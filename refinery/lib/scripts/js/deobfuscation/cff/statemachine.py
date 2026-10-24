@@ -22,6 +22,7 @@ from refinery.lib.scripts import (
     _replace_in_parent,
     set_child,
     set_child_list,
+    tree_root,
 )
 from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
@@ -38,6 +39,7 @@ from refinery.lib.scripts.js.analysis.model import (
     references_own_arguments,
     walk_receiver_scope,
 )
+from refinery.lib.scripts.js.deobfuscation.admission import CallAdmission
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
     PinnedTransformer,
@@ -50,11 +52,17 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_reference,
     is_valid_identifier,
     make_numeric_literal,
+    make_string_literal,
     make_undefined_expression,
     property_absent_from_written_chain,
     property_key,
     sanitize_inlined_body,
     substitute_use_position,
+)
+from refinery.lib.scripts.js.deobfuscation.interpreter import (
+    InterpreterError,
+    IrreducibleExpression,
+    _ThrowSignal,
 )
 from refinery.lib.scripts.js.deobfuscation.namespaces import namespace_accesses
 from refinery.lib.scripts.js.deobfuscation.parameters import parameter_list
@@ -140,12 +148,15 @@ _UNDEFINED = _Undefined.VALUE
 
 
 if TYPE_CHECKING:
+    from refinery.lib.scripts.js.analysis.cache import ModelCache
     from refinery.lib.scripts.js.analysis.intrinsics import IntrinsicWrites
     from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel
+    from refinery.lib.scripts.js.deobfuscation.helpers import Value
 
-    _StateEnv = dict[str, float]
+    _StateValue = float | tuple[float, ...]
+    _StateEnv = dict[str, _StateValue]
     _SlotPath = tuple[str, ...]
-    _Value = float | bool | _Undefined
+    _Value = float | bool | str | tuple[float, ...] | _Undefined
     _Slots = dict[_SlotPath, _Value]
 
 _MAX_BLOCKS = 2000
@@ -190,17 +201,18 @@ _Flag = _FlagVariable | _FlagProperty
 
 
 class _CallSiteInfo(NamedTuple):
-    initial_state: list[int | float]
+    initial_state: list[_StateValue]
     flag: _Flag | None
     result_var: str | None
     scaffolding_end: int
     returns_value: bool
     guarded: bool
     undefined_reads: list[Expression]
+    initial_args: list[Expression]
 
 
 class _WrapperFunctionInfo(NamedTuple):
-    initial_state: list[int | float]
+    initial_state: list[_StateValue]
     rest_param_name: str | None
     scope_arg: Expression
 
@@ -214,6 +226,7 @@ class _SMRawAssignment:
     operator: str
     rhs: Expression
     node: JsAssignmentExpression
+    index: Expression | None = None
 
 
 @dataclass
@@ -237,6 +250,18 @@ class _SMConditionalTransition:
 
 
 @dataclass
+class _SMGuardedTransition:
+    """
+    A transition behind jumps ahead of it, `if (c) { stores; break; }`, each in *guards* with its
+    condition and its stores: at each arrival the first jump whose condition holds takes its
+    stores, and with none, the block takes *assignments*. A condition is evaluated on the state
+    alone, and one that does not evaluate refuses the machine.
+    """
+    guards: list[tuple[Expression, list[_SMRawAssignment]]]
+    assignments: list[_SMRawAssignment]
+
+
+@dataclass
 class _SMExitTransition:
     """
     The state machine reaches the end state after this block.
@@ -245,7 +270,9 @@ class _SMExitTransition:
 
 
 if TYPE_CHECKING:
-    _SMTransition = _SMLinearTransition | _SMConditionalTransition | _SMExitTransition
+    _SMTransition = (
+        _SMLinearTransition | _SMConditionalTransition | _SMExitTransition | _SMGuardedTransition
+    )
 
 
 @dataclass
@@ -263,8 +290,9 @@ class _SMBlock:
 class _MachineMatch:
     machine: JsFunctionNode
     machine_names: frozenset[str]
+    design: _Design
     state_var_names: list[str]
-    initial_state: list[int | float]
+    initial_state: list[_StateValue]
     end_state: int | float
     loop_sum: Expression
     switch_stmt: JsSwitchStatement
@@ -285,6 +313,15 @@ class _MachineMatch:
     namespaces: set[str] = field(default_factory=set)
     namespace_homes: dict[str, tuple[str, ...]] = field(default_factory=dict)
     undefined_reads: list[Expression] = field(default_factory=list)
+    runtime_name: str | None = None
+    initial_args: list[Expression] = field(default_factory=list)
+    calls: _Calls | None = None
+
+    def removed(self, body: list[Statement]) -> list[Statement]:
+        """
+        The statements of *body* the recovery removes: the machine and its call site.
+        """
+        return body[self.machine_index:self.scaffolding_end + 1]
 
     @property
     def qualifies_namespaces(self) -> bool:
@@ -300,10 +337,12 @@ class _MachineMatch:
 class _Env:
     """
     What a run of the machine reads when it picks the next case: the value of every state variable,
-    and that of each routing slot (`_routing_paths`) whose value is known.
+    that of each routing slot (`_routing_paths`) whose value is known, and the calls of the
+    program's own functions the run may make (`_Calls`), where its design computes with them.
     """
     states: _StateEnv
     slots: _Slots = field(default_factory=dict)
+    calls: _Calls | None = None
 
     def same_as(self, other: _Env) -> bool:
         """
@@ -317,9 +356,15 @@ class _Env:
         )
 
 
-def _to_number(value: _Value) -> float:
+def _to_number(value: _Value) -> float | None:
+    """
+    The number JavaScript converts *value* to, or `None` for a string or an array, whose conversion
+    this does not model.
+    """
     if isinstance(value, _Undefined):
         return math.nan
+    if isinstance(value, (str, tuple)):
+        return None
     return float(value)
 
 
@@ -328,66 +373,153 @@ def _is_truthy(value: _Value) -> bool:
         return False
     if isinstance(value, bool):
         return value
+    if isinstance(value, tuple):
+        return True
+    if isinstance(value, str):
+        return bool(value)
     return not (value == 0 or math.isnan(value))
 
 
-def _strictly_equal(a: _Value, b: _Value) -> bool:
+def _strictly_equal(a: _Value, b: _Value) -> bool | None:
     """
-    JavaScript's `===` on the values a case test can make: a boolean is never a number.
+    JavaScript's `===` on the values a case test can make: a boolean is never a number, and an array
+    is never a primitive. Two arrays are equal only where they are one object, which the values do
+    not say: `None`.
     """
-    if isinstance(a, (bool, _Undefined)) or isinstance(b, (bool, _Undefined)):
+    if isinstance(a, tuple) and isinstance(b, tuple):
+        return None
+    if isinstance(a, (bool, _Undefined, tuple)) or isinstance(b, (bool, _Undefined, tuple)):
         return a is b
+    if isinstance(a, str) or isinstance(b, str):
+        return type(a) is type(b) and a == b
     return a == b
+
+
+def _value_key(value: _Value) -> tuple[object, ...]:
+    """
+    A key under which two values the machine reads are one exactly where JavaScript's SameValue
+    holds of them: `===`, except that it tells `-0` from `0`, which a block reading the value would
+    print or divide by differently, and that `NaN` is itself. Two arrays of the state are one where
+    their elements are, since the machine's state is what they hold and not which object holds it.
+    """
+    if isinstance(value, tuple):
+        return ('array', *map(_value_key, value))
+    if isinstance(value, _Undefined):
+        return ('undefined',)
+    if isinstance(value, bool):
+        return ('boolean', value)
+    if isinstance(value, str):
+        return ('string', value)
+    if math.isnan(value):
+        return ('number', 'NaN')
+    return ('number', value, is_negative_zero(value))
 
 
 def _same_value(a: _Value, b: _Value) -> bool:
     """
-    JavaScript's SameValue on the values the machine reads: `===`, except that it tells `-0` from
-    `0`, which a block reading the value would print or divide by differently.
+    Whether *a* and *b* are one value of the machine (`_value_key`).
     """
-    if isinstance(a, float) and isinstance(b, float) and is_negative_zero(a) != is_negative_zero(b):
-        return False
-    return _strictly_equal(a, b)
+    return _value_key(a) == _value_key(b)
 
 
 def _finite_number(value: _Value | None) -> float | None:
     """
     The value where it is a finite number, the only value a state variable holds, or `None`.
     """
-    if isinstance(value, (bool, _Undefined)) or value is None or not math.isfinite(value):
+    if isinstance(value, (bool, _Undefined, str, tuple)) or value is None:
+        return None
+    if not math.isfinite(value):
         return None
     return value
 
 
-def _loosely_equal(a: _Value, b: _Value) -> bool:
+def _loosely_equal(a: _Value, b: _Value) -> bool | None:
     """
     JavaScript's `==` on the values a case test can make: `undefined` equals only itself here, and a
     boolean compares as the number it converts to.
     """
     if isinstance(a, _Undefined) or isinstance(b, _Undefined):
         return a is b
-    return _to_number(a) == _to_number(b)
+    if (x := _to_number(a)) is None or (y := _to_number(b)) is None:
+        return None
+    return x == y
 
 
-def _eval_expr(node: Expression, env: _Env) -> _Value | None:
+def _element(array: tuple[float, ...], key: _Value | None) -> _Value | None:
+    """
+    The element of a state array under *key*, where the key is the index of one.
+    """
+    if (index := _finite_number(key)) is None or not index.is_integer():
+        return None
+    if not 0 <= index < len(array):
+        return None
+    return array[int(index)]
+
+
+def _eval_expr(node: Node | None, env: _Env) -> _Value | None:
     """
     Evaluate an expression of numbers, state variables and routing slots the way JavaScript does,
     or give `None` where it reads anything else or applies an operator this does not know. A
     comparison makes a boolean, which stays one, and arithmetic on `undefined` makes `NaN`.
+
+    A state variable may hold an array of numbers. An element of one is read at an index that
+    evaluates and lies in range, and an array literal is built of numbers and of spreads of arrays
+    where arrays iterate as built at the spread (`_Calls.iterates_arrays`). A call with an argument
+    that reads the state is run by the shared admission (`_Calls`), which may give a string or an
+    array as well; a call that reads no state is the function evaluator's to fold.
     """
+    node = strip_parens(node)
     if isinstance(node, JsNumericLiteral):
         return node.value
     if isinstance(node, JsIdentifier):
         return env.states.get(node.name)
     if isinstance(node, JsMemberExpression):
+        holder = node.object
+        if isinstance(holder, JsIdentifier) and isinstance(array := env.states.get(holder.name), tuple):
+            if not node.computed or node.property is None:
+                return None
+            return _element(array, _eval_expr(node.property, env))
         path = _slot_path(node)
         return None if path is None else env.slots.get(path)
+    if isinstance(node, JsArrayExpression):
+        items: list[float] = []
+        for element in node.elements:
+            if element is None:
+                return None
+            if isinstance(element, JsSpreadElement):
+                if element.argument is None or env.calls is None:
+                    return None
+                spread = _eval_expr(element.argument, env)
+                if not isinstance(spread, tuple) or not env.calls.iterates_arrays(element):
+                    return None
+                items.extend(spread)
+            elif (number := _finite_number(_eval_expr(element, env))) is None:
+                return None
+            else:
+                items.append(number)
+        return tuple(items)
+    if (
+        isinstance(node, JsCallExpression)
+        and env.calls is not None
+        and any(_reads_the_state(argument, env) for argument in node.arguments)
+    ):
+        arguments: list[_Value] = []
+        for argument in node.arguments:
+            if isinstance(argument, JsSpreadElement):
+                return None
+            if (value := _eval_expr(argument, env)) is None:
+                return None
+            arguments.append(value)
+        return env.calls(node, arguments)
     if isinstance(node, JsUnaryExpression) and node.prefix and node.operand is not None:
-        if node.operator in ('-', '+'):
+        if node.operator in ('-', '+', '!'):
             operand = _eval_expr(node.operand, env)
             if operand is None:
                 return None
-            number = _to_number(operand)
+            if node.operator == '!':
+                return not _is_truthy(operand)
+            if (number := _to_number(operand)) is None:
+                return None
             return -number if node.operator == '-' else number
     if isinstance(node, JsLogicalExpression) and node.left is not None and node.right is not None:
         if node.operator in ('&&', '||'):
@@ -403,11 +535,28 @@ def _eval_expr(node: Expression, env: _Env) -> _Value | None:
         if lhs is None or rhs is None:
             return None
         if node.operator in ('===', '!=='):
-            return _strictly_equal(lhs, rhs) == (node.operator == '===')
+            if (equal := _strictly_equal(lhs, rhs)) is None:
+                return None
+            return equal == (node.operator == '===')
         if node.operator in ('==', '!='):
-            return _loosely_equal(lhs, rhs) == (node.operator == '==')
-        return eval_binary_op(node.operator, _to_number(lhs), _to_number(rhs))
+            if (equal := _loosely_equal(lhs, rhs)) is None:
+                return None
+            return equal == (node.operator == '==')
+        if (x := _to_number(lhs)) is None or (y := _to_number(rhs)) is None:
+            return None
+        return eval_binary_op(node.operator, x, y)
     return None
+
+
+def _reads_the_state(node: Node, env: _Env) -> bool:
+    """
+    Whether *node* reads a state variable of *env* outside a nested function.
+    """
+    if isinstance(node, FUNCTION_NODES):
+        return False
+    if isinstance(node, JsIdentifier):
+        return node.name in env.states and is_reference(node)
+    return any(_reads_the_state(child, env) for child in node.children())
 
 
 def _eval_number(node: Expression) -> float | None:
@@ -738,7 +887,7 @@ def _collect_namespace_homes(
     return homes
 
 
-def _match_generator_cff(body: list[Statement], idx: int) -> _MachineMatch | None:
+def _match_generator_cff(body: list[Statement], idx: int, design: _Design) -> _MachineMatch | None:
     """
     Starting at index *idx* in *body*, test whether the statement is a generator function
     declaration matching the state machine CFF pattern, with its call site following. Its parameters
@@ -870,6 +1019,7 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _MachineMatch | Non
     return _MachineMatch(
         machine=stmt,
         machine_names=gen_names,
+        design=design,
         state_var_names=state_var_names,
         initial_state=call_info.initial_state,
         end_state=end_state,
@@ -891,6 +1041,131 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _MachineMatch | Non
         scope_default_inits=scope_default_inits,
         namespaces=namespaces,
         namespace_homes=namespace_homes,
+    )
+
+
+def _state_sum_call(node: Expression | None, states: str) -> JsCallExpression | None:
+    """
+    The call `f(states)` of a function under a name with the state array as its one argument.
+    """
+    if (
+        isinstance(node, JsCallExpression)
+        and isinstance(node.callee, JsIdentifier)
+        and len(node.arguments) == 1
+        and isinstance(argument := node.arguments[0], JsIdentifier)
+        and argument.name == states
+    ):
+        return node
+    return None
+
+
+def _match_array_machine(body: list[Statement], idx: int, design: _Design) -> _MachineMatch | None:
+    """
+    Starting at index *idx* in *body*, test whether the statement is the machine of the design
+    whose state is one array of numbers, summed by a function of the program, with its call site
+    following:
+
+        function M(states, scope = {…}, runtime, arg) {
+          while (sum(states) !== END) { L: switch (sum(states)) { … } }
+        }
+        M([…]);
+
+    The machine is a plain function, declared or stored to a variable, and a `return` of
+    `undefined` may stand behind its loop. Its call hands it one array, which the design reads
+    once the match is decided on (`_ArrayDesign.read_start`). Whether the code of the machine reads
+    what its invocation binds, and whether it holds a function declared in a block of strict code,
+    are asked of the whole function, and only once its shape matched.
+    """
+    if (held := _held_generator(body[idx])) is None:
+        return None
+    stmt, holder = held
+    if is_generator_function(stmt) or is_async_function(stmt) or stmt.body is None:
+        return None
+    name = holder.name
+    names = frozenset({name, *_own_name(stmt)})
+    params = stmt.params
+    if not 3 <= len(params) <= 4:
+        return None
+    states, scope, runtime, *rest = params
+    if not isinstance(states, JsIdentifier) or not isinstance(runtime, JsIdentifier):
+        return None
+    if not isinstance(scope, JsAssignmentPattern) or not isinstance(scope.left, JsIdentifier):
+        return None
+    arg_var_name: str | None = None
+    if rest:
+        if not isinstance(rest[0], JsIdentifier):
+            return None
+        arg_var_name = rest[0].name
+    scope_param_name = scope.left.name
+    code = stmt.body.body
+    implicit_reads: list[Expression] = []
+    if len(code) == 2 and (implicit := _is_implicit_return(code[1])) is not None:
+        implicit_reads = implicit
+        code = code[:1]
+    if len(code) != 1 or not isinstance(while_stmt := code[0], JsWhileStatement):
+        return None
+    test = while_stmt.test
+    if not isinstance(test, JsBinaryExpression) or test.operator != '!==':
+        return None
+    if (loop_sum := _state_sum_call(test.left, states.name)) is None:
+        return None
+    if test.right is None or (end_state := _eval_number(test.right)) is None:
+        return None
+    inner: Statement | None = while_stmt.body
+    if isinstance(inner, JsBlockStatement) and len(inner.body) == 1:
+        inner = inner.body[0]
+    switch_label: str | None = None
+    if isinstance(inner, JsLabeledStatement):
+        if inner.label is not None:
+            switch_label = inner.label.name
+        inner = inner.body
+    if not isinstance(inner, JsSwitchStatement):
+        return None
+    discriminant = _state_sum_call(inner.discriminant, states.name)
+    if discriminant is None or not isinstance(discriminant.callee, JsIdentifier):
+        return None
+    assert isinstance(loop_sum.callee, JsIdentifier)
+    if discriminant.callee.name != loop_sum.callee.name:
+        return None
+    if (scope_defaults := _extract_scope_default_props(params, scope.left.name)) is None:
+        return None
+    if _reads_its_own_invocation(stmt):
+        return None
+    if strict_mode_at(stmt) and _holds_a_block_function(stmt.body):
+        return None
+    scope_default_props, scope_default_inits = scope_defaults
+    call_info = _find_generator_call_site(body, idx, name, plain=True)
+    if call_info is None or len(call_info.initial_args) != 1:
+        return None
+    slots = _scope_slots(inner, scope_param_name, scope_default_props)
+    if _spells_a_slot_bare(inner, slots):
+        return None
+    flag = call_info.flag
+    if flag is not None and flag.base in slots:
+        return None
+    return _MachineMatch(
+        machine=stmt,
+        machine_names=names,
+        design=design,
+        state_var_names=[states.name],
+        initial_state=[],
+        end_state=end_state,
+        loop_sum=loop_sum,
+        switch_stmt=inner,
+        switch_label=switch_label,
+        scope_param_name=scope_param_name,
+        arg_var_name=arg_var_name,
+        flag=flag,
+        result_var=call_info.result_var,
+        undefined_reads=call_info.undefined_reads + implicit_reads,
+        machine_index=idx,
+        scaffolding_end=call_info.scaffolding_end,
+        returns_value=call_info.returns_value,
+        guarded=call_info.guarded,
+        scope_default_props=scope_default_props,
+        scope_default_inits=scope_default_inits,
+        runtime_name=runtime.name,
+        initial_args=call_info.initial_args,
     )
 
 
@@ -1149,6 +1424,7 @@ def _find_generator_call_site(
     body: list[Statement],
     gen_idx: int,
     gen_name: str,
+    plain: bool = False,
 ) -> _CallSiteInfo | None:
     """
     Read the call of the generator declared at *gen_idx*, which the obfuscator writes right behind
@@ -1161,8 +1437,8 @@ def _find_generator_call_site(
     The flag may be reset with `didReturn = void 0;` instead, the result assigned to a variable
     declared elsewhere, and the call returned directly or made for nothing. The guard is part of
     the scaffolding in exactly this form: one that does anything else stays, and the flag it reads
-    keeps the recovery from going ahead (`_scaffolding_is_private`). Returns a `_CallSiteInfo` or
-    `None`.
+    keeps the recovery from going ahead (`_scaffolding_is_private`). Where *plain*, the call is the
+    plain call `M(array)` of a machine that is no generator. Returns a `_CallSiteInfo` or `None`.
     """
     pos = gen_idx + 1
     undefined_reads: list[Expression] = []
@@ -1172,16 +1448,17 @@ def _find_generator_call_site(
         pos += 1
     if pos >= len(body):
         return None
-    call_expr = _extract_generator_call(body[pos], gen_name)
+    call_expr = _extract_generator_call(body[pos], gen_name, plain)
     if call_expr is None:
         return None
     call_node, result_var = call_expr
-    initial_state: list[int | float] = []
-    for arg in call_node.arguments:
-        val = _eval_number(arg)
-        if val is None:
-            return None
-        initial_state.append(val)
+    initial_state: list[_StateValue] = []
+    if not plain:
+        for arg in call_node.arguments:
+            val = _eval_number(arg)
+            if val is None:
+                return None
+            initial_state.append(val)
     scaffolding_end = pos
     ends_a_function = (owner := body[gen_idx].parent) is not None and _is_a_function_body(owner)
     guard_reads = None
@@ -1211,6 +1488,7 @@ def _find_generator_call_site(
         isinstance(body[pos], JsReturnStatement),
         guarded,
         undefined_reads,
+        list(call_node.arguments),
     )
 
 
@@ -1222,6 +1500,7 @@ class _GeneratorCallInfo(NamedTuple):
 def _extract_generator_call(
     stmt: Statement,
     gen_name: str,
+    plain: bool = False,
 ) -> _GeneratorCallInfo | None:
     """
     Extract a generator call from a statement. Handles:
@@ -1230,8 +1509,9 @@ def _extract_generator_call(
     - gen(...)["next"]()["value"];
     - return gen(...)["next"]()["value"];
 
-    Returns a `(call, name)` pair (the inner call to gen and the result variable name) or `None`. A
-    result stored anywhere but in a plain name is refused: the recovery would drop the store.
+    Where *plain*, the call is `gen(...)` itself. Returns a `(call, name)` pair (the inner call to
+    gen and the result variable name) or `None`. A result stored anywhere but in a plain name is
+    refused: the recovery would drop the store.
     """
     result_name: str | None = None
     expr: Expression | None = None
@@ -1256,7 +1536,7 @@ def _extract_generator_call(
         return None
     if expr is None:
         return None
-    gen_call = _unwrap_next_value(expr)
+    gen_call = (expr if isinstance(expr, JsCallExpression) else None) if plain else _unwrap_next_value(expr)
     if gen_call is None:
         return None
     if not isinstance(gen_call.callee, JsIdentifier):
@@ -1326,7 +1606,7 @@ def _detect_wrapper_function(
     args = gen_call.arguments
     if len(args) < num_state_vars + 1:
         return None
-    initial_state: list[int | float] = []
+    initial_state: list[_StateValue] = []
     for arg in args[:num_state_vars]:
         val = _eval_number(arg)
         if val is None:
@@ -1347,6 +1627,57 @@ def _detect_wrapper_function(
     ):
         return None
     return _WrapperFunctionInfo(initial_state, rest_param_name, args[num_state_vars])
+
+
+def _plain_wrapper_call(node: JsFunctionExpression, match: _MachineMatch) -> JsCallExpression | None:
+    """
+    The call `M(states, scope, runtime, rest)` a wrapper of the machine of *match* returns where
+    that is its whole body and it hands on the machine's own `runtime`, the design whose state is
+    one array.
+    """
+    if node.body is None:
+        return None
+    body = node.body.body
+    if len(body) != 1 or not isinstance(stmt := body[0], JsReturnStatement):
+        return None
+    call = stmt.argument
+    if (
+        not isinstance(call, JsCallExpression)
+        or not isinstance(call.callee, JsIdentifier)
+        or call.callee.name not in match.machine_names
+        or len(call.arguments) != 4
+    ):
+        return None
+    runtime = call.arguments[2]
+    if not isinstance(runtime, JsIdentifier) or runtime.name != match.runtime_name:
+        return None
+    return call
+
+
+def _detect_plain_wrapper(
+    node: Expression,
+    match: _MachineMatch,
+) -> _WrapperFunctionInfo | None:
+    """
+    The wrapper `function (...rest) { return M(states, scope, runtime, rest); }` of the machine of
+    *match*, the design whose state is one array. Its start state is read from numbers alone: a
+    start state the run computes was put in its place as an array literal by the run that made the
+    wrapper (`_fold_scope_keys`).
+    """
+    if not isinstance(node, JsFunctionExpression) or (call := _plain_wrapper_call(node, match)) is None:
+        return None
+    states, scope_arg, runtime, handed = call.arguments
+    entry = _eval_expr(states, _Env({}))
+    if not isinstance(entry, tuple):
+        return None
+    params = node.params
+    if len(params) != 1 or not isinstance(rest := params[0], JsRestElement):
+        return None
+    if not isinstance(rest.argument, JsIdentifier):
+        return None
+    if not isinstance(handed, JsIdentifier) or handed.name != rest.argument.name:
+        return None
+    return _WrapperFunctionInfo([entry], rest.argument.name, scope_arg)
 
 
 @dataclass
@@ -1416,7 +1747,7 @@ def _extract_state_blocks(
     declared = _block_bound_names([stmt for case in cases for stmt in case.body])
     if not declared.isdisjoint(match.state_var_names):
         return None
-    routing = _routing_paths(cases)
+    routing = _routing_paths(cases, frozenset(match.state_var_names))
     flow = DominatorModel(ControlFlowModel({id(match.machine): build_cfg(match.machine)}))
     last_body = max((i for i, case in enumerate(cases) if case.body), default=-1)
     labels: list[_SMCase] = []
@@ -1439,7 +1770,7 @@ def _extract_state_blocks(
     )
 
 
-def _routing_paths(cases: list[JsSwitchCase]) -> frozenset[_SlotPath]:
+def _routing_paths(cases: list[JsSwitchCase], states: frozenset[str] = frozenset()) -> frozenset[_SlotPath]:
     """
     The routing slots of a switch: every property a case test reads along a chain of static keys
     (`_slot_path`).
@@ -1453,7 +1784,7 @@ def _routing_paths(cases: list[JsSwitchCase]) -> frozenset[_SlotPath]:
                 continue
             if isinstance(node.parent, JsMemberExpression) and node.parent.object is node:
                 continue
-            if (path := _slot_path(node)) is not None:
+            if (path := _slot_path(node)) is not None and path[0] not in states:
                 paths.add(path)
     return frozenset(paths)
 
@@ -1742,12 +2073,49 @@ def _split_transition_at_the_end(
         payload = stmts[:-1]
     elif (split := _split_transition(stmts, var_names)) is not None:
         payload, assignments = split
-        transition = _SMLinearTransition(assignments=assignments)
+        guards: list[tuple[Expression, list[_SMRawAssignment]]] = []
+        while payload and (guard := _state_guard(payload[-1], var_names, switch_label)) is not None:
+            guards.insert(0, guard)
+            payload = payload[:-1]
+        if guards:
+            transition = _SMGuardedTransition(guards, assignments)
+        else:
+            transition = _SMLinearTransition(assignments=assignments)
     else:
         return None
     if not terminated and not last:
         return None
     return (payload, transition)
+
+
+def _state_guard(
+    stmt: Statement,
+    var_names: list[str],
+    switch_label: str | None,
+) -> tuple[Expression, list[_SMRawAssignment]] | None:
+    """
+    The condition and the stores of a jump `if (c) { stores; break; }` ahead of a transition, which
+    leaves the block with its own stores where its condition holds. A jump without stores enters
+    the same block again.
+    """
+    if (
+        not isinstance(stmt, JsIfStatement)
+        or stmt.alternate is not None
+        or stmt.test is None
+        or stmt.consequent is None
+    ):
+        return None
+    inner, terminated = _strip_trailing_break(_block_stmts(stmt.consequent), switch_label)
+    if not terminated:
+        return None
+    if not inner:
+        return stmt.test, []
+    if (split := _split_transition(inner, var_names)) is None:
+        return None
+    rest, assignments = split
+    if rest:
+        return None
+    return stmt.test, assignments
 
 
 def _strip_trailing_break(
@@ -1769,13 +2137,22 @@ def _state_assignment(expr: Expression, var_names: list[str]) -> _SMRawAssignmen
     The assignment *expr* makes to a state variable with `=` or `+=`, or `None`.
     """
     if (
-        isinstance(expr, JsAssignmentExpression)
-        and isinstance(expr.left, JsIdentifier)
-        and expr.left.name in var_names
-        and expr.operator in ('=', '+=')
-        and expr.right is not None
+        not isinstance(expr, JsAssignmentExpression)
+        or expr.operator not in ('=', '+=')
+        or expr.right is None
     ):
-        return _SMRawAssignment(expr.left.name, expr.operator, expr.right, expr)
+        return None
+    target = expr.left
+    if isinstance(target, JsIdentifier) and target.name in var_names:
+        return _SMRawAssignment(target.name, expr.operator, expr.right, expr)
+    if (
+        isinstance(target, JsMemberExpression)
+        and target.computed
+        and isinstance(target.object, JsIdentifier)
+        and target.object.name in var_names
+        and target.property is not None
+    ):
+        return _SMRawAssignment(target.object.name, expr.operator, expr.right, expr, target.property)
     return None
 
 
@@ -1830,6 +2207,8 @@ def _transition_assignments(transition: _SMTransition) -> list[_SMRawAssignment]
         return transition.assignments
     if isinstance(transition, _SMConditionalTransition):
         return transition.true_assignments + transition.false_assignments
+    if isinstance(transition, _SMGuardedTransition):
+        return [a for _, guard in transition.guards for a in guard] + transition.assignments
     return []
 
 
@@ -1860,6 +2239,14 @@ def _writes_a_state_variable(
             elif (
                 isinstance(node, JsIdentifier)
                 and node.name in names
+                and is_member_write_target(node)
+                and id(node.parent) not in allowed
+            ):
+                return True
+            elif (
+                isinstance(node, JsMemberExpression)
+                and isinstance(node.object, JsIdentifier)
+                and node.object.name in names
                 and is_member_write_target(node)
                 and id(node.parent) not in allowed
             ):
@@ -1907,13 +2294,34 @@ def _apply_raw_transition(assignments: list[_SMRawAssignment], current: _Env) ->
     """
     states = dict(current.states)
     for assign in assignments:
-        value = _eval_expr(assign.rhs, _Env(states, current.slots))
+        env = _Env(states, current.slots, current.calls)
+        held = states.get(assign.name)
+        index: int | None = None
+        if assign.index is not None:
+            if not isinstance(held, tuple):
+                return None
+            key = _finite_number(_eval_expr(assign.index, env))
+            if key is None or not key.is_integer() or not 0 <= key < len(held):
+                return None
+            index = int(key)
+            old = held[index]
+        elif isinstance(held, tuple) or held is None:
+            return None
+        else:
+            old = held
+        value = _eval_expr(assign.rhs, env)
         if value is not None and assign.operator == '+=':
-            value = eval_binary_op('+', states[assign.name], _to_number(value))
+            if (addend := _to_number(value)) is None:
+                return None
+            value = eval_binary_op('+', old, addend)
         if (number := _finite_number(value)) is None:
             return None
-        states[assign.name] = number
-    return _Env(states, current.slots)
+        if index is None:
+            states[assign.name] = number
+        else:
+            assert isinstance(held, tuple)
+            states[assign.name] = (*held[:index], number, *held[index + 1:])
+    return _Env(states, current.slots, current.calls)
 
 
 def _block_stmts(node: Statement) -> list[Statement]:
@@ -1973,7 +2381,9 @@ def _dispatch(machine: _StateMachine, env: _Env) -> _SMBlock | None:
         assert test is not None
         if (value := _eval_expr(test, env)) is None:
             return None
-        if _strictly_equal(value, discriminant):
+        if (equal := _strictly_equal(value, discriminant)) is None:
+            return None
+        if equal:
             return machine.cases[index].block
     if first is not None:
         return machine.cases[first].block
@@ -1990,7 +2400,7 @@ def _ends(machine: _StateMachine, env: _Env) -> bool | None:
     return total == machine.end_state
 
 
-def _apply_initial_state(var_names: list[str], values: list[int | float]) -> _StateEnv:
+def _apply_initial_state(var_names: list[str], values: list[_StateValue]) -> _StateEnv:
     return dict(zip(var_names, values))
 
 
@@ -2041,16 +2451,21 @@ def _process_payload(
     stmts: list[Statement],
     state: _StateEnv,
     match: _MachineMatch,
-) -> list[Statement]:
+) -> list[Statement] | None:
     """
     Process statements a block runs, its payload or a branch prefix of its transition, through the
     standard pipeline: substitute the state, record the scope slots they use, strip the scope
     prefix, qualify, and filter the redirect bookkeeping. Returns the processed statements ready
-    for emission.
+    for emission, or `None` where a key of an access to the scope object does not decode
+    (`_fold_scope_keys`).
     """
     if not stmts:
         return []
-    result = _substitute_state_vars(stmts, state)
+    result = [_clone_node(stmt) for stmt in stmts]
+    if not _fold_scope_keys(stmts, result, state, match):
+        return None
+    for clone in result:
+        _substitute_in_scope(clone, state)
     _collect_scope_props(result, match)
     result = _strip_scope_param_prefix(result, match.scope_param_name)
     result = _qualify_with_identifiers(result, match)
@@ -2155,9 +2570,11 @@ def _build_cfg(
             if not main or node_id != entry_id:
                 return None
             settled = {**env.slots, **dict(block.routing_stores)}
-            env = _Env(env.states, settled)
+            env = _Env(env.states, settled, env.calls)
 
         payload = _process_payload(block.payload, env.states, match)
+        if payload is None:
+            return None
 
         condition: Expression | None = None
         successors: list[int] = []
@@ -2171,14 +2588,29 @@ def _build_cfg(
             if (target := arrive(_apply_raw_transition(transition.assignments, env))) is None:
                 return None
             successors = [target]
+        elif isinstance(transition, _SMGuardedTransition):
+            chosen = transition.assignments
+            for condition_of_jump, assignments in transition.guards:
+                if (holds := _eval_expr(condition_of_jump, env)) is None:
+                    return None
+                if _is_truthy(holds):
+                    chosen = assignments
+                    break
+            if (target := arrive(_apply_raw_transition(chosen, env))) is None:
+                return None
+            successors = [target]
         elif isinstance(transition, _SMConditionalTransition):
             true_id = arrive(_apply_raw_transition(transition.true_assignments, env))
             false_id = arrive(_apply_raw_transition(transition.false_assignments, env))
             if true_id is None or false_id is None:
                 return None
             successors = [true_id, false_id]
-            true_prefix_payload = _process_payload(transition.true_prefix, env.states, match)
-            false_prefix_payload = _process_payload(transition.false_prefix, env.states, match)
+            true_prefix = _process_payload(transition.true_prefix, env.states, match)
+            false_prefix = _process_payload(transition.false_prefix, env.states, match)
+            if true_prefix is None or false_prefix is None:
+                return None
+            true_prefix_payload = true_prefix
+            false_prefix_payload = false_prefix
             condition = _qualify_condition(transition.condition, env.states, match)
 
         node = _CFGNode(
@@ -2876,6 +3308,92 @@ def _substitute_state_vars(stmts: list[Statement], env: _StateEnv) -> list[State
     return result
 
 
+def _fold_scope_keys(
+    originals: Sequence[Node],
+    clones: Sequence[Node],
+    state: _StateEnv,
+    match: _MachineMatch,
+) -> bool:
+    """
+    Put what the run computes from *state* into *clones*, the copies of *originals*: the string
+    each computed key of an access to the scope object, or to a member of it, evaluates to in place
+    of the key, and the array a wrapper's call starts the machine in as an array literal. Each is
+    evaluated on the original node, which anchors the calls that make it, and only where it runs
+    at the state: none under a nested function, which reads the state when it is called, and none
+    whose scope object or state variables something between the block and the key binds anew
+    (`_scoped_children`). `False` where a key of the block does not decode.
+    """
+    if match.calls is None or match.scope_param_name is None:
+        return True
+    scope = match.scope_param_name
+    watched = frozenset({scope, *state})
+    keys: dict[Node, str] = {}
+
+    def decode(node: Node, hidden: frozenset[str]) -> bool:
+        if isinstance(node, FUNCTION_NODES):
+            return True
+        if (
+            isinstance(node, JsMemberExpression)
+            and node.computed
+            and (key := node.property) is not None
+            and not isinstance(key, JsStringLiteral)
+            and isinstance(holder := _scope_holder(node), JsIdentifier)
+            and holder.name == scope
+            and scope not in hidden
+        ):
+            visible = {name: value for name, value in state.items() if name not in hidden}
+            if not isinstance(value := _eval_expr(key, _Env(visible, calls=match.calls)), str):
+                return False
+            keys[node] = value
+        for child, bound in _scoped_children(node):
+            if not decode(child, hidden | (watched & bound) if bound else hidden):
+                return False
+        return True
+
+    for original, clone in zip(originals, clones):
+        keys.clear()
+        if not decode(original, frozenset()):
+            return False
+        starts: dict[Node, Expression] = {}
+        for node in original.walk():
+            if (
+                isinstance(node, JsFunctionExpression)
+                and (call := _plain_wrapper_call(node, match)) is not None
+                and isinstance(entry := _eval_expr(call.arguments[0], _Env({}, calls=match.calls)), tuple)
+                and (literal := _array_literal(entry)) is not None
+            ):
+                starts[call.arguments[0]] = literal
+        for node, copy in list(zip(original.walk(), clone.walk())):
+            if (value := keys.get(node)) is not None:
+                assert isinstance(copy, JsMemberExpression) and copy.property is not None
+                _replace_in_parent(copy.property, make_string_literal(value))
+            elif (literal := starts.get(node)) is not None:
+                _replace_in_parent(copy, literal)
+    return True
+
+
+def _array_literal(values: tuple[float, ...]) -> JsArrayExpression | None:
+    """
+    An array literal of the numbers *values*, or `None` where one of them has no literal.
+    """
+    elements: list[Expression | None] = []
+    for value in values:
+        if (literal := make_numeric_literal(value)) is None:
+            return None
+        elements.append(literal)
+    return JsArrayExpression(elements=elements)
+
+
+def _scope_holder(member: JsMemberExpression) -> Expression | None:
+    """
+    The object an access `scope[k]` or `scope.P[k]` reads the scope object as.
+    """
+    holder = member.object
+    if isinstance(holder, JsMemberExpression):
+        holder = holder.object
+    return holder
+
+
 def _parameter_names(func: JsFunctionNode) -> set[str]:
     """
     The names *func* binds for its parameter list: its parameters and the name of a function
@@ -3043,8 +3561,25 @@ def _substitute_in_scope(node: Node, env: _StateEnv) -> None:
     for child, bound in _scoped_children(node):
         if isinstance(child, FUNCTION_NODES):
             continue
-        if isinstance(child, JsIdentifier) and child.name in env and child.name not in bound:
-            literal = make_numeric_literal(env[child.name])
+        if (
+            isinstance(child, JsMemberExpression)
+            and isinstance(holder := child.object, JsIdentifier)
+            and isinstance(env.get(holder.name), tuple)
+            and holder.name not in bound
+            and not is_member_write_target(child)
+            and (value := _finite_number(_eval_expr(child, _Env(env)))) is not None
+        ):
+            literal = make_numeric_literal(value)
+            if literal is not None:
+                _replace_in_parent(child, literal)
+                continue
+        if (
+            isinstance(child, JsIdentifier)
+            and child.name not in bound
+            and (held := env.get(child.name)) is not None
+            and not isinstance(held, tuple)
+        ):
+            literal = make_numeric_literal(held)
             if literal is not None:
                 substitute_use_position(child, literal)
         elif bound.isdisjoint(env):
@@ -3131,6 +3666,8 @@ def _qualify_condition(
     `undefined`; recording it here is what lets `_declare_recovered_scope_vars` declare it.
     """
     wrapper = JsExpressionStatement(expression=_clone_node(condition))
+    assert wrapper.expression is not None
+    _fold_scope_keys([condition], [wrapper.expression], state, match)
     _substitute_in_scope(wrapper, state)
     if match.scope_param_name:
         _collect_scope_props([wrapper], match)
@@ -3604,7 +4141,7 @@ def _execute_machine(
     analysis, and emits structured control flow (while, if/else, break). Returns the run (`_Run`),
     the *main* run or a wrapper's.
     """
-    entry = _Env(_apply_initial_state(match.state_var_names, match.initial_state), slots)
+    entry = _Env(_apply_initial_state(match.state_var_names, match.initial_state), slots, match.calls)
     cfg_result = _build_cfg(machine, entry, match, main)
     if cfg_result is None:
         return None
@@ -3787,10 +4324,9 @@ def _resolve_shared_wrappers(
     recovered code can only share (`_stores_precede_the_wrappers`).
     """
     gen_names = match.machine_names
-    num_vars = len(match.state_var_names)
     activations: dict[int, _Activation] = {}
     orders: dict[int, _RunOrder] = {}
-    entries: dict[int, list[int | float]] = {}
+    entries: dict[int, list[_StateValue]] = {}
 
     while True:
         resolved_any = False
@@ -3800,7 +4336,7 @@ def _resolve_shared_wrappers(
             node_id = id(node)
             if node_id in activations:
                 continue
-            wrapper_info = _detect_wrapper_function(node, gen_names, num_vars)
+            wrapper_info = match.design.wrapper(node, match)
             if wrapper_info is None or node.body is None:
                 continue
             if _reenters(node, wrapper_info.initial_state, entries):
@@ -3821,6 +4357,7 @@ def _resolve_shared_wrappers(
             synthetic = _MachineMatch(
                 machine=match.machine,
                 machine_names=gen_names,
+                design=match.design,
                 state_var_names=match.state_var_names,
                 initial_state=wrapper_info.initial_state,
                 end_state=match.end_state,
@@ -3837,6 +4374,8 @@ def _resolve_shared_wrappers(
                 scope_default_props=match.scope_default_props,
                 namespaces=match.namespaces,
                 namespace_homes=match.namespace_homes,
+                runtime_name=match.runtime_name,
+                calls=match.calls,
             )
             result = _execute_machine(machine, synthetic, activation.routing, main=False)
             if result is None:
@@ -3948,8 +4487,8 @@ def _own_run(node: Node, activations: dict[int, _Activation]) -> int | None:
 
 def _reenters(
     node: JsFunctionExpression,
-    initial_state: list[int | float],
-    entries: dict[int, list[int | float]],
+    initial_state: list[_StateValue],
+    entries: dict[int, list[_StateValue]],
 ) -> bool:
     """
     Whether a resolved wrapper whose recovered body holds the wrapper *node* enters the machine at
@@ -4488,7 +5027,7 @@ def _scaffolding_is_private(
     raised by a call the recovered code makes before the guard reads it. Every name that spells
     `undefined` in the scaffolding has to denote it.
     """
-    removed = body[match.machine_index:match.scaffolding_end + 1]
+    removed = match.removed(body)
     inside = {id(node) for statement in removed for node in statement.walk()}
     home = model.scope_of(body[match.scaffolding_end])
     if (holder := _held_generator(removed[0])) is None or home is None:
@@ -4538,7 +5077,7 @@ def _property_flag_is_private(
     key, and every reflective surface that could name the holder, stands inside.
     """
     references = (
-        node for statement in body[match.machine_index + 1:match.scaffolding_end + 1]
+        node for statement in match.removed(body)[1:]
         for node in statement.walk()
         if isinstance(node, JsIdentifier) and node.name == flag.holder and is_reference(node)
     )
@@ -4616,7 +5155,7 @@ def _declares_only_its_own_names(
     names = _declared_names_in_stmts(recovered)
     if not names:
         return True
-    removed = body[match.machine_index:match.scaffolding_end + 1]
+    removed = match.removed(body)
     inside = {id(node) for statement in removed for node in statement.walk()}
     home = model.scope_of(body[match.scaffolding_end])
     if home is None:
@@ -4659,6 +5198,7 @@ def _leaves_the_generator(recovered: list[Statement], match: _MachineMatch) -> b
         match.scope_param_name,
         match.arg_var_name,
         match.result_var,
+        match.runtime_name,
         *match.state_var_names,
         *match.machine_names,
     }
@@ -4821,16 +5361,168 @@ def _recovery_reveals(
     )
 
 
+class _Calls:
+    """
+    The calls of the program's own functions a run of the machine makes, run by the shared
+    admission (`refinery.lib.scripts.js.deobfuscation.admission.CallAdmission`) on the values the
+    run computes. It is asked only about a call of the machine being decided, a node of the tree
+    it holds, and answers each call once for each value of its arguments (`_value_key`). The
+    admission is built on the first question, over the models the cache holds then, and again
+    wherever the cache holds another effect model: what it derived from one tree is no answer about
+    another.
+    """
+
+    def __init__(self, models: ModelCache, script: JsScript):
+        self._models = models
+        self._script = script
+        self._admission: CallAdmission | None = None
+        self._admitted: dict[Node, JsFunctionNode | None] = {}
+        self._memo: dict[tuple[object, ...], _Value | None] = {}
+
+    def _current(self) -> CallAdmission:
+        admission = self._admission
+        if admission is None or admission.effects is not self._models.effects:
+            self._admission = admission = CallAdmission(self._models, self._script)
+            self._admitted.clear()
+            self._memo.clear()
+        return admission
+
+    def iterates_arrays(self, node: Node) -> bool:
+        """
+        Whether a spread of an array at *node* yields its elements: the prototype chain of an array
+        is intact there, the question a `for-of` walk of the interpreter asks.
+        """
+        trust = self._current().trust_at(node)
+        return trust is not None and trust.chain(list)
+
+    def __call__(self, node: JsCallExpression, arguments: list[_Value]) -> _Value | None:
+        """
+        The value the call *node* gives with *arguments*, or `None` where the admission does not
+        run it, an argument is `undefined`, the run is refused or throws, or its result is no value
+        a run of the machine holds: a number, a boolean, a string, or an array of numbers.
+        """
+        admission = self._current()
+        if not admission.holds(node):
+            return None
+        values: list[Value] = []
+        for argument in arguments:
+            if isinstance(argument, _Undefined):
+                return None
+            values.append(list(argument) if isinstance(argument, tuple) else argument)
+        if node not in self._admitted:
+            self._admitted[node] = admission.callee(node)
+        if (function := self._admitted[node]) is None:
+            return None
+        key = (node, *map(_value_key, arguments))
+        if key in self._memo:
+            return self._memo[key]
+        try:
+            result = admission.interpreter_at(node).execute(function, values)
+        except (InterpreterError, IrreducibleExpression, _ThrowSignal):
+            result = None
+        value: _Value | None
+        if isinstance(result, (bool, str)):
+            value = result
+        elif isinstance(result, (int, float)):
+            value = float(result)
+        elif isinstance(result, list) and all(
+            isinstance(x, (int, float)) and not isinstance(x, bool) for x in result
+        ):
+            value = tuple(float(x) for x in result)
+        else:
+            value = None
+        self._memo[key] = value
+        return value
+
+
+class _Design:
+    """
+    What one design of the flattening spells its own way: the machine and the call that runs it
+    (`match`), the state that call starts in (`read_start`), and the call a wrapper of the machine
+    makes (`wrapper`). Blocks, transitions, structuring, returns, wrappers and the checks that the
+    scaffolding is private are shared.
+    """
+
+    runs_helpers: bool = False
+    """
+    Whether the values of a run are made by calls of the program's own functions, which the shared
+    admission runs (`_Calls`).
+    """
+
+    def match(self, body: list[Statement], idx: int) -> _MachineMatch | None:
+        """
+        The machine of this design declared at index *idx* of *body*, with its call site.
+        """
+        raise NotImplementedError
+
+    def read_start(self, match: _MachineMatch) -> bool:
+        """
+        Read the state the call of the machine starts in into *match*; `False` where it is not
+        known.
+        """
+        return True
+
+    def wrapper(self, node: JsFunctionExpression, match: _MachineMatch) -> _WrapperFunctionInfo | None:
+        """
+        The call of the machine *node* makes where it is a wrapper of the machine of *match*.
+        """
+        raise NotImplementedError
+
+
+class _GeneratorDesign(_Design):
+    """
+    A generator whose state is several variables, run by `M(…).next().value`; the matcher reads
+    the state it starts in from the numbers of its call.
+    """
+
+    def match(self, body: list[Statement], idx: int) -> _MachineMatch | None:
+        return _match_generator_cff(body, idx, self)
+
+    def wrapper(self, node: JsFunctionExpression, match: _MachineMatch) -> _WrapperFunctionInfo | None:
+        return _detect_wrapper_function(node, match.machine_names, len(match.state_var_names))
+
+
+class _ArrayDesign(_Design):
+    """
+    A plain function whose state is one array of numbers, summed by a function of the program, run
+    by `M(array)`. The array of the call is evaluated with the call as the anchor of every question
+    the run asks, and only once the match is decided on: what it calls is run by the shared
+    admission, which the pass builds for the tree its held models were built over.
+    """
+
+    runs_helpers = True
+
+    def match(self, body: list[Statement], idx: int) -> _MachineMatch | None:
+        return _match_array_machine(body, idx, self)
+
+    def read_start(self, match: _MachineMatch) -> bool:
+        entry = _eval_expr(match.initial_args[0], _Env({}, calls=match.calls))
+        if not isinstance(entry, tuple):
+            return False
+        match.initial_state = [entry]
+        return True
+
+    def wrapper(self, node: JsFunctionExpression, match: _MachineMatch) -> _WrapperFunctionInfo | None:
+        return _detect_plain_wrapper(node, match)
+
+
+_DESIGNS: tuple[_Design, ...] = (_GeneratorDesign(), _ArrayDesign())
+
+
 class JsStateMachineUnflattening(PinnedTransformer, BodyProcessingTransformer):
     """
     Recover original code from functions flattened into a state machine: the body of a function is
     replaced by a call of a machine function, a `while`/`switch` loop whose discriminant is the sum
-    of its state. The machine is a generator function whose state is several variables.
+    of its state. Two designs write the machine (`_Design`): a generator function whose state is
+    several variables, and a plain function whose state is one array of numbers, summed by a
+    function of the program, whose values the program's own functions compute (`_Calls`).
 
-    The pass holds the two models it reads, the semantic model and the intrinsic-write scan, for an
-    invocation (`refinery.lib.scripts.js.deobfuscation.helpers.PinnedTransformer`). A recovery
-    replaces the scaffolding of a machine with code made from copies of its states, and leaves the
-    answers about the next machine no more permissive than rebuilt ones:
+    The pass holds the models it reads for an invocation
+    (`refinery.lib.scripts.js.deobfuscation.helpers.PinnedTransformer`): the semantic model, the
+    intrinsic-write scan, and the effect, dominance and tampering models the shared admission of
+    calls is built over. A recovery replaces the scaffolding of a machine with code made from
+    copies of its states, and leaves the answers about the next machine no more permissive than
+    rebuilt ones:
 
     - Whether the scaffolding is private (`_scaffolding_is_private`) is asked of the bindings the
       recovery of that machine removes, which are its own: no other recovery declares or reaches
@@ -4844,13 +5536,19 @@ class JsStateMachineUnflattening(PinnedTransformer, BodyProcessingTransformer):
       bindings into a binding store, where it removes the `with` statement between a name and a
       binding whose values denote a root the scan watches, or where its code declares or assigns a
       name the scan watches (`_recovery_reveals`). After such a recovery, the pass renews.
+    - Whether a call the machine makes may be run, and what it gives (`_Calls`), is asked only
+      about a call of the machine being decided, on a node of the tree the held models were built
+      over: before it builds the admission, the pass renews where it edited since the last
+      renewal. A recovery puts copies of the machine's own blocks where its call stood, so a call
+      or a store of a built-in the held models know of runs where it ran.
     """
 
-    reads = ('_model', '_intrinsic_writes')
+    reads = ('_model', '_intrinsic_writes', '_effects', '_dominance', '_tampering')
 
     def __init__(self):
         super().__init__()
         self._edited: dict[Node, list[Node]] = {}
+        self._calls: _Calls | None = None
 
     def visit_JsScript(self, node: JsScript):
         with self.holding_models(node):
@@ -4858,6 +5556,7 @@ class JsStateMachineUnflattening(PinnedTransformer, BodyProcessingTransformer):
 
     def _forget_edits(self) -> None:
         self._edited = {}
+        self._calls = None
 
     def _note_edit(self, body: Node) -> None:
         """
@@ -4903,14 +5602,27 @@ class JsStateMachineUnflattening(PinnedTransformer, BodyProcessingTransformer):
             return
         i = 0
         while i < len(body):
-            match = _match_generator_cff(body, i)
+            match = next((m for design in _DESIGNS if (m := design.match(body, i))), None)
             if match is None:
                 i += 1
                 continue
+            design = match.design
             models = self.held_models()
-            removed = body[match.machine_index:match.scaffolding_end + 1]
-            if self._edited_around(parent, removed):
+            removed = match.removed(body)
+            if (
+                self._edited_around(parent, removed)
+                or design.runs_helpers and self._calls is None and self._edited
+            ):
                 self.renew_models()
+            if design.runs_helpers:
+                if self._calls is None:
+                    root = tree_root(parent)
+                    assert isinstance(root, JsScript)
+                    self._calls = _Calls(self.held_models(), root)
+                match.calls = self._calls
+            if not design.read_start(match):
+                i += 1
+                continue
             model = models.model
             if _an_observed_copy_may_not_be_made(model, match.machine):
                 i += 1
