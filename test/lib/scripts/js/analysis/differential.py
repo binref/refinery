@@ -226,7 +226,13 @@ def host_behavior(
     return behavior(_as_global_script(source, calls), timeout=timeout)
 
 
-def behavior(source: str, *, module: bool = False, timeout: float = NODE_TIMEOUT) -> tuple[str, str | None]:
+def behavior(
+    source: str,
+    *,
+    module: bool = False,
+    timeout: float = NODE_TIMEOUT,
+    fresh: bool = False,
+) -> tuple[str, str | None]:
     """
     Execute *source* in Node.js and return its observable behavior as a pair: the captured standard
     output, and the error type (`TypeError`, `ReferenceError`, …) when execution terminated with an
@@ -245,11 +251,15 @@ def behavior(source: str, *, module: bool = False, timeout: float = NODE_TIMEOUT
     the engine is asked here: the platform default rewrites every `\\n` on the way out, so a case
     written with `\\r\\n` handed Node a `\\r\\r\\n`, and the two sides of the comparison then read
     different programs.
+
+    *fresh* runs Node even when it has answered for this snippet before; `module_graph_behavior`
+    says when that is needed.
     """
     return module_graph_behavior(
         {'snippet.mjs' if module else 'snippet.js': source},
         'snippet.mjs' if module else 'snippet.js',
         timeout=timeout,
+        fresh=fresh,
     )
 
 
@@ -258,6 +268,7 @@ def module_graph_behavior(
     entry: str,
     *,
     timeout: float = NODE_TIMEOUT,
+    fresh: bool = False,
 ) -> tuple[str, str | None]:
     """
     The observable behavior of running *entry* with every file of *files* written beside it, in the
@@ -270,13 +281,40 @@ def module_graph_behavior(
 
     Each file reaches the folder untranslated, for the reason `behavior` gives, and the extension in
     each key is what decides the goal symbol its file is read under.
+
+    Node's answer is kept for the rest of the process and given again when the same files, entry
+    and timeout are asked about: tests often ask about the same program, and starting Node costs
+    far more than running the program. A test whose question is whether two runs of a program agree
+    passes *fresh*, which runs Node again.
     """
     refuse_script_host_near_a_sample('node')
     node = node_executable()
     if node is None:
         raise RuntimeError('node.js is not available')
+    graph = tuple(sorted(files.items()))
+    if fresh:
+        return _node_behavior(node, graph, entry, timeout)
+    return _remembered_node_behavior(node, graph, entry, timeout)
+
+
+@functools.lru_cache(maxsize=None)
+def _remembered_node_behavior(
+    node: str,
+    graph: tuple[tuple[str, str], ...],
+    entry: str,
+    timeout: float,
+) -> tuple[str, str | None]:
+    return _node_behavior(node, graph, entry, timeout)
+
+
+def _node_behavior(
+    node: str,
+    graph: tuple[tuple[str, str], ...],
+    entry: str,
+    timeout: float,
+) -> tuple[str, str | None]:
     with tempfile.TemporaryDirectory() as folder:
-        for name, source in files.items():
+        for name, source in graph:
             with open(os.path.join(folder, name), 'w', encoding='utf-8', newline='') as stream:
                 stream.write(source)
         proc = subprocess.run(

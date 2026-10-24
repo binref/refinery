@@ -107,7 +107,7 @@ class TestFuzzGeneratorRunsInNode(TestBase):
             )
             self.assertEqual(
                 first,
-                behavior(source),
+                behavior(source, fresh=True),
                 F'seed {seed} is not deterministic in node:\n{source}',
             )
 
@@ -340,7 +340,7 @@ class TestTheProgramsWhoseDivergenceWasFixed(TestBase):
                 )
                 self.assertEqual(
                     first,
-                    behavior(source),
+                    behavior(source, fresh=True),
                     F'the program from seed {seed} is not deterministic in node:\n{source}',
                 )
 
