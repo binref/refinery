@@ -19,7 +19,7 @@ from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.liveness import build_liveness
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
-from refinery.lib.scripts.js.deobfuscation.cff import JsGeneratorCFFUnflattening
+from refinery.lib.scripts.js.deobfuscation.cff import JsStateMachineUnflattening
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
@@ -910,14 +910,14 @@ class TestGeneratorUnflatteningHoldsTheModelsForARun(TestBase):
 
     @staticmethod
     def _held(source: str) -> tuple[int, str]:
-        return _transform_root_builds(JsGeneratorCFFUnflattening, source)
+        return _transform_root_builds(JsStateMachineUnflattening, source)
 
     @staticmethod
     def _released(source: str) -> tuple[int, str]:
         original = ModelCache.pinned
         ModelCache.pinned = _no_pin
         try:
-            return _transform_root_builds(JsGeneratorCFFUnflattening, source)
+            return _transform_root_builds(JsStateMachineUnflattening, source)
         finally:
             ModelCache.pinned = original
 

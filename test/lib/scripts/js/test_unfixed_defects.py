@@ -2255,7 +2255,7 @@ class TestANameAFlattenedWriterPutsOnEveryObjectStaysInheritedInTheReader(TestBa
     """
     Generator unflattening removes the reader's `with` statement only where no name its code reads
     bare is one a plain object may inherit, since inside the statement the scope object finds such a
-    name before the global (`JsGeneratorCFFUnflattening._provably_absent`). That answer comes from
+    name before the global (`JsStateMachineUnflattening._provably_absent`). That answer comes from
     the writes the effect model sees to `Object.prototype`, and the writer's is made through a copy
     of the prototype kept in its scope object. The write scan follows a value only while a name holds
     it, and it trusts `Object` wherever it escapes (`ESCAPE_RECORDED_ROOTS` leaves it out), so it

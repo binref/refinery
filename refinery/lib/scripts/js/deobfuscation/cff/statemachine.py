@@ -1,9 +1,8 @@
 """
-Recover original code from generator-based state-machine CFF dispatchers.
-
-Handles the pattern where a function body is replaced with a generator function containing a
-while/switch state machine driven by multiple state variables whose sum is the switch
-discriminant. Each case updates the state via relative `+=` assignments.
+Recover original code from functions flattened into a state machine: the body of a function is
+replaced by a call of a machine function, a `while`/`switch` loop whose discriminant is the sum of
+its state, and each case changes the state by relative stores. The machine is a generator function
+whose state is several variables.
 """
 from __future__ import annotations
 
@@ -261,9 +260,9 @@ class _SMBlock:
 
 
 @dataclass
-class _GeneratorCFFMatch:
-    generator: JsFunctionNode
-    generator_names: frozenset[str]
+class _MachineMatch:
+    machine: JsFunctionNode
+    machine_names: frozenset[str]
     state_var_names: list[str]
     initial_state: list[int | float]
     end_state: int | float
@@ -274,7 +273,7 @@ class _GeneratorCFFMatch:
     arg_var_name: str | None
     flag: _Flag | None
     result_var: str | None
-    gen_decl_index: int
+    machine_index: int
     scaffolding_end: int
     with_redirect_var: str | None = None
     routed: bool = False
@@ -654,11 +653,11 @@ def _redirect_assignment_target(
 
 def _scope_arg_object(
     node: Node,
-    generator_names: frozenset[str],
+    machine_names: frozenset[str],
     num_state_vars: int,
 ) -> JsObjectExpression | None:
     """
-    If *node* is a call of the generator under one of *generator_names*,
+    If *node* is a call of the generator under one of *machine_names*,
 
         generator(states…, scopeObj, …)
 
@@ -668,7 +667,7 @@ def _scope_arg_object(
     """
     if not isinstance(node, JsCallExpression):
         return None
-    if not isinstance(node.callee, JsIdentifier) or node.callee.name not in generator_names:
+    if not isinstance(node.callee, JsIdentifier) or node.callee.name not in machine_names:
         return None
     args = node.arguments
     if len(args) <= num_state_vars:
@@ -684,7 +683,7 @@ def _collect_namespaces(
     scope_param_name: str | None,
     scope_default_props: list[str],
     redirect_var: str | None,
-    generator_names: frozenset[str],
+    machine_names: frozenset[str],
     num_state_vars: int,
 ) -> set[str] | None:
     """
@@ -703,7 +702,7 @@ def _collect_namespaces(
             target = _redirect_assignment_target(node, scope_param_name, redirect_var)
             if target is not None:
                 namespaces.add(target)
-        scope_arg = _scope_arg_object(node, generator_names, num_state_vars)
+        scope_arg = _scope_arg_object(node, machine_names, num_state_vars)
         if scope_arg is None:
             continue
         if (properties := _scope_object_properties(scope_arg)) is None:
@@ -739,7 +738,7 @@ def _collect_namespace_homes(
     return homes
 
 
-def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch | None:
+def _match_generator_cff(body: list[Statement], idx: int) -> _MachineMatch | None:
     """
     Starting at index *idx* in *body*, test whether the statement is a generator function
     declaration matching the state machine CFF pattern, with its call site following. Its parameters
@@ -868,9 +867,9 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         namespace_homes = homes
     if flag is not None and (flag.base in namespaces or flag.base in namespace_homes):
         return None
-    return _GeneratorCFFMatch(
-        generator=stmt,
-        generator_names=gen_names,
+    return _MachineMatch(
+        machine=stmt,
+        machine_names=gen_names,
         state_var_names=state_var_names,
         initial_state=call_info.initial_state,
         end_state=end_state,
@@ -882,7 +881,7 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         flag=call_info.flag,
         result_var=call_info.result_var,
         undefined_reads=call_info.undefined_reads,
-        gen_decl_index=idx,
+        machine_index=idx,
         scaffolding_end=call_info.scaffolding_end,
         with_redirect_var=with_redirect_var,
         routed=routed,
@@ -1400,7 +1399,7 @@ class _StateMachine:
 
 
 def _extract_state_blocks(
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
     absent: Callable[[str], bool],
 ) -> _StateMachine | None:
     """
@@ -1418,7 +1417,7 @@ def _extract_state_blocks(
     if not declared.isdisjoint(match.state_var_names):
         return None
     routing = _routing_paths(cases)
-    flow = DominatorModel(ControlFlowModel({id(match.generator): build_cfg(match.generator)}))
+    flow = DominatorModel(ControlFlowModel({id(match.machine): build_cfg(match.machine)}))
     last_body = max((i for i, case in enumerate(cases) if case.body), default=-1)
     labels: list[_SMCase] = []
     pending: list[Expression | None] = []
@@ -1489,7 +1488,7 @@ def _running_statements(stmts: list[Statement], flow: DominatorModel) -> _Runnin
 def _read_block(
     stmts: list[Statement],
     flow: DominatorModel,
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
     routing: frozenset[_SlotPath],
     last: bool,
     absent: Callable[[str], bool],
@@ -2041,7 +2040,7 @@ def _initial_slots(
 def _process_payload(
     stmts: list[Statement],
     state: _StateEnv,
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
 ) -> list[Statement]:
     """
     Process statements a block runs, its payload or a branch prefix of its transition, through the
@@ -2104,7 +2103,7 @@ class _NaturalLoop:
 def _build_cfg(
     machine: _StateMachine,
     entry: _Env,
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
     main: bool,
 ) -> tuple[_CFG, _Slots] | None:
     """
@@ -2553,7 +2552,7 @@ class _Structuring:
     copy of its code (`_parts`, `_collapsed`), since a tree holds a node in one place. Blocks whose
     ways part and share blocks without meeting again make every level of them double what the
     levels below write, so the copies may hold at most as much code as the blocks of the run
-    (`allowance`), and none of them may call the generator under one of its *generator_names*;
+    (`allowance`), and none of them may call the generator under one of its *machine_names*;
     beyond that, the run is not written.
 
     A loop is written only where every way out of it goes to one block. A `break` goes to where the
@@ -2564,10 +2563,10 @@ class _Structuring:
         self,
         cfg: _CFG,
         idom: dict[int, int | None],
-        generator_names: frozenset[str],
+        machine_names: frozenset[str],
     ):
         self.cfg = cfg
-        self.generator_names = generator_names
+        self.machine_names = machine_names
         self.collapsed: dict[int, list[Statement]] = {}
         self.placed: set[int] = set()
         self.placed_loops: set[int] = set()
@@ -2599,7 +2598,7 @@ class _Structuring:
         the generator, as the code making a wrapper does, is not copied (`_CopiesOutgrowTheRun`).
         """
         self.allowance -= _code_size(code)
-        if self.allowance < 0 or _refers_to_one_of(code, self.generator_names):
+        if self.allowance < 0 or _refers_to_one_of(code, self.machine_names):
             raise _CopiesOutgrowTheRun
         return [_clone_node(part) for part in code]
 
@@ -3095,14 +3094,14 @@ def _strip_scope_prefix_walk(node: Node, scope_param_name: str) -> None:
         _replace_in_parent(member, JsIdentifier(name=name))
 
 
-def _qualify_exempt(match: _GeneratorCFFMatch) -> set[str]:
+def _qualify_exempt(match: _MachineMatch) -> set[str]:
     """
     The set of names that home-driven qualification must leave bare: the state variables, the
     JavaScript built-in globals, every namespace object, and the compiler-introduced scaffolding
     identifiers (generator, scope parameter, argument holder, return flag, redirect variable).
     """
     exempt: set[str] = set(match.state_var_names) | _JS_BUILTIN_GLOBALS | set(match.namespaces)
-    exempt |= match.generator_names
+    exempt |= match.machine_names
     for name in (
         match.scope_param_name,
         match.arg_var_name,
@@ -3118,7 +3117,7 @@ def _qualify_exempt(match: _GeneratorCFFMatch) -> set[str]:
 def _qualify_condition(
     condition: Expression,
     state: _StateEnv,
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
 ) -> Expression:
     """
     Clone, substitute, strip, and qualify a transition condition expression using the same
@@ -3207,7 +3206,7 @@ _JS_BUILTIN_GLOBALS: frozenset[str] = frozenset({
 
 def _qualify_with_identifiers(
     stmts: list[Statement],
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
 ) -> list[Statement]:
     """
     Qualify each bare identifier that names a proven namespace-local by prepending its canonical
@@ -3395,7 +3394,7 @@ def _own_returns(
         )
 
 
-def _recover_returns(stmts: list[Statement], match: _GeneratorCFFMatch) -> _RunReturns:
+def _recover_returns(stmts: list[Statement], match: _MachineMatch) -> _RunReturns:
     """
     Rewrite each return of the code of a run of the machine of *match* that raises the flag,
 
@@ -3430,7 +3429,7 @@ def _recover_returns(stmts: list[Statement], match: _GeneratorCFFMatch) -> _RunR
     return _RunReturns(plain, intercepted)
 
 
-def _names_bound_for_the_switch(match: _GeneratorCFFMatch) -> set[str]:
+def _names_bound_for_the_switch(match: _MachineMatch) -> set[str]:
     """
     The names the generator of *match* binds for the code of the cases of its switch: its parameters
     and its own name, what its body declares (`_function_bound_names`), and what the cases declare
@@ -3440,7 +3439,7 @@ def _names_bound_for_the_switch(match: _GeneratorCFFMatch) -> set[str]:
         statement for case in match.switch_stmt.cases if isinstance(case, JsSwitchCase)
         for statement in case.body
     ]
-    return _function_bound_names(match.generator) | _block_bound_names(statements)
+    return _function_bound_names(match.machine) | _block_bound_names(statements)
 
 
 def _is_direct_scope_member(node: Node, scope_param_name: str) -> bool:
@@ -3492,7 +3491,7 @@ def _is_bare_redirect_assignment(expr: Expression, redirect_var: str) -> bool:
 
 def _filter_redirect_var_assignments(
     stmts: list[Statement],
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
 ) -> list[Statement]:
     if not match.qualifies_namespaces:
         return stmts
@@ -3595,7 +3594,7 @@ class _Run(NamedTuple):
 
 def _execute_machine(
     machine: _StateMachine,
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
     slots: _Slots,
     main: bool,
 ) -> _Run | None:
@@ -3612,7 +3611,7 @@ def _execute_machine(
 
     cfg, settled = cfg_result
     idom = _compute_idom(cfg)
-    structuring = _Structuring(cfg, idom, match.generator_names)
+    structuring = _Structuring(cfg, idom, match.machine_names)
     if (stmts := structuring.run(_find_loops(cfg, idom))) is None:
         return None
     return _Run(
@@ -3698,7 +3697,7 @@ def _wrapper_activation(
     node: JsFunctionExpression,
     scope_arg: Expression,
     creator: _Activation,
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
 ) -> _Activation | None:
     """
     The activation of the run a wrapper's call starts, read off the scope argument it hands the
@@ -3765,7 +3764,7 @@ def _bound_on_the_way_to(node: Node, name: str) -> bool:
 def _resolve_shared_wrappers(
     stmts: list[Statement],
     machine: _StateMachine,
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
     main: _Activation,
     main_order: _RunOrder,
     absent: Callable[[str], bool],
@@ -3787,7 +3786,7 @@ def _resolve_shared_wrappers(
     could leave the copy the wrapper's scope object holds apart from the creator's value, which the
     recovered code can only share (`_stores_precede_the_wrappers`).
     """
-    gen_names = match.generator_names
+    gen_names = match.machine_names
     num_vars = len(match.state_var_names)
     activations: dict[int, _Activation] = {}
     orders: dict[int, _RunOrder] = {}
@@ -3819,9 +3818,9 @@ def _resolve_shared_wrappers(
                     creator.routing,
                     absent,
                 )
-            synthetic = _GeneratorCFFMatch(
-                generator=match.generator,
-                generator_names=gen_names,
+            synthetic = _MachineMatch(
+                machine=match.machine,
+                machine_names=gen_names,
                 state_var_names=match.state_var_names,
                 initial_state=wrapper_info.initial_state,
                 end_state=match.end_state,
@@ -3832,7 +3831,7 @@ def _resolve_shared_wrappers(
                 arg_var_name=match.arg_var_name,
                 flag=match.flag,
                 result_var=None,
-                gen_decl_index=0,
+                machine_index=0,
                 scaffolding_end=0,
                 with_redirect_var=match.with_redirect_var,
                 scope_default_props=match.scope_default_props,
@@ -4110,7 +4109,7 @@ def _rebind_wrapper_param(params: list[Expression], target: str) -> list[Express
 
 
 def _wrapper_arg_param_name(
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
     wrapper_info: _WrapperFunctionInfo,
     recovered: list[Statement],
 ) -> str | None:
@@ -4195,7 +4194,7 @@ def _emit_scope_namespace_declarations(
     return declarations
 
 
-def _collect_scope_props(stmts: list[Statement], match: _GeneratorCFFMatch) -> None:
+def _collect_scope_props(stmts: list[Statement], match: _MachineMatch) -> None:
     """
     Record the property names of depth-1 scope-member accesses (`scope.X` / `scope["X"]`) in
     *stmts* in `scope_prop_names`. The names identify which bare identifiers in the recovered code
@@ -4426,7 +4425,7 @@ def _declare_wrapper_scope_vars(activation: _Activation) -> None:
     set_child_list(function.body, 'body', body[:split] + recovered)
 
 
-def _bind_main_arguments(recovered: list[Statement], match: _GeneratorCFFMatch) -> bool:
+def _bind_main_arguments(recovered: list[Statement], match: _MachineMatch) -> bool:
     """
     The main call hands the generator nothing beyond its state, so its run reads the argument
     variable as `undefined`: every read of it that the recovered code keeps becomes `void 0`. A
@@ -4444,7 +4443,7 @@ def _bind_main_arguments(recovered: list[Statement], match: _GeneratorCFFMatch) 
 
 def _settle_returns(
     recovered: list[Statement],
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
     trailing: list[Statement],
     wrapped: bool,
     returns: _RunReturns,
@@ -4477,7 +4476,7 @@ def _settle_returns(
 def _scaffolding_is_private(
     model: SemanticModel,
     body: list[Statement],
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
     absent: Callable[[str], bool],
 ) -> bool:
     """
@@ -4489,7 +4488,7 @@ def _scaffolding_is_private(
     raised by a call the recovered code makes before the guard reads it. Every name that spells
     `undefined` in the scaffolding has to denote it.
     """
-    removed = body[match.gen_decl_index:match.scaffolding_end + 1]
+    removed = body[match.machine_index:match.scaffolding_end + 1]
     inside = {id(node) for statement in removed for node in statement.walk()}
     home = model.scope_of(body[match.scaffolding_end])
     if (holder := _held_generator(removed[0])) is None or home is None:
@@ -4522,7 +4521,7 @@ def _scaffolding_is_private(
 def _property_flag_is_private(
     model: SemanticModel,
     body: list[Statement],
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
     flag: _FlagProperty,
     home: Scope,
     inside: set[int],
@@ -4539,7 +4538,7 @@ def _property_flag_is_private(
     key, and every reflective surface that could name the holder, stands inside.
     """
     references = (
-        node for statement in body[match.gen_decl_index + 1:match.scaffolding_end + 1]
+        node for statement in body[match.machine_index + 1:match.scaffolding_end + 1]
         for node in statement.walk()
         if isinstance(node, JsIdentifier) and node.name == flag.holder and is_reference(node)
     )
@@ -4557,7 +4556,7 @@ def _property_flag_is_private(
         and declarator.id is declarations[0]
         and isinstance(declarator.init, JsObjectExpression)
         and not declarator.init.properties
-        and any(declarator.parent is statement for statement in body[:match.gen_decl_index])
+        and any(declarator.parent is statement for statement in body[:match.machine_index])
     ):
         return False
     accesses = namespace_accesses([*model.references(binding), *binding.dynamic_refs])
@@ -4601,7 +4600,7 @@ def _declaration_stores(identifier: Node) -> bool:
 def _declares_only_its_own_names(
     model: SemanticModel,
     body: list[Statement],
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
     recovered: list[Statement],
 ) -> bool:
     """
@@ -4617,7 +4616,7 @@ def _declares_only_its_own_names(
     names = _declared_names_in_stmts(recovered)
     if not names:
         return True
-    removed = body[match.gen_decl_index:match.scaffolding_end + 1]
+    removed = body[match.machine_index:match.scaffolding_end + 1]
     inside = {id(node) for statement in removed for node in statement.walk()}
     home = model.scope_of(body[match.scaffolding_end])
     if home is None:
@@ -4647,7 +4646,7 @@ def _declares_only_its_own_names(
     return True
 
 
-def _leaves_the_generator(recovered: list[Statement], match: _GeneratorCFFMatch) -> bool:
+def _leaves_the_generator(recovered: list[Statement], match: _MachineMatch) -> bool:
     """
     Whether *recovered* still refers to a binding the recovery removes: the generator under any of
     its names, its parameters, or the scaffolding variables of its call. Such a reference would be
@@ -4661,7 +4660,7 @@ def _leaves_the_generator(recovered: list[Statement], match: _GeneratorCFFMatch)
         match.arg_var_name,
         match.result_var,
         *match.state_var_names,
-        *match.generator_names,
+        *match.machine_names,
     }
     if isinstance(flag, _FlagVariable):
         names.add(flag.name)
@@ -4697,7 +4696,7 @@ def _is_a_function_body(node: Node) -> bool:
 def _values_the_recovery_binds(
     model: SemanticModel,
     roots: Sequence[Node],
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
 ) -> Iterator[Node]:
     """
     The values under *roots* that the recovery of *match* hands to bindings where the scaffolding
@@ -4719,7 +4718,7 @@ def _values_the_recovery_binds(
                     yield from _literal_values(node.right)
             elif isinstance(node, JsCallExpression):
                 if any(
-                    isinstance(leaf, JsIdentifier) and leaf.name in match.generator_names
+                    isinstance(leaf, JsIdentifier) and leaf.name in match.machine_names
                     for leaf in denoting_leaves(node.callee)
                 ):
                     for argument in node.arguments:
@@ -4746,7 +4745,7 @@ def _literal_values(node: Node | None) -> Iterator[Node]:
                 yield prop.value
 
 
-def _stores_into_the_scope(model: SemanticModel, target: Node, match: _GeneratorCFFMatch) -> bool:
+def _stores_into_the_scope(model: SemanticModel, target: Node, match: _MachineMatch) -> bool:
     """
     Whether a store to *target* stores into a slot of the scope object of *match*: through its
     parameter, or through a name a `with` statement resolves, which no binding below the statement
@@ -4766,7 +4765,7 @@ def _stores_into_the_scope(model: SemanticModel, target: Node, match: _Generator
 def _stores_into_the_scope_through(
     model: SemanticModel,
     pattern: Node | None,
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
 ) -> bool:
     """
     Whether the pattern *pattern* stores into a slot of the scope object of *match* at one of its
@@ -4799,7 +4798,7 @@ def _recovery_reveals(
     scan: IntrinsicWrites,
     removed: list[Statement],
     recovered: list[Statement],
-    match: _GeneratorCFFMatch,
+    match: _MachineMatch,
 ) -> bool:
     """
     Whether replacing the scaffolding *removed* of *match* with *recovered* shows the models a
@@ -4822,11 +4821,11 @@ def _recovery_reveals(
     )
 
 
-class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
+class JsStateMachineUnflattening(PinnedTransformer, BodyProcessingTransformer):
     """
-    Recover original code from generator-based state-machine CFF dispatchers. Handles the pattern
-    where a function body is replaced with a generator function containing a while/switch state
-    machine driven by multiple state variables.
+    Recover original code from functions flattened into a state machine: the body of a function is
+    replaced by a call of a machine function, a `while`/`switch` loop whose discriminant is the sum
+    of its state. The machine is a generator function whose state is several variables.
 
     The pass holds the two models it reads, the semantic model and the intrinsic-write scan, for an
     invocation (`refinery.lib.scripts.js.deobfuscation.helpers.PinnedTransformer`). A recovery
@@ -4909,11 +4908,11 @@ class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
                 i += 1
                 continue
             models = self.held_models()
-            removed = body[match.gen_decl_index:match.scaffolding_end + 1]
+            removed = body[match.machine_index:match.scaffolding_end + 1]
             if self._edited_around(parent, removed):
                 self.renew_models()
             model = models.model
-            if _an_observed_copy_may_not_be_made(model, match.generator):
+            if _an_observed_copy_may_not_be_made(model, match.machine):
                 i += 1
                 continue
             if not _scaffolding_is_private(model, body, match, self._provably_absent):
@@ -4977,7 +4976,7 @@ class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
             recovered = settled
             for s in recovered:
                 s.parent = parent
-            start = match.gen_decl_index
+            start = match.machine_index
             end = match.scaffolding_end
             reveals = _recovery_reveals(model, models.intrinsic_writes, removed, recovered, match)
             replacement = body[:start] + recovered + body[end + 1:]

@@ -21,7 +21,7 @@ from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_e
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
-from refinery.lib.scripts.js.deobfuscation.cff import JsGeneratorCFFUnflattening
+from refinery.lib.scripts.js.deobfuscation.cff import JsStateMachineUnflattening
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
@@ -33,7 +33,7 @@ def deobfuscated(source: str) -> str:
 
 def recovered(source: str) -> str:
     ast = JsParser(source).parse()
-    JsGeneratorCFFUnflattening().visit(ast)
+    JsStateMachineUnflattening().visit(ast)
     return JsSynthesizer().convert(ast)
 
 

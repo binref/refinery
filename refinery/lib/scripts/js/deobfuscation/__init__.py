@@ -15,7 +15,7 @@ from refinery.lib.scripts.js.deobfuscation.b91strings import (
 )
 from refinery.lib.scripts.js.deobfuscation.cff import (
     JsControlFlowUnflattening,
-    JsGeneratorCFFUnflattening,
+    JsStateMachineUnflattening,
 )
 from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
@@ -72,7 +72,7 @@ _pipeline = DeobfuscationPipeline(
             JsFunctionEvaluator,
             JsObjectFold,
             JsControlFlowUnflattening,
-            JsGeneratorCFFUnflattening,
+            JsStateMachineUnflattening,
             JsRestArrayUnpacking,
             JsParameterCopyCoalescing,
             JsRestPatternParameters,

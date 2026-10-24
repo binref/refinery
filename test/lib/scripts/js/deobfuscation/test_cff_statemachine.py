@@ -10,7 +10,7 @@ from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_with
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts import TREE_RECURSION_DEPTH
-from refinery.lib.scripts.js.deobfuscation.cff import JsGeneratorCFFUnflattening, statemachine
+from refinery.lib.scripts.js.deobfuscation.cff import JsStateMachineUnflattening, statemachine
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.lib.tools import RecursionDepth
@@ -143,7 +143,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_with_statement_dissolved(self):
-        result = self._run_transformer(self.WITH_DISSOLUTION_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.WITH_DISSOLUTION_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
@@ -295,7 +295,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         of capturing it. Verified equivalent to the original under Node: `outer()(7)` returns `15`
         for both, as do the other drivers.
         """
-        result = self._run_transformer(self.NESTED_WRAPPER_ARG_REBIND_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.NESTED_WRAPPER_ARG_REBIND_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -339,7 +339,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_redirect_var_removed(self):
-        result = self._run_transformer(self.REDIRECT_VAR_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.REDIRECT_VAR_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
@@ -379,7 +379,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_computed_redirect_resolved(self):
-        result = self._run_transformer(self.COMPUTED_REDIRECT_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.COMPUTED_REDIRECT_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
@@ -454,10 +454,10 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         with mock.patch.object(statemachine, '_MAX_BLOCKS', 3):
             self.assertEqual(
                 self._run_transformers(source),
-                self._run_transformer(source, JsGeneratorCFFUnflattening),
+                self._run_transformer(source, JsStateMachineUnflattening),
             )
         with mock.patch.object(statemachine, '_MAX_BLOCKS', 4):
-            self.assertNotIn('function*', self._run_transformer(source, JsGeneratorCFFUnflattening))
+            self.assertNotIn('function*', self._run_transformer(source, JsStateMachineUnflattening))
 
     CONTINUE_IN_LOOP_CFF = inspect.cleandoc(
         """
@@ -1054,7 +1054,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_free_names_stay_bare(self):
-        result = self._run_transformer(self.FREE_NAMES_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.FREE_NAMES_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
@@ -1138,7 +1138,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_free_forms_stay_free(self):
-        result = self._run_transformer(self.FREE_FORMS_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.FREE_FORMS_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
@@ -1182,7 +1182,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         defining write is proven local, so bare `local` is qualified back to `NS.local`. This is
         what distinguishes the fix from simply never qualifying.
         """
-        result = self._run_transformer(self.NAMESPACE_LOCAL_DEEP_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.NAMESPACE_LOCAL_DEEP_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
@@ -1220,7 +1220,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_namespace_local_bare_write_recovered(self):
-        result = self._run_transformer(self.NAMESPACE_LOCAL_BARE_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.NAMESPACE_LOCAL_BARE_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
@@ -1258,7 +1258,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_namespace_local_destructuring_recovered(self):
-        result = self._run_transformer(self.NAMESPACE_LOCAL_DESTRUCTURING_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.NAMESPACE_LOCAL_DESTRUCTURING_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
@@ -1311,7 +1311,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         shared generator, a fresh object for every call of the wrapper, so it is declared as
         `var Sub = {}` in the wrapper's recovered body.
         """
-        result = self._run_transformer(self.SIBLING_NAMESPACE_HOME_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.SIBLING_NAMESPACE_HOME_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -1363,7 +1363,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         rather than emitting a bare `v` that would resolve to a free variable. Node-verified: the
         original and the returned form both evaluate `outer()` to 22.
         """
-        result = self._run_transformer(self.AMBIGUOUS_NAMESPACE_HOME_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.AMBIGUOUS_NAMESPACE_HOME_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -1431,7 +1431,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         bare in a sibling statement. The catch exemption must stay confined to the catch clause so
         the later read still qualifies to `NS.x`. Original and recovered both return 10 under Node.
         """
-        result = self._run_transformer(self.CATCH_PARAM_QUALIFY_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.CATCH_PARAM_QUALIFY_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -1479,7 +1479,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         must stay bare rather than be rewritten to the invalid `(NS.x) => NS.x + 1`. Original and
         recovered both return 6 under Node.
         """
-        result = self._run_transformer(self.ARROW_PARAM_QUALIFY_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.ARROW_PARAM_QUALIFY_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -1521,7 +1521,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         A namespace-local read through an object shorthand `{x}` must expand to `{x: NS.x}`; leaving
         it bare would read a global. Original and recovered both return {x: 7} under Node.
         """
-        result = self._run_transformer(self.OBJECT_SHORTHAND_QUALIFY_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.OBJECT_SHORTHAND_QUALIFY_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -1564,7 +1564,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         namespace-local, so its bare read must qualify to `NS.c`. Original and recovered both return
         4 under Node.
         """
-        result = self._run_transformer(self.COMPOUND_ASSIGNMENT_HOME_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.COMPOUND_ASSIGNMENT_HOME_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer(seed) {
@@ -1608,7 +1608,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         after its argument name is minted fresh, not become `...args_1`, so the caller's single
         array argument keeps its binding. Original and recovered both return 3 for `outer()([1,2])`.
         """
-        result = self._run_transformer(self.PLAIN_PARAM_WRAPPER_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.PLAIN_PARAM_WRAPPER_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -1656,7 +1656,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         reusing it as the argument name would capture that global; a fresh name must be minted
         instead. Original and recovered both yield sink == 999 under Node.
         """
-        result = self._run_transformer(self.WRAPPER_REST_FREE_REFERENCE_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.WRAPPER_REST_FREE_REFERENCE_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             var sink;
@@ -1704,7 +1704,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         so the property value binds the wrapper parameter. Original and recovered both return
         {args: [5, 6]} for `outer()(5, 6)` under Node.
         """
-        result = self._run_transformer(self.WRAPPER_SHORTHAND_ARG_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.WRAPPER_SHORTHAND_ARG_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -1750,7 +1750,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         engine parses. Original and recovered both return [1, 40, 40, 2] under Node.
         """
         result = self._run_transformer(
-            self.STATE_NAME_IN_PROPERTY_SLOTS_CFF, JsGeneratorCFFUnflattening)
+            self.STATE_NAME_IN_PROPERTY_SLOTS_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -1798,7 +1798,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         keeps; the recovered wrapper declares `Loc` itself, and the argument store becomes its
         parameters.
         """
-        result = self._run_transformer(self.PER_CALL_NAMESPACE_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.PER_CALL_NAMESPACE_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -1844,7 +1844,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_per_call_scope_variable_is_a_local_of_the_wrapper(self):
-        result = self._run_transformer(self.PER_CALL_SCOPE_VARIABLE_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.PER_CALL_SCOPE_VARIABLE_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -1894,7 +1894,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_argument_store_with_a_rest_slot_becomes_a_rest_parameter(self):
         result = self._run_transformer(
-            self.ARGUMENT_STORE_WITH_REST_CFF, JsGeneratorCFFUnflattening)
+            self.ARGUMENT_STORE_WITH_REST_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -1939,7 +1939,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_scope_members_below_a_rebinding_of_the_scope_name_stay(self):
-        result = self._run_transformer(self.SCOPE_NAME_REBOUND_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.SCOPE_NAME_REBOUND_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
@@ -2248,7 +2248,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             with self.subTest(source):
                 self.assertEqual(
                     self._run_transformers(source),
-                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                    self._run_transformer(source, JsStateMachineUnflattening),
                 )
 
     MAIN_SLOT_NAMED_LIKE_A_WRAPPER_SLOT_CFF = inspect.cleandoc(
@@ -2287,7 +2287,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         declared, or the main run's `t` becomes a global every call of `outer` shares.
         """
         result = self._run_transformer(
-            self.MAIN_SLOT_NAMED_LIKE_A_WRAPPER_SLOT_CFF, JsGeneratorCFFUnflattening)
+            self.MAIN_SLOT_NAMED_LIKE_A_WRAPPER_SLOT_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer(n) {
@@ -2335,7 +2335,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         The default `() => scope.v` is evaluated in the scope of the parameter list, where the
         body's `var scope` does not exist, so it reads the generator's scope object.
         """
-        result = self._run_transformer(self.DEFAULT_READING_A_SLOT_CFF, JsGeneratorCFFUnflattening)
+        result = self._run_transformer(self.DEFAULT_READING_A_SLOT_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
@@ -2458,7 +2458,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_payload_declaring_the_argument_holder_reads_its_declaration(self):
         result = self._run_transformer(
-            self.PAYLOAD_DECLARING_THE_ARGUMENT_HOLDER_CFF, JsGeneratorCFFUnflattening)
+            self.PAYLOAD_DECLARING_THE_ARGUMENT_HOLDER_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
@@ -3154,7 +3154,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             with self.subTest(source):
                 self.assertEqual(
                     self._run_transformers(source),
-                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                    self._run_transformer(source, JsStateMachineUnflattening),
                 )
 
     FALSE_BESIDE_A_ZERO_DISCRIMINANT_CFF = inspect.cleandoc(
@@ -3192,7 +3192,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.FALSE_BESIDE_A_ZERO_DISCRIMINANT_CFF, JsGeneratorCFFUnflattening
+                self.FALSE_BESIDE_A_ZERO_DISCRIMINANT_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -3231,7 +3231,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.PREDICATE_CASE_BEFORE_A_LITERAL_CASE_CFF, JsGeneratorCFFUnflattening
+                self.PREDICATE_CASE_BEFORE_A_LITERAL_CASE_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -3271,7 +3271,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.ROUTING_SLOT_GIVEN_BY_THE_NAMESPACE_LITERAL_CFF, JsGeneratorCFFUnflattening
+                self.ROUTING_SLOT_GIVEN_BY_THE_NAMESPACE_LITERAL_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -3319,7 +3319,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.ROUTING_SLOTS_STORED_BY_DESTRUCTURING_CFF, JsGeneratorCFFUnflattening
+                self.ROUTING_SLOTS_STORED_BY_DESTRUCTURING_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -3362,7 +3362,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.ROUTING_SLOT_READ_UNDER_A_COMPUTED_KEY_CFF, JsGeneratorCFFUnflattening
+                self.ROUTING_SLOT_READ_UNDER_A_COMPUTED_KEY_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -3584,7 +3584,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             with self.subTest(source):
                 self.assertEqual(
                     self._run_transformers(source),
-                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                    self._run_transformer(source, JsStateMachineUnflattening),
                 )
 
     def test_generator_cff_recovery_declines_a_body_the_obfuscator_does_not_write(self):
@@ -3617,7 +3617,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             with self.subTest(source):
                 self.assertEqual(
                     self._run_transformers(source),
-                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                    self._run_transformer(source, JsStateMachineUnflattening),
                 )
 
     def test_generator_cff_bare_name_every_object_inherits_is_declined(self):
@@ -3633,7 +3633,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             with self.subTest(source):
                 self.assertEqual(
                     self._run_transformers(source),
-                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                    self._run_transformer(source, JsStateMachineUnflattening),
                 )
 
     def test_generator_cff_last_body_needs_no_break(self):
@@ -3646,7 +3646,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 }
                 """
             ),
-            self._run_transformer(self.LAST_BODY_WITHOUT_A_BREAK_CFF, JsGeneratorCFFUnflattening),
+            self._run_transformer(self.LAST_BODY_WITHOUT_A_BREAK_CFF, JsStateMachineUnflattening),
         )
 
     def test_generator_cff_body_that_leaves_the_state_as_it_is_is_declined(self):
@@ -3678,7 +3678,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         )
         self.assertEqual(
             self._run_transformers(source),
-            self._run_transformer(source, JsGeneratorCFFUnflattening),
+            self._run_transformer(source, JsStateMachineUnflattening),
         )
 
     def test_generator_cff_recovery_declines_what_its_new_home_would_change(self):
@@ -3712,7 +3712,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             with self.subTest(source):
                 self.assertEqual(
                     self._run_transformers(source),
-                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                    self._run_transformer(source, JsStateMachineUnflattening),
                 )
 
     def test_generator_cff_wrapper_making_itself_again_is_declined_in_time(self):
@@ -3725,7 +3725,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         outcome: list[str] = []
 
         def recover():
-            outcome.append(self._run_transformer(source, JsGeneratorCFFUnflattening))
+            outcome.append(self._run_transformer(source, JsStateMachineUnflattening))
 
         worker = threading.Thread(target=recover, daemon=True)
         worker.start()
@@ -3761,7 +3761,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             """
         )
         with RecursionDepth(TREE_RECURSION_DEPTH):
-            result = self._run_transformer(source, JsGeneratorCFFUnflattening)
+            result = self._run_transformer(source, JsStateMachineUnflattening)
         self.assertNotIn('function*', result)
 
     NAMESPACE_REPLACED_AFTER_THE_ROUTING_STORE_CFF = inspect.cleandoc(
@@ -4294,7 +4294,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         source = self.ENTRY_STATE_AT_THE_END_CFF
         self.assertEqual(
             self._run_transformers(source),
-            self._run_transformer(source, JsGeneratorCFFUnflattening),
+            self._run_transformer(source, JsStateMachineUnflattening),
         )
 
     def test_generator_cff_namespace_used_whole_keeps_its_routing_store(self):
@@ -4308,7 +4308,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 }
                 """
             ),
-            self._run_transformer(self.NAMESPACE_READ_AS_A_WHOLE_CFF, JsGeneratorCFFUnflattening),
+            self._run_transformer(self.NAMESPACE_READ_AS_A_WHOLE_CFF, JsStateMachineUnflattening),
         )
 
     def test_generator_cff_destructuring_into_a_rest_element_stays_whole(self):
@@ -4323,7 +4323,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.DESTRUCTURING_INTO_A_REST_ELEMENT_CFF, JsGeneratorCFFUnflattening
+                self.DESTRUCTURING_INTO_A_REST_ELEMENT_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -4336,7 +4336,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 }
                 """
             ),
-            self._run_transformer(self.FRACTIONAL_STATES_CFF, JsGeneratorCFFUnflattening),
+            self._run_transformer(self.FRACTIONAL_STATES_CFF, JsStateMachineUnflattening),
         )
 
     def test_generator_cff_routing_beside_a_patch_of_another_object_key_is_recovered(self):
@@ -4352,7 +4352,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.ROUTING_BESIDE_AN_OBJECT_POLYFILL_CFF, JsGeneratorCFFUnflattening
+                self.ROUTING_BESIDE_AN_OBJECT_POLYFILL_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -4372,7 +4372,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.WRAPPER_MADE_IN_A_WRAPPER_PARAMETER_CFF, JsGeneratorCFFUnflattening
+                self.WRAPPER_MADE_IN_A_WRAPPER_PARAMETER_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -4380,7 +4380,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         self.assertNotIn(
             'function*',
             self._run_transformer(
-                self.NAMESPACE_WITH_A_PROTO_METHOD_CFF, JsGeneratorCFFUnflattening
+                self.NAMESPACE_WITH_A_PROTO_METHOD_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -4395,7 +4395,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.CONDITION_OF_BRANCHES_TO_ONE_BLOCK_CFF, JsGeneratorCFFUnflattening
+                self.CONDITION_OF_BRANCHES_TO_ONE_BLOCK_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -4685,7 +4685,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.RECOVERED_FUNCTION_DECLARING_A_NAME_A_SIBLING_DECLARES_CFF, JsGeneratorCFFUnflattening
+                self.RECOVERED_FUNCTION_DECLARING_A_NAME_A_SIBLING_DECLARES_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -4705,7 +4705,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.CONDITION_OF_BRANCHES_TO_ONE_BLOCK_IN_A_LOOP_CFF, JsGeneratorCFFUnflattening
+                self.CONDITION_OF_BRANCHES_TO_ONE_BLOCK_IN_A_LOOP_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -4733,7 +4733,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             """
         )
         ast = JsParser(source).parse()
-        JsGeneratorCFFUnflattening().visit(ast)
+        JsStateMachineUnflattening().visit(ast)
         detached = [
             child for node in ast.walk() for child in node.children() if child.parent is not node
         ]
@@ -4906,7 +4906,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 }
                 """
             ),
-            self._run_transformer(self.JUMP_BEHIND_THE_TRANSITION_CFF, JsGeneratorCFFUnflattening),
+            self._run_transformer(self.JUMP_BEHIND_THE_TRANSITION_CFF, JsStateMachineUnflattening),
         )
 
     def test_generator_cff_jump_behind_a_two_way_transition_never_runs(self):
@@ -4922,7 +4922,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.JUMP_BEHIND_A_TWO_WAY_TRANSITION_CFF, JsGeneratorCFFUnflattening
+                self.JUMP_BEHIND_A_TWO_WAY_TRANSITION_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -4936,7 +4936,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 }
                 """
             ),
-            self._run_transformer(self.JUMP_BEHIND_A_LABELED_BREAK_CFF, JsGeneratorCFFUnflattening),
+            self._run_transformer(self.JUMP_BEHIND_A_LABELED_BREAK_CFF, JsStateMachineUnflattening),
         )
 
     BRANCH_RETURNING_EARLY_AND_RUNNING_ON_CFF = inspect.cleandoc(
@@ -5440,7 +5440,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.BRANCH_RETURNING_EARLY_AND_RUNNING_ON_CFF, JsGeneratorCFFUnflattening
+                self.BRANCH_RETURNING_EARLY_AND_RUNNING_ON_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5458,7 +5458,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.IF_AND_ELSE_THAT_BOTH_RETURN_CFF, JsGeneratorCFFUnflattening
+                self.IF_AND_ELSE_THAT_BOTH_RETURN_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5481,7 +5481,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.EARLY_RETURN_IN_AN_IF_AND_ELSE_THAT_MEET_CFF, JsGeneratorCFFUnflattening
+                self.EARLY_RETURN_IN_AN_IF_AND_ELSE_THAT_MEET_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5501,7 +5501,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.BRANCH_REACHING_THE_END_BESIDE_ONE_THAT_RUNS_ON_CFF, JsGeneratorCFFUnflattening
+                self.BRANCH_REACHING_THE_END_BESIDE_ONE_THAT_RUNS_ON_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5523,7 +5523,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.BRANCH_BYPASSING_THE_FIRST_PLACE_BOTH_REACH_CFF, JsGeneratorCFFUnflattening
+                self.BRANCH_BYPASSING_THE_FIRST_PLACE_BOTH_REACH_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5545,7 +5545,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.RETURN_THROUGH_A_BLOCK_THE_OTHER_BRANCH_REACHES_CFF, JsGeneratorCFFUnflattening
+                self.RETURN_THROUGH_A_BLOCK_THE_OTHER_BRANCH_REACHES_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5584,7 +5584,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.RETURN_BEHIND_THE_FIRST_PLACE_BOTH_REACH_CFF, JsGeneratorCFFUnflattening
+                self.RETURN_BEHIND_THE_FIRST_PLACE_BOTH_REACH_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5610,7 +5610,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.LOOP_LEFT_BY_A_BREAK_FROM_ITS_BODY_CFF, JsGeneratorCFFUnflattening
+                self.LOOP_LEFT_BY_A_BREAK_FROM_ITS_BODY_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5634,7 +5634,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.LOOP_WITHOUT_A_TEST_LEFT_FROM_ITS_BODY_CFF, JsGeneratorCFFUnflattening
+                self.LOOP_WITHOUT_A_TEST_LEFT_FROM_ITS_BODY_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5674,7 +5674,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.BRANCHES_PARTING_AND_MEETING_AGAIN_CFF, JsGeneratorCFFUnflattening
+                self.BRANCHES_PARTING_AND_MEETING_AGAIN_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5724,7 +5724,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 }
                 """
             ),
-            self._run_transformer(self.LADDER_OF_THREE_LEVELS_CFF, JsGeneratorCFFUnflattening),
+            self._run_transformer(self.LADDER_OF_THREE_LEVELS_CFF, JsStateMachineUnflattening),
         )
 
     def test_generator_cff_ladder_of_blocks_that_only_leave_is_written_with_copies(self):
@@ -5767,7 +5767,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.LADDER_OF_BLOCKS_THAT_ONLY_LEAVE_CFF, JsGeneratorCFFUnflattening
+                self.LADDER_OF_BLOCKS_THAT_ONLY_LEAVE_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5853,7 +5853,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.LADDER_WITH_A_LOOP_AHEAD_OF_EVERY_BLOCK_CFF, JsGeneratorCFFUnflattening
+                self.LADDER_WITH_A_LOOP_AHEAD_OF_EVERY_BLOCK_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -5869,7 +5869,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             with self.subTest(source):
                 self.assertEqual(
                     self._run_transformers(source),
-                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                    self._run_transformer(source, JsStateMachineUnflattening),
                 )
 
     def test_generator_cff_recovered_code_holds_every_node_in_one_place(self):
@@ -5890,7 +5890,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         ):
             with self.subTest(source):
                 ast = JsParser(source).parse()
-                JsGeneratorCFFUnflattening().visit(ast)
+                JsStateMachineUnflattening().visit(ast)
                 held = [(node, child) for node in ast.walk() for child in node.children()]
                 self.assertNotIn('function*', JsSynthesizer().convert(ast))
                 self.assertEqual(len(held), len({id(child) for _, child in held}))
@@ -5913,7 +5913,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             cases.append(F'case {early}: return done = true, {index};')
         source = self._machine(cases, 10)
         with RecursionDepth(TREE_RECURSION_DEPTH):
-            result = self._run_transformer(source, JsGeneratorCFFUnflattening)
+            result = self._run_transformer(source, JsStateMachineUnflattening)
         self.assertNotIn('function*', result)
 
     def test_generator_cff_ladder_of_twenty_levels_is_declined_in_time(self):
@@ -6514,7 +6514,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.END_OF_THE_MACHINE_IN_A_BRANCH_OF_A_LOOP_CFF, JsGeneratorCFFUnflattening
+                self.END_OF_THE_MACHINE_IN_A_BRANCH_OF_A_LOOP_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -6538,7 +6538,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 }
                 """
             ),
-            self._run_transformer(self.LOOP_IN_A_LOOP_CFF, JsGeneratorCFFUnflattening),
+            self._run_transformer(self.LOOP_IN_A_LOOP_CFF, JsStateMachineUnflattening),
         )
 
     def test_generator_cff_wrapper_made_in_a_block_placed_twice_is_declined(self):
@@ -6549,7 +6549,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         source = self.WRAPPER_MADE_IN_A_BLOCK_PLACED_TWICE_CFF
         self.assertEqual(
             self._run_transformers(source),
-            self._run_transformer(source, JsGeneratorCFFUnflattening),
+            self._run_transformer(source, JsStateMachineUnflattening),
         )
 
     def test_generator_cff_return_in_a_loop_of_the_payload_is_recovered(self):
@@ -6567,7 +6567,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.RETURN_IN_A_LOOP_OF_THE_PAYLOAD_CFF, JsGeneratorCFFUnflattening
+                self.RETURN_IN_A_LOOP_OF_THE_PAYLOAD_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -6588,7 +6588,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.RETURN_IN_A_TRY_WITH_A_FINALLY_CFF, JsGeneratorCFFUnflattening
+                self.RETURN_IN_A_TRY_WITH_A_FINALLY_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -6612,7 +6612,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.RETURN_IN_A_SWITCH_AND_A_LABELED_BLOCK_CFF, JsGeneratorCFFUnflattening
+                self.RETURN_IN_A_SWITCH_AND_A_LABELED_BLOCK_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -6632,7 +6632,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.WRAPPER_RETURNING_WITHOUT_THE_FLAG_CFF, JsGeneratorCFFUnflattening
+                self.WRAPPER_RETURNING_WITHOUT_THE_FLAG_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -6654,7 +6654,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(
-                self.BODY_ENDING_IN_A_SWITCH_THAT_RETURNS_CFF, JsGeneratorCFFUnflattening
+                self.BODY_ENDING_IN_A_SWITCH_THAT_RETURNS_CFF, JsStateMachineUnflattening
             ),
         )
 
@@ -6683,7 +6683,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             with self.subTest(source):
                 self.assertEqual(
                     self._run_transformers(source),
-                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                    self._run_transformer(source, JsStateMachineUnflattening),
                 )
 
 
@@ -6930,7 +6930,7 @@ class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):
     def test_each_fixture_recovered_alone_prints_what_it_printed(self):
         for name, program in self._programs():
             with self.subTest(name):
-                recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+                recovered = self._run_transformer(program, JsStateMachineUnflattening)
                 self.assertEqual(behavior(program), behavior(recovered))
 
     def test_each_fixture_deobfuscated_prints_what_it_printed(self):
