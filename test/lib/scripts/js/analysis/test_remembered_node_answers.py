@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 import tempfile
 import unittest
 import unittest.mock
@@ -68,6 +69,37 @@ class TestAnAnswerWithoutAnErrorIsKeptForTheNextRun(TestBase):
                 again = behavior(program)
         self.assertEqual((first[1], again[1]), ('TypeError', 'TypeError'))
         self.assertNotEqual(first[0], again[0])
+
+    def test_answers_kept_in_one_time_zone_are_not_given_in_another(self):
+        program = A_PROGRAM_THAT_PRINTS_SOMETHING_ELSE_ON_EVERY_RUN
+        with tempfile.TemporaryDirectory() as folder:
+            with a_run_keeping_answers_in(folder), unittest.mock.patch.dict(os.environ, {'TZ': 'UTC'}):
+                first = behavior(program)
+            with a_run_keeping_answers_in(folder), unittest.mock.patch.dict(os.environ, {'TZ': 'Asia/Tokyo'}):
+                again = behavior(program)
+        self.assertNotEqual(first, again)
+
+
+class TestNoAnswerIsKeptForANodeThatCannotSayWhatItIs(TestBase):
+
+    def test_a_missing_node_or_another_program_in_its_place_keeps_nothing(self):
+        with tempfile.TemporaryDirectory() as programs:
+            impostor = os.path.join(programs, 'impostor.cmd' if os.name == 'nt' else 'impostor')
+            with open(impostor, 'w') as script:
+                if os.name == 'nt':
+                    script.write('@echo ["not a version","en-US","UTC"]\n')
+                else:
+                    script.write('#!/bin/sh\necho \'["not a version","en-US","UTC"]\'\n')
+            os.chmod(impostor, 0o755)
+            for name, executable in [
+                ('missing', os.path.join(programs, 'missing')),
+                ('python', sys.executable),
+                ('impostor', impostor),
+            ]:
+                with self.subTest(node=name), tempfile.TemporaryDirectory() as folder:
+                    environment = tuple(os.environ.items())
+                    self.assertIsNone(differential._kept_answers(executable, folder, environment))
+                    self.assertEqual(os.listdir(folder), [])
 
 
 class TestTheAnswersOfOneVersionOfNodeAreNotGivenForAnother(TestBase):

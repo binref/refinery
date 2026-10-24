@@ -330,8 +330,8 @@ class NodeAnswers:
     """
     What one version of Node printed for programs that ran without an error, kept in a folder so
     that a later run of the test suite starts Node only for the programs it has not seen. The folder
-    holds one subfolder per version, and opening it for one version removes all others, because an
-    answer is only ever the answer of the version that gave it.
+    holds one subfolder per identity that `_kept_answers` gives, and opening it for one identity
+    removes all others, because an answer is only ever the answer of the Node that gave it.
 
     An answer that ends in an error is not kept. A run that fails for a reason unrelated to the
     program, such as a machine that ran out of memory, can then never be given again as what the
@@ -342,12 +342,12 @@ class NodeAnswers:
     no reader can find it half written.
     """
 
-    def __init__(self, folder: Path, version: str):
+    def __init__(self, folder: Path, identity: str):
         folder.mkdir(parents=True, exist_ok=True)
         for other in folder.iterdir():
-            if other.name != version:
+            if other.name != identity:
                 shutil.rmtree(other, ignore_errors=True)
-        self.folder = folder / version
+        self.folder = folder / identity
         self.folder.mkdir(exist_ok=True)
 
     def _path(self, question: tuple) -> Path:
@@ -375,22 +375,49 @@ class NodeAnswers:
                 os.remove(stream.name)
 
 
+#: Asks Node what it is and where it runs: its version, and the locale and time zone that every
+#: program sees, which change what a program prints as much as the program does.
+_NODE_IDENTITY = R'''
+const options = Intl.DateTimeFormat().resolvedOptions();
+console.log(JSON.stringify([process.version, options.locale, options.timeZone]));
+'''
+
+_NODE_VERSION = re.compile(r'v\d+\.\d+\.\d+')
+
+
 @functools.lru_cache(maxsize=None)
-def _kept_answers(node: str, folder: str) -> NodeAnswers | None:
+def _kept_answers(
+    node: str,
+    folder: str,
+    environment: tuple[tuple[str, str], ...],
+) -> NodeAnswers | None:
     """
-    The answers kept in *folder* for the version of *node*, or `None` when *folder* is empty.
+    The answers kept in *folder* for the Node at *node* started with *environment*, or `None` when
+    *folder* is empty or Node cannot say what it is. Answers are kept apart by the version of Node,
+    by the locale and time zone it runs in, and by the code of this module, which decides how Node
+    is asked: a change to any of them starts the answers over.
     """
     if not folder:
         return None
-    version = subprocess.run(
-        [node, '--version'],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=NODE_TIMEOUT,
-        env=_node_environment(),
-    ).stdout.strip()
-    return NodeAnswers(Path(folder), version)
+    try:
+        asked = subprocess.run(
+            [node, '-e', _NODE_IDENTITY],
+            capture_output=True,
+            text=True,
+            timeout=NODE_TIMEOUT,
+            env=dict(environment),
+        )
+        version, locale, time_zone = json.loads(asked.stdout)
+    except (OSError, subprocess.SubprocessError, TypeError, ValueError):
+        return None
+    if asked.returncode != 0 or not isinstance(version, str) or not _NODE_VERSION.fullmatch(version):
+        return None
+    code = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    surroundings = hashlib.sha256(json.dumps([locale, time_zone, code]).encode('utf-8')).hexdigest()
+    try:
+        return NodeAnswers(Path(folder), F'{version}-{surroundings[:16]}')
+    except OSError:
+        return None
 
 
 @functools.lru_cache(maxsize=1024)
@@ -401,7 +428,11 @@ def _remembered_node_behavior(
     timeout: float,
 ) -> tuple[str, str | None]:
     question = (graph, entry, timeout)
-    kept = _kept_answers(node, os.environ.get('REFINERY_TEST_NODE_ANSWERS', ''))
+    kept = _kept_answers(
+        node,
+        os.environ.get('REFINERY_TEST_NODE_ANSWERS', ''),
+        tuple(sorted(_node_environment().items())),
+    )
     if kept is not None and (stdout := kept.answer(question)) is not None:
         return stdout, None
     stdout, error = _node_behavior(node, graph, entry, timeout)
