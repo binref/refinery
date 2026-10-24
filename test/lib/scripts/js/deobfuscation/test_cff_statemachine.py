@@ -1805,7 +1805,8 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
               var NS = {};
               NS.keep = function(p_1, q_1) {
                 var Loc = {};
-                Loc.p = p_1, Loc.q = q_1;
+                Loc.p = p_1;
+                Loc.q = q_1;
                 return function() {
                   return Loc.p + Loc.q;
                 };
@@ -1901,11 +1902,72 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
               var NS = {};
               NS.count = function(first_1, ...others_1) {
                 var Loc = {};
-                Loc.first = first_1, Loc.others = others_1;
+                Loc.first = first_1;
+                Loc.others = others_1;
                 return Loc.first + ":" + Loc.others.length;
               };
               return NS.count;
             }
+            """
+        ))
+
+    ARGUMENT_STORE_WITH_A_DEFAULT_READING_THE_ELEMENT_BEFORE_IT_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = { F: {} }, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    F.helper = function(...rest) {
+                      return gen(40, 10, { F: scope.F, L: {} }, rest)["next"]()["value"];
+                    };
+                    F.result = F.helper(n) + F.helper(n, 1);
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    return done = true, F.result;
+                  case 50:
+                    [L.x, L.y = L.x] = args;
+                    a = 60, b = 0;
+                    break;
+                  case 60:
+                    return L.x + L.y;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        console.log(outer(3));
+        """
+    )
+
+    def test_generator_cff_default_reading_the_element_before_it_reads_that_parameter(self):
+        """
+        The argument store gives the second element the first as its default, which the parameter
+        list evaluates after the first parameter is bound: the default becomes a read of it.
+        """
+        result = self._run_transformer(
+            self.ARGUMENT_STORE_WITH_A_DEFAULT_READING_THE_ELEMENT_BEFORE_IT_CFF,
+            JsStateMachineUnflattening,
+        )
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer(n) {
+              var F = {};
+              F.helper = function(x_1, y_1 = x_1) {
+                var L = {};
+                L.x = x_1;
+                L.y = y_1;
+                return L.x + L.y;
+              };
+              F.result = F.helper(n) + F.helper(n, 1);
+              return F.result;
+            }
+            console.log(outer(3));
             """
         ))
 
@@ -6903,6 +6965,7 @@ ENTRY_POINTS = {
         'console.log(outer([1, 1], [0, 1]).join(), outer([0, 1], [1]).join());'
     ),
     'LOOP_IN_A_LOOP_CFF': 'console.log(outer(3).join(), outer(0).join());',
+    'ARGUMENT_STORE_WITH_A_DEFAULT_READING_THE_ELEMENT_BEFORE_IT_CFF': '',
     'WRAPPER_MADE_IN_A_BLOCK_PLACED_TWICE_CFF': (
         'console.log(outer([1, 1, 0]).length, outer([0, 0, 1])[2](7, 8, 9));'
     ),

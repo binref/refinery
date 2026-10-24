@@ -18,7 +18,6 @@ from refinery.lib.scripts import (
     Node,
     Statement,
     _clone_node,
-    _remove_from_parent,
     _replace_in_parent,
     set_child,
     set_child_list,
@@ -101,6 +100,7 @@ from refinery.lib.scripts.js.model import (
     JsNumericLiteral,
     JsObjectExpression,
     JsObjectPattern,
+    JsParenthesizedExpression,
     JsProperty,
     JsPropertyKind,
     JsRestElement,
@@ -209,6 +209,7 @@ class _CallSiteInfo(NamedTuple):
     guarded: bool
     undefined_reads: list[Expression]
     initial_args: list[Expression]
+    call_index: int
 
 
 class _WrapperFunctionInfo(NamedTuple):
@@ -316,12 +317,21 @@ class _MachineMatch:
     runtime_name: str | None = None
     initial_args: list[Expression] = field(default_factory=list)
     calls: _Calls | None = None
+    call_index: int = -1
+
+    @property
+    def call_start(self) -> int:
+        """
+        The index of the first statement of the call site: the statement behind the machine, or
+        one further down the same body where the machine is a declared function.
+        """
+        return self.machine_index + 1 if self.call_index < 0 else self.call_index
 
     def removed(self, body: list[Statement]) -> list[Statement]:
         """
         The statements of *body* the recovery removes: the machine and its call site.
         """
-        return body[self.machine_index:self.scaffolding_end + 1]
+        return [body[self.machine_index], *body[self.call_start:self.scaffolding_end + 1]]
 
     @property
     def qualifies_namespaces(self) -> bool:
@@ -1071,7 +1081,9 @@ def _match_array_machine(body: list[Statement], idx: int, design: _Design) -> _M
         M([…]);
 
     The machine is a plain function, declared or stored to a variable, and a `return` of
-    `undefined` may stand behind its loop. Its call hands it one array, which the design reads
+    `undefined` may stand behind its loop. A declared machine may be called further down the same
+    body, as the recovery of an outer machine writes it; the statements between stay where they
+    are. Its call hands it one array, which the design reads
     once the match is decided on (`_ArrayDesign.read_start`). Whether the code of the machine reads
     what its invocation binds, and whether it holds a function declared in a block of strict code,
     are asked of the whole function, and only once its shape matched.
@@ -1135,6 +1147,10 @@ def _match_array_machine(body: list[Statement], idx: int, design: _Design) -> _M
         return None
     scope_default_props, scope_default_inits = scope_defaults
     call_info = _find_generator_call_site(body, idx, name, plain=True)
+    if call_info is None and isinstance(stmt, JsFunctionDeclaration):
+        for start in range(idx + 2, len(body)):
+            if (call_info := _find_generator_call_site(body, idx, name, True, start)) is not None:
+                break
     if call_info is None or len(call_info.initial_args) != 1:
         return None
     slots = _scope_slots(inner, scope_param_name, scope_default_props)
@@ -1166,6 +1182,7 @@ def _match_array_machine(body: list[Statement], idx: int, design: _Design) -> _M
         scope_default_inits=scope_default_inits,
         runtime_name=runtime.name,
         initial_args=call_info.initial_args,
+        call_index=call_info.call_index,
     )
 
 
@@ -1425,6 +1442,7 @@ def _find_generator_call_site(
     gen_idx: int,
     gen_name: str,
     plain: bool = False,
+    start: int | None = None,
 ) -> _CallSiteInfo | None:
     """
     Read the call of the generator declared at *gen_idx*, which the obfuscator writes right behind
@@ -1438,9 +1456,12 @@ def _find_generator_call_site(
     declared elsewhere, and the call returned directly or made for nothing. The guard is part of
     the scaffolding in exactly this form: one that does anything else stays, and the flag it reads
     keeps the recovery from going ahead (`_scaffolding_is_private`). Where *plain*, the call is the
-    plain call `M(array)` of a machine that is no generator. Returns a `_CallSiteInfo` or `None`.
+    plain call `M(array)` of a machine that is no generator, and *start* is the index the call site
+    begins at where it does not stand right behind the machine. Returns a `_CallSiteInfo` or
+    `None`.
     """
-    pos = gen_idx + 1
+    pos = gen_idx + 1 if start is None else start
+    call_index = pos
     undefined_reads: list[Expression] = []
     flag: _Flag | None = None
     if pos < len(body) and (reset := _did_return_reset(body[pos])) is not None:
@@ -1489,6 +1510,7 @@ def _find_generator_call_site(
         guarded,
         undefined_reads,
         list(call_node.arguments),
+        call_index,
     )
 
 
@@ -4517,15 +4539,23 @@ def _is_activation_slot(target: Node | None, activation: _Activation) -> bool:
     )
 
 
+class _ArgumentSlot(NamedTuple):
+    """
+    A slot an argument store fills, and the default an element `slot = default` gives it.
+    """
+    target: Expression
+    default: Expression | None
+
+
 def _argument_slots(
     pattern: JsArrayExpression | JsArrayPattern,
     activation: _Activation,
-) -> tuple[list[Expression], Expression | None] | None:
+) -> tuple[list[_ArgumentSlot], Expression | None] | None:
     """
     The slots an argument store `[s1, …, sn] = rest` or `[s1, …, ...r] = rest` fills, in order,
     and the slot taking the remaining arguments where the pattern ends in a rest element. `None`
     where one of them is not a slot of *activation*'s own scope object (`_is_activation_slot`), or
-    the pattern skips an element or gives one a default.
+    the pattern skips an element. An element may carry a default, `s = d`.
     """
     elements = list(pattern.elements)
     remainder: Expression | None = None
@@ -4534,29 +4564,117 @@ def _argument_slots(
         elements.pop()
         if not _is_activation_slot(remainder, activation):
             return None
-    slots: list[Expression] = []
+    slots: list[_ArgumentSlot] = []
     for element in elements:
-        if element is None or not _is_activation_slot(element, activation):
+        target, default = element, None
+        if isinstance(element, JsAssignmentPattern):
+            target, default = element.left, element.right
+        if target is None or not _is_activation_slot(target, activation):
             return None
-        slots.append(element)
+        slots.append(_ArgumentSlot(target, default))
     return slots, remainder
+
+
+def _activation_slot_identity(node: Node, activation: _Activation) -> tuple[str, ...] | None:
+    """
+    What *node* names of the scope object of *activation*: `(namespace, key)` for a member of a
+    namespace the object is created with, `(name,)` for a variable the run keeps on the object, `()`
+    for a namespace itself, and `None` for anything else.
+    """
+    if isinstance(node, JsIdentifier):
+        if node.name in activation.namespaces:
+            return ()
+        if node.name in activation.props and node.name not in activation.inherited:
+            return (node.name,)
+        return None
+    if (
+        isinstance(node, JsMemberExpression)
+        and isinstance(node.object, JsIdentifier)
+        and node.object.name in activation.namespaces
+        and (key := access_key(node)) is not None
+    ):
+        return (node.object.name, key)
+    return None
+
+
+def _default_reads(
+    default: Expression,
+    earlier: list[Expression],
+    function: JsFunctionExpression,
+    activation: _Activation,
+) -> dict[Node, int] | None:
+    """
+    Whether the default *default* of an element of the argument store can become the default of its
+    parameter, and the reads in it that become reads of an earlier parameter. A default reads the
+    elements before it, stored before it is evaluated, and where it reads one of them plainly, the
+    read becomes that parameter (`_unpack_argument_stores`). `None` where the default reads `this`,
+    a name the body binds, or any other part of what the run keeps on its scope object: its own
+    element or a later one, which the parameter list has not stored, a namespace as a whole, a
+    store to one, a call through one, which hands the namespace on as `this`, and a read under a
+    function, which reads it when called.
+    """
+    bound = _function_bound_names(function)
+    slots = {
+        identity: index for index, target in enumerate(earlier)
+        if (identity := _activation_slot_identity(target, activation))
+    }
+    reads: dict[Node, int] = {}
+
+    def visit(node: Node, nested: bool) -> bool:
+        if isinstance(node, JsThisExpression):
+            return False
+        if isinstance(node, JsIdentifier) and not is_reference(node):
+            return True
+        if isinstance(node, JsIdentifier) and node.name in bound:
+            return False
+        if (identity := _activation_slot_identity(node, activation)) is not None:
+            outer = node
+            while isinstance(parent := outer.parent, JsParenthesizedExpression):
+                outer = parent
+            if (
+                nested
+                or not identity
+                or (index := slots.get(identity)) is None
+                or is_member_write_target(node)
+                or isinstance(parent, JsCallExpression) and parent.callee is outer
+                or isinstance(parent, JsTaggedTemplateExpression) and parent.tag is outer
+            ):
+                return False
+            reads[node] = index
+            return True
+        inner = nested or isinstance(node, FUNCTION_NODES)
+        return all(visit(child, inner) for child in node.children())
+
+    return reads if visit(default, False) else None
 
 
 def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activation) -> None:
     """
-    Give a wrapper whose run owns its scope object the parameters its run stores its arguments
-    into. A run starts by destructuring the argument holder into slots of its own scope object, as
-    in `[NS.a, NS.b] = rest` for the wrapper `function (...rest)`, and a function whose own
-    parameters ended in a rest parameter is stored as `[NS.a, ...NS.r] = rest`. Where the rest
-    parameter is read by such stores and nothing else, the wrapper takes the parameters `(a, ...r)`
-    and the store becomes `NS.a = a, NS.r = r`: every slot receives what it received, the remainder
-    being an array of the same arguments. Every store has to be a statement of the body itself,
-    which runs once per call: the destructuring makes a new array each time it runs, and the rest
-    parameter is one array per call. The wrapper's `length` counts the new parameters, as the
-    function the obfuscator flattened counted them, and the destructuring's array iterator is
-    trusted the way the recovery trusts the rest of the obfuscator's scaffolding. A body that reads
-    its own `arguments`, whose elements a simple parameter list aliases, is left alone, and the list
-    is the one `refinery.lib.scripts.js.deobfuscation.parameters.parameter_list` writes.
+    Give a wrapper whose run owns its scope object the parameters its run stores its arguments into.
+    A run starts by destructuring the argument holder into slots of its own scope object, as in
+    `[NS.a, NS.b] = rest` for the wrapper `function (...rest)`, and a function whose own parameters
+    ended in a rest parameter is stored as `[NS.a, ...NS.r] = rest`. Where the rest parameter is
+    read by such stores and nothing else, the wrapper takes the parameters `(a, ...r)` and the store
+    becomes the statements `NS.a = a; NS.r = r;`: every slot receives what it received, the
+    remainder being an array of the same arguments. Each store is a statement of its own, where the
+    passes that drop a dead store or fold a read copy into its parameter reach it. Every store has
+    to be a statement of the body itself, which runs once per call: the destructuring makes a new
+    array each time it runs, and the rest parameter is one array per call. The wrapper's `length`
+    counts the new parameters, as the function the obfuscator flattened counted them, and the
+    destructuring's array iterator is trusted the way the recovery trusts the rest of the
+    obfuscator's scaffolding. A body that reads its own `arguments`, whose elements a simple
+    parameter list aliases, is left alone, and the list is the one
+    `refinery.lib.scripts.js.deobfuscation.parameters.parameter_list` writes. A parameter takes a
+    name no identifier and no static key of the function spells.
+
+    An element with a default, `[NS.a, NS.b = d] = rest`, gives its parameter that default where the
+    destructuring is the first statement of the body and `_default_reads` admits it: the default
+    reads no `this`, no name the body binds, and of the scope object only a plain read of an element
+    before it, which becomes a read of that element's parameter. The store
+
+        [NS.a, NS.b = NS.a] = rest;
+
+    gives the wrapper the parameters `(a, b = a)`.
     """
     params = function.params
     if (
@@ -4567,7 +4685,7 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
         or references_own_arguments(function)
     ):
         return
-    stores: list[tuple[JsAssignmentExpression, list[Expression], Expression | None]] = []
+    stores: list[tuple[JsAssignmentExpression, list[_ArgumentSlot], Expression | None]] = []
     for read in _references_to(function.body.body, frozenset({rest.argument.name})):
         store = read.parent
         if not (
@@ -4584,6 +4702,10 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
     if not stores or len(stores) > 1 and any(remainder is not None for _, _, remainder in stores):
         return
     taken = {node.name for node in function.walk() if isinstance(node, JsIdentifier)}
+    taken.update(
+        key for node in function.walk()
+        if isinstance(node, JsMemberExpression) and (key := access_key(node)) is not None
+    )
 
     def fresh(slot: Expression) -> str:
         base = _deepest_property_name(slot)
@@ -4591,34 +4713,60 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
         taken.add(name)
         return name
 
+    defaults: dict[int, tuple[Expression, dict[Node, int]]] = {}
+    for store, slots, _ in stores:
+        for index, (_, default) in enumerate(slots):
+            if default is None:
+                continue
+            if len(stores) > 1 or store.parent is not function.body.body[0]:
+                return
+            earlier = [slot.target for slot in slots[:index]]
+            if (reads := _default_reads(default, earlier, function, activation)) is None:
+                return
+            defaults[index] = default, reads
     names: list[str] = []
-    for index in range(max(len(elements) for _, elements, _ in stores)):
-        slot = next(elements[index] for _, elements, _ in stores if index < len(elements))
-        names.append(fresh(slot))
+    for index in range(max(len(slots) for _, slots, _ in stores)):
+        target = next(slots[index].target for _, slots, _ in stores if index < len(slots))
+        names.append(fresh(target))
     remainders = [remainder for _, _, remainder in stores if remainder is not None]
     remainder_name = fresh(remainders[0]) if remainders else None
-    new_params: list[Expression] = [JsIdentifier(name=name) for name in names]
+
+    def parameter(index: int, name: str) -> Expression:
+        if index not in defaults:
+            return JsIdentifier(name=name)
+        default, reads = defaults[index]
+        value = _clone_node(default)
+        for node, copy in list(zip(default.walk(), value.walk())):
+            if (slot := reads.get(node)) is None:
+                continue
+            if copy is value:
+                value = JsIdentifier(name=names[slot])
+            else:
+                _replace_in_parent(copy, JsIdentifier(name=names[slot]))
+        return JsAssignmentPattern(left=JsIdentifier(name=name), right=value)
+
+    new_params: list[Expression] = [parameter(index, name) for index, name in enumerate(names)]
     if remainder_name is not None:
         new_params.append(JsRestElement(argument=JsIdentifier(name=remainder_name)))
     parameters = parameter_list(new_params, function, None)
     if parameters is None:
         return
-    for store, elements, remainder in stores:
+    for store, slots, remainder in stores:
         assignments: list[Expression] = [
-            JsAssignmentExpression(operator='=', left=element, right=JsIdentifier(name=name))
-            for element, name in zip(elements, names)
+            JsAssignmentExpression(operator='=', left=slot.target, right=JsIdentifier(name=name))
+            for slot, name in zip(slots, names)
         ]
         if remainder is not None and remainder_name is not None:
             assignments.append(JsAssignmentExpression(
                 operator='=', left=remainder, right=JsIdentifier(name=remainder_name)))
-        if not assignments:
-            statement = store.parent
-            assert statement is not None
-            _remove_from_parent(statement)
-        elif len(assignments) == 1:
-            _replace_in_parent(store, assignments[0])
-        else:
-            _replace_in_parent(store, JsSequenceExpression(expressions=assignments))
+        statement = store.parent
+        assert statement is not None and function.body is not None
+        body = function.body.body
+        at = next(index for index, kept in enumerate(body) if kept is statement)
+        separate: list[Statement] = [
+            JsExpressionStatement(expression=assignment) for assignment in assignments
+        ]
+        set_child_list(function.body, 'body', [*body[:at], *separate, *body[at + 1:]])
     set_child_list(function, 'params', parameters.build())
 
 
@@ -5095,7 +5243,10 @@ def _property_flag_is_private(
         and declarator.id is declarations[0]
         and isinstance(declarator.init, JsObjectExpression)
         and not declarator.init.properties
-        and any(declarator.parent is statement for statement in body[:match.machine_index])
+        and any(
+            declarator.parent is statement
+            for statement in body[:match.call_start] if statement is not body[match.machine_index]
+        )
     ):
         return False
     accesses = namespace_accesses([*model.references(binding), *binding.dynamic_refs])
@@ -5691,9 +5842,10 @@ class JsStateMachineUnflattening(PinnedTransformer, BodyProcessingTransformer):
             start = match.machine_index
             end = match.scaffolding_end
             reveals = _recovery_reveals(model, models.intrinsic_writes, removed, recovered, match)
-            replacement = body[:start] + recovered + body[end + 1:]
+            between = body[start + 1:match.call_start]
+            replacement = body[:start] + between + recovered + body[end + 1:]
             self._replace_body(parent, replacement)
             self._note_edit(parent)
             if reveals:
                 self.renew_models()
-            i = start + len(recovered)
+            i = start + len(between) + len(recovered)

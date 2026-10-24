@@ -8,8 +8,9 @@ recovery takes a machine apart, the text it writes is pinned; where something ou
 scaffolding may reach the flag, the generator or the result, it leaves the machine as it is. A
 function the obfuscation declares in a block of a flattened function reads a copy of the block's
 scope object, made when it is called, where the recovered code shares one variable; the recovery
-goes ahead where every store to it runs before the function is made. Two files the obfuscation
-wrote for one program, every function of which it flattened, are read as text and never run.
+goes ahead where every store to it runs before the function is made. Three files the obfuscation
+wrote for one program, every function of which it flattened, are read as text and never run: the
+third, whose machine keeps its state in one array, is read from the sample store.
 """
 from __future__ import annotations
 
@@ -2067,15 +2068,13 @@ FLATTENED_TWICE_DEOBFUSCATED = inspect.cleandoc(
       }
       return -1;
     }
-    function GPgIgQ(...__p_eyXp) {
+    function GPgIgQ(cFd5H4X, d6VElg = ', ') {
       function MvmeD2R(cj8ac0) {
         var hdEeet;
         hdEeet = String(cj8ac0);
         return '"' + hdEeet + '"';
       }
       var z80HZjY;
-      var cFd5H4X, d6VElg;
-      [cFd5H4X, d6VElg = ', '] = __p_eyXp;
       z80HZjY = [];
       for (const entry of cFd5H4X) {
         z80HZjY.push(MvmeD2R(entry));
@@ -2772,15 +2771,13 @@ FLATTENED_TWICE_AGAIN = inspect.cleandoc(
 
 FLATTENED_TWICE_AGAIN_DEOBFUSCATED = inspect.cleandoc(
     """
-    function qDscIjS(...__p_Skt3) {
+    function qDscIjS(vpKs618, uZRGvl = ', ') {
       function dgVoWM(ZBiLRWQ) {
         var rrJ0ZV;
         rrJ0ZV = String(ZBiLRWQ);
         return '"' + rrJ0ZV + '"';
       }
       var FMyKiG;
-      var uZRGvl, vpKs618;
-      [vpKs618, uZRGvl = ', '] = __p_Skt3;
       FMyKiG = [];
       for (const entry of vpKs618) {
         FMyKiG.push(dgVoWM(entry));
@@ -2837,6 +2834,76 @@ FLATTENED_TWICE_AGAIN_DEOBFUSCATED = inspect.cleandoc(
 )
 
 
+#: The deobfuscation of the file the version of the obfuscation whose machine keeps its state in one
+#: array wrote for the same program, read from the sample store under
+#: `FLATTENED_INTO_ONE_ARRAY_SHA256`.
+FLATTENED_INTO_ONE_ARRAY_DEOBFUSCATED = inspect.cleandoc(
+    """
+    function qbK3lb(X8zYSmr, ZLGEG90 = ', ') {
+      function We6tze(fq8oR7i) {
+        var R7cZ20;
+        R7cZ20 = String(fq8oR7i);
+        return '"' + R7cZ20 + '"';
+      }
+      var i7_qAH3;
+      i7_qAH3 = [];
+      for (const entry of X8zYSmr) {
+        i7_qAH3.push(We6tze(entry));
+      }
+      return i7_qAH3.join(ZLGEG90);
+    }
+    function fRsrdl(eH1UcX) {
+      var RrMvpe;
+      var pFOeeay;
+      RrMvpe = 'none';
+      if (eH1UcX) {
+        pFOeeay = {};
+        pFOeeay.iDxh9Hq = function(mEKMJS) {
+          mEKMJS * 2;
+          mEKMJS * 2 + '';
+          return mEKMJS * 2 + '';
+        };
+        RrMvpe = (1, pFOeeay.iDxh9Hq)(3);
+      }
+      return RrMvpe + '!';
+    }
+    function ejJdWE(vCQ8tv, ...ItWZ7r) {
+      var ITVgkA;
+      ITVgkA = vCQ8tv;
+      for (const value of ItWZ7r) {
+        ITVgkA += value;
+      }
+      if (ITVgkA > 10) {
+        return 'big ' + ITVgkA;
+      }
+      return 'small ' + ITVgkA;
+    }
+    function Agwm_HD(a8EoG2, k_iFmV) {
+      var UISsq7y;
+      UISsq7y = 0;
+      for (const item of a8EoG2) {
+        if (k_iFmV(item)) {
+          return UISsq7y;
+        }
+        UISsq7y++;
+      }
+      return -1;
+    }
+    console.log('negative', 'zero', 'odd', 'large even', 'huge even');
+    console.log(Agwm_HD([3, 8, 12], x => {
+      return x > 5;
+    }), Agwm_HD([1], x => {
+      return x > 5;
+    }));
+    console.log(qbK3lb(['a', 'b']), qbK3lb([1, 2, 3], '/'));
+    console.log(ejJdWE(1, 2, 3), ejJdWE(5, 6));
+    console.log(fRsrdl(true), fRsrdl(false));
+    """
+)
+
+FLATTENED_INTO_ONE_ARRAY_SHA256 = '4fb00b022544cfca0e98913b10c1a20ffd6c30b850535db7c4a7daa70c065905'
+
+
 class TestTheFilesTheObfuscationWrote(TestBase):
 
     def test_the_file_of_the_first_version_reads_as_pinned(self):
@@ -2844,3 +2911,7 @@ class TestTheFilesTheObfuscationWrote(TestBase):
 
     def test_the_file_of_the_later_version_reads_as_pinned(self):
         self.assertEqual(deobfuscated(FLATTENED_TWICE_AGAIN), FLATTENED_TWICE_AGAIN_DEOBFUSCATED)
+
+    def test_the_file_of_the_version_keeping_the_state_in_one_array_reads_as_pinned(self):
+        source = self.download_sample(FLATTENED_INTO_ONE_ARRAY_SHA256).decode('utf-8')
+        self.assertEqual(deobfuscated(source), FLATTENED_INTO_ONE_ARRAY_DEOBFUSCATED)

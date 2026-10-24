@@ -105,6 +105,85 @@ def graded(
     return '\n'.join(part for part in (before, prelude, machine, after) if part)
 
 
+#: The function `grade(n)` as the recovery of an outer machine writes it: the machine copies its
+#: parameters into variables, a `return` of `undefined` stands behind its loop, and its call
+#: stands further down the body, behind `BETWEEN`. The second block reads the label after `READ`.
+COPIED = inspect.cleandoc(
+    """
+    function grade(n) {
+      function M(states, scope_1 = { A: {} }, runtime_1) {
+        var runtime, scope;
+        scope = scope_1, runtime = runtime_1;
+        while (sum(states) !== 0) {
+          L: switch (sum(states)) {
+            case 15:
+              scope.A.label = n > 10 ? 'big' : 'small';
+              states[0] += states[1] - 4;
+              break L;
+            case 16:
+              return ret = true, scope.A.label + READ'!';
+          }
+        }
+        return undefined;
+      }
+      var res, ret;
+      var X = {};
+      X.n = n;
+      BETWEEN
+      ret = undefined;
+      res = M([...slice(0, 3)]);
+      if (ret) {
+        return res;
+      }
+      return undefined;
+    }
+    console.log(grade(3), grade(30));
+    """
+)
+
+
+def copied(read: str = '', between: str = '') -> str:
+    """
+    A program that defines `PRELUDE` and `COPIED` with its parts replaced.
+    """
+    return '\n'.join((PRELUDE, COPIED.replace('READ', read).replace('BETWEEN', between)))
+
+
+#: The machine of a program that takes the function `greet` apart: its first block runs `BEFORE`,
+#: makes the wrapper and prints two calls of it, one without the second argument, and the block
+#: the wrapper enters stores the arguments with `ARGUMENTS` before it greets.
+GREET = inspect.cleandoc(
+    """
+    function M(states, scope = { A: {} }, runtime, arg) {
+      while (sum(states) !== 9) {
+        L: switch (sum(states)) {
+          case 15:
+            BEFORE
+            scope.A.greet = function (...r) {
+              return M([...slice(1, 4)], { A: scope.A, B: {} }, runtime, r);
+            };
+            console.log((1, scope.A.greet)('a'), (1, scope.A.greet)('b', '?'));
+            states[1] += states[0] - 7;
+            states[2] += states[1] - 5;
+            break L;
+          case 18:
+            ARGUMENTS
+            return 'hi ' + scope.B.name + scope.B.mark;
+        }
+      }
+    }
+    M([...slice(0, 3)]);
+    """
+)
+
+
+def greeted(arguments: str, before: str = '') -> str:
+    """
+    A program that defines `PRELUDE` and `GREET` with its parts replaced.
+    """
+    return '\n'.join((PRELUDE, GREET.replace('ARGUMENTS', arguments).replace('BEFORE', before)))
+
+
 A_FUNCTION_WHOSE_BODY_IS_A_MACHINE = graded()
 
 THE_MACHINE_OF_THE_PROGRAM = PRELUDE + '\n' + inspect.cleandoc(
@@ -426,6 +505,152 @@ A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_THE_SAME_NAMES = PRELUDE + '\n' + 
     """
 )
 
+A_MACHINE_WHOSE_PARAMETERS_ARE_COPIED_CALLED_FURTHER_DOWN = copied()
+
+A_MACHINE_CALLED_FURTHER_DOWN_WITH_A_RETURN_BEHIND_ITS_LOOP = PRELUDE + '\n' + inspect.cleandoc(
+    """
+    function grade(n) {
+      function M(states, scope = { A: {} }, runtime) {
+        while (sum(states) !== 0) {
+          L: switch (sum(states)) {
+            case 15:
+              scope.A.label = n > 10 ? 'big' : 'small';
+              states[0] += states[1] - 4;
+              break L;
+            case 16:
+              return ret = true, scope.A.label + '!';
+          }
+        }
+        return undefined;
+      }
+      var res, ret;
+      ret = undefined;
+      res = M([...slice(0, 3)]);
+      if (ret) {
+        return res;
+      }
+      return undefined;
+    }
+    console.log(grade(3), grade(30));
+    """
+)
+
+THE_MACHINE_CALLED_BEFORE_ITS_DECLARATION = PRELUDE + '\n' + inspect.cleandoc(
+    """
+    function grade(n) {
+      console.log(M([...slice(0, 3)]));
+      function M(states, scope = { A: {} }, runtime) {
+        while (sum(states) !== 0) {
+          L: switch (sum(states)) {
+            case 15:
+              scope.A.label = n > 10 ? 'big' : 'small';
+              states[0] += states[1] - 4;
+              break L;
+            case 16:
+              return ret = true, scope.A.label + '!';
+          }
+        }
+        return undefined;
+      }
+      var res, ret;
+      ret = undefined;
+      res = M([...slice(0, 3)]);
+      if (ret) {
+        return res;
+      }
+      return undefined;
+    }
+    console.log(grade(3), grade(30));
+    """
+)
+
+THE_MACHINE_CALLED_AGAIN_BETWEEN_ITS_DECLARATION_AND_ITS_CALL = copied(
+    between='console.log(M([...slice(0, 3)]));'
+)
+
+THE_MACHINE_NAMED_BETWEEN_ITS_DECLARATION_AND_ITS_CALL = copied(between='console.log(typeof M);')
+
+A_COPIED_PARAMETER_READ_AGAIN = copied(read='(scope_1 === scope) + ')
+
+A_FUNCTION_TAKEN_APART_WHOSE_PARAMETER_HAS_A_DEFAULT = greeted(
+    "[scope.B.name, scope.B.mark = '!'] = arg;"
+)
+
+A_DEFAULT_READING_THE_PARAMETER_BEFORE_IT = greeted('[scope.B.name, scope.B.mark = scope.B.name] = arg;')
+
+A_DEFAULT_READING_A_VARIABLE_OF_THE_FUNCTION_AROUND = greeted(
+    '[scope.B.name, scope.B.mark = scope.A.suffix] = arg;',
+    before="scope.A.suffix = '!';",
+)
+
+A_DEFAULT_READING_THE_PARAMETER_AFTER_IT = greeted('[scope.B.name = scope.B.mark, scope.B.mark] = arg;')
+
+A_DEFAULT_READING_A_NAME_THE_BODY_DECLARES = greeted(
+    "[scope.B.name, scope.B.mark = later] = arg; var later = '!';"
+)
+
+A_FUNCTION_TAKEN_APART_WHOSE_PARAMETER_IS_STORED_UNDER_A_DECODED_KEY = PRELUDE + '\n' + inspect.cleandoc(
+    """
+    var names = "AlabelBx";
+    function dec(start, length) {
+      return names["slice"](start, start + length);
+    }
+    function M(states, scope = { A: {} }, runtime, arg) {
+      while (sum(states) !== 9) {
+        L: switch (sum(states)) {
+          case 15:
+            scope.A.double = function (...r) {
+              return M([...slice(1, 4)], { A: scope.A, B: {} }, runtime, r);
+            };
+            console.log((1, scope.A.double)(Math.random() < 2 ? 4 : 0), (1, scope.A.double)(Math.random() < 2 ? 5 : 0));
+            states[1] += states[0] - 7;
+            states[2] += states[1] - 5;
+            break L;
+          case 18:
+            [scope[dec(states[0] + 1, 1)][dec(states[0] + 2, 1)]] = arg;
+            return scope.B.x * 2 + 1;
+        }
+      }
+    }
+    M([...slice(0, 3)]);
+    """
+)
+
+A_CLASS_READING_ITS_INSTANCE_UNDER_A_KEY_FROM_A_TABLE_OF_THE_MACHINE = PRELUDE + '\n' + DECODER + '\n' + inspect.cleandoc(
+    """
+    function grade(n) {
+      function M(states, scope = { A: {} }, runtime) {
+        while (sum(states) !== 0) {
+          L: switch (sum(states)) {
+            case 15:
+              scope.A.keys = ['value'];
+              scope.A.Box = class {
+                constructor(v) {
+                  this[scope.A.keys[0]] = v;
+                }
+                read() {
+                  const { [scope.A.keys[0]]: value } = this;
+                  return value;
+                }
+              };
+              scope[dec(states[0] - 4, 1)][dec(states[0] - 3, 5)] = new scope.A.Box(n > 10 ? 'big' : 'small').read();
+              states[0] += states[1] - 4;
+              break L;
+            case 16:
+              return ret = true, scope.A.label + '!';
+          }
+        }
+      }
+      var ret;
+      var res = M([...slice(0, 3)]);
+      if (ret) {
+        return res;
+      }
+    }
+    console.log(grade(3), grade(30));
+    """
+)
+
 #: The recovered body of `grade` in every machine of `GRADE` whose recovery stores the label under
 #: the key it was written with.
 GRADE_RECOVERED = inspect.cleandoc(
@@ -505,6 +730,60 @@ RECOVERED = {
         console.log(out.join(''));
         """
     ),
+    A_MACHINE_CALLED_FURTHER_DOWN_WITH_A_RETURN_BEHIND_ITS_LOOP: inspect.cleandoc(
+        """
+        function grade(n) {
+          var res, ret;
+          var A = {};
+          A.label = n > 10 ? 'big' : 'small';
+          return A.label + '!';
+        }
+        """
+    ),
+    A_FUNCTION_TAKEN_APART_WHOSE_PARAMETER_HAS_A_DEFAULT: inspect.cleandoc(
+        """
+        A.greet = function(name_1, mark_1 = '!') {
+          var B = {};
+          B.name = name_1;
+          B.mark = mark_1;
+          return 'hi ' + B.name + B.mark;
+        };
+        """
+    ),
+    A_DEFAULT_READING_THE_PARAMETER_BEFORE_IT: inspect.cleandoc(
+        """
+        A.greet = function(name_1, mark_1 = name_1) {
+          var B = {};
+          B.name = name_1;
+          B.mark = mark_1;
+          return 'hi ' + B.name + B.mark;
+        };
+        """
+    ),
+    A_DEFAULT_READING_A_VARIABLE_OF_THE_FUNCTION_AROUND: inspect.cleandoc(
+        """
+        A.suffix = '!';
+        A.greet = function(name_1, mark_1 = A.suffix) {
+        """
+    ),
+    A_DEFAULT_READING_THE_PARAMETER_AFTER_IT: inspect.cleandoc(
+        """
+        A.greet = function(...r) {
+          var B = {};
+          [B.name = B.mark, B.mark] = r;
+          return 'hi ' + B.name + B.mark;
+        };
+        """
+    ),
+    A_FUNCTION_TAKEN_APART_WHOSE_PARAMETER_IS_STORED_UNDER_A_DECODED_KEY: inspect.cleandoc(
+        """
+        A.double = function(x_1) {
+          var B = {};
+          B['x'] = x_1;
+          return B.x * 2 + 1;
+        };
+        """
+    ),
 }
 
 #: Machines the recovery leaves as they are, each mapped to the reason.
@@ -531,6 +810,11 @@ KEPT = {
     A_JUMP_WHOSE_CONDITION_READS_MORE_THAN_THE_STATE: 'the next block is not decided by the state',
     A_START_STATE_THAT_READS_A_PARAMETER: 'the next block is not decided by the state',
     A_JUMP_WHOSE_CONDITION_COMPARES_TWO_NEW_ARRAYS: 'the next block is not decided by the state',
+    THE_MACHINE_CALLED_BEFORE_ITS_DECLARATION: 'the machine runs elsewhere',
+    THE_MACHINE_CALLED_AGAIN_BETWEEN_ITS_DECLARATION_AND_ITS_CALL: 'the machine runs elsewhere',
+    THE_MACHINE_NAMED_BETWEEN_ITS_DECLARATION_AND_ITS_CALL: 'the machine is read elsewhere',
+    A_COPIED_PARAMETER_READ_AGAIN: 'the scaffolding is read',
+    A_DEFAULT_READING_A_NAME_THE_BODY_DECLARES: 'a default moved into the parameters would throw',
 }
 
 
@@ -556,6 +840,16 @@ class TestArrayMachines(TestJsDeobfuscator):
             "console.log('small!', 'big!');",
         )
 
+    def test_a_machine_whose_copied_parameters_other_passes_fold_is_recovered(self):
+        """
+        The machine copies its parameters into variables, as the recovery of an outer machine
+        writes it; other passes fold the copies, after which the machine is recovered.
+        """
+        self.assertEqual(
+            self._deobfuscate(A_MACHINE_WHOSE_PARAMETERS_ARE_COPIED_CALLED_FURTHER_DOWN),
+            "console.log('small!', 'big!');",
+        )
+
     def test_each_machine_whose_run_the_recovery_cannot_decide_is_kept(self):
         for source, reason in KEPT.items():
             with self.subTest(reason=reason, source=source):
@@ -569,6 +863,22 @@ class TestArrayMachines(TestJsDeobfuscator):
         deobfuscated = self._deobfuscate(A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_THE_SAME_NAMES)
         self.assertEqual(deobfuscated.count('switch (sum(states))'), 1)
         self.assertIn('scope.B[dec(states[0] - 5, 5)] = states.length;', deobfuscated)
+
+    @unittest.expectedFailure
+    def test_a_machine_whose_class_reads_its_instance_under_a_key_from_a_table_of_the_machine_is_recovered(self):
+        """
+        The method `read` destructures `this` under a key read from a table the machine holds.
+        The model takes a read of `this` under a key it cannot name for a read of the global object
+        under any name, and trusts no built-in anywhere; the function that decodes the keys of the
+        scope object calls a built-in, so the recovery cannot decode them. The machine is the one
+        thing that writes the table, so the key is known only once the machine is recovered. A fix
+        bounds the objects a method's `this` may be, so that a read of the instance is not counted
+        as one of the global object.
+        """
+        self.assertNotIn(
+            'switch (sum(states))',
+            self._deobfuscate(A_CLASS_READING_ITS_INSTANCE_UNDER_A_KEY_FROM_A_TABLE_OF_THE_MACHINE),
+        )
 
     def test_a_machine_of_a_thousand_blocks_and_a_state_of_a_hundred_numbers_is_recovered_in_time(self):
         blocks = 1000
@@ -611,6 +921,8 @@ class TestNodePrintsTheSameForEachArrayMachine(TestJsDeobfuscator):
         yield from RECOVERED
         yield from KEPT
         yield A_TABLE_READ_BY_A_METHOD_UNDER_A_COMPUTED_KEY
+        yield A_MACHINE_WHOSE_PARAMETERS_ARE_COPIED_CALLED_FURTHER_DOWN
+        yield A_CLASS_READING_ITS_INSTANCE_UNDER_A_KEY_FROM_A_TABLE_OF_THE_MACHINE
         yield A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_THE_SAME_NAMES
 
     def test_each_machine_recovered_after_the_evaluator_prints_what_it_printed(self):

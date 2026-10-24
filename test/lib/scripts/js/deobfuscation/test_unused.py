@@ -1461,6 +1461,19 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             ),
         )
 
+    @unittest.expectedFailure
+    def test_dead_stores_in_one_comma_sequence_are_removed_as_separate_ones_are(self):
+        """
+        Two stores to names nothing reads are dead whether they stand as statements of their own
+        or as the parts of one comma sequence, and the pass removes them only in the first form.
+        A fix judges each part of a sequence that is the whole of a statement as the statement it
+        would be on its own.
+        """
+        self.assertEqual(
+            self._remove_unused('function f(a_1, b_1) { var a, b; a = a_1, b = b_1; return 1; } f(1, 2);'),
+            self._remove_unused('function f(a_1, b_1) { var a, b; a = a_1; b = b_1; return 1; } f(1, 2);'),
+        )
+
 
 class TestRegressionBugs(TestJsDeobfuscator):
 
