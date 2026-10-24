@@ -8,8 +8,10 @@ from test import conftest
 
 
 def a_configuration(cache: unittest.mock.Mock | None, **options: bool) -> unittest.mock.Mock:
+    def getoption(name: str) -> bool:
+        return options.get(name.lstrip('-').replace('-', '_'), False)
     config = unittest.mock.Mock(spec=['getoption', 'cache'])
-    config.getoption.side_effect = lambda name: options.get(name.lstrip('-').replace('-', '_'), False)
+    config.getoption.side_effect = getoption
     config.cache = cache
     return config
 
@@ -23,3 +25,8 @@ class TestTheFolderOfKeptNodeAnswers(unittest.TestCase):
             os.environ.pop('REFINERY_TEST_NODE_ANSWERS', None)
             conftest.pytest_configure(a_configuration(cache))
             self.assertNotIn('REFINERY_TEST_NODE_ANSWERS', os.environ)
+
+    def test_asking_node_about_every_program_keeps_no_answers_even_where_a_folder_is_set(self):
+        with unittest.mock.patch.dict(os.environ, {'REFINERY_TEST_NODE_ANSWERS': 'answers'}):
+            conftest.pytest_configure(a_configuration(unittest.mock.Mock(), no_node_answers=True))
+            self.assertEqual(os.environ['REFINERY_TEST_NODE_ANSWERS'], '')

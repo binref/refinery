@@ -1,5 +1,5 @@
 """
-Two differentials, each an option that runs a whole test selection under a cost device turned off:
+Three differentials, each an option that runs a whole test selection under a cost device turned off:
 
 - `--no-pin` neutralizes every model-cache pin, so each model read observes the current tree. A pin
   is a cost device, never a semantic one — the obligation
@@ -16,11 +16,15 @@ Two differentials, each an option that runs a whole test selection under a cost 
   self. Tests that count builds or edits measure what the batch itself buys and skip themselves
   through the `REFINERY_TEST_NO_BATCH` environment variable this option sets before collection.
 
+- `--no-node-answers` asks Node about every program instead of giving the answer it kept from an
+  earlier run. A kept answer is a cost device as well, so any test that fails only under this
+  option was given an answer that Node no longer gives.
+
 Node's answers to the JavaScript oracle are kept between runs in pytest's cache folder, which this
 module names in the `REFINERY_TEST_NODE_ANSWERS` environment variable unless that is set already:
 `--cache-clear` empties it, and without the cache provider, or where its folder cannot be created,
-nothing is kept. Which answers are kept, and when they are dropped, is
-`test.lib.scripts.js.analysis.differential.NodeAnswers`.
+nothing is kept. `--no-node-answers` empties the variable, which keeps nothing either. Which answers
+are kept, and when they are dropped, is `test.lib.scripts.js.analysis.differential.NodeAnswers`.
 """
 from __future__ import annotations
 
@@ -44,10 +48,18 @@ def pytest_addoption(parser):
             'apply every batched pass edit as it is decided and run the selection as a differential'
         ),
     )
+    parser.addoption(
+        '--no-node-answers',
+        action='store_true',
+        default=False,
+        help='ask Node about every program instead of giving the answers kept from earlier runs',
+    )
 
 
 def pytest_configure(config):
-    if (cache := getattr(config, 'cache', None)) is not None:
+    if config.getoption('--no-node-answers'):
+        os.environ['REFINERY_TEST_NODE_ANSWERS'] = ''
+    elif (cache := getattr(config, 'cache', None)) is not None:
         with suppress(OSError):
             os.environ.setdefault('REFINERY_TEST_NODE_ANSWERS', str(cache.mkdir('node-answers')))
     if config.getoption('--no-pin'):
