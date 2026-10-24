@@ -331,7 +331,8 @@ class NodeAnswers:
     What one version of Node printed for programs that ran without an error, kept in a folder so
     that a later run of the test suite starts Node only for the programs it has not seen. The folder
     holds one subfolder per identity that `_kept_answers` gives, and opening it for one identity
-    removes all others, because an answer is only ever the answer of the Node that gave it.
+    removes the subfolders of all others, because an answer is only ever the answer of the Node that
+    gave it. Nothing else in the folder is touched: its name is a setting, and it may hold more.
 
     An answer that ends in an error is not kept. A run that fails for a reason unrelated to the
     program, such as a machine that ran out of memory, can then never be given again as what the
@@ -343,9 +344,11 @@ class NodeAnswers:
     """
 
     def __init__(self, folder: Path, identity: str):
+        if not _KEPT_ANSWERS_FOLDER.fullmatch(identity):
+            raise ValueError(F'not the identity of a Node: {identity!r}')
         folder.mkdir(parents=True, exist_ok=True)
         for other in folder.iterdir():
-            if other.name != identity:
+            if other.name != identity and _KEPT_ANSWERS_FOLDER.fullmatch(other.name):
                 shutil.rmtree(other, ignore_errors=True)
         self.folder = folder / identity
         self.folder.mkdir(exist_ok=True)
@@ -383,6 +386,10 @@ console.log(JSON.stringify([process.version, options.locale, options.timeZone]))
 '''
 
 _NODE_VERSION = re.compile(r'v\d+\.\d+\.\d+')
+
+#: The name of a folder of kept answers: the version of the Node that gave them, and a digest of
+#: the surroundings it gave them in.
+_KEPT_ANSWERS_FOLDER = re.compile(F'{_NODE_VERSION.pattern}-[0-9a-f]{{16}}')
 
 
 @functools.lru_cache(maxsize=None)

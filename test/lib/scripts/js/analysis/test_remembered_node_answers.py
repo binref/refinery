@@ -104,10 +104,21 @@ class TestNoAnswerIsKeptForANodeThatCannotSayWhatItIs(TestBase):
 
 class TestTheAnswersOfOneVersionOfNodeAreNotGivenForAnother(TestBase):
 
+    FIRST = 'v1.0.0-0123456789abcdef'
+    OTHER = 'v2.0.0-0123456789abcdef'
+    QUESTION = ((('snippet.js', 'console.log(1);'),), 'snippet.js', NODE_TIMEOUT)
+
     def test_opening_the_answers_for_another_version_drops_those_of_the_first(self):
-        question = ((('snippet.js', 'console.log(1);'),), 'snippet.js', NODE_TIMEOUT)
         with tempfile.TemporaryDirectory() as folder:
-            NodeAnswers(Path(folder), 'v1.0.0').keep(question, '1\n')
-            self.assertEqual(NodeAnswers(Path(folder), 'v1.0.0').answer(question), '1\n')
-            self.assertIsNone(NodeAnswers(Path(folder), 'v2.0.0').answer(question))
-            self.assertIsNone(NodeAnswers(Path(folder), 'v1.0.0').answer(question))
+            NodeAnswers(Path(folder), self.FIRST).keep(self.QUESTION, '1\n')
+            self.assertEqual(NodeAnswers(Path(folder), self.FIRST).answer(self.QUESTION), '1\n')
+            self.assertIsNone(NodeAnswers(Path(folder), self.OTHER).answer(self.QUESTION))
+            self.assertIsNone(NodeAnswers(Path(folder), self.FIRST).answer(self.QUESTION))
+
+    def test_opening_the_answers_leaves_whatever_else_the_folder_holds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder, 'notes').mkdir()
+            Path(folder, 'notes', 'todo.txt').write_text('keep me')
+            NodeAnswers(Path(folder), self.FIRST)
+            NodeAnswers(Path(folder), self.OTHER)
+            self.assertEqual(Path(folder, 'notes', 'todo.txt').read_text(), 'keep me')
