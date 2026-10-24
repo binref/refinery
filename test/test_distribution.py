@@ -3,8 +3,6 @@ from __future__ import annotations
 import pathlib
 import unittest
 
-import pytest
-
 from setuptools.command.egg_info import FileList
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -27,11 +25,6 @@ def _shipped_in_the_source_distribution() -> set[str]:
 
 class TestTheSourceDistribution(unittest.TestCase):
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='the RAR decoder sources are missing from MANIFEST.in, so installs from PyPI compile no extension',
-    )
     def test_every_cython_source_of_the_package_is_shipped(self):
         cython = sorted(
             path.relative_to(_ROOT).as_posix()
