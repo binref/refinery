@@ -383,15 +383,16 @@ class NodeAnswers:
         """
         The standard output kept for *question*, or `None` when none is kept.
         """
+        path = self._path(question)
         try:
-            kept = self._path(question).read_bytes()
+            kept = path.read_bytes()
         except OSError:
             return None
         digest, answer = kept[:32], kept[32:]
         if hashlib.sha256(answer).digest() != digest:
             return None
         with suppress(OSError):
-            os.utime(self._path(question))
+            os.utime(path)
         return answer.decode('utf-8')
 
     def keep(self, question: tuple, stdout: str) -> None:
