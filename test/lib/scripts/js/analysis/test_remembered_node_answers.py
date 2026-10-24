@@ -27,15 +27,12 @@ def a_run_keeping_answers_in(folder: str):
     A run of the test suite as far as Node's answers go: it starts with no answer remembered in the
     process, and it keeps its answers in *folder*.
     """
-    def forget():
-        differential._kept_answers.cache_clear()
-        differential._remembered_node_behavior.cache_clear()
     with unittest.mock.patch.dict(os.environ, {'REFINERY_TEST_NODE_ANSWERS': folder}):
-        forget()
+        differential._remembered_node_behavior.cache_clear()
         try:
             yield
         finally:
-            forget()
+            differential._remembered_node_behavior.cache_clear()
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

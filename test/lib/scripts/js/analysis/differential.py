@@ -376,12 +376,11 @@ class NodeAnswers:
 
 
 @functools.lru_cache(maxsize=None)
-def _kept_answers(node: str) -> NodeAnswers | None:
+def _kept_answers(node: str, folder: str) -> NodeAnswers | None:
     """
-    The answers kept for the version of *node* in the folder that `REFINERY_TEST_NODE_ANSWERS`
-    names, or `None` when it names none.
+    The answers kept in *folder* for the version of *node*, or `None` when *folder* is empty.
     """
-    if not (folder := os.environ.get('REFINERY_TEST_NODE_ANSWERS')):
+    if not folder:
         return None
     version = subprocess.run(
         [node, '--version'],
@@ -402,7 +401,7 @@ def _remembered_node_behavior(
     timeout: float,
 ) -> tuple[str, str | None]:
     question = (graph, entry, timeout)
-    kept = _kept_answers(node)
+    kept = _kept_answers(node, os.environ.get('REFINERY_TEST_NODE_ANSWERS', ''))
     if kept is not None and (stdout := kept.answer(question)) is not None:
         return stdout, None
     stdout, error = _node_behavior(node, graph, entry, timeout)
