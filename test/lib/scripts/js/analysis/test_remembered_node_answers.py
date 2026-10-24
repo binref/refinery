@@ -89,9 +89,9 @@ class TestNoAnswerIsKeptForANodeThatCannotSayWhatItIs(TestBase):
             impostor = os.path.join(programs, 'impostor.cmd' if os.name == 'nt' else 'impostor')
             with open(impostor, 'w') as script:
                 if os.name == 'nt':
-                    script.write('@echo ["not a version","en-US","UTC"]\n')
+                    script.write('@echo ["not a version",{},"en-US","UTC"]\n')
                 else:
-                    script.write('#!/bin/sh\necho \'["not a version","en-US","UTC"]\'\n')
+                    script.write('#!/bin/sh\necho \'["not a version",{},"en-US","UTC"]\'\n')
             os.chmod(impostor, 0o755)
             for name, executable in [
                 ('missing', os.path.join(programs, 'missing')),
@@ -106,14 +106,16 @@ class TestNoAnswerIsKeptForANodeThatCannotSayWhatItIs(TestBase):
 
 class TestTheKeptAnswersDependOnlyOnTheLocaleAndTimeZoneOfTheEnvironment(TestBase):
 
-    def test_another_test_or_variable_changes_nothing_but_the_time_zone_does(self):
+    def test_another_test_or_variable_changes_nothing_but_the_locale_data_or_time_zone_does(self):
         with unittest.mock.patch.dict(os.environ, {'TZ': 'UTC', 'PYTEST_CURRENT_TEST': 'one'}):
             first = differential._surroundings()
             os.environ['PYTEST_CURRENT_TEST'] = 'two'
             os.environ['REFINERY_UNRELATED'] = 'set'
             self.assertEqual(differential._surroundings(), first)
-            os.environ['TZ'] = 'Asia/Tokyo'
-            self.assertNotEqual(differential._surroundings(), first)
+            for variable, value in [('NODE_ICU_DATA', 'icu'), ('TZ', 'Asia/Tokyo')]:
+                with self.subTest(variable=variable):
+                    with unittest.mock.patch.dict(os.environ, {variable: value}):
+                        self.assertNotEqual(differential._surroundings(), first)
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_the_answers_are_opened_once_for_all_the_tests_of_a_run(self):

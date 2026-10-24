@@ -404,27 +404,30 @@ class NodeAnswers:
                 os.remove(stream.name)
 
 
-#: Asks Node what it is and where it runs: its version, and the locale and time zone that every
-#: program sees, which change what a program prints as much as the program does.
+#: Asks Node what it is and where it runs: its version, the versions of what it is built with, such
+#: as its Unicode, locale and time zone data, and the locale and time zone that every program sees.
+#: All of them change what a program prints as much as the program does.
 _NODE_IDENTITY = R'''
 const options = Intl.DateTimeFormat().resolvedOptions();
-console.log(JSON.stringify([process.version, options.locale, options.timeZone]));
+console.log(JSON.stringify([process.version, process.versions, options.locale, options.timeZone]));
 '''
 
 _NODE_VERSION = re.compile(r'v\d+\.\d+\.\d+')
 
 #: The variables of the environment, besides those whose name begins with `LC_`, that decide the
-#: locale and time zone Node runs in.
+#: locale and time zone Node runs in and the locale data it reads.
 _SURROUNDING_VARIABLES = frozenset({
     'LANG',
     'LANGUAGE',
+    'NODE_ICU_DATA',
     'TZ',
 })
 
 
 def _surroundings() -> tuple[tuple[str, str], ...]:
     """
-    The variables of this process's environment that decide the locale and time zone Node runs in.
+    The variables of this process's environment that decide the locale, time zone and locale data of
+    Node.
     Nothing else of the environment changes which answers apply, and the rest changes all the time:
     pytest names the current test in it.
     """
@@ -446,9 +449,10 @@ def _kept_answers(
 ) -> NodeAnswers | None:
     """
     The answers kept in *folder* for the Node at *node* in *surroundings*, or `None` when *folder*
-    is empty or Node cannot say what it is. Answers are kept apart by the version of Node,
-    by the locale and time zone it runs in, and by the code of this module, which decides how Node
-    is asked: a change to any of them starts the answers over.
+    is empty or Node cannot say what it is. Answers are kept apart by the executable of Node, by the
+    versions it reports for itself and what it is built with, by the locale and time zone it runs in,
+    by *surroundings*, and by the code of this module, which decides how Node is asked: a change to
+    any of them starts the answers over.
     """
     if not folder:
         return None
@@ -460,13 +464,13 @@ def _kept_answers(
             timeout=NODE_TIMEOUT,
             env=_node_environment(),
         )
-        version, locale, time_zone = json.loads(asked.stdout)
+        version, versions, locale, time_zone = json.loads(asked.stdout)
     except (OSError, subprocess.SubprocessError, TypeError, ValueError):
         return None
     if asked.returncode != 0 or not isinstance(version, str) or not _NODE_VERSION.fullmatch(version):
         return None
     code = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-    identity = json.dumps([locale, time_zone, surroundings, code])
+    identity = json.dumps([node, versions, locale, time_zone, surroundings, code])
     digest = hashlib.sha256(identity.encode('utf-8')).hexdigest()
     try:
         return NodeAnswers(Path(folder), F'{version}-{digest[:16]}')
