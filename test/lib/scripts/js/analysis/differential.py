@@ -467,9 +467,11 @@ def _kept_answers(
     """
     The answers kept in *folder* for the Node at *node* in *surroundings*, or `None` when *folder*
     is empty or Node cannot say what it is. Answers are kept apart by the executable of Node, by the
-    versions it reports for itself and what it is built with, by the locale and time zone it runs in,
-    by *surroundings*, and by the code of this module, which decides how Node is asked: a change to
-    any of them starts the answers over.
+    versions it reports for itself and what it is built with, by the locale and time zone it says it
+    runs in, and by the code of this module, which decides how Node is asked: a change to any of
+    them starts the answers over. The *surroundings* themselves are not part of that: they only
+    decide when Node is asked again, so that two shells that spell the same locale differently, or
+    set a variable this Node ignores, share their answers.
     """
     if not folder:
         return None
@@ -488,7 +490,7 @@ def _kept_answers(
     if asked.returncode != 0 or not isinstance(version, str) or not _NODE_VERSION.fullmatch(version):
         return None
     code = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-    identity = json.dumps([node, versions, locale, time_zone, surroundings, code])
+    identity = json.dumps([node, versions, locale, time_zone, code])
     digest = hashlib.sha256(identity.encode('utf-8')).hexdigest()
     return NodeAnswers(Path(folder), F'{version}-{digest[:16]}')
 

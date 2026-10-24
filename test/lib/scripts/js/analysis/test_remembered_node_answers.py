@@ -84,6 +84,17 @@ class TestAnAnswerWithoutAnErrorIsKeptForTheNextRun(TestBase):
         self.assertEqual(utc, utc_again)
         self.assertNotEqual(utc, tokyo)
 
+    def test_two_spellings_of_the_time_zone_that_node_reads_as_one_share_their_answers(self):
+        program = A_PROGRAM_THAT_PRINTS_SOMETHING_ELSE_ON_EVERY_RUN
+        answers = []
+        with tempfile.TemporaryDirectory() as folder:
+            for time_zone in ['UTC', 'Etc/UTC']:
+                with a_run_keeping_answers_in(folder):
+                    with unittest.mock.patch.dict(os.environ, {'TZ': time_zone}):
+                        answers.append(behavior(program))
+        utc, etc_utc = answers
+        self.assertEqual(utc, etc_utc)
+
 
 class TestNoAnswerIsKeptForANodeThatCannotSayWhatItIs(TestBase):
 
