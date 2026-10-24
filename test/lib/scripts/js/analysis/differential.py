@@ -282,10 +282,11 @@ def module_graph_behavior(
     Each file reaches the folder untranslated, for the reason `behavior` gives, and the extension in
     each key is what decides the goal symbol its file is read under.
 
-    Node's answer is kept for the rest of the process and given again when the same files, entry
-    and timeout are asked about: tests often ask about the same program, and starting Node costs
-    far more than running the program. A test whose question is whether two runs of a program agree
-    passes *fresh*, which runs Node again.
+    Node's answers to the latest 1024 questions are kept and given again when the same files, entry
+    and timeout are asked about: tests often ask about the same program a few questions apart, and
+    starting Node costs far more than running the program. The bound keeps a process that asks
+    about many programs only once, like a fuzzing sweep, from holding all of them. A test whose
+    question is whether two runs of a program agree passes *fresh*, which runs Node again.
     """
     refuse_script_host_near_a_sample('node')
     node = node_executable()
@@ -297,7 +298,7 @@ def module_graph_behavior(
     return _remembered_node_behavior(node, graph, entry, timeout)
 
 
-@functools.lru_cache(maxsize=None)
+@functools.lru_cache(maxsize=1024)
 def _remembered_node_behavior(
     node: str,
     graph: tuple[tuple[str, str], ...],
