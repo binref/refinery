@@ -165,8 +165,16 @@ class TestTheFolderOfKeptAnswers(TestBase):
         with tempfile.TemporaryDirectory() as folder:
             answers = NodeAnswers(Path(folder), self.FIRST)
             shutil.rmtree(answers.folder)
+            answers.folder.write_bytes(B'a file where the folder was')
             answers.keep(self.QUESTION, '1\n')
             self.assertIsNone(answers.answer(self.QUESTION))
+
+    def test_a_folder_removed_during_a_run_is_made_again_by_the_next_answer_kept(self):
+        with tempfile.TemporaryDirectory() as folder:
+            answers = NodeAnswers(Path(folder), self.FIRST)
+            shutil.rmtree(Path(folder))
+            answers.keep(self.QUESTION, '1\n')
+            self.assertEqual(answers.answer(self.QUESTION), '1\n')
 
     def test_a_kept_answer_whose_file_was_emptied_or_garbled_is_no_answer(self):
         for name, damage in [

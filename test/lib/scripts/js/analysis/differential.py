@@ -396,10 +396,13 @@ class NodeAnswers:
 
     def keep(self, question: tuple, stdout: str) -> None:
         """
-        Keep *stdout* as the answer to *question*, which ran without an error. An answer that cannot
-        be kept, because the folder is gone or full, is only asked about again.
+        Keep *stdout* as the answer to *question*, which ran without an error. A folder removed during
+        the run, as `--cache-clear` does in a worker that starts later than the others, is made again;
+        an answer that cannot be kept, because the disk is full or the folder cannot be made, is only
+        asked about again.
         """
         try:
+            self.folder.mkdir(parents=True, exist_ok=True)
             stream = tempfile.NamedTemporaryFile(dir=self.folder, delete=False)
         except OSError:
             return
