@@ -148,6 +148,14 @@ class EVBool(EnvironmentVariableSetting[bool]):
             return False
 
 
+class EVStr(EnvironmentVariableSetting[str]):
+    """
+    A string stored in an environment variable.
+    """
+    def read(self, value: str):
+        return value
+
+
 class EVPath(EnvironmentVariableSetting[Path]):
     """
     A system path stored in an environment variable.
@@ -196,3 +204,4 @@ class environment:
     silence_ps1_warning = EVBool('SILENCE_PS1_WARNING')
     disable_ps1_bandaid = EVBool('DISABLE_PS1_BANDAID')
     no_extensions = EVBool('NO_EXTENSIONS')
+    prefix = EVStr('PREFIX')

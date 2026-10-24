@@ -51,7 +51,6 @@ class BuildCommand(_build_ext):
             self._cleanup_renamed()
 
 
-__prefix__ = os.getenv('REFINERY_PREFIX') or ''
 __minver__ = '3.11'
 __github__ = 'https://github.com/binref/refinery/'
 __gitraw__ = 'https://raw.githubusercontent.com/binref/refinery/'
@@ -274,11 +273,13 @@ def get_config():
     def normalize_name(name: str, separator: str = '-'):
         return separator.join([segment for segment in name.strip('_').split('_')])
 
-    if __prefix__ == '!':
+    prefix = environment.prefix.value or ''
+
+    if prefix == '!':
         console_scripts = []
     else:
         console_scripts = [
-            F'{__prefix__}{normalize_name(name)}={path}:{name}.run'
+            F'{prefix}{normalize_name(name)}={path}:{name}.run'
             for name, path in refinery.__unit__.UNITS.items()
         ]
     console_scripts.append('binref=refinery.explore:explorer')
