@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -114,6 +115,13 @@ class TestTheAnswersOfOneVersionOfNodeAreNotGivenForAnother(TestBase):
             self.assertEqual(NodeAnswers(Path(folder), self.FIRST).answer(self.QUESTION), '1\n')
             self.assertIsNone(NodeAnswers(Path(folder), self.OTHER).answer(self.QUESTION))
             self.assertIsNone(NodeAnswers(Path(folder), self.FIRST).answer(self.QUESTION))
+
+    def test_an_answer_that_cannot_be_kept_is_only_not_kept(self):
+        with tempfile.TemporaryDirectory() as folder:
+            answers = NodeAnswers(Path(folder), self.FIRST)
+            shutil.rmtree(answers.folder)
+            answers.keep(self.QUESTION, '1\n')
+            self.assertIsNone(answers.answer(self.QUESTION))
 
     def test_opening_the_answers_leaves_whatever_else_the_folder_holds(self):
         with tempfile.TemporaryDirectory() as folder:

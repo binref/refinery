@@ -367,11 +367,16 @@ class NodeAnswers:
 
     def keep(self, question: tuple, stdout: str) -> None:
         """
-        Keep *stdout* as the answer to *question*, which ran without an error.
+        Keep *stdout* as the answer to *question*, which ran without an error. An answer that cannot
+        be kept, because the folder is gone or full, is only asked about again.
         """
-        with tempfile.NamedTemporaryFile(dir=self.folder, delete=False) as stream:
-            stream.write(stdout.encode('utf-8'))
         try:
+            stream = tempfile.NamedTemporaryFile(dir=self.folder, delete=False)
+        except OSError:
+            return
+        try:
+            with stream:
+                stream.write(stdout.encode('utf-8'))
             os.replace(stream.name, self._path(question))
         except OSError:
             with suppress(OSError):
