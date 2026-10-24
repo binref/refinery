@@ -216,6 +216,7 @@ def get_config():
     import importlib
     import pkgutil
 
+    from refinery.lib.environment import EVBool
     from refinery.lib.loader import get_all_entry_points
 
     for _, name, _ in pkgutil.iter_modules(refinery.lib.shared.__path__):
@@ -293,7 +294,7 @@ def get_config():
     extras = get_setup_extras(requirements)
     config = get_setup_common()
 
-    if os.getenv('REFINERY_NO_EXTENSIONS'):
+    if EVBool('NO_EXTENSIONS').value:
         ext = []
     else:
         try:
