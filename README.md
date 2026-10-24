@@ -116,6 +116,8 @@ Specifying the special prefix `!` will have the effect that no shell commands ar
 and binary refinery will be installed only as a library.
 Setting the environment variable `REFINERY_NO_EXTENSIONS` to `1` installs refinery without compiling its Cython extensions;
 it then uses the slower pure Python implementations of the same algorithms.
+Both variables take effect only when pip builds refinery, and pip reuses a package it has built before:
+pass `--no-cache-dir` to pip when you change either of them.
 If you want to install the current refinery `HEAD`, you can repeat all of the above steps, specifying this repository instead of the pip package.
 For example, the following will install the very latest refinery commit:
 ```
