@@ -72,14 +72,17 @@ class TestAnAnswerWithoutAnErrorIsKeptForTheNextRun(TestBase):
         self.assertEqual((first[1], again[1]), ('TypeError', 'TypeError'))
         self.assertNotEqual(first[0], again[0])
 
-    def test_answers_kept_in_one_time_zone_are_not_given_in_another(self):
+    def test_answers_kept_in_one_time_zone_are_given_in_it_and_not_in_another(self):
         program = A_PROGRAM_THAT_PRINTS_SOMETHING_ELSE_ON_EVERY_RUN
+        answers = []
         with tempfile.TemporaryDirectory() as folder:
-            with a_run_keeping_answers_in(folder), unittest.mock.patch.dict(os.environ, {'TZ': 'UTC'}):
-                first = behavior(program)
-            with a_run_keeping_answers_in(folder), unittest.mock.patch.dict(os.environ, {'TZ': 'Asia/Tokyo'}):
-                again = behavior(program)
-        self.assertNotEqual(first, again)
+            for time_zone in ['UTC', 'Asia/Tokyo', 'UTC']:
+                with a_run_keeping_answers_in(folder):
+                    with unittest.mock.patch.dict(os.environ, {'TZ': time_zone}):
+                        answers.append(behavior(program))
+        utc, tokyo, utc_again = answers
+        self.assertEqual(utc, utc_again)
+        self.assertNotEqual(utc, tokyo)
 
 
 class TestNoAnswerIsKeptForANodeThatCannotSayWhatItIs(TestBase):
