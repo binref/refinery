@@ -169,6 +169,13 @@ class TestTheFolderOfKeptAnswers(TestBase):
             answers.keep(self.QUESTION, '1\n')
             self.assertIsNone(answers.answer(self.QUESTION))
 
+    def test_answers_whose_folder_vanishes_while_they_are_opened_are_still_kept(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with unittest.mock.patch.object(Path, 'iterdir', side_effect=FileNotFoundError):
+                answers = NodeAnswers(Path(folder), self.FIRST)
+            answers.keep(self.QUESTION, '1\n')
+            self.assertEqual(answers.answer(self.QUESTION), '1\n')
+
     def test_a_folder_removed_during_a_run_is_made_again_by_the_next_answer_kept(self):
         with tempfile.TemporaryDirectory() as folder:
             answers = NodeAnswers(Path(folder), self.FIRST)

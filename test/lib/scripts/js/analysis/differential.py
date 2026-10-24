@@ -361,8 +361,12 @@ class NodeAnswers:
         if not _KEPT_ANSWERS_FOLDER.fullmatch(identity):
             raise ValueError(F'not the identity of a Node: {identity!r}')
         self.folder = folder / identity
-        self.folder.mkdir(parents=True, exist_ok=True)
-        os.utime(self.folder)
+        with suppress(OSError):
+            self.folder.mkdir(parents=True, exist_ok=True)
+            os.utime(self.folder)
+            self._remove_what_went_unused(folder, identity)
+
+    def _remove_what_went_unused(self, folder: Path, identity: str) -> None:
         unopened = time.time() - _UNOPENED_FOR
         for other in folder.iterdir():
             if other.name == identity or not _KEPT_ANSWERS_FOLDER.fullmatch(other.name):
@@ -486,10 +490,7 @@ def _kept_answers(
     code = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     identity = json.dumps([node, versions, locale, time_zone, surroundings, code])
     digest = hashlib.sha256(identity.encode('utf-8')).hexdigest()
-    try:
-        return NodeAnswers(Path(folder), F'{version}-{digest[:16]}')
-    except OSError:
-        return None
+    return NodeAnswers(Path(folder), F'{version}-{digest[:16]}')
 
 
 @functools.lru_cache(maxsize=1024)
