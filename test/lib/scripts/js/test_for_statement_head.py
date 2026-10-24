@@ -34,7 +34,6 @@ the oracle. Nothing from `samples` may ever be fed to this.
 """
 from __future__ import annotations
 
-import functools
 import inspect
 import unittest
 
@@ -70,13 +69,11 @@ def _program(loop: str) -> str:
     return F'{FIXTURE}\n{loop}\nconsole.log(JSON.stringify(log));\n'
 
 
-@functools.lru_cache(maxsize=None)
 def node_says(source: str) -> str:
     """
     What Node.js makes of *source*: the standard output it produced, or the name of the error that
     stopped it. Every snippet here ends by printing the log it built as a JSON array, so the two
-    kinds of answer cannot be mistaken for one another. The snippets are deterministic, which is
-    what makes it sound to answer twice from one run.
+    kinds of answer cannot be mistaken for one another.
     """
     out, error = behavior(source)
     return error or out.strip()

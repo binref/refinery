@@ -10,7 +10,6 @@ makes of the text, which the library makes in Node when the test runs.
 """
 from __future__ import annotations
 
-import functools
 import inspect
 import json
 import re
@@ -188,7 +187,6 @@ FIZZBUZZ_PRINTED = (
 _COMPRESSED = re.compile(r'COMPRESSED\(("(?:[^"\\]|\\.)*")\)')
 
 
-@functools.lru_cache(maxsize=None)
 def _compressed_by_the_library(texts: tuple[str, ...]) -> dict[str, str]:
     """
     The string literal Node prints for what the library's `compressToUTF16` makes of each of
