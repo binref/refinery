@@ -52,6 +52,24 @@ _ERROR_RE = re.compile(r'^([A-Za-z]+Error): .*$', re.MULTILINE)
 #: machine can stall a run that needs a fraction of a second for more than a quarter of a minute.
 NODE_TIMEOUT = 60.0
 
+#: Variables of the environment that change how Node prints or starts without being part of any
+#: program: colors, extra command line options, and extra places to look for modules. Node starts
+#: without them, so that a shell setting one, such as `FORCE_COLOR`, asks the same question as any.
+_NOT_FOR_NODE = frozenset({
+    'FORCE_COLOR',
+    'NO_COLOR',
+    'NODE_DISABLE_COLORS',
+    'NODE_OPTIONS',
+    'NODE_PATH',
+})
+
+
+def _node_environment() -> dict[str, str]:
+    """
+    The environment every run of Node gets: this process's own, without `_NOT_FOR_NODE`.
+    """
+    return {key: value for key, value in os.environ.items() if key.upper() not in _NOT_FOR_NODE}
+
 
 @functools.lru_cache(maxsize=None)
 def node_executable() -> str | None:
@@ -79,6 +97,7 @@ def node_reads_as_a_program(source: str) -> bool:
             [executable, '--check', str(path)],
             capture_output=True,
             text=True,
+            env=_node_environment(),
         )
     return completed.returncode == 0
 
@@ -370,6 +389,7 @@ def _kept_answers(node: str) -> NodeAnswers | None:
         text=True,
         check=True,
         timeout=NODE_TIMEOUT,
+        env=_node_environment(),
     ).stdout.strip()
     return NodeAnswers(Path(folder), version)
 
@@ -408,6 +428,7 @@ def _node_behavior(
             encoding='utf-8',
             errors='replace',
             timeout=timeout,
+            env=_node_environment(),
         )
     error = None if proc.returncode == 0 else _normalize_error(proc.stderr)
     return proc.stdout, error
