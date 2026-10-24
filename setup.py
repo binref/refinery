@@ -11,11 +11,18 @@ import toml
 from contextlib import suppress
 from setuptools import Extension
 from setuptools.command.build_ext import build_ext as _build_ext
+from setuptools.errors import SetupError
 
 
 class BuildCommand(_build_ext):
     """
-    Custom command that fixes a Windows issue for building Cython extensions: as the setup imports
+    Custom command for building the Cython extensions. Every extension has a pure Python module of
+    the same name that refinery uses when the extension is missing. A package build, such as the one
+    pip runs to install refinery, therefore leaves out any extension that cannot be built, so that
+    installing refinery does not depend on a C compiler. An inplace build requires every extension,
+    because it is how the extensions are built for testing them.
+
+    The command also fixes a Windows issue for building Cython extensions: as the setup imports
     refinery modules, loaded Cython extension get loaded and are locked by the OS. The default
     inplace build fails because it cannot overwrite the locked file.
     The workaround renames existing .pyd files before the build. Windows allows renaming open files
@@ -23,6 +30,11 @@ class BuildCommand(_build_ext):
     best-effort basis.
     """
     _renamed: dict[str, str] = {}
+
+    def _require_every_extension(self):
+        available = {ext.name for ext in self.extensions}
+        if missing := [name for name in EXTENSION_DICT if name not in available]:
+            raise SetupError(F'an inplace build needs every extension, these cannot be built: {", ".join(missing)}')
 
     def _rename_locked_extensions(self):
         if not self.inplace:
@@ -43,6 +55,10 @@ class BuildCommand(_build_ext):
                 os.remove(renamed)
 
     def run(self):
+        if self.inplace:
+            self._require_every_extension()
+        for ext in self.extensions:
+            ext.optional = not self.inplace
         self._renamed.clear()
         self._rename_locked_extensions()
         try:
@@ -300,7 +316,7 @@ def get_config():
     else:
         try:
             import Cython.Build as cy
-            ext = cy.cythonize(EXTENSION_LIST, nthreads=os.cpu_count() or 1)
+            ext = cy.cythonize(EXTENSION_LIST, nthreads=os.cpu_count() or 1, exclude_failures=True)
         except Exception:
             ext = []
 
