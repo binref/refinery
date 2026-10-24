@@ -30,3 +30,10 @@ class TestTheFolderOfKeptNodeAnswers(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {'REFINERY_TEST_NODE_ANSWERS': 'answers'}):
             conftest.pytest_configure(a_configuration(unittest.mock.Mock(), no_node_answers=True))
             self.assertEqual(os.environ['REFINERY_TEST_NODE_ANSWERS'], '')
+
+    def test_a_folder_named_already_is_kept_and_no_cache_folder_is_made(self):
+        cache = unittest.mock.Mock()
+        with unittest.mock.patch.dict(os.environ, {'REFINERY_TEST_NODE_ANSWERS': 'answers'}):
+            conftest.pytest_configure(a_configuration(cache))
+            self.assertEqual(os.environ['REFINERY_TEST_NODE_ANSWERS'], 'answers')
+        cache.mkdir.assert_not_called()

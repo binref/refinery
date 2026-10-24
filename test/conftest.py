@@ -59,9 +59,12 @@ def pytest_addoption(parser):
 def pytest_configure(config):
     if config.getoption('--no-node-answers'):
         os.environ['REFINERY_TEST_NODE_ANSWERS'] = ''
-    elif (cache := getattr(config, 'cache', None)) is not None:
+    elif (
+        'REFINERY_TEST_NODE_ANSWERS' not in os.environ
+        and (cache := getattr(config, 'cache', None)) is not None
+    ):
         with suppress(OSError):
-            os.environ.setdefault('REFINERY_TEST_NODE_ANSWERS', str(cache.mkdir('node-answers')))
+            os.environ['REFINERY_TEST_NODE_ANSWERS'] = str(cache.mkdir('node-answers'))
     if config.getoption('--no-pin'):
         os.environ['REFINERY_TEST_NO_PIN'] = '1'
         from refinery.lib.scripts.modelcache import ModelCacheBase
