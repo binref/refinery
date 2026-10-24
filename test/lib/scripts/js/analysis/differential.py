@@ -435,7 +435,8 @@ def completion_values(
     can see, and a table of programs is meant to be read one row at a time.
 
     The values come back through a file rather than through standard output, because a program in
-    *programs* may print, and what it prints must not be mistaken for what it evaluates to.
+    *programs* may print, and what it prints must not be mistaken for what it evaluates to. Node
+    therefore always runs again here: a remembered answer would leave that file unwritten.
     """
     with tempfile.TemporaryDirectory() as folder:
         path = os.path.join(folder, 'values.json')
@@ -444,7 +445,7 @@ def completion_values(
             'host': evaluation.value,
             'report': path,
         })
-        _, error = behavior(F'{_COMPLETION_DRIVER}\nreport({request});\n', timeout=timeout)
+        _, error = behavior(F'{_COMPLETION_DRIVER}\nreport({request});\n', timeout=timeout, fresh=True)
         if error is not None:
             raise AssertionError(F'node refused a table of {len(programs)} programs: {error}')
         with open(path, 'r', encoding='utf-8') as stream:
