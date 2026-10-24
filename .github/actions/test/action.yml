@@ -10,6 +10,12 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Keep Node Answers Between Runs
+      uses: actions/cache@v6
+      with:
+        path: .pytest_cache/d/node-answers
+        key: node-answers-${{ runner.os }}-${{ inputs.py }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: node-answers-${{ runner.os }}-
     - name: Disable Compiled Modules
       shell: ${{ contains(inputs.os, 'windows') && 'pwsh' || 'bash' }}
       run: python setup.py disable_ext
