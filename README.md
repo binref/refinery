@@ -27,7 +27,7 @@ and is an attempt to implement something like [CyberChef](https://github.com/gch
 Make a Python virtual environment. You need Python 3.11 or later. Install refinery like this:
 ```
 python -m pip install -U pip
-python -m pip install -U binary-refinery[extended]
+python -m pip install -U  --no-cache-dir binary-refinery[extended]
 ```
 Run units with `-h` to learn how they work, grep through the [docs][] or use the command `binref` to find them.
 Watch [a recent video][VOD3] if you want to see it in action.
@@ -100,28 +100,27 @@ python -m pip install -U pip
 ```
 Then just install the refinery package:
 ```
-pip install -U binary-refinery
+pip install -U --no-cache-dir binary-refinery
 ```
 If you want to choose a prefix for all units, you can specify it via the environment variable `REFINERY_PREFIX`.
 For example, the following command will install refinery into the current Python environment with prefix `r.` on Linux:
 ```bash
-REFINERY_PREFIX=r. pip install -U binary-refinery
+REFINERY_PREFIX=r. pip install -U --no-cache-dir binary-refinery
 ```
 On Windows, you would have to run the following commands:
 ```batch
 set REFINERY_PREFIX=r.
-pip install -U binary-refinery
+pip install -U --no-cache-dir binary-refinery
 ```
 Specifying the special prefix `!` will have the effect that no shell commands are created at all,
 and binary refinery will be installed only as a library.
-Setting the environment variable `REFINERY_NO_EXTENSIONS` to `1` installs refinery without compiling its Cython extensions;
-it then uses the slower pure Python implementations of the same algorithms.
-Both variables take effect only when pip builds refinery, and pip reuses a package it has built before:
-pass `--no-cache-dir` to pip when you change either of them.
+Set `REFINERY_NO_EXTENSIONS=1` to install without Cython extensions;
+refinery then uses (much slower) pure Python implementations several algorithms.
+
 If you want to install the current refinery `HEAD`, you can repeat all of the above steps, specifying this repository instead of the pip package.
 For example, the following will install the very latest refinery commit:
 ```
-pip install -U git+git://github.com/binref/refinery.git
+pip install -U --no-cache-dir git+git://github.com/binref/refinery.git
 ```
 Finally, if you are using [REMnux][remnux-main], you can use their [refinery docker container][remnux].
 
@@ -192,6 +191,20 @@ The documentation can then be found in the subdirectory `html` directly next to 
 
 The [tutorials](tutorials) are Jupyter notebooks which you can simply run and execute if your virtual environment has [Jupyter installed][jupyter].
 It's worth pointing out that [Visual Studio Code has very comfortable support for Jupyter][jupyter-vscode].
+
+## Environment Variables
+
+The following are some of the environment variables that binary refinery consumes:
+
+| Name                           | Type | Effect                                               |
+|--------------------------------|------|------------------------------------------------------|
+| `REFINERY_TERM_SIZE`           | Int  | Maximum width for all terminal output.               |
+| `REFINERY_COLORLESS`           | Bool | Do not ever show colors on the terminal.             |
+| `REFINERY_DISABLE_SIZE_FORMAT` | Bool | Do not pretty-print sizes in meta variables.         |
+| `REFINERY_DISABLE_PS1_BANDAID` | Bool | Disable the PS1 [bandaid][psh1].                     |
+| `REFINERY_SILENCE_PS1_WARNING` | Bool | Silence the PS1 [bandaid][psh1] warning.             |
+| `REFINERY_NO_EXTENSIONS`       | Bool | Do not compile Cython extensions.                    |
+| `REFINERY_PREFIX`              | Str  | Unit shell command prefix (used during installation) |
 
 ## Examples
 
