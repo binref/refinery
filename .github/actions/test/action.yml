@@ -11,6 +11,7 @@ runs:
   using: "composite"
   steps:
     - name: Keep Node Answers Between Runs
+      if: ${{ !contains(inputs.os, 'windows') }}
       uses: actions/cache@v6
       with:
         path: .pytest_cache/d/node-answers
