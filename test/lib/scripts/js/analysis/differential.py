@@ -468,6 +468,7 @@ def _kept_answers(
     """
     if not folder:
         return None
+    refuse_script_host_near_a_sample('node')
     try:
         asked = subprocess.run(
             [node, '-e', _NODE_IDENTITY],

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import tempfile
 
 from samples import ScriptHostRefused
 from test import TestBase
+from test.lib.scripts.js.analysis import differential
 from test.lib.scripts.js.analysis.differential import behavior, node_reads_as_a_program
 from test.lib.scripts.ps1.oracle import run
 
@@ -27,6 +29,11 @@ class TestATestThatDecodedASampleCannotStartAScriptHost(TestBase):
     def test_node_does_not_run_a_snippet(self):
         with self.assertRaises(ScriptHostRefused):
             behavior('0;')
+
+    def test_node_is_not_asked_what_it_is(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ScriptHostRefused):
+                differential._kept_answers('node', folder, ())
 
     def test_node_does_not_check_a_snippet(self):
         with self.assertRaises(ScriptHostRefused):
