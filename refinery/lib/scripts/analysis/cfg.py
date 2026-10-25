@@ -33,9 +33,12 @@ import enum
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import AbstractSet as Set
-from typing import Callable, Iterable, Iterator, Sequence
+from typing import Callable, Generic, Hashable, Iterable, Iterator, Mapping, Sequence, TypeVar
 
 from refinery.lib.scripts import Node
+from refinery.lib.scripts.analysis.components import Condensation
+
+_Label = TypeVar('_Label', bound=Hashable)
 
 
 class CfgEdge(enum.Flag):
@@ -268,22 +271,36 @@ def flood(
     walk every layer above reaches the graphs through — asking a projection per node instead costs
     the whole run more than the resumption edges do.
     """
-    distinct: dict[int, CfgNode] = {}
+    distinct_sources: dict[int, CfgNode] = {}
     for source in sources:
-        distinct.setdefault(id(source), source)
-    stack = list(distinct.values())
-    declines = projection.declines_the_hub and any(
-        node.graph.carries_resumption for node in stack)
-    seen: set[int] = set()
-    if declines and forward:
-        coarse = [node for node in stack if node.is_hub_bound]
-        if coarse:
-            seen.update(id(node) for node in coarse)
-            _sweep(coarse, seen, forward=True, declines=False)
-            stack = [node for node in stack if not node.is_hub_bound and id(node) not in seen]
-    seen.update(id(node) for node in stack)
-    _sweep(stack, seen, forward=forward, declines=declines)
+        distinct_sources.setdefault(id(source), source)
+    coarse, precise, declines = _split_sources(
+        list(distinct_sources.values()), forward=forward, projection=projection)
+    seen: set[int] = {id(node) for node in coarse}
+    if coarse:
+        _sweep(coarse, seen, forward=True, declines=False)
+    pending = [node for node in precise if id(node) not in seen]
+    seen.update(id(node) for node in pending)
+    _sweep(pending, seen, forward=forward, declines=declines)
     return seen
+
+
+def _split_sources(
+    sources: list[CfgNode], *, forward: bool, projection: Projection,
+) -> tuple[list[CfgNode], list[CfgNode], bool]:
+    """
+    The rule `flood` documents, applied to *sources*: those walked with the hub followed, because
+    the forward reading carries nothing for them; those walked under *projection*; and whether that
+    walk declines the hub at all, which it need not where no source's graph draws one. Every walk
+    that floods from sources reads it here, so no two of them can disagree about which source takes
+    which walk.
+    """
+    declines = projection.declines_the_hub and any(node.graph.carries_resumption for node in sources)
+    if declines and forward:
+        coarse = [node for node in sources if node.is_hub_bound]
+        if coarse:
+            return coarse, [node for node in sources if not node.is_hub_bound], True
+    return [], sources, declines
 
 
 def _sweep(
@@ -362,6 +379,117 @@ def normal_reach(
             seen.add(id(target))
             stack.append(target)
     return frozenset(seen - barrier_ids)
+
+
+class LabelledReach(Generic[_Label]):
+    """
+    Which of several labelled sets of sources reach each node, for every label at once: the answer
+    `flood_labels` and `normal_reach_labels` give where a caller would otherwise walk the same graph
+    once per label.
+
+    A label reaches a node exactly when the walk of the same name, seeded with that label's sources
+    alone, would include the node; each source reaches itself. A label that was never named reaches
+    nothing. The labels are kept once per strongly connected component of what the sources reach,
+    so the cost is one bit per label per component, and a caller that labels only what it will ask
+    about pays for nothing else.
+    """
+
+    def __init__(self, bits: dict[_Label, int], walks: list[tuple[Condensation[CfgNode], list[int]]]):
+        self._bits = bits
+        self._walks = walks
+
+    def reaches(self, label: _Label, node: CfgNode) -> bool:
+        """
+        Whether *label* reaches *node*.
+        """
+        bit = self._bits.get(label)
+        if bit is None:
+            return False
+        for condensation, masks in self._walks:
+            number = condensation.number_of(node)
+            if number is not None and masks[number] & bit:
+                return True
+        return False
+
+
+def _label_walk(
+    seeds: dict[int, tuple[CfgNode, int]],
+    adjacent: Callable[[CfgNode], list[CfgNode]],
+) -> tuple[Condensation[CfgNode], list[int]]:
+    """
+    Push the labels *seeds* carry along *adjacent*: the part of the graph the seeds reach is
+    condensed, and every component's labels are its own seeds' joined with those of every component
+    that reaches it, in one pass whatever the number of labels.
+    """
+    condensation = Condensation([node for node, _ in seeds.values()], adjacent)
+
+    def own(number: int) -> int:
+        mask = 0
+        for member in condensation.components[number]:
+            seeded = seeds.get(id(member))
+            if seeded is not None:
+                mask |= seeded[1]
+        return mask
+
+    return condensation, condensation.accumulate(own, int.__or__, downstream=False)
+
+
+def _seed_labels(
+    sources: Mapping[_Label, Iterable[CfgNode]],
+) -> tuple[dict[_Label, int], dict[int, tuple[CfgNode, int]]]:
+    bits: dict[_Label, int] = {}
+    seeds: dict[int, tuple[CfgNode, int]] = {}
+    for label, nodes in sources.items():
+        bit = bits.setdefault(label, 1 << len(bits))
+        for node in nodes:
+            known = seeds.get(id(node))
+            seeds[id(node)] = (node, bit if known is None else known[1] | bit)
+    return bits, seeds
+
+
+def flood_labels(
+    sources: Mapping[_Label, Iterable[CfgNode]], *, forward: bool, projection: Projection,
+) -> LabelledReach[_Label]:
+    """
+    `flood` for every label of *sources* in one walk: a label reaches a node exactly when `flood`
+    seeded with that label's sources would return the node's id. Which source takes which walk is
+    `flood`'s own rule (`_split_sources`), and the hub is screened by `Projection`, so neither is
+    spelled a second time here.
+    """
+    bits, seeds = _seed_labels(sources)
+    coarse, precise, declines = _split_sources(
+        [node for node, _ in seeds.values()], forward=forward, projection=projection)
+    walks: list[tuple[Condensation[CfgNode], list[int]]] = []
+    for nodes, reading in ((coarse, Projection.MAY), (precise, projection if declines else Projection.MAY)):
+        if nodes:
+            adjacent = reading.successors if forward else reading.predecessors
+            walks.append(_label_walk({id(node): seeds[id(node)] for node in nodes}, adjacent))
+    return LabelledReach(bits, walks)
+
+
+def normal_reach_labels(
+    sources: Mapping[_Label, Iterable[CfgNode]], *, forward: bool,
+) -> LabelledReach[_Label]:
+    """
+    `normal_reach` without a barrier for every label of *sources* in one walk, in either direction:
+    forward, a label reaches what its sources lead to over `CfgEdge.NORMAL` edges; backward, it
+    reaches every node that leads to one of its sources over such edges, which is the question
+    whether something a node's continuation runs is one of the label's sources.
+    """
+    bits, seeds = _seed_labels(sources)
+
+    def adjacent(node: CfgNode) -> list[CfgNode]:
+        if forward:
+            return [
+                target for target in node.successors
+                if node.graph.edge_kind(node, target) is CfgEdge.NORMAL
+            ]
+        return [
+            source for source in node.predecessors
+            if node.graph.edge_kind(source, node) is CfgEdge.NORMAL
+        ]
+
+    return LabelledReach(bits, [_label_walk(seeds, adjacent)] if seeds else [])
 
 
 class ControlFlowGraph:
@@ -548,6 +676,26 @@ def reachable_forward_from_any(
                 'hub-bound and takes the precise walk over what this graph calls plain flow'
             )
     return frozenset(flood(sources, forward=True, projection=Projection.FORWARD))
+
+
+def reachable_forward_labels(
+    graph: ControlFlowGraph,
+    sources: Mapping[_Label, Iterable[CfgNode]],
+) -> LabelledReach[_Label]:
+    """
+    `reachable_forward_from_any` for every label of *sources* in one walk, with the same refusal of
+    a source that belongs to another body.
+    """
+    listed = {label: list(nodes) for label, nodes in sources.items()}
+    for nodes in listed.values():
+        for source in nodes:
+            if source.graph is not graph:
+                raise ValueError(
+                    'a source of a forward flood belongs to another body: the two facts this walk '
+                    'reads are recorded per graph, so such a source reads as neither a hub nor '
+                    'hub-bound and takes the precise walk over what this graph calls plain flow'
+                )
+    return flood_labels(listed, forward=True, projection=Projection.FORWARD)
 
 
 class ElementLocator:

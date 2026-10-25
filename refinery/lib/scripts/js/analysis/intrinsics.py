@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Iterator, NamedTuple
 
 from refinery.lib.scripts import Node
-from refinery.lib.scripts.analysis.cycles import strongly_connected_components
+from refinery.lib.scripts.analysis.components import strongly_connected_components
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     Binding,

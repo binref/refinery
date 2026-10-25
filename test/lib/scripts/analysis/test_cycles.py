@@ -4,7 +4,8 @@ from test import TestBase
 from test.lib.scripts.analysis import graph_from_edges as _graph
 
 from refinery.lib.scripts.analysis.cfg import CfgNode
-from refinery.lib.scripts.analysis.cycles import nodes_on_a_cycle, strongly_connected_components
+from refinery.lib.scripts.analysis.components import strongly_connected_components
+from refinery.lib.scripts.analysis.cycles import nodes_on_a_cycle
 
 
 def _successors(node: CfgNode) -> list[CfgNode]:

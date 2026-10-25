@@ -12,7 +12,11 @@ from refinery.lib.scripts.analysis.cfg import (
     ControlFlowGraph,
     Projection,
     flood,
+    flood_labels,
+    normal_reach,
+    normal_reach_labels,
     reachable_forward_from_any,
+    reachable_forward_labels,
     reachable_from_any,
 )
 from refinery.lib.scripts.analysis.cycles import CycleModel
@@ -1239,3 +1243,103 @@ class TestPs1AResumableBlockTakesOnlyTheNodesBuiltInsideIt(TestBase):
                 raise _BuildFailed
         node = builder.detached_node(following)
         self.assertEqual((node.predecessors, node.successors), ([], []))
+
+
+class TestPs1ALabelledWalkAnswersEveryLabelAsItsOwnWalkWould(TestBase):
+    """
+    One labelled walk stands in for one walk per label. Each label below is either a single node or
+    a handler statement paired with another node, the pairing that decides which sweep a source
+    takes, and its answer is compared with the walk of the same name seeded with its sources alone.
+    """
+
+    _SCRIPTS = [
+        "trap { 'handled'\ncontinue }\n'one'\nif ($c) { trap { continue }\nGet-Item nope\n'two' }",
+        "while ($x) { trap { 'h'\ncontinue }\nGet-Item a\n$y = [int]$s\n'tail' }\n'after'",
+        "trap { if ($q) { trap { continue }\n'p' }\ncontinue }\n'x'\n'y'",
+        "try { Get-Item a\n'b' } catch { 'c' } finally { 'f' }\nfunction f { trap { break }\n'in' }",
+        "switch ($x) { 1 { 'a' } 2 { trap { continue }\nGet-Item b } default { 'c' } }\n'z'",
+        "do { trap { continue }\nGet-Item a\nif ($y) { break }\n$v = [int]$s } while ($x)\n'end'",
+    ]
+
+    def _labelled_graphs(self):
+        for script in self._SCRIPTS:
+            for graph in build_ps1_control_flow(Ps1Parser(script).parse()).values():
+                labels: dict[object, list[CfgNode]] = {
+                    index: [node] for index, node in enumerate(graph.nodes)}
+                for bound in (node for node in graph.nodes if node.is_hub_bound):
+                    for other in graph.nodes:
+                        labels[(id(bound), id(other))] = [bound, other]
+                yield script, graph, labels
+
+    def test_a_labelled_flood_answers_every_label_as_its_own_flood(self):
+        for script, graph, labels in self._labelled_graphs():
+            for forward in (True, False):
+                for projection in Projection:
+                    walk = flood_labels(labels, forward=forward, projection=projection)
+                    wrong = [
+                        (label, index)
+                        for label, sources in labels.items()
+                        for reached in (flood(sources, forward=forward, projection=projection),)
+                        for index, node in enumerate(graph.nodes)
+                        if walk.reaches(label, node) != (id(node) in reached)
+                    ]
+                    with self.subTest(script=script, forward=forward, projection=projection.name):
+                        self.assertEqual(wrong, [])
+
+    def test_a_labelled_forward_reach_answers_every_label_as_its_own_reach(self):
+        for script, graph, labels in self._labelled_graphs():
+            walk = reachable_forward_labels(graph, labels)
+            wrong = [
+                (label, index)
+                for label, sources in labels.items()
+                for reached in (reachable_forward_from_any(graph, sources),)
+                for index, node in enumerate(graph.nodes)
+                if walk.reaches(label, node) != (id(node) in reached)
+            ]
+            with self.subTest(script=script):
+                self.assertEqual(wrong, [])
+
+    def test_a_labelled_plain_reach_answers_every_label_as_its_own_plain_reach(self):
+        for script, graph, labels in self._labelled_graphs():
+            onward = normal_reach_labels(labels, forward=True)
+            backward = normal_reach_labels(labels, forward=False)
+            wrong = []
+            for label, sources in labels.items():
+                reached = normal_reach(sources)
+                for index, node in enumerate(graph.nodes):
+                    if onward.reaches(label, node) != (id(node) in reached):
+                        wrong.append(('forward', label, index))
+                    leads = any(id(source) in normal_reach([node]) for source in sources)
+                    if backward.reaches(label, node) != leads:
+                        wrong.append(('backward', label, index))
+            with self.subTest(script=script):
+                self.assertEqual(wrong, [])
+
+    def test_a_label_seeded_in_a_handler_body_reaches_the_block_the_handler_resumes_into(self):
+        tree = Ps1Parser("trap { 'handled'\ncontinue }\n'one'\n'two'").parse()
+        graph = build_ps1_control_flow(tree)[id(tree)]
+        trap = tree.body[0]
+        assert isinstance(trap, Ps1TrapStatement) and trap.body is not None
+        handled = graph.node_of(trap.body.body[0])
+        one = graph.node_of(tree.body[1])
+        two = graph.node_of(tree.body[2])
+        assert handled is not None and one is not None and two is not None
+        walk = reachable_forward_labels(graph, {'handled': [handled]})
+        self.assertTrue(walk.reaches('handled', one))
+        self.assertTrue(walk.reaches('handled', two))
+
+    def test_a_label_never_named_reaches_nothing(self):
+        _, graph, labels = next(self._labelled_graphs())
+        walk = flood_labels(labels, forward=True, projection=Projection.MAY)
+        self.assertFalse(any(walk.reaches('unnamed', node) for node in graph.nodes))
+
+    def test_a_labelled_forward_reach_refuses_a_source_belonging_to_another_body(self):
+        tree = Ps1Parser("trap { continue }\nfunction f { 'in' }\n'out'").parse()
+        graphs = build_ps1_control_flow(tree)
+        definition = next(node for node in tree.walk() if isinstance(node, Ps1FunctionDefinition))
+        body = definition.body
+        assert body is not None
+        inside = graphs[id(body)].node_of(body.body[0])
+        assert inside is not None
+        with self.assertRaises(ValueError):
+            reachable_forward_labels(graphs[id(tree)], {'inside': [inside]})
