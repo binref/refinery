@@ -33,6 +33,8 @@ class TestCollectionTrigger(TestBase):
         return collected, survived
 
     def test_a_cycle_that_grew_the_process_beyond_the_limit_is_collected(self):
+        if sys.platform == 'darwin':
+            self.skipTest('On macOS, the memory read is the peak of the resident memory.')
         collected, survived = self._trigger_after_dropping_a_cycle(growth=16 << 20, size=64 << 20)
         self.assertTrue(collected)
         self.assertFalse(survived)
