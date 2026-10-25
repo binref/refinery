@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import sys
-
-from test import TestBase
+from test import TestBase, lines_executed
 from test.lib.scripts.ps1.corpus import executable
 
 from refinery.lib.scripts.analysis import dominance
@@ -11,19 +9,24 @@ from refinery.lib.scripts.ps1.analysis.cfg import build_ps1_control_flow
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
-def _immediate_dominators_from_sets(
-    graph: ControlFlowGraph, order: list[CfgNode], projection: Projection
-) -> dict[int, int]:
+def _immediate_dominators_from_sets(graph: ControlFlowGraph, projection: Projection) -> dict[int, int]:
     """
-    The immediate dominator of every node in *order*, keyed by node identity, computed the textbook
-    way: a node is dominated by itself and by whatever dominates all of its reachable predecessors,
-    iterated to a fixpoint, and its immediate dominator is the one of its strict dominators that has
-    the most dominators of its own.
+    The immediate dominator of every node the entry reaches under *projection*, keyed by node
+    identity, computed the textbook way: a node is dominated by itself and by whatever dominates all
+    of its reachable predecessors, iterated to a fixpoint, and its immediate dominator is the one of
+    its strict dominators that has the most dominators of its own.
 
     Held apart from the module under test as a second opinion: the set formulation says nothing about
-    the order predecessors are folded in, so it cannot share an ordering bug with the module.
+    the order predecessors are folded in, and the nodes it answers for are found by a walk of its
+    own, so it shares neither an ordering bug nor a reach bug with the module.
     """
-    reachable = {id(node) for node in order}
+    order: list[CfgNode] = [graph.entry]
+    reachable = {id(graph.entry)}
+    for node in order:
+        for successor in projection.successors(node):
+            if id(successor) not in reachable:
+                reachable.add(id(successor))
+                order.append(successor)
     everything = frozenset(reachable)
     sets = {id(node): everything for node in order}
     sets[id(graph.entry)] = frozenset({id(graph.entry)})
@@ -57,69 +60,35 @@ class TestPs1ImmediateDominators(TestBase):
             tree = Ps1Parser(source).parse()
             for index, graph in enumerate(build_ps1_control_flow(tree).values()):
                 for projection in Projection:
-                    order = dominance._reverse_postorder(graph, projection)
+                    idom, _ = dominance._immediate_dominators(graph, projection)
                     with self.subTest(source=source, graph=index, projection=projection.name):
-                        self.assertEqual(
-                            dominance._immediate_dominators(graph, order, projection),
-                            _immediate_dominators_from_sets(graph, order, projection),
-                        )
+                        self.assertEqual(idom, _immediate_dominators_from_sets(graph, projection))
 
 
 class TestPs1DominanceCostsABoundedClimbPerStatement(TestBase):
     """
-    A `catch` clause is reached from every statement of the body it guards, so its immediate
-    dominator is folded from that many predecessors. Folded in the wrong order, each fold walks the
-    whole chain of statements above it and the pass is quadratic in the length of the body.
+    A `catch` clause is reached from every statement of the body it guards, and a resuming `trap`
+    adds a hub with an edge to every statement of its block, so one node has as many predecessors as
+    the body has statements. A computation that climbs the chain of statements above it once per
+    such predecessor is quadratic in the length of the body.
     """
 
-    _SHORT = 200
-    _LONG = 400
-
-    #: Doubling the body doubles the work of a linear pass and quadruples that of a quadratic one, so
-    #: the bound separates the two cost classes without naming a constant that a faster or slower
-    #: machine, or a line added to the module, would move.
-    _BUDGET = 3
-
     @staticmethod
-    def _body(length: int) -> str:
-        return ' '.join(F"'s{index}';" for index in range(length))
+    def _work(head: str, statement: str, tail: str = ''):
+        def work(length: int) -> int:
+            body = '\n'.join(statement.format(index=index) for index in range(length))
+            graphs = build_ps1_control_flow(Ps1Parser(F'{head}\n{body}\n{tail}').parse())
+            return lines_executed(
+                lambda: [dominance._immediate_dominators(graph, Projection.MAY) for graph in graphs.values()],
+                dominance,
+            )
+        return work
 
-    def _lines_traced(self, source: str) -> int:
-        """
-        How many lines of the dominance module run while the immediate dominators of every graph
-        *source* builds are computed.
-        """
-        graphs = build_ps1_control_flow(Ps1Parser(source).parse())
-        counted = 0
+    def test_the_work_for_a_catch_clause_grows_linearly_with_the_guarded_body(self):
+        self.assertWorkGrowsLinearly(self._work('try {', "'s{index}'", '} catch { }'), 100)
 
-        def within(frame, event, argument):
-            nonlocal counted
-            if event == 'line':
-                counted += 1
-            return within
+    def test_the_work_for_a_resuming_trap_grows_linearly_with_the_guarded_body(self):
+        self.assertWorkGrowsLinearly(self._work('trap { continue }', "'s{index}'"), 100)
 
-        def entering(frame, event, argument):
-            return within if frame.f_code.co_filename == dominance.__file__ else None
-
-        previous = sys.gettrace()
-        sys.settrace(entering)
-        try:
-            for graph in graphs.values():
-                dominance._immediate_dominators(
-                    graph,
-                    dominance._reverse_postorder(graph, Projection.MAY),
-                    Projection.MAY,
-                )
-        finally:
-            sys.settrace(previous)
-        return counted
-
-    def _growth(self, shape: str) -> float:
-        short = self._lines_traced(shape.format(body=self._body(self._SHORT)))
-        return self._lines_traced(shape.format(body=self._body(self._LONG))) / short
-
-    def test_doubling_a_guarded_body_does_not_quadruple_the_work_of_a_catch_clause(self):
-        self.assertLess(self._growth('try {{ {body} }} catch {{ }}'), self._BUDGET)
-
-    def test_doubling_a_guarded_body_does_not_quadruple_the_work_of_a_resuming_trap(self):
-        self.assertLess(self._growth('trap {{ continue }}; {body}'), self._BUDGET)
+    def test_the_work_for_a_resuming_trap_over_branches_grows_linearly_with_the_guarded_body(self):
+        self.assertWorkGrowsLinearly(self._work('trap { continue }', "if ($x) {{ 's{index}' }}"), 100)

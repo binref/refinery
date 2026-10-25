@@ -6,10 +6,12 @@ import string
 import unittest
 import contextlib
 import os
+import sys
 import time
 import tracemalloc
 
 from samples import SampleStore
+from types import ModuleType
 from typing import Callable, Iterable
 
 
@@ -64,6 +66,32 @@ def processor_time_ratio(numerator: float, denominator: float) -> float:
     if denominator < 0.05:
         raise ValueError(F'A time of {denominator * 1000:.0f} milliseconds is too short to divide by.')
     return numerator / denominator
+
+
+def lines_executed(operation: Callable[[], object], *modules: ModuleType) -> int:
+    """
+    How many lines of the given modules run while the operation runs, a line inside a loop counted
+    once per pass: a measure of work that no processor, load or cache can move.
+    """
+    files = {module.__file__ for module in modules}
+    counted = 0
+
+    def within(frame, event, argument):
+        nonlocal counted
+        if event == 'line':
+            counted += 1
+        return within
+
+    def entering(frame, event, argument):
+        return within if frame.f_code.co_filename in files else None
+
+    previous = sys.gettrace()
+    sys.settrace(entering)
+    try:
+        operation()
+    finally:
+        sys.settrace(previous)
+    return counted
 
 
 def wontfix(reason: str):
@@ -150,6 +178,19 @@ class TestBase(unittest.TestCase):
             yield
             survivors = [obj for obj in gc.get_objects() if isinstance(obj, cls) and id(obj) not in known]
         self.assertEqual(survivors, [])
+
+    def assertWorkGrowsLinearly(self, work: Callable[[int], int], size: int):
+        """
+        Fails unless the work done at sizes `n`, `2n` and `4n`, with `n` the given size, grows like
+        that of a linear cost. Work that costs `a + b * n` adds exactly twice as much on the second
+        doubling as on the first, whatever `a` and `b` are; a quadratic term makes it up to four
+        times as much. The bound of two and a half admits a logarithmic factor, which adds about
+        a tenth at the sizes these tests use, and fails once a quadratic term costs a ninth of the
+        linear work at `n`.
+        """
+        small, middle, large = (work(factor * size) for factor in (1, 2, 4))
+        self.assertGreater(middle, small)
+        self.assertLess(large - middle, 2.5 * (middle - small))
 
     def assertCollectorFreesLessThan(self, limit: int, operation: Callable[[], object]):
         """

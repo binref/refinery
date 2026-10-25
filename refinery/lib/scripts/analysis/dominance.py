@@ -46,116 +46,83 @@ from refinery.lib.scripts.analysis.cfg import (
 )
 
 
-def _reverse_postorder(graph: ControlFlowGraph, projection: Projection) -> list[CfgNode]:
+def _immediate_dominators(
+    graph: ControlFlowGraph, projection: Projection,
+) -> tuple[dict[int, int], list[CfgNode]]:
     """
-    The nodes of *graph* that its entry reaches under *projection*, ordered so that a node precedes
-    every successor a depth-first walk first arrived at through it. The entry comes first, and a node
-    the projection does not reach does not appear at all — which is what confines every later step to
-    the part of the graph the projection draws.
+    The immediate dominator of every node the entry reaches under *projection*, keyed by node
+    identity, with the entry seeded as its own — the conventional answer, and what marks it as the
+    root for `_dominance_intervals` — and the reached nodes themselves, in the depth-first preorder
+    the computation numbers them in. A node no walk from the entry reaches is in neither, which is
+    what the module docstring requires.
 
-    The walk is iterative rather than recursive. A body of five thousand statements is a walk five
-    thousand deep, and the interpreter's stack is not.
+    Lengauer and Tarjan's algorithm with path compression: number the nodes in depth-first preorder,
+    find each node's semidominator by evaluating its predecessors over a forest that grows in reverse
+    preorder, and settle the immediate dominator from the semidominators in one forward pass. Its
+    cost depends on the edges, not on the order a walk happens to meet the nodes in, which is what
+    an iterative intersection cannot promise: a resuming `trap` adds a hub with an edge to every
+    statement of its block, a walk meets that hub late, and the intersection then climbs from every
+    later predecessor back to the top of the script — the square of the block.
     """
-    order: list[CfgNode] = []
-    seen: set[int] = {id(graph.entry)}
+    number: dict[int, int] = {id(graph.entry): 0}
+    vertex: list[CfgNode] = [graph.entry]
+    parent: list[int] = [0]
     stack: list[tuple[CfgNode, Iterator[CfgNode]]] = [
         (graph.entry, iter(projection.successors(graph.entry)))
     ]
     while stack:
         node, successors = stack[-1]
         for successor in successors:
-            if id(successor) in seen:
+            if id(successor) in number:
                 continue
-            seen.add(id(successor))
+            number[id(successor)] = len(vertex)
+            parent.append(number[id(node)])
+            vertex.append(successor)
             stack.append((successor, iter(projection.successors(successor))))
             break
         else:
-            order.append(node)
             stack.pop()
-    order.reverse()
-    return order
+    count = len(vertex)
+    semi = list(range(count))
+    label = list(range(count))
+    ancestor = [-1] * count
+    idom = [0] * count
+    bucket: list[list[int]] = [[] for _ in range(count)]
 
+    def evaluate(v: int) -> int:
+        if ancestor[v] < 0:
+            return v
+        chain: list[int] = []
+        x = v
+        while ancestor[ancestor[x]] >= 0:
+            chain.append(x)
+            x = ancestor[x]
+        for x in reversed(chain):
+            above = ancestor[x]
+            if semi[label[above]] < semi[label[x]]:
+                label[x] = label[above]
+            ancestor[x] = ancestor[above]
+        return label[v]
 
-def _immediate_dominators(
-    graph: ControlFlowGraph, order: list[CfgNode], projection: Projection,
-) -> dict[int, int]:
-    """
-    The immediate dominator of every node in *order*, keyed by node identity. The entry is seeded as
-    its own, which is the conventional answer and, more to the point here, what marks it as placed
-    for the predecessors that resolve against it.
-
-    Cooper, Harvey and Kennedy's iterative formulation: walk the nodes in reverse postorder and
-    replace each one's immediate dominator with the nearest common ancestor of the ones its
-    already-placed predecessors have, until a whole pass changes nothing. The ancestor is found by
-    walking two chains up in lockstep, always advancing whichever is further from the entry, which is
-    what the reverse-postorder rank measures.
-
-    A predecessor with no immediate dominator yet is skipped rather than intersected against, which
-    is how an unreachable predecessor stays out of the answer: it never gains one, so it is skipped
-    forever, and a reachable node keeps the dominators its reachable predecessors give it. *That is
-    also what would carry the projection on its own* — a node *order* leaves out never gains an
-    immediate dominator and is therefore skipped forever — but the adjacency is read through
-    *projection* here as well, so that this function and the ordering above cannot come to disagree
-    about which graph they are walking.
-
-    **The placed predecessors are folded deepest first, and that is what keeps the pass linear.**
-    Which order they are folded in cannot change the answer — the ancestor operation is commutative
-    and associative, and the loop runs to a fixpoint either way — but it decides how far `common`
-    climbs. A `catch` clause has one predecessor per statement of the body it guards, and those
-    predecessors are themselves a chain; folded shallowest first, the running answer sits at the top
-    of that chain and every further predecessor climbs the whole way down to it, which is a pass
-    quadratic in the size of the body. Folded deepest first, each predecessor is the immediate
-    dominator of the one before it and the climb is a single step. A body of eight hundred statements
-    is the difference between thirteen hundred thousand steps and thirteen thousand.
-
-    The ordering is taken once, before the fixpoint, and not per pass. Neither the adjacency nor
-    the rank changes while the loop runs; only which predecessors are placed does, and filtering
-    a sorted list leaves it sorted. Reading the adjacency inside the loop would also allocate a
-    fresh predecessor list per node per pass under `Projection.FORWARD`, which builds one.
-
-    **The fixpoint is what makes the answer independent of the shape of the graph.** One pass
-    suffices only where every cycle is entered at one point; on a cycle entered at two, a node placed
-    from the predecessors seen so far reports a dominator it does not have, which is the direction a
-    caller cannot defend against. Neither language here was seen to build such a graph and neither is
-    asked to promise it — this module takes whatever graph it is handed — and the fixpoint costs one
-    confirming pass on the graphs that never needed it.
-    """
-    rank = {id(node): index for index, node in enumerate(order)}
-    idom: dict[int, int] = {id(graph.entry): id(graph.entry)}
-
-    def common(a: int, b: int) -> int:
-        while a != b:
-            while rank[a] > rank[b]:
-                a = idom[a]
-            while rank[b] > rank[a]:
-                b = idom[b]
-        return a
-
-    ranked = [
-        (
-            id(node),
-            sorted(
-                (known for known in map(id, projection.predecessors(node)) if known in rank),
-                key=rank.__getitem__,
-                reverse=True,
-            ),
-        )
-        for node in order
-        if node is not graph.entry
-    ]
-    changed = True
-    while changed:
-        changed = False
-        for key, predecessors in ranked:
-            candidate: int | None = None
-            for known in predecessors:
-                if known not in idom:
-                    continue
-                candidate = known if candidate is None else common(known, candidate)
-            if candidate is not None and idom.get(key) != candidate:
-                idom[key] = candidate
-                changed = True
-    return idom
+    for w in range(count - 1, 0, -1):
+        for predecessor in projection.predecessors(vertex[w]):
+            v = number.get(id(predecessor))
+            if v is None:
+                continue
+            u = evaluate(v)
+            if semi[u] < semi[w]:
+                semi[w] = semi[u]
+        bucket[semi[w]].append(w)
+        p = parent[w]
+        ancestor[w] = p
+        for v in bucket[p]:
+            u = evaluate(v)
+            idom[v] = u if semi[u] < semi[v] else p
+        bucket[p].clear()
+    for w in range(1, count):
+        if idom[w] != semi[w]:
+            idom[w] = idom[idom[w]]
+    return {id(vertex[w]): id(vertex[idom[w]]) for w in range(count)}, vertex
 
 
 def _dominance_intervals(
@@ -167,8 +134,7 @@ def _dominance_intervals(
     walk visits a subtree contiguously, so *dominates* becomes the test that one stamp lies inside
     another's half-open interval.
 
-    Iterative for the reason the postorder walk is: the tree of a straight-line body is a chain as
-    long as the body.
+    Iterative, because the tree of a straight-line body is a chain as long as the body.
     """
     root = id(graph.entry)
     children: dict[int, list[int]] = {id(node): [] for node in order}
@@ -210,8 +176,7 @@ class DominanceTree:
     """
 
     def __init__(self, graph: ControlFlowGraph, projection: Projection):
-        order = _reverse_postorder(graph, projection)
-        self.idom = _immediate_dominators(graph, order, projection)
+        self.idom, order = _immediate_dominators(graph, projection)
         self._entered, self._left = _dominance_intervals(self.idom, graph, order)
 
     @property
