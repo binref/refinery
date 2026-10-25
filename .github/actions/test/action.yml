@@ -22,7 +22,7 @@ runs:
     - name: Unit Tests (Pure Python)
       if: ${{ contains(inputs.os, 'windows') }}
       shell: cmd
-      run: pytest -n=4 --dist=worksteal -m "not cythonized_only" test 2>NUL
+      run: pytest -n=6 --dist=worksteal -m "not cythonized_only" test 2>NUL
     - name: Unit Tests (Pure Python)
       if: ${{ contains(inputs.os, 'mac') }}
       shell: bash
@@ -37,7 +37,7 @@ runs:
     - name: Unit Tests (Cython Modules)
       if: ${{ contains(inputs.os, 'windows') }}
       shell: cmd
-      run: pytest -n=4 --dist=worksteal -m "cythonized or cythonized_only" test 2>NUL
+      run: pytest -n=6 --dist=worksteal -m "cythonized or cythonized_only" test 2>NUL
     - name: Unit Tests (Cython Modules)
       if: ${{ contains(inputs.os, 'mac') }}
       shell: bash
