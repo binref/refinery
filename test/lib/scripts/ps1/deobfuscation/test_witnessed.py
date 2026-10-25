@@ -372,7 +372,7 @@ def _expression_cannot_fault_without_the_world(
 
 
 def _removing_a_handler_asked_at_the_handler(
-    self: faults.Ps1FaultReach, handler: Node, may_raise, soft_step_over_observed=lambda _h: True,
+    self: faults.Ps1FaultReach, handler: Node, raises, skips=None,
 ) -> bool:
     """
     The transpose answered by the forward question, which is the confusion the two queries exist to

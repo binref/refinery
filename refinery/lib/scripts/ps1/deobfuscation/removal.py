@@ -3,7 +3,7 @@ The single route by which a PowerShell cleanup pass removes or rewrites statemen
 """
 from __future__ import annotations
 
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 
 from refinery.lib.scripts import (
     BodyEdit,
@@ -15,6 +15,7 @@ from refinery.lib.scripts import (
     reattach,
 )
 from refinery.lib.scripts.ps1.analysis.effects import (
+    Ps1HandlerVerdicts,
     deletion_is_observable,
     emptying_unhooks_a_handler,
     statement_can_raise,
@@ -150,7 +151,8 @@ class Ps1RemovalPlan:
         faults: Ps1FaultReach | None,
         world: Ps1WorldReach | None = None,
         error_state: Ps1ErrorStateReach | None = None,
-        soft_step_over_observed: Callable[[Node], bool] | None = None,
+        handlers: Ps1HandlerVerdicts | None = None,
+        weigh_skips: bool = False,
     ):
         """
         `faults` is the model the removal verdicts are reached against, and `None` says this plan
@@ -174,13 +176,21 @@ class Ps1RemovalPlan:
         which is what every pass got before the model existed — see
         `refinery.lib.scripts.ps1.analysis.effects.deletion_is_observable`.
 
-        `soft_step_over_observed` answers, for the `trap` step-over branch, whether the region a
-        resuming `trap` skips is observable. It is injected rather than read off `world` because that
-        judgment is one of emission and liveness the fault reader holds none of, and it is kept apart
-        from `world` so that it does not change what the `may_raise` half or the replacement veto ask
-        of `statement_can_raise`. Absent, the branch keeps a resuming trap rather than removing it on
-        a guess.
+        `handlers` is the semantic half of the question asked before a `trap` is deleted, taken from
+        the same cache as `faults` and `world`, and handed to
+        `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_a_handler_is_observed`:
+        whether what the `trap` guards may raise is read under `world` when one was given and
+        without one otherwise, which is the question the replacement veto asks of
+        `statement_can_raise` too. Absent, no `trap` is removed. `weigh_skips` asks it also whether
+        the region a resuming `trap` skips is observable, rather than keeping every resuming `trap`
+        whose block may raise. A `handlers` built over another fault model or another world than the
+        ones given is refused, because its verdicts would be about a different tree.
         """
+        if handlers is not None and (
+            handlers.faults is not faults
+            or world is not None and handlers.world is not world
+        ):
+            raise ValueError('the handler verdicts were built over other models than this plan')
         self.parent = parent
         self.attr = attr
         self.removals_may_fault = removals_may_fault
@@ -188,7 +198,8 @@ class Ps1RemovalPlan:
         self.faults = faults
         self.world = world
         self.error_state = error_state
-        self._soft_step_over_observed = soft_step_over_observed
+        self.handlers = handlers
+        self.weigh_skips = weigh_skips
         self._proposals: dict[int, _Proposal] = {}
 
     def propose(
@@ -326,10 +337,13 @@ class Ps1RemovalPlan:
         if faults is None:
             return True
         if _removes_a_handler(proposal.statement):
+            handlers = self.handlers
+            if handlers is None:
+                return True
             return faults.removing_a_handler_is_observed(
                 proposal.statement,
-                lambda raiser: statement_can_raise(raiser, faults, self.world),
-                self._soft_step_over_observed or (lambda _handler: True),
+                handlers.raises(self.world is not None),
+                handlers.skips if self.weigh_skips else None,
             )
         if not self.removals_may_fault:
             return False
@@ -426,10 +440,12 @@ class Ps1RemovalPlans:
         faults: Ps1FaultReach,
         world: Ps1WorldReach | None = None,
         error_state: Ps1ErrorStateReach | None = None,
+        handlers: Ps1HandlerVerdicts | None = None,
     ):
         self.faults = faults
         self.world = world
         self.error_state = error_state
+        self.handlers = handlers
         #: Every plan this opens may remove, so unlike `Ps1RemovalPlan` there is no
         #: substitution-only spelling of this class: a caller holding one is a pass that deletes.
         self._plans: dict[tuple[int, str], Ps1RemovalPlan] = {}
@@ -481,6 +497,7 @@ class Ps1RemovalPlans:
                 faults=self.faults,
                 world=self.world,
                 error_state=self.error_state,
+                handlers=self.handlers,
             )
             return plan
 

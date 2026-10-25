@@ -8,6 +8,7 @@ from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib import scripts
 from refinery.lib.scripts import set_child_list, tree_root, tree_version
+from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.faults import build_fault_reach
 from refinery.lib.scripts.ps1.deobfuscation import (
@@ -973,3 +974,32 @@ class TestPs1RemovalPlansFindEachListOncePerBatch(TestPs1):
             return lines_executed(remove_all, scripts, removal)
 
         self.assertWorkGrowsLinearly(work, 100)
+
+
+class TestPs1ARemovalPlanTakesHandlerVerdictsOnlyOverItsOwnModels(TestPs1):
+
+    def test_verdicts_built_over_another_fault_model_are_refused(self):
+        script = Ps1Parser("trap { continue }\n'a'").parse()
+        cache = Ps1ModelCache(script)
+        with self.assertRaises(ValueError):
+            Ps1RemovalPlan(script, faults=_faults(script), handlers=cache.handlers)
+
+    def test_verdicts_built_over_another_world_are_refused(self):
+        script = Ps1Parser("trap { continue }\n'a'").parse()
+        cache = Ps1ModelCache(script)
+        other = Ps1ModelCache(script)
+        with self.assertRaises(ValueError):
+            Ps1RemovalPlan(script, faults=cache.faults, world=other.world_reach, handlers=cache.handlers)
+
+    def test_verdicts_built_over_the_same_models_are_taken(self):
+        script = Ps1Parser("trap { continue }\n'a'").parse()
+        cache = Ps1ModelCache(script)
+        plan = Ps1RemovalPlan(script, faults=cache.faults, world=cache.world_reach, handlers=cache.handlers)
+        self.assertIs(plan.handlers, cache.handlers)
+
+    def test_a_plan_without_verdicts_removes_no_trap(self):
+        script = Ps1Parser("trap { continue }\n'a'").parse()
+        plan = Ps1RemovalPlan(script, faults=_faults(script))
+        plan.propose(script.body[0])
+        self.assertFalse(plan.commit())
+        self.assertIsInstance(script.body[0], Ps1TrapStatement)

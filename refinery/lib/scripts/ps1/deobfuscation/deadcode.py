@@ -19,7 +19,6 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     is_fault_free,
     is_side_effect_free,
     output_sink,
-    resuming_trap_step_over_is_observed,
 )
 from refinery.lib.scripts.ps1.analysis.values import (
     integer_of,
@@ -516,8 +515,8 @@ class Ps1DeadCodeElimination(Transformer):
             removals_may_fault=False,
             faults=cache.faults,
             error_state=cache.error_state,
-            soft_step_over_observed=lambda handler: resuming_trap_step_over_is_observed(
-                handler, cache.faults, cache.world_reach),
+            handlers=cache.handlers,
+            weigh_skips=True,
         )
         for stmt in get_body(parent):
             if (

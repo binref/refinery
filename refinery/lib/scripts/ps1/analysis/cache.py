@@ -26,7 +26,7 @@ from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.commands import Ps1CommandModel, build_command_model
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow, build_variable_flow
 from refinery.lib.scripts.ps1.analysis.dominance import build_dominance
-from refinery.lib.scripts.ps1.analysis.effects import Ps1OutputFlow, build_output_flow
+from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts, Ps1OutputFlow, build_output_flow
 from refinery.lib.scripts.ps1.analysis.errorstate import (
     Ps1ErrorStateReach,
     build_error_state_reach,
@@ -87,6 +87,7 @@ class Ps1ModelCache(ModelCacheBase):
         '_object_flow',
         '_commands',
         '_error_state',
+        '_handlers',
         '_used_before_defined',
         '_names_may_be_read_unseen',
     )
@@ -106,6 +107,7 @@ class Ps1ModelCache(ModelCacheBase):
     _object_flow: Ps1ObjectFlow | None
     _commands: Ps1CommandModel | None
     _error_state: Ps1ErrorStateReach | None
+    _handlers: Ps1HandlerVerdicts | None
     _used_before_defined: frozenset[str] | None
     _names_may_be_read_unseen: Ps1UnseenReads | None
 
@@ -255,6 +257,15 @@ class Ps1ModelCache(ModelCacheBase):
         return self._lazy('_commands', lambda: build_command_model(
             self.root, self.control_flow, self.dominance, self.blocks,
             frozenset(self.call_graph.defined_names), self.closed_world.shadowed_names))
+
+    @property
+    def handlers(self) -> Ps1HandlerVerdicts:
+        """
+        The semantic half of whether deleting a handler changes what runs — whether what it guards
+        may raise, and whether a resuming `trap`'s skip is observable — over `faults` and
+        `world_reach`, rebuilt with them.
+        """
+        return self._lazy('_handlers', lambda: Ps1HandlerVerdicts(self.faults, self.world_reach, self.root))
 
     @property
     def error_state(self) -> Ps1ErrorStateReach:

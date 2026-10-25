@@ -7,10 +7,7 @@ from test import TestBase
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
-from refinery.lib.scripts.ps1.analysis.effects import (
-    resuming_trap_step_over_is_observed,
-    statement_can_raise,
-)
+from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts
 from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1FaultReach,
     Ps1FaultRouting,
@@ -42,12 +39,20 @@ def _model(source: str) -> tuple[Ps1Script, Ps1FaultReach]:
     return tree, build_fault_reach(build_control_flow_model(tree))
 
 
-def _may_raise(reach: Ps1FaultReach):
+class _Answering:
     """
-    The real fault-possibility predicate the transpose is injected with, so the unit tests judge a
-    `trap` by the raisers a removal site sees rather than by every statement its block offers.
+    Raise verdicts that answer every question about what lies behind a handler with *answer*, and
+    never report a raise that ends the run.
     """
-    return lambda node: statement_can_raise(node, reach)
+
+    def __init__(self, answer: bool):
+        self._answer = answer
+
+    def may_raise_behind(self, paths, start) -> bool:
+        return self._answer
+
+    def may_end_the_run_behind(self, paths, start) -> bool:
+        return False
 
 
 def _handler_removal_is_observed(tree: Ps1Script, reach: Ps1FaultReach, handler: Node) -> bool:
@@ -59,11 +64,8 @@ def _handler_removal_is_observed(tree: Ps1Script, reach: Ps1FaultReach, handler:
     """
     control_flow = build_control_flow_model(tree)
     world = build_world_reach(measure_world(tree), lambda: control_flow)
-    return reach.removing_a_handler_is_observed(
-        handler,
-        _may_raise(reach),
-        lambda trap: resuming_trap_step_over_is_observed(trap, reach, world),
-    )
+    verdicts = Ps1HandlerVerdicts(reach, world, tree)
+    return reach.removing_a_handler_is_observed(handler, verdicts.raises(False), verdicts.skips)
 
 
 #: The subexpression that `TestPs1ATrapWrittenInASubexpressionGuardsThatSubexpression` is measured
@@ -417,8 +419,8 @@ class TestPs1RemovingATrapIsJudgedByWhereItsErrorsWouldGoInstead(TestBase):
             [int]'a'
         """)
         trap = tree.body[0]
-        self.assertTrue(reach.removing_a_handler_is_observed(trap, lambda node: True))
-        self.assertFalse(reach.removing_a_handler_is_observed(trap, lambda node: False))
+        self.assertTrue(reach.removing_a_handler_is_observed(trap, _Answering(True)))
+        self.assertFalse(reach.removing_a_handler_is_observed(trap, _Answering(False)))
 
     def test_a_trap_matters_only_while_its_block_still_holds_something_that_may_raise(self):
         guarding, guarding_reach = _model("""
