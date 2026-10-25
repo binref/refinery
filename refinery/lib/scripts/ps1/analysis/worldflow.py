@@ -74,8 +74,10 @@ from refinery.lib.scripts.analysis.cfg import (
     CfgNode,
     ControlFlowGraph,
     ControlFlowModel,
+    LabelledReach,
     Projection,
     reachable_forward_from_any,
+    reachable_forward_labels,
 )
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockReach, classify_block
 from refinery.lib.scripts.ps1.analysis.world import (
@@ -97,6 +99,35 @@ from refinery.lib.scripts.ps1.model import (
     Ps1StringLiteral,
     Ps1Variable,
 )
+
+
+class Ps1CommandShadows:
+    """
+    The forward floods from the placed redefinition sites of every command name a script takes over,
+    keyed by the normalized name: a name spares a position when no redefinition of it can have run
+    before that position. A name missing from *landings* has a site no flood can bound, so it spares
+    no position. The floods are walked as one, and only on the first question: most builds of a
+    world reach are never asked about a name at all.
+    """
+
+    def __init__(self, graph: ControlFlowGraph, landings: Mapping[str, list[CfgNode]]):
+        for nodes in landings.values():
+            for node in nodes:
+                if node.graph is not graph:
+                    raise ValueError('a redefinition site was placed in another body than the flood')
+        self._graph = graph
+        self._landings = landings
+        self._floods: LabelledReach[str] | None = None
+
+    def spares(self, name: str, position: CfgNode) -> bool:
+        """
+        Whether no redefinition of *name* can have run before *position*.
+        """
+        if name not in self._landings:
+            return False
+        if self._floods is None:
+            self._floods = reachable_forward_labels(self._graph, self._landings)
+        return not self._floods.reaches(name, position)
 
 
 class Ps1WorldReach:
@@ -138,7 +169,7 @@ class Ps1WorldReach:
         control_flow: ControlFlowModel | None = None,
         poisoned: frozenset[int] = frozenset(),
         poisoned_only_by: Mapping[int, tuple[Node, ...]] | None = None,
-        shadow_poisoned: Mapping[str, frozenset[int]] | None = None,
+        shadow_poisoned: Ps1CommandShadows | None = None,
         refuse: bool = False,
         build_version: int = 0,
     ):
@@ -147,7 +178,7 @@ class Ps1WorldReach:
         self._control_flow = control_flow
         self._poisoned = poisoned
         self._poisoned_only_by = poisoned_only_by or {}
-        self._shadow_poisoned = shadow_poisoned or {}
+        self._shadow_poisoned = shadow_poisoned
         self._refuse = refuse
         self._build_version = build_version
 
@@ -227,8 +258,8 @@ class Ps1WorldReach:
             return False
         if not self._world.command_shadowed(name):
             return True
-        shadow = self._shadow_poisoned.get(normalize_command_name(name))
-        return shadow is not None and id(position) not in shadow
+        shadows = self._shadow_poisoned
+        return shadows is not None and shadows.spares(normalize_command_name(name), position)
 
     def closed_at(self, node) -> bool:
         """
@@ -422,7 +453,7 @@ def _flood_shadow_sites(
     sites: tuple[Ps1ShadowSite, ...],
     control_flow: ControlFlowModel,
     root_graph: ControlFlowGraph,
-) -> dict[str, frozenset[int]]:
+) -> Ps1CommandShadows:
     """
     The forward flood from every placed redefinition of each command name, keyed the way the shadow
     set is keyed. Forward in the strict sense `reachable_forward_from_any` gives it: a name rebound
@@ -447,10 +478,7 @@ def _flood_shadow_sites(
             landings.pop(name, None)
             continue
         landings.setdefault(name, []).append(landing)
-    return {
-        name: reachable_forward_from_any(root_graph, nodes)
-        for name, nodes in landings.items()
-    }
+    return Ps1CommandShadows(root_graph, landings)
 
 
 def _lift_to_root(

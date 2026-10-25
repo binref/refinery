@@ -4,14 +4,25 @@ import unittest
 
 from inspect import cleandoc
 
-from test import TestBase
+from test import TestBase, lines_executed
 
 from refinery.lib.scripts import set_body
+from refinery.lib.scripts.analysis import cfg, components
+from refinery.lib.scripts.analysis.cfg import reachable_forward_from_any
+from refinery.lib.scripts.ps1.analysis import worldflow
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
+from refinery.lib.scripts.ps1.analysis.cfg import build_ps1_control_flow
 from refinery.lib.scripts.ps1.analysis.world import build_closed_world
-from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
+from refinery.lib.scripts.ps1.analysis.worldflow import Ps1CommandShadows, Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import resolve_command_name
-from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1InvokeMember, Ps1Script
+from refinery.lib.scripts.ps1.model import (
+    Ps1CommandInvocation,
+    Ps1FunctionDefinition,
+    Ps1InvokeMember,
+    Ps1Script,
+    Ps1TrapStatement,
+    Ps1WhileLoop,
+)
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -481,3 +492,86 @@ class TestPs1ABindingOfAnUninvokedNameFloodsNothing(TestBase):
         )
         self.assertFalse(cache.world_reach.may_trust_command_name_at('get-random', read))
         self.assertFalse(cache.world_reach.closed_at(read))
+
+
+class TestPs1CommandShadowsAnswerAsOneFloodPerName(TestBase):
+    """
+    Every redefined name is answered from one walk over all of them, which has to agree with the
+    forward flood from that name's own sites alone.
+    """
+
+    _SCRIPT = cleandoc("""
+        trap { function Get-Date { 'd' }
+        continue }
+        $Null = Get-Random -Maximum 7
+        if ($x) { function Get-Random { 'r' } }
+        while ($y) {
+          Get-Random
+          Set-Alias Get-Item Get-ChildItem
+          Get-Date
+        }
+        function Get-Random { 'again' }
+        Get-Item x
+    """)
+
+    def _graph_and_landings(self):
+        script = Ps1Parser(self._SCRIPT).parse()
+        graph = build_ps1_control_flow(script)[id(script)]
+        loop = script.body[3]
+        assert isinstance(loop, Ps1WhileLoop) and loop.body is not None
+        trap = script.body[0]
+        assert isinstance(trap, Ps1TrapStatement) and trap.body is not None
+
+        def node(element):
+            found = graph.node_of(element)
+            assert found is not None
+            return found
+
+        landings = {
+            'get-date': [node(trap.body.body[0])],
+            'get-random': [node(script.body[2]), node(script.body[4])],
+            'get-item': [node(loop.body.body[1])],
+        }
+        return graph, landings
+
+    def test_every_name_spares_exactly_what_its_own_flood_leaves(self):
+        graph, landings = self._graph_and_landings()
+        shadows = Ps1CommandShadows(graph, landings)
+        for name, sites in landings.items():
+            flooded = reachable_forward_from_any(graph, sites)
+            wrong = [
+                index for index, position in enumerate(graph.nodes)
+                if shadows.spares(name, position) == (id(position) in flooded)
+            ]
+            with self.subTest(name=name):
+                self.assertEqual(wrong, [])
+
+    def test_a_name_without_placed_sites_spares_no_position(self):
+        graph, landings = self._graph_and_landings()
+        shadows = Ps1CommandShadows(graph, landings)
+        self.assertFalse(any(shadows.spares('write-host', position) for position in graph.nodes))
+
+    def test_a_site_placed_in_another_body_is_refused(self):
+        script = Ps1Parser("function f { 'in' }\n'out'").parse()
+        graphs = build_ps1_control_flow(script)
+        definition = script.body[0]
+        assert isinstance(definition, Ps1FunctionDefinition) and definition.body is not None
+        inside = graphs[id(definition.body)].node_of(definition.body.body[0])
+        assert inside is not None
+        with self.assertRaises(ValueError):
+            Ps1CommandShadows(graphs[id(script)], {'f': [inside]})
+
+    def test_the_work_of_asking_about_every_call_of_every_redefined_name_grows_linearly(self):
+        def work(count: int) -> int:
+            script = Ps1Parser('\n'.join(
+                F"function Get-Thing{index} {{ 's' }}\nGet-Thing{index}" for index in range(count))).parse()
+            calls = script.body[1::2]
+
+            def ask():
+                reach = Ps1ModelCache(script).world_reach
+                for index, call in enumerate(calls):
+                    reach.may_trust_command_name_at(F'Get-Thing{index}', call)
+
+            return lines_executed(ask, worldflow, cfg, components)
+
+        self.assertWorkGrowsLinearly(work, 100)
