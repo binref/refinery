@@ -5,9 +5,13 @@ import unittest
 
 from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_within, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import wontfix
 
 from refinery.lib.scripts.js.deobfuscation.cff import JsStateMachineUnflattening
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
+from refinery.lib.scripts.js.options import DeobfuscationOptions
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
 
 #: The functions the machines below compute their state with: `sum` adds up the state, and `slice`
 #: reads a part of a table, which a machine's call spreads into the state it starts in.
@@ -651,6 +655,145 @@ A_CLASS_READING_ITS_INSTANCE_UNDER_A_KEY_FROM_A_TABLE_OF_THE_MACHINE = PRELUDE +
     """
 )
 
+A_HELPER_THAT_CHANGES_THE_STATE_IT_IS_HANDED = graded(
+    prelude=PRELUDE.replace('function sum(array) {', 'function sum(array) {\n  array.push(1);'),
+)
+
+A_HELPER_HANDED_THE_STATE_TWICE = graded(
+    prelude=PRELUDE + '\nfunction same(a, b) { return a === b ? 1 : 2; }',
+).replace('states[0] += states[1] - 4;', 'states[0] += same(states, states);')
+
+A_HELPER_THAT_ANSWERS_A_BUFFER = graded(
+    store='scope.A[key(bytes(states))]',
+    prelude=PRELUDE + '\n' + inspect.cleandoc(
+        """
+        function bytes(states) {
+          return Buffer.from([states[0] + 93]);
+        }
+        function key(b) {
+          return Array.isArray(b) ? 'label' : 'a';
+        }
+        """
+    ),
+)
+
+A_KEY_DECODED_FROM_THE_STATE_NAMING_A_GLOBAL_THE_CODE_READS = PRELUDE + '\n' + inspect.cleandoc(
+    """
+    var names = "BBx";
+    function dec(start, length) {
+      return names["slice"](start, start + length);
+    }
+    var B = 'outer';
+    function grade(n) {
+      function M(states, scope = { A: {} }, runtime) {
+        while (sum(states) !== 0) {
+          L: switch (sum(states)) {
+            case 15:
+              scope[dec(states[0] - 4, 1)] = n > 10 ? 'big' : 'small';
+              states[0] += states[1] - 4;
+              break L;
+            case 16:
+              return ret = true, scope[dec(states[0] - 4, 1)] + B + '!';
+          }
+        }
+      }
+      var ret;
+      var res = M([...slice(0, 3)]);
+      if (ret) {
+        return res;
+      }
+    }
+    console.log(grade(3), grade(30));
+    """
+)
+
+A_KEY_DECODED_FROM_THE_STATE_THAT_EVERY_OBJECT_INHERITS = graded(
+    'console.log(typeof scope[dec(states[0] + 3, 11)]);',
+    prelude=PRELUDE + '\n' + DECODER.replace('"AlabelB"', '"AlabelBconstructor"'),
+)
+
+A_SLOT_THAT_EVERY_OBJECT_INHERITS = graded('console.log(typeof scope.constructor);')
+
+A_CLASS_FIELD_READS_THE_STATE_WHEN_AN_INSTANCE_IS_MADE = graded(
+    'scope.A.C = class { v = states[0]; };',
+    'new scope.A.C().v + ',
+)
+
+A_CLASS_FIELD_DECODES_A_KEY_FROM_THE_STATE_WHEN_AN_INSTANCE_IS_MADE = graded(
+    'scope.A.C = class { v = scope.A[dec(states[0] - 4, 5)]; };',
+    'new scope.A.C().v + ',
+    prelude=F'{PRELUDE}\n{LABELS}',
+)
+
+A_DECLARED_FUNCTION_READS_THE_STATE_WHEN_IT_IS_CALLED = graded(
+    'function peek() { return states[0]; } scope.A.peek = peek;',
+    '(1, scope.A.peek)() + ',
+)
+
+A_CASE_RUNS_CODE_THAT_CHANGES_THE_STATE = graded('eval("states[0] += 1");', start='[4, 5, 6]')
+
+A_DEFAULT_THAT_IS_A_FUNCTION_WITHOUT_A_NAME = greeted(
+    '[scope.B.name, scope.B.mark = function () {}] = arg;'
+    " scope.B.mark = '<' + scope.B.mark.name + '>';"
+)
+
+A_DEFAULT_THAT_RUNS_CODE_READING_AN_ELEMENT = greeted(
+    "[scope.B.name, scope.B.mark = eval('scope.B.name')] = arg;"
+).replace('{ A: scope.A, B: {} }', '{ B: {} }')
+
+A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_A_WRAPPER_OF_THE_SAME_NAMES = PRELUDE + '\n' + inspect.cleandoc(
+    """
+    function grade(n) {
+      function M(states, scope = { A: {} }, runtime) {
+        while (sum(states) !== 0) {
+          L: switch (sum(states)) {
+            case 15:
+              scope.A.label = n > 10 ? 'big' : 'small';
+              scope.A.inner = function () {
+                function M(states, scope = { B: {} }, runtime, arg) {
+                  while (sum(states) !== 0) {
+                    L: switch (sum(states)) {
+                      case 16:
+                        scope.B.f = function (...r) {
+                          return M([6, 6, 6], { C: {} }, runtime, r);
+                        };
+                        console.log(states.length);
+                        return done = true, (1, scope.B.f)();
+                      case 18:
+                        return 'inner';
+                    }
+                  }
+                }
+                var done;
+                var result = M([5, 5, 6]);
+                if (done) {
+                  return result;
+                }
+              };
+              states[0] += states[1] - 4;
+              break L;
+            case 16:
+              return ret = true, scope.A.label + (1, scope.A.inner)() + '!';
+            case 18:
+              return 'outer';
+          }
+        }
+      }
+      var ret;
+      var res = M([...slice(0, 3)]);
+      if (ret) {
+        return res;
+      }
+    }
+    console.log(grade(3), grade(30));
+    """
+)
+
+THE_ITERATOR_OF_EVERY_ARRAY_IS_STOPPED_AND_THE_START_STATE_SPREADS_A_LITERAL = graded(
+    start='[...[4, 5, 6]]',
+    before='Object.getPrototypeOf([][Symbol.iterator]()).next = () => ({ done: true });',
+)
+
 #: The recovered body of `grade` in every machine of `GRADE` whose recovery stores the label under
 #: the key it was written with.
 GRADE_RECOVERED = inspect.cleandoc(
@@ -664,7 +807,8 @@ GRADE_RECOVERED = inspect.cleandoc(
 )
 
 #: Each machine the recovery reads, mapped to code its recovery writes. The function evaluator runs
-#: first, as it does in the pipeline: it folds a start state that reads no state, `[...slice(0, 3)]`.
+#: first, as it does in the pipeline: it folds a start state that reads no state, as it folds
+#: `[...slice(0, 3)]`.
 RECOVERED = {
     A_FUNCTION_WHOSE_BODY_IS_A_MACHINE: GRADE_RECOVERED,
     THE_MACHINE_OF_THE_PROGRAM: inspect.cleandoc(
@@ -815,6 +959,15 @@ KEPT = {
     THE_MACHINE_NAMED_BETWEEN_ITS_DECLARATION_AND_ITS_CALL: 'the machine is read elsewhere',
     A_COPIED_PARAMETER_READ_AGAIN: 'the scaffolding is read',
     A_DEFAULT_READING_A_NAME_THE_BODY_DECLARES: 'a default moved into the parameters would throw',
+    A_HELPER_THAT_CHANGES_THE_STATE_IT_IS_HANDED: 'a helper changes the state',
+    A_HELPER_HANDED_THE_STATE_TWICE: 'a helper may compare two arrays that are one',
+    A_HELPER_THAT_ANSWERS_A_BUFFER: 'a helper answers a Buffer, which is no array',
+    A_KEY_DECODED_FROM_THE_STATE_THAT_EVERY_OBJECT_INHERITS: 'a slot every object inherits',
+    A_SLOT_THAT_EVERY_OBJECT_INHERITS: 'a slot every object inherits',
+    A_CLASS_FIELD_READS_THE_STATE_WHEN_AN_INSTANCE_IS_MADE: 'the state is read after the run',
+    A_CLASS_FIELD_DECODES_A_KEY_FROM_THE_STATE_WHEN_AN_INSTANCE_IS_MADE: 'the state is read after the run',
+    A_DECLARED_FUNCTION_READS_THE_STATE_WHEN_IT_IS_CALLED: 'the state is read after the run',
+    A_CASE_RUNS_CODE_THAT_CHANGES_THE_STATE: 'the code runs eval',
 }
 
 
@@ -863,6 +1016,50 @@ class TestArrayMachines(TestJsDeobfuscator):
         deobfuscated = self._deobfuscate(A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_THE_SAME_NAMES)
         self.assertEqual(deobfuscated.count('switch (sum(states))'), 1)
         self.assertIn('scope.B[dec(states[0] - 5, 5)] = states.length;', deobfuscated)
+
+    def test_a_wrapper_of_a_machine_inside_a_function_of_a_recovered_machine_calls_its_own_machine(self):
+        """
+        The wrapper of the inner machine calls it under the names of the outer one, which the
+        function around the inner machine binds anew, so the recovery of the outer machine is no
+        run of that wrapper.
+        """
+        deobfuscated = self._deobfuscate(A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_A_WRAPPER_OF_THE_SAME_NAMES)
+        self.assertEqual(deobfuscated.count('switch (sum(states))'), 1)
+        self.assertIn('return M([6, 6, 6], { C: {} }, runtime, r);', deobfuscated)
+
+    def test_a_slot_named_by_a_key_decoded_from_the_state_does_not_capture_a_global_of_its_name(self):
+        """
+        The bare `B` reads the global, while the decoded key names the slot `B` of the scope
+        object, which the recovery would make a variable `B`.
+        """
+        self.assertEqual(
+            self._deobfuscate(A_KEY_DECODED_FROM_THE_STATE_NAMING_A_GLOBAL_THE_CODE_READS),
+            "console.log('smallouter!', 'bigouter!');",
+        )
+
+    def test_a_default_that_is_a_function_without_a_name_stays_in_the_argument_store(self):
+        """
+        A parameter would give the function its own name, which the member the store gives it to
+        does not.
+        """
+        self.assertIn(
+            '[B.name, B.mark = function() {}] = r;',
+            self._recovered(A_DEFAULT_THAT_IS_A_FUNCTION_WITHOUT_A_NAME),
+        )
+
+    def test_a_default_that_runs_code_stays_in_the_argument_store_where_eval_is_trusted(self):
+        """
+        Where eval is trusted, the machine is recovered, and the code the default runs is still run
+        where the names of the body exist.
+        """
+        ast = JsParser(A_DEFAULT_THAT_RUNS_CODE_READING_AN_ELEMENT).parse()
+        for transformer in (JsFunctionEvaluator, JsStateMachineUnflattening):
+            instance = transformer()
+            instance.options = DeobfuscationOptions(trust_eval=True)
+            instance.visit(ast)
+        recovered = JsSynthesizer().convert(ast)
+        self.assertNotIn('switch (sum(states))', recovered)
+        self.assertIn("[B.name, B.mark = eval('scope.B.name')] = r;", recovered)
 
     @unittest.expectedFailure
     def test_a_machine_whose_class_reads_its_instance_under_a_key_from_a_table_of_the_machine_is_recovered(self):
@@ -924,6 +1121,8 @@ class TestNodePrintsTheSameForEachArrayMachine(TestJsDeobfuscator):
         yield A_MACHINE_WHOSE_PARAMETERS_ARE_COPIED_CALLED_FURTHER_DOWN
         yield A_CLASS_READING_ITS_INSTANCE_UNDER_A_KEY_FROM_A_TABLE_OF_THE_MACHINE
         yield A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_THE_SAME_NAMES
+        yield A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_A_WRAPPER_OF_THE_SAME_NAMES
+        yield A_KEY_DECODED_FROM_THE_STATE_NAMING_A_GLOBAL_THE_CODE_READS
 
     def test_each_machine_recovered_after_the_evaluator_prints_what_it_printed(self):
         for source in RECOVERED:
@@ -935,3 +1134,11 @@ class TestNodePrintsTheSameForEachArrayMachine(TestJsDeobfuscator):
         for source in self._machines():
             with self.subTest(source):
                 self.assertEqual(behavior(source), behavior(self._deobfuscate(source)))
+
+    @wontfix(
+        'no program replaces what the iterator of every array does; the recovery trusts the array '
+        'iterator as the interpreter does'
+    )
+    def test_a_machine_whose_start_state_spreads_through_a_stopped_array_iterator_prints_what_it_printed(self):
+        source = THE_ITERATOR_OF_EVERY_ARRAY_IS_STOPPED_AND_THE_START_STATE_SPREADS_A_LITERAL
+        self.assertEqual(behavior(source), behavior(self._deobfuscate(source)))

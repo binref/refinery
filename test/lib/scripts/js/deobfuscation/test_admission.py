@@ -5,11 +5,7 @@ from test import TestBase
 from refinery.lib.scripts import _clone_node
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.deobfuscation.admission import CallAdmission
-from refinery.lib.scripts.js.model import (
-    FUNCTION_NODES,
-    JsCallExpression,
-    JsIdentifier,
-)
+from refinery.lib.scripts.js.model import JsCallExpression, JsIdentifier
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -29,7 +25,7 @@ class TestCallAdmission(TestBase):
     def test_a_call_of_a_function_computing_from_its_arguments_is_admitted(self):
         admission, call = self._admission('function add(a, b) { return a + b; } SINK(add(1, 2));', 'add')
         callee = admission.callee(call)
-        self.assertIsInstance(callee, FUNCTION_NODES)
+        assert callee is not None
         self.assertEqual(admission.interpreter_at(call).execute(callee, [1.0, 2.0]), 3.0)
 
     def test_a_call_of_a_function_writing_a_global_is_refused(self):

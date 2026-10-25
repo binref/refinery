@@ -168,8 +168,9 @@ the receiver nor hands it to code of the program, as `map` hands it to its callb
 program may still run during the call, converting an argument (`valueOf`, `toString`), an element
 `join` converts, or the constructor `slice` creates its result with, but none of it is handed the
 receiver: it reaches the array only through a reference of its own, which the container question
-judges like every other. Unlike `_FRESH_ARRAY_RESULT_METHODS`, membership says nothing about the
-result.
+judges like every other. That holds for an array that owns every position below its length: at a
+hole, the method reads the position from the prototypes, where an accessor is handed the receiver.
+Unlike `_FRESH_ARRAY_RESULT_METHODS`, membership says nothing about the result.
 """
 
 _PURE_CONSTRUCTOR_ROOTS = frozenset({'Array'})
@@ -1356,11 +1357,11 @@ class EffectModel:
         makes it mutable. A method invoked on the container (`obj.m(...)`) may mutate it — an
         array's `sort`/`push`/`splice` and so on — so by default it too counts as mutable, except
         a method of `Array.prototype` that only reads its receiver (`_ARRAY_READING_METHODS`)
-        called on an array literal while the program leaves that prototype trusted; a caller
-        that knows some of the container's own methods cannot mutate it (an object literal with no
-        `this`-bound property) names their keys in *inert_methods*: a call of one of those on the
-        container is permitted, and so is a call on a value it holds (`obj.k.split(...)`), which
-        such a caller vouches for. A method the container inherits is never one of them:
+        called on an array literal without holes while the program leaves that prototype trusted;
+        a caller that knows some of the container's own methods cannot mutate it (an object literal
+        with no `this`-bound property) names their keys in *inert_methods*: a call of one of those
+        on the container is permitted, and so is a call on a value it holds (`obj.k.split(...)`),
+        which such a caller vouches for. A method the container inherits is never one of them:
         `obj.valueOf()` hands the container back and `obj.__defineGetter__(k, g)` replaces a
         property. A reference that escapes is safe in three cases: it aliases another binding that
         is itself an immutable container (alias-following the textual predicates this replaces could
@@ -1445,14 +1446,18 @@ class EffectModel:
         """
         Whether the method call *reference* begins leaves the container *binding* holds as it was:
         a call its caller vouches for (`_method_call_is_inert`), or a call of one of
-        `_ARRAY_READING_METHODS` where the one value of the binding is an array literal and the
-        program leaves `Array.prototype` trusted, so that the method called is the built-in.
+        `_ARRAY_READING_METHODS` where the one value of the binding is an array literal without
+        holes and the program leaves `Array.prototype` trusted, so that the method called is the
+        built-in and every position it reads is one the array owns.
         """
         if _method_call_is_inert(reference, inert_methods):
             return True
+        if not _method_call_reads_an_array(reference):
+            return False
+        literal = self.model.singular_value(binding)
         return (
-            _method_call_reads_an_array(reference)
-            and isinstance(self.model.singular_value(binding), JsArrayExpression)
+            isinstance(literal, JsArrayExpression)
+            and all(element is not None for element in literal.elements)
             and self.trusted_prototype(list)
         )
 

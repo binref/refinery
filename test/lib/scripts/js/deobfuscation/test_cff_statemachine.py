@@ -1971,6 +1971,60 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             """
         ))
 
+    ARGUMENT_STORED_TO_A_VARIABLE_A_NESTED_WRAPPER_HANDS_ON_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    var hold = function (...rest) {
+                      return gen(20, 30, {}, rest)["next"]()["value"];
+                    };
+                    return done = true, hold;
+                  case 50:
+                    [scope.p] = args;
+                    return done = true, function (...rest) {
+                      return gen(60, 10, { p: scope.p }, rest)["next"]()["value"];
+                    };
+                  case 70:
+                    return done = true, p;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_argument_stored_to_a_variable_a_nested_wrapper_hands_on_is_recovered(self):
+        """
+        The store of the argument into `p` runs before the nested wrapper that hands `p` on is made,
+        also once the store is a statement of the parameter it became.
+        """
+        result = self._run_transformer(
+            self.ARGUMENT_STORED_TO_A_VARIABLE_A_NESTED_WRAPPER_HANDS_ON_CFF,
+            JsStateMachineUnflattening,
+        )
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var hold = function(p_1) {
+                var p;
+                p = p_1;
+                return function(...rest) {
+                  return p;
+                };
+              };
+              return hold;
+            }
+            """
+        ))
+
     SCOPE_NAME_REBOUND_CFF = inspect.cleandoc(
         """
         function outer() {
@@ -2067,6 +2121,42 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         }
         """
     )
+
+    STATE_READ_BY_THE_FIELD_OF_A_CLASS_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.Box = class { v = a; };
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, new Box().v;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_state_read_by_the_field_of_a_class_is_declined(self):
+        """
+        The field is set when an instance is made, which happens after the transition, from the
+        state variable as it is then.
+        """
+        source = self.STATE_READ_BY_THE_FIELD_OF_A_CLASS_CFF
+        self.assertEqual(
+            self._run_transformers(source),
+            self._run_transformer(source, JsStateMachineUnflattening),
+        )
 
     MAIN_RUN_WRITES_ITS_ARGUMENTS_CFF = inspect.cleandoc(
         """
@@ -6803,6 +6893,7 @@ ENTRY_POINTS = {
     'SCOPE_NAME_REBOUND_CFF': 'console.log(outer());',
     'UNREADABLE_WRAPPER_SCOPE_CFF': 'function make() { return { k: 1 }; } console.log(outer()(5));',
     'STATE_READ_BY_A_CLOSURE_CFF': 'console.log(outer());',
+    'STATE_READ_BY_THE_FIELD_OF_A_CLASS_CFF': 'console.log(outer());',
     'MAIN_RUN_WRITES_ITS_ARGUMENTS_CFF': 'var args = "global"; console.log(outer(), args);',
     'ACCESSOR_SCOPE_DEFAULT_CFF': 'console.log(outer());',
     'NAMESPACE_INITIALIZER_WITH_AN_EFFECT_CFF': (
@@ -6966,6 +7057,7 @@ ENTRY_POINTS = {
     ),
     'LOOP_IN_A_LOOP_CFF': 'console.log(outer(3).join(), outer(0).join());',
     'ARGUMENT_STORE_WITH_A_DEFAULT_READING_THE_ELEMENT_BEFORE_IT_CFF': '',
+    'ARGUMENT_STORED_TO_A_VARIABLE_A_NESTED_WRAPPER_HANDS_ON_CFF': 'console.log(outer()(1)());',
     'WRAPPER_MADE_IN_A_BLOCK_PLACED_TWICE_CFF': (
         'console.log(outer([1, 1, 0]).length, outer([0, 0, 1])[2](7, 8, 9));'
     ),

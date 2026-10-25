@@ -1481,6 +1481,15 @@ class TestEffectModel(TestBase):
             with self.subTest(call=call):
                 self.assertTrue(self._container(F'var a = [1, 2, 3]; SINK({call}); SINK(a[0]);'))
 
+    def test_array_with_a_hole_read_by_a_method_that_only_reads_it_is_mutable(self):
+        """
+        At the hole, the method reads the position from the prototypes, where an accessor is handed
+        the array.
+        """
+        for call in ['a.join("-")', 'a.indexOf(5)', 'a.at(1)']:
+            with self.subTest(call=call):
+                self.assertFalse(self._container(F'var a = [1, , 3]; SINK({call}); SINK(a[0]);'))
+
     def test_array_read_by_slice_and_stored_to_is_mutable(self):
         self.assertFalse(self._container('var a = [1, 2]; SINK(a.slice(0)); a[0] = 9;'))
 

@@ -27,14 +27,17 @@ from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.js.analysis.cfg import build_cfg
 from refinery.lib.scripts.js.analysis.environment import FileKind
+from refinery.lib.scripts.js.analysis.evaluation import Evaluation, evaluation_of
 from refinery.lib.scripts.js.analysis.intrinsics import denoting_leaves
 from refinery.lib.scripts.js.analysis.model import (
     annex_b_function_home,
     is_direct_eval_call,
+    is_invocation_target,
     is_member_write_target,
     is_simple_assignment_target,
     is_use_position,
     lexically_declared_names,
+    pattern_identifiers,
     references_own_arguments,
     walk_receiver_scope,
 )
@@ -70,6 +73,7 @@ from refinery.lib.scripts.js.model import (
     LOOP_NODES,
     JsArrayExpression,
     JsArrayPattern,
+    JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAssignmentPattern,
     JsAwaitExpression,
@@ -100,7 +104,6 @@ from refinery.lib.scripts.js.model import (
     JsNumericLiteral,
     JsObjectExpression,
     JsObjectPattern,
-    JsParenthesizedExpression,
     JsProperty,
     JsPropertyKind,
     JsRestElement,
@@ -216,6 +219,11 @@ class _WrapperFunctionInfo(NamedTuple):
     initial_state: list[_StateValue]
     rest_param_name: str | None
     scope_arg: Expression
+    machine_reads: tuple[JsIdentifier, ...]
+    """
+    The names the call of the wrapper reads the machine through: its callee, and the `runtime` it
+    hands on where the design has one.
+    """
 
 
 @dataclass
@@ -1291,6 +1299,26 @@ def _spells_an_inherited_name_bare(
     )
 
 
+def _slots_may_become_variables(
+    match: _MachineMatch,
+    activations: list[_Activation],
+    absent: Callable[[str], bool],
+) -> bool:
+    """
+    Whether every slot the runs of *match* keep on a scope object may become a variable of its own
+    name, as the strip makes it (`_strip_scope_param_prefix`): the slots of its main run
+    (`scope_prop_names`) and of the runs of its wrappers (*activations*). No prototype of a plain
+    object may supply the name (*absent*), as one supplies `constructor`, where a read of a slot no
+    run stored finds it; and where the code reads its scope object through no `with` body, it may
+    spell none of them bare (`_spells_a_slot_bare`). A key a run decodes from its state
+    (`_fold_scope_keys`) names a slot only the run shows.
+    """
+    names = set(match.scope_prop_names).union(*(activation.props for activation in activations))
+    if not all(absent(name) for name in names):
+        return False
+    return match.routed or not _spells_a_slot_bare(match.switch_stmt, names)
+
+
 def _block_functions(root: Node) -> Iterator[JsFunctionDeclaration]:
     """
     Every function declared inside a block anywhere below *root*, where sloppy code would copy its
@@ -1648,7 +1676,9 @@ def _detect_wrapper_function(
         or handed.name != rest_param_name
     ):
         return None
-    return _WrapperFunctionInfo(initial_state, rest_param_name, args[num_state_vars])
+    return _WrapperFunctionInfo(
+        initial_state, rest_param_name, args[num_state_vars], (gen_call.callee,)
+    )
 
 
 def _plain_wrapper_call(node: JsFunctionExpression, match: _MachineMatch) -> JsCallExpression | None:
@@ -1699,7 +1729,8 @@ def _detect_plain_wrapper(
         return None
     if not isinstance(handed, JsIdentifier) or handed.name != rest.argument.name:
         return None
-    return _WrapperFunctionInfo([entry], rest.argument.name, scope_arg)
+    assert isinstance(call.callee, JsIdentifier) and isinstance(runtime, JsIdentifier)
+    return _WrapperFunctionInfo([entry], rest.argument.name, scope_arg, (call.callee, runtime))
 
 
 @dataclass
@@ -3317,19 +3348,6 @@ class _Structuring:
         return result
 
 
-def _substitute_state_vars(stmts: list[Statement], env: _StateEnv) -> list[Statement]:
-    """
-    Clone statements and replace state variable identifiers with numeric literals. Stops at
-    function boundaries to avoid replacing reused names in nested scopes.
-    """
-    result: list[Statement] = []
-    for stmt in stmts:
-        cloned = _clone_node(stmt)
-        _substitute_in_scope(cloned, env)
-        result.append(cloned)
-    return result
-
-
 def _fold_scope_keys(
     originals: Sequence[Node],
     clones: Sequence[Node],
@@ -3341,9 +3359,12 @@ def _fold_scope_keys(
     each computed key of an access to the scope object, or to a member of it, evaluates to in place
     of the key, and the array a wrapper's call starts the machine in as an array literal. Each is
     evaluated on the original node, which anchors the calls that make it, and only where it runs
-    at the state: none under a nested function, which reads the state when it is called, and none
-    whose scope object or state variables something between the block and the key binds anew
-    (`_scoped_children`). `False` where a key of the block does not decode.
+    at the state: none in code that runs at a time of its own
+    (`refinery.lib.scripts.js.analysis.evaluation.Evaluation.LATER`), such as a nested function,
+    which reads the state when it is called, or the initializer of a class field, which reads it
+    when an instance is made, and none whose scope object or state variables something between the
+    block and the key binds anew (`_scoped_children`). `False` where a key of the block does not
+    decode.
     """
     if match.calls is None or match.scope_param_name is None:
         return True
@@ -3368,6 +3389,8 @@ def _fold_scope_keys(
                 return False
             keys[node] = value
         for child, bound in _scoped_children(node):
+            if evaluation_of(node, child) is Evaluation.LATER:
+                continue
             if not decode(child, hidden | (watched & bound) if bound else hidden):
                 return False
         return True
@@ -3577,11 +3600,15 @@ def _references_to(stmts: list[Statement], names: frozenset[str]) -> Iterator[Js
 
 def _substitute_in_scope(node: Node, env: _StateEnv) -> None:
     """
-    Replace state variable identifiers with numeric literals. A nested function is not entered: it
-    reads the state variable when it is called, not at the state being recovered.
+    Replace state variable identifiers with numeric literals. Code that runs at a time of its own
+    (`refinery.lib.scripts.js.analysis.evaluation.Evaluation.LATER`) is not entered, a nested
+    function at the root as well: a function reads the state variable when it is called, and the
+    initializer of a class field when an instance is made, not at the state being recovered.
     """
+    if isinstance(node, FUNCTION_NODES):
+        return
     for child, bound in _scoped_children(node):
-        if isinstance(child, FUNCTION_NODES):
+        if isinstance(child, FUNCTION_NODES) or evaluation_of(node, child) is Evaluation.LATER:
             continue
         if (
             isinstance(child, JsMemberExpression)
@@ -4125,6 +4152,15 @@ class _RunOrder:
             cursor = cursor.parent
         return None
 
+    def replace(self, statement: Node, replacement: Sequence[Node]) -> None:
+        """
+        Record that the statements of *replacement* stand where *statement* stood, and run when it
+        ran.
+        """
+        if (home := self.homes.pop(statement, None)) is not None:
+            for stmt in replacement:
+                self.homes[stmt] = home
+
     def runs_only_before(self, first: Node, then: Node) -> bool:
         """
         Whether *first* runs before *then* on every way to it and never again once *then* has run,
@@ -4335,7 +4371,10 @@ def _resolve_shared_wrappers(
     reads the routing slots of the scope object it hands the generator (`_initial_slots`, with
     *absent* for keys no literal holds): where it hands on the scope object or namespaces of the
     run that creates it, they hold what that run filled them with before any wrapper existed.
-    Iterates until no more wrappers are resolved (handles nesting).
+    Iterates until no more wrappers are resolved (handles nesting). A function that calls a name of
+    the machine, or hands on a `runtime`, which something in the recovered code binds anew, as a
+    machine nested in it under the same names does, calls that binding (`_references_to`) and is
+    no wrapper of this machine.
 
     Returns the activations of the resolved wrappers, each one once and *main* among them where a
     wrapper shares its scope object, or `None` where a wrapper cannot be resolved: it would be left
@@ -4346,12 +4385,14 @@ def _resolve_shared_wrappers(
     recovered code can only share (`_stores_precede_the_wrappers`).
     """
     gen_names = match.machine_names
+    named = gen_names if match.runtime_name is None else gen_names | {match.runtime_name}
     activations: dict[int, _Activation] = {}
     orders: dict[int, _RunOrder] = {}
     entries: dict[int, list[_StateValue]] = {}
 
     while True:
         resolved_any = False
+        reads_of_the_machine = {id(read) for read in _references_to(stmts, named)}
         for node in list(_walk_all(stmts)):
             if not isinstance(node, JsFunctionExpression):
                 continue
@@ -4360,6 +4401,8 @@ def _resolve_shared_wrappers(
                 continue
             wrapper_info = match.design.wrapper(node, match)
             if wrapper_info is None or node.body is None:
+                continue
+            if not all(id(read) in reads_of_the_machine for read in wrapper_info.machine_reads):
                 continue
             if _reenters(node, wrapper_info.initial_state, entries):
                 return None
@@ -4415,7 +4458,7 @@ def _resolve_shared_wrappers(
             if target is not None and target != wrapper_info.rest_param_name:
                 set_child_list(node, 'params', _rebind_wrapper_param(node.params, target))
             if activation is not creator:
-                _unpack_argument_stores(node, activation)
+                _unpack_argument_stores(node, activation, result.order)
             resolved_any = True
         if not resolved_any:
             break
@@ -4597,6 +4640,17 @@ def _activation_slot_identity(node: Node, activation: _Activation) -> tuple[str,
     return None
 
 
+def _is_anonymous_definition(node: Node | None) -> bool:
+    """
+    Whether *node* defines a function or a class without a name of its own, which a binding of a
+    plain name gives the name it binds: an arrow, or a function or class expression with no name.
+    """
+    node = strip_parens(node)
+    if isinstance(node, JsArrowFunctionExpression):
+        return True
+    return isinstance(node, (JsFunctionExpression, JsClassExpression)) and node.id is None
+
+
 def _default_reads(
     default: Expression,
     earlier: list[Expression],
@@ -4611,8 +4665,13 @@ def _default_reads(
     a name the body binds, or any other part of what the run keeps on its scope object: its own
     element or a later one, which the parameter list has not stored, a namespace as a whole, a
     store to one, a call through one, which hands the namespace on as `this`, and a read under a
-    function, which reads it when called.
+    function, which reads it when called. `None` as well where the default holds a direct `eval`,
+    which the parameter list runs where no name of the body exists, and where it is a function or a
+    class without a name of its own, which a parameter names after itself and an element of the
+    store, a member, leaves unnamed (`_is_anonymous_definition`).
     """
+    if _is_anonymous_definition(default):
+        return None
     bound = _function_bound_names(function)
     slots = {
         identity: index for index, target in enumerate(earlier)
@@ -4621,23 +4680,19 @@ def _default_reads(
     reads: dict[Node, int] = {}
 
     def visit(node: Node, nested: bool) -> bool:
-        if isinstance(node, JsThisExpression):
+        if isinstance(node, JsThisExpression) or is_direct_eval_call(node):
             return False
         if isinstance(node, JsIdentifier) and not is_reference(node):
             return True
         if isinstance(node, JsIdentifier) and node.name in bound:
             return False
         if (identity := _activation_slot_identity(node, activation)) is not None:
-            outer = node
-            while isinstance(parent := outer.parent, JsParenthesizedExpression):
-                outer = parent
             if (
                 nested
                 or not identity
                 or (index := slots.get(identity)) is None
                 or is_member_write_target(node)
-                or isinstance(parent, JsCallExpression) and parent.callee is outer
-                or isinstance(parent, JsTaggedTemplateExpression) and parent.tag is outer
+                or is_invocation_target(node)
             ):
                 return False
             reads[node] = index
@@ -4648,7 +4703,11 @@ def _default_reads(
     return reads if visit(default, False) else None
 
 
-def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activation) -> None:
+def _unpack_argument_stores(
+    function: JsFunctionExpression,
+    activation: _Activation,
+    order: _RunOrder,
+) -> None:
     """
     Give a wrapper whose run owns its scope object the parameters its run stores its arguments into.
     A run starts by destructuring the argument holder into slots of its own scope object, as in
@@ -4657,7 +4716,8 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
     read by such stores and nothing else, the wrapper takes the parameters `(a, ...r)` and the store
     becomes the statements `NS.a = a; NS.r = r;`: every slot receives what it received, the
     remainder being an array of the same arguments. Each store is a statement of its own, where the
-    passes that drop a dead store or fold a read copy into its parameter reach it. Every store has
+    passes that drop a dead store or fold a read copy into its parameter reach it, and runs when the
+    store it replaces ran in the run of the wrapper (*order*, `_RunOrder.replace`). Every store has
     to be a statement of the body itself, which runs once per call: the destructuring makes a new
     array each time it runs, and the rest parameter is one array per call. The wrapper's `length`
     counts the new parameters, as the function the obfuscator flattened counted them, and the
@@ -4767,6 +4827,7 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
             JsExpressionStatement(expression=assignment) for assignment in assignments
         ]
         set_child_list(function.body, 'body', [*body[:at], *separate, *body[at + 1:]])
+        order.replace(statement, separate)
     set_child_list(function, 'params', parameters.build())
 
 
@@ -5173,8 +5234,17 @@ def _scaffolding_is_private(
     lives as long as one call of that function does: a variable it declares, or a property of an
     object it makes for each call (`_property_flag_is_private`). A flag every call shares could be
     raised by a call the recovered code makes before the guard reads it. Every name that spells
-    `undefined` in the scaffolding has to denote it.
+    `undefined` in the scaffolding has to denote it. No opaque reflective surface, such as a direct
+    `eval` in the code of the generator, may name one of its parameters: the recovery moves that
+    code out of the generator, where the name no longer exists
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.reflection_surface_sites`).
     """
+    if any(
+        (binding := model.binding_of(name)) is None or model.reflection_surface_sites(binding)
+        for param in match.machine.params
+        for name in pattern_identifiers(param)
+    ):
+        return False
     removed = match.removed(body)
     inside = {id(node) for statement in removed for node in statement.walk()}
     home = model.scope_of(body[match.scaffolding_end])
@@ -5550,10 +5620,16 @@ class _Calls:
         """
         The value the call *node* gives with *arguments*, or `None` where the admission does not
         run it, an argument is `undefined`, the run is refused or throws, or its result is no value
-        a run of the machine holds: a number, a boolean, a string, or an array of numbers.
+        a run of the machine holds: a number, a boolean, a string, or an array of numbers, which a
+        Buffer is not. An array argument is the state of the machine or an array made from it, and
+        the helper is handed a copy: two array arguments may be one object, which two copies are
+        not, so such a call is not run, and a helper that changes the array it is handed changes
+        the state, which the run does not follow (`_left_as_handed`), so its value is not taken.
         """
         admission = self._current()
         if not admission.holds(node):
+            return None
+        if sum(isinstance(argument, tuple) for argument in arguments) > 1:
             return None
         values: list[Value] = []
         for argument in arguments:
@@ -5572,18 +5648,38 @@ class _Calls:
         except (InterpreterError, IrreducibleExpression, _ThrowSignal):
             result = None
         value: _Value | None
-        if isinstance(result, (bool, str)):
+        if not all(map(_left_as_handed, values, arguments)):
+            value = None
+        elif isinstance(result, (bool, str)):
             value = result
         elif isinstance(result, (int, float)):
             value = float(result)
-        elif isinstance(result, list) and all(
-            isinstance(x, (int, float)) and not isinstance(x, bool) for x in result
+        elif (
+            type(result) is list
+            and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in result)
         ):
             value = tuple(float(x) for x in result)
         else:
             value = None
         self._memo[key] = value
         return value
+
+
+def _left_as_handed(handed: Value, argument: _Value) -> bool:
+    """
+    Whether a run of a helper left *handed*, what it was given for *argument*, as it was given: an
+    array still holds the same numbers.
+    """
+    if not isinstance(argument, tuple):
+        return True
+    return (
+        isinstance(handed, list)
+        and len(handed) == len(argument)
+        and all(
+            isinstance(x, (int, float)) and not isinstance(x, bool) and _same_value(float(x), y)
+            for x, y in zip(handed, argument)
+        )
+    )
 
 
 class _Design:
@@ -5813,7 +5909,11 @@ class JsStateMachineUnflattening(PinnedTransformer, BodyProcessingTransformer):
             wrappers = _resolve_shared_wrappers(
                 recovered, machine, match, main, result.order, self._provably_absent
             )
-            if wrappers is None or not _bind_main_arguments(recovered, match):
+            if (
+                wrappers is None
+                or not _bind_main_arguments(recovered, match)
+                or not _slots_may_become_variables(match, wrappers, self._provably_absent)
+            ):
                 i += 1
                 continue
             for activation in wrappers:

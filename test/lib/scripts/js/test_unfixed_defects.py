@@ -2015,7 +2015,8 @@ class TestAPrototypeReachedThroughABindingIsStillWritten(TestBase):
         `A_PROTOTYPE_REACHED_THROUGH_A_BINDING`, each of which reaches an intrinsic prototype
         through a name rather than through a literal. The first two deobfuscations print
         `undefined`, and come back having replaced the read with a variable nothing writes; the
-        third prints `1-2` and the fourth `1`, each answering as if `Array.prototype` were unwritten.
+        third prints `1-2` and the fourth `1`, each answering as if `Array.prototype` were
+        unwritten.
         """
         rows = A_PROTOTYPE_REACHED_THROUGH_A_BINDING
         self.assertEqual(
@@ -5730,3 +5731,42 @@ class TestAnUnpackedRestParameterKeepsTheLengthOfTheFunction(TestBase):
     read (`refinery.lib.scripts.js.deobfuscation.parameters.function_length_unobserved`), and the
     plain names elsewhere.
     """
+
+
+#: Programs that read the name of an anonymous function they stored on an object, mapped to what
+#: Node prints for each.
+AN_ANONYMOUS_FUNCTION_STORED_ON_A_NAMESPACE = {
+    "function f() { var B = {}; B.x = function () {}; return '<' + B.x.name + '>'; }\n"
+    'console.log(f());':
+        '<>\n',
+    "function f(r) { var B = {}; [B.x = function () {}] = r; return '<' + B.x.name + '>'; }\n"
+    'console.log(f([]));':
+        '<>\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnAnonymousFunctionStoredOnANamespaceKeepsItsEmptyName(TestBase):
+    """
+    A function or class without a name of its own is named after the variable a declaration, an
+    assignment or a destructuring default binds it to, and stays unnamed where it is stored to a
+    member. `refinery.lib.scripts.js.deobfuscation.namespaces` turns the members of a namespace
+    into variables, so a function stored on one is named after its key, and a read of its `name`
+    tells the two apart. A correct pass writes the value where no binding names it, as
+    `(0, function () {})`, or keeps the namespace where an anonymous definition is stored to it.
+    Off the release gate: the obfuscators store the functions they take apart this way, and their
+    names come back as the program gave them; only a program reading the name of a function it
+    left anonymous sees it.
+    """
+
+    @unittest.expectedFailure
+    def test_the_name_of_the_function_stays_empty(self):
+        """
+        Node prints `<>` for both programs of `AN_ANONYMOUS_FUNCTION_STORED_ON_A_NAMESPACE`; each
+        deobfuscation prints `<x>`.
+        """
+        rows = AN_ANONYMOUS_FUNCTION_STORED_ON_A_NAMESPACE
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )

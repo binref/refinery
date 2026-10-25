@@ -1233,6 +1233,67 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._simplify(source))
 
+    def test_delete_of_an_element_an_array_method_reads_is_kept(self):
+        for call in [
+            'a.at(1)',
+            'a.includes(2)',
+            'a.indexOf(2)',
+            "a.join('-')",
+            'a.lastIndexOf(2)',
+            'a.slice(0)',
+        ]:
+            source = inspect.cleandoc(
+                F"""
+                var a = [1, 2, 3];
+                delete a['1'];
+                console.log({call});
+                """
+            )
+            with self.subTest(call=call):
+                self.assertEqual(source, self._simplify(source))
+
+    def test_delete_of_the_length_of_an_array_answers_false_in_sloppy_code(self):
+        source = inspect.cleandoc(
+            """
+            var a = [1, 2, 3];
+            console.log(delete a.length);
+            """
+        )
+        self.assertEqual(
+            self._simplify(source),
+            inspect.cleandoc(
+                """
+                var a = [1, 2, 3];
+                console.log(false);
+                """
+            ),
+        )
+
+    def test_delete_of_the_length_of_an_array_is_kept_in_strict_code(self):
+        source = inspect.cleandoc(
+            """
+            'use strict';
+            var a = [1, 2, 3];
+            console.log(delete a.length);
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
+    def test_delete_of_a_key_a_getter_reads_through_this_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            var o = {
+              x: 1,
+              get y() {
+                return this.x;
+              }
+            };
+            delete o['x'];
+            console.log(o.y);
+            """
+        )
+        self.assertIn('delete o.x;', self._simplify(source))
+
     def test_global_alias_preserved_when_shadowed_by_param(self):
         source = inspect.cleandoc(
             """

@@ -312,12 +312,12 @@ class CallAdmission:
     def _collect_named_functions(self, script: JsScript) -> list[JsFunctionNode]:
         """
         Every function the model resolves a name to unambiguously: a function declaration, a
-        `var`/`let`/`const` declarator initializer, or a hoisted `var` assigned a function exactly once
-        (`var f; f = function(){}`, the form namespace flattening leaves). This is
+        `var`/`let`/`const` declarator initializer, or a hoisted `var` assigned a function exactly
+        once (`var f; f = function(){}`, the form namespace flattening leaves). This is
         `EffectModel.unambiguous_function`, the same filter the interpreter resolves nested callees
-        through, so every name a call site can reach is a candidate for purity analysis here. Anonymous
-        functions and names that held a value and were then reassigned are excluded, because the model
-        resolves no single function for them.
+        through, so every name a call site can reach is a candidate for purity analysis here.
+        Anonymous functions and names that held a value and were then reassigned are excluded,
+        because the model resolves no single function for them.
         """
         effects = self.effects
         model = effects.model
@@ -335,11 +335,11 @@ class CallAdmission:
         The names *func*'s body reads that resolve, from *scope* outward, to something a call to
         *func* can be evaluated with: a function already proven pure, or a binding that holds a
         constant (`binding_constant`) no write inside *func* establishes. A nearer binding wins: a
-        name rebound below the scope that holds the pure function or the constant — a parameter or
-        a local — shadows it and is not known, matching how the name resolves inside the body being
+        name rebound below the scope that holds the pure function or the constant — a parameter or a
+        local — shadows it and is not known, matching how the name resolves inside the body being
         analyzed. Only the names the body reads are asked about: the question is asked for every
-        function on every round of the purity fixpoint, and a scope may hold thousands of names
-        that no body reads. Whether the constant is in place when a call runs is asked for each call,
+        function on every round of the purity fixpoint, and a scope may hold thousands of names that
+        no body reads. Whether the constant is in place when a call runs is asked for each call,
         through the callback of the interpreter `interpreter_at` builds.
         """
         effects = self.effects

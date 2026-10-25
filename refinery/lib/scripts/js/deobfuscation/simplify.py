@@ -14,8 +14,10 @@ from refinery.lib.scripts.js.analysis.model import (
     SAME_REALM_GLOBAL_OBJECT_ALIASES,
     Binding,
     BindingKind,
+    ContainerRole,
     Role,
     SemanticModel,
+    container_reference_role,
     enclosing_operator,
     is_constructed_or_invoked,
     is_invocation_target,
@@ -83,6 +85,7 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     JsUnaryExpression,
     callee_form_sensitive,
+    object_member_access_runs_accessor,
     strip_parens,
 )
 from refinery.lib.scripts.js.numbers import exact_integer
@@ -946,43 +949,56 @@ class JsSimplifications(Transformer):
         known, value = denoted_value(node, self.model)
         return value if known else _UNCONVERTIBLE
 
-    def _deletion_is_unobservable(self, node: JsUnaryExpression) -> bool:
+    def _deletion_answer(self, node: JsUnaryExpression) -> bool | None:
         """
-        Whether the `delete` at *node* removes a property that nothing in the program can read, so that
-        the deletion is a dead store and only its result — `true`, the answer for every configurable and
-        every absent property — remains. The object literal keeps the property, which is sound precisely
-        because no reader of it survives; editing the literal instead would have to be ordered against
-        every read, while leaving it needs no ordering at all.
+        The value the `delete` at *node* gives where it changes nothing anything reads, so that only
+        that value remains, or `None` where the `delete` stays. It is `true` where the `delete`
+        removes a property that nothing in the program can read, the answer for every configurable
+        and every absent property: the deletion is a dead store. The object literal keeps the
+        property, which is sound precisely because no reader of it survives; editing the literal
+        instead would have to be ordered against every read, while leaving it needs no ordering at
+        all. It is `false` for the `length` of an array, which the array owns and cannot lose, where
+        the code cannot run as strict code; strict code throws there, and the `delete` stays.
 
-        The object must be a container held by a local that nothing else can reach: a single unwritten
-        declaration bound to a freshly allocated literal, immutable across the rest of the program, and
-        referenced only through statically named properties other than the deleted one. That last
-        condition is what rules out every reader — a method call, a spread, a `for-in`, or an escape into
-        a call would each be able to observe the property, and none of them is a named read.
+        The object must be a container held by a local that nothing else can reach: a single
+        unwritten declaration bound to a freshly allocated literal, immutable across the rest of the
+        program, and referenced only through plain reads of statically named properties other than
+        the deleted one (`refinery.lib.scripts.js.analysis.model.ContainerRole.MEMBER_READ`). That
+        last condition is what rules out every reader — a method call, a spread, a `for-in`, or an
+        escape into a call would each be able to observe the property, and none of them is a plain
+        named read. A method call names a key of its own, as `a.join('-')` names `join`, and still
+        reads every element, and a named read runs an accessor where the literal declares one or
+        installs a prototype through `__proto__:`, which may read the deleted key through `this`.
         """
         member = strip_parens(node.operand)
         if not isinstance(member, JsMemberExpression):
-            return False
+            return None
         base = member.object
         key = access_key(member)
         if key is None or not isinstance(base, JsIdentifier):
-            return False
+            return None
         binding = self.model.resolve(base)
         if binding is None or binding.writes or len(binding.declarations) != 1:
-            return False
+            return None
         value = self.model.singular_value(binding)
         if not isinstance(value, (JsObjectExpression, JsArrayExpression)):
-            return False
+            return None
+        if isinstance(value, JsObjectExpression) and object_member_access_runs_accessor(value):
+            return None
         if not self.effects.binding_is_immutable_container(binding, exclude=node):
-            return False
+            return None
         for reference in self.model.references(binding):
             if reference is base:
                 continue
             access = reference.parent
             if not isinstance(access, JsMemberExpression) or access.object is not reference:
-                return False
+                return None
             if access_key(access) in (None, key):
-                return False
+                return None
+            if container_reference_role(reference) is not ContainerRole.MEMBER_READ:
+                return None
+        if isinstance(value, JsArrayExpression) and key == 'length':
+            return None if self.model.may_run_as_strict(node) else False
         return True
 
     def _typeof_of_global_read(self, operand: Node | None) -> str | None:
@@ -1028,7 +1044,8 @@ class JsSimplifications(Transformer):
             return None
         op = node.operator
         if op == 'delete':
-            return JsBooleanLiteral(value=True) if self._deletion_is_unobservable(node) else None
+            answer = self._deletion_answer(node)
+            return None if answer is None else JsBooleanLiteral(value=answer)
         kind = self._fresh_object_type(operand)
         if kind is not None:
             if op == 'typeof':
