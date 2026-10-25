@@ -13,7 +13,7 @@ from pathlib import Path
 
 from test import TestBase
 
-from test.lib.scripts.js.analysis import differential
+from test.lib.scripts.js.analysis import differential, nodejs
 from test.lib.scripts.js.analysis.differential import (
     NODE_TIMEOUT,
     NodeAnswers,
@@ -113,7 +113,7 @@ class TestNoAnswerIsKeptForANodeThatCannotSayWhatItIs(TestBase):
                 ('impostor', impostor),
             ]:
                 with self.subTest(node=name), tempfile.TemporaryDirectory() as folder:
-                    surroundings = differential._surroundings()
+                    surroundings = nodejs.surroundings()
                     self.assertIsNone(differential._kept_answers(executable, folder, surroundings))
                     self.assertEqual(os.listdir(folder), [])
 
@@ -122,14 +122,14 @@ class TestTheKeptAnswersDependOnlyOnTheLocaleAndTimeZoneOfTheEnvironment(TestBas
 
     def test_another_test_or_variable_changes_nothing_but_the_locale_data_or_time_zone_does(self):
         with unittest.mock.patch.dict(os.environ, {'TZ': 'UTC', 'PYTEST_CURRENT_TEST': 'one'}):
-            first = differential._surroundings()
+            first = nodejs.surroundings()
             os.environ['PYTEST_CURRENT_TEST'] = 'two'
             os.environ['REFINERY_UNRELATED'] = 'set'
-            self.assertEqual(differential._surroundings(), first)
+            self.assertEqual(nodejs.surroundings(), first)
             for variable, value in [('NODE_ICU_DATA', 'icu'), ('TZ', 'Asia/Tokyo')]:
                 with self.subTest(variable=variable):
                     with unittest.mock.patch.dict(os.environ, {variable: value}):
-                        self.assertNotEqual(differential._surroundings(), first)
+                        self.assertNotEqual(nodejs.surroundings(), first)
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_the_answers_are_opened_once_for_all_the_tests_of_a_run(self):
@@ -143,8 +143,8 @@ class TestTheKeptAnswersDependOnlyOnTheLocaleAndTimeZoneOfTheEnvironment(TestBas
 
 class TestTheFolderOfKeptAnswers(TestBase):
 
-    FIRST = 'v1.0.0-0123456789abcdef'
-    OTHER = 'v2.0.0-0123456789abcdef'
+    FIRST = '0123456789abcdef'
+    OTHER = 'fedcba9876543210'
     QUESTION = ((('snippet.js', 'console.log(1);'),), 'snippet.js', NODE_TIMEOUT)
 
     def test_the_answers_of_one_node_are_not_given_for_another_nor_removed_by_it(self):
