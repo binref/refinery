@@ -9,6 +9,7 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     node_executable,
+    node_reads_as_a_program,
 )
 
 
@@ -26,3 +27,24 @@ class TestTheLineBreaksNodePrintsAreTheLineBreaksTheTestReads(TestBase):
     def test_a_carriage_return_alone_or_before_a_line_feed_is_read_as_node_printed_it(self):
         program = 'console.log("a" + String.fromCharCode(13) + "b" + String.fromCharCode(13, 10) + "c");'
         self.assertEqual(behavior(program, fresh=True), ('a\rb\r\nc\n', None))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheErrorAProgramEndsInIsTheOneNodeNames(TestBase):
+
+    def test_each_uncaught_error_is_named_by_its_type_and_a_thrown_string_by_none(self):
+        for program, error in [
+            ('throw new Error("x");', 'Error'),
+            ('throw new TypeError();', 'TypeError'),
+            ('console.error("RangeError: printed first"); throw new TypeError("x");', 'TypeError'),
+            ('throw "x";', 'ERROR'),
+        ]:
+            with self.subTest(program=program):
+                self.assertEqual(behavior(program, fresh=True), ('', error))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheLineBreaksOfASnippetAreTheLineBreaksNodeChecks(TestBase):
+
+    def test_a_backslash_before_a_carriage_return_and_line_feed_continues_a_string(self):
+        self.assertTrue(node_reads_as_a_program('var s = "a\\\r\nb";'))

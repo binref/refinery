@@ -49,23 +49,28 @@ from test.lib.scripts.js.analysis.nodejs import (
 )
 
 
-@functools.lru_cache(maxsize=None)
 def node_reads_as_a_program(source: str) -> bool:
     """
     Whether `node --check` reads *source* as a program, parsing it as a script and never running it.
     A file the grammar refuses is a syntax error the check reports, so this is the engine answering
     the same question `refinery.lib.scripts.is_well_formed` answers about the tree the parser built.
+    A test that decoded a sample is refused even where Node checked the same snippet before, and the
+    snippet reaches the file untranslated, for the reason `behavior` gives.
     """
     refuse_script_host_near_a_sample('node')
+    return _node_checks(source)
+
+
+@functools.lru_cache(maxsize=None)
+def _node_checks(source: str) -> bool:
     executable = node_executable()
     assert executable is not None
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / 'snippet.js'
-        path.write_text(source, encoding='utf8')
+        path.write_text(source, encoding='utf8', newline='')
         completed = subprocess.run(
             [executable, '--check', str(path)],
             capture_output=True,
-            text=True,
             env=node_environment(),
         )
     return completed.returncode == 0

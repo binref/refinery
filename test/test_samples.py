@@ -29,6 +29,12 @@ class TestAnAnswerNodeGaveBeforeASampleWasDecodedIsNotGivenAfterIt(TestBase):
         with self.assertRaises(ScriptHostRefused):
             behavior('console.log(1);')
 
+    def test_a_snippet_checked_before_a_sample_was_decoded_is_refused_after_it(self):
+        self.assertTrue(node_reads_as_a_program('0;'))
+        self.download_sample('0fd7c8302457d9d9099282439d8413d9122a5d3cff3467d5042e51fc1156fa5b')
+        with self.assertRaises(ScriptHostRefused):
+            node_reads_as_a_program('0;')
+
 
 class TestATestThatDecodedASampleCannotStartAScriptHost(TestBase):
 

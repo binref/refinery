@@ -55,20 +55,22 @@ def node_executable() -> str | None:
     return shutil.which('node')
 
 
-_ERROR_RE = re.compile(r'^([A-Za-z]+Error): .*$', re.MULTILINE)
+_ERROR_RE = re.compile(r'^([A-Za-z]*Error)(?=:\s|\s*$)', re.MULTILINE)
 
 
 def _normalize_error(stderr: str) -> str:
     """
-    The error type a nonzero-exit *stderr* names — `TypeError`, `ReferenceError`, and so on — read
-    off the `XxxError: …` line every thrown `Error` prints. Only the type is kept, for the reason
+    The error type a nonzero-exit *stderr* names — `Error`, `TypeError`, `ReferenceError`, and so
+    on — read off the `XxxError: …` line every thrown `Error` prints, or the bare name when its
+    message is empty. It is the last such line, because Node prints the uncaught error after
+    whatever the program wrote to *stderr* itself. Only the type is kept, for the reason
     `test.lib.scripts.js.analysis.differential.behavior` gives: the message names the offending
     expression, which a semantics-preserving rewrite may reshape.
 
     RESOLUTION LIMIT: a program may `throw` a value that is not an `Error` — a string, a number, an
     object, `null`, `undefined`, a symbol — and such a throw prints no `XxxError:` line, so every
     one of them collapses to the single token `ERROR` here. Two programs that throw *different*
-    non-Error values are therefore indistinguishable by the error half of `behavior`, and a rewrite
+    non-Error values are therefore indistinguishable by the error half of an answer, and a rewrite
     that changed which non-Error value is thrown is invisible unless the standard output leading up
     to the throw also differs. The exposure is narrow — the fuzzer never emits an uncaught non-Error
     throw, so only a hand-authored ledger entry reaches it — but an entry that must tell two
@@ -78,9 +80,8 @@ def _normalize_error(stderr: str) -> str:
     rare false match for a version-fragile false difference between two runs that threw the very
     same value.
     """
-    match = _ERROR_RE.search(stderr)
-    if match is not None:
-        return match.group(1)
+    if names := _ERROR_RE.findall(stderr):
+        return names[-1]
     return 'ERROR'
 
 
@@ -158,27 +159,21 @@ _CODE = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 def identity(node: str) -> str | None:
     """
-    What the Node at *node* is, as a digest, or `None` when it cannot say. The digest covers the
-    path of the executable, everything `_NODE_IDENTITY` asks, and the code of this module: an answer
-    is only ever the answer of the Node that gave it, asked this way. What Node says depends on its
+    What the Node at *node* is, as a digest, or `None` when it cannot say. Node runs
+    `_NODE_IDENTITY` as it runs any program, through `run`. The digest covers the path of the
+    executable, everything `_NODE_IDENTITY` asks, and the code of this module: an answer is only
+    ever the answer of the Node that gave it, asked this way. What Node says depends on its
     `surroundings`, which themselves are not part of the digest, so that two shells that spell the
     same time zone differently give the same one.
     """
     refuse_script_host_near_a_sample('node')
     try:
-        asked = subprocess.run(
-            [node],
-            input=_NODE_IDENTITY,
-            capture_output=True,
-            text=True,
-            timeout=NODE_TIMEOUT,
-            env=node_environment(),
-        )
-        report = json.loads(asked.stdout)
+        stdout, error = run(node, (('identity.js', _NODE_IDENTITY),), 'identity.js', NODE_TIMEOUT)
+        report = json.loads(stdout)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     if (
-        asked.returncode != 0
+        error is not None
         or not isinstance(report, list)
         or not report
         or not isinstance(version := report[0], str)
