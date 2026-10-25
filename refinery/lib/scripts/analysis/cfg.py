@@ -253,7 +253,10 @@ def flood(
     precise walk would stop dead at the resumption point — the fail-open direction, and the one a
     flood cannot afford. It is applied to the *sources* and never to a node the walk merely met,
     which would follow the hub out of any handler body the sweep happened to pass through. The two
-    sweeps share one `seen`, so the second never re-walks what the first already reached.
+    sweeps share one `seen`, so the second never re-walks what the first already reached; the
+    first walks on through every other source it meets, and the second starts only from the sources
+    the first did not reach, because what the precise walk reaches from a node is a part of what the
+    hub-followed walk reaches from it.
 
     Walked as one depth-first sweep seeded with every source rather than a union of per-source
     walks: the union grows the same answer at the cost of one full walk per source, where a single
@@ -265,19 +268,20 @@ def flood(
     walk every layer above reaches the graphs through — asking a projection per node instead costs
     the whole run more than the resumption edges do.
     """
-    seen: set[int] = set()
-    stack: list[CfgNode] = []
+    distinct: dict[int, CfgNode] = {}
     for source in sources:
-        if id(source) not in seen:
-            seen.add(id(source))
-            stack.append(source)
+        distinct.setdefault(id(source), source)
+    stack = list(distinct.values())
     declines = projection.declines_the_hub and any(
         node.graph.carries_resumption for node in stack)
+    seen: set[int] = set()
     if declines and forward:
         coarse = [node for node in stack if node.is_hub_bound]
         if coarse:
+            seen.update(id(node) for node in coarse)
             _sweep(coarse, seen, forward=True, declines=False)
-            stack = [node for node in stack if not node.is_hub_bound]
+            stack = [node for node in stack if not node.is_hub_bound and id(node) not in seen]
+    seen.update(id(node) for node in stack)
     _sweep(stack, seen, forward=forward, declines=declines)
     return seen
 
