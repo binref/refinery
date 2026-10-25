@@ -5,9 +5,15 @@ once per edit.
 """
 from __future__ import annotations
 
+import gc
 import unittest
+import weakref
 
 from dataclasses import dataclass, field
+
+from test import TestBase, lines_executed
+
+from refinery.lib import scripts
 from refinery.lib.scripts import (
     BodyEdit,
     ListIndex,
@@ -44,6 +50,12 @@ class _Holder(Node):
 @dataclass(repr=False, eq=False)
 class _LateHolder(Node):
     items: list[Node] | None = None
+
+
+@dataclass(repr=False, eq=False)
+class _Mixed(Node):
+    child: Node | None = None
+    items: list[Node | tuple[Node, Node]] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)
@@ -523,7 +535,7 @@ class TestListRemoval(unittest.TestCase):
         self.assertEqual(_names(script), ['c'])
 
 
-class TestListIndex(unittest.TestCase):
+class TestListIndex(TestBase):
     """
     The index answers what `owning_list` answers for the tree as it stands, including after edits
     that change a list in place without going through any edit primitive.
@@ -560,14 +572,45 @@ class TestListIndex(unittest.TestCase):
         holder.first.remove(c)
         self._assert_agrees(index, nodes, 'list replaced')
 
-    def test_a_cleared_index_answers_afresh(self):
-        script = _script('a', 'b')
+    def test_an_answer_follows_raw_edits_between_a_list_a_tuple_and_a_field(self):
+        held, paired, other, listed = (_Leaf(name=name) for name in ('held', 'paired', 'other', 'listed'))
+        clauses = _Clauses(clauses=[(paired, other)])
+        holder = _Mixed(child=held, items=[listed, clauses])
+        for node in (held, paired, other, listed):
+            node.parent = holder
+        nodes: list[Node] = [held, paired, other, listed]
         index = ListIndex()
-        first = script.body[0]
-        self.assertEqual(index.owning_list(first), (script, 'body'))
+        holder.items.append(paired)
+        self._assert_agrees(index, nodes, 'tuple item also listed')
+        holder.child = listed
+        holder.items[0] = held
+        self._assert_agrees(index, nodes, 'field and list swapped')
+        holder.items.remove(paired)
+        holder.items.append((paired, other))
+        self._assert_agrees(index, nodes, 'listed item moved into a tuple')
+
+    def test_a_cleared_index_keeps_no_parent_alive(self):
+        script = _script('a', 'b')
+        child = script.body[0]
+        index = ListIndex()
+        index.owning_list(child)
+        alive = weakref.ref(script)
+        child.parent = None
+        del script
         index.clear()
-        script.body.remove(first)
-        self.assertIsNone(index.owning_list(first))
+        gc.collect()
+        self.assertIsNone(alive())
+
+    def test_the_work_of_asking_about_every_condition_of_a_long_chain_grows_linearly(self):
+        def work(count: int) -> int:
+            conditions = [_Leaf(name=F'c{index}') for index in range(count)]
+            chain = _Clauses(clauses=[(condition, _Leaf(name='body')) for condition in conditions])
+            for condition in conditions:
+                condition.parent = chain
+            index = ListIndex()
+            return lines_executed(lambda: [index.owning_list(condition) for condition in conditions], scripts)
+
+        self.assertWorkGrowsLinearly(work, 250)
 
 
 class TestChildrenMemo(unittest.TestCase):

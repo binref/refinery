@@ -12,7 +12,7 @@ import types
 import typing
 
 from dataclasses import dataclass, field
-from typing import Callable, Generator, Protocol, TypeVar
+from typing import Callable, Generator, NamedTuple, Protocol, TypeVar
 from weakref import WeakKeyDictionary
 
 from refinery.lib.tools import RecursionDepth
@@ -930,31 +930,69 @@ class BodyEdit:
         return True
 
 
+class _Place(NamedTuple):
+    """
+    Where a child sits in its parent: the attribute, the position in that attribute's list or
+    `None` for a single field, and the position inside the tuple at that list position or `None`
+    for a child the list holds directly.
+    """
+    name: str
+    position: int | None
+    slot: int | None
+
+
 class ListIndex:
     """
     Which child list of its parent a node sits in, the answer `owning_list` gives, without scanning
-    the parent's lists once per question. The lists of a parent are indexed by identity on the first
-    question about one of its children, and every answer is checked against the list it names: an
-    entry whose list no longer holds the node at the position it was indexed at, and a node the
-    index does not know, index that parent afresh. So the answer is the one `owning_list` gives for
-    the tree as it stands, however the lists were edited in between, and a batch asking about many
-    statements of one long list pays for the list once rather than once per statement.
+    the parent's lists once per question. The places of a parent's children are indexed by identity
+    on the first question about one of them, and every answer is checked against the place it names:
+    a child the list holds directly answers with that list, and a child in a tuple inside a list or
+    in a single field answers that no list holds it, as `owning_list` does. An entry whose place no
+    longer holds the node, and a node the index does not know, index that parent afresh. So the
+    answer is the one `owning_list` gives for the tree as it stands, however it was edited in
+    between, and a batch asking about many children of one parent pays for the parent once rather
+    than once per child — the conditions of an `elseif` chain no less than the statements of a body.
     """
 
     def __init__(self):
-        #: Each parent is kept beside its index, and not only its `id`, for the reason `BodyEdit`
-        #: keeps its spliced-out nodes: a recycled `id` would answer for whatever took the address.
-        self._indexes: dict[int, tuple[Node, dict[int, tuple[str, int]]]] = {}
+        self._indexes: dict[Node, dict[int, _Place]] = {}
 
-    def _index(self, parent: Node) -> dict[int, tuple[str, int]]:
-        index: dict[int, tuple[str, int]] = {}
+    def _index(self, parent: Node) -> dict[int, _Place]:
+        index: dict[int, _Place] = {}
+        nested: list[tuple[int, _Place]] = []
         for name, value in vars(parent).items():
-            if name in _VARS_SKIP or not isinstance(value, list):
+            if name in _VARS_SKIP:
                 continue
-            for position, item in enumerate(value):
-                index.setdefault(id(item), (name, position))
-        self._indexes[id(parent)] = parent, index
+            if isinstance(value, list):
+                for position, item in enumerate(value):
+                    if isinstance(item, tuple):
+                        nested.extend((id(inner), _Place(name, position, slot)) for slot, inner in enumerate(item))
+                    else:
+                        index.setdefault(id(item), _Place(name, position, None))
+            elif isinstance(value, Node):
+                nested.append((id(value), _Place(name, None, None)))
+        for key, place in nested:
+            index.setdefault(key, place)
+        self._indexes[parent] = index
         return index
+
+    @staticmethod
+    def _holds(parent: Node, place: _Place, node: Node) -> bool:
+        value = vars(parent).get(place.name)
+        if place.position is None:
+            return value is node
+        if not isinstance(value, list) or place.position >= len(value):
+            return False
+        item = value[place.position]
+        if place.slot is None:
+            return item is node
+        return isinstance(item, tuple) and place.slot < len(item) and item[place.slot] is node
+
+    def knows(self, parent: Node) -> bool:
+        """
+        Whether the children of *parent* have been indexed since the last `clear`.
+        """
+        return parent in self._indexes
 
     def owning_list(self, node: Node) -> tuple[Node, str] | None:
         """
@@ -964,16 +1002,13 @@ class ListIndex:
         parent = node.parent
         if parent is None:
             return None
-        known = self._indexes.get(id(parent))
-        if known is not None and known[0] is parent:
-            found = known[1].get(id(node))
-            if found is not None:
-                name, position = found
-                items = vars(parent).get(name)
-                if isinstance(items, list) and position < len(items) and items[position] is node:
-                    return parent, name
-        found = self._index(parent).get(id(node))
-        return None if found is None else (parent, found[0])
+        index = self._indexes.get(parent)
+        place = None if index is None else index.get(id(node))
+        if place is None or not self._holds(parent, place, node):
+            place = self._index(parent).get(id(node))
+        if place is None or place.position is None or place.slot is not None:
+            return None
+        return parent, place.name
 
     def clear(self) -> None:
         self._indexes.clear()
@@ -1000,9 +1035,6 @@ class ListRemoval:
         self._root: Node | None = None
         self._version = 0
         self._lists = ListIndex()
-        #: The parents whose tree was checked, kept beside their `id` for the reason `ListIndex`
-        #: keeps its parents: a recycled `id` would answer for whatever took the address.
-        self._parents: dict[int, Node] = {}
         self._edits: dict[tuple[int, str], BodyEdit] = {}
 
     def _check_unmoved(self) -> None:
@@ -1018,14 +1050,13 @@ class ListRemoval:
         if parent is None:
             return None
         self._check_unmoved()
-        if self._parents.get(id(parent)) is not parent:
+        if not self._lists.knows(parent):
             root = tree_root(parent)
             if self._root is None:
                 self._root = root
                 self._version = tree_version(root)
             elif root is not self._root:
                 raise RuntimeError('a list removal batch was asked about a second tree')
-            self._parents[id(parent)] = parent
         return self._lists.owning_list(node)
 
     def remove(self, node: Node) -> bool:
@@ -1056,7 +1087,6 @@ class ListRemoval:
         finally:
             self._root = None
             self._lists.clear()
-            self._parents.clear()
             self._edits.clear()
 
 
