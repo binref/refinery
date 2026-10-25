@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
+from test import lines_executed
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
+from refinery.lib import scripts
 from refinery.lib.scripts import set_child_list, tree_root, tree_version
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.faults import build_fault_reach
@@ -17,6 +19,7 @@ from refinery.lib.scripts.ps1.deobfuscation import (
     Ps1JunkStatementRemoval,
     Ps1UnusedVariableRemoval,
 )
+from refinery.lib.scripts.ps1.deobfuscation import removal
 from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan, Ps1RemovalPlans
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -952,3 +955,21 @@ class TestPs1ACallThatWritesNothingGoesOnlyWhereNothingObservesIt(TestPs1):
             f
             {self._ANCHOR}
         """), Ps1JunkStatementRemoval), self._ANCHOR)
+
+
+class TestPs1RemovalPlansFindEachListOncePerBatch(TestPs1):
+
+    def test_the_work_of_removing_every_statement_of_a_body_grows_linearly(self):
+        def work(length: int) -> int:
+            script = Ps1Parser('\n'.join(F"'s{index}'" for index in range(length))).parse()
+            plans = Ps1RemovalPlans(_faults(script))
+            statements = list(script.body)
+
+            def remove_all():
+                for statement in statements:
+                    plans.propose(statement)
+                plans.commit()
+
+            return lines_executed(remove_all, scripts, removal)
+
+        self.assertWorkGrowsLinearly(work, 100)

@@ -930,6 +930,55 @@ class BodyEdit:
         return True
 
 
+class ListIndex:
+    """
+    Which child list of its parent a node sits in, the answer `owning_list` gives, without scanning
+    the parent's lists once per question. The lists of a parent are indexed by identity on the first
+    question about one of its children, and every answer is checked against the list it names: an
+    entry whose list no longer holds the node at the position it was indexed at, and a node the index
+    does not know, index that parent afresh. So the answer is the one `owning_list` gives for the
+    tree as it stands, however the lists were edited in between, and a batch asking about many
+    statements of one long list pays for the list once rather than once per statement.
+    """
+
+    def __init__(self):
+        #: Each parent is kept beside its index, and not only its `id`, for the reason `BodyEdit`
+        #: keeps its spliced-out nodes: a recycled `id` would answer for whatever took the address.
+        self._indexes: dict[int, tuple[Node, dict[int, tuple[str, int]]]] = {}
+
+    def _index(self, parent: Node) -> dict[int, tuple[str, int]]:
+        index: dict[int, tuple[str, int]] = {}
+        for name, value in vars(parent).items():
+            if name in _VARS_SKIP or not isinstance(value, list):
+                continue
+            for position, item in enumerate(value):
+                index.setdefault(id(item), (name, position))
+        self._indexes[id(parent)] = parent, index
+        return index
+
+    def owning_list(self, node: Node) -> tuple[Node, str] | None:
+        """
+        The parent and attribute name of the child list `node` sits in, or `None` when it sits in
+        none.
+        """
+        parent = node.parent
+        if parent is None:
+            return None
+        known = self._indexes.get(id(parent))
+        if known is not None and known[0] is parent:
+            found = known[1].get(id(node))
+            if found is not None:
+                name, position = found
+                items = vars(parent).get(name)
+                if isinstance(items, list) and position < len(items) and items[position] is node:
+                    return parent, name
+        found = self._index(parent).get(id(node))
+        return None if found is None else (parent, found[0])
+
+    def clear(self) -> None:
+        self._indexes.clear()
+
+
 class ListRemoval:
     """
     A batch of removals from whichever child lists hold the removed nodes, each list that loses an
@@ -938,42 +987,27 @@ class ListRemoval:
     `_remove_from_parent` finds the list holding a node by searching every list of the parent, and
     removes the node on the spot. A pass that removes many statements from one long list therefore
     scans that list once per removal and advances the mutation counter once per removal. Here the
-    lists of a parent are indexed by identity on the first question about one of its children, and
-    each list that lost an entry is installed through one `BodyEdit` when `apply` runs. Until then
-    the tree is untouched, so a pass keeps asking its questions about the tree it decides on.
+    list holding a node is found through a `ListIndex`, and each list that lost an entry is
+    installed through one `BodyEdit` when `apply` runs. Until then the tree is untouched, so a
+    pass keeps asking its questions about the tree it decides on.
 
-    The index describes the tree as it stood when it was built, so the batch serves one tree, and
-    any answer or `apply` after an edit that reached the tree by another route raises instead of
+    The edits describe the tree as it stood when they were registered, so the batch serves one tree,
+    and any answer or `apply` after an edit that reached the tree by another route raises instead of
     answering for lists that may have changed since.
     """
 
     def __init__(self):
         self._root: Node | None = None
         self._version = 0
-        #: Each parent is kept beside its index, and not only its `id`, for the reason `BodyEdit`
-        #: keeps its spliced-out nodes: a recycled `id` would answer for whatever took the address.
-        self._indexes: dict[int, tuple[Node, dict[int, str]]] = {}
+        self._lists = ListIndex()
+        #: The parents whose tree was checked, kept beside their `id` for the reason `ListIndex`
+        #: keeps its parents: a recycled `id` would answer for whatever took the address.
+        self._parents: dict[int, Node] = {}
         self._edits: dict[tuple[int, str], BodyEdit] = {}
 
     def _check_unmoved(self) -> None:
         if self._root is not None and tree_version(self._root) != self._version:
             raise RuntimeError('the tree was edited while a list removal batch was pending')
-
-    def _index(self, parent: Node) -> dict[int, str]:
-        root = tree_root(parent)
-        if self._root is None:
-            self._root = root
-            self._version = tree_version(root)
-        elif root is not self._root:
-            raise RuntimeError('a list removal batch was asked about a second tree')
-        index: dict[int, str] = {}
-        for name, value in vars(parent).items():
-            if name in _VARS_SKIP or not isinstance(value, list):
-                continue
-            for item in value:
-                index.setdefault(id(item), name)
-        self._indexes[id(parent)] = parent, index
-        return index
 
     def owning_list(self, node: Node) -> tuple[Node, str] | None:
         """
@@ -984,13 +1018,15 @@ class ListRemoval:
         if parent is None:
             return None
         self._check_unmoved()
-        try:
-            _, index = self._indexes[id(parent)]
-        except KeyError:
-            index = self._index(parent)
-        if (name := index.get(id(node))) is None:
-            return None
-        return parent, name
+        if self._parents.get(id(parent)) is not parent:
+            root = tree_root(parent)
+            if self._root is None:
+                self._root = root
+                self._version = tree_version(root)
+            elif root is not self._root:
+                raise RuntimeError('a list removal batch was asked about a second tree')
+            self._parents[id(parent)] = parent
+        return self._lists.owning_list(node)
 
     def remove(self, node: Node) -> bool:
         """
@@ -1019,7 +1055,8 @@ class ListRemoval:
             return changed
         finally:
             self._root = None
-            self._indexes.clear()
+            self._lists.clear()
+            self._parents.clear()
             self._edits.clear()
 
 

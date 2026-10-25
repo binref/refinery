@@ -10,6 +10,7 @@ import unittest
 from dataclasses import dataclass, field
 from refinery.lib.scripts import (
     BodyEdit,
+    ListIndex,
     ListRemoval,
     Node,
     Script,
@@ -43,6 +44,12 @@ class _Holder(Node):
 @dataclass(repr=False, eq=False)
 class _LateHolder(Node):
     items: list[Node] | None = None
+
+
+@dataclass(repr=False, eq=False)
+class _TwoLists(Node):
+    first: list[Node] = field(default_factory=list)
+    second: list[Node] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)
@@ -514,6 +521,53 @@ class TestListRemoval(unittest.TestCase):
         self.assertTrue(lists.remove(script.body[0]))
         self.assertTrue(lists.apply())
         self.assertEqual(_names(script), ['c'])
+
+
+class TestListIndex(unittest.TestCase):
+    """
+    The index answers what `owning_list` answers for the tree as it stands, including after edits
+    that change a list in place without going through any edit primitive.
+    """
+
+    def _assert_agrees(self, index: ListIndex, nodes: list[Node], step: str):
+        for node in nodes:
+            with self.subTest(step=step, node=getattr(node, 'name', None)):
+                self.assertEqual(index.owning_list(node), owning_list(node))
+
+    def test_the_list_holding_a_node_is_the_one_owning_list_names(self):
+        _, places = TestListRemoval._places()
+        self._assert_agrees(ListIndex(), list(places.values()), 'places')
+
+    def test_an_answer_follows_raw_edits_of_the_lists(self):
+        a, b, c, d, e = (_Leaf(name=name) for name in 'abcde')
+        holder = _TwoLists()
+        set_child_list(holder, 'first', [a, b, c])
+        set_child_list(holder, 'second', [d])
+        nodes: list[Node] = [a, b, c, d, e]
+        index = ListIndex()
+        self._assert_agrees(index, nodes, 'as built')
+        holder.first.reverse()
+        self._assert_agrees(index, nodes, 'reversed')
+        holder.first.remove(b)
+        self._assert_agrees(index, nodes, 'removed')
+        holder.first.insert(0, e)
+        e.parent = holder
+        self._assert_agrees(index, nodes, 'inserted')
+        holder.first.remove(a)
+        holder.second.append(a)
+        self._assert_agrees(index, nodes, 'moved to the other list')
+        holder.second = [c, d]
+        holder.first.remove(c)
+        self._assert_agrees(index, nodes, 'list replaced')
+
+    def test_a_cleared_index_answers_afresh(self):
+        script = _script('a', 'b')
+        index = ListIndex()
+        first = script.body[0]
+        self.assertEqual(index.owning_list(first), (script, 'body'))
+        index.clear()
+        script.body.remove(first)
+        self.assertIsNone(index.owning_list(first))
 
 
 class TestChildrenMemo(unittest.TestCase):

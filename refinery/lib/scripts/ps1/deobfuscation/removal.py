@@ -7,11 +7,11 @@ from typing import Callable, NamedTuple
 
 from refinery.lib.scripts import (
     BodyEdit,
+    ListIndex,
     Node,
     Statement,
     _replace_in_parent,
     owning_field,
-    owning_list,
     reattach,
 )
 from refinery.lib.scripts.ps1.analysis.effects import (
@@ -439,6 +439,7 @@ class Ps1RemovalPlans:
         #: collected while its entry stands would let the next object at that address be withdrawn
         #: from a plan that never held it.
         self._filed: dict[int, tuple[Statement, Ps1RemovalPlan]] = {}
+        self._lists = ListIndex()
 
     def propose_in(
         self,
@@ -499,7 +500,7 @@ class Ps1RemovalPlans:
         no registered replacement holds a claim before `commit` either, and for why the release is
         owed whatever the `replacement` argument turns out to hold.
         """
-        owner = owning_list(statement)
+        owner = self._lists.owning_list(statement)
         if owner is None:
             if owning_field(statement) is None:
                 reattach(statement)
