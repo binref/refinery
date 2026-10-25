@@ -1800,7 +1800,7 @@ A_SURFACE_THAT_EVALUATES_A_STRING = {
 }
 
 #: The pack shape, whose payload reaches the proxy object beside it through a getter or a setter,
-#: mapped to the text `refinery.js` writes for it. Two of these payloads hold an early error, so
+#: mapped to the text `refinery.djs` writes for it. Two of these payloads hold an early error, so
 #: those two calls are left standing; the other two differ from them in a single character and are
 #: unpacked as before.
 A_PACK_WHOSE_PAYLOAD_IS_READ_OR_REFUSED = {

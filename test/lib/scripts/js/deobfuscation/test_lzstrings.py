@@ -1,9 +1,9 @@
 """
 Programs that keep their strings compressed with the lz-string library: the minified build of the
 library is inserted whole, and one call of its `decompressFromUTF16` with a string literal gives
-every string of the program, joined. `refinery.js` replaces that call by the string it returns where
-the name holds the object the library builds, nothing changes that object before the call, and the
-built-ins the library reads are the language's when it is built and when the call runs.
+every string of the program, joined. `refinery.djs` replaces that call by the string it returns
+where the name holds the object the library builds, nothing changes that object before the call, and
+the built-ins the library reads are the language's when it is built and when the call runs.
 
 `COMPRESSED("...")` in a program stands for the string literal the library's `compressToUTF16`
 makes of the text, which the library makes in Node when the test runs.
@@ -30,7 +30,7 @@ from test.lib.scripts.js.ledger import (
 )
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 #: The function of the minified build of lz-string 1.5.0, copyright (c) 2013 pieroxy, MIT license,
 #: as the package ships it in `libs/lz-string.min.js`; a call of it builds the library object.
@@ -179,7 +179,7 @@ STRINGS_COMPRESSED = (
     r')](__p_2ibP_SC(5)+fizzbuzz(15));'
 )
 
-#: The one line the program prints, as `refinery.js` recovers it.
+#: The one line the program prints, as `refinery.djs` recovers it.
 FIZZBUZZ_PRINTED = (
     "console.log('FizzBuzz: 1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14, FizzBuzz');"
 )
@@ -687,7 +687,7 @@ class TestTheInsertedShapeIsDecompressed(TestBase):
         return rows['the inserted shape: library, its export line, the accessor'].text
 
     def _deobfuscated(self, source: str, *switches: str) -> str:
-        return source.encode('utf8') | js.assemble(*switches) | str
+        return source.encode('utf8') | djs.assemble(*switches) | str
 
     def test_the_library_its_export_line_and_the_accessor_go_from_a_commonjs_file(self):
         self.assertEqual(
@@ -716,12 +716,12 @@ class TestTheInsertedShapeIsDecompressed(TestBase):
 
 class TestAProgramAnObfuscatorCompressedTheStringsOf(TestBase):
     """
-    The program `STRINGS_COMPRESSED`, deobfuscated as an analyst runs `refinery.js` on a Node script
-    and read as text only.
+    The program `STRINGS_COMPRESSED`, deobfuscated as an analyst runs `refinery.djs` on a Node
+    script and read as text only.
     """
 
     def _deobfuscated(self, *switches: str) -> str:
-        return STRINGS_COMPRESSED.encode('utf8') | js.assemble(*switches) | str
+        return STRINGS_COMPRESSED.encode('utf8') | djs.assemble(*switches) | str
 
     def test_a_commonjs_file_is_recovered_as_the_line_it_prints(self):
         self.assertEqual(self._deobfuscated('-c', '-e', 'node'), FIZZBUZZ_PRINTED)

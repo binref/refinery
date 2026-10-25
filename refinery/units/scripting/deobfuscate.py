@@ -44,7 +44,7 @@ class defu(IterativeDeobfuscator):
 
     Where the selected language has a notion of a statement whose only effect is to write a value to
     the console, such a statement is deleted by default and the switch below keeps it; see
-    `refinery.ps1` for what that costs and the assumption it rests on. A language without that
+    `refinery.dps1` for what that costs and the assumption it rests on. A language without that
     notion ignores the switch.
     """
 

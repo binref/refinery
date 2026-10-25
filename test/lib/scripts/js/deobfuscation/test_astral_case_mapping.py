@@ -29,7 +29,7 @@ import unittest
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 
 _CAP = chr(0x10400)
@@ -108,10 +108,10 @@ def _case_mapped(source: str, method: str) -> str:
 
 def _fold(expression: str) -> str:
     """
-    The expression `refinery.js` folds *expression* to. It is placed in a `console.log` argument,
+    The expression `refinery.djs` folds *expression* to. It is placed in a `console.log` argument,
     which survives as a side effect, so nothing but the fold decides what comes back.
     """
-    printed = F'console.log({expression});'.encode('utf8') | js(strict=True) | str
+    printed = F'console.log({expression});'.encode('utf8') | djs(strict=True) | str
     return printed.removeprefix('console.log(').removesuffix(');')
 
 

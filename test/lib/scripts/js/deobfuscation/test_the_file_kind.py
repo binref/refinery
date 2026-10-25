@@ -23,7 +23,7 @@ from test.lib.scripts.js.ledger import (
 )
 
 from refinery.lib.scripts.js.options import ExecutionModel
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 #: The three readings of a file Node runs as a module: `MODULE` and `ES_MODULE` share the text the
 #: deobfuscation writes for a module of either kind and run it as a CommonJS file and as an ES
@@ -656,7 +656,7 @@ class TestTheTopOfACommonJsFileIsTheBodyOfTheWrapper(TestBase):
 
     def test_a_commonjs_file_in_a_browser_keeps_its_test_for_module(self):
         source = 'if (typeof module === "object") console.log("cjs"); else console.log("global");'
-        output = source.encode('utf8') | js.assemble('-c', '-e', 'browser') | str
+        output = source.encode('utf8') | djs.assemble('-c', '-e', 'browser') | str
         self.assertIn('cjs', output)
 
 

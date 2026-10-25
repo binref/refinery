@@ -193,7 +193,7 @@ class Ps1CallGraph:
         The `Export-ModuleMember` row catches the explicit export and not the general case. A
         `.psm1` with no export statement exports every function by default, and nothing in a file
         says it is a module — the assumption the bare-output default rests on, stated where a
-        caller can see it in `refinery.units.scripting.ps1`.
+        caller can see it in `refinery.units.scripting.dps1`.
         """
         return self._readable
 

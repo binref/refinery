@@ -41,7 +41,7 @@ import unittest
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
@@ -168,9 +168,9 @@ _REPORTS_ITS_MODE = 'function probe() { return this; } console.log(probe() === u
 
 def _deobfuscated(source: str) -> str:
     """
-    The script `refinery.js` emits for *source*.
+    The script `refinery.djs` emits for *source*.
     """
-    return source.encode('utf8') | js(strict=True) | str
+    return source.encode('utf8') | djs(strict=True) | str
 
 
 def _simplified(source: str) -> str:
@@ -188,7 +188,7 @@ def _simplified(source: str) -> str:
 
 def _fold(expression: str) -> str:
     """
-    The expression `refinery.js` folds *expression* to. It is placed in a `console.log` argument,
+    The expression `refinery.djs` folds *expression* to. It is placed in a `console.log` argument,
     which survives as a side effect, so nothing but the fold decides what comes back.
     """
     printed = _deobfuscated(F'console.log({expression});')
@@ -230,7 +230,7 @@ class _NodeDecides(TestBase):
     """
 
     def _preserves(self, source: str):
-        deobfuscated = source.encode('utf8') | js(strict=True) | str
+        deobfuscated = source.encode('utf8') | djs(strict=True) | str
         self.assertEqual(
             behavior(source),
             behavior(deobfuscated),

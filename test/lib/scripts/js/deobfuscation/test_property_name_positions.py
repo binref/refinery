@@ -55,7 +55,7 @@ from refinery.lib.scripts.js.parser import JsParser
 
 def rewritten(programs: Iterable[str]) -> dict[str, str]:
     """
-    What `refinery.js` writes for each program, keyed by the program it was given.
+    What `refinery.djs` writes for each program, keyed by the program it was given.
     """
     return {program: folded(program) for program in programs}
 
@@ -834,7 +834,7 @@ def _a_module_reporting_it_loaded(module: str) -> str:
 
 def rewritten_as_modules(programs: Iterable[str]) -> dict[str, str]:
     """
-    What `refinery.js` writes for each program under the module execution model, keyed by the
+    What `refinery.djs` writes for each program under the module execution model, keyed by the
     program it was given.
     """
     return {program: folded(program, module=True) for program in programs}

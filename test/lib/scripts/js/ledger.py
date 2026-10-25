@@ -32,7 +32,7 @@ from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.lib.scripts.js.token import JsTokenKind
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 NL = chr(10)
 
@@ -130,7 +130,7 @@ def each_well_formed(programs: Iterable[str]) -> dict[str, bool]:
 
 def printed(source: str) -> str:
     """
-    The text `refinery.js` writes for *source* with no pass run over it, which is what the parser
+    The text `refinery.djs` writes for *source* with no pass run over it, which is what the parser
     read spelled back out. An entry about what a file comes back as reads this; one about what a
     program does reads `before_and_after`.
     """
@@ -144,12 +144,12 @@ def folded(
     environment: HostEnvironment = HostEnvironment.universal,
 ) -> str:
     """
-    The text `refinery.js` writes for *source* under the strict model, which is the one whose output
-    is semantically equivalent to its input — the claim every entry reading this makes. The unit's
-    own default is the trusting model, which folds more and guarantees nothing; a test of that model
-    asks for it by name. *environment* is the host the unit is told the script runs in.
+    The text `refinery.djs` writes for *source* under the strict model, which is the one whose
+    output is semantically equivalent to its input — the claim every entry reading this makes. The
+    unit's own default is the trusting model, which folds more and guarantees nothing; a test of
+    that model asks for it by name. *environment* is the host the unit is told the script runs in.
     """
-    return source.encode('utf8') | js(module=module, strict=True, environment=environment.name) | str
+    return source.encode('utf8') | djs(module=module, strict=True, environment=environment.name) | str
 
 
 def evaluated_in_a_body(receiver: str, read: str, installs: str = '') -> str:
@@ -211,7 +211,7 @@ def before_and_after(
     environment: HostEnvironment = HostEnvironment.universal,
 ) -> tuple[tuple[str, str | None], tuple[str, str | None]]:
     """
-    What Node makes of *source* and what it makes of the text `refinery.js` deobfuscates it to,
+    What Node makes of *source* and what it makes of the text `refinery.djs` deobfuscates it to,
     reported together because the law is that the two agree. The deobfuscation assumes the host
     *environment*, which Node is unless it is the browser.
 
@@ -241,7 +241,7 @@ def deobfuscated_behavior(
     environment: HostEnvironment = HostEnvironment.universal,
 ) -> Behavior:
     """
-    What Node makes of the text `refinery.js` deobfuscates *source* to: the second half of what
+    What Node makes of the text `refinery.djs` deobfuscates *source* to: the second half of what
     `before_and_after` reports, without running *source* itself.
     """
     return behavior(deobfuscate_source(source, execution=execution, environment=environment), module=module)
@@ -253,13 +253,13 @@ def before_and_after_in_a_host(
 ) -> tuple[tuple[str, str | None], tuple[str, str | None]]:
     """
     What a host running *source* as a classic global script makes of it, and what it makes of the
-    text `refinery.js` writes for it, reported together because the law is that the two agree.
+    text `refinery.djs` writes for it, reported together because the law is that the two agree.
 
     `before_and_after` reads both under the module execution model, in which a top-level declaration
     is scoped to the file and reaches no global object. A question about what a name reaches through
     `this`, through `globalThis`, or from outside the file is one that model cannot be asked at all,
     and this is the reading that answers it. The deobfuscation here is the strict one
-    `refinery.js` writes under `-s`, the only model whose output is equivalent to its input; the
+    `refinery.djs` writes under `-s`, the only model whose output is equivalent to its input; the
     unit's own default is the trusting model, which folds more and guarantees nothing.
     """
     return (host_behavior(source), deobfuscated_host_behavior(source, environment))
@@ -270,8 +270,9 @@ def deobfuscated_host_behavior(
     environment: HostEnvironment = HostEnvironment.universal,
 ) -> Behavior:
     """
-    What a host running a classic global script makes of the text `refinery.js` writes for *source*:
-    the second half of what `before_and_after_in_a_host` reports, without running *source* itself.
+    What a host running a classic global script makes of the text `refinery.djs` writes for
+    *source*: the second half of what `before_and_after_in_a_host` reports, without running *source*
+    itself.
     """
     return host_behavior(folded(source, environment=environment))
 
@@ -321,7 +322,7 @@ class Reading(Enum):
     ) -> tuple[Behavior, Behavior]:
         """
         What an engine makes of *source* under this model and what it makes of the text
-        `refinery.js` deobfuscates it to for the host *environment*, reported together because the
+        `refinery.djs` deobfuscates it to for the host *environment*, reported together because the
         law is that the two agree.
         """
         return (self.behaves(source), self.deobfuscated(source, environment))
@@ -344,9 +345,9 @@ class Reading(Enum):
         environment: HostEnvironment = HostEnvironment.universal,
     ) -> Behavior:
         """
-        What an engine makes under this model of the text `refinery.js` deobfuscates *source* to for
-        the host *environment* — the second half of what `read` returns, computed without running
-        *source* itself.
+        What an engine makes under this model of the text `refinery.djs` deobfuscates *source* to
+        for the host *environment* — the second half of what `read` returns, computed without
+        running *source* itself.
         """
         if self is Reading.SCRIPT:
             return deobfuscated_host_behavior(source, environment)

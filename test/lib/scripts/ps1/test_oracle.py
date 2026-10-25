@@ -4176,7 +4176,7 @@ class TestPs1OracleReportsASourceItCannotSend(Ps1OracleTest):
 
 class _RecordingUnit:
     """
-    A stand-in for the `ps1` unit that hands each input straight back and counts how often it was
+    A stand-in for the `dps1` unit that hands each input straight back and counts how often it was
     entered. It cannot be entered twice at once any more than the real unit can, but what is asked
     here is *when* it is entered rather than from where, which needs no threads to answer.
     """
@@ -4301,7 +4301,7 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
         measured = dict(zip(snippets, behaviours(snippets)))
         with self.subTest(law='every belief about what a script does is what powershell does'):
             self.assertEqual({claim: measured[claim] for claim in corpus.CLAIMS}, CLAIM_TRANSCRIPTS)
-        deobfuscated = rewritten_by(self.ldu('ps1', strict=True), snippets)
+        deobfuscated = rewritten_by(self.ldu('dps1', strict=True), snippets)
         rewritten = [snippet for snippet in snippets if deobfuscated(snippet) != snippet]
         changed = sorted(
             snippet
@@ -4342,7 +4342,7 @@ class TestPs1EverySnippetIsStillRewritten(TestBase):
     """
 
     def test_every_corpus_snippet_is_rewritten(self):
-        unit = self.ldu('ps1', strict=True)
+        unit = self.ldu('dps1', strict=True)
         untouched = frozenset(
             snippet for snippet in (*corpus.BEHAVIOURS, *corpus.CLAIMS)
             if bytes(snippet.encode('utf8') | unit).decode('utf8') == snippet
@@ -4404,7 +4404,7 @@ class TestPs1DeobfuscationPreservesValueTypes(Ps1OracleTest):
         measured = dict(zip(rows, behaviours(rows)))
         with self.subTest(law='every belief about a value type is what powershell does'):
             self.assertEqual(measured, TYPE_TRANSCRIPTS)
-        rewrite = rewritten_by(self.ldu('ps1', strict=True), rows)
+        rewrite = rewritten_by(self.ldu('dps1', strict=True), rows)
         changed = sorted(
             row for row, after in zip(rows, behaviours(rows, rewrite))
             if after != measured[row]

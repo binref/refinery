@@ -37,7 +37,7 @@ from test.lib.scripts.js.analysis.differential import (
     node_executable,
 )
 
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 #: A literal whose keys are plain names and numerals, mapped to the order they are visited in.
 _A_NUMERAL_IS_VISITED_BEFORE_A_NAME: dict[str, str] = {
@@ -195,7 +195,7 @@ def _walk(body: str) -> str:
 
 
 def _walked(body: str) -> str:
-    return _walk(body).encode('utf8') | js(strict=True) | str
+    return _walk(body).encode('utf8') | djs(strict=True) | str
 
 
 def _keys_of(literal: str) -> str:

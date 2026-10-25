@@ -2,13 +2,13 @@
 The host environment a script is assumed to run in, and the set of global names that environment
 guarantees a bare read resolves rather than throwing a `ReferenceError`.
 
-A bare read of a name the program neither declares nor assigns reaches the host's global object. Which
-names are there is not a language fact but a host one: `window` exists in a browser and throws under
-Node, `global` the other way around. The deobfuscator's sound default asserts only what every host
-shares — `GUARANTEED_GLOBALS`, the names the ECMAScript specification mandates — and answers every other
-bare read may-throw, so no pass drops the `ReferenceError` an absent host raises. An analyst who knows
-where a sample runs pins the host with the `js` unit's `-e` switch, and the reads that host guarantees
-become certain, recovering the folds the sound default refuses.
+A bare read of a name the program neither declares nor assigns reaches the host's global object.
+Which names are there is not a language fact but a host one: `window` exists in a browser and throws
+under Node, `global` the other way around. The deobfuscator's sound default asserts only what every
+host shares — `GUARANTEED_GLOBALS`, the names the ECMAScript specification mandates — and answers
+every other bare read may-throw, so no pass drops the `ReferenceError` an absent host raises. An
+analyst who knows where a sample runs pins the host with the `djs` unit's `-e` switch, and the reads
+that host guarantees become certain, recovering the folds the sound default refuses.
 
 This module is the single datum those decisions read. `HostEnvironment.provides` answers, from data
 alone, whether a host resolves a name; `SemanticModel.read_may_throw` is the one seam that consults it.
@@ -600,10 +600,10 @@ class FileKind(enum.Enum):
 
 class HostEnvironment(enum.Enum):
     """
-    The host a script is assumed to run in, selected by the `js` unit's `-e` switch. `universal` is the
-    default and asserts only `GUARANTEED_GLOBALS`, so deobfuscation stays byte-identical to an unpinned
-    run; each other member adds the globals that host guarantees, recovering the folds the sound default
-    refuses for a name no universal host defines.
+    The host a script is assumed to run in, selected by the `djs` unit's `-e` switch. `universal` is
+    the default and asserts only `GUARANTEED_GLOBALS`, so deobfuscation stays byte-identical to an
+    unpinned run; each other member adds the globals that host guarantees, recovering the folds the
+    sound default refuses for a name no universal host defines.
     """
     universal = 'universal'
     node = 'node'

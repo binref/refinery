@@ -18,8 +18,8 @@ from refinery.lib.scripts.js.deobfuscation.helpers import function_source
 from refinery.lib.scripts.js.model import JsFunctionExpression, JsMethodDefinition
 from refinery.lib.scripts.js.parser import JsParser
 
-#: A program reading the text of a function value, mapped to the file `refinery.js` folds it to. The
-#: read is written inside a function body, which is where the tool answers it at all; the folded
+#: A program reading the text of a function value, mapped to the file `refinery.djs` folds it to.
+#: The read is written inside a function body, which is where the tool answers it at all; the folded
 #: text holds the source the function was written with, character for character, as a string
 #: literal. Each expected value was confirmed against Node: `String` of a declaration keeps its
 #: name, a function expression drops it, an arrow is the arrow, and a method keeps its name; a loose

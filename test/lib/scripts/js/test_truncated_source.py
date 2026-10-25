@@ -18,7 +18,7 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 
 _TOP_LEVEL = inspect.cleandoc("""
@@ -486,7 +486,7 @@ class TestAFoldOverALiteralTheCutLeftOpen(TestBase):
     """
 
     def _deobfuscated(self, source: str) -> str:
-        return source.encode('utf8') | js(strict=True) | str
+        return source.encode('utf8') | djs(strict=True) | str
 
     def test_a_fold_that_reaches_a_literal_the_cut_left_open_leaves_the_file_cut(self):
         expected = {

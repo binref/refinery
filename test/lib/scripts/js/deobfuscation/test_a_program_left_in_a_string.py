@@ -2,7 +2,7 @@
 Programs that leave part of themselves in a string, which a `Function` construction or an `eval`
 runs, read the way Node reads a file it runs as a module.
 
-A CommonJS file is sloppy code unless it says otherwise, so where `refinery.js` is told the file is
+A CommonJS file is sloppy code unless it says otherwise, so where `refinery.djs` is told the file is
 one, a payload that runs differently as strict code is unpacked into it. Where the file may be an
 ES module as well, such a payload stays in its string, because unpacked it would run as strict
 code. Either way a payload reading a name the CommonJS wrapper binds — `require`, `module`,
@@ -35,7 +35,7 @@ from test.lib.scripts.js.ledger import (
 )
 
 from refinery.lib.scripts.js.options import ExecutionModel
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 
 def _runs_a_string(source: str) -> bool:
@@ -293,7 +293,7 @@ A_PAYLOAD_AT_A_STRICT_SITE = {
 }
 
 #: A file spelling `export`, which Node runs as an ES module only, so its code is strict code
-#: whatever `refinery.js` is told about it.
+#: whatever `refinery.djs` is told about it.
 A_FILE_SPELLING_EXPORT = a_program("""
     export {};
     Function("leak12 = 6;")();
@@ -999,7 +999,7 @@ PACKED_GLOBALS = (
     r'=ym9Tun8},get"VM9Zxy"(){return require},get"FCHW63"(){return typeof module}});'
 )
 
-#: The program `PACKED_GLOBALS` packs, as `refinery.js` writes it once unpacked.
+#: The program `PACKED_GLOBALS` packs, as `refinery.djs` writes it once unpacked.
 PACKED_GLOBALS_UNPACKED = inspect.cleandoc(
     """
     function fizzbuzz(limit) {
@@ -1025,14 +1025,14 @@ PACKED_GLOBALS_UNPACKED = inspect.cleandoc(
 
 class TestThePackersOwnOutputIsUnpacked(TestBase):
     """
-    The packer's own output for two small programs, deobfuscated as an analyst runs `refinery.js` on
-    a Node script and read as text only. Each program writes through the accessor object only where
-    the accessors stand, at the top of the file, so it unpacks whether the file is known to be
+    The packer's own output for two small programs, deobfuscated as an analyst runs `refinery.djs`
+    on a Node script and read as text only. Each program writes through the accessor object only
+    where the accessors stand, at the top of the file, so it unpacks whether the file is known to be
     CommonJS or may be an ES module as well.
     """
 
     def _deobfuscated(self, source: str, *switches: str) -> str:
-        return source.encode('utf8') | js.assemble(*switches, '-e', 'node') | str
+        return source.encode('utf8') | djs.assemble(*switches, '-e', 'node') | str
 
     def test_a_program_reading_no_global_is_recovered_as_the_line_it_prints(self):
         printed_line = (

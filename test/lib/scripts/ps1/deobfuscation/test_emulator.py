@@ -19,7 +19,7 @@ from refinery.lib.scripts.ps1.deobfuscation.emulator import (
 )
 from refinery.lib.scripts.ps1.model import Ps1ScriptBlock
 from refinery.lib.scripts.ps1.parser import Ps1Parser
-from refinery.units.scripting.ps1 import ps1
+from refinery.units.scripting.dps1 import dps1
 
 #: The Int32 that every measurement in `TestPs1WhichSideOfWhichOperatorABooleanMayStandOn` was taken
 #: against, as the grid names its type.
@@ -1905,11 +1905,11 @@ class TestPs1AFoldedBodyAnswersWhereTheHostAnswersAndNowhereElse(TestPs1):
     def test_the_unit_folds_a_sum_of_two_thousand_ones_to_the_number_they_add_up_to(self):
         # Both sums go through the unit and not the helper: raising the recursion limit is the
         # unit's own doing, so where a fold over a body runs out of stack is measurable only there.
-        self.assertEqual(self._sum_of_ones(2000).encode('utf8') | ps1() | str, '$x = 2000')
+        self.assertEqual(self._sum_of_ones(2000).encode('utf8') | dps1() | str, '$x = 2000')
 
     def test_the_unit_answers_a_sum_too_long_to_fold_rather_than_crashing_on_it(self):
         try:
-            bytes(self._sum_of_ones(5000).encode('utf8') | ps1())
+            bytes(self._sum_of_ones(5000).encode('utf8') | dps1())
         except RecursionError:
             self.fail('a RecursionError escaped the unit, which has to decline a fold instead')
 

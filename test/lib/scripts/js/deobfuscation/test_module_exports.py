@@ -1,5 +1,5 @@
 """
-A CommonJS file hands what it stores in `module.exports` to the code that loads it. `refinery.js`
+A CommonJS file hands what it stores in `module.exports` to the code that loads it. `refinery.djs`
 assumes no code loads the input unless `-l` says otherwise, so a store that replaces
 `module.exports` in a file that never reads `module` back is read by nothing and goes. Every other
 store into the module objects stays, and so does the store wherever the file reads its exports back

@@ -31,7 +31,7 @@ from typing import NamedTuple
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 
 class _Store(NamedTuple):
@@ -52,7 +52,7 @@ class _Store(NamedTuple):
 
 class _Rewrite(NamedTuple):
     """
-    A program and the text `refinery.js` leaves it as.
+    A program and the text `refinery.djs` leaves it as.
     """
     source: str
     result: str
@@ -214,7 +214,7 @@ _FOLDS_BESIDE_A_STORE: dict[str, _Rewrite] = {
     ),
 }
 """
-A program whose call the fold must still reach, mapped to the text `refinery.js` leaves it as. Each
+A program whose call the fold must still reach, mapped to the text `refinery.djs` leaves it as. Each
 of them stores somewhere the fold does not reach — a neighbouring statement, a sibling argument, a
 function written down and never called — or reads back a store the fold may carry through, and the
 call is decided by what is written in it either way. A refusal here is invisible to Node, which is
@@ -224,14 +224,14 @@ why the text is what these rows assert.
 
 def _deobfuscated(source: str) -> str:
     """
-    The script `refinery.js` emits for *source*.
+    The script `refinery.djs` emits for *source*.
     """
-    return source.encode('utf8') | js(strict=True) | str
+    return source.encode('utf8') | djs(strict=True) | str
 
 
 def _fold(expression: str) -> str:
     """
-    The text `refinery.js` leaves *expression* as. It is written into a `console.log` argument,
+    The text `refinery.djs` leaves *expression* as. It is written into a `console.log` argument,
     which survives, so nothing but the fold decides what comes back.
     """
     printed = _deobfuscated(F'console.log({expression});')

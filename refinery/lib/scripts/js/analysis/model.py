@@ -2587,16 +2587,16 @@ class SemanticModel:
         A name resolves for certain when a declaration binds it, or when the pinned host environment
         guarantees it on the global object (`HostEnvironment.provides`). The default `universal`
         environment provides exactly `GUARANTEED_GLOBALS`, the existence allowlist the language
-        mandates everywhere, so `globalThis` resolves while the other `GLOBAL_OBJECT_ALIASES` spellings
-        (`window`, `self`, `top`, `frames`, `global`) are a *host* assumption rather than a language
-        one, and are not admitted: no host defines all of them, so a bare `window` throws under Node
-        exactly as a bare `global` throws in a browser. An analyst who knows the host pins it with the
-        `js` unit's `-e` switch, and the names that host guarantees become certain here, recovering the
-        reading the sound default refuses — except a host-conditional global the program `delete`s off a
-        same-realm alias, which `_scan_deleted_host_globals` withholds program-wide so the bare read
-        keeps its throw. Unpinned, the read is answered may-throw so no pass drops the `ReferenceError`
-        the absent host raises, and `_base_is_safe` agrees, refusing to clear a property access on such
-        an alias. Everything else may not be there:
+        mandates everywhere, so `globalThis` resolves while the other `GLOBAL_OBJECT_ALIASES`
+        spellings (`window`, `self`, `top`, `frames`, `global`) are a *host* assumption rather than
+        a language one, and are not admitted: no host defines all of them, so a bare `window` throws
+        under Node exactly as a bare `global` throws in a browser. An analyst who knows the host
+        pins it with the `djs` unit's `-e` switch, and the names that host guarantees become certain
+        here, recovering the reading the sound default refuses — except a host-conditional global
+        the program `delete`s off a same-realm alias, which `_scan_deleted_host_globals` withholds
+        program-wide so the bare read keeps its throw. Unpinned, the read is answered may-throw so
+        no pass drops the `ReferenceError` the absent host raises, and `_base_is_safe` agrees,
+        refusing to clear a property access on such an alias. Everything else may not be there:
 
         - a free name, which reaches the host and may simply not exist
         - a name whose only binding is an `IMPLICIT_GLOBAL`, which the assignment that creates it

@@ -91,7 +91,7 @@ from refinery.lib.scripts.js.strict import (
     joins_directive_prologue,
     strict_mode_at,
 )
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 #: What `test.lib.scripts.js.analysis.differential.completion_values` reports for a text Node does
 #: not read as a program at all.
@@ -346,7 +346,7 @@ A_PROGRAM_REPORTING_ITS_MODE = {
 }
 
 #: A read a constant string decides, standing at the head of a body that reads no Directive
-#: Prologue, mapped to the text `refinery.js` writes for the whole program. The read answers a
+#: Prologue, mapped to the text `refinery.djs` writes for the whole program. The read answers a
 #: string, so folding it writes a string literal where the read stood; no directive is ever read
 #: there, so no mode turns on the rewrite and nothing licenses declining it.
 A_READ_WHERE_NO_PROLOGUE_IS_READ = {
@@ -363,7 +363,7 @@ A_READ_WHERE_NO_PROLOGUE_IS_READ = {
 }
 
 #: The same read standing where a string literal would join a Directive Prologue, mapped to the text
-#: `refinery.js` writes for it. Folding it there hands the prologue a statement that had ended one.
+#: `refinery.djs` writes for it. Folding it there hands the prologue a statement that had ended one.
 A_READ_WHERE_A_PROLOGUE_IS_READ = {
     "'abc'[0];":
         "'abc'[0];",
@@ -541,7 +541,7 @@ A_ROUTE_A_STRING_ARRIVES_AT_THE_HEAD_BY = {
     'a removal'   : "var dead = 1; 'use strict';",
 }
 
-#: A statement standing at the head of a function body, mapped to the text `refinery.js` writes for
+#: A statement standing at the head of a function body, mapped to the text `refinery.djs` writes for
 #: the whole program. A `'use strict'` an edit moved into the prologue is written inside a bracket,
 #: which computes the same string and declares nothing; one the source wrote there is left alone;
 #: and a promoted string that is not `use strict` is left alone too, since parenthesizing it would
@@ -677,12 +677,12 @@ def _a_body_with_the_directive_at(index: int) -> str:
 
 
 def _deobfuscated(source: str) -> str:
-    return source.encode('utf8') | js(strict=True) | str
+    return source.encode('utf8') | djs(strict=True) | str
 
 
 def _before_and_after(source: str) -> tuple[tuple[str, str | None], tuple[str, str | None]]:
     """
-    What Node makes of *source* and what it makes of the text `refinery.js` deobfuscates it to,
+    What Node makes of *source* and what it makes of the text `refinery.djs` deobfuscates it to,
     reported together because the law is that the two agree.
     """
     return behavior(source), behavior(deobfuscate_source(source))

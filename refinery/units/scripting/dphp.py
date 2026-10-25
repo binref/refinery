@@ -7,7 +7,7 @@ from refinery.lib.scripts.php.synth import PhpSynthesizer
 from refinery.units.scripting import IterativeDeobfuscator
 
 
-class php(IterativeDeobfuscator):
+class dphp(IterativeDeobfuscator):
     """
     AST-based PHP deobfuscator and pretty-printer.
 

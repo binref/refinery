@@ -34,7 +34,7 @@ from typing import NamedTuple
 
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 
 class _Row(NamedTuple):
@@ -251,7 +251,7 @@ _A_RESULT_HOLDING_A_HOLE: dict[str, _Row] = {
 
 
 def _deobfuscated(source: str) -> str:
-    return source.encode('utf8') | js | str
+    return source.encode('utf8') | djs | str
 
 
 def _printed(rows: dict[str, _Row]) -> dict[str, tuple[str, str | None]]:

@@ -11,6 +11,10 @@
 > **BREAKING CHANGES**
 
 - The minimum supported Python version was raised from 3.10 to 3.11.
+- The script deobfuscators were renamed so that their commands no longer shadow script interpreters such as `php` or a `js` shell:
+  `js` is now `djs`, `ps1` is now `dps1`, `vba` is now `dvba`, and `php` is now `dphp`.
+  The new names follow the AutoIt deobfuscator `dau3`; the language-detecting `defu` keeps its name.
+  Pipelines that use the old names have to be updated.
 - The meta variable `offset` was renamed to `start`.
   It is emitted by `carve`, `dnsdomain`, `rex`, `xtp`, `xtw`, all `carve-*` units, `ngrams`, `perc`, `vsect`, `vsnip`, `xtasar`.
   Every unit that reports a `start` now also reports the matching `end`, which is the position just after the region in the input.

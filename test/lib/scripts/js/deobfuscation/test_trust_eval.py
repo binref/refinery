@@ -1,5 +1,5 @@
 """
-The strict switch of `refinery.units.scripting.js` — `-s`/`--strict` — selects between the two
+The strict switch of `refinery.units.scripting.djs` — `-s`/`--strict` — selects between the two
 models `refinery.lib.scripts.js.options.DeobfuscationOptions.trust_eval` names. The suspecting
 model, which the library default and every differential entry in this tree runs, is the only sound
 one: code supplied as data may read or write anything the scope it runs in can reach. The trusting

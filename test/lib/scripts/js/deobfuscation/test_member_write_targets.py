@@ -7,7 +7,7 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.analysis.write_positions import WRITE_POSITIONS
 
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 _ARRAY_INDEX = ('[1, 2, 3][0]', '1')
 """
@@ -77,9 +77,9 @@ def _in_position(template: str, target: str) -> str:
 
 def _deobfuscate(source: str) -> str:
     """
-    The script the `js` unit emits for *source*, iterated to a fixed point as the unit does.
+    The script the `djs` unit emits for *source*, iterated to a fixed point as the unit does.
     """
-    return source.encode('utf8') | js(strict=True) | str
+    return source.encode('utf8') | djs(strict=True) | str
 
 
 def _rewritten_snippets() -> list[str]:

@@ -53,11 +53,11 @@ import unittest
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 
 def _deobfuscated(source: str, *, module: bool = False) -> str:
-    return source.encode('utf8') | js(module=module, strict=True) | str
+    return source.encode('utf8') | djs(module=module, strict=True) | str
 
 
 def _printed(rows: dict[str, str]) -> dict[str, tuple[str, str | None]]:

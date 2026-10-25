@@ -414,7 +414,7 @@ class TestPs1ImplicitGetRetryYieldsToAProgramWindowsShips(TestBase):
         self.assertEqual(sorted(PROGRAM_NAMES.intersection({'item', 'tpm'})), ['tpm'])
 
     def test_the_refusal_reaches_the_script_the_unit_emits(self):
-        unit = self.ldu('ps1')
+        unit = self.ldu('dps1')
 
         def emitted(source: str) -> str:
             return bytes(source.encode('utf8') | unit).decode('utf8')

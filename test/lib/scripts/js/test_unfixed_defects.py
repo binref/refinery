@@ -143,7 +143,7 @@ class TestAnExpressionNamedByAWordOnlyTheEnclosingKindReservesIsAProgram(TestBas
     def test_the_deobfuscation_of_one_that_prints_keeps_what_it_prints(self):
         """
         A file that asks for the type of the expression keeps it alive through every pass, so what
-        the tool writes for this one is what a caller of `refinery.js` is handed.
+        the tool writes for this one is what a caller of `refinery.djs` is handed.
         """
         source = (
             'function* g() { var f = function yield() { return 1; };'
@@ -2063,7 +2063,7 @@ class TestAPrototypeHandedToAWriterIsStillWritten(TestBase):
     A correct implementation records the escape once, against the name as much as against its keys,
     so that the two questions asked about one escape cannot disagree. Doing that and nothing else
     withdraws every chain answer from a file that hands `Object` to a call it cannot resolve, which
-    the real samples do: `test.units.scripting.test_js` measures two of them coming back unreduced.
+    the real samples do: `test.units.scripting.test_djs` measures two of them coming back unreduced.
     So the escape has to be *followed* rather than assumed, which is the interprocedural precision
     this is deferred to — a callee whose writes are enumerable is a callee whose escape is not one.
 
@@ -3371,7 +3371,7 @@ class TestADeepChainOfLocalsOverflowsTheRewriter(TestBase):
     in the pipeline walks the tree by recursing per node, and a tree four hundred operands deep
     exceeds the interpreter's recursion limit inside
     `refinery.lib.scripts.js.deobfuscation.simplify.JsSimplifications`, so the library run raises a
-    `RecursionError` where a shorter chain folds to its final print. The `refinery.js` unit raises
+    `RecursionError` where a shorter chain folds to its final print. The `refinery.djs` unit raises
     the interpreter's limit and catches the error, so a unit run does not die — it returns the
     input undeobfuscated, which is what the overflow costs there. The same chain written through
     implicit globals reduces at n = 1000, because the sweep deletes those stores without ever

@@ -9,7 +9,7 @@ from refinery.units import Arg
 from refinery.units.scripting import IterativeDeobfuscator
 
 
-class ps1(IterativeDeobfuscator):
+class dps1(IterativeDeobfuscator):
     """
     AST-based PowerShell deobfuscator.
 

@@ -28,7 +28,7 @@ from test.lib.scripts.js.ledger import (
 )
 
 from refinery.lib.scripts.js.options import ExecutionModel
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 #: Programs calling an accessor whose table, or a function whose constant, is in place before every
 #: call runs and never changes, mapped to what Node prints for them.
@@ -565,7 +565,7 @@ class TestATableReadThroughAnAccessorStillPrintsTheSame(TestBase):
             {
                 source: (
                     host_behavior(source),
-                    host_behavior(source.encode('utf8') | js | str),
+                    host_behavior(source.encode('utf8') | djs | str),
                 )
                 for source in rows
             },

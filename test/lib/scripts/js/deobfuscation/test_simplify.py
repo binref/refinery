@@ -14,7 +14,7 @@ from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 _ASTRAL = chr(0x1F600)
 
@@ -28,11 +28,11 @@ while Python sees three code points, so every offset past the middle character d
 
 def _folded_value(expression: str) -> str:
     """
-    The text `refinery.js` prints for *expression* once it has folded it. The expression is placed
+    The text `refinery.djs` prints for *expression* once it has folded it. The expression is placed
     in the argument of a `console.log` call, which survives because it is a side effect, so nothing
     but the fold decides what comes back.
     """
-    printed = F'console.log({expression});'.encode('utf8') | js(strict=True) | str
+    printed = F'console.log({expression});'.encode('utf8') | djs(strict=True) | str
     return printed.removeprefix('console.log(').removesuffix(');')
 
 

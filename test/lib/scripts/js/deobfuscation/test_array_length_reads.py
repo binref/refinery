@@ -37,7 +37,7 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 from test.lib.scripts.js.test_array_holes import SHAPES
 
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 #: Each read the literal decides, mapped to the text the tool folds it to, which is also the number
 #: Node answers the read with.
@@ -204,12 +204,12 @@ _TARGET = '[1, 2, 3].length'
 
 
 def _deobfuscated(source: str) -> str:
-    return source.encode('utf8') | js(strict=True) | str
+    return source.encode('utf8') | djs(strict=True) | str
 
 
 def _fold(expression: str) -> str:
     """
-    The expression `refinery.js` folds *expression* to. It is placed in a `console.log` argument,
+    The expression `refinery.djs` folds *expression* to. It is placed in a `console.log` argument,
     which survives as a side effect, so nothing but the fold decides what comes back.
     """
     printed = _deobfuscated(F'console.log({expression});')

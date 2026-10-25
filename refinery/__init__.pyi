@@ -370,10 +370,10 @@ from refinery.units.scripting.bat import batfs as batfs
 from refinery.units.scripting.cmdarg import cmdarg as cmdarg
 from refinery.units.scripting.dau3 import dau3 as dau3
 from refinery.units.scripting.deobfuscate import defu as defu
-from refinery.units.scripting.js import js as js
-from refinery.units.scripting.php import php as php
-from refinery.units.scripting.ps1 import ps1 as ps1
-from refinery.units.scripting.vba import vba as vba
+from refinery.units.scripting.djs import djs as djs
+from refinery.units.scripting.dphp import dphp as dphp
+from refinery.units.scripting.dps1 import dps1 as dps1
+from refinery.units.scripting.dvba import dvba as dvba
 from refinery.units.sinks.asm import asm as asm
 from refinery.units.sinks.dnasm import dnasm as dnasm
 from refinery.units.sinks.dump import d2p as d2p

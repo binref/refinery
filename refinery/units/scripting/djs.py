@@ -11,7 +11,7 @@ from refinery.units import Arg
 from refinery.units.scripting import IterativeDeobfuscator
 
 
-class js(IterativeDeobfuscator):
+class djs(IterativeDeobfuscator):
     """
     AST-based JavaScript deobfuscator and pretty-printer.
 

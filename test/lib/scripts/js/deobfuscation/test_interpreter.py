@@ -10,7 +10,7 @@ from test.lib.scripts.js.analysis.differential import behavior, completion_value
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
-from refinery.units.scripting.js import js
+from refinery.units.scripting.djs import djs
 
 
 class TestInterpreterValueSemantics(TestJsDeobfuscator):
@@ -1686,7 +1686,7 @@ class TestInterpreterTrustVerdictBoundaries(TestJsDeobfuscator):
             """
         )
         self.assertEqual(('10\n', None), behavior(source))
-        self.assertEqual(('10\n', None), behavior(source.encode('utf8') | js | str))
+        self.assertEqual(('10\n', None), behavior(source.encode('utf8') | djs | str))
 
     def test_a_static_object_method_call_folds_every_time_it_is_asked(self):
         source = inspect.cleandoc(
