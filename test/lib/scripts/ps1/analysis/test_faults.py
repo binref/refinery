@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unittest
+
 from inspect import cleandoc
 
 from test import TestBase
@@ -41,8 +43,8 @@ def _model(source: str) -> tuple[Ps1Script, Ps1FaultReach]:
 
 class _Answering:
     """
-    Raise verdicts that answer every question about what lies behind a handler with *answer*, and
-    never report a raise that ends the run.
+    Raise and skip verdicts that answer every question about what lies behind a handler with
+    *answer*, and never report a raise that ends the run.
     """
 
     def __init__(self, answer: bool):
@@ -54,6 +56,9 @@ class _Answering:
     def may_end_the_run_behind(self, paths, start) -> bool:
         return False
 
+    def skip_observed_behind(self, paths, start) -> bool:
+        return self._answer
+
 
 def _handler_removal_is_observed(tree: Ps1Script, reach: Ps1FaultReach, handler: Node) -> bool:
     """
@@ -64,7 +69,7 @@ def _handler_removal_is_observed(tree: Ps1Script, reach: Ps1FaultReach, handler:
     """
     control_flow = build_control_flow_model(tree)
     world = build_world_reach(measure_world(tree), lambda: control_flow)
-    verdicts = Ps1HandlerVerdicts(reach, world, tree)
+    verdicts = Ps1HandlerVerdicts(reach, lambda: world, tree)
     return reach.removing_a_handler_is_observed(handler, verdicts.raises(False), verdicts.skips)
 
 
@@ -419,8 +424,8 @@ class TestPs1RemovingATrapIsJudgedByWhereItsErrorsWouldGoInstead(TestBase):
             [int]'a'
         """)
         trap = tree.body[0]
-        self.assertTrue(reach.removing_a_handler_is_observed(trap, _Answering(True)))
-        self.assertFalse(reach.removing_a_handler_is_observed(trap, _Answering(False)))
+        self.assertTrue(reach.removing_a_handler_is_observed(trap, _Answering(True), _Answering(True)))
+        self.assertFalse(reach.removing_a_handler_is_observed(trap, _Answering(False), _Answering(False)))
 
     def test_a_trap_matters_only_while_its_block_still_holds_something_that_may_raise(self):
         guarding, guarding_reach = _model("""
@@ -583,6 +588,50 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
     def test_a_soft_error_in_a_loop_body_lets_the_trap_go(self):
         self.assertFalse(self._trap_removal_is_observed(
             "trap { continue }; for ($i = 0; $i -lt 3; $i++) { $y = 1 % 0 }; Write-Host 'after'"))
+
+    @unittest.expectedFailure
+    def test_a_soft_error_whose_later_runs_write_what_is_read_after_the_loop_keeps_the_trap(self):
+        """
+        With the `trap`, the first failed cast resumes past the whole loop and `$y` is never set;
+        delete the `trap` and 5.1 reports the error, steps over to `$i++`, and the second run sets
+        `$y` to 5, which `Write-Host` prints. The trap abandons the raiser's own later runs, which
+        the step-over reader does not count: it excepts the raiser from its own region.
+        """
+        self.assertTrue(self._trap_removal_is_observed(cleandoc("""
+            trap { continue }
+            $a = @('x', '5')
+            for ($i = 0; $i -lt 2; $i++) { $y = [int]$a[$i] }
+            Write-Host $y
+        """)))
+
+    def test_a_soft_error_whose_later_runs_write_what_nothing_reads_lets_the_trap_go(self):
+        self.assertFalse(self._trap_removal_is_observed(cleandoc("""
+            trap { continue }
+            $a = @('x', '5')
+            for ($i = 0; $i -lt 2; $i++) { $y = [int]$a[$i] }
+            Write-Host 'after'
+        """)))
+
+    def test_a_soft_error_after_a_statement_at_script_scope_lets_the_trap_go(self):
+        self.assertFalse(self._trap_removal_is_observed(cleandoc("""
+            trap { continue }
+            'out'
+            $null = [int]$s
+            'after'
+        """)))
+
+    @unittest.expectedFailure
+    def test_a_soft_error_after_a_statement_in_an_if_body_lets_the_trap_go(self):
+        """
+        `'out'` runs before the raiser with the trap and without it, so the trap skips nothing, as
+        at script scope. The `if` statement's own node is read as a soft raiser because its body
+        holds one, and its step-over into the body counts `'out'` as skipped.
+        """
+        self.assertFalse(self._trap_removal_is_observed(cleandoc("""
+            trap { continue }
+            if ($c) { 'out'; $null = [int]$s }
+            'after'
+        """)))
 
     def test_a_soft_error_before_a_live_tail_in_an_if_body_keeps_the_trap(self):
         """

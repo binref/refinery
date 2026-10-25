@@ -26,7 +26,11 @@ from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.commands import Ps1CommandModel, build_command_model
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow, build_variable_flow
 from refinery.lib.scripts.ps1.analysis.dominance import build_dominance
-from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts, Ps1OutputFlow, build_output_flow
+from refinery.lib.scripts.ps1.analysis.effects import (
+    Ps1HandlerVerdicts,
+    Ps1OutputFlow,
+    build_output_flow,
+)
 from refinery.lib.scripts.ps1.analysis.errorstate import (
     Ps1ErrorStateReach,
     build_error_state_reach,
@@ -262,10 +266,10 @@ class Ps1ModelCache(ModelCacheBase):
     def handlers(self) -> Ps1HandlerVerdicts:
         """
         The semantic half of whether deleting a handler changes what runs — whether what it guards
-        may raise, and whether a resuming `trap`'s skip is observable — over `faults` and
-        `world_reach`, rebuilt with them.
+        may raise, and whether a resuming `trap`'s skip is observable — over `faults`, reading
+        `world_reach` only once a verdict needs it.
         """
-        return self._lazy('_handlers', lambda: Ps1HandlerVerdicts(self.faults, self.world_reach, self.root))
+        return self._lazy('_handlers', lambda: Ps1HandlerVerdicts(self.faults, lambda: self.world_reach, self.root))
 
     @property
     def error_state(self) -> Ps1ErrorStateReach:

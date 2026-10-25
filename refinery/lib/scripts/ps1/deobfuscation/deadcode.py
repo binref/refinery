@@ -516,7 +516,6 @@ class Ps1DeadCodeElimination(Transformer):
             faults=cache.faults,
             error_state=cache.error_state,
             handlers=cache.handlers,
-            weigh_skips=True,
         )
         for stmt in get_body(parent):
             if (

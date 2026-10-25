@@ -47,7 +47,8 @@ def _removes_a_handler(statement: Node) -> bool:
     `removals_may_fault` answers only the first half of the fault question — can what this pass
     removes throw — and says nothing about this half, so this half is asked of every pass, and it is
     asked in reverse: not where an error raised here would go, but whether anything is left that
-    could offer this handler one.
+    could offer this handler one. Its semantic half comes from the handler verdicts a plan is given,
+    so a plan given none keeps every `trap` it is asked to remove.
     """
     return isinstance(statement, Ps1TrapStatement)
 
@@ -152,7 +153,6 @@ class Ps1RemovalPlan:
         world: Ps1WorldReach | None = None,
         error_state: Ps1ErrorStateReach | None = None,
         handlers: Ps1HandlerVerdicts | None = None,
-        weigh_skips: bool = False,
     ):
         """
         `faults` is the model the removal verdicts are reached against, and `None` says this plan
@@ -181,16 +181,16 @@ class Ps1RemovalPlan:
         `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_a_handler_is_observed`:
         whether what the `trap` guards may raise is read under `world` when one was given and
         without one otherwise, which is the question the replacement veto asks of
-        `statement_can_raise` too. Absent, no `trap` is removed. `weigh_skips` asks it also whether
-        the region a resuming `trap` skips is observable, rather than keeping every resuming `trap`
-        whose block may raise. A `handlers` built over another fault model or another world than the
-        ones given is refused, because its verdicts would be about a different tree.
+        `refinery.lib.scripts.ps1.analysis.effects.statement_can_raise` too, and whether the region
+        a resuming `trap` skips is observable.
+        Absent, no `trap` is removed: the question cannot be asked without it, and keeping the
+        handler is the answer that changes nothing. A `handlers` built over another fault model or
+        another world than the ones given is refused, because its verdicts would be about a
+        different tree.
         """
-        if handlers is not None and (
-            handlers.faults is not faults
-            or world is not None and handlers.world is not world
-        ):
-            raise ValueError('the handler verdicts were built over other models than this plan')
+        if handlers is not None:
+            if handlers.faults is not faults or world is not None and handlers.world is not world:
+                raise ValueError('the handler verdicts were built over other models than this plan')
         self.parent = parent
         self.attr = attr
         self.removals_may_fault = removals_may_fault
@@ -199,7 +199,6 @@ class Ps1RemovalPlan:
         self.world = world
         self.error_state = error_state
         self.handlers = handlers
-        self.weigh_skips = weigh_skips
         self._proposals: dict[int, _Proposal] = {}
 
     def propose(
@@ -343,7 +342,7 @@ class Ps1RemovalPlan:
             return faults.removing_a_handler_is_observed(
                 proposal.statement,
                 handlers.raises(self.world is not None),
-                handlers.skips if self.weigh_skips else None,
+                handlers.skips,
             )
         if not self.removals_may_fault:
             return False

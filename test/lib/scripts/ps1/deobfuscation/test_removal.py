@@ -979,26 +979,58 @@ class TestPs1RemovalPlansFindEachListOncePerBatch(TestPs1):
 class TestPs1ARemovalPlanTakesHandlerVerdictsOnlyOverItsOwnModels(TestPs1):
 
     def test_verdicts_built_over_another_fault_model_are_refused(self):
-        script = Ps1Parser("trap { continue }\n'a'").parse()
+        script = Ps1Parser(cleandoc("""
+            trap { continue }
+            'a'
+        """)).parse()
         cache = Ps1ModelCache(script)
         with self.assertRaises(ValueError):
             Ps1RemovalPlan(script, faults=_faults(script), handlers=cache.handlers)
 
     def test_verdicts_built_over_another_world_are_refused(self):
-        script = Ps1Parser("trap { continue }\n'a'").parse()
+        script = Ps1Parser(cleandoc("""
+            trap { continue }
+            'a'
+        """)).parse()
         cache = Ps1ModelCache(script)
         other = Ps1ModelCache(script)
         with self.assertRaises(ValueError):
             Ps1RemovalPlan(script, faults=cache.faults, world=other.world_reach, handlers=cache.handlers)
 
     def test_verdicts_built_over_the_same_models_are_taken(self):
-        script = Ps1Parser("trap { continue }\n'a'").parse()
+        script = Ps1Parser(cleandoc("""
+            trap { continue }
+            'a'
+        """)).parse()
         cache = Ps1ModelCache(script)
         plan = Ps1RemovalPlan(script, faults=cache.faults, world=cache.world_reach, handlers=cache.handlers)
         self.assertIs(plan.handlers, cache.handlers)
 
+    def test_a_batch_and_a_single_plan_given_verdicts_both_remove_a_trap_nothing_needs(self):
+        for kind in ('plan', 'batch'):
+            script = Ps1Parser(cleandoc("""
+                trap { continue }
+                $x = $('a'; [int]'b')
+                'tail'
+            """)).parse()
+            cache = Ps1ModelCache(script)
+            trap = script.body[0]
+            if kind == 'plan':
+                plan = Ps1RemovalPlan(script, faults=cache.faults, handlers=cache.handlers)
+                plan.propose(trap)
+                plan.commit()
+            else:
+                plans = Ps1RemovalPlans(cache.faults, handlers=cache.handlers)
+                plans.propose(trap)
+                plans.commit()
+            with self.subTest(kind=kind):
+                self.assertNotIn(trap, script.body)
+
     def test_a_plan_without_verdicts_removes_no_trap(self):
-        script = Ps1Parser("trap { continue }\n'a'").parse()
+        script = Ps1Parser(cleandoc("""
+            trap { continue }
+            'a'
+        """)).parse()
         plan = Ps1RemovalPlan(script, faults=_faults(script))
         plan.propose(script.body[0])
         self.assertFalse(plan.commit())

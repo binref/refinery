@@ -167,15 +167,21 @@ class TestBase(unittest.TestCase):
         self.assertIn(member, container, msg)
 
     @contextlib.contextmanager
-    def assertNoInstanceSurvives(self, cls: type):
+    def assertNoInstanceSurvives(self, cls: type | tuple[type, ...], collect: bool = False):
         """
         Fails if an instance of the given class that was created inside the block is still alive
         after it while the cycle collector is off, i.e. if only the collector could free it.
-        Instances that existed before the block, like units that a cache keeps, are ignored.
+        Instances that existed before the block, like units that a cache keeps, are ignored. With
+        `collect`, the collector runs as usual and a full collection precedes the count, so the
+        block fails only for an instance that something still holds.
         """
-        with without_cycle_collector():
+        with contextlib.nullcontext() if collect else without_cycle_collector():
+            if collect:
+                gc.collect()
             known = {id(obj) for obj in gc.get_objects() if isinstance(obj, cls)}
             yield
+            if collect:
+                gc.collect()
             survivors = [obj for obj in gc.get_objects() if isinstance(obj, cls) and id(obj) not in known]
         self.assertEqual(survivors, [])
 

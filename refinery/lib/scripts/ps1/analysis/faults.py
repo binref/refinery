@@ -31,7 +31,8 @@ from refinery.lib.scripts.analysis.cfg import (
     CfgNode,
     ControlFlowGraph,
     ControlFlowModel,
-    normal_reach,
+    distinct,
+    plain_successors,
 )
 from refinery.lib.scripts.analysis.components import Condensation
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
@@ -589,34 +590,39 @@ class _Route(NamedTuple):
     What the readers of a routing ask of it, settled once for a stretch of error-carrying edges
     rather than recounted from its handler list by every position that shares the stretch: whether
     some handler on it acts, whether it passes a `trap`, whether it offers the error to any handler
-    at all, whether the error may leave the body, and which empty `catch` clauses it passes.
+    at all, whether the error may leave the body, and where the empty `catch` clauses it passes
+    resume.
 
     Every statement of a guarded block has the same edge out — into the first handler of the set
     guarding it — so all of them share one of these, where a handler list per statement costs the
     length of the handler chain once per statement: a script that writes a hundred `trap` lines
     among four thousand statements pays four hundred thousand steps to say the same thing four
-    thousand times.
+    thousand times. For the same reason a route is of fixed size: the one question asked of the
+    empty clauses is whether one resumes somewhere other than a given position steps over to, and
+    two distinct slots settle that for every position, so no more than two are kept.
     """
     acts: bool
     passes_a_trap: bool
     offers_a_handler: bool
     leaves_the_body: bool
-    empty_catches: tuple[Ps1CatchClause, ...]
+    empty_resumes: tuple[frozenset[CfgNode], ...]
 
     def joined(self, other: _Route) -> _Route:
         """
         The route of an error that may take either this stretch or *other*.
         """
-        empty_catches = self.empty_catches + tuple(
-            clause for clause in other.empty_catches
-            if not any(clause is known for known in self.empty_catches)
-        )
+        resumes = self.empty_resumes
+        for slot in other.empty_resumes:
+            if len(resumes) > 1:
+                break
+            if slot not in resumes:
+                resumes = (*resumes, slot)
         return _Route(
             self.acts or other.acts,
             self.passes_a_trap or other.passes_a_trap,
             self.offers_a_handler or other.offers_a_handler,
             self.leaves_the_body or other.leaves_the_body,
-            empty_catches,
+            resumes,
         )
 
 
@@ -632,7 +638,8 @@ def _arrival(graph: ControlFlowGraph, node: CfgNode) -> _Route:
     element = node.element
     if isinstance(element, Ps1CatchClause):
         empty = element.body is None or not element.body.body
-        return _Route(handler_acts(element), False, True, False, (element,) if empty else ())
+        resumes = (_normal_successors(node),) if empty else ()
+        return _Route(handler_acts(element), False, True, False, resumes)
     if isinstance(element, Ps1TrapStatement):
         return _Route(handler_acts(element), True, True, False, ())
     if node is graph.exit:
@@ -644,7 +651,7 @@ def _handled_in_the_body(route: _Route) -> bool:
     """
     Whether a handler of the body the error was raised in disposes of it in a way a run can see: a
     `catch` or `trap` that acts, or a `trap` set the error may get past, which 5.1 answers by ending
-    the body rather than by reporting the error and stepping over it.
+    the body.
 
     A `catch` that misses does not end the body, but a `trap` the error gets past does, so the
     escalation reading is keyed to the `trap` and not to the escape.
@@ -661,15 +668,12 @@ def _escapes(route: _Route) -> bool:
     return not route.offers_a_handler or route.leaves_the_body
 
 
-def _normal_successors(graph: ControlFlowGraph, node: CfgNode) -> frozenset[CfgNode]:
+def _normal_successors(node: CfgNode) -> frozenset[CfgNode]:
     """
     The nodes control reaches from *node* along a plain fall-through edge — where a soft error at
     *node* steps over to, which is the same node its value flows to when it does not fail.
     """
-    return frozenset(
-        successor for successor in node.successors
-        if graph.edge_kind(node, successor) == CfgEdge.NORMAL
-    )
+    return frozenset(plain_successors(node))
 
 
 def _enclosing_trap_body(node: Node) -> Ps1TrapStatement | None:
@@ -706,50 +710,32 @@ def _resumption_slot(graph: ControlFlowGraph, node: CfgNode) -> CfgNode | None:
     return None
 
 
-class Ps1Resumption(NamedTuple):
-    """
-    Where a resuming `trap` carries on past the statement it abandons: the nodes control reaches
-    from the slot it resumes at, in *graph*. A soft raiser stepping over untrapped carries on inside
-    the statement instead, and everything that runs from there up to these nodes is what the trap
-    skips; what runs from these nodes on is shared by the trapped and the untrapped run, so a write
-    the trap skips is observable exactly when something reached from here reads it.
-    """
-    graph: ControlFlowGraph
-    resumed: frozenset[CfgNode]
-
-
 class Ps1StepOverRegion:
     """
     The plain control flow a resuming `trap` skips for every soft raiser that resumes at one slot:
-    what runs on the untrapped fall-through from those raisers up to where the trap would resume.
+    what runs on the untrapped fall-through from those raisers up to `resumed`, the nodes control
+    reaches from the slot.
 
     Built once per slot for all of them, because raisers resuming at the same slot skip overlapping
     stretches of the same statement — the second of two raisers in a block skips a suffix of what
-    the first skips — and a walk per raiser costs the square of the block. The region is
-    `normal_reach` from every step-over of the slot with the resumed nodes as the barrier, condensed
-    over its `CfgEdge.NORMAL` edges, so that whether a raiser skips something observable is one look
-    at the components its step-over reaches. Whether a statement is observable is not this class's
-    to say; `query` pairs the region with a reader that says it.
+    the first skips — and a walk per raiser costs the square of the block. The region is condensed
+    over its plain edges from every step-over of the slot, never entering a node of `resumed`, so
+    that whether a raiser skips something observable is one look at the components its step-over
+    reaches. What runs from `resumed` on is shared by the trapped and the untrapped run, so a write
+    the trap skips is observable exactly when something reached from there reads it. Whether a
+    statement is observable is not this class's to say; `query` pairs the region with a reader that
+    says it.
     """
 
-    def __init__(
-        self,
-        graph: ControlFlowGraph,
-        nodes: dict[int, CfgNode],
-        steps: list[frozenset[CfgNode]],
-        resumed: frozenset[CfgNode],
-    ):
-        self.resumption = Ps1Resumption(graph, resumed)
-        inside = normal_reach([node for step in steps for node in step], barrier=resumed)
-        self.members = [nodes[number] for number in inside]
+    def __init__(self, steps: list[frozenset[CfgNode]], resumed: frozenset[CfgNode]):
+        self.resumed = resumed
 
         def flows(node: CfgNode) -> list[CfgNode]:
-            return [
-                target for target in node.successors
-                if id(target) in inside and graph.edge_kind(node, target) is CfgEdge.NORMAL
-            ]
+            return [target for target in plain_successors(node) if target not in resumed]
 
-        self.condensation = Condensation(self.members, flows)
+        starts = [node for step in steps for node in step if node not in resumed]
+        self.condensation = Condensation(starts, flows)
+        self.members = [member for component in self.condensation.components for member in component]
 
     def query(self, observed: Callable[[CfgNode], bool]) -> Ps1SkipQuery:
         """
@@ -830,6 +816,15 @@ def raiser_of(node: CfgNode) -> Node | None:
     return element
 
 
+class _Divergences(NamedTuple):
+    """
+    Every soft raiser of one graph whose step-over lands off where its trap resumes, and the
+    step-overs of those raisers grouped by the slot they resume at.
+    """
+    by_raiser: dict[CfgNode, Ps1Divergence]
+    steps_by_slot: dict[CfgNode, list[frozenset[CfgNode]]]
+
+
 class Ps1ErrorPaths:
     """
     The error-carrying edges of one graph, condensed once into strongly connected components, so
@@ -846,15 +841,12 @@ class Ps1ErrorPaths:
 
     def __init__(self, graph: ControlFlowGraph):
         self.graph = graph
-        onward: dict[int, list[CfgNode]] = {}
-        for node in graph.nodes:
-            targets: dict[int, CfgNode] = {}
-            for target in node.successors:
-                if graph.is_exceptional(node, target):
-                    targets.setdefault(id(target), target)
-            onward[id(node)] = list(targets.values())
+        onward = {
+            node: distinct(target for target in node.successors if graph.is_exceptional(node, target))
+            for node in graph.nodes
+        }
         self._onward = onward
-        self._condensation = Condensation(graph.nodes, lambda node: onward[id(node)])
+        self._condensation = Condensation(graph.nodes, onward.__getitem__)
         components = self._condensation.components
 
         def own(number: int) -> _Route:
@@ -864,38 +856,29 @@ class Ps1ErrorPaths:
             return route
 
         self._routes = self._condensation.accumulate(own, _Route.joined, downstream=True)
-        self._from: dict[int, _Route] = {}
-        self._divergences: dict[int, Ps1Divergence | None] | None = None
-        self._steps: dict[int, list[frozenset[CfgNode]]] = {}
-        self._slots: dict[int, CfgNode] = {}
-        self._regions: dict[int, Ps1StepOverRegion] = {}
-        self._nodes: dict[int, CfgNode] | None = None
+        self._from: dict[CfgNode, _Route] = {}
+        self._handlers: dict[CfgNode, tuple[Ps1CatchClause | Ps1TrapStatement, ...]] = {}
+        self._divergences: _Divergences | None = None
+        self._regions: dict[CfgNode, Ps1StepOverRegion] = {}
 
     def route_from(self, start: CfgNode) -> _Route:
         """
         The route of an error raised at *start*: everything its error-carrying edges reach, *start*
         itself excluded even where a cycle would lead back to it.
         """
-        condensation = self._condensation
-        number = condensation.number_of(start)
-        assert number is not None
-        looped = condensation.looped(number)
-        key = id(start) if looped else -1 - number
-        route = self._from.get(key)
-        if route is not None:
-            return route
-        downstream = condensation.downstream(number)
-        if not looped and len(downstream) == 1:
-            route = self._routes[downstream[0]]
-        else:
+        route = self._from.get(start)
+        if route is None:
+            condensation = self._condensation
+            number = condensation.number_of(start)
+            assert number is not None
             route = _NOWHERE
-            if looped:
+            if condensation.looped(number):
                 for member in condensation.components[number]:
                     if member is not start:
                         route = route.joined(_arrival(self.graph, member))
-            for other in downstream:
+            for other in condensation.downstream(number):
                 route = route.joined(self._routes[other])
-        self._from[key] = route
+            self._from[start] = route
         return route
 
     def handlers_from(self, start: CfgNode) -> tuple[Ps1CatchClause | Ps1TrapStatement, ...]:
@@ -904,19 +887,21 @@ class Ps1ErrorPaths:
         the error-carrying edges first meets them. Spelled out only for a caller that asks for the
         list itself; every reading inside this module asks `route_from`.
         """
-        handlers: list[Ps1CatchClause | Ps1TrapStatement] = []
-        seen = {id(start)}
-        stack = [start]
-        while stack:
-            current = stack.pop()
-            for node in self._onward[id(current)]:
-                if id(node) in seen:
-                    continue
-                seen.add(id(node))
-                stack.append(node)
-                if isinstance(node.element, (Ps1CatchClause, Ps1TrapStatement)):
-                    handlers.append(node.element)
-        return tuple(handlers)
+        handlers = self._handlers.get(start)
+        if handlers is None:
+            found: list[Ps1CatchClause | Ps1TrapStatement] = []
+            seen = {start}
+            stack = [start]
+            while stack:
+                for node in self._onward[stack.pop()]:
+                    if node in seen:
+                        continue
+                    seen.add(node)
+                    stack.append(node)
+                    if isinstance(node.element, (Ps1CatchClause, Ps1TrapStatement)):
+                        found.append(node.element)
+            handlers = self._handlers[start] = tuple(found)
+        return handlers
 
     def behind(self, start: CfgNode, member: Callable[[CfgNode], bool], memo: dict[int, bool]) -> bool:
         """
@@ -928,9 +913,8 @@ class Ps1ErrorPaths:
         number = condensation.number_of(start)
         assert number is not None
         components = condensation.components
-        if condensation.looped(number) and any(
-            member(node) for node in components[number] if node is not start
-        ):
+        others = (node for node in components[number] if node is not start)
+        if condensation.looped(number) and any(member(node) for node in others):
             return True
 
         def test(other: int) -> bool:
@@ -947,48 +931,53 @@ class Ps1ErrorPaths:
         carries on, or `None` where *node* is no soft raiser or its step-over lands where the trap
         resumes anyway — a raiser standing at statement level of the guarded block is one.
         """
-        if self._divergences is None:
-            self._divergences = {}
-            for candidate in self.graph.nodes:
-                found = self._divergences[id(candidate)] = self._diverges(candidate)
-                if found is not None:
-                    self._slots[id(found.slot)] = found.slot
-                    self._steps.setdefault(id(found.slot), []).append(found.step)
-        return self._divergences.get(id(node))
-
-    def _diverges(self, node: CfgNode) -> Ps1Divergence | None:
-        element = node.element
-        if element is None or not is_soft_error_source(element):
-            return None
-        graph = self.graph
-        step = _normal_successors(graph, node)
-        slot = _resumption_slot(graph, node)
-        if slot is None:
-            return None
-        resumed = _normal_successors(graph, slot)
-        if not resumed or step == resumed:
-            return None
-        return Ps1Divergence(step, slot)
+        return self._table().by_raiser.get(node)
 
     def region(self, slot: CfgNode) -> Ps1StepOverRegion:
         """
         The region every soft raiser resuming at *slot* skips into.
         """
-        region = self._regions.get(id(slot))
+        region = self._regions.get(slot)
         if region is None:
-            self.divergence(slot)
-            if self._nodes is None:
-                self._nodes = {id(node): node for node in self.graph.nodes}
-            region = self._regions[id(slot)] = Ps1StepOverRegion(
-                self.graph, self._nodes, self._steps.get(id(slot), []), _normal_successors(self.graph, slot))
+            steps = self._table().steps_by_slot.get(slot, [])
+            region = self._regions[slot] = Ps1StepOverRegion(steps, _normal_successors(slot))
         return region
 
     def regions(self) -> list[Ps1StepOverRegion]:
         """
         The region of every slot some soft raiser of this graph diverges to.
         """
-        self.divergence(self.graph.entry)
-        return [self.region(slot) for slot in self._slots.values()]
+        return [self.region(slot) for slot in self._table().steps_by_slot]
+
+    def _table(self) -> _Divergences:
+        table = self._divergences
+        if table is None:
+            by_raiser: dict[CfgNode, Ps1Divergence] = {}
+            steps_by_slot: dict[CfgNode, list[frozenset[CfgNode]]] = {}
+            for node in self.graph.nodes:
+                found = self._diverges(node)
+                if found is not None:
+                    by_raiser[node] = found
+                    steps_by_slot.setdefault(found.slot, []).append(found.step)
+            table = self._divergences = _Divergences(by_raiser, steps_by_slot)
+        return table
+
+    def _diverges(self, node: CfgNode) -> Ps1Divergence | None:
+        """
+        The divergence of *node*. Whether a trap resumes it at all is asked first, because that
+        reads the node's own edges where the soft-error test walks its whole statement.
+        """
+        slot = _resumption_slot(self.graph, node)
+        if slot is None:
+            return None
+        element = node.element
+        if element is None or not is_soft_error_source(element):
+            return None
+        step = _normal_successors(node)
+        resumed = _normal_successors(slot)
+        if not resumed or step == resumed:
+            return None
+        return Ps1Divergence(step, slot)
 
 
 class RaiseVerdicts(Protocol):
@@ -1022,9 +1011,9 @@ class Ps1FaultReach:
 
     Built over `refinery.lib.scripts.analysis.cfg.ControlFlowModel`: where an error goes is decided
     by the graph the builder already wired, so this needs no semantic model, no call graph and no
-    world. It is a view rather than a solver — every answer is one walk over the exceptional edges,
-    memoized per node for the life of the model, and the model itself is discarded whenever the tree
-    moves. The graph it reads is the sub-statement one
+    world. It is a view rather than a solver — every answer is read off the error-carrying edges of
+    a graph condensed once (`Ps1ErrorPaths`) and kept for the life of the model, and the model
+    itself is discarded whenever the tree moves. The graph it reads is the sub-statement one
     `refinery.lib.scripts.ps1.analysis.cfg.build_control_flow_model` draws with `descend`, so that a
     soft error stepping over inside a `$( )` or `@( )` — and a `trap` written among those inner
     statements — is a point it places rather than detail hidden in the one node the coarse graph
@@ -1035,8 +1024,8 @@ class Ps1FaultReach:
     def __init__(self, control_flow: ControlFlowModel):
         self._given = control_flow
         self._model: ControlFlowModel | None = None
-        self._paths: dict[int, Ps1ErrorPaths] = {}
-        self._fires: dict[int, dict[int, bool]] = {}
+        self._paths: dict[ControlFlowGraph, Ps1ErrorPaths] = {}
+        self._fires: dict[ControlFlowGraph, dict[int, bool]] = {}
         self._handled: set[int] | None = None
         self._ending: dict[int, bool] = {}
         self._stopping: bool | None = None
@@ -1246,16 +1235,10 @@ class Ps1FaultReach:
         if located is None:
             return False
         graph, start = located
-        normal = _normal_successors(graph, start)
+        normal = _normal_successors(start)
         if not normal:
             return False
-        for handler in self._route(graph, start).empty_catches:
-            placed = self._control_flow.locate(handler)
-            if placed is None:
-                continue
-            if normal != _normal_successors(placed[0], placed[1]):
-                return True
-        return False
+        return any(normal != resumes for resumes in self._route(graph, start).empty_resumes)
 
     def fault_the_try_catches(self, operand: Node) -> bool:
         """
@@ -1315,13 +1298,13 @@ class Ps1FaultReach:
         if located is None:
             return False
         graph, start = located
-        memo = self._fires.setdefault(id(graph), {})
+        memo = self._fires.setdefault(graph, {})
         return self.paths_of(graph).behind(start, self._fires_a_trap_at, memo)
 
     def _fires_a_trap_at(self, node: CfgNode) -> bool:
         """
-        `_fires_a_trap` asked of the statement *node* stands for, where it stands for one that raises
-        at all rather than for a handler entry.
+        `_fires_a_trap` asked of the statement *node* stands for, where it stands for one that
+        raises at all rather than for a handler entry.
         """
         raiser = raiser_of(node)
         return raiser is not None and self._fires_a_trap(raiser)
@@ -1357,7 +1340,7 @@ class Ps1FaultReach:
         self,
         handler: Node,
         raises: RaiseVerdicts,
-        skips: SkipVerdicts | None = None,
+        skips: SkipVerdicts,
     ) -> bool:
         """
         Whether deleting *handler* may change which code runs — the transpose, and the question
@@ -1409,8 +1392,7 @@ class Ps1FaultReach:
         own block and carry on; the trap abandons that block and lands past it. Whether the
         abandoned region does anything a run can see — writes the output stream, or a name a later
         statement reads — is a fact of the semantic model, so it is handed in as *skips*, which
-        reads the `Ps1StepOverRegion` of each divergence this module finds; a caller that cannot
-        judge it hands in nothing, and the trap is kept.
+        reads the `Ps1StepOverRegion` of each divergence this module finds.
         """
         located = self._control_flow.locate(handler)
         if located is None:
@@ -1427,7 +1409,7 @@ class Ps1FaultReach:
         graph: ControlFlowGraph,
         start: CfgNode,
         raises: RaiseVerdicts,
-        skips: SkipVerdicts | None,
+        skips: SkipVerdicts,
     ) -> bool:
         paths = self.paths_of(graph)
         if not raises.may_raise_behind(paths, start):
@@ -1442,9 +1424,7 @@ class Ps1FaultReach:
             return True
         if route.acts:
             return True
-        if isinstance(element, Ps1TrapStatement) and (
-            skips is None or skips.skip_observed_behind(paths, start)
-        ):
+        if isinstance(element, Ps1TrapStatement) and skips.skip_observed_behind(paths, start):
             return True
         fallback = graph.fallback_of(start)
         if fallback is None:
@@ -1468,9 +1448,9 @@ class Ps1FaultReach:
         The condensed error-carrying edges of *graph*, built on the first question about it and kept
         for the life of this model.
         """
-        paths = self._paths.get(id(graph))
-        if paths is None or paths.graph is not graph:
-            paths = self._paths[id(graph)] = Ps1ErrorPaths(graph)
+        paths = self._paths.get(graph)
+        if paths is None:
+            paths = self._paths[graph] = Ps1ErrorPaths(graph)
         return paths
 
     def _route(self, graph: ControlFlowGraph, start: CfgNode) -> _Route:

@@ -33,9 +33,9 @@ from __future__ import annotations
 
 import enum
 
-from typing import Iterator, NamedTuple, Sequence
+from typing import Callable, Iterator, NamedTuple, Sequence
 
-from refinery.lib.scripts import Block, Node, tree_version
+from refinery.lib.scripts import Block, Node, tree_root, tree_version
 from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, normal_reach_labels
 from refinery.lib.scripts.ps1 import data
 from refinery.lib.scripts.ps1.analysis.arguments import Ps1WrittenSlots, written_slots
@@ -44,13 +44,12 @@ from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1ErrorPaths,
     Ps1FaultReach,
-    Ps1Resumption,
     Ps1SkipQuery,
     Ps1StepOverRegion,
     raiser_of,
 )
 from refinery.lib.scripts.ps1.analysis.identity import object_sources
-from refinery.lib.scripts.ps1.analysis.model import occurrence_role
+from refinery.lib.scripts.ps1.analysis.model import occurrence_role, scope_local_nodes
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
     candidate_types,
@@ -2074,22 +2073,25 @@ def _name_read(node: Node) -> str | None:
 
 def _reads_in_bodies(root: Node) -> _BodyReads:
     """
-    The `_BodyReads` of the tree under *root*, in one walk. It is the same answer for every graph of
-    the tree, so its owner asks it once per tree version; a walk per graph is the size of the script
-    once per function that a resuming `trap` guards.
+    The `_BodyReads` of the tree under *root*, scope by scope as
+    `refinery.lib.scripts.ps1.analysis.model.scope_local_nodes` partitions it. It is the same
+    answer for every graph of the tree, so its owner asks it once per tree version; a walk per graph
+    is the size of the script once per function a resuming `trap` guards.
     """
     names: set[str] = set()
     dynamic = False
-    stack: list[tuple[Node, bool]] = [(root, False)]
-    while stack:
-        node, inside = stack.pop()
-        if inside:
-            if _reads_a_name_given_as_data(node):
+    scopes: list[Node] = [root]
+    while scopes:
+        scope = scopes.pop()
+        for node in scope_local_nodes(scope):
+            if isinstance(node, Ps1ScriptBlock):
+                scopes.append(node)
+            elif scope is root:
+                continue
+            elif _reads_a_name_given_as_data(node):
                 dynamic = True
             elif (name := _name_read(node)) is not None:
                 names.add(name)
-        within = inside or isinstance(node, Ps1ScriptBlock)
-        stack.extend((child, within) for child in node.children())
     return _BodyReads(frozenset(names), dynamic)
 
 
@@ -2111,11 +2113,13 @@ class _ContinuationReads:
     the continuation may run from anywhere, so it keeps every skipped write the way `in_a_body`
     keeps the names read there.
 
-    Only what stands under the graph's owner and inside no stored body can be placed in the graph,
-    so that is all it walks; what the stored bodies read is the same for every graph of the tree and
-    arrives as *bodies*. Only the names in *asked* — the names a skipped statement of this graph
-    writes — are carried through the continuation walk, one bit per name per component, so a name
-    no question can reach costs nothing.
+    Only the scope of the graph's owner, as
+    `refinery.lib.scripts.ps1.analysis.model.scope_local_nodes` gives it, can be placed in the
+    graph, so that is all it walks, and a graph owned by a stored body places nothing of its own;
+    what the stored bodies read is the same for every graph of the tree and arrives as *bodies*.
+    Only the names in *asked* — the names a skipped statement of this graph writes — are carried
+    through the continuation walk, one bit per name per component, so a name no question can reach
+    costs nothing.
     """
 
     def __init__(self, graph: ControlFlowGraph, bodies: _BodyReads, asked: frozenset[str]):
@@ -2124,9 +2128,16 @@ class _ContinuationReads:
         self.in_a_body = bodies.names
         self.dynamic_reader_in_a_body = bodies.dynamic
         self._asked = asked
-        owner = graph.owner
-        if not isinstance(owner, Ps1ScriptBlock) and not _within_a_stored_body(owner):
-            self._place(graph)
+        if not isinstance(graph.owner, Ps1ScriptBlock):
+            for node in scope_local_nodes(graph.owner):
+                if _reads_a_name_given_as_data(node):
+                    placed = _placed_statement(node, graph)
+                    if placed is not None:
+                        self.dynamic_readers.add(placed)
+                elif (name := _name_read(node)) is not None:
+                    placed = _placed_statement(node, graph)
+                    if placed is not None:
+                        self.by_name.setdefault(name, set()).add(placed)
         nodes = {id(node): node for node in graph.nodes}
         sources: dict[str | None, list[CfgNode]] = {
             name: [nodes[placed] for placed in sites]
@@ -2134,24 +2145,6 @@ class _ContinuationReads:
         }
         sources[None] = [nodes[placed] for placed in self.dynamic_readers]
         self._reach = normal_reach_labels(sources, forward=False)
-
-    def _place(self, graph: ControlFlowGraph) -> None:
-        """
-        Place every read under the owner of *graph* that no stored body holds.
-        """
-        stack: list[Node] = [graph.owner]
-        while stack:
-            node = stack.pop()
-            if _reads_a_name_given_as_data(node):
-                placed = _placed_statement(node, graph)
-                if placed is not None:
-                    self.dynamic_readers.add(placed)
-            elif (name := _name_read(node)) is not None:
-                placed = _placed_statement(node, graph)
-                if placed is not None:
-                    self.by_name.setdefault(name, set()).add(placed)
-            stack.extend(
-                child for child in node.children() if not isinstance(child, Ps1ScriptBlock))
 
     def read_on(self, name: str, resumed: frozenset[CfgNode]) -> bool:
         """
@@ -2168,142 +2161,163 @@ class _ContinuationReads:
         return any(reach.reaches(None, node) or reach.reaches(name, node) for node in resumed)
 
 
+class _TreeStamp:
+    """
+    The tree version a set of verdicts was decided for. Once the tree moves, every verdict is
+    refused, the way `refinery.lib.scripts.ps1.analysis.worldflow.Ps1WorldReach` refuses once its
+    tree moves; each refusal is the answer that keeps the handler.
+    """
+
+    def __init__(self, root: Node):
+        self._root = root
+        self._version = tree_version(root)
+
+    def moved(self) -> bool:
+        return tree_version(self._root) != self._version
+
+
 class _RaiseVerdicts:
     """
     Whether something behind a handler may raise, and whether it may raise an error that ends the
     run, read with `statement_can_raise` under one world (or none) and kept per component of each
     graph's `refinery.lib.scripts.ps1.analysis.faults.Ps1ErrorPaths`, so that every handler guarding
-    the same statements is answered by one walk over them. Answers are given for the tree version
-    the owner was built at; once that tree moves, every question is refused — answered as "may
-    raise", which keeps the handler — the way `Ps1WorldReach` refuses once its tree moves.
+    the same statements is answered by one walk over them. Refused once the tree moves, as "may
+    raise".
     """
 
-    def __init__(self, faults: Ps1FaultReach, world: Ps1WorldReach | None, root: Node, version: int):
+    def __init__(self, faults: Ps1FaultReach, world: Callable[[], Ps1WorldReach | None], stamp: _TreeStamp):
         self._faults = faults
         self._world = world
-        self._root = root
-        self._version = version
-        self._memos: dict[tuple[int, bool], tuple[Ps1ErrorPaths, dict[int, bool]]] = {}
-
-    def _memo(self, paths: Ps1ErrorPaths, terminating: bool) -> dict[int, bool]:
-        key = (id(paths), terminating)
-        known = self._memos.get(key)
-        if known is None or known[0] is not paths:
-            known = self._memos[key] = (paths, {})
-        return known[1]
-
-    def _stale(self) -> bool:
-        return tree_version(self._root) != self._version
+        self._stamp = stamp
+        self._memos: dict[tuple[Ps1ErrorPaths, bool], dict[int, bool]] = {}
 
     def _raises(self, node: CfgNode) -> bool:
         raiser = raiser_of(node)
-        return raiser is not None and statement_can_raise(raiser, self._faults, self._world)
+        return raiser is not None and statement_can_raise(raiser, self._faults, self._world())
 
     def _ends_the_run(self, node: CfgNode) -> bool:
         raiser = raiser_of(node)
         return (
             raiser is not None
             and self._faults.error_is_terminating(raiser)
-            and statement_can_raise(raiser, self._faults, self._world)
+            and statement_can_raise(raiser, self._faults, self._world())
         )
 
     def may_raise_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
-        if self._stale():
+        if self._stamp.moved():
             return True
-        return paths.behind(start, self._raises, self._memo(paths, False))
+        return paths.behind(start, self._raises, self._memos.setdefault((paths, False), {}))
 
     def may_end_the_run_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
-        if self._stale():
+        if self._stamp.moved():
             return True
-        return paths.behind(start, self._ends_the_run, self._memo(paths, True))
+        return paths.behind(start, self._ends_the_run, self._memos.setdefault((paths, True), {}))
 
 
 class _SkipVerdicts:
     """
     Whether some soft raiser behind a resuming handler would, untrapped, run a statement a run can
     see before reaching where the trap resumes, read with `_skipped_statement_is_observable` under
-    one world. It owns everything that judgment keeps: what the stored bodies of the tree read, the
-    continuation reads of each graph, one query per step-over region, and the existential per
-    component of each graph's error paths. Refused once the tree moves, like `_RaiseVerdicts`, as
-    "observed", which keeps the trap.
+    one world. It owns everything that judgment keeps: what each skipped statement writes, what the
+    stored bodies of the tree read, the continuation reads of each graph, one query per step-over
+    region, and the existential per component of each graph's error paths. The names a graph's
+    continuation index carries and the names a skipped statement is judged by are both read off
+    `_writes_at`, so the index holds every name a judgment can ask about. Refused once the tree
+    moves, as "observed".
     """
 
-    def __init__(self, faults: Ps1FaultReach, world: Ps1WorldReach, root: Node, version: int):
-        self._faults = faults
+    def __init__(self, world: Callable[[], Ps1WorldReach], root: Node, stamp: _TreeStamp):
         self._world = world
         self._root = root
-        self._version = version
+        self._stamp = stamp
         self._bodies: _BodyReads | None = None
-        self._reads: dict[int, tuple[Ps1ErrorPaths, _ContinuationReads]] = {}
-        self._queries: dict[int, tuple[Ps1StepOverRegion, Ps1SkipQuery]] = {}
-        self._memos: dict[int, tuple[Ps1ErrorPaths, dict[int, bool]]] = {}
-
-    def _stale(self) -> bool:
-        return tree_version(self._root) != self._version
+        self._writes: dict[Node, _Writes] = {}
+        self._reads: dict[Ps1ErrorPaths, _ContinuationReads] = {}
+        self._queries: dict[Ps1StepOverRegion, Ps1SkipQuery] = {}
+        self._memos: dict[Ps1ErrorPaths, dict[int, bool]] = {}
 
     def skip_observed_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
-        if self._stale():
+        if self._stamp.moved():
             return True
-        known = self._memos.get(id(paths))
-        if known is None or known[0] is not paths:
-            known = self._memos[id(paths)] = (paths, {})
-        return paths.behind(start, lambda node: self._skips(paths, node), known[1])
+        memo = self._memos.setdefault(paths, {})
+        return paths.behind(start, lambda node: self._skips(paths, node), memo)
 
     def _skips(self, paths: Ps1ErrorPaths, node: CfgNode) -> bool:
         divergence = paths.divergence(node)
         if divergence is None:
             return False
         region = paths.region(divergence.slot)
-        known = self._queries.get(id(region))
-        if known is None or known[0] is not region:
+        query = self._queries.get(region)
+        if query is None:
             reads = self._continuation_reads(paths)
-            resumption = region.resumption
-            world = self._world
+            resumed = region.resumed
+            world = self._world()
 
             def observed(member: CfgNode) -> bool:
                 element = member.element
                 return element is not None and _skipped_statement_is_observable(
-                    element, resumption, world, reads)
+                    element, resumed, world, reads, self._written(element))
 
-            known = self._queries[id(region)] = (region, region.query(observed))
-        return known[1].skips(node, divergence.step)
+            query = self._queries[region] = region.query(observed)
+        return query.skips(node, divergence.step)
+
+    def _written(self, element: Node) -> _Writes:
+        writes = self._writes.get(element)
+        if writes is None:
+            writes = self._writes[element] = _skipped_writes(element)
+        return writes
 
     def _continuation_reads(self, paths: Ps1ErrorPaths) -> _ContinuationReads:
-        known = self._reads.get(id(paths))
-        if known is None or known[0] is not paths:
+        reads = self._reads.get(paths)
+        if reads is None:
             if self._bodies is None:
                 self._bodies = _reads_in_bodies(self._root)
-            asked: set[str] = set()
-            for region in paths.regions():
-                for member in region.members:
-                    if member.element is not None:
-                        asked.update(_skipped_writes(member.element)[1])
-            known = self._reads[id(paths)] = (
-                paths, _ContinuationReads(paths.graph, self._bodies, frozenset(asked)))
-        return known[1]
+            skipped = {
+                member.element
+                for region in paths.regions()
+                for member in region.members
+                if member.element is not None
+            }
+            reads = self._reads[paths] = _ContinuationReads(
+                paths.graph, self._bodies, _names_written_under(paths.graph.owner, skipped))
+        return reads
 
 
 class Ps1HandlerVerdicts:
     """
     The semantic half of the question whether deleting a handler changes what runs, for one version
-    of one tree: whether what the handler guards may raise — read without a world, or under *world*
-    — and whether a resuming `trap`'s skip is observable under *world*. Held in a
+    of one tree: whether what the handler guards may raise — read without a world, or under the
+    world — and whether a resuming `trap`'s skip is observable under the world. Held in a
     `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot, so it is rebuilt with the fault
-    model and the world it reads, and handed to
+    model it reads, and handed to
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_a_handler_is_observed` through
     the removal plan. Each answer is kept by the object that owns the test it was decided with, so
-    no caller can hand in a test and a memo that do not belong together.
+    no caller can hand in a test and a memo that do not belong together. The world is taken from
+    *world* on the first verdict that reads it, so a pass that never weighs a handler under the
+    world never has one built.
     """
 
-    def __init__(self, faults: Ps1FaultReach, world: Ps1WorldReach, root: Node):
-        version = tree_version(root)
+    def __init__(self, faults: Ps1FaultReach, world: Callable[[], Ps1WorldReach], root: Node):
+        root = tree_root(root)
+        stamp = _TreeStamp(root)
         self.faults = faults
-        self.world = world
+        self._world_of = world
+        self._world: Ps1WorldReach | None = None
         self._raises = (
-            _RaiseVerdicts(faults, None, root, version),
-            _RaiseVerdicts(faults, world, root, version),
+            _RaiseVerdicts(faults, lambda: None, stamp),
+            _RaiseVerdicts(faults, lambda: self.world, stamp),
         )
-        self.skips = _SkipVerdicts(faults, world, root, version)
+        self.skips = _SkipVerdicts(lambda: self.world, root, stamp)
+
+    @property
+    def world(self) -> Ps1WorldReach:
+        """
+        The world the verdicts read, built on first use.
+        """
+        world = self._world
+        if world is None:
+            world = self._world = self._world_of()
+        return world
 
     def raises(self, under_the_world: bool) -> _RaiseVerdicts:
         """
@@ -2314,12 +2328,15 @@ class Ps1HandlerVerdicts:
 
 def _skipped_statement_is_observable(
     element: Node,
-    resumption: Ps1Resumption,
+    resumed: frozenset[CfgNode],
     world: Ps1WorldReach,
     reads: _ContinuationReads,
+    writes: _Writes,
 ) -> bool:
     """
-    Whether *element*, run on the untrapped fall-through the trap skips, does something observable.
+    Whether *element*, run on the untrapped fall-through the trap skips, does something observable,
+    where *writes* is what `_skipped_writes` reports for it and *resumed* is where the trap carries
+    on.
 
     A statement that emits to the output stream is observable outright. Otherwise it is observable
     only for a *real* effect — a command, a method call, a read of a member whose getter is not
@@ -2353,22 +2370,56 @@ def _skipped_statement_is_observable(
             member = get_member_name(node.member)
             if member is None or member.lower() not in data.SHAPE_MEMBERS:
                 return True
-    escapes, names = _skipped_writes(element)
-    if escapes:
+    if writes.escapes:
         return True
-    return any(reads.read_on(name, resumption.resumed) for name in names)
+    return any(reads.read_on(name, resumed) for name in writes.names)
 
 
-def _skipped_writes(element: Node) -> tuple[bool, list[str]]:
+class _Writes(NamedTuple):
+    """
+    What a skipped statement writes, split into the part the continuation's reads can prove dead and
+    the part they cannot — see `_skipped_writes`.
+    """
+    escapes: bool
+    names: tuple[str, ...]
+
+
+def _writes_at(node: Node) -> _Writes:
+    """
+    What *node* itself writes, its descendants left out: the per-node rule `_skipped_writes` folds
+    over a statement and `_names_written_under` folds over every skipped statement of a graph.
+    """
+    if isinstance(node, Ps1AssignmentExpression):
+        if not assignment_target_is_all_variables(node.target):
+            return _Writes(True, ())
+        names: list[str] = []
+        escapes = False
+        for target in assignment_target_variables(node.target):
+            if _is_plain_local(target):
+                names.append(target.name.lower())
+            else:
+                escapes = True
+        return _Writes(escapes, tuple(names))
+    if isinstance(node, Ps1UnaryExpression) and node.operator in ('++', '--'):
+        operand = node.operand
+        if isinstance(operand, Ps1Variable) and _is_plain_local(operand):
+            return _Writes(False, (operand.name.lower(),))
+        return _Writes(True, ())
+    if isinstance(node, Ps1BinaryExpression) and node.operator.lower() in MATCH_OPERATORS:
+        return _Writes(True, ())
+    return _Writes(False, ())
+
+
+def _skipped_writes(element: Node) -> _Writes:
     """
     What a skipped statement writes, split into the part the continuation's reads can prove dead and
     the part they cannot.
 
-    The second element lists the unqualified local names *element* assigns or increments — a
-    plain `$name` an assignment stores into (a multi-assignment slot and a `[Type]$name` target
-    among them, which `assignment_target_variables` resolves) or a `++`/`--` operand — whose
-    liveness on the continuation decides the write. The first is `True` when *element* performs a
-    write no continuation read can be matched against: a scope- or drive-qualified store
+    The names are the unqualified local names *element* assigns or increments — a plain `$name` an
+    assignment stores into (a multi-assignment slot and a `[Type]$name` target among them, which
+    `assignment_target_variables` resolves) or a `++`/`--` operand — whose liveness on the
+    continuation decides the write. The flag is `True` when *element* performs a write no
+    continuation read can be matched against: a scope- or drive-qualified store
     (`$global:`/`$script:`/`$env:`), a store through an index or member (`$a[0] = …`, `$o.P = …`),
     a multi-assignment slot that is not a plain variable, a qualified `++`/`--`, or a
     `$Matches`-writing `-match`. A qualified target's reads may sit in a scope or a place the reach
@@ -2378,24 +2429,31 @@ def _skipped_writes(element: Node) -> tuple[bool, list[str]]:
     escapes = False
     names: list[str] = []
     for node in element.walk():
-        if isinstance(node, Ps1AssignmentExpression):
-            if not assignment_target_is_all_variables(node.target):
-                escapes = True
-            else:
-                for target in assignment_target_variables(node.target):
-                    if _is_plain_local(target):
-                        names.append(target.name.lower())
-                    else:
-                        escapes = True
-        elif isinstance(node, Ps1UnaryExpression) and node.operator in ('++', '--'):
-            operand = node.operand
-            if isinstance(operand, Ps1Variable) and _is_plain_local(operand):
-                names.append(operand.name.lower())
-            else:
-                escapes = True
-        elif isinstance(node, Ps1BinaryExpression) and node.operator.lower() in MATCH_OPERATORS:
-            escapes = True
-    return escapes, names
+        writes = _writes_at(node)
+        escapes = escapes or writes.escapes
+        names.extend(writes.names)
+    return _Writes(escapes, tuple(names))
+
+
+def _names_written_under(owner: Node, skipped: set[Node]) -> frozenset[str]:
+    """
+    Every name a statement of *skipped* writes, in one walk of the scope of *owner* that visits each
+    node once however many skipped statements hold it: the skipped statements of nested resuming
+    blocks contain one another, and folding `_skipped_writes` over each would walk the inner ones
+    once per level around them. A nested scriptblock is entered only inside a skipped statement,
+    which is where `_skipped_writes` reads it too.
+    """
+    names: set[str] = set()
+    stack: list[tuple[Node, bool]] = [(owner, False)]
+    while stack:
+        node, inside = stack.pop()
+        inside = inside or node in skipped
+        if inside:
+            names.update(_writes_at(node).names)
+            stack.extend((child, True) for child in node.children())
+        else:
+            stack.extend((child, False) for child in node.children() if not isinstance(child, Ps1ScriptBlock))
+    return frozenset(names)
 
 
 def _is_plain_local(variable: Ps1Variable) -> bool:
