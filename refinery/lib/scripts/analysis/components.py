@@ -142,8 +142,9 @@ class Condensation(Generic[_Vertex]):
     ) -> list[_Value]:
         """
         For every component, *own* of it joined with the accumulation of every component on one
-        side of it — what it reaches when *downstream*, what reaches it otherwise — each component's
-        own value counted once, in one pass.
+        side of it — what it reaches when *downstream*, what reaches it otherwise — in one pass. A
+        component reached along two paths is joined once per path, so *join* has to give the same
+        answer for a value joined twice as for one joined once, as a union does and a sum does not.
         """
         count = len(self.components)
         result: dict[int, _Value] = {}

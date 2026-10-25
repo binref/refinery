@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+from inspect import cleandoc
+
 from test import TestBase
 
 from refinery.lib.scripts import Node, Statement
@@ -1253,12 +1255,32 @@ class TestPs1ALabelledWalkAnswersEveryLabelAsItsOwnWalkWould(TestBase):
     """
 
     _SCRIPTS = [
-        "trap { 'handled'\ncontinue }\n'one'\nif ($c) { trap { continue }\nGet-Item nope\n'two' }",
-        "while ($x) { trap { 'h'\ncontinue }\nGet-Item a\n$y = [int]$s\n'tail' }\n'after'",
-        "trap { if ($q) { trap { continue }\n'p' }\ncontinue }\n'x'\n'y'",
-        "try { Get-Item a\n'b' } catch { 'c' } finally { 'f' }\nfunction f { trap { break }\n'in' }",
-        "switch ($x) { 1 { 'a' } 2 { trap { continue }\nGet-Item b } default { 'c' } }\n'z'",
-        "do { trap { continue }\nGet-Item a\nif ($y) { break }\n$v = [int]$s } while ($x)\n'end'",
+        cleandoc("""
+            trap { 'handled'; continue }
+            'one'
+            if ($c) { trap { continue }; Get-Item nope; 'two' }
+        """),
+        cleandoc("""
+            while ($x) { trap { 'h'; continue }; Get-Item a; $y = [int]$s; 'tail' }
+            'after'
+        """),
+        cleandoc("""
+            trap { if ($q) { trap { continue }; 'p' }; continue }
+            'x'
+            'y'
+        """),
+        cleandoc("""
+            try { Get-Item a; 'b' } catch { 'c' } finally { 'f' }
+            function f { trap { break }; 'in' }
+        """),
+        cleandoc("""
+            switch ($x) { 1 { 'a' } 2 { trap { continue }; Get-Item b } default { 'c' } }
+            'z'
+        """),
+        cleandoc("""
+            do { trap { continue }; Get-Item a; if ($y) { break }; $v = [int]$s } while ($x)
+            'end'
+        """),
     ]
 
     def _labelled_graphs(self):
@@ -1316,7 +1338,11 @@ class TestPs1ALabelledWalkAnswersEveryLabelAsItsOwnWalkWould(TestBase):
                 self.assertEqual(wrong, [])
 
     def test_a_label_seeded_in_a_handler_body_reaches_the_block_the_handler_resumes_into(self):
-        tree = Ps1Parser("trap { 'handled'\ncontinue }\n'one'\n'two'").parse()
+        tree = Ps1Parser(cleandoc("""
+            trap { 'handled'; continue }
+            'one'
+            'two'
+        """)).parse()
         graph = build_ps1_control_flow(tree)[id(tree)]
         trap = tree.body[0]
         assert isinstance(trap, Ps1TrapStatement) and trap.body is not None
@@ -1334,7 +1360,11 @@ class TestPs1ALabelledWalkAnswersEveryLabelAsItsOwnWalkWould(TestBase):
         self.assertFalse(any(walk.reaches('unnamed', node) for node in graph.nodes))
 
     def test_a_labelled_forward_reach_refuses_a_source_belonging_to_another_body(self):
-        tree = Ps1Parser("trap { continue }\nfunction f { 'in' }\n'out'").parse()
+        tree = Ps1Parser(cleandoc("""
+            trap { continue }
+            function f { 'in' }
+            'out'
+        """)).parse()
         graphs = build_ps1_control_flow(tree)
         definition = next(node for node in tree.walk() if isinstance(node, Ps1FunctionDefinition))
         body = definition.body

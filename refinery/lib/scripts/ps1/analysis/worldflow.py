@@ -78,6 +78,7 @@ from refinery.lib.scripts.analysis.cfg import (
     Projection,
     reachable_forward_from_any,
     reachable_forward_labels,
+    require_sources_in,
 )
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockReach, classify_block
 from refinery.lib.scripts.ps1.analysis.world import (
@@ -112,9 +113,7 @@ class Ps1CommandShadows:
 
     def __init__(self, graph: ControlFlowGraph, landings: Mapping[str, list[CfgNode]]):
         for nodes in landings.values():
-            for node in nodes:
-                if node.graph is not graph:
-                    raise ValueError('a redefinition site was placed in another body than the flood')
+            require_sources_in(graph, nodes)
         self._graph = graph
         self._landings = landings
         self._floods: LabelledReach[str] | None = None

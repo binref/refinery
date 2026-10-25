@@ -23,7 +23,13 @@ loop iteration. Every query is deny-side toward keeping: an unplaceable or unrea
 from __future__ import annotations
 
 from refinery.lib.scripts import Node
-from refinery.lib.scripts.analysis.cfg import CfgEdge, CfgNode, ControlFlowModel, Projection
+from refinery.lib.scripts.analysis.cfg import (
+    CfgNode,
+    ControlFlowModel,
+    Projection,
+    plain_predecessors,
+    plain_successors,
+)
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
 from refinery.lib.scripts.ps1.analysis.commands import Ps1ErrorReadSites
@@ -166,10 +172,8 @@ class Ps1ErrorStateReach:
         stack: list[CfgNode] = [start]
         while stack:
             current = stack.pop()
-            for successor in current.successors:
+            for successor in plain_successors(current):
                 if id(successor) in seen:
-                    continue
-                if graph.edge_kind(current, successor) is not CfgEdge.NORMAL:
                     continue
                 seen.add(id(successor))
                 if id(successor) in sites:
@@ -213,10 +217,8 @@ class Ps1ErrorStateReach:
         stack: list[CfgNode] = [node]
         while stack:
             current = stack.pop()
-            for pred in current.predecessors:
+            for pred in plain_predecessors(current):
                 if id(pred) in seen:
-                    continue
-                if graph.edge_kind(pred, current) is not CfgEdge.NORMAL:
                     continue
                 seen.add(id(pred))
                 if pred is entry:

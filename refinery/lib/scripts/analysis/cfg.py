@@ -271,11 +271,8 @@ def flood(
     walk every layer above reaches the graphs through — asking a projection per node instead costs
     the whole run more than the resumption edges do.
     """
-    distinct_sources: dict[int, CfgNode] = {}
-    for source in sources:
-        distinct_sources.setdefault(id(source), source)
     coarse, precise, declines = _split_sources(
-        list(distinct_sources.values()), forward=forward, projection=projection)
+        distinct(sources), forward=forward, projection=projection)
     seen: set[int] = {id(node) for node in coarse}
     if coarse:
         _sweep(coarse, seen, forward=True, declines=False)
@@ -370,15 +367,31 @@ def normal_reach(
             seen.add(id(source))
             stack.append(source)
     while stack:
-        node = stack.pop()
-        for target in node.successors:
+        for target in plain_successors(stack.pop()):
             if id(target) in seen:
-                continue
-            if node.graph.edge_kind(node, target) is not CfgEdge.NORMAL:
                 continue
             seen.add(id(target))
             stack.append(target)
     return frozenset(seen - barrier_ids)
+
+
+def plain_successors(node: CfgNode) -> list[CfgNode]:
+    """
+    The successors *node* reaches over a `CfgEdge.NORMAL` edge: where control carries on from it
+    when nothing throws and nothing resumes. Every walk over plain control flow reads its edges
+    here, so that no two of them can disagree about which edge is plain.
+    """
+    graph = node.graph
+    return [target for target in node.successors if graph.edge_kind(node, target) is CfgEdge.NORMAL]
+
+
+def plain_predecessors(node: CfgNode) -> list[CfgNode]:
+    """
+    The predecessors that reach *node* over a `CfgEdge.NORMAL` edge, the reverse of
+    `plain_successors`.
+    """
+    graph = node.graph
+    return [source for source in node.predecessors if graph.edge_kind(source, node) is CfgEdge.NORMAL]
 
 
 class LabelledReach(Generic[_Label]):
@@ -477,18 +490,7 @@ def normal_reach_labels(
     whether something a node's continuation runs is one of the label's sources.
     """
     bits, seeds = _seed_labels(sources)
-
-    def adjacent(node: CfgNode) -> list[CfgNode]:
-        if forward:
-            return [
-                target for target in node.successors
-                if node.graph.edge_kind(node, target) is CfgEdge.NORMAL
-            ]
-        return [
-            source for source in node.predecessors
-            if node.graph.edge_kind(source, node) is CfgEdge.NORMAL
-        ]
-
+    adjacent = plain_successors if forward else plain_predecessors
     return LabelledReach(bits, [_label_walk(seeds, adjacent)] if seeds else [])
 
 
@@ -668,6 +670,17 @@ def reachable_forward_from_any(
     the fail-open direction.
     """
     sources = list(sources)
+    require_sources_in(graph, sources)
+    return frozenset(flood(sources, forward=True, projection=Projection.FORWARD))
+
+
+def require_sources_in(graph: ControlFlowGraph, sources: Iterable[CfgNode]) -> None:
+    """
+    Refuse a source of a forward flood over *graph* that is a node of another body. The two facts
+    the walk reads, `CfgNode.is_hub_bound` and the edge kinds, are recorded per graph, so such a
+    source reads as neither a hub nor hub-bound and takes the precise walk over what this graph
+    calls plain flow, which is the fail-open direction.
+    """
     for source in sources:
         if source.graph is not graph:
             raise ValueError(
@@ -675,7 +688,6 @@ def reachable_forward_from_any(
                 'reads are recorded per graph, so such a source reads as neither a hub nor '
                 'hub-bound and takes the precise walk over what this graph calls plain flow'
             )
-    return frozenset(flood(sources, forward=True, projection=Projection.FORWARD))
 
 
 def reachable_forward_labels(
@@ -688,13 +700,7 @@ def reachable_forward_labels(
     """
     listed = {label: list(nodes) for label, nodes in sources.items()}
     for nodes in listed.values():
-        for source in nodes:
-            if source.graph is not graph:
-                raise ValueError(
-                    'a source of a forward flood belongs to another body: the two facts this walk '
-                    'reads are recorded per graph, so such a source reads as neither a hub nor '
-                    'hub-bound and takes the precise walk over what this graph calls plain flow'
-                )
+        require_sources_in(graph, nodes)
     return flood_labels(listed, forward=True, projection=Projection.FORWARD)
 
 

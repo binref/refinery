@@ -564,7 +564,10 @@ class TestPs1CommandShadowsAnswerAsOneFloodPerName(TestBase):
     def test_the_work_of_asking_about_every_call_of_every_redefined_name_grows_linearly(self):
         def work(count: int) -> int:
             script = Ps1Parser('\n'.join(
-                F"function Get-Thing{index} {{ 's' }}\nGet-Thing{index}" for index in range(count))).parse()
+                line
+                for index in range(count)
+                for line in (F"function Get-Thing{index} {{ 's' }}", F'Get-Thing{index}')
+            )).parse()
             calls = script.body[1::2]
 
             def ask():

@@ -38,7 +38,7 @@ from typing import Callable
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, ControlFlowModel
-from refinery.lib.scripts.analysis.components import strongly_connected_components
+from refinery.lib.scripts.analysis.components import Condensation
 
 #: What a language may answer about the body a control-flow graph belongs to: the element whose
 #: evaluation runs that body, and whether the site runs it more than once. `None` means the language
@@ -57,15 +57,13 @@ def nodes_on_a_cycle(graph: ControlFlowGraph) -> frozenset[int]:
     component-size test gets wrong — a construct that iterates over nothing but its own head, such as
     a dispatch whose every arm is empty, is one node reaching only itself.
     """
-    found: set[int] = set()
-    for component in strongly_connected_components(graph.nodes, lambda node: node.successors):
-        if len(component) > 1:
-            found.update(id(node) for node in component)
-            continue
-        node = component[0]
-        if any(successor is node for successor in node.successors):
-            found.add(id(node))
-    return frozenset(found)
+    condensation = Condensation(graph.nodes, lambda node: node.successors)
+    return frozenset(
+        id(node)
+        for number, component in enumerate(condensation.components)
+        if condensation.looped(number)
+        for node in component
+    )
 
 
 class CycleModel:
