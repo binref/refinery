@@ -7,6 +7,7 @@ import inspect
 import os
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -36,15 +37,18 @@ ROOT = Path(__file__).resolve().parents[5]
 
 def an_impostor(folder: str) -> str:
     """
-    A program in *folder* that prints `AN_IMPOSTORS_REPORT` whatever it is asked, as a program in the
-    place of Node would print something that is not Node's answer.
+    A program in *folder* that prints `AN_IMPOSTORS_REPORT` whatever it is asked, as a program in
+    the place of Node would print something that is not Node's answer.
     """
     impostor = os.path.join(folder, 'impostor.cmd' if os.name == 'nt' else 'impostor')
     with open(impostor, 'w') as script:
         if os.name == 'nt':
             script.write(F'@echo {AN_IMPOSTORS_REPORT}\n')
         else:
-            script.write(F'#!/bin/sh\necho \'{AN_IMPOSTORS_REPORT}\'\n')
+            script.write(inspect.cleandoc(F'''
+                #!/bin/sh
+                echo '{AN_IMPOSTORS_REPORT}'
+            '''))
     os.chmod(impostor, 0o755)
     return impostor
 
@@ -57,7 +61,10 @@ def a_wrapper_around_node(path: Path, *options: str) -> None:
     if os.name == 'nt':
         path.write_text(F'@{arguments} %*\n')
     else:
-        path.write_text(F'#!/bin/sh\nexec {arguments} "$@"\n')
+        path.write_text(inspect.cleandoc(F'''
+            #!/bin/sh
+            exec {arguments} "$@"
+        '''))
         path.chmod(0o755)
 
 
@@ -110,18 +117,18 @@ class TestAnAnswerWithoutAnErrorIsKeptForTheNextRun(TestBase):
     def test_a_later_run_is_given_the_answer_an_earlier_run_kept(self):
         program = A_PROGRAM_THAT_PRINTS_SOMETHING_ELSE_ON_EVERY_RUN
         with tempfile.TemporaryDirectory() as folder:
-            with answers_kept_in(Path(folder)):
+            with answers_kept_in(lambda: Path(folder)):
                 first = behavior(program)
-            with answers_kept_in(Path(folder)):
+            with answers_kept_in(lambda: Path(folder)):
                 again = behavior(program)
         self.assertEqual(first, again)
 
     def test_an_answer_that_ends_in_an_error_is_not_kept(self):
         program = 'console.log(Math.random()); throw new TypeError("after printing");'
         with tempfile.TemporaryDirectory() as folder:
-            with answers_kept_in(Path(folder)):
+            with answers_kept_in(lambda: Path(folder)):
                 first = behavior(program)
-            with answers_kept_in(Path(folder)):
+            with answers_kept_in(lambda: Path(folder)):
                 again = behavior(program)
         self.assertEqual((first[1], again[1]), ('TypeError', 'TypeError'))
         self.assertNotEqual(first[0], again[0])
@@ -129,9 +136,9 @@ class TestAnAnswerWithoutAnErrorIsKeptForTheNextRun(TestBase):
     def test_an_answer_with_any_character_is_given_exactly_as_node_gave_it(self):
         program = R'console.log(Math.random() + "\u0000\u00e4\u4e2d\ud83d\ude00\ud83d");'
         with tempfile.TemporaryDirectory() as folder:
-            with answers_kept_in(Path(folder)):
+            with answers_kept_in(lambda: Path(folder)):
                 first = behavior(program)
-            with answers_kept_in(Path(folder)):
+            with answers_kept_in(lambda: Path(folder)):
                 again = behavior(program)
         self.assertEqual(first, again)
         self.assertIn('\x00\xe4\u4e2d\U0001F600\ufffd', first[0])
@@ -142,7 +149,7 @@ class TestAnAnswerWithoutAnErrorIsKeptForTheNextRun(TestBase):
         with tempfile.TemporaryDirectory() as folder:
             for time_zone in ['UTC', 'Asia/Tokyo', 'UTC']:
                 with unittest.mock.patch.dict(os.environ, {'TZ': time_zone}):
-                    with answers_kept_in(Path(folder)):
+                    with answers_kept_in(lambda: Path(folder)):
                         answers.append(behavior(program))
         utc, tokyo, utc_again = answers
         self.assertEqual(utc, utc_again)
@@ -154,7 +161,7 @@ class TestAnAnswerWithoutAnErrorIsKeptForTheNextRun(TestBase):
         with tempfile.TemporaryDirectory() as folder:
             for time_zone in ['UTC', 'Etc/UTC']:
                 with unittest.mock.patch.dict(os.environ, {'TZ': time_zone}):
-                    with answers_kept_in(Path(folder)):
+                    with answers_kept_in(lambda: Path(folder)):
                         answers.append(behavior(program))
         utc, etc_utc = answers
         self.assertEqual(utc, etc_utc)
@@ -169,7 +176,7 @@ class TestAnAnswerWithoutAnErrorIsKeptForTheNextRun(TestBase):
             for options in [(), ('-r', F'"{older}"'), ()]:
                 a_wrapper_around_node(node, *options)
                 with unittest.mock.patch.object(nodejs, 'node_executable', return_value=str(node)):
-                    with answers_kept_in(Path(folder)):
+                    with answers_kept_in(lambda: Path(folder)):
                         answers.append(behavior(program))
         first, older_node, first_again = answers
         self.assertEqual(first, first_again)
@@ -187,7 +194,7 @@ class TestAnAnswerWithoutAnErrorIsKeptForTheNextRun(TestBase):
                 with self.subTest(node=name):
                     self.assertIsNone(nodejs.identity(executable))
             with unittest.mock.patch.object(nodejs, 'node_executable', return_value=impostor):
-                with answers_kept_in(Path(folder)):
+                with answers_kept_in(lambda: Path(folder)):
                     stdout, error = behavior(program)
             self.assertEqual((stdout.strip(), error), (AN_IMPOSTORS_REPORT, None))
             self.assertEqual(os.listdir(folder), [])
@@ -206,7 +213,7 @@ class TestAnAnswerWithoutAnErrorIsKeptForTheNextRun(TestBase):
                 spec.loader.exec_module(module)
                 identities.append(module.identity(node))
         copied, edited = identities
-        self.assertIsNotNone(copied)
+        self.assertNotIn(None, identities)
         self.assertEqual(copied, nodejs.identity(node))
         self.assertNotEqual(edited, copied)
 
@@ -227,7 +234,7 @@ class TestNodeIsAskedWhatItIsOncePerRunAndLocaleAndTimeZone(TestBase):
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_node_starts_once_for_each_program_and_once_for_each_time_zone_of_a_run(self):
         node = node_executable()
-        with tempfile.TemporaryDirectory() as folder, answers_kept_in(Path(folder)):
+        with tempfile.TemporaryDirectory() as folder, answers_kept_in(lambda: Path(folder)):
             with unittest.mock.patch.object(subprocess, 'run', wraps=subprocess.run) as started:
                 for test, time_zone, program in [
                     ('one', 'UTC', 'console.log(1);'),
@@ -258,6 +265,8 @@ class TestTheFileOfKeptAnswers(TestBase):
             ('garbled', 'UPDATE answers SET answer = ? WHERE key = ?', (B'1\x00', ONE)),
             ('emptied', 'UPDATE answers SET answer = zeroblob(0) WHERE key = ?', (ONE,)),
             ('swapped', 'UPDATE answers SET answer = (SELECT answer FROM answers WHERE key = ?) WHERE key = ?', (TWO, ONE)),
+            ('answer made text', 'UPDATE answers SET answer = CAST(answer AS TEXT) WHERE key = ?', (ONE,)),
+            ('last use made text', 'UPDATE answers SET used = ? WHERE key = ?', ('a day', ONE)),
         ]:
             with self.subTest(change=name), tempfile.TemporaryDirectory() as folder:
                 with a_store_opened_on(folder, 20_000) as store:
@@ -306,6 +315,31 @@ class TestTheFileOfKeptAnswers(TestBase):
                 taken_over = path.read_bytes()
             self.assertEqual(path.read_bytes(), taken_over)
 
+    def test_a_store_that_can_be_read_but_not_written_still_gives_its_answers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, 'answers.sqlite')
+            with a_store_opened_on(folder, 20_000) as store:
+                store.keep(ONE, '1\n')
+            path.chmod(stat.S_IREAD)
+            try:
+                with a_store_opened_on(folder, 20_000) as store:
+                    self.assertEqual(store.answer(ONE), '1\n')
+            finally:
+                path.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+    @unittest.skipUnless(os.name == 'nt', 'a UNC path names a folder only on Windows')
+    def test_a_store_in_a_folder_named_by_a_unc_path_keeps_its_answers_in_that_folder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            drive, rest = os.path.splitdrive(os.path.abspath(folder))
+            shared = Path(F'//localhost/{drive[0]}$') / rest
+            if not shared.is_dir():
+                self.skipTest(F'the administrative share of {drive} cannot be reached')
+            with a_store_opened_on(str(shared), 20_000) as store:
+                store.keep(ONE, '1\n')
+            with a_store_opened_on(str(shared), 20_000) as store:
+                self.assertEqual(store.answer(ONE), '1\n')
+            self.assertTrue(Path(folder, 'answers.sqlite').is_file())
+
     def test_the_journal_of_a_killed_writer_applied_to_another_store_gives_no_wrong_answer(self):
         killed_writer = inspect.cleandoc('''
             import hashlib, os, sqlite3, sys
@@ -323,7 +357,8 @@ class TestTheFileOfKeptAnswers(TestBase):
             return hashlib.sha256(F'{store}-{n}'.encode()).digest()
 
         def answer(store: str, n: int):
-            return (F'{store}{n:04d} ' * 1000)[:5000] + '\n'
+            text = (F'{store}{n:04d} ' * 1000)[:5000]
+            return F'{text}\n'
 
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
             for folder, store in [(a, 'A'), (b, 'B')]:
@@ -391,19 +426,32 @@ class TestARunOfTheTestsWithKeptAnswers(TestBase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder, 'answers.sqlite')
             path.write_text('kept answers\n')
-            with answers_kept_in(Path(folder)):
+            with answers_kept_in(lambda: Path(folder)):
                 self.assertEqual(path.read_text(), 'kept answers\n')
                 behavior('console.log(1);')
                 self.assertFalse(path.exists())
-            with answers_kept_in(Path(folder)):
+            with answers_kept_in(lambda: Path(folder)):
                 self.assertEqual(behavior('console.log(1);'), ('1\n', None))
                 path.unlink()
 
-    def test_a_damaged_store_that_another_process_holds_open_still_gives_nodes_answers(self):
+    def test_a_run_asks_where_to_keep_its_answers_at_its_first_question_and_not_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            unasked = unittest.mock.Mock(return_value=Path(folder))
+            with answers_kept_in(unasked):
+                pass
+            where = unittest.mock.Mock(return_value=Path(folder))
+            with answers_kept_in(where):
+                where.assert_not_called()
+                behavior('console.log(1);')
+                behavior('console.log(2);')
+        unasked.assert_not_called()
+        where.assert_called_once_with()
+
+    def test_a_damaged_store_that_is_held_open_still_gives_nodes_answers(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder, 'answers.sqlite')
             path.write_text('kept answers\n')
-            with path.open('rb'), answers_kept_in(Path(folder)):
+            with path.open('rb'), answers_kept_in(lambda: Path(folder)):
                 self.assertEqual(behavior('console.log(1);'), ('1\n', None))
 
     def test_a_store_that_cannot_be_written_still_gives_nodes_answers(self):
@@ -411,9 +459,9 @@ class TestARunOfTheTestsWithKeptAnswers(TestBase):
         with tempfile.TemporaryDirectory() as folder:
             store = Path(folder, 'node')
             store.write_text('a file where the folder was\n')
-            with answers_kept_in(store):
+            with answers_kept_in(lambda: store):
                 first = behavior(program)
-            with answers_kept_in(store):
+            with answers_kept_in(lambda: store):
                 again = behavior(program)
         self.assertIsNone(first[1])
         self.assertNotEqual(first, again)
@@ -423,10 +471,10 @@ class TestARunOfTheTestsWithKeptAnswers(TestBase):
         with tempfile.TemporaryDirectory() as folder:
             store = Path(folder, 'node')
             store.mkdir()
-            with answers_kept_in(store):
+            with answers_kept_in(lambda: store):
                 first = behavior(program)
                 shutil.rmtree(store)
-            with answers_kept_in(store):
+            with answers_kept_in(lambda: store):
                 again = behavior(program)
         self.assertEqual(first, again)
 
@@ -434,10 +482,10 @@ class TestARunOfTheTestsWithKeptAnswers(TestBase):
         program = A_PROGRAM_THAT_PRINTS_SOMETHING_ELSE_ON_EVERY_RUN
         answers = []
         with tempfile.TemporaryDirectory() as folder:
-            with answers_kept_in(Path(folder)):
+            with answers_kept_in(lambda: Path(folder)):
                 thread = threading.Thread(target=lambda: answers.append(behavior(program)))
                 thread.start()
                 thread.join()
-            with answers_kept_in(Path(folder)):
+            with answers_kept_in(lambda: Path(folder)):
                 again = behavior(program)
         self.assertEqual(answers, [again])

@@ -22,8 +22,8 @@ Three differentials, each an option that runs a whole test selection under a cos
 
 Node's answers to the JavaScript oracle are kept between runs in the folder `node` of pytest's
 cache, which `--cache-clear` empties. Each process keeps them from its configuration to the end of
-its session, which is before xdist stops a worker. Which answers are kept, and when they are
-dropped, is `test.lib.scripts.js.analysis.node_answers`.
+its session, which is before xdist stops a worker, and makes the folder only at its first question.
+Which answers are kept, and when they are dropped, is `test.lib.scripts.js.analysis.node_answers`.
 """
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def node_answers_folder(config) -> Path | None:
 
 def pytest_configure(config):
     from test.lib.scripts.js.analysis.node_answers import answers_kept_in
-    _NODE_ANSWERS.enter_context(answers_kept_in(node_answers_folder(config)))
+    _NODE_ANSWERS.enter_context(answers_kept_in(lambda: node_answers_folder(config)))
     if config.getoption('--no-pin'):
         os.environ['REFINERY_TEST_NO_PIN'] = '1'
         from refinery.lib.scripts.modelcache import ModelCacheBase

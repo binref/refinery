@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import contextlib
+import sqlite3
+import subprocess
+import sys
+import tempfile
 import unittest
 import unittest.mock
 
 from pathlib import Path
 
-from test import conftest
+from test import TestBase, conftest
+from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
 
 def a_configuration(cache: unittest.mock.Mock | None, **options: bool) -> unittest.mock.Mock:
@@ -39,3 +45,29 @@ class TestTheFolderOfKeptNodeAnswers(unittest.TestCase):
 
     def test_a_run_without_the_cache_provider_keeps_no_answers(self):
         self.assertIsNone(conftest.node_answers_folder(a_configuration(None)))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestASessionThatAsksNodeAboutOneProgram(TestBase):
+
+    def test_node_prints_one(self):
+        self.assertEqual(behavior('console.log(1);'), ('1\n', None))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestASessionKeepsWhatNodeAnsweredWhenItEnds(TestBase):
+
+    def test_the_one_answer_of_a_session_is_in_the_store_of_its_cache_after_it(self):
+        root = Path(__file__).resolve().parents[1]
+        session = F'{Path(__file__).relative_to(root).as_posix()}::TestASessionThatAsksNodeAboutOneProgram'
+        with tempfile.TemporaryDirectory() as cache:
+            completed = subprocess.run(
+                [sys.executable, '-m', 'pytest', '-q', '-o', F'cache_dir={cache}', session],
+                cwd=root,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            with contextlib.closing(sqlite3.connect(Path(cache, 'd', 'node', 'answers.sqlite'))) as db:
+                kept = db.execute('SELECT count(*) FROM answers').fetchone()
+        self.assertEqual(kept, (1,))

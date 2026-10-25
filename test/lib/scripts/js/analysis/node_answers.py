@@ -9,13 +9,14 @@ apart, and starting Node costs far more than running the program. The bound keep
 asks about many programs only once, like a fuzzing sweep, from holding all of them. Answers are
 remembered per locale and time zone, because a program can print something else in another one.
 
-The answers that end without an error are also kept for later runs, as `KeptAnswers` says. An
-answer that ends in an error is not kept: a run that fails for a reason unrelated to the program,
-such as a machine that ran out of memory, can then never be given again as what the program does,
-at the price of running every program that throws each time a run asks about it.
+The answers that end without an error are also kept for later runs, as `KeptAnswers` says. An answer
+that ends in an error is not kept: a run that fails for a reason unrelated to the program, such as a
+machine that ran out of memory, can then never be given again as what the program does, at the price
+of running every program that throws each time a run asks about it.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import sqlite3
@@ -23,10 +24,10 @@ import threading
 import time
 import zlib
 
-from collections import OrderedDict
 from contextlib import closing, contextmanager, suppress
 from pathlib import Path
-from typing import Generator
+from typing import Callable, Generator
+from urllib.parse import quote
 
 from samples import refuse_script_host_near_a_sample
 from test.lib.scripts.js.analysis import nodejs
@@ -87,7 +88,7 @@ class KeptAnswers:
 
     - a file that SQLite rejects as damaged or as not a database is deleted
     - a file of another format has its table made again, empty
-    - answers no run used for `_UNUSED_DAYS` days are removed
+    - answers no run used for `_UNUSED_DAYS` days are removed, where the file can be written
 
     The format of the file is the definition of its table, so that a change to what a row holds is a
     change of the format. Each row also holds a digest of its key and answer, which is checked every
@@ -96,7 +97,8 @@ class KeptAnswers:
     that was killed being applied to the file that took the place of its own.
 
     A store that cannot be read or written is only a store that keeps nothing: every `OSError` and
-    `sqlite3.Error` means that an answer is not kept, and Node is asked.
+    `sqlite3.Error` means that an answer is not kept, and Node is asked. So does a row whose fields
+    are not of the types its table declares, which SQLite does not enforce.
     """
 
     def __init__(self, folder: Path):
@@ -110,7 +112,7 @@ class KeptAnswers:
     def _connect(self, *, create: bool) -> sqlite3.Connection:
         mode = 'rwc' if create else 'rw'
         return sqlite3.connect(
-            F'{self.path.as_uri()}?mode={mode}',
+            F'file:{quote(str(self.path))}?mode={mode}',
             uri=True,
             timeout=_BUSY_SECONDS,
             isolation_level=None,
@@ -138,8 +140,14 @@ class KeptAnswers:
                 db.execute(F'PRAGMA user_version = {_FORMAT}')
             db.execute('COMMIT')
             return {}
-        db.execute('DELETE FROM answers WHERE used < ?', (self.today - _UNUSED_DAYS,))
-        rows = db.execute('SELECT key, answer, digest, used FROM answers')
+        oldest = self.today - _UNUSED_DAYS
+        rows = db.execute(
+            'SELECT key, answer, digest, used FROM answers WHERE used >= ?'
+            ' AND typeof(answer) = ? AND typeof(digest) = ? AND typeof(used) = ?',
+            (oldest, 'blob', 'blob', 'integer'),
+        ).fetchall()
+        with suppress(sqlite3.OperationalError):
+            db.execute('DELETE FROM answers WHERE used < ?', (oldest,))
         return {key: (answer, digest, used) for key, answer, digest, used in rows}
 
     def answer(self, key: bytes) -> str | None:
@@ -190,47 +198,39 @@ class KeptAnswers:
                 db.execute(F'PRAGMA user_version = {_FORMAT}')
             elif version != _FORMAT:
                 return
-            db.executemany('INSERT OR REPLACE INTO answers VALUES (?, ?, ?, ?)', [
-                (key, answer, _digest(key, answer), self.today)
-                for key, answer in self.new.items()
-            ])
-            db.executemany('UPDATE answers SET used = ? WHERE key = ?', [
-                (self.today, key) for key in self.used
-            ])
+            db.executemany(
+                'INSERT OR REPLACE INTO answers VALUES (?, ?, ?, ?)',
+                [(key, answer, _digest(key, answer), self.today) for key, answer in self.new.items()],
+            )
+            db.executemany(
+                'UPDATE answers SET used = ? WHERE key = ?',
+                [(self.today, key) for key in self.used],
+            )
             db.execute('COMMIT')
 
 
 class _Run:
     """
     What one run knows about Node's answers: the latest answers it gave, what each Node it asked
-    says it is, and the store it keeps answers in, if any.
+    says it is, and the store it keeps answers in, if any. The store's folder is asked of *where*
+    at the run's first question, and never before: under `--cache-clear`, each xdist worker empties
+    pytest's cache folder as it starts, and a folder that one worker makes while another empties it
+    can fail to be made or to be emptied. No test runs before every worker has started.
     """
 
-    def __init__(self, kept: KeptAnswers | None):
-        self.kept = kept
+    def __init__(self, where: Callable[[], Path | None] | None):
+        self.where = where
         self.lock = threading.Lock()
-        self.remembered: OrderedDict[tuple, tuple[str, str | None]] = OrderedDict()
-        self.identities: dict[tuple[str, tuple[tuple[str, str], ...]], str | None] = {}
+        self.kept: KeptAnswers | None = None
+        self.answer = functools.lru_cache(maxsize=_REMEMBERED)(self._kept_or_asked)
+        self.identity = functools.cache(self._identity)
 
-    def answer(
-        self,
-        node: str,
-        graph: tuple[tuple[str, str], ...],
-        entry: str,
-        timeout: float,
-    ) -> tuple[str, str | None]:
-        surroundings = nodejs.surroundings()
-        question = (node, surroundings, graph, entry, timeout)
+    def _store(self) -> KeptAnswers | None:
         with self.lock:
-            if (answer := self.remembered.get(question)) is not None:
-                self.remembered.move_to_end(question)
-                return answer
-        answer = self._kept_or_asked(node, surroundings, graph, entry, timeout)
-        with self.lock:
-            self.remembered[question] = answer
-            if len(self.remembered) > _REMEMBERED:
-                self.remembered.popitem(last=False)
-        return answer
+            if self.where is not None:
+                folder, self.where = self.where(), None
+                self.kept = None if folder is None else KeptAnswers(folder)
+            return self.kept
 
     def _kept_or_asked(
         self,
@@ -240,8 +240,8 @@ class _Run:
         entry: str,
         timeout: float,
     ) -> tuple[str, str | None]:
-        kept = self.kept
-        if kept is None or (identity := self._identity(node, surroundings)) is None:
+        kept = self._store()
+        if kept is None or (identity := self.identity(node, surroundings)) is None:
             return nodejs.run(node, graph, entry, timeout)
         key = hashlib.sha256(json.dumps([identity, graph, entry, timeout]).encode('ascii')).digest()
         if (stdout := kept.answer(key)) is not None:
@@ -252,17 +252,13 @@ class _Run:
         return stdout, error
 
     def _identity(self, node: str, surroundings: tuple[tuple[str, str], ...]) -> str | None:
-        with self.lock:
-            if (node, surroundings) in self.identities:
-                return self.identities[node, surroundings]
-        identity = nodejs.identity(node)
-        with self.lock:
-            self.identities[node, surroundings] = identity
-        return identity
+        return nodejs.identity(node)
 
     def close(self) -> None:
-        if self.kept is not None:
-            self.kept.close()
+        with self.lock:
+            kept, self.where = self.kept, None
+        if kept is not None:
+            kept.close()
 
 
 _active = _Run(None)
@@ -290,19 +286,20 @@ def ask(
         raise RuntimeError('node.js is not available')
     if fresh:
         return nodejs.run(node, graph, entry, timeout)
-    return _active.answer(node, graph, entry, timeout)
+    return _active.answer(node, nodejs.surroundings(), graph, entry, timeout)
 
 
 @contextmanager
-def answers_kept_in(folder: Path | None) -> Generator[None, None, None]:
+def answers_kept_in(where: Callable[[], Path | None] | None) -> Generator[None, None, None]:
     """
     Make a new run active for as long as the context lasts: it remembers no answer yet, and it keeps
-    answers in *folder*, or nowhere when that is `None`. On exit, the run writes what it kept, and
-    the run that was active before is active again.
+    answers in the folder that *where* gives at its first question, or nowhere when *where* is or
+    gives `None`. On exit, the run writes what it kept, and the run that was active before is active
+    again.
     """
     global _active
     previous = _active
-    _active = run = _Run(None if folder is None else KeptAnswers(folder))
+    _active = run = _Run(where)
     try:
         yield
     finally:
