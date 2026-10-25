@@ -17,35 +17,35 @@ runs:
         key: node-answers-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: node-answers-${{ runner.os }}-
     - name: Disable Compiled Modules
-      shell: ${{ contains(inputs.os, 'windows') && 'pwsh' || 'bash' }}
-      run: python setup.py disable_ext
+      shell: bash
+      run: '"$CIPY" setup.py disable_ext'
     - name: Unit Tests (Pure Python)
       if: ${{ contains(inputs.os, 'windows') }}
       shell: cmd
-      run: pytest -n=6 --dist=worksteal -m "not cythonized_only" test 2>NUL
+      run: '"%CIPY%" -m pytest -n=6 --dist=worksteal -m "not cythonized_only" test 2>NUL'
     - name: Unit Tests (Pure Python)
       if: ${{ contains(inputs.os, 'mac') }}
       shell: bash
-      run: pytest -n=4 --dist=worksteal -m "not cythonized_only" test
+      run: '"$CIPY" -m pytest -n=4 --dist=worksteal -m "not cythonized_only" test'
     - name: Unit Tests (Pure Python)
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: bash
-      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=4 --dist=worksteal -m "not cythonized_only" test
+      run: 'XDG_SESSION_TYPE=x11 xvfb-run "$CIPY" -m pytest -n=4 --dist=worksteal -m "not cythonized_only" test'
     - name: Prepare Compiled Module Tests
-      shell: ${{ contains(inputs.os, 'windows') && 'pwsh' || 'bash' }}
-      run: python setup.py build_ext --inplace
+      shell: bash
+      run: '"$CIPY" setup.py build_ext --inplace'
     - name: Unit Tests (Cython Modules)
       if: ${{ contains(inputs.os, 'windows') }}
       shell: cmd
-      run: pytest -n=6 --dist=worksteal -m "cythonized or cythonized_only" test 2>NUL
+      run: '"%CIPY%" -m pytest -n=6 --dist=worksteal -m "cythonized or cythonized_only" test 2>NUL'
     - name: Unit Tests (Cython Modules)
       if: ${{ contains(inputs.os, 'mac') }}
       shell: bash
-      run: pytest -n=4 --dist=worksteal -m "cythonized or cythonized_only" test
+      run: '"$CIPY" -m pytest -n=4 --dist=worksteal -m "cythonized or cythonized_only" test'
     - name: Unit Tests (Cython Modules)
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: bash
-      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=4 --dist=worksteal -m "cythonized or cythonized_only" test
+      run: 'XDG_SESSION_TYPE=x11 xvfb-run "$CIPY" -m pytest -n=4 --dist=worksteal -m "cythonized or cythonized_only" test'
     - name: Keep Node Answers For Later Runs
       if: ${{ !cancelled() }}
       uses: actions/cache/save@v6

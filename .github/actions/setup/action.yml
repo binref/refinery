@@ -33,9 +33,17 @@ runs:
         git rm --cached -r .
         git reset --hard
     - name: Install Dependencies
-      shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
+      shell: bash
       env:
         REFINERY_NO_EXTENSIONS: 1
       run: |
         python -m pip install uv
-        python -m uv pip install --system .[all] pycodestyle pyflakes pytest-xdist
+        venv="$RUNNER_TEMP/.venv.refinery"
+        python -m uv venv --python python "$venv"
+        if [ "$RUNNER_OS" = Windows ]; then
+          cipy="$(cygpath -w "$venv/Scripts/python.exe")"
+        else
+          cipy="$venv/bin/python"
+        fi
+        echo "CIPY=$cipy" >> "$GITHUB_ENV"
+        python -m uv pip install --python "$cipy" ".[all]" pycodestyle pyflakes pytest-xdist

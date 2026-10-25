@@ -114,7 +114,7 @@ jobs:
         os: windows-latest
     - name: Install Coverage Dependencies
       run: |
-        python -m uv pip install --system pytest pytest-cov
+        python -m uv pip install --python $env:CIPY pytest pytest-cov
     - name: Read The Node Answers Of The Windows Tests
       uses: actions/cache/restore@v6
       with:
@@ -124,7 +124,7 @@ jobs:
           node-answers-Windows-${{ github.run_id }}-
           node-answers-Windows-
     - name: Run tests and collect coverage
-      run: pytest --disable-warnings --cov-config=.coveragerc --cov refinery -n=4 --dist=worksteal test 2>nul
+      run: '"%CIPY%" -m pytest --disable-warnings --cov-config=.coveragerc --cov refinery -n=4 --dist=worksteal test 2>nul'
       shell: cmd
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v7
