@@ -10,8 +10,8 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Keep Node Answers Between Runs
-      uses: actions/cache@v6
+    - name: Read Node Answers Of Earlier Runs
+      uses: actions/cache/restore@v6
       with:
         path: .pytest_cache/d/node
         key: node-answers-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -46,3 +46,9 @@ runs:
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: bash
       run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=4 --dist=worksteal -m "cythonized or cythonized_only" test
+    - name: Keep Node Answers For Later Runs
+      if: ${{ !cancelled() }}
+      uses: actions/cache/save@v6
+      with:
+        path: .pytest_cache/d/node
+        key: node-answers-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
