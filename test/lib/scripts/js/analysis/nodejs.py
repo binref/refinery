@@ -93,8 +93,8 @@ def run(
     """
     What the Node at *node* prints when it runs *entry* with every file of *graph* written beside
     it, as names and sources, and the type of the error it ended in, or `None` when it ended without
-    one. Each file is written untranslated, because which characters end a line is a question the
-    engine is asked.
+    one. Each file is written untranslated and what Node prints is read untranslated, because which
+    characters end a line is a question the engine is asked.
     """
     refuse_script_host_near_a_sample('node')
     with tempfile.TemporaryDirectory() as folder:
@@ -104,14 +104,13 @@ def run(
         proc = subprocess.run(
             [node, os.path.join(folder, entry)],
             capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
             timeout=timeout,
             env=node_environment(),
         )
-    error = None if proc.returncode == 0 else _normalize_error(proc.stderr)
-    return proc.stdout, error
+    stdout = proc.stdout.decode('utf-8', 'replace')
+    if proc.returncode == 0:
+        return stdout, None
+    return stdout, _normalize_error(proc.stderr.decode('utf-8', 'replace'))
 
 
 #: Asks Node what it is and where it runs: its version, the versions of what it is built with, such
