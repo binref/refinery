@@ -25,17 +25,12 @@ those is forbidden.
 from __future__ import annotations
 
 import functools
-import hashlib
 import json
 import os
-import re
-import shutil
 import subprocess
 import sys
 import tempfile
-import time
 
-from contextlib import suppress
 from enum import Enum
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -46,13 +41,11 @@ from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from samples import refuse_script_host_near_a_sample
+from test.lib.scripts.js.analysis.node_answers import ask
 from test.lib.scripts.js.analysis.nodejs import (
     NODE_TIMEOUT,
-    identity,
     node_environment,
     node_executable,
-    run,
-    surroundings,
 )
 
 
@@ -256,164 +249,11 @@ def module_graph_behavior(
     Each file reaches the folder untranslated, for the reason `behavior` gives, and the extension in
     each key is what decides the goal symbol its file is read under.
 
-    Node's answers to the latest 1024 questions are kept and given again when the same files, entry
-    and timeout are asked about: tests often ask about the same program a few questions apart, and
-    starting Node costs far more than running the program. The bound keeps a process that asks
-    about many programs only once, like a fuzzing sweep, from holding all of them. A test whose
-    question is whether two runs of a program agree passes *fresh*, which runs Node again and keeps
-    nothing.
-
-    When the environment variable `REFINERY_TEST_NODE_ANSWERS` names a folder, as the configuration
-    of the test suite makes it do, the answers that end without an error also outlive the process:
-    `NodeAnswers` says how they are kept.
+    Node's answers are remembered, and kept for later runs, as
+    `test.lib.scripts.js.analysis.node_answers` says. A test whose question is whether two runs of a
+    program agree passes *fresh*, which runs Node again and keeps nothing.
     """
-    refuse_script_host_near_a_sample('node')
-    node = node_executable()
-    if node is None:
-        raise RuntimeError('node.js is not available')
-    graph = tuple(sorted(files.items()))
-    if fresh:
-        return run(node, graph, entry, timeout)
-    return _remembered_node_behavior(node, graph, entry, timeout)
-
-
-#: How long a kept answer may go without being asked for before it is removed: thirty days.
-_UNUSED_FOR = 30 * 24 * 60 * 60
-
-#: How long the answers of another Node may go unopened before they are removed: a day, which no run
-#: of the test suite lasts, so that two runs with different Nodes never remove what the other uses.
-_UNOPENED_FOR = 24 * 60 * 60
-
-
-class NodeAnswers:
-    """
-    What one version of Node printed for programs that ran without an error, kept in a folder so
-    that a later run of the test suite starts Node only for the programs it has not seen. The folder
-    holds one subfolder per identity that `_kept_answers` gives, because an answer is only ever the
-    answer of the Node that gave it. Opening the store for one identity marks its subfolder as
-    opened and removes those of other identities that went unopened for `_UNOPENED_FOR` seconds.
-    Nothing else in the folder is touched: its name is a setting, and it may hold more.
-
-    An answer that ends in an error is not kept. A run that fails for a reason unrelated to the
-    program, such as a machine that ran out of memory, can then never be given again as what the
-    program does, at the price of running every program that throws each time it is asked about.
-
-    Each answer is one file named by a hash of its question, so that the workers of a run can read
-    and write the folder at the same time: a file is written beside its name and moved onto it, and
-    no reader can find it half written. The file begins with a digest of the answer it holds, so
-    that one a crash left empty or garbled is no answer rather than a wrong one.
-
-    Giving an answer marks it as used, and opening the store removes every answer that has not been
-    used for `_UNUSED_FOR` seconds, so that it does not keep answers to programs no test contains.
-    """
-
-    def __init__(self, folder: Path, identity: str):
-        if not _KEPT_ANSWERS_FOLDER.fullmatch(identity):
-            raise ValueError(F'not the identity of a Node: {identity!r}')
-        self.folder = folder / identity
-        with suppress(OSError):
-            self.folder.mkdir(parents=True, exist_ok=True)
-            os.utime(self.folder)
-            self._remove_what_went_unused(folder, identity)
-
-    def _remove_what_went_unused(self, folder: Path, identity: str) -> None:
-        unopened = time.time() - _UNOPENED_FOR
-        for other in folder.iterdir():
-            if other.name == identity or not _KEPT_ANSWERS_FOLDER.fullmatch(other.name):
-                continue
-            with suppress(OSError):
-                if other.stat().st_mtime < unopened:
-                    shutil.rmtree(other, ignore_errors=True)
-        unused = time.time() - _UNUSED_FOR
-        for kept in self.folder.iterdir():
-            with suppress(OSError):
-                if kept.stat().st_mtime < unused:
-                    kept.unlink()
-
-    def _path(self, question: tuple) -> Path:
-        return self.folder / hashlib.sha256(json.dumps(question).encode('ascii')).hexdigest()
-
-    def answer(self, question: tuple) -> str | None:
-        """
-        The standard output kept for *question*, or `None` when none is kept.
-        """
-        path = self._path(question)
-        try:
-            kept = path.read_bytes()
-        except OSError:
-            return None
-        digest, answer = kept[:32], kept[32:]
-        if hashlib.sha256(answer).digest() != digest:
-            return None
-        with suppress(OSError):
-            os.utime(path)
-        return answer.decode('utf-8')
-
-    def keep(self, question: tuple, stdout: str) -> None:
-        """
-        Keep *stdout* as the answer to *question*, which ran without an error. A folder removed during
-        the run, as `--cache-clear` does in a worker that starts later than the others, is made again;
-        an answer that cannot be kept, because the disk is full or the folder cannot be made, is only
-        asked about again.
-        """
-        try:
-            self.folder.mkdir(parents=True, exist_ok=True)
-            stream = tempfile.NamedTemporaryFile(dir=self.folder, delete=False)
-        except OSError:
-            return
-        answer = stdout.encode('utf-8')
-        try:
-            with stream:
-                stream.write(hashlib.sha256(answer).digest() + answer)
-            os.replace(stream.name, self._path(question))
-        except OSError:
-            with suppress(OSError):
-                os.remove(stream.name)
-
-
-#: The name of a folder of kept answers: the start of the identity of the Node that gave them.
-_KEPT_ANSWERS_FOLDER = re.compile('[0-9a-f]{16}')
-
-
-@functools.lru_cache(maxsize=None)
-def _kept_answers(
-    node: str,
-    folder: str,
-    surroundings: tuple[tuple[str, str], ...],
-) -> NodeAnswers | None:
-    """
-    The answers kept in *folder* for the Node at *node* in *surroundings*, or `None` when *folder*
-    is empty or Node cannot say what it is. Answers are kept apart by what
-    `test.lib.scripts.js.analysis.nodejs.identity` says the Node is. The *surroundings* only decide
-    when Node is asked again, so that two shells that spell the same locale differently, or set a
-    variable this Node ignores, share their answers.
-    """
-    if not folder:
-        return None
-    if (digest := identity(node)) is None:
-        return None
-    return NodeAnswers(Path(folder), digest[:16])
-
-
-@functools.lru_cache(maxsize=1024)
-def _remembered_node_behavior(
-    node: str,
-    graph: tuple[tuple[str, str], ...],
-    entry: str,
-    timeout: float,
-) -> tuple[str, str | None]:
-    question = (graph, entry, timeout)
-    kept = _kept_answers(
-        node,
-        os.environ.get('REFINERY_TEST_NODE_ANSWERS', ''),
-        surroundings(),
-    )
-    if kept is not None and (stdout := kept.answer(question)) is not None:
-        return stdout, None
-    stdout, error = run(node, graph, entry, timeout)
-    if kept is not None and error is None:
-        kept.keep(question, stdout)
-    return stdout, error
+    return ask(tuple(sorted(files.items())), entry, timeout, fresh=fresh)
 
 
 _CODE_UNIT_ENCODER = R'''

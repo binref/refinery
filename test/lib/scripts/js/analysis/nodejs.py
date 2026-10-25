@@ -66,16 +66,17 @@ def _normalize_error(stderr: str) -> str:
     expression, which a semantics-preserving rewrite may reshape.
 
     RESOLUTION LIMIT: a program may `throw` a value that is not an `Error` — a string, a number, an
-    object, `null`, `undefined`, a symbol — and such a throw prints no `XxxError:` line, so every one
-    of them collapses to the single token `ERROR` here. Two programs that throw *different* non-Error
-    values are therefore indistinguishable by the error half of `behavior`, and a rewrite that changed
-    which non-Error value is thrown is invisible unless the standard output leading up to the throw
-    also differs. The exposure is narrow — the fuzzer never emits an uncaught non-Error throw, so only
-    a hand-authored ledger entry reaches it — but an entry that must tell two non-Error throws apart
-    asserts on standard output rather than on this token. Parsing the thrown value out of *stderr* is
-    deliberately not attempted: Node renders it in a shape that varies by value and version (an object
-    spans lines, a symbol renders as nothing), so a parse would trade a rare false match for a
-    version-fragile false difference between two runs that threw the very same value.
+    object, `null`, `undefined`, a symbol — and such a throw prints no `XxxError:` line, so every
+    one of them collapses to the single token `ERROR` here. Two programs that throw *different*
+    non-Error values are therefore indistinguishable by the error half of `behavior`, and a rewrite
+    that changed which non-Error value is thrown is invisible unless the standard output leading up
+    to the throw also differs. The exposure is narrow — the fuzzer never emits an uncaught non-Error
+    throw, so only a hand-authored ledger entry reaches it — but an entry that must tell two
+    non-Error throws apart asserts on standard output rather than on this token. Parsing the thrown
+    value out of *stderr* is deliberately not attempted: Node renders it in a shape that varies by
+    value and version (an object spans lines, a symbol renders as nothing), so a parse would trade a
+    rare false match for a version-fragile false difference between two runs that threw the very
+    same value.
     """
     match = _ERROR_RE.search(stderr)
     if match is not None:
@@ -90,10 +91,10 @@ def run(
     timeout: float,
 ) -> tuple[str, str | None]:
     """
-    What the Node at *node* prints when it runs *entry* with every file of *graph* written beside it,
-    as names and sources, and the type of the error it ended in, or `None` when it ended without one.
-    Each file is written untranslated, because which characters end a line is a question the engine
-    is asked.
+    What the Node at *node* prints when it runs *entry* with every file of *graph* written beside
+    it, as names and sources, and the type of the error it ended in, or `None` when it ended without
+    one. Each file is written untranslated, because which characters end a line is a question the
+    engine is asked.
     """
     refuse_script_host_near_a_sample('node')
     with tempfile.TemporaryDirectory() as folder:
@@ -152,27 +153,23 @@ def surroundings() -> tuple[tuple[str, str], ...]:
     ))
 
 
+#: The digest of this module as it was loaded, which decides how Node is asked.
+_CODE = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
 def identity(node: str) -> str | None:
     """
-    What the Node at *node* is, as a digest, or `None` when it cannot say. The digest covers the path
-    of the executable, everything `_NODE_IDENTITY` asks, and the code of this module, which decides
-    how Node is asked: an answer is only ever the answer of the Node that gave it, asked this way.
-    Node is asked once per process for each of its `surroundings`, which themselves are not part of
-    the digest, so that two shells that spell the same time zone differently share it.
+    What the Node at *node* is, as a digest, or `None` when it cannot say. The digest covers the
+    path of the executable, everything `_NODE_IDENTITY` asks, and the code of this module: an answer
+    is only ever the answer of the Node that gave it, asked this way. What Node says depends on its
+    `surroundings`, which themselves are not part of the digest, so that two shells that spell the
+    same time zone differently give the same one.
     """
     refuse_script_host_near_a_sample('node')
-    return _identity(node, surroundings())
-
-
-@functools.lru_cache(maxsize=None)
-def _identity(node: str, variables: tuple[tuple[str, str], ...]) -> str | None:
-    """
-    The digest that `identity` gives for *node*, asked where `surroundings` are *variables*: they are
-    not read here, because Node reads them from the environment, but its answer depends on them.
-    """
     try:
         asked = subprocess.run(
-            [node, '-e', _NODE_IDENTITY],
+            [node],
+            input=_NODE_IDENTITY,
             capture_output=True,
             text=True,
             timeout=NODE_TIMEOUT,
@@ -189,5 +186,4 @@ def _identity(node: str, variables: tuple[tuple[str, str], ...]) -> str | None:
         or not _NODE_VERSION.fullmatch(version)
     ):
         return None
-    code = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-    return hashlib.sha256(json.dumps([node, report, code]).encode('utf-8')).hexdigest()
+    return hashlib.sha256(json.dumps([node, report, _CODE]).encode('utf-8')).hexdigest()

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
-import tempfile
+import unittest
 
 from samples import ScriptHostRefused
 from test import TestBase
-from test.lib.scripts.js.analysis import differential
-from test.lib.scripts.js.analysis.differential import behavior, node_reads_as_a_program
+from test.lib.scripts.js.analysis import nodejs
+from test.lib.scripts.js.analysis.differential import behavior, node_executable, node_reads_as_a_program
 from test.lib.scripts.ps1.oracle import run
 
 
@@ -18,6 +18,16 @@ def _the_fuzzer():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnAnswerNodeGaveBeforeASampleWasDecodedIsNotGivenAfterIt(TestBase):
+
+    def test_a_program_answered_before_a_sample_was_decoded_is_refused_after_it(self):
+        self.assertEqual(behavior('console.log(1);'), ('1\n', None))
+        self.download_sample('0fd7c8302457d9d9099282439d8413d9122a5d3cff3467d5042e51fc1156fa5b')
+        with self.assertRaises(ScriptHostRefused):
+            behavior('console.log(1);')
 
 
 class TestATestThatDecodedASampleCannotStartAScriptHost(TestBase):
@@ -31,9 +41,8 @@ class TestATestThatDecodedASampleCannotStartAScriptHost(TestBase):
             behavior('0;')
 
     def test_node_is_not_asked_what_it_is(self):
-        with tempfile.TemporaryDirectory() as folder:
-            with self.assertRaises(ScriptHostRefused):
-                differential._kept_answers('node', folder, ())
+        with self.assertRaises(ScriptHostRefused):
+            nodejs.identity('node')
 
     def test_node_does_not_check_a_snippet(self):
         with self.assertRaises(ScriptHostRefused):

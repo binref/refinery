@@ -20,17 +20,19 @@ Three differentials, each an option that runs a whole test selection under a cos
   earlier run. A kept answer is a cost device as well, so any test that fails only under this
   option was given an answer that Node no longer gives.
 
-Node's answers to the JavaScript oracle are kept between runs in pytest's cache folder, which this
-module names in the `REFINERY_TEST_NODE_ANSWERS` environment variable unless that is set already:
-`--cache-clear` empties it, and without the cache provider, or where its folder cannot be created,
-nothing is kept. `--no-node-answers` empties the variable, which keeps nothing either. Which answers
-are kept, and when they are dropped, is `test.lib.scripts.js.analysis.differential.NodeAnswers`.
+Node's answers to the JavaScript oracle are kept between runs in the folder `node` of pytest's
+cache, which `--cache-clear` empties. Each process keeps them from its configuration to the end of
+its session, which is before xdist stops a worker. Which answers are kept, and when they are
+dropped, is `test.lib.scripts.js.analysis.node_answers`.
 """
 from __future__ import annotations
 
 import os
 
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
+
+_NODE_ANSWERS = ExitStack()
 
 
 def pytest_addoption(parser):
@@ -56,15 +58,24 @@ def pytest_addoption(parser):
     )
 
 
-def pytest_configure(config):
+def node_answers_folder(config) -> Path | None:
+    """
+    The folder in which this run keeps Node's answers, made if need be, or `None` when it keeps
+    none: with `--no-node-answers`, without the cache provider, or where its folder cannot be made.
+    """
     if config.getoption('--no-node-answers'):
-        os.environ['REFINERY_TEST_NODE_ANSWERS'] = ''
-    elif (
-        'REFINERY_TEST_NODE_ANSWERS' not in os.environ
-        and (cache := getattr(config, 'cache', None)) is not None
-    ):
-        with suppress(OSError):
-            os.environ['REFINERY_TEST_NODE_ANSWERS'] = str(cache.mkdir('node-answers'))
+        return None
+    if (cache := getattr(config, 'cache', None)) is None:
+        return None
+    try:
+        return cache.mkdir('node')
+    except OSError:
+        return None
+
+
+def pytest_configure(config):
+    from test.lib.scripts.js.analysis.node_answers import answers_kept_in
+    _NODE_ANSWERS.enter_context(answers_kept_in(node_answers_folder(config)))
     if config.getoption('--no-pin'):
         os.environ['REFINERY_TEST_NO_PIN'] = '1'
         from refinery.lib.scripts.modelcache import ModelCacheBase
@@ -79,3 +90,7 @@ def pytest_configure(config):
         from refinery.lib.scripts.js.deobfuscation.helpers import BatchedTransformer
 
         BatchedTransformer.batching = False
+
+
+def pytest_sessionfinish():
+    _NODE_ANSWERS.close()
