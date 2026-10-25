@@ -115,12 +115,14 @@ jobs:
     - name: Install Coverage Dependencies
       run: |
         python -m uv pip install --system pytest pytest-cov
-    - name: Keep Node Answers Between Runs
-      uses: actions/cache@v6
+    - name: Read The Node Answers Of The Windows Tests
+      uses: actions/cache/restore@v6
       with:
-        path: .pytest_cache/d/node-answers
-        key: node-answers-coverage-${{ github.run_id }}-${{ github.run_attempt }}
-        restore-keys: node-answers-coverage-
+        path: .pytest_cache/d/node
+        key: node-answers-Windows-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          node-answers-Windows-${{ github.run_id }}-
+          node-answers-Windows-
     - name: Run tests and collect coverage
       run: pytest --disable-warnings --cov-config=.coveragerc --cov refinery -n=4 --dist=worksteal test 2>nul
       shell: cmd

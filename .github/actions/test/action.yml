@@ -13,7 +13,7 @@ runs:
     - name: Keep Node Answers Between Runs
       uses: actions/cache@v6
       with:
-        path: .pytest_cache/d/node-answers
+        path: .pytest_cache/d/node
         key: node-answers-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: node-answers-${{ runner.os }}-
     - name: Disable Compiled Modules
