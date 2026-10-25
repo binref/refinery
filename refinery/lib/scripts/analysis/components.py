@@ -75,8 +75,8 @@ class Condensation(Generic[_Vertex]):
     everything that reaches it, is answered once per component rather than once per node that asks.
 
     Components are numbered in the order `strongly_connected_components` lists them, so every
-    component a component has an edge into carries a smaller number. A component is `looped` when
-    it holds more than one node or a node with an edge to itself: only then does a node reach itself,
+    component a component has an edge into carries a smaller number. A component is `looped` when it
+    holds more than one node or a node with an edge to itself: only then does a node reach itself,
     which is what a caller excluding the node that asks has to know.
     """
 

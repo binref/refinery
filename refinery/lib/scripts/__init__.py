@@ -935,9 +935,9 @@ class ListIndex:
     Which child list of its parent a node sits in, the answer `owning_list` gives, without scanning
     the parent's lists once per question. The lists of a parent are indexed by identity on the first
     question about one of its children, and every answer is checked against the list it names: an
-    entry whose list no longer holds the node at the position it was indexed at, and a node the index
-    does not know, index that parent afresh. So the answer is the one `owning_list` gives for the
-    tree as it stands, however the lists were edited in between, and a batch asking about many
+    entry whose list no longer holds the node at the position it was indexed at, and a node the
+    index does not know, index that parent afresh. So the answer is the one `owning_list` gives for
+    the tree as it stands, however the lists were edited in between, and a batch asking about many
     statements of one long list pays for the list once rather than once per statement.
     """
 

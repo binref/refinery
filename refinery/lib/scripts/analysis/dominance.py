@@ -57,12 +57,12 @@ def _immediate_dominators(
     what the module docstring requires.
 
     Lengauer and Tarjan's algorithm with path compression: number the nodes in depth-first preorder,
-    find each node's semidominator by evaluating its predecessors over a forest that grows in reverse
-    preorder, and settle the immediate dominator from the semidominators in one forward pass. Its
-    cost depends on the edges, not on the order a walk happens to meet the nodes in, which is what
-    an iterative intersection cannot promise: a resuming `trap` adds a hub with an edge to every
-    statement of its block, a walk meets that hub late, and the intersection then climbs from every
-    later predecessor back to the top of the script — the square of the block.
+    find each node's semidominator by evaluating its predecessors over a forest that grows in
+    reverse preorder, and settle the immediate dominator from the semidominators in one forward
+    pass. Its cost depends on the edges, not on the order a walk happens to meet the nodes in, which
+    is what an iterative intersection cannot promise: a resuming `trap` adds a hub with an edge to
+    every statement of its block, a walk meets that hub late, and the intersection then climbs from
+    every later predecessor back to the top of the script — the square of the block.
     """
     number: dict[int, int] = {id(graph.entry): 0}
     vertex: list[CfgNode] = [graph.entry]
