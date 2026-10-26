@@ -3066,7 +3066,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
               with (scope) {
                 switch (a + b) {
                   case 10:
-                    scope.u = Date.now() > 0 ? 35 : 0;
+                    scope.u = Math.random() < 2 ? 35 : 0;
                     a = 20, b = 15;
                     break;
                   case scope.u:
@@ -3168,7 +3168,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 switch (a + b) {
                   case 10:
                     if (flag) {
-                      a = Date.now() > 0 ? 30 : 0;
+                      a = Math.random() < 2 ? 30 : 0;
                       b += 5;
                     } else {
                       b += 20;

@@ -285,7 +285,7 @@ A_VARIABLE_AN_UNREADABLE_EVAL_ASSIGNS_READ_BY_A_FUNCTION = {
         a_program("""
             var s = "abc";
             function f(n) { return s.slice(n); }
-            eval(Date.now() > 0 ? "s = 'xyz'" : "");
+            eval(Math.random() < 2 ? "s = 'xyz'" : "");
             console.log(f(Math.random() > 2 ? 0 : 1));
             """),
         prints('yz'),
@@ -295,7 +295,7 @@ A_VARIABLE_AN_UNREADABLE_EVAL_ASSIGNS_READ_BY_A_FUNCTION = {
         a_program("""
             var s = "abc";
             function f(n) { return s.slice(n); }
-            function g() { eval(Date.now() > 0 ? "s = 'xyz'" : ""); }
+            function g() { eval(Math.random() < 2 ? "s = 'xyz'" : ""); }
             g();
             console.log(f(Math.random() > 2 ? 0 : 1));
             """),
@@ -306,7 +306,7 @@ A_VARIABLE_AN_UNREADABLE_EVAL_ASSIGNS_READ_BY_A_FUNCTION = {
         SLICED
         + decoder('S_decode') + '\n'
         + slicing('S', 'S_decode') + '\n'
-        + 'eval(Date.now() > 0 ? "strs = " + JSON.stringify("XXlrCD^") : "");\n'
+        + 'eval(Math.random() < 2 ? "strs = " + JSON.stringify("XXlrCD^") : "");\n'
         + 'console.log(S(2, 5));\n',
         prints('Fizz'),
         prints('Fizz'),

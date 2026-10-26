@@ -31,19 +31,19 @@ A_PARAMETER_COPIED_AT_ENTRY = [
 #: shorthand property binds, alone and with a default, whose name is also the key the pattern reads.
 A_PARAMETER_COPY_THE_LOCAL_CANNOT_REPLACE = {
     'var a = "outer"; function f(a_1, h = () => a) { var a; a = a_1; return h() + ":" + a; }'
-    ' console.log(f(Date.now() > 0 ? "arg" : ""));\n': 'outer:arg\n',
+    ' console.log(f(Math.random() < 2 ? "arg" : ""));\n': 'outer:arg\n',
     'function f({x} = {}, x_1) { var x; x = x_1; return x; }'
-    ' console.log(f(undefined, Date.now() > 0 ? 3 : 0));\n': '3\n',
+    ' console.log(f(undefined, Math.random() < 2 ? 3 : 0));\n': '3\n',
     'function f(a_1) { var a; function a_1() { return 9; } a = a_1; return typeof a; }'
-    ' console.log(f(Date.now() > 0 ? 1 : 0));\n': 'function\n',
+    ' console.log(f(Math.random() < 2 ? 1 : 0));\n': 'function\n',
     'function f(a_1) { var a; a = a_1; for (var a in {x: 1}) {} return a; }'
-    ' console.log(f(Date.now() > 0 ? 1 : 0));\n': 'x\n',
+    ' console.log(f(Math.random() < 2 ? 1 : 0));\n': 'x\n',
     'function f(a_1) { var a, b; b = a, a = a_1; return [a, b]; }'
-    ' console.log(JSON.stringify(f(Date.now() > 0 ? 1 : 0)));\n': '[1,null]\n',
+    ' console.log(JSON.stringify(f(Math.random() < 2 ? 1 : 0)));\n': '[1,null]\n',
     'function f({a_1}) { var a; a = a_1; return a; }'
-    ' console.log(f({ a_1: Date.now() > 0 ? 5 : 0, a: 6 }));\n': '5\n',
+    ' console.log(f({ a_1: Math.random() < 2 ? 5 : 0, a: 6 }));\n': '5\n',
     'function f({a_1 = 1}) { var a; a = a_1; return a; }'
-    ' console.log(f({ a_1: Date.now() > 0 ? 5 : 0, a: 6 }));\n': '5\n',
+    ' console.log(f({ a_1: Math.random() < 2 ? 5 : 0, a: 6 }));\n': '5\n',
 }
 
 

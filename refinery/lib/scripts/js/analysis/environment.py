@@ -29,8 +29,10 @@ is the pin for a dedicated worker rather than a service worker.
 from __future__ import annotations
 
 import enum
+import operator
 
 from dataclasses import dataclass
+from typing import Callable, NamedTuple
 
 
 class Presence(enum.Enum):
@@ -653,6 +655,48 @@ def typeof_of_global(name: str, environment: HostEnvironment) -> str | None:
     if presence is Presence.PRESENT:
         return _HOST_CONDITIONAL_TYPEOF.get(name)
     return None
+
+
+_CLOCK_COMPARISONS: dict[str, Callable[[float, float], bool]] = {
+    '<'   : operator.lt,
+    '<='  : operator.le,
+    '>'   : operator.gt,
+    '>='  : operator.ge,
+    '=='  : operator.eq,
+    '===' : operator.eq,
+    '!='  : operator.ne,
+    '!==' : operator.ne,
+}
+
+
+class ClockWindow(NamedTuple):
+    """
+    The times between which a run reads the host's clock, in milliseconds since the epoch, both
+    included.
+    """
+    earliest: float
+    latest: float
+
+    def comparison(self, comparison: str, time: float) -> bool | None:
+        """
+        What `clock <comparison> time` yields for a number *time* where every reading of the clock
+        inside this window yields the same, or `None`: a time inside the window, `NaN`, or an
+        operator that is not a comparison.
+        """
+        compare = _CLOCK_COMPARISONS.get(comparison)
+        if compare is None or time != time or self.earliest <= time <= self.latest:
+            return None
+        return compare(self.earliest, time)
+
+
+ASSUMED_CLOCK = ClockWindow(946771200000, 4102358400000)
+"""
+The window a run is assumed to read the host's clock in: 2000-01-02 to 2099-12-31. A lock that hangs
+or breaks the script outside a window of dates compares the clock with the first day of 2000 or of
+2100, moved by some seconds; that defense is not the program's behavior, and the comparison answers
+the same for every reading inside the window. A date inside it, an expiry or a time the program
+waits for, is the program's own and stays.
+"""
 
 
 _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {

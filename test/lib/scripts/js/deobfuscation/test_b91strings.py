@@ -945,7 +945,7 @@ A_PROGRAM_HOLDING_CONCEALED_STRINGS = {
         HEAD
         + decoder('decode') + '\n'
         + accessor('acc', 'cache', 'decode') + '\n'
-        + F'eval(Date.now() > 0 ? "table = " + JSON.stringify({OTHER_TABLE}) : "");\n'
+        + F'eval(Math.random() < 2 ? "table = " + JSON.stringify({OTHER_TABLE}) : "");\n'
         + 'console.log(acc(10));\n'
     ): 'Fizz\n',
     (

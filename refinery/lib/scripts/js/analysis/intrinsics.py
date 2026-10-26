@@ -199,12 +199,13 @@ that supply each value type's members. A caller asking about a name outside it i
 this scan was not built to answer, and is told so.
 """
 
-ESCAPE_RECORDED_ROOTS = PURE_INTRINSIC_ROOTS | frozenset({'RegExp'})
+ESCAPE_RECORDED_ROOTS = PURE_INTRINSIC_ROOTS | frozenset({'RegExp', 'Date'})
 """
 The global names an escape records as written by name, not only by key: the names a fold trusts
-to run code. A fold runs the methods of the pure roots, and a fold that decides what a regular
+to run code. A fold runs the methods of the pure roots, a fold that decides what a regular
 expression answers trusts `RegExp`, so `p(RegExp)` for a `p` that replaces `RegExp.prototype.test`
-must withdraw that trust.
+must withdraw that trust, and a fold that decides a comparison of the clock trusts `Date`, which
+`Reflect.set(Date, 'now', f)` must withdraw.
 
 `Object` and `Function` are left out on purpose. Real samples hand `Object` to a call this scan
 cannot resolve, and recording that escape refuses every fold that trusts `Object.prototype` in
@@ -398,8 +399,7 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
         elif isinstance(node, (JsForInStatement, JsForOfStatement)):
             target = node.left
         for member in _written_members(target):
-            base = _member_chain_root(member)
-            if base is not None:
+            for base in _member_chain_roots(member):
                 record(aliases.names_denoted_by(base), static_property_key(member))
             written_global = model.may_name_a_global(member)
             if written_global is not None:
@@ -653,8 +653,7 @@ def _callee_is_write_free(
             target = node.argument
         elif isinstance(node, JsUnaryExpression) and node.operator == 'delete':
             target = node.operand
-        base = _member_chain_root(target)
-        if base is not None and base.name in params:
+        if any(base.name in params for base in _member_chain_roots(target)):
             return False
         if isinstance(node, JsIdentifier) and node.name in params:
             if reference_role(node) is Role.READ:
@@ -922,15 +921,15 @@ def _is_member_object(node: Node) -> bool:
     return isinstance(parent, JsMemberExpression) and parent.object is cursor
 
 
-def _member_chain_root(node: Node | None) -> JsIdentifier | None:
+def _member_chain_roots(node: Node | None) -> Iterator[JsIdentifier]:
     """
-    The identifier at the foot of a member-access chain, or `None` when the chain does not start at
-    a plain name. `Math.prototype.x` roots at `Math`, so a write anywhere along the chain is
-    attributed to the name that owns it; testing only the immediate `.object` would miss every
-    nested write.
+    The names the foot of a member-access chain may evaluate to (`_denoted_roots`), none where
+    *node* is no member access. `Math.prototype.x` roots at `Math`, so a write anywhere along the
+    chain is attributed to the name that owns it; testing only the immediate `.object` would miss
+    every nested write. A foot written `(0, Math)`, `(Math || m)` or `c ? Math : Date` roots at
+    every name it may be, as an escape through those forms is attributed
+    (`_VALUE_FORWARDING_NODES`).
     """
     cursor = strip_parens(node)
-    if not isinstance(cursor, JsMemberExpression):
-        return None
-    foot = _member_chain_foot(cursor)
-    return foot if isinstance(foot, JsIdentifier) else None
+    if isinstance(cursor, JsMemberExpression):
+        yield from _denoted_roots(_member_chain_foot(cursor))

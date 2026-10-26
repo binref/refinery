@@ -3364,6 +3364,49 @@ class AnchoredTrust:
             return None
         return folded
 
+    def reads_the_clock(self, node: Node | None) -> bool:
+        """
+        Whether *node* reads the host's clock and does nothing else: `Date.now()`, `getTime()` of a
+        `new Date()`, or `Date.prototype.getTime.call(new Date())`, with no argument but that date,
+        where `Date` is the built-in at the anchor (`intrinsic`) and, in the last form, so is the
+        `call` of every function (`prototype`).
+        """
+        call = strip_parens(node)
+        if not isinstance(call, JsCallExpression) or call.optional:
+            return False
+        method = strip_parens(call.callee)
+        if not isinstance(method, JsMemberExpression) or method.optional:
+            return False
+        key = static_property_key(method)
+        receiver = strip_parens(method.object)
+        if key == 'call':
+            return (
+                len(call.arguments) == 1
+                and self._constructs_the_date(call.arguments[0])
+                and isinstance(receiver, JsMemberExpression)
+                and static_property_key(receiver) == 'getTime'
+                and isinstance(owner := strip_parens(receiver.object), JsMemberExpression)
+                and static_property_key(owner) == 'prototype'
+                and self.intrinsic(owner.object) == 'Date'
+                and self.prototype(JsFunctionExpression)
+            )
+        if call.arguments:
+            return False
+        if key == 'now':
+            return self.intrinsic(receiver) == 'Date'
+        return key == 'getTime' and self._constructs_the_date(receiver)
+
+    def _constructs_the_date(self, node: Node | None) -> bool:
+        """
+        Whether *node* is `new Date()` without arguments, `Date` being the built-in at the anchor.
+        """
+        node = strip_parens(node)
+        return (
+            isinstance(node, JsNewExpression)
+            and not node.arguments
+            and self.intrinsic(node.callee) == 'Date'
+        )
+
     def prototype(self, value_type: type) -> bool:
         """
         `EffectModel.trusted_prototype` at the anchor.

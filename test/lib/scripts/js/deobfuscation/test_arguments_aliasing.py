@@ -289,9 +289,9 @@ _A_KEY_THAT_REACHES_AN_ELEMENT: dict[str, str] = {
 #: Node prints for it. The key is `1`, so the write lands on the second parameter and the value the
 #: first was given a statement earlier is the one it still holds.
 _A_KEY_THE_TOOL_CANNOT_COMPUTE: dict[str, str] = {
-    'function f(a, b) { var k = Date.now() > 0 ? 1 : 0; a = 5; arguments[k] = 9;'
+    'function f(a, b) { var k = Math.random() < 2 ? 1 : 0; a = 5; arguments[k] = 9;'
     " return a + ':' + b; } console.log(f(1, 2));": '5:9\n',
-    'function f(a, b) { var k = Date.now() > 0 ? 0 : 1; a = 5; arguments[k] = 9;'
+    'function f(a, b) { var k = Math.random() < 2 ? 0 : 1; a = 5; arguments[k] = 9;'
     " return a + ':' + b; } console.log(f(1, 2));": '9:2\n',
 }
 
@@ -644,7 +644,7 @@ _A_VALUE_READ_AHEAD_OF_AN_UNDECIDABLE_WRITE: dict[str, str] = {
     ' console.log(f(1, 0));': 'x1\n',
     'function f(a, b) { var t = !a; arguments[b] = 9; return t; }'
     ' console.log(f(1, 0));': 'false\n',
-    'function f(p) { var t = p + 1; arguments[Date.now() > 0 ? 0 : 1] = 99; return t; }'
+    'function f(p) { var t = p + 1; arguments[Math.random() < 2 ? 0 : 1] = 99; return t; }'
     ' console.log(f(1));': '2\n',
     'function f(a, b) { var t = a; arguments[0] = 9; return t; }'
     ' console.log(f(1, 0));': '1\n',

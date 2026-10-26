@@ -10,7 +10,9 @@ from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING
 
 from refinery.lib.scripts.js.analysis.environment import (
+    ASSUMED_CLOCK,
     COMMONJS_WRAPPER_PARAMETERS,
+    ClockWindow,
     FileKind,
     HostEnvironment,
 )
@@ -94,6 +96,11 @@ class DeobfuscationOptions:
     CommonJS file another one requires, or a package's main file. By default no code loads it, and
     what a CommonJS file stores in `module.exports` is read only where the file itself reads it back
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.module_exports_unread`).
+
+    *clock* is the window of times a run reads from the host's clock, by default
+    `refinery.lib.scripts.js.analysis.environment.ASSUMED_CLOCK`: a comparison of the clock with a
+    time outside it is decided, which removes the date checks a lock writes against the first day of
+    2000 or of 2100. `None` assumes no window, and every reading of the clock stays unknown.
     """
     execution: ExecutionModel = ExecutionModel.script
     entrypoints: tuple[str, ...] = ()
@@ -101,6 +108,7 @@ class DeobfuscationOptions:
     trust_eval: bool = False
     preserve_script_return: bool = False
     loaded_by_other_files: bool = False
+    clock: ClockWindow | None = ASSUMED_CLOCK
 
     def names_entrypoint(self, name: str) -> bool:
         return any(fnmatchcase(name, pattern) for pattern in self.entrypoints)
@@ -126,6 +134,18 @@ def host_environment(options: object | None) -> HostEnvironment:
     if isinstance(options, DeobfuscationOptions):
         return options.environment
     return HostEnvironment.universal
+
+
+def clock_window(options: object | None) -> ClockWindow | None:
+    """
+    The window of times *options* assumes a run reads from the host's clock, or `None` for no
+    window. Any value that is not a `DeobfuscationOptions` — a transformer run standalone, or with
+    no options attached — assumes the window the options assume by default,
+    `refinery.lib.scripts.js.analysis.environment.ASSUMED_CLOCK`.
+    """
+    if isinstance(options, DeobfuscationOptions):
+        return options.clock
+    return ASSUMED_CLOCK
 
 
 def eval_is_trusted(options: object | None) -> bool:

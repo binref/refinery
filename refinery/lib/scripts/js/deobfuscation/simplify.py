@@ -89,6 +89,7 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
 )
 from refinery.lib.scripts.js.numbers import exact_integer
+from refinery.lib.scripts.js.options import clock_window
 from refinery.lib.scripts.js.precedence import parens_required
 from refinery.lib.scripts.js.strict import joins_directive_prologue, spelling_states
 
@@ -98,6 +99,13 @@ _EMPTY_OBJECT_PROPERTIES = _OBJECT_PROTO_PROPERTIES
 
 
 _UNCONVERTIBLE = object()
+
+_MIRRORED_COMPARISONS = {
+    '<'  : '>',
+    '<=' : '>=',
+    '>'  : '<',
+    '>=' : '<=',
+}
 
 
 def concat_string(node: Expression | None) -> str | None:
@@ -476,6 +484,8 @@ class JsSimplifications(Transformer):
                 return JsBooleanLiteral(value=result)
             elif isinstance(result, (int, float)):
                 return make_numeric_literal(result)
+        if (decided := self._clock_comparison(node)) is not None:
+            return JsBooleanLiteral(value=decided)
         if op in ('===', '!==', '==', '!='):
             equal: bool | None = None
             if left_str is not None and right_str is not None:
@@ -497,6 +507,32 @@ class JsSimplifications(Transformer):
             if result is not None:
                 return JsBooleanLiteral(value=result)
         return None
+
+    def _clock_comparison(self, node: JsBinaryExpression) -> bool | None:
+        """
+        What *node* yields where it compares a read of the host's clock with a number outside the
+        window of times the run assumes (`refinery.lib.scripts.js.options.clock_window`), the clock
+        on either side. The read is asked at the comparison
+        (`refinery.lib.scripts.js.analysis.effects.AnchoredTrust.reads_the_clock`), so a `Date` the
+        program replaces or writes on is no clock.
+        """
+        left, right, operator = node.left, node.right, node.operator
+        if left is None or right is None:
+            return None
+        if (time := numeric_value(right)) is not None:
+            clock = left
+        elif (time := numeric_value(left)) is not None:
+            clock = right
+            operator = _MIRRORED_COMPARISONS.get(operator, operator)
+        else:
+            return None
+        window = clock_window(self.options)
+        if window is None or (decided := window.comparison(operator, time)) is None:
+            return None
+        assert self._cache is not None
+        if not self._cache.trust_at(node).reads_the_clock(clock):
+            return None
+        return decided
 
     def _merge_concat_tail(self, node: JsBinaryExpression) -> JsBinaryExpression | None:
         """

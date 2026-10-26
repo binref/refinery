@@ -47,11 +47,11 @@ A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME = {
 #: between a read and the namespace. Each call takes an argument no fold computes.
 A_KEY_A_BARE_NAME_CANNOT_CARRY = [
     'function f(q) { var NS = {}; NS["foo-bar"] = q; return NS["foo-bar"]; }'
-    ' console.log(f(Date.now() > 0 ? 1 : 0));',
+    ' console.log(f(Math.random() < 2 ? 1 : 0));',
     'function f(q) { var NS = {}; NS.if = q; return NS.if + 1; }'
-    ' console.log(f(Date.now() > 0 ? 1 : 0));',
+    ' console.log(f(Math.random() < 2 ? 1 : 0));',
     'function f(q) { var NS = {}; NS.default = function () { return q; }; return NS.default(); }'
-    ' console.log(f(Date.now() > 0 ? 1 : 0));',
+    ' console.log(f(Math.random() < 2 ? 1 : 0));',
     'function f(o) { var NS = {}; NS.x = 1; with (o) { console.log(NS.x); } } f({ x: 2 });',
     'function f(s) { var NS = {}; NS.x = 1; eval(s); console.log(NS.x); } f("x = 2");',
     'var NS = {}; NS.k = 1; function inner(s) { eval(s); return NS.k; } NS.k = 2;'

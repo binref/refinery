@@ -90,7 +90,7 @@ CRASH_HELPERS = OLD_HELPERS.replace(
 #: The older helpers with a date check inserted into the hash.
 DATED_HELPERS = OLD_HELPERS.replace(
     'function hashText(str, seed) { ',
-    'function hashText(str, seed) { if (Date.now() < 946684800000) { console.log("early"); } ',
+    'function hashText(str, seed) { if (Date.now() > 4000000000000) { console.log("late"); } ',
 )
 
 DOUBLE = 'function double(x) { return x * 2; }'
@@ -263,7 +263,7 @@ A_CHECK_DECIDED_OVER_HELPERS_CARRYING_AN_INSERTED_CHECK = {
         'ran\n', str(PROGRAM_READING_A_KEY_25)),
     wrapped(
         PROGRAM_25,
-        OLD_HELPERS.replace('function textOf(x) { ', 'function textOf(x) { if (Date.now() > 0) { console.log("dated"); } '),
+        OLD_HELPERS.replace('function textOf(x) { ', 'function textOf(x) { if (Date.now() < 4000000000000) { console.log("dated"); } '),
     ): ('dated\nran\n', str(PROGRAM_25)),
 }
 
@@ -375,24 +375,24 @@ A_CHECK_THE_INPUT_TEXT_DOES_NOT_DECIDE = {
         'Object.freeze(guarded);\ntry { console.log(guarded(21)); } catch (e) { console.log(e.constructor.name); }\n',
     ): ('TypeError\n', str(DOUBLE_42)),
     wrapped(PROGRAM_25 + 1): ('tampered\n', str(PROGRAM_25 + 1)),
-    wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (Date.now() < 0) { seed = 1; } '), PROGRAM): (
+    wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (Date.now() > 4000000000000) { seed = 1; } '), PROGRAM): (
         'ran\n', str(PROGRAM_25)),
-    wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (Date.now() < 0) { return 1; } '), PROGRAM): (
+    wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (Date.now() > 4000000000000) { return 1; } '), PROGRAM): (
         'ran\n', str(PROGRAM_25)),
-    wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (Date.now() < 0) { imul = null; } '), PROGRAM): (
+    wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (Date.now() > 4000000000000) { imul = null; } '), PROGRAM): (
         'ran\n', str(PROGRAM_25)),
     wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (new.target) { console.log("constructed"); } '), PROGRAM): (
         'ran\n', str(PROGRAM_25)),
     wrapped(
         PROGRAM_25,
-        inserted_at_the_start_of_the_hash('if (Date.now() < 0) { String.prototype.charCodeAt = function () { return 0; }; } '),
+        inserted_at_the_start_of_the_hash('if (Date.now() > 4000000000000) { String.prototype.charCodeAt = function () { return 0; }; } '),
         PROGRAM,
     ): ('ran\n', str(PROGRAM_25)),
-    wrapped(PROGRAM_25, inserted_before_the_hash_returns('if (Date.now() > 0) { with ({}) { h2 = 0; } } '), PROGRAM): (
+    wrapped(PROGRAM_25, inserted_before_the_hash_returns('if (Date.now() < 4000000000000) { with ({}) { h2 = 0; } } '), PROGRAM): (
         'tampered\n', str(PROGRAM_25)),
-    wrapped(PROGRAM_25, inserted_before_the_hash_returns('if (Date.now() > 0) { eval("h2 = 0"); } '), PROGRAM): (
+    wrapped(PROGRAM_25, inserted_before_the_hash_returns('if (Date.now() < 4000000000000) { eval("h2 = 0"); } '), PROGRAM): (
         'tampered\n', str(PROGRAM_25)),
-    wrapped(PROGRAM_25, inserted_before_the_hash_returns('if (Date.now() > 0) { function h2() {} } '), PROGRAM): (
+    wrapped(PROGRAM_25, inserted_before_the_hash_returns('if (Date.now() < 4000000000000) { function h2() {} } '), PROGRAM): (
         'tampered\n', str(PROGRAM_25)),
     checked(LINE_BREAK_CHECK.replace('const t = function ()', 'const t = async function ()')): (
         'tampered\nran\n',

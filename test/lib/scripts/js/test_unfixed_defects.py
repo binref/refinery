@@ -2189,6 +2189,87 @@ class TestAnAccessorInstalledOnABuiltInRunsWhereItIsRead(TestBase):
         )
 
 
+#: Programs replacing a method of a built-in through a route that does not spell the name of the
+#: built-in, then calling it, mapped to what Node prints for them: a prototype reached from a value
+#: (`Object.getPrototypeOf(new Date())`, `__proto__` of an instance, the prototype of a string), a
+#: global read under a key only the run computes, and the `vm` module running the write in the same
+#: context.
+A_BUILT_IN_REPLACED_WITHOUT_SPELLING_ITS_NAME = {
+    inspect.cleandoc("""
+        Object.getPrototypeOf(new Date()).getTime = function () { return 5000000000000; };
+        console.log(new Date().getTime() > 4102444800000);
+    """): 'true\n',
+    inspect.cleandoc("""
+        (new Date()).__proto__.getTime = function () { return 5000000000000; };
+        console.log(new Date().getTime() > 4102444800000);
+    """): 'true\n',
+    inspect.cleandoc("""
+        var d = new Date();
+        Object.getPrototypeOf(d).getTime = function () { return 5000000000000; };
+        console.log(new Date().getTime() > 4102444800000);
+    """): 'true\n',
+    inspect.cleandoc("""
+        function patch(x) {
+          x.__proto__.getTime = function () { return 5000000000000; };
+        }
+        patch(new Date());
+        console.log(new Date().getTime() > 4102444800000);
+    """): 'true\n',
+    inspect.cleandoc("""
+        Object.getPrototypeOf('').toUpperCase = function () { return 'replaced'; };
+        console.log('a'.toUpperCase());
+    """): 'replaced\n',
+    inspect.cleandoc("""
+        var s = 'x';
+        Object.getPrototypeOf(s).toUpperCase = function () { return 'replaced'; };
+        console.log('a'.toUpperCase());
+    """): 'replaced\n',
+    inspect.cleandoc("""
+        var k = ['Da', 'te'].join('');
+        globalThis[k].now = function () { return 5e12; };
+        console.log(Date.now() > 4102444800000);
+    """): 'true\n',
+    inspect.cleandoc("""
+        var k = ['Ma', 'th'].join('');
+        globalThis[k].floor = function () { return 42; };
+        console.log(Math.floor(1.5));
+    """): '42\n',
+    inspect.cleandoc("""
+        require('vm').runInThisContext('Date.now = function () { return 5000000000000; };');
+        console.log(Date.now() > 4102444800000);
+    """): 'true\n',
+    inspect.cleandoc("""
+        require('vm').runInThisContext('Math.floor = function () { return 42; };');
+        console.log(Math.floor(1.5));
+    """): '42\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABuiltInReplacedWithoutSpellingItsNameIsNotFolded(TestBase):
+    """
+    The scan of writes to the built-ins
+    (`refinery.lib.scripts.js.analysis.intrinsics.build_intrinsic_writes`) attributes a write to
+    each name the foot of its chain may be. A prototype reached from a value, a global read under a
+    key the run computes and the `vm` module write a built-in without naming it, and the folds that
+    trust the built-in, a comparison of the clock among them, answer for the built-in the language
+    describes.
+    """
+
+    @wontfix(
+        'no obfuscator and no program replaces a built-in this way: a prototype reached from an '
+        'instance or a string, a global under a key joined at runtime and the vm module are made up '
+        'for the defect, and attributing them would refuse every write to a property of the result '
+        'of a call'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_BUILT_IN_REPLACED_WITHOUT_SPELLING_ITS_NAME
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
 #: A function flattened into a generator whose `with` statement reads its scope object, and whose
 #: code reads `label` bare, as the obfuscator leaves every name the function does not declare.
 A_FLATTENED_READER_OF_A_BARE_NAME = inspect.cleandoc(

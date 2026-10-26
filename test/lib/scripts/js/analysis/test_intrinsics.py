@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import inspect
+import unittest
+
 from test import TestBase
+from test.lib.scripts.js.analysis.differential import node_executable
+from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.model import JsAssignmentExpression, JsExpressionStatement, JsIdentifier
@@ -93,3 +98,63 @@ class TestBindingsWhoseValuesDenoteARootTheScanWatches(TestBase):
         ):
             with self.subTest(source=source):
                 self.assertFalse(self._denotes(source))
+
+
+class TestAWriteThroughAFormThatForwardsItsValueWritesTheRoot(TestBase):
+    """
+    A comma, a logical or a conditional expression evaluates to one of its operands, so a property
+    written on what one of them evaluates to is written on each name an operand may be.
+    """
+
+    @staticmethod
+    def _written(source: str) -> frozenset[str]:
+        return ModelCache(JsParser(source).parse()).intrinsic_writes.names
+
+    def test_a_key_written_through_a_comma_a_logical_or_a_conditional_writes_each_root(self):
+        for source, roots in (
+            ('(0, Math).floor = f;', {'Math'}),
+            ('(Math || null).floor = f;', {'Math'}),
+            ('(c ? Math : JSON).floor = f;', {'Math', 'JSON'}),
+            ('(0, Date).now = f;', {'Date'}),
+            ('(Date || null).now = f;', {'Date'}),
+            ('(c ? Date : Math).now = f;', {'Date', 'Math'}),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(self._written(source) & roots, roots)
+
+    def test_a_root_handed_to_a_function_writing_through_such_a_form_is_written(self):
+        for source in (
+            'function patch(m) { (0, m).floor = f; } patch(Math);',
+            'function patch(m) { (m || 0).floor = f; } patch(Math);',
+        ):
+            with self.subTest(source=source):
+                self.assertIn('Math', self._written(source))
+
+
+#: Programs replacing `Math.floor` through a comma, a logical or a conditional expression before
+#: calling it, mapped to what Node prints for them.
+A_METHOD_REPLACED_THROUGH_A_FORM_THAT_FORWARDS_ITS_VALUE = {
+    inspect.cleandoc("""
+        (0, Math).floor = function () { return 42; };
+        console.log(Math.floor(1.5));
+    """): '42\n',
+    inspect.cleandoc("""
+        (Math || null).floor = function () { return 42; };
+        console.log(Math.floor(1.5));
+    """): '42\n',
+    inspect.cleandoc("""
+        (process.argv.length ? Math : JSON).floor = function () { return 42; };
+        console.log(Math.floor(1.5));
+    """): '42\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAMethodReplacedThroughAFormThatForwardsItsValue(TestBase):
+
+    def test_the_replaced_method_is_not_folded(self):
+        rows = A_METHOD_REPLACED_THROUGH_A_FORM_THAT_FORWARDS_ITS_VALUE
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )

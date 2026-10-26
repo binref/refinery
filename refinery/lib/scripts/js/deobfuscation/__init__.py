@@ -6,7 +6,7 @@ from __future__ import annotations
 from refinery.lib.scripts import tree_version
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
-from refinery.lib.scripts.js.analysis.environment import HostEnvironment
+from refinery.lib.scripts.js.analysis.environment import ASSUMED_CLOCK, ClockWindow, HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.antidbg import JsRemoveSelfDefending
 from refinery.lib.scripts.js.deobfuscation.argwrap import JsAssignmentsAsFunctionArgs
 from refinery.lib.scripts.js.deobfuscation.b91strings import (
@@ -114,6 +114,7 @@ def deobfuscate(
     trust_eval: bool = False,
     preserve_script_return: bool = False,
     loaded_by_other_files: bool = False,
+    clock: ClockWindow | None = ASSUMED_CLOCK,
     observer: PipelineObserver | None = None,
 ) -> int:
     """
@@ -129,8 +130,9 @@ def deobfuscate(
     selects the trusting model, which assumes code supplied as data is inert and is deliberately
     unsound; the default is the suspecting model, so a caller that reads this function's output as
     equivalent to its input keeps that claim. *loaded_by_other_files* says that code may load the
-    input and read what it exports. *observer* is called around every transformer, which is how a
-    property of the tree is attributed to the pass that moved it; see
+    input and read what it exports. *clock* is the window of times a run reads from the host's
+    clock. *observer* is called around every transformer, which is how a property of the tree is
+    attributed to the pass that moved it; see
     `refinery.lib.scripts.js.deobfuscation.audit.StrictModeAudit`.
 
     A conversion of a function that is handed on, with no evidence that the program installs a
@@ -150,6 +152,7 @@ def deobfuscate(
         trust_eval=trust_eval,
         preserve_script_return=preserve_script_return,
         loaded_by_other_files=loaded_by_other_files,
+        clock=clock,
     )
     settlement = ConversionSettlement()
     models = ModelCache(ast, options, settlement)
