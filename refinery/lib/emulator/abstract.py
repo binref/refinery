@@ -274,8 +274,15 @@ class Emulator(ABC, Generic[_E, _R, _T]):
                 nopcode = NopCodeByArch[self.exe.arch()]
                 self._return_trap = until = self.malloc(len(nopcode))
                 self.mem_write(until, nopcode)
+        if self.exe.arch() == Arch.X64:
+            words = len(stack) + 4 + 1
+            if (self.sp - 8 * words) % 16 != 8:
+                self.push(0)
         for arg in reversed(stack):
             self.push(arg)
+        if self.exe.arch() == Arch.X64:
+            for _ in range(4):
+                self.push(0)
         self.set_return_address(until)
         self.emulate(address, until, timeout)
         return self.rv
@@ -378,10 +385,13 @@ class Emulator(ABC, Generic[_E, _R, _T]):
     def emulate(self, start: int, end: int | None = None, timeout: int | None = None):
         """
         Call this function to begin emulation. The `start` parameter is the address where execution
-        should begin, the `end` parameter is an optional address to halt at.
+        should begin, the `end` parameter is an optional address to halt at. A `timeout` of zero or
+        less means that the number of instructions is not limited.
         """
         if not self._resetonce:
             self.reset()
+        if timeout is not None and timeout <= 0:
+            timeout = None
         self._hook_error = None
         try:
             result = self._emulate(start, end, timeout)
@@ -491,7 +501,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
 
     @abstractmethod
-    def _map(self, address: int, size: int):
+    def _map(self, address: int, size: int) -> int:
         """
         Called as part of `refinery.lib.emulator.Emulator.map`.
         """

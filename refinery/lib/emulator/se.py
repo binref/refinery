@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from typing import cast, TYPE_CHECKING, Any, Callable, TypeVar
 
 from refinery.lib.emulator.abstract import (
     EmulationError,
@@ -347,11 +347,11 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
     @contextmanager
     def _preserve_cpu_state(self, start: int):
         """
-        Speakeasy resets the stack pointer and the argument registers (via reset_stack and
-        set_func_args) when it kicks off a run, discarding whatever CPU state the caller set up
-        before emulate(). Snapshot the general purpose registers and stack pointer and reinstate
-        them with a one-shot code hook at the run's first instruction, so a shellcode run continues
-        from the current CPU state like the unicorn and icicle backends do.
+        Speakeasy resets the stack pointer and the argument registers when it kicks off a run,
+        discarding whatever CPU state the caller set up before emulate(). Snapshot the general
+        purpose registers and stack pointer and reinstate them with a one-shot code hook at the
+        run's first instruction, so a shellcode or PE module run continues from the current CPU
+        state like the unicorn and icicle backends do.
         """
         registers = [reg.code for reg in self.general_purpose_registers()]
         registers.append(self._reg_sp)
@@ -396,7 +396,13 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                 with self._preserve_cpu_state(start):
                     spk.run_shellcode(self.base, offset=offset)
             else:
-                spk.call(start, self._ensure_context())
+                kernel = isinstance(inner, se.WinKernelEmulator)
+                context = self._ensure_context()
+                if kernel:
+                    spk.call(start, context)
+                else:
+                    with self._preserve_cpu_state(start):
+                        spk.call(start, context)
         finally:
             for hook in countdown_hooks:
                 self._remove_hook(hook)
@@ -432,7 +438,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         if emu.get_address_map(address):
             raise ValueError(address)
         if mm := emu.get_reserve_map(address):
-            mm: MemMap = emu.get_address_map(emu.mem_map_reserve(mm.base))
+            mm = cast(MemMap, emu.get_address_map(emu.mem_map_reserve(mm.base)))
             if address not in range(mm.base, mm.base + mm.size):
                 raise RuntimeError(F'Speakeasy claimed to map 0x{address:X} in map 0x{mm.base:X}-0x{mm.base + mm.size:X}.')
             map_size = mm.size

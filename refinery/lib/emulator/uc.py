@@ -183,7 +183,8 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
         return reg
 
     def _map(self, address: int, size: int):
-        return self.unicorn.mem_map(address, size)
+        self.unicorn.mem_map(address, size)
+        return address
 
     def _set_register(self, register: int, v: int) -> None:
         return self.unicorn.reg_write(register, v)

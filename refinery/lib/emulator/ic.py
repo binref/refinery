@@ -241,7 +241,8 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             perm = MP.ExecuteOnly
         else:
             perm = MP.ExecuteReadWrite
-        return self.icicle.mem_map(address, size, perm)
+        self.icicle.mem_map(address, size, perm)
+        return address
 
     def _set_register(self, register: str, v: int) -> None:
         return self.icicle.reg_write(register, v)

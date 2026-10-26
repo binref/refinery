@@ -19,11 +19,57 @@ from refinery.units.formats.exe.vcall import (
 )
 
 import hashlib
+import struct
 
 from refinery.lib.emulator import Arch, CC, Engine, Hook
 from refinery.units import Chunk
 
 from ... import TestUnitBase
+
+
+def _minimal_pe64(code: bytes, image_base: int = 0x140000000) -> bytes:
+    """
+    Hand-craft the smallest PE32+ that both LIEF and speakeasy accept.
+    """
+    align_s = 0x1000
+    align_f = 0x200
+    text_rva = 0x1000
+    raw_size = (len(code) + align_f - 1) // align_f * align_f
+
+    dos = B'MZ' + bytes(0x3A) + struct.pack('<I', 0x40)
+    coff = struct.pack('<HHIIIHH',
+        0x8664,            # Machine: AMD64
+        1,                 # NumberOfSections
+        0, 0, 0,           # TimeDateStamp, symbol table, symbol count
+        0xF0,              # SizeOfOptionalHeader
+        0x0023,            # Characteristics: RELOCS_STRIPPED | EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
+    )
+    opt = struct.pack('<HBB', 0x20B, 1, 0)                            # magic, linker version
+    opt += struct.pack('<III', raw_size, 0, 0)                        # code, initialized, uninitialized
+    opt += struct.pack('<II', text_rva, text_rva)                     # entry point, base of code
+    opt += struct.pack('<Q', image_base)                              # ImageBase
+    opt += struct.pack('<II', align_s, align_f)                       # alignments
+    opt += struct.pack('<HHHHHH', 6, 0, 0, 0, 6, 0)                   # OS, image, subsystem versions
+    opt += struct.pack('<I', 0)                                       # Win32VersionValue
+    opt += struct.pack('<II', text_rva + align_s, align_f)            # SizeOfImage, SizeOfHeaders
+    opt += struct.pack('<I', 0)                                       # CheckSum
+    opt += struct.pack('<HH', 3, 0)                                   # Subsystem: console, DllCharacteristics
+    opt += struct.pack('<QQQQ', 0x100000, 0x1000, 0x100000, 0x1000)   # stack and heap, reserve and commit
+    opt += struct.pack('<II', 0, 16)                                  # LoaderFlags, NumberOfRvaAndSizes
+    opt += bytes(16 * 8)                                              # data directories, all empty
+    assert len(opt) == 0xF0
+    sect = struct.pack('<8sIIIIIIHHI',
+        B'.text\0\0\0',    # Name
+        len(code),         # VirtualSize
+        text_rva,          # VirtualAddress
+        raw_size,          # SizeOfRawData
+        align_f,           # PointerToRawData
+        0, 0, 0, 0,        # relocation and line number bookkeeping
+        0x60000020,        # Characteristics: CODE | EXECUTE | READ
+    )
+    header = dos + B'PE\0\0' + coff + opt + sect
+    assert len(header) <= align_f
+    return header.ljust(align_f, B'\0') + code.ljust(raw_size, B'\0')
 
 
 class TestVCallSpec(TestUnitBase):
@@ -262,3 +308,55 @@ class TestVCallUnit(TestUnitBase):
             hashlib.sha256(test).hexdigest(),
             'f31468c95437a0c99be5551536b64576e21eeacfd43b0c63b020cdc10465a01b'
         )
+
+
+class TestVCallX64StackArguments(TestUnitBase):
+    FIFTH = 0xA5A5A5A5
+    SIXTH = 0x5A5A5A5A
+
+    SHELLCODE = bytes.fromhex(
+        '488b442428c39090'                           # 0x00: mov rax, [rsp+0x28] ; ret
+        '488b442430c39090'                           # 0x08: mov rax, [rsp+0x30] ; ret
+        '4889e04883e00fc3'                           # 0x10: mov rax, rsp ; and rax, 0xF ; ret
+        '488b4424284803442430c3' + '90' * 5          # 0x18: mov rax, [rsp+0x28] ; add rax, [rsp+0x30] ; ret
+    )
+
+    def _call(self, engine: Engine, offset: int, *tokens: str) -> int:
+        pe = engine is Engine.speakeasy
+        data = _minimal_pe64(self.SHELLCODE) if pe else self.SHELLCODE
+        emu = engine.cls(data, None, Arch.X64, Hook.Errors).reset()
+        evaluator = Evaluator(emu, Chunk(data), CC.StdCall)
+        evaluator.setup([parse_arg_slot(token) for token in tokens])
+        va = (0x140001000 if pe else 0) + offset
+        return evaluator.invoke(emu.base_exe_to_emu(va), None, 0)
+
+    def _arguments(self, stack_arguments: int = 2) -> tuple[str, ...]:
+        return ('0', '0', '0', '0', hex(self.FIFTH), hex(self.SIXTH))[:4 + stack_arguments]
+
+    def test_fifth_and_sixth_stack_arguments_are_delivered(self):
+        for engine in (Engine.unicorn, Engine.speakeasy):
+            for offset, expected in ((0x00, self.FIFTH), (0x08, self.SIXTH)):
+                test = self._call(engine, offset, *self._arguments())
+                self.assertEqual(test, expected, F'{engine.name} at shellcode offset 0x{offset:02X}')
+
+    def test_stack_arguments_are_usable_together(self):
+        for engine in (Engine.unicorn, Engine.speakeasy):
+            test = self._call(engine, 0x18, *self._arguments())
+            self.assertEqual(test, self.FIFTH + self.SIXTH, engine.name)
+
+    def test_stack_is_16_byte_aligned_at_function_entry(self):
+        for engine in (Engine.unicorn, Engine.speakeasy):
+            for stack_arguments in (0, 1, 2):
+                test = self._call(engine, 0x10, *self._arguments(stack_arguments))
+                self.assertEqual(test, 8, F'{engine.name} with {stack_arguments} stack arguments')
+
+    def test_zero_timeout_means_unlimited_instruction_budget(self):
+        for engine in (Engine.unicorn, Engine.icicle, Engine.speakeasy):
+            test = self._call(engine, 0x00, *self._arguments())
+            self.assertEqual(test, self.FIFTH, engine.name)
+
+    def test_pe_module_call_with_stack_arguments_through_the_unit(self):
+        data = _minimal_pe64(self.SHELLCODE)
+        result = next(data | self.load(
+            '0x140001000', *self._arguments(), engine='speakeasy', ret='rv'))
+        self.assertEqual(result.meta['rv'], self.FIFTH)
