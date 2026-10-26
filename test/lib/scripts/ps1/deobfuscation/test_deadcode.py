@@ -6,10 +6,12 @@ from inspect import cleandoc
 
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
+from refinery.lib.scripts.pipeline import PipelineObserver, TransformerGroup
 from refinery.lib.scripts.ps1.deobfuscation import (
     Ps1DeadCodeElimination,
     Ps1JunkStatementRemoval,
 )
+from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
 class TestPs1DeadCodeElimination(TestPs1):
@@ -599,6 +601,99 @@ class TestPs1UnreachableStatementRemoval(TestPs1):
             """
         ))
 
+    @unittest.expectedFailure
+    def test_a_statement_after_a_throw_is_kept_where_errors_silently_continue(self):
+        """
+        Where the error preference silently continues and no `trap` is in force, 5.1 carries on
+        past a `throw` outside any `try` exactly as past any other error, so `after` is written.
+        The control-flow graph reads every `throw` as ending its block.
+        """
+        self._assertUnchanged(cleandoc(
+            """
+            $ErrorActionPreference = 'SilentlyContinue'
+            throw 'boom'
+            Write-Host 'after'
+            """
+        ), Ps1DeadCodeElimination)
+
+    def test_a_try_after_a_throw_is_removed_with_its_handler(self):
+        result = self._apply(cleandoc(
+            """
+            Write-Host 'before'
+            throw 'boom'
+            try {
+              Write-Host 'x'
+            } catch {
+              Write-Host 'c'
+            }
+            Write-Host 'after'
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc(
+            """
+            Write-Host 'before'
+            throw 'boom'
+            """
+        ))
+
+    def test_a_for_loop_after_a_throw_is_removed(self):
+        result = self._apply(cleandoc(
+            """
+            Write-Host 'before'
+            throw 'boom'
+            for ($i = 0; $i -lt 3; $i++) {
+              trap {
+                Write-Host 'h'
+              }
+            }
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc(
+            """
+            Write-Host 'before'
+            throw 'boom'
+            """
+        ))
+
+    def test_a_try_that_a_resolved_branch_leaves_behind_a_throw_is_removed(self):
+        result = self._apply(cleandoc(
+            """
+            Write-Host 'before'
+            if ($True) {
+              throw 'boom'
+            }
+            try {
+              if ($True) {
+                try {
+                  return
+                  trap {
+                    Write-Host 'h'
+                  }
+                } catch {
+                  Write-Host 'c'
+                }
+              }
+            } catch {}
+            Write-Host 'after'
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc(
+            """
+            Write-Host 'before'
+            throw 'boom'
+            """
+        ))
+
+    def test_an_empty_try_after_a_statement_that_completes_keeps_its_handler(self):
+        self._assertUnchanged(cleandoc(
+            """
+            Write-Host 'a'
+            try {} catch {
+              Start-Process calc
+            }
+            """
+        ), Ps1DeadCodeElimination)
+
     def test_a_finally_body_survives_the_return_that_leaves_its_try(self):
         result = self._apply(cleandoc(
             """
@@ -634,6 +729,144 @@ class TestPs1UnreachableStatementRemoval(TestPs1):
             Write-Host 'after'
             """
         ), Ps1DeadCodeElimination)
+
+
+class TestPs1ALoopWhoseBodyCannotRunTwiceRunsItOnce(TestPs1):
+    """
+    A loop whose body cannot start a second run is one run of that body, whether the body ends in
+    a `break` or in a statement that never completes. The statements that never run go in the same
+    visit, a `break` behind a `return` among them, so a loop that waited for its `break` stayed.
+    """
+
+    def test_a_loop_whose_break_stands_behind_a_return_runs_its_body_once(self):
+        result = self._apply(cleandoc(
+            """
+            while ($True) {
+              if ($False) {
+                continue
+              }
+              return
+              break
+            }
+            Write-Host 'end'
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertEqual(result, 'return')
+
+    def test_a_loop_whose_break_stands_behind_a_throw_a_resolved_branch_left_runs_its_body_once(self):
+        result = self._apply(cleandoc(
+            """
+            while ($True) {
+              if ($True) {
+                throw 'x'
+                foreach ($i in 1..2) {
+                  trap {
+                    continue
+                  }
+                }
+              }
+              break
+            }
+            Write-Host 'end'
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertEqual(result, "throw 'x'")
+
+    def test_a_body_ending_in_a_return_under_a_condition_becomes_a_branch(self):
+        result = self._apply(cleandoc(
+            """
+            while ($c) {
+              Write-Host 'a'
+              return
+            }
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc(
+            """
+            if ($c) {
+              Write-Host 'a'
+              return
+            }
+            """
+        ))
+
+    def test_a_do_loop_whose_body_ends_in_exit_runs_it_once(self):
+        result = self._apply(cleandoc(
+            """
+            do {
+              Write-Host 'a'
+              exit
+            } while ($c)
+            Write-Host 'end'
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertEqual(result, "Write-Host 'a'\nexit")
+
+    def test_a_continue_that_may_start_another_run_keeps_the_loop(self):
+        self._assertUnchanged(cleandoc(
+            """
+            while ($True) {
+              if ($c) {
+                continue
+              }
+              return
+            }
+            """
+        ), Ps1DeadCodeElimination)
+
+    def test_a_resuming_trap_that_carries_control_past_the_last_throw_keeps_the_loop(self):
+        self._assertUnchanged(cleandoc(
+            """
+            while ($True) {
+              if ($c) {
+                trap {
+                  continue
+                }
+                throw 'x'
+              } else {
+                return
+              }
+            }
+            """
+        ), Ps1DeadCodeElimination)
+
+
+class TestPs1ADeadCodeVisitLeavesNothingForTheNext(TestPs1):
+    """
+    The pass prunes until nothing it can do is left, so a pipeline does not run it again on the
+    tree it just left.
+    """
+
+    _SCRIPTS = (
+        "while ($True) { if ($False) { continue }; return; break }\nWrite-Host 'end'",
+        "if ($True) { throw 'e' }\ntry { if ($True) { try { return } catch { 'c' } } } catch {}",
+        'trap { continue }\nforeach ($i in 1..2) { trap { continue }; $null = 1/$z }',
+    )
+
+    def test_a_second_visit_changes_nothing(self):
+        for source in self._SCRIPTS:
+            with self.subTest(source=source):
+                script = Ps1Parser(source).parse()
+                first = Ps1DeadCodeElimination()
+                first.visit(script)
+                self.assertTrue(first.changed)
+                second = Ps1DeadCodeElimination()
+                second.visit(script)
+                self.assertFalse(second.changed)
+
+    def test_a_group_holding_the_pass_runs_it_once_on_a_script_one_visit_settles(self):
+        visits: list[str] = []
+
+        class Count(PipelineObserver):
+            def before(self, group, transformer, ast):
+                visits.append(transformer.__name__)
+
+        for source in self._SCRIPTS:
+            with self.subTest(source=source):
+                visits.clear()
+                script = Ps1Parser(source).parse()
+                TransformerGroup('prune', Ps1DeadCodeElimination).run(script, observer=Count())
+                self.assertEqual(visits, ['Ps1DeadCodeElimination'])
 
 
 class TestPs1ATryWhoseBodyCannotRaiseDissolvesWhateverItsHandlerTakes(TestPs1):
@@ -791,6 +1024,18 @@ class TestPs1DeadCodeLeavesTheTreeConsistent(TestPs1):
             Write-Host 'go'
             """
         ), Ps1DeadCodeElimination)
+
+    def test_a_prune_refused_for_the_class_it_would_drop(self):
+        source = cleandoc(
+            """
+            if ($False) {
+              class Foo {}
+            } elseif ($c) {
+              'x'
+            }
+            """
+        )
+        self._assertTreeIsIntact(source, source, Ps1DeadCodeElimination)
 
     def test_a_branch_that_never_runs_takes_its_redirection_with_it(self):
         # A removal claims the code does not run at all, so what the dead branch would have written

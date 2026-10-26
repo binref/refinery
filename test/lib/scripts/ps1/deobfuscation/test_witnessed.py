@@ -163,15 +163,18 @@ def _propose_repairing_only_a_replacement(
 
 def _commit_interleaving_verdicts_and_edits(self: removal.Ps1RemovalPlans) -> bool:
     """
-    `Ps1RemovalPlans.commit` with its verdicts left lazy, which is the whole mutation: asked again
-    inside the loop that edits, each landing plan decides after the plan before it has moved the
-    tree. Kept a token away from the original so that a `commit` which grows a phase reads as stale
-    here rather than quietly modelling a different bug.
+    `Ps1RemovalPlans.commit` with its verdicts left lazy, which is the whole mutation: every plan
+    the batch does not hold back decides inside the loop that edits, after the plan before it has
+    moved the tree, so a plan refused against the tree as written lands once an earlier edit makes
+    it permissive. Kept as close to the original as that allows, so that a `commit` which grows a
+    phase reads as stale here rather than quietly modelling a different bug.
     """
     decision = self._decide()
     landed = []
     moved = False
-    for plan, _ in decision.landing:
+    for plan in self._plans.values():
+        if id(plan) in decision.held_back:
+            continue
         was_moved, installed = plan._apply(plan._allowed())
         moved = moved or was_moved
         landed.extend(installed)
@@ -505,7 +508,7 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
             [_PLAN, _HOLD],
             patch.object(
                 removal.Ps1RemovalPlans, 'commit', _commit_interleaving_verdicts_and_edits),
-            notices='test_a_trap_in_a_function_goes_in_the_same_batch_as_the_trap_around_its_definition')
+            notices='test_every_verdict_is_reached_before_the_first_edit_lands')
 
     def test_accepted_on_a_single_plan_is_witnessed(self):
         self._assertWitnessed(

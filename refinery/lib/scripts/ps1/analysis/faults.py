@@ -1394,15 +1394,22 @@ class Ps1FaultReach:
         statement reads — is a fact of the semantic model, so it is handed in as *skips*, which
         reads the `Ps1StepOverRegion` of each divergence this module finds.
         """
-        located = self._control_flow.locate(handler)
-        if located is None:
+        if (located := self._handler_node(handler)) is None:
             return True
         graph, start = located
-        if start.element is not handler:
-            # The climb left the handler behind, so the node this would answer about stands for the
-            # statement around it and every question below reads the wrong element.
-            return True
         return self._removal_matters(graph, start, raises, skips)
+
+    def _handler_node(self, handler: Node) -> tuple[ControlFlowGraph, CfgNode] | None:
+        """
+        The graph *handler* is written in and the node of the handler itself, or `None` when the
+        graph has no node for it. Locating climbs to the nearest element that has one, and a node
+        that stands for the statement around the handler would have every question about the
+        handler read the wrong element.
+        """
+        located = self._control_flow.locate(handler)
+        if located is None or located[1].element is not handler:
+            return None
+        return located
 
     def removals_that_wait(
         self,
@@ -1448,18 +1455,15 @@ class Ps1FaultReach:
         handler in a block around it; *written* maps each block to the groups deleting a handler
         written directly in it.
         """
-        located = self._control_flow.locate(handler)
-        if located is None:
+        if (located := self._handler_node(handler)) is None:
             return True
         graph, start = located
-        if start.element is not handler:
-            return True
         if not raises.may_raise_behind(self.paths_of(graph), start):
             return False
         block = handler.parent
         while block is not None and block is not graph.owner:
             block = block.parent
-            if block is not None and written.get(id(block), set()) - {index}:
+            if block is not None and any(other != index for other in written.get(id(block), ())):
                 return True
         return False
 

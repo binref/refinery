@@ -159,11 +159,16 @@ class _Composition:
     Which edits of one batch land in a tree that still holds the list or field they edit.
 
     An edit is made against its holder. Inside a statement another edit of the batch replaces, that
-    holder survives only when the replacement carries it, as `$Null = ($y = Start-Process a)`
+    holder survives only when the replacement carries it, as
+
+        $Null = ($y = Start-Process a)
+
     carries the parenthesis an inner rewrite of `$y = Start-Process a` edits. A replacement that
     dissolves the holder and takes its statements instead, as resolving `if ($True) { <body> }`
     into the statements of its body does, leaves an edit of that body splicing a block the tree no
-    longer holds, and re-parents the statements it took into that block.
+    longer holds, and re-parents the statements it took into that block. An edit that does not
+    land replaces nothing, so what stands inside its statement stands wherever that statement
+    does.
     """
 
     def __init__(self, edits: list[_Edit]):
@@ -183,11 +188,12 @@ class _Composition:
             known = self._lands[key] = edit.free and self._stands(edit.holder)
         return known
 
-    def _stands(self, holder: Node) -> bool:
-        outer = self._enclosing(holder)
-        if outer is None:
-            return True
-        return self.lands(outer) and self._carries(outer, holder)
+    def _stands(self, node: Node) -> bool:
+        outer = self._enclosing(node)
+        while outer is not None and not self.lands(outer):
+            node = outer
+            outer = self._enclosing(outer.parent)
+        return outer is None or self._carries(outer, node)
 
     def _carries(self, outer: Node, holder: Node) -> bool:
         frontier = self._frontier(outer)

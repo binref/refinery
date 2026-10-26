@@ -9,8 +9,8 @@ from refinery.lib.scripts import (
     Node,
     Statement,
     Transformer,
+    reattach,
 )
-from refinery.lib.scripts.analysis.cfg import Projection
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
 from refinery.lib.scripts.ps1.analysis.cfg import certain_catch_all, swallows_every_error
@@ -380,21 +380,33 @@ def _simulate_empty_for_terminal(node: Ps1ForLoop) -> tuple[Ps1Variable, int] | 
     return variable, value
 
 
-def _body_breaks_unconditionally(body: list[Statement]) -> bool:
+def _body_running_once(body: list[Statement], dominance: DominatorModel) -> list[Statement] | None:
     """
-    Return `True` if the last statement in the body is an unlabeled break and the body contains no
-    continue statements at any nesting depth. Such a loop body executes exactly once.
+    The statements one run of a loop body comes to when the body never starts a second run, or
+    `None` when it may. Control must not run off the end of the body: its last statement is an
+    unlabeled `break`, which is dropped, or one the control-flow graph says never completes, such
+    as a `return` (`refinery.lib.scripts.analysis.dominance.DominatorModel.completes`). And no other
+    `break` or `continue` may stand in it at any depth, since one could start another run or, once
+    the body stands outside the loop, leave a different one.
+
+    The graph is asked rather than the trailing `break` alone because the statements that never run
+    are deleted too, a `break` behind a `return` among them, and a loop that waited for its `break`
+    would then stay whenever that deletion landed first.
     """
     if not body:
-        return False
-    last = body[-1]
-    if not isinstance(last, Ps1BreakStatement) or last.label is not None:
-        return False
-    for stmt in body[:-1]:
+        return None
+    *rest, last = body
+    if isinstance(last, Ps1BreakStatement) and last.label is None:
+        once = rest
+    elif not dominance.completes(last):
+        once = body
+    else:
+        return None
+    for stmt in once:
         for node in stmt.walk():
             if isinstance(node, (Ps1BreakStatement, Ps1ContinueStatement)):
-                return False
-    return True
+                return None
+    return list(once)
 
 
 _NO_LITERAL = object()
@@ -467,6 +479,8 @@ class Ps1DeadCodeElimination(Transformer):
     on constant values.
     """
 
+    self_converging = True
+
     def visit(self, node: Node):
         """
         Prune until a batch lands nothing, so that after one visit no rule of this pass applies
@@ -523,12 +537,15 @@ class Ps1DeadCodeElimination(Transformer):
 
         What is left removes only constructs whose condition is already proved constant, plus
         statements the control-flow graph reports no path can reach — a statement after `return`,
-        `throw` or `exit`, which never runs and so cannot be what an enclosing handler catches. Its
-        removal cannot empty a body that pruning was not already entitled to empty, because a body's
-        entry is always reachable. A prune that would drop a `class` or `enum` definition standing
-        in the deleted region is refused whole, because the engine registers those when it compiles
-        the script — before any statement runs — so one inside a branch that never executes still
-        defines its type, and deleting it changes what the surviving script resolves that name to.
+        `throw` or `exit`, which never runs and so cannot be what an enclosing handler catches
+        (`_never_runs`). Its removal cannot empty a body that pruning was not already entitled to
+        empty, because a body's entry is always reachable. A `trap` is not asked: its handler is
+        reached only through the exceptional edges of the body it guards, so an unreachable handler
+        means nothing threw, not that the declaration is dead, and `_prune_trap` owns that decision.
+        A prune that would drop a `class` or `enum` definition standing in the deleted region is
+        refused whole, because the engine registers those when it compiles the script — before any
+        statement runs — so one inside a branch that never executes still defines its type, and
+        deleting it changes what the surviving script resolves that name to.
         """
         dominance = cache.dominance
         # A handler body — a `trap`, a `catch`, or a `finally` — runs on a path this deletion does
@@ -538,11 +555,13 @@ class Ps1DeadCodeElimination(Transformer):
         # a whole, and an empty guarded body is evidence about an earlier pass rather than about the
         # code, so the unreachability deletion stays out of every handler body.
         deletes_unreachable = not self._within_handler_body(parent)
-        for stmt in get_body(parent):
+        if (body := get_body(parent)) is None:
+            return
+        for index, stmt in enumerate(body):
             if (
                 deletes_unreachable
                 and not isinstance(stmt, Ps1TrapStatement)
-                and self._is_unreachable(stmt, dominance)
+                and self._never_runs(stmt, body[index - 1] if index else None, dominance)
             ):
                 replacement: list[Statement] = []
             else:
@@ -551,6 +570,7 @@ class Ps1DeadCodeElimination(Transformer):
                     continue
                 replacement = pruned
             if _drops_a_type_definition(stmt, replacement):
+                reattach(stmt)
                 continue
             plans.propose_in(parent, stmt, replacement)
 
@@ -574,39 +594,34 @@ class Ps1DeadCodeElimination(Transformer):
         return False
 
     @staticmethod
-    def _is_unreachable(stmt: Statement, dominance: DominatorModel) -> bool:
+    def _never_runs(
+        stmt: Statement,
+        previous: Statement | None,
+        dominance: DominatorModel,
+    ) -> bool:
         """
-        Whether no path reaches any part of `stmt`. A compound statement runs when its first
-        executable node is reached, so a `do`/`while` whose tail-tested condition is unreachable
-        still runs its body — the statement is dead only when *every* control-flow node in its own
-        graph is unreachable. A node in a nested script block is in that block's own graph and says
-        nothing about whether the statement enclosing it runs, so it is not counted. A `trap` is
-        excluded by the caller: its handler node is reachable only through the exceptional edges of
-        the body it guards, so an unreachable handler means nothing threw, not that the declaration
-        is dead — `_prune_trap` owns that decision.
+        Whether no run reaches `stmt`, the statement after `previous` in its body. The graph says so
+        when no node of the statement is reached
+        (`refinery.lib.scripts.analysis.dominance.DominatorModel.never_runs`), which settles it for
+        a statement the graph keys a node to. A `try` is keyed none, and one whose body runs nothing
+        on the normal path, such as `try {} catch { <payload> }`, is entered without reaching any
+        node of it; it never runs only where `previous` never completes. At the start of a body
+        nothing here says whether the body is entered, so such a statement stays there.
         """
-        located = dominance.locate(stmt)
-        if located is None:
+        if not dominance.never_runs(stmt):
             return False
-        graph = located[0]
-        reachable = dominance.reached_from_entry(graph, Projection.MAY)
-        saw_node = False
-        for descendant in stmt.walk():
-            found = dominance.locate(descendant)
-            if found is None or found[0] is not graph:
-                continue
-            saw_node = True
-            if id(found[1]) in reachable:
-                return False
-        return saw_node
+        located = dominance.locate(stmt)
+        if located is not None and located[1].element is stmt:
+            return True
+        return previous is not None and not dominance.completes(previous)
 
     def _try_prune(self, stmt: Statement, cache: Ps1ModelCache) -> list[Statement] | None:
         if isinstance(stmt, Ps1WhileLoop):
-            return self._prune_while(stmt)
+            return self._prune_while(stmt, cache.dominance)
         if isinstance(stmt, Ps1DoLoop):
-            return self._prune_do_loop(stmt)
+            return self._prune_do_loop(stmt, cache.dominance)
         if isinstance(stmt, Ps1ForLoop):
-            return self._prune_for(stmt)
+            return self._prune_for(stmt, cache.dominance)
         if isinstance(stmt, Ps1IfStatement):
             return self._prune_if(stmt)
         if isinstance(stmt, Ps1SwitchStatement):
@@ -618,39 +633,36 @@ class Ps1DeadCodeElimination(Transformer):
         return None
 
     @staticmethod
-    def _prune_while(node: Ps1WhileLoop) -> list[Statement] | None:
+    def _prune_while(node: Ps1WhileLoop, dominance: DominatorModel) -> list[Statement] | None:
         truth = is_truthy(node.condition)
         if truth is False:
             return []
-        if node.body is not None and _body_breaks_unconditionally(node.body.body):
-            body = list(node.body.body[:-1])
-            if truth is True or node.condition is None:
-                return body
-            return [Ps1IfStatement(clauses=[(node.condition, Block(body=body))])]
-        return None
+        if node.body is None or (body := _body_running_once(node.body.body, dominance)) is None:
+            return None
+        if truth is True or node.condition is None:
+            return body
+        return [Ps1IfStatement(clauses=[(node.condition, Block(body=body))])]
 
     @staticmethod
-    def _prune_do_loop(node: Ps1DoLoop) -> list[Statement] | None:
+    def _prune_do_loop(node: Ps1DoLoop, dominance: DominatorModel) -> list[Statement] | None:
         if node.body is not None:
+            body = node.body.body
+            if (once := _body_running_once(body, dominance)) is not None:
+                return once
             trivially_exits = (
                 is_truthy(node.condition) is True if node.is_until
                 else is_truthy(node.condition) is False
             )
             if trivially_exits:
-                body = node.body.body
-                if _body_breaks_unconditionally(body):
-                    return list(body[:-1])
                 for stmt in body:
                     for child in stmt.walk():
                         if isinstance(child, (Ps1BreakStatement, Ps1ContinueStatement)):
                             return None
                 return list(body)
-            if _body_breaks_unconditionally(node.body.body):
-                return list(node.body.body[:-1])
         return None
 
     @staticmethod
-    def _prune_for(node: Ps1ForLoop) -> list[Statement] | None:
+    def _prune_for(node: Ps1ForLoop, dominance: DominatorModel) -> list[Statement] | None:
         truth = _evaluate_for_condition(node)
         if truth is None:
             truth = is_truthy(node.condition)
@@ -659,11 +671,11 @@ class Ps1DeadCodeElimination(Transformer):
             if node.initializer is not None:
                 result.append(_hoisted_initializer(node.initializer))
             return result
-        if node.body is not None and _body_breaks_unconditionally(node.body.body):
+        body = None if node.body is None else _body_running_once(node.body.body, dominance)
+        if body is not None:
             result = []
             if node.initializer is not None:
                 result.append(_hoisted_initializer(node.initializer))
-            body = list(node.body.body[:-1])
             if truth is True or node.condition is None:
                 result.extend(body)
             else:

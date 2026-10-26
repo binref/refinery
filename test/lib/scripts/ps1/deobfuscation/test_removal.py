@@ -642,12 +642,36 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
         self.assertTrue(any(isinstance(node, Ps1TrapStatement) for node in guarded.walk()))
 
     @unittest.expectedFailure
+    def test_a_resuming_trap_is_kept_where_an_empty_catch_around_its_loop_would_end_the_loop(self):
+        """
+        The `trap` resumes after the failing cast, so every pass of the loop writes `tail`; with it
+        gone the error leaves the loop for the empty `catch` around it, and the loop ends at its
+        first pass. The trap-set work that waits on the batched passes fixes this.
+        """
+        result = self._apply(cleandoc("""
+            try {
+              foreach ($i in 1..2) {
+                trap {
+                  continue
+                }
+                [int]'a'
+                Write-Host 'tail'
+              }
+            } catch {}
+            Write-Host 'after'
+        """), Ps1DeadCodeElimination)
+        script = Ps1Parser(result).parse()
+        loop = next(node for node in script.walk() if isinstance(node, Ps1ForEachLoop))
+        self.assertTrue(any(isinstance(node, Ps1TrapStatement) for node in loop.walk()))
+
+    @unittest.expectedFailure
     def test_a_resuming_trap_is_kept_where_the_typed_trap_around_it_would_decline_its_errors(self):
         """
         The inner `trap` resumes after the failing cast, so the script goes on to write `after`.
         With it gone the error reaches the script's only other `trap`, typed for a different error,
         which declines it, and a declined error with nothing around it stops the script. The
-        verdict on the inner `trap` reads the declining set as an error stepped over at script scope.
+        verdict on the inner `trap` reads the declining set as an error stepped over at script
+        scope.
         """
         result = self._deobfuscate_iterative(cleandoc("""
             trap [System.IO.IOException] {}
@@ -1162,6 +1186,33 @@ class TestPs1RemovalPlansLandOnlyEditsThatStillHoldTogether(TestPs1):
         self.assertEqual([id(statement) for statement in plans.accepted], [id(outer)])
         self.assertTrue(plans.commit())
         self.assertEqual([id(statement) for statement in script.body], [id(block.body[0]), id(inner)])
+        self.assertParentPointersAgreeWithTheTree(script)
+
+    def test_an_edit_inside_a_statement_whose_own_edit_is_held_back_still_lands(self):
+        script = self._script("""
+            if ($True) {
+              if ($c) {
+                'a'
+                if ($False) {
+                  'b'
+                }
+              }
+            }
+        """)
+        outer = script.body[0]
+        assert isinstance(outer, Ps1IfStatement)
+        block = outer.clauses[0][1]
+        middle = block.body[0]
+        assert isinstance(middle, Ps1IfStatement)
+        kept, inner = middle.clauses[0][1].body
+        plans = self._batch_that_removes_handlers(script)
+        plans.propose_in(script, outer, list(block.body))
+        plans.propose_in(block, middle)
+        plans.propose_in(middle.clauses[0][1], inner)
+        self.assertEqual([id(statement) for statement in plans.accepted], [id(outer), id(inner)])
+        self.assertTrue(plans.commit())
+        self.assertEqual([id(statement) for statement in script.body], [id(middle)])
+        self.assertEqual([id(statement) for statement in middle.clauses[0][1].body], [id(kept)])
         self.assertParentPointersAgreeWithTheTree(script)
 
     def test_a_chained_dead_store_leaves_every_parent_pointer_in_agreement_with_the_tree(self):
