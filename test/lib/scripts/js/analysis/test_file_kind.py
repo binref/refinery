@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 
 from test import TestBase
-from test.lib.scripts.js.ledger import wontfix
 
 from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.model import (
@@ -236,10 +235,21 @@ class TestTheTopOfACommonJsFileBindsTheWrapper(TestBase):
         self.assertFalse(model.supplied_from_outside(bindings['own']))
 
     def test_a_block_function_at_the_top_named_like_a_parameter_gets_no_copy(self):
-        for name in ('exports', 'require', 'module', '__filename', '__dirname', 'arguments'):
+        for name in ('exports', 'require', 'module', '__filename', '__dirname'):
             with self.subTest(name):
                 model = _model(F'{{ function {name}() {{}} }}', FileKind.commonjs)
                 self.assertEqual(model.root_scope.bindings[name].declarations, [])
+
+    def test_a_block_function_at_the_top_named_arguments_is_copied_into_the_wrapper_arguments(self):
+        model = _model('{ function arguments() {} }', FileKind.commonjs)
+        function = next(node for node in model.root.walk() if isinstance(node, JsFunctionDeclaration))
+        assert function.id is not None
+        arguments = model.root_scope.bindings['arguments']
+        block = model.binding_of(function.id)
+        assert block is not None
+        self.assertEqual(arguments.kind, BindingKind.ARGUMENTS)
+        self.assertEqual(arguments.declarations, [function.id])
+        self.assertEqual([copy.var for copy in block.copies_made], [arguments])
 
     def test_a_lexical_declaration_of_arguments_at_the_top_binds_that_name_alone(self):
         kinds = {}
@@ -264,10 +274,6 @@ class TestTheTopOfACommonJsFileBindsTheWrapper(TestBase):
         }
         self.assertEqual(read, {'exports': True, 'require': False, 'module': True})
 
-    @wontfix(
-        'no program names a function it declares in a block arguments: strict code forbids the '
-        'name, and no renamer picks it'
-    )
     def test_a_block_function_named_arguments_replaces_the_object_where_its_declaration_runs(self):
         model = _model('exports = 1;\n{ function arguments() {} }\nf(arguments[0]);', FileKind.commonjs)
         exports = model.root_scope.bindings['exports']

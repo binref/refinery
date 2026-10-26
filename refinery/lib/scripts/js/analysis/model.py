@@ -1217,6 +1217,60 @@ def _lexical_function_names(statements: list[Statement]) -> frozenset[str]:
     )
 
 
+def _annex_b_copy_home(
+    declaration: JsFunctionDeclaration,
+    file_kind: FileKind,
+    cache: LexicalNameCache | None = None,
+) -> Node | None:
+    """
+    The function, script or static block the copy Annex B makes of the function *declaration*
+    writes into, as `annex_b_var_home` climbs to it, where the name `arguments` does not stop the
+    climb: the copy of a function of that name runs, and only the `var` it would write is never
+    made, the function having one already.
+    """
+    cache = cache if cache is not None else LexicalNameCache()
+    home = statement_list_holding(declaration)
+    if home is not None and is_a_var_home(home):
+        return home
+    if (
+        declaration.generator
+        or declaration.is_async
+        or file_kind is FileKind.es_module
+        or strict_mode_at(declaration)
+    ):
+        return None
+    name = declaration.id.name if declaration.id is not None else None
+    if name is None:
+        return None
+    cursor: Node | None = declaration.parent
+    while cursor is not None:
+        if cache.declares(cursor, name):
+            return None
+        if (
+            isinstance(cursor, JsCatchClause)
+            and cursor.param is not None
+            and not isinstance(cursor.param, JsIdentifier)
+            and any(ident.name == name for ident in pattern_identifiers(cursor.param))
+        ):
+            return None
+        if is_a_var_home(cursor):
+            if (
+                isinstance(cursor, JsScript)
+                and file_kind.may_be_commonjs
+                and name in COMMONJS_WRAPPER_PARAMETERS
+            ):
+                return None
+            if any(
+                ident.name == name
+                for param in getattr(cursor, 'params', ())
+                for ident in pattern_identifiers(param)
+            ):
+                return None
+            return cursor
+        cursor = cursor.parent
+    return None
+
+
 def annex_b_var_home(
     declaration: JsFunctionDeclaration,
     file_kind: FileKind,
@@ -1254,53 +1308,56 @@ def annex_b_var_home(
     *cache* holds the lexical names of the lists the climb passes, for a caller asking this of many
     declarations over a tree it is not rewriting.
     """
-    cache = cache if cache is not None else LexicalNameCache()
-    home = statement_list_holding(declaration)
-    if home is not None and is_a_var_home(home):
-        return home
-    if (
-        declaration.generator
-        or declaration.is_async
-        or file_kind is FileKind.es_module
-        or strict_mode_at(declaration)
-    ):
+    target = annex_b_target(declaration, file_kind, cache)
+    if target is None or target.own_arguments:
         return None
-    name = declaration.id.name if declaration.id is not None else None
-    if name is None:
+    return target.home
+
+
+class AnnexBTarget(NamedTuple):
+    """
+    Where the copy Annex B makes of a function declared in a block lands: the function, script or
+    static block *home* around the block, in a `var` of the name (`annex_b_var_home`), or where
+    *own_arguments*, in the `arguments` that *home* already has: §B.3.3.1 makes no `var` for a
+    function named `arguments` where the function around it has its object, but the copy still runs
+    when the declaration does, and the name holds the function from then on.
+    """
+    home: Node
+    own_arguments: bool
+
+
+def annex_b_target(
+    declaration: JsFunctionDeclaration,
+    file_kind: FileKind,
+    cache: LexicalNameCache | None = None,
+) -> AnnexBTarget | None:
+    """
+    Where the copy Annex B makes of the function *declaration* lands (`AnnexBTarget`), or `None`
+    where it makes none; *file_kind* and *cache* as for `annex_b_var_home`.
+    """
+    home = _annex_b_copy_home(declaration, file_kind, cache)
+    if home is None:
         return None
-    cursor: Node | None = declaration.parent
-    while cursor is not None:
-        if cache.declares(cursor, name):
-            return None
-        if (
-            isinstance(cursor, JsCatchClause)
-            and cursor.param is not None
-            and not isinstance(cursor.param, JsIdentifier)
-            and any(ident.name == name for ident in pattern_identifiers(cursor.param))
-        ):
-            return None
-        if is_a_var_home(cursor):
-            if (
-                name == 'arguments'
-                and isinstance(cursor, FUNCTION_NODES)
-                and not isinstance(cursor, JsArrowFunctionExpression)
-            ):
-                return None
-            if (
-                isinstance(cursor, JsScript)
-                and file_kind.may_be_commonjs
-                and (name == 'arguments' or name in COMMONJS_WRAPPER_PARAMETERS)
-            ):
-                return None
-            if any(
-                ident.name == name
-                for param in getattr(cursor, 'params', ())
-                for ident in pattern_identifiers(param)
-            ):
-                return None
-            return cursor
-        cursor = cursor.parent
-    return None
+    return AnnexBTarget(home, _writes_own_arguments(declaration, home, file_kind))
+
+
+def _writes_own_arguments(
+    declaration: JsFunctionDeclaration,
+    home: Node,
+    file_kind: FileKind,
+) -> bool:
+    """
+    Whether the copy of *declaration* into *home* writes the `arguments` *home* already has: the
+    name is `arguments` and *home* is a function other than an arrow, or the top of a file that may
+    be CommonJS, which is the body of the function the host wraps around it.
+    """
+    if declaration.id is None or declaration.id.name != 'arguments':
+        return False
+    if (held := statement_list_holding(declaration)) is not None and is_a_var_home(held):
+        return False
+    if isinstance(home, JsScript):
+        return file_kind.may_be_commonjs
+    return isinstance(home, FUNCTION_NODES) and not isinstance(home, JsArrowFunctionExpression)
 
 
 def annex_b_function_home(
@@ -5330,9 +5387,13 @@ class _ScopeBuilder:
                         for ident in pattern_identifiers(decl.id):
                             self._declare(func_scope, ident.name, BindingKind.VAR, ident)
             elif isinstance(node, JsFunctionDeclaration) and node.id is not None:
-                home = annex_b_var_home(node, self.model.file_kind, self._lexical_names)
-                if home is func_scope.node:
+                target = annex_b_target(node, self.model.file_kind, self._lexical_names)
+                if target is None or target.home is not func_scope.node:
+                    continue
+                if not target.own_arguments:
                     self._declare(func_scope, node.id.name, BindingKind.FUNCTION, node.id)
+                elif (own := self._own_arguments(func_scope, func_scope.node)) is not None:
+                    self._declare(own.scope, 'arguments', BindingKind.ARGUMENTS, node.id)
 
     def _collect_imports(self, stmts: list, scope: Scope):
         for stmt in stmts:
@@ -5373,17 +5434,38 @@ class _ScopeBuilder:
             elif isinstance(stmt, JsClassDeclaration) and stmt.id is not None:
                 self._declare(scope, stmt.id.name, BindingKind.CLASS, stmt.id)
             elif isinstance(stmt, JsFunctionDeclaration) and stmt.id is not None:
-                home = annex_b_var_home(stmt, self.model.file_kind, self._lexical_names)
-                if home is not None and scope.is_var_scope:
+                target = annex_b_target(stmt, self.model.file_kind, self._lexical_names)
+                if target is not None and not target.own_arguments and scope.is_var_scope:
                     continue
                 binding = self._declare(scope, stmt.id.name, BindingKind.FUNCTION, stmt.id)
-                if home is None or (var := self._copy_target(scope, home, stmt.id.name)) is None:
+                if target is None:
+                    var = None
+                elif target.own_arguments:
+                    var = self._own_arguments(scope, target.home)
+                else:
+                    var = self._copy_target(scope, target.home, stmt.id.name)
+                if var is None:
                     continue
                 conditional = self.model.file_kind is FileKind.commonjs_or_es_module
                 copy = AnnexBCopy(stmt, binding, var, conditional)
                 binding.copies_made.append(copy)
                 var.copies_received.append(copy)
                 self.model._annex_b_copies.append(copy)
+
+    @staticmethod
+    def _own_arguments(scope: Scope, home: Node) -> Binding | None:
+        """
+        The `arguments` the function or the file *home* has of its own, found from *scope* inside
+        it: the binding of kind `ARGUMENTS` in the scope of its parameters or of its body.
+        """
+        cursor: Scope | None = scope
+        while cursor is not None:
+            if cursor.node is home:
+                own = cursor.bindings.get('arguments')
+                if own is not None and own.kind is BindingKind.ARGUMENTS:
+                    return own
+            cursor = cursor.parent
+        return None
 
     @staticmethod
     def _copy_target(scope: Scope, home: Node, name: str) -> Binding | None:

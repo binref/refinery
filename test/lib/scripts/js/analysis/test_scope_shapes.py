@@ -174,6 +174,144 @@ class TestABlockFunctionIsWhereItsModeAndItsPositionPutIt(TestBase):
         self.assertEqual(_still_answered(rows), _as_it_answers_them(rows))
 
 
+#: A program declaring a function named `arguments` inside a block, run as a CommonJS file, mapped
+#: to the behavior Node gives it. §B.3.3.1 makes no `var` of the name where the function around the
+#: block, or the wrapper of the file, already has its `arguments`, but the copy still runs where the
+#: declaration does and replaces the object.
+A_BLOCK_FUNCTION_NAMED_ARGUMENTS = {
+    'a read after the block': Program(
+        a_program("""
+            function outer() {
+              { function arguments() { return 1; } }
+              console.log(typeof arguments);
+            }
+            outer(1);
+            """),
+        prints('function'),
+        Reading.COMMONJS,
+    ),
+    'a read of the object before the block': Program(
+        a_program("""
+            function outer(a) {
+              console.log(arguments.length);
+              { function arguments() { return 1; } }
+              console.log(typeof arguments, arguments.length);
+            }
+            outer(1, 2);
+            """),
+        prints('2', 'function 0'),
+        Reading.COMMONJS,
+    ),
+    'a block holding another statement': Program(
+        a_program("""
+            function outer() {
+              { function arguments() { return 1; } var z = 1; }
+              console.log(typeof arguments, z);
+            }
+            outer(1);
+            """),
+        prints('function 1'),
+        Reading.COMMONJS,
+    ),
+    'a parameter with a default': Program(
+        a_program("""
+            function outer(a = 1) {
+              { function arguments() { return 2; } }
+              console.log(typeof arguments, a);
+            }
+            outer();
+            """),
+        prints('function 1'),
+        Reading.COMMONJS,
+    ),
+    'a mapped parameter written after the copy': Program(
+        a_program("""
+            function outer(a) {
+              { function arguments() { return 2; } }
+              a = 5;
+              console.log(arguments[0], a);
+            }
+            outer(1);
+            """),
+        prints('undefined 5'),
+        Reading.COMMONJS,
+    ),
+    'an element read at the top of the file': Program(
+        a_program("""
+            exports = 1;
+            { function arguments() {} }
+            console.log(arguments[0]);
+            """),
+        prints('undefined'),
+        Reading.COMMONJS,
+    ),
+    'a type read at the top of the file': Program(
+        a_program("""
+            { function arguments() {} }
+            console.log(typeof arguments);
+            """),
+        prints('function'),
+        Reading.COMMONJS,
+    ),
+    'a branch taken on the second call only': Program(
+        a_program("""
+            function outer(c) {
+              if (c) { function arguments() { return 1; } }
+              console.log(typeof arguments);
+            }
+            outer(0);
+            outer(1);
+            """),
+        prints('object', 'function'),
+        Reading.COMMONJS,
+    ),
+    'an arrow function, which has no object of its own': Program(
+        a_program("""
+            function outer() {
+              var f = () => {
+                { function arguments() { return 1; } }
+                return typeof arguments;
+              };
+              console.log(f(), typeof arguments);
+            }
+            outer(1);
+            """),
+        prints('function object'),
+        Reading.COMMONJS,
+    ),
+    'the copy called': Program(
+        a_program("""
+            function outer() {
+              { function arguments() { return 'called'; } }
+              console.log(arguments());
+            }
+            outer();
+            """),
+        prints('called'),
+        Reading.COMMONJS,
+    ),
+    'a block holding an unread var': Program(
+        a_program("""
+            function outer() {
+              { function arguments() { return 1; } var z = 1; }
+              console.log(typeof arguments);
+            }
+            outer(1);
+            """),
+        prints('function'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABlockFunctionNamedArgumentsReplacesTheObject(TestBase):
+
+    def test_a_block_function_named_arguments_is_answered_the_way_node_runs_it(self):
+        rows = A_BLOCK_FUNCTION_NAMED_ARGUMENTS
+        self.assertEqual(_still_answered(rows), _as_it_answers_them(rows))
+
+
 #: A program whose parameter default reads a name its own body declares again, mapped to the
 #: behavior an engine gives it. Every kind of function a default may be written on is here, because
 #: the scope a default evaluates in is a property of having one at all and of nothing else.
