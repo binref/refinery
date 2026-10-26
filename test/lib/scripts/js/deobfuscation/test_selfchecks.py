@@ -93,6 +93,13 @@ DATED_HELPERS = OLD_HELPERS.replace(
     'function hashText(str, seed) { if (Date.now() > 4000000000000) { console.log("late"); } ',
 )
 
+#: The older helpers with a date check inserted into the loop of the hash, against a date inside the
+#: window of times a run is assumed to read, which the comparison of the clock does not decide.
+LOOP_DATED_HELPERS = OLD_HELPERS.replace(
+    'i < str.length; i++) { ',
+    'i < str.length; i++) { if (Date.now() > 4000000000000) { console.log("late"); } ',
+)
+
 DOUBLE = 'function double(x) { return x * 2; }'
 SMILE = 'function smile(x) { return x + "' + chr(0x1F600) + '"; }'
 GREET = 'function greet(x) { return `hi ${x}`; }'
@@ -265,6 +272,7 @@ A_CHECK_DECIDED_OVER_HELPERS_CARRYING_AN_INSERTED_CHECK = {
         PROGRAM_25,
         OLD_HELPERS.replace('function textOf(x) { ', 'function textOf(x) { if (Date.now() < 4000000000000) { console.log("dated"); } '),
     ): ('dated\nran\n', str(PROGRAM_25)),
+    wrapped(PROGRAM_25, LOOP_DATED_HELPERS): ('ran\n', str(PROGRAM_25)),
 }
 
 SET_A_LINE_BREAK = r'function () { return "a\nb"; }'

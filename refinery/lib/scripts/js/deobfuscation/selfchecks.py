@@ -211,16 +211,15 @@ def _is_inserted(model: SemanticModel, function: JsFunctionNode, statement: Node
 
 def _inserted_statements(model: SemanticModel, function: JsFunctionNode) -> list[Node]:
     """
-    The statements another transform inserted into the helper *function* (`_is_inserted`), in a
-    block of the helper outside its loops: every lock of the older obfuscator inserts its check as
-    an `if` without `else` at some position of such a block, a check of the date, of the host, or
-    of the text of a function.
+    The statements another transform inserted into the helper *function* (`_is_inserted`), in any
+    block of the helper, its loops included: a lock inserts its check as an `if` without `else` at
+    some position of a block, a check of the date, of the host, or of the text of a function.
     """
     inserted: list[Node] = []
     stack: list[Node] = [] if function.body is None else [function.body]
     while stack:
         node = stack.pop()
-        if isinstance(node, (*FUNCTION_NODES, *LOOP_NODES)):
+        if isinstance(node, FUNCTION_NODES):
             continue
         if not isinstance(node, JsBlockStatement):
             stack.extend(node.children())
