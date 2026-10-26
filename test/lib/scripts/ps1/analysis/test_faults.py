@@ -60,6 +60,12 @@ class _Answering:
         return self._answer
 
 
+def _handler_verdicts(tree: Ps1Script, reach: Ps1FaultReach) -> Ps1HandlerVerdicts:
+    control_flow = build_control_flow_model(tree)
+    world = build_world_reach(measure_world(tree), lambda: control_flow)
+    return Ps1HandlerVerdicts(reach, lambda: world, tree)
+
+
 def _handler_removal_is_observed(tree: Ps1Script, reach: Ps1FaultReach, handler: Node) -> bool:
     """
     The composed verdict the dead-code pass reads: `removing_a_handler_is_observed` weighing the
@@ -67,9 +73,7 @@ def _handler_removal_is_observed(tree: Ps1Script, reach: Ps1FaultReach, handler:
     judges a resuming `trap` exactly as the pass does rather than by the always-keep default the
     reader falls back on when a caller supplies neither.
     """
-    control_flow = build_control_flow_model(tree)
-    world = build_world_reach(measure_world(tree), lambda: control_flow)
-    verdicts = Ps1HandlerVerdicts(reach, lambda: world, tree)
+    verdicts = _handler_verdicts(tree, reach)
     return reach.removing_a_handler_is_observed(handler, verdicts.raises(False), verdicts.skips)
 
 
@@ -471,6 +475,147 @@ class TestPs1RemovingATrapIsJudgedByWhereItsErrorsWouldGoInstead(TestBase):
             acting, acting_reach, acting.body[0].try_block.body[0]))
         self.assertFalse(_handler_removal_is_observed(
             swallowing, swallowing_reach, swallowing.body[0].try_block.body[0]))
+
+
+class TestPs1ATrapRemovalWaitsOnlyForATrapRemovedFromABlockAroundIt(TestBase):
+
+    @staticmethod
+    def _traps(tree: Ps1Script) -> list[Node]:
+        return [node for node in tree.walk_in_order() if isinstance(node, Ps1TrapStatement)]
+
+    @staticmethod
+    def _waiting(tree: Ps1Script, reach: Ps1FaultReach, groups: list[list[Node]]) -> set[int]:
+        return reach.removals_that_wait(groups, _handler_verdicts(tree, reach).raises(False))
+
+    def test_a_trap_waits_for_the_removal_of_the_trap_its_errors_fall_back_to(self):
+        tree, reach = _model("""
+            & {
+              foreach ($i in 1..2) {
+                try {
+                  throw 'x'
+                } catch {
+                  'a'
+                  & {}
+                  trap {
+                    break
+                  }
+                }
+                trap {
+                  continue
+                }
+              }
+            }
+        """)
+        without_outer, without_outer_reach = _model("""
+            & {
+              foreach ($i in 1..2) {
+                try {
+                  throw 'x'
+                } catch {
+                  'a'
+                  & {}
+                  trap {
+                    break
+                  }
+                }
+              }
+            }
+        """)
+        inner, outer = self._traps(tree)
+        self.assertFalse(_handler_removal_is_observed(tree, reach, inner))
+        self.assertFalse(_handler_removal_is_observed(tree, reach, outer))
+        self.assertTrue(_handler_removal_is_observed(without_outer, without_outer_reach, *self._traps(without_outer)))
+        self.assertEqual(self._waiting(tree, reach, [[outer], [inner]]), {1})
+
+    def test_a_trap_waits_for_the_removal_of_a_trap_its_errors_reach_past_a_finally_block(self):
+        tree, reach = _model("""
+            trap { continue }
+            try {
+              $v = $o.M()
+              trap { break }
+            } finally { }
+        """)
+        without_outer, without_outer_reach = _model("""
+            try {
+              $v = $o.M()
+              trap { break }
+            } finally { }
+        """)
+        outer, inner = self._traps(tree)
+        self.assertFalse(_handler_removal_is_observed(tree, reach, inner))
+        self.assertFalse(_handler_removal_is_observed(tree, reach, outer))
+        self.assertTrue(_handler_removal_is_observed(without_outer, without_outer_reach, *self._traps(without_outer)))
+        self.assertEqual(self._waiting(tree, reach, [[outer], [inner]]), {1})
+
+    def test_a_trap_in_a_function_does_not_wait_for_the_removal_of_a_trap_at_script_scope(self):
+        tree, reach = _model("""
+            trap { continue }
+            function f {
+              trap { continue }
+              'a'
+            }
+            f
+        """)
+        outer, inner = self._traps(tree)
+        self.assertEqual(self._waiting(tree, reach, [[outer], [inner]]), set())
+
+    def test_a_trap_waits_for_the_removal_of_a_resuming_trap_in_a_block_around_it(self):
+        tree, reach = _model("""
+            trap [System.IO.IOException] {}
+            while ($c) {
+              try {} catch {} finally {
+                try {
+                  trap { break }
+                  Write-Host 'a'
+                } catch {}
+                trap { continue }
+              }
+            }
+        """)
+        without_outer, without_outer_reach = _model("""
+            trap [System.IO.IOException] {}
+            while ($c) {
+              try {} catch {} finally {
+                try {
+                  trap { break }
+                  Write-Host 'a'
+                } catch {}
+              }
+            }
+        """)
+        _, inner, outer = self._traps(tree)
+        self.assertFalse(_handler_removal_is_observed(tree, reach, inner))
+        self.assertFalse(_handler_removal_is_observed(tree, reach, outer))
+        _, inner_alone = self._traps(without_outer)
+        self.assertTrue(_handler_removal_is_observed(without_outer, without_outer_reach, inner_alone))
+        self.assertEqual(self._waiting(tree, reach, [[outer], [inner]]), {1})
+
+    def test_a_trap_nothing_may_raise_into_does_not_wait_for_the_trap_around_it(self):
+        tree, reach = _model("""
+            trap { continue }
+            if ($x) {
+              trap { continue }
+              'a'
+            }
+        """)
+        without_outer, without_outer_reach = _model("""
+            if ($x) {
+              trap { continue }
+              'a'
+            }
+        """)
+        outer, inner = self._traps(tree)
+        self.assertFalse(_handler_removal_is_observed(tree, reach, inner))
+        self.assertFalse(_handler_removal_is_observed(without_outer, without_outer_reach, *self._traps(without_outer)))
+        self.assertEqual(self._waiting(tree, reach, [[outer], [inner]]), set())
+
+    def test_traps_judged_by_one_verdict_do_not_wait_for_each_other(self):
+        tree, reach = _model("""
+            trap { continue }
+            trap { break }
+            'a'
+        """)
+        self.assertEqual(self._waiting(tree, reach, [self._traps(tree)]), set())
 
 
 class TestPs1AResumingTrapIsTheOnlyKindThatGuardsASplicePoint(TestBase):

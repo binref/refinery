@@ -37,7 +37,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     store_dropped_to_value,
     switch_matches,
 )
-from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan
+from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlans
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
@@ -468,24 +468,52 @@ class Ps1DeadCodeElimination(Transformer):
     """
 
     def visit(self, node: Node):
+        """
+        Prune until a batch lands nothing, so that after one visit no rule of this pass applies
+        anywhere in the tree. The junk pass decides what is bare-output noise right after this one
+        and is sound only on such a tree:
+        `refinery.lib.scripts.ps1.deobfuscation.unused.Ps1JunkStatementRemoval`. Each batch judges
+        every body against one build of the models and lands its edits together, so the models are
+        rebuilt once per batch rather than once per body that changed.
+        """
+        while self._prune(node):
+            self.mark_changed()
+
+    def _prune(self, node: Node) -> bool:
+        """
+        Propose the prunes of every body that no statement proposed here encloses, land them as one
+        batch, and report whether the tree moved. A statement its own body's plan lets through is
+        being rewritten, so what is inside it is judged by the next batch, against the tree that
+        rewrite leaves.
+        """
         cache = model_cache(self, node)
-        for parent in list(node.walk()):
+        plans = Ps1RemovalPlans(
+            cache.faults,
+            error_state=cache.error_state,
+            handlers=cache.handlers,
+            removals_may_fault=False,
+        )
+        pending: list[Node] = [node]
+        while pending:
+            parent = pending.pop()
             sink = output_sink(parent)
             if sink is None or sink is OutputSink.CAPTURED:
+                pending.extend(parent.children())
                 continue
-            if self._prune_body(parent, cache):
-                self.mark_changed()
+            self._prune_body(parent, cache, plans)
+            settled = {id(statement) for statement in plans.allowed_in(parent)}
+            pending.extend(child for child in parent.children() if id(child) not in settled)
+        return plans.commit()
 
-    def _prune_body(self, parent: Node, cache: Ps1ModelCache) -> bool:
+    def _prune_body(
+        self,
+        parent: Node,
+        cache: Ps1ModelCache,
+        plans: Ps1RemovalPlans,
+    ) -> None:
         """
-        Rewrite each statement of one body into what its condition has already been proved to make
-        of it, or leave it alone.
-
-        The models travel as the version-keyed cache and are read out of it where they are used,
-        never bound at the top and carried across the walk: a prune advances the tree version, and a
-        held world would then answer `False` for every later body of the same pass. A body whose
-        prune bumps the version rebuilds them; a body that changes nothing reads the same cached
-        objects back.
+        Propose rewriting each statement of one body into what its condition has already been
+        proved to make of it.
 
         Deleting a write to the output stream is not this pass's to make: reading a body's value as
         unobserved is not something position can say — only
@@ -510,13 +538,6 @@ class Ps1DeadCodeElimination(Transformer):
         # a whole, and an empty guarded body is evidence about an earlier pass rather than about the
         # code, so the unreachability deletion stays out of every handler body.
         deletes_unreachable = not self._within_handler_body(parent)
-        plan = Ps1RemovalPlan(
-            parent,
-            removals_may_fault=False,
-            faults=cache.faults,
-            error_state=cache.error_state,
-            handlers=cache.handlers,
-        )
         for stmt in get_body(parent):
             if (
                 deletes_unreachable
@@ -531,8 +552,7 @@ class Ps1DeadCodeElimination(Transformer):
                 replacement = pruned
             if _drops_a_type_definition(stmt, replacement):
                 continue
-            plan.propose(stmt, replacement)
-        return plan.commit()
+            plans.propose_in(parent, stmt, replacement)
 
     @staticmethod
     def _within_handler_body(node: Node) -> bool:

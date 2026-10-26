@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unittest
 
 from inspect import cleandoc
 
@@ -8,6 +9,8 @@ from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib import scripts
 from refinery.lib.scripts import set_child_list, tree_root, tree_version
+from refinery.lib.scripts.analysis import cfg as generic_cfg
+from refinery.lib.scripts.ps1.analysis import cfg as ps1_cfg
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.faults import build_fault_reach
@@ -25,6 +28,9 @@ from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan, Ps1Re
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ExpressionStatement,
+    Ps1ForEachLoop,
+    Ps1FunctionDefinition,
+    Ps1IfStatement,
     Ps1ParenExpression,
     Ps1TrapStatement,
 )
@@ -326,6 +332,68 @@ class TestPs1AScriptIsNeverPrunedToNothing(TestPs1):
             with self.subTest(trap):
                 self.assertEqual(self._content_beside_the_traps(F"{trap}\n'a'"), "'a'")
 
+    def test_the_only_value_a_script_emits_survives_dead_code_that_one_edit_unlocks_for_another(self):
+        for source in [
+            """
+                function u {
+                  try {
+                    if ($c) {
+                      Set-Alias foo bar
+                    }
+                  } catch {
+                    if ($c) {
+                      Write-Host 2
+                    }
+                  }
+                }
+                'a'
+            """,
+            """
+                try {
+                  if ($c) {
+                    Set-Alias foo bar
+                  }
+                } catch {
+                  if ($c) {
+                    Write-Host 2
+                  }
+                }
+                'a'
+            """,
+            """
+                function u {
+                  if ($args) {
+                    return
+                    Set-Alias foo bar
+                  }
+                  if ($c) {
+                    $?
+                  }
+                }
+                'a'
+            """,
+        ]:
+            for trust_eval in (False, True):
+                with self.subTest(source=source, trust_eval=trust_eval):
+                    result = self._deobfuscate_iterative(cleandoc(source), trust_eval=trust_eval)
+                    self.assertIn("'a'", result.splitlines())
+
+    @unittest.expectedFailure
+    def test_the_only_value_a_script_emits_survives_padding_that_goes_in_a_later_round(self):
+        """
+        The junk pass strips the value because the padding still stands beside it, and the dead-code
+        pass removes the padding in the next round, once the uncalled function that reads `$Error`
+        is gone. The fix is for the junk pass to count as content only what no later pass deletes as
+        noise.
+        """
+        self.assertEqual(self._deobfuscate_iterative(cleandoc("""
+            function u { $Error }
+            try {
+              0042Dsk=86
+            } catch {}
+            'a'
+        """)), "'a'")
+
 
 class TestPs1RemovalReportsWhatItDid(TestPs1):
     def _edit(self, source: str, transform):
@@ -548,6 +616,50 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
                     }}
                 """), Ps1DeadCodeElimination)
                 self.assertIn('trap', result)
+
+    @unittest.expectedFailure
+    def test_a_resuming_trap_under_another_resuming_trap_is_kept_where_its_block_goes_on(self):
+        """
+        The inner `trap` resumes inside the `if` body, so a failing call still writes `tail`; with
+        it gone the outer `trap` resumes after the `if`, and `tail` is skipped. The trap-set work
+        that waits on the batched passes fixes this.
+        """
+        result = self._deobfuscate_iterative(cleandoc("""
+            trap {
+              continue
+            }
+            if ((Get-Random) -gt 5) {
+              trap {
+                continue
+              }
+              $v = $o.M()
+              Write-Host 'tail'
+            }
+            Write-Host 'next'
+        """))
+        script = Ps1Parser(result).parse()
+        guarded = next(node for node in script.walk() if isinstance(node, Ps1IfStatement))
+        self.assertTrue(any(isinstance(node, Ps1TrapStatement) for node in guarded.walk()))
+
+    @unittest.expectedFailure
+    def test_a_resuming_trap_is_kept_where_the_typed_trap_around_it_would_decline_its_errors(self):
+        """
+        The inner `trap` resumes after the failing cast, so the script goes on to write `after`.
+        With it gone the error reaches the script's only other `trap`, typed for a different error,
+        which declines it, and a declined error with nothing around it stops the script. The
+        verdict on the inner `trap` reads the declining set as an error stepped over at script scope.
+        """
+        result = self._deobfuscate_iterative(cleandoc("""
+            trap [System.IO.IOException] {}
+            if ($True) {
+              [int]'a'
+              trap [System.Management.Automation.RuntimeException] {
+                continue
+              }
+            }
+            Write-Host 'after'
+        """))
+        self.assertIn('RuntimeException', result)
 
     def test_a_trap_no_handler_protects_is_still_removed(self):
         result = self._apply(cleandoc("""
@@ -786,7 +898,7 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
         The floor under it, differing in the one word that decides the question: a `trap` that
         rethrows ends the script where the raise stands, so nothing after it runs at either level
         and moving the statements past it changes nothing. What is left behind is unreachable in
-        the input too — this pass deletes such a statement only where no handler body encloses it.
+        the input too, and the same visit deletes it, as no handler body encloses it.
         """
         result = self._apply(cleandoc("""
             trap {
@@ -803,8 +915,6 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
               break
             }
             throw 'e'
-            Write-Host 'tail'
-            Write-Host 'next'
         """))
 
     def test_the_same_switch_under_a_trap_that_does_not_resume_is_resolved(self):
@@ -825,8 +935,6 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
               break
             }
             throw 'e'
-            Write-Host 'tail'
-            Write-Host 'next'
         """))
 
     def test_the_same_for_under_a_trap_that_does_not_resume_is_resolved(self):
@@ -847,8 +955,6 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
             }
             $i = 0
             throw 'e'
-            Write-Host 'tail'
-            Write-Host 'next'
         """))
 
     def test_the_same_try_under_a_trap_that_does_not_resume_is_resolved(self):
@@ -867,7 +973,6 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
               break
             }
             throw 'e'
-            Write-Host 'tail'
         """))
 
 
@@ -974,6 +1079,233 @@ class TestPs1RemovalPlansFindEachListOncePerBatch(TestPs1):
             return lines_executed(remove_all, scripts, removal)
 
         self.assertWorkGrowsLinearly(work, 100)
+
+
+class TestPs1CleanupPassesRebuildTheModelsOncePerBatch(TestPs1):
+
+    @staticmethod
+    def _work_and_result(source: str, transform: type) -> tuple[int, str]:
+        script = Ps1Parser(source).parse()
+        work = lines_executed(lambda: transform().visit(script), generic_cfg, ps1_cfg)
+        return work, Ps1Synthesizer().convert(script)
+
+    def test_the_work_of_removing_a_junk_trap_from_every_function_grows_linearly(self):
+        def work(count: int) -> int:
+            lines, result = self._work_and_result('\n'.join(
+                F'function f{index} {{ trap {{ continue }}; $w{index} = {index} }}' for index in range(count)
+            ), Ps1DeadCodeElimination)
+            self.assertNotIn('trap', result)
+            return lines
+
+        self.assertWorkGrowsLinearly(work, 10)
+
+    def test_the_work_of_pruning_a_dead_branch_and_an_unreachable_tail_in_every_function_grows_linearly(self):
+        def work(count: int) -> int:
+            lines, result = self._work_and_result('\n'.join(
+                F"function f{index} {{ if ($False) {{ 'x' }}; $w{index} = {index}; return; 'z' }}"
+                for index in range(count)
+            ), Ps1DeadCodeElimination)
+            self.assertNotIn("'x'", result)
+            self.assertNotIn("'z'", result)
+            return lines
+
+        self.assertWorkGrowsLinearly(work, 10)
+
+    def test_the_work_of_removing_a_dead_store_from_every_function_grows_linearly(self):
+        def work(count: int) -> int:
+            lines, result = self._work_and_result('\n'.join(
+                F'function f{index} {{ $a = {index}; $a = {index + 1}; $a }}' for index in range(count)
+            ), Ps1DeadStoreElimination)
+            self.assertEqual(result.count('$a = '), count)
+            return lines
+
+        self.assertWorkGrowsLinearly(work, 10)
+
+
+class TestPs1RemovalPlansLandOnlyEditsThatStillHoldTogether(TestPs1):
+
+    @staticmethod
+    def _script(source: str):
+        return Ps1Parser(cleandoc(source)).parse()
+
+    @staticmethod
+    def _batch_that_removes_handlers(script) -> Ps1RemovalPlans:
+        cache = Ps1ModelCache(script)
+        return Ps1RemovalPlans(
+            cache.faults,
+            error_state=cache.error_state,
+            handlers=cache.handlers,
+            removals_may_fault=False,
+        )
+
+    def assertParentPointersAgreeWithTheTree(self, script):
+        for node in script.walk():
+            for child in node.children():
+                self.assertIs(child.parent, node)
+
+    def test_an_edit_of_a_block_that_another_edit_dissolves_is_held_back(self):
+        script = self._script("""
+            if ($True) {
+              'a'
+              if ($False) {
+                'b'
+              }
+            }
+        """)
+        outer = script.body[0]
+        assert isinstance(outer, Ps1IfStatement)
+        block = outer.clauses[0][1]
+        inner = block.body[1]
+        plans = Ps1RemovalPlans(_faults(script))
+        plans.propose_in(script, outer, list(block.body))
+        plans.propose_in(block, inner)
+        self.assertEqual([id(statement) for statement in plans.accepted], [id(outer)])
+        self.assertTrue(plans.commit())
+        self.assertEqual([id(statement) for statement in script.body], [id(block.body[0]), id(inner)])
+        self.assertParentPointersAgreeWithTheTree(script)
+
+    def test_a_chained_dead_store_leaves_every_parent_pointer_in_agreement_with_the_tree(self):
+        for source in [
+            """
+                $x = $y = Start-Process a
+                Write-Host 'k'
+            """,
+            """
+                $a = $b = $c = Get-Random
+                'k'
+            """,
+        ]:
+            with self.subTest(source=source):
+                script = self._script(source)
+                Ps1UnusedVariableRemoval().visit(script)
+                self.assertParentPointersAgreeWithTheTree(script)
+
+    def test_a_trap_that_hands_its_errors_to_a_trap_deleted_in_the_same_batch_is_held_back(self):
+        script = self._script("""
+            trap {
+              continue
+            }
+            foreach ($i in 1..2) {
+              trap {
+                continue
+              }
+              $null = 1/$z
+            }
+        """)
+        outer, loop = script.body
+        assert isinstance(loop, Ps1ForEachLoop)
+        block = loop.body
+        assert block is not None
+        inner = block.body[0]
+        plans = self._batch_that_removes_handlers(script)
+        plans.propose_in(script, outer)
+        plans.propose_in(block, inner)
+        self.assertEqual(plans.allowed_in(script), [outer])
+        self.assertEqual(plans.allowed_in(block), [inner])
+        self.assertEqual([id(statement) for statement in plans.accepted], [id(outer)])
+        self.assertTrue(plans.commit())
+        self.assertIs(block.body[0], inner)
+
+    def test_a_trap_in_a_function_goes_in_the_same_batch_as_the_trap_around_its_definition(self):
+        script = self._script("""
+            trap {
+              continue
+            }
+            function f {
+              trap {
+                continue
+              }
+              'a'
+            }
+            f
+        """)
+        outer, definition = script.body[:2]
+        assert isinstance(definition, Ps1FunctionDefinition)
+        body = definition.body
+        assert body is not None
+        inner = body.body[0]
+        plans = self._batch_that_removes_handlers(script)
+        plans.propose_in(script, outer)
+        plans.propose_in(body, inner)
+        self.assertEqual([id(statement) for statement in plans.accepted], [id(outer), id(inner)])
+        self.assertTrue(plans.commit())
+        self.assertNotIn(outer, script.body)
+        self.assertNotIn(inner, body.body)
+
+    def test_withdrawing_a_trap_removal_releases_the_list_held_back_for_it(self):
+        script = self._script("""
+            trap {
+              continue
+            }
+            foreach ($i in 1..2) {
+              trap {
+                continue
+              }
+              $null = 1/$z
+            }
+        """)
+        outer, loop = script.body
+        assert isinstance(loop, Ps1ForEachLoop)
+        block = loop.body
+        assert block is not None
+        inner = block.body[0]
+        plans = self._batch_that_removes_handlers(script)
+        plans.propose_in(script, outer)
+        plans.propose_in(block, inner)
+        self.assertEqual([id(statement) for statement in plans.accepted], [id(outer)])
+        plans.withdraw(outer)
+        self.assertEqual([id(statement) for statement in plans.accepted], [id(inner)])
+
+    def test_a_trap_whose_removal_is_observed_once_the_outer_trap_is_gone_is_kept(self):
+        self.assertEqual(self._apply(cleandoc("""
+            & {
+              foreach ($i in 1..2) {
+                try {
+                  throw 'x'
+                } catch {
+                  'a'
+                  & {}
+                  trap {
+                    break
+                  }
+                }
+                trap {
+                  continue
+                }
+              }
+            }
+        """), Ps1DeadCodeElimination), cleandoc("""
+            & {
+              foreach ($i in 1..2) {
+                try {
+                  throw 'x'
+                } catch {
+                  'a'
+                  & {}
+                  trap {
+                    break
+                  }
+                }
+              }
+            }
+        """))
+
+    def test_the_dead_code_pass_judges_a_held_back_list_again_in_the_same_visit(self):
+        self.assertEqual(self._apply(cleandoc("""
+            trap {
+              continue
+            }
+            foreach ($i in 1..2) {
+              trap {
+                continue
+              }
+              $null = 1/$z
+            }
+        """), Ps1DeadCodeElimination), cleandoc("""
+            foreach ($i in 1..2) {
+              $null = 1 / $z
+            }
+        """))
 
 
 class TestPs1ARemovalPlanTakesHandlerVerdictsOnlyOverItsOwnModels(TestPs1):

@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from refinery.lib.scripts import Node, Transformer
-from refinery.lib.scripts.ps1.analysis.cache import model_cache
+from refinery.lib.scripts.ps1.analysis.cache import Ps1UnseenReads, model_cache
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
 from refinery.lib.scripts.ps1.analysis.effects import (
     OutputSink,
@@ -36,7 +36,7 @@ from refinery.lib.scripts.ps1.deobfuscation.constants import (
     _find_removable_statement,
 )
 from refinery.lib.scripts.ps1.deobfuscation.helpers import store_dropped_to_value
-from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan, Ps1RemovalPlans
+from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlans
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AssignmentExpression,
@@ -713,23 +713,36 @@ class Ps1DeadStoreElimination(Transformer):
     """
 
     def visit(self, node: Node):
+        """
+        Propose the dead stores of every body against one reading of the tree, and land them as one
+        batch. A body's verdict reads its own scope alone, and the only edit another body's batch
+        can make to that scope is to drop a read inside a store that is going away, which leaves a
+        dead store dead.
+        """
         cache = model_cache(self, node)
         unseen = cache.names_may_be_read_unseen
         if unseen.every_name:
-            self.generic_visit(node)
             return None
         model = cache.model
-        # Model and world are both re-read per body through the version-keyed cache: removing a
-        # store changes what the next body's scope says, and once a removal advances the version a
-        # held world would answer `False` for the rest of the pass. A body whose
-        # removal bumps the version rebuilds both, and a body that removes nothing reads the same
-        # cached objects back, so the fresh read costs a rebuild only where the tree actually moved.
         world = cache.world_reach
+        plans = Ps1RemovalPlans(cache.faults, world, cache.error_state)
+        for owner in list(node.walk()):
+            self._propose_dead_stores(owner, model, world, unseen, plans)
+        if plans.commit():
+            self.mark_changed()
+
+    def _propose_dead_stores(
+        self,
+        node: Node,
+        model: Ps1SemanticModel,
+        world: Ps1WorldReach,
+        unseen: Ps1UnseenReads,
+        plans: Ps1RemovalPlans,
+    ) -> None:
         body = get_body(node)
         scope = model.scope_of(node)
         if body is None or scope is None:
-            self.generic_visit(node)
-            return None
+            return
         pending: dict[str, list[Ps1ExpressionStatement]] = {}
         dead: list[Ps1ExpressionStatement] = []
         has_read: set[str] = set()
@@ -752,11 +765,6 @@ class Ps1DeadStoreElimination(Transformer):
             for var, stores in pending.items():
                 if var in has_read:
                     dead.extend(stores)
-        if not dead:
-            self.generic_visit(node)
-            return None
-        plan = Ps1RemovalPlan(
-            node, faults=cache.faults, world=world, error_state=cache.error_state)
         for stmt in dead:
             if not isinstance(stmt, Ps1ExpressionStatement):
                 continue
@@ -764,12 +772,9 @@ class Ps1DeadStoreElimination(Transformer):
             if isinstance(rhs, Ps1AssignmentExpression):
                 rhs = rhs.value
             if rhs is None or is_side_effect_free(rhs, world):
-                plan.propose(stmt)
+                plans.propose_in(node, stmt)
             elif _value_is_movable(rhs):
-                plan.propose(stmt, [store_dropped_to_value(rhs)])
-        if plan.commit():
-            self.mark_changed()
-        self.generic_visit(node)
+                plans.propose_in(node, stmt, [store_dropped_to_value(rhs)])
 
     def _classify_statement(
         self, stmt, scope: Scope, model: Ps1SemanticModel,

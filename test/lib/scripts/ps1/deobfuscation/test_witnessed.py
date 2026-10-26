@@ -88,6 +88,7 @@ _EMULATOR_EXTRA = _witness(test_emulator.TestPs1EmulatorExtra)
 _ESCALATION = _witness(test_faults.TestPs1FaultIsObservedWhereAHandlerActsOrATrapMayDecline)
 _FOREACH_PIPELINE = _witness(test_emulator.TestPs1EmulatorRedirections)
 _HANDLER = _witness(test_removal.TestPs1DeadCodeEliminationDoesNotUnhookAHandler)
+_HOLD = _witness(test_removal.TestPs1RemovalPlansLandOnlyEditsThatStillHoldTogether)
 _IEX_REDIRECTIONS = _witness(test_iexinline.TestPs1IexRedirections)
 _INTEGRATION = _witness(test_deobfuscation.TestPs1Integration)
 _KEPT_EITHER_WAY = _witness(test_unused.TestPs1OutputSomethingElseHoldsIsKeptEitherWay)
@@ -162,20 +163,19 @@ def _propose_repairing_only_a_replacement(
 
 def _commit_interleaving_verdicts_and_edits(self: removal.Ps1RemovalPlans) -> bool:
     """
-    `Ps1RemovalPlans.commit` with its verdicts left lazy, which is the whole mutation: read out of a
-    generator inside the loop that edits, each plan decides after the plan before it has moved the
+    `Ps1RemovalPlans.commit` with its verdicts left lazy, which is the whole mutation: asked again
+    inside the loop that edits, each landing plan decides after the plan before it has moved the
     tree. Kept a token away from the original so that a `commit` which grows a phase reads as stale
     here rather than quietly modelling a different bug.
     """
-    verdicts = ((plan, plan._allowed()) for plan in self._plans.values())
-    rewrites = self._installable()
+    decision = self._decide()
     landed = []
     moved = False
-    for plan, allowed in verdicts:
-        was_moved, installed = plan._apply(allowed)
+    for plan, _ in decision.landing:
+        was_moved, installed = plan._apply(plan._allowed())
         moved = moved or was_moved
         landed.extend(installed)
-    for proposal, replacement in rewrites:
+    for proposal, replacement in decision.rewrites:
         if not removal._replace_in_parent(proposal.statement, replacement):
             continue
         landed.append(replacement)
@@ -502,10 +502,10 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
 
     def test_reaching_every_verdict_before_the_first_edit_is_witnessed(self):
         self._assertWitnessed(
-            [_PLAN],
+            [_PLAN, _HOLD],
             patch.object(
                 removal.Ps1RemovalPlans, 'commit', _commit_interleaving_verdicts_and_edits),
-            notices='test_every_verdict_is_reached_before_the_first_edit_lands')
+            notices='test_a_trap_in_a_function_goes_in_the_same_batch_as_the_trap_around_its_definition')
 
     def test_accepted_on_a_single_plan_is_witnessed(self):
         self._assertWitnessed(

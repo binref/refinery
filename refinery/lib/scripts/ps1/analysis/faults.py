@@ -23,7 +23,7 @@ rather than guessing, and a caller reads it as *unknown* wherever a caller might
 """
 from __future__ import annotations
 
-from typing import Callable, Iterator, NamedTuple, Protocol
+from typing import Callable, Iterator, NamedTuple, Protocol, Sequence
 
 from refinery.lib.scripts import Node, tree_root
 from refinery.lib.scripts.analysis.cfg import (
@@ -1403,6 +1403,65 @@ class Ps1FaultReach:
             # statement around it and every question below reads the wrong element.
             return True
         return self._removal_matters(graph, start, raises, skips)
+
+    def removals_that_wait(
+        self,
+        groups: Sequence[Sequence[Node]],
+        raises: RaiseVerdicts,
+    ) -> set[int]:
+        """
+        Of handler deletions judged apart, one group to each verdict, the indices of the groups
+        whose deletions have to wait until the others have landed and they are judged again.
+
+        `removing_a_handler_is_observed` reads one graph, the body the handler is written in, and
+        within it the blocks around the handler: their handlers decide where its errors go once it
+        is gone, and their resuming sets decide what an error it would have taken steps over
+        instead. Beyond that body it reads only whether a handler that acts is written anywhere
+        else, and a deletion can only make that answer more permissive. Nothing of this is read
+        unless something may raise into the handler, and a deletion elsewhere never puts a raiser
+        behind a handler that had none. So a deletion judged apart from another one still holds
+        once both land unless it may be offered an error and a block around it, in the same body,
+        loses a handler too. The inner group waits; the outer one was judged with the inner one
+        standing, and it still does. The members of one group were weighed against each other by
+        their own verdict and are not asked about here.
+        """
+        written: dict[int, set[int]] = {}
+        for index, group in enumerate(groups):
+            for handler in group:
+                if (block := handler.parent) is not None:
+                    written.setdefault(id(block), set()).add(index)
+        waiting: set[int] = set()
+        for index, group in enumerate(groups):
+            if any(self._waits(handler, index, written, raises) for handler in group):
+                waiting.add(index)
+        return waiting
+
+    def _waits(
+        self,
+        handler: Node,
+        index: int,
+        written: dict[int, set[int]],
+        raises: RaiseVerdicts,
+    ) -> bool:
+        """
+        Whether the deletion of *handler*, one of group *index*, waits for a group that deletes a
+        handler in a block around it; *written* maps each block to the groups deleting a handler
+        written directly in it.
+        """
+        located = self._control_flow.locate(handler)
+        if located is None:
+            return True
+        graph, start = located
+        if start.element is not handler:
+            return True
+        if not raises.may_raise_behind(self.paths_of(graph), start):
+            return False
+        block = handler.parent
+        while block is not None and block is not graph.owner:
+            block = block.parent
+            if block is not None and written.get(id(block), set()) - {index}:
+                return True
+        return False
 
     def _removal_matters(
         self,

@@ -3,7 +3,7 @@ The single route by which a PowerShell cleanup pass removes or rewrites statemen
 """
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import NamedTuple, Sequence
 
 from refinery.lib.scripts import (
     BodyEdit,
@@ -11,6 +11,7 @@ from refinery.lib.scripts import (
     Node,
     Statement,
     _replace_in_parent,
+    mutation_epoch,
     owning_field,
     reattach,
 )
@@ -113,6 +114,107 @@ def _fits_a_field(proposal: _Proposal) -> Node | None:
     return None
 
 
+class _Nearest:
+    """
+    The nearest of the given nodes at or above a node, climbing parent pointers. Every node a
+    question climbs through keeps its answer, so a batch asking about every list it touches climbs
+    each node of the tree at most once, however deep the lists are nested.
+    """
+
+    def __init__(self, marked: dict[int, Node]):
+        self._marked = marked
+        self._known: dict[int, Node | None] = {}
+
+    def __call__(self, node: Node | None) -> Node | None:
+        climbed: list[int] = []
+        found: Node | None = None
+        while node is not None:
+            key = id(node)
+            if key in self._known:
+                found = self._known[key]
+                break
+            climbed.append(key)
+            if (marked := self._marked.get(key)) is not None:
+                found = marked
+                break
+            node = node.parent
+        for key in climbed:
+            self._known[key] = found
+        return found
+
+
+class _Edit(NamedTuple):
+    """
+    One edit a batch would land: the statement it changes, the node whose list or field holds that
+    statement, what stands in its place, and whether its own plan lets it land at all.
+    """
+    statement: Node
+    holder: Node
+    replacement: Sequence[Node]
+    free: bool
+
+
+class _Composition:
+    """
+    Which edits of one batch land in a tree that still holds the list or field they edit.
+
+    An edit is made against its holder. Inside a statement another edit of the batch replaces, that
+    holder survives only when the replacement carries it, as `$Null = ($y = Start-Process a)`
+    carries the parenthesis an inner rewrite of `$y = Start-Process a` edits. A replacement that
+    dissolves the holder and takes its statements instead, as resolving `if ($True) { <body> }`
+    into the statements of its body does, leaves an edit of that body splicing a block the tree no
+    longer holds, and re-parents the statements it took into that block.
+    """
+
+    def __init__(self, edits: list[_Edit]):
+        self._edits = {id(edit.statement): edit for edit in edits}
+        self._enclosing = _Nearest({key: edit.statement for key, edit in self._edits.items()})
+        self._lands: dict[int, bool] = {}
+        self._frontiers: dict[int, set[int]] = {}
+
+    def lands(self, statement: Node) -> bool:
+        """
+        Whether the edit of `statement` lands: its plan lets it, and the tree the batch leaves still
+        holds its holder.
+        """
+        key = id(statement)
+        if (known := self._lands.get(key)) is None:
+            edit = self._edits[key]
+            known = self._lands[key] = edit.free and self._stands(edit.holder)
+        return known
+
+    def _stands(self, holder: Node) -> bool:
+        outer = self._enclosing(holder)
+        if outer is None:
+            return True
+        return self.lands(outer) and self._carries(outer, holder)
+
+    def _carries(self, outer: Node, holder: Node) -> bool:
+        frontier = self._frontier(outer)
+        node: Node | None = holder
+        while node is not None and node is not outer:
+            if id(node) in frontier:
+                return True
+            node = node.parent
+        return False
+
+    def _frontier(self, outer: Node) -> set[int]:
+        """
+        The nodes of the tree as written below `outer` that its replacement holds, directly or
+        through nodes the replacement built.
+        """
+        if (frontier := self._frontiers.get(id(outer))) is None:
+            frontier = self._frontiers[id(outer)] = set()
+            pending = list(self._edits[id(outer)].replacement)
+            while pending:
+                node = pending.pop()
+                if node.is_descendant_of(outer):
+                    frontier.add(id(node))
+                else:
+                    pending.extend(node.children())
+        return frontier
+
+
 class Ps1RemovalPlan:
     """
     A batch of proposed edits to one statement list, committed as a single mutation.
@@ -200,6 +302,7 @@ class Ps1RemovalPlan:
         self.error_state = error_state
         self.handlers = handlers
         self._proposals: dict[int, _Proposal] = {}
+        self._verdict: tuple[int, list[_Proposal]] | None = None
 
     def propose(
         self,
@@ -227,6 +330,7 @@ class Ps1RemovalPlan:
             if not proposal.replacement and self.faults is None:
                 raise ValueError('this plan was opened to substitute and holds no fault model')
             self._proposals[id(statement)] = proposal
+            self._verdict = None
         finally:
             reattach(statement)
 
@@ -237,6 +341,7 @@ class Ps1RemovalPlan:
         never let the replacement take anything in the first place.
         """
         self._proposals.pop(id(statement), None)
+        self._verdict = None
 
     def abandon(self) -> None:
         """
@@ -244,6 +349,7 @@ class Ps1RemovalPlan:
         that built a whole batch and then decided against all of it.
         """
         self._proposals.clear()
+        self._verdict = None
 
     @property
     def survivors(self) -> list[Statement]:
@@ -353,14 +459,19 @@ class Ps1RemovalPlan:
         """
         The proposals that survive the veto and every set-level refusal this class owns. Kept
         apart from `commit` so that `accepted` is a query over the decision rather than a second
-        copy of it.
+        copy of it. It is kept until the proposals or any tree change, because the batch that holds
+        this plan asks for it while the pass is still walking and again when it commits.
         """
+        epoch = mutation_epoch()
+        if self._verdict is not None and self._verdict[0] == epoch:
+            return self._verdict[1]
         proposals = list(self._proposals.values())
         allowed = [p for p in proposals if not self._vetoed(p)]
         if self.all_or_nothing and len(allowed) != len(proposals):
             allowed = []
         if self._empties_a_protected_body(allowed):
             allowed = []
+        self._verdict = epoch, allowed
         return allowed
 
     def commit(self) -> bool:
@@ -419,6 +530,16 @@ class Ps1RemovalPlan:
         return not self._edit(allowed).result()
 
 
+class _Decision(NamedTuple):
+    """
+    What `Ps1RemovalPlans.commit` does: the plans whose edits land, each beside the proposals it
+    allows, the direct-field rewrites that land, and the plans whose edits it holds back.
+    """
+    landing: list[tuple[Ps1RemovalPlan, list[_Proposal]]]
+    rewrites: list[tuple[_Proposal, Node]]
+    held_back: set[int]
+
+
 class Ps1RemovalPlans:
     """
     One `Ps1RemovalPlan` per statement list, for a pass that finds its removals by walking the whole
@@ -432,6 +553,10 @@ class Ps1RemovalPlans:
     rewrites. A field cannot lose its statement without the parent losing its shape, so a proposal
     to remove one outright is registered and then declined at commit, which is also why the fault
     veto has nothing to say about them: it declines deletions, and none of these is one.
+
+    Every verdict of a batch is reached against one tree, before any of its edits lands, so a pass
+    pays for one build of the models however many lists it edits. Two kinds of edit cannot be judged
+    that way and are held back for the pass to propose again: see `_decide`.
     """
 
     def __init__(
@@ -440,11 +565,13 @@ class Ps1RemovalPlans:
         world: Ps1WorldReach | None = None,
         error_state: Ps1ErrorStateReach | None = None,
         handlers: Ps1HandlerVerdicts | None = None,
+        removals_may_fault: bool = True,
     ):
         self.faults = faults
         self.world = world
         self.error_state = error_state
         self.handlers = handlers
+        self.removals_may_fault = removals_may_fault
         #: Every plan this opens may remove, so unlike `Ps1RemovalPlan` there is no
         #: substitution-only spelling of this class: a caller holding one is a pass that deletes.
         self._plans: dict[tuple[int, str], Ps1RemovalPlan] = {}
@@ -493,6 +620,7 @@ class Ps1RemovalPlans:
             plan = self._plans[key] = Ps1RemovalPlan(
                 parent,
                 attr,
+                self.removals_may_fault,
                 faults=self.faults,
                 world=self.world,
                 error_state=self.error_state,
@@ -552,6 +680,17 @@ class Ps1RemovalPlans:
         self._rewrites.clear()
         self._filed.clear()
 
+    def allowed_in(self, parent: Node, attr: str = 'body') -> list[Statement]:
+        """
+        The statements of the list `parent.<attr>` whose proposals its own plan lets through. The
+        batch may still hold the whole list back at `commit`; what it never does is land a proposal
+        of this list that is not reported here.
+        """
+        plan = self._plans.get((id(parent), attr))
+        if plan is None:
+            return []
+        return [proposal.statement for proposal in plan._allowed()]
+
     def survivors(self, parent: Node, attr: str = 'body') -> list[Statement]:
         """
         The pre-veto survivors of one of the lists this batch touches, or its current contents when
@@ -566,17 +705,91 @@ class Ps1RemovalPlans:
     def accepted(self) -> list[Statement]:
         """
         The statements `commit` would edit across every list this batch touches, plus the
-        direct-field rewrites it would install. Same contract, and the same two limits, as
-        `Ps1RemovalPlan.accepted`.
+        direct-field rewrites it would install. Same contract as `Ps1RemovalPlan.accepted`, and the
+        same two limits, plus a third way a withdrawal can grow this set: withdrawing an edit that
+        the batch holds another list back for releases that list; see `_decide`.
 
         A pass that scatters one logical removal across several lists needs this rather than the
         per-plan answer: `refinery.lib.scripts.ps1.deobfuscation.unused.Ps1JunkStatementRemoval`
         drops an inert definition and the bare calls to it, and those routinely land in different
         plans, so a veto on either half is only visible here.
         """
-        accepted = [statement for plan in self._plans.values() for statement in plan.accepted]
-        accepted.extend(proposal.statement for proposal, _ in self._installable())
+        decision = self._decide()
+        accepted = [
+            statement
+            for plan in self._plans.values() if id(plan) not in decision.held_back
+            for statement in plan.accepted
+        ]
+        accepted.extend(proposal.statement for proposal, _ in decision.rewrites)
         return accepted
+
+    def _decide(self) -> _Decision:
+        """
+        What `commit` does, read by `accepted` as well, so the two cannot drift.
+
+        Each list's verdict is reached against the tree as written, and so assumes that every other
+        list stands as written. Two kinds of edit break that. An edit in a list or field that a
+        larger edit of the batch takes apart is one; see `_Composition`. A handler deletion whose
+        verdict read a handler that another list deletes is the other, and which deletions those
+        are is the fault model's to say:
+        `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removals_that_wait`. Every edit of
+        such a list is held back, because its plan judged them as one, and is judged again by the
+        pass's next batch, against the tree this one leaves.
+        """
+        verdicts = [(plan, allowed) for plan in self._plans.values() if (allowed := plan._allowed())]
+        rewrites = self._installable()
+        if len(verdicts) + len(rewrites) <= 1:
+            return _Decision(verdicts, rewrites, set())
+        edits: list[_Edit] = []
+        waiting = self._waiting_for_handler_removals(verdicts)
+        for plan, allowed in verdicts:
+            free = id(plan) not in waiting
+            edits.extend(
+                _Edit(proposal.statement, plan.parent, proposal.replacement, free)
+                for proposal in allowed
+            )
+        for proposal, replacement in rewrites:
+            holder = proposal.statement.parent
+            assert holder is not None
+            edits.append(_Edit(proposal.statement, holder, [replacement], True))
+        composition = _Composition(edits)
+        landing: list[tuple[Ps1RemovalPlan, list[_Proposal]]] = []
+        held_back: set[int] = set()
+        for plan, allowed in verdicts:
+            if composition.lands(allowed[0].statement):
+                landing.append((plan, allowed))
+            else:
+                held_back.add(id(plan))
+        rewrites = [
+            (proposal, replacement) for proposal, replacement in rewrites
+            if composition.lands(proposal.statement)
+        ]
+        return _Decision(landing, rewrites, held_back)
+
+    def _waiting_for_handler_removals(
+        self,
+        verdicts: list[tuple[Ps1RemovalPlan, list[_Proposal]]],
+    ) -> set[int]:
+        """
+        The plans among *verdicts* whose handler deletions the fault model says have to wait for
+        another plan's.
+        """
+        plans: list[Ps1RemovalPlan] = []
+        groups: list[Sequence[Node]] = []
+        for plan, allowed in verdicts:
+            removed = [
+                proposal.statement for proposal in allowed
+                if _removes_a_handler(proposal.statement) and not proposal.replacement
+            ]
+            if removed:
+                plans.append(plan)
+                groups.append(removed)
+        if len(groups) <= 1:
+            return set()
+        handlers = self.handlers
+        assert handlers is not None
+        raises = handlers.raises(self.world is not None)
+        return {id(plans[index]) for index in self.faults.removals_that_wait(groups, raises)}
 
     def _installable(self) -> list[tuple[_Proposal, Node]]:
         """
@@ -609,15 +822,14 @@ class Ps1RemovalPlans:
         either — and asserting an uninstalled statement's structure here is the one walk that could
         assert it over a node the tree holds somewhere else.
         """
-        verdicts = [(plan, plan._allowed()) for plan in self._plans.values()]
-        rewrites = self._installable()
+        decision = self._decide()
         landed: list[Node] = []
         moved = False
-        for plan, allowed in verdicts:
+        for plan, allowed in decision.landing:
             was_moved, installed = plan._apply(allowed)
             moved = moved or was_moved
             landed.extend(installed)
-        for proposal, replacement in rewrites:
+        for proposal, replacement in decision.rewrites:
             if not _replace_in_parent(proposal.statement, replacement):
                 continue
             landed.append(replacement)

@@ -617,8 +617,9 @@ def mutation_epoch() -> int:
     query it was meant to make cheap back into a walk. This is the counter such a reader can ask in
     constant time, and it is *coarser on purpose*: a mutation to some unrelated tree drops entries
     that were still good, and what that costs is recomputing one node's answer rather than
-    rebuilding a model. `refinery.lib.scripts.ps1.analysis.values.evaluate` and `Node.children` are
-    the readers it exists for.
+    rebuilding a model. `refinery.lib.scripts.ps1.analysis.values.evaluate`, `Node.children` and the
+    verdict `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan` keeps between a pass
+    asking for it and the batch committing it are the readers it exists for.
 
     A pass that assigns a field directly instead of through `set_child`, `set_child_list` or
     `set_value` opts out of this counter exactly as it opts out of `tree_version`, and the entries

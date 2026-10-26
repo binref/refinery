@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unittest
+
 from inspect import cleandoc
 
 from test.lib.scripts.ps1.deobfuscation import TestPs1
@@ -288,6 +290,29 @@ class TestPs1DeadCodeExtra(TestPs1):
             Write-Host 'A'
             Write-Host 'B'
         """))
+
+    @unittest.expectedFailure
+    def test_a_switch_is_kept_while_a_continue_nested_in_its_clause_targets_it(self):
+        """
+        A `switch` is a loop to the jumps inside it, so the `continue` ends this `switch` and the
+        `foreach` goes on to write `x`. Resolving the `switch` into its clause hands that `continue`
+        to the `foreach`, which then skips `x`. Only jumps at the top level of the clause are
+        checked before the clause is inlined.
+        """
+        result = self._apply(cleandoc("""
+            foreach ($i in 1..3) {
+              switch (1) {
+                1 {
+                  if ($i -eq 2) {
+                    continue
+                  }
+                  Write-Host $i
+                }
+              }
+              Write-Host 'x'
+            }
+        """), Ps1DeadCodeElimination)
+        self.assertIn('switch', result)
 
     def test_switch_case_sensitive_match(self):
         result = self._apply(
