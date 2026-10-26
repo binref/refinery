@@ -2270,6 +2270,46 @@ class TestABuiltInReplacedWithoutSpellingItsNameIsNotFolded(TestBase):
         )
 
 
+#: Programs calling a function whose default throws for operands made of literals and discarding
+#: what the call returns, mapped to what Node prints for them: the call throws a `TypeError` before
+#: the body runs, for a plain function, a generator and an async generator alike.
+A_DISCARDED_CALL_WHOSE_DEFAULT_THROWS = {
+    inspect.cleandoc("""
+        async function* g(a, x = 1 instanceof 2) { yield x; }
+        try { g(1); console.log('created'); } catch (e) { console.log('call threw'); }
+    """): 'call threw\n',
+    inspect.cleandoc("""
+        function* g(a, x = 1 instanceof 2) { yield x; }
+        try { g(1); console.log('created'); } catch (e) { console.log('call threw'); }
+    """): 'call threw\n',
+    inspect.cleandoc("""
+        function g(a, x = 1 instanceof 2) { return x; }
+        try { g(1); console.log('created'); } catch (e) { console.log('call threw'); }
+    """): 'call threw\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestADiscardedCallWhoseDefaultThrowsStillThrows(TestBase):
+    """
+    A call whose value nothing reads goes where the function it calls has no effect. Its defaults
+    run as part of the call, and `1 instanceof 2` throws a `TypeError` that the removal drops with
+    the call; a default reading an undeclared name or a property of `undefined` is one the effect
+    model sees throw, and the call stays.
+    """
+
+    @wontfix(
+        'no program and no obfuscator writes a default that throws for operands made of literals; '
+        'the shape is made up for the defect'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_DISCARDED_CALL_WHOSE_DEFAULT_THROWS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
 #: A function flattened into a generator whose `with` statement reads its scope object, and whose
 #: code reads `label` bare, as the obfuscator leaves every name the function does not declare.
 A_FLATTENED_READER_OF_A_BARE_NAME = inspect.cleandoc(
@@ -5809,7 +5849,7 @@ class TestAnUnpackedRestParameterKeepsTheLengthOfTheFunction(TestBase):
     `refinery.lib.scripts.js.deobfuscation.cff.statemachine` give a function `(...s)` the parameters
     it reads out of `s` as plain names, which turns its `length` of 0 into their count. A correct
     pass writes `(...[a, b])`, which keeps the length 0, wherever the `length` of the function is
-    read (`refinery.lib.scripts.js.deobfuscation.parameters.function_length_unobserved`), and the
+    read (`refinery.lib.scripts.js.deobfuscation.parameters.every_call_shown` refuses), and the
     plain names elsewhere.
     """
 

@@ -32,7 +32,7 @@ the parameters the flat function unpacked:
     }
 
 The wrapper keeps its `length` of 0 where something may read it; where nothing can
-(`refinery.lib.scripts.js.deobfuscation.parameters.function_length_unobserved`), the parameters
+(`refinery.lib.scripts.js.deobfuscation.parameters.every_call_shown`), the parameters
 are written `(value)` right away. An async function keeps a function of its own, whose promise
 settles when it did, and the flat function moves into the wrapper without the object instead:
 
@@ -75,7 +75,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.deobfuscation.nameproxy import NameProxy
 from refinery.lib.scripts.js.deobfuscation.parameters import (
     ParameterList,
-    function_length_unobserved,
+    every_call_shown,
     parameter_list,
     unpacking_moves_into_parameters,
 )
@@ -606,7 +606,7 @@ def _plan(
         and not unpacking_moves_into_parameters(model, reading.pattern, flat, [parameter])
     ):
         return None
-    length = None if function_length_unobserved(model, wrapper, options) else 0
+    length = None if every_call_shown(model, wrapper, options) else 0
     parameters = parameter_list(reading.pattern.elements, wrapper, length)
     if parameters is None:
         return None
@@ -677,7 +677,7 @@ def _forwarded(
         return None
     if not cache.trust_at(call).chain(list):
         return None
-    if function_length_unobserved(model, wrapper, options):
+    if every_call_shown(model, wrapper, options):
         parameters = list(target.params)
     elif (built := parameter_list(target.params, target, 0)) is not None:
         parameters = built.build()

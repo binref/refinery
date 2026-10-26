@@ -3187,6 +3187,29 @@ class SemanticModel:
                 passed.append(argument)
         return passed, complete
 
+    def parameter_never_passed(self, binding: Binding) -> bool:
+        """
+        Whether the function of the parameter *binding* is called, and no call can pass an argument
+        to the parameter, which then holds `undefined` or its default whenever the function starts:
+        it is a name of a parameter list, plain or with a default, every way to its function is a
+        call the text shows (`_calls_shown`), there is one at least, and none of those passes an
+        argument at its position or a spread at or before it.
+        """
+        if len(binding.declarations) != 1:
+            return False
+        declared = _declared_parameter(binding.declarations[0])
+        if declared is None:
+            return False
+        function, position, _ = declared
+        calls, complete = self._calls_shown(function)
+        if not complete or not calls:
+            return False
+        for call in calls:
+            argument, hidden = _passed_at(call, position)
+            if argument is not None or hidden:
+                return False
+        return True
+
     def _names_calling(self, held: Node) -> list[tuple[Binding, list[ReferenceNode]] | None]:
         """
         The names the function or class *held* is called or constructed through, each with the

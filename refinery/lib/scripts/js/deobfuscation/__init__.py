@@ -37,6 +37,7 @@ from refinery.lib.scripts.js.deobfuscation.selfchecks import JsSelfCheckFolding
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.singleuse import JsSingleUseFunctionInliner
 from refinery.lib.scripts.js.deobfuscation.stringarray import JsStringArrayResolver
+from refinery.lib.scripts.js.deobfuscation.unpassed import JsUnpassedParameters
 from refinery.lib.scripts.js.deobfuscation.unshuffle import JsArrayUnshuffle
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
@@ -76,6 +77,7 @@ _pipeline = DeobfuscationPipeline(
             JsRestArrayUnpacking,
             JsParameterCopyCoalescing,
             JsRestPatternParameters,
+            JsUnpassedParameters,
             JsArrayUnshuffle,
             JsConstantInlining,
             JsGlobalFinderInlining,

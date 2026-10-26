@@ -229,16 +229,17 @@ def unpacking_moves_into_parameters(
     return True
 
 
-def function_length_unobserved(
+def every_call_shown(
     model: SemanticModel,
     function: JsFunctionNode,
     options: object,
 ) -> bool:
     """
-    Whether nothing can read the `length` of *function*: every way to it is a call the text shows
+    Whether every way to *function* is a call the text shows
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_only_by_shown_calls`), and no
     name it is reached through, which is the name of its class for a constructor
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.names_reaching`), is one a host reaches.
+    No other code then calls it, passes it arguments, or reads its `length`.
     """
     if not model.reached_only_by_shown_calls(function):
         return False
@@ -270,7 +271,7 @@ class JsRestPatternParameters(ScriptLevelTransformer):
                     or not isinstance(inner := rest.argument, JsArrayPattern)
                 ):
                     continue
-                if not function_length_unobserved(model, function, self.options):
+                if not every_call_shown(model, function, self.options):
                     continue
                 leading = len(params) - 1
                 decided = parameter_list([*params[:leading], *inner.elements], function, None)
