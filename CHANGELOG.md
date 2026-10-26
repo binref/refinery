@@ -10,32 +10,42 @@
 > [!WARNING]  
 > **BREAKING CHANGES**
 
-- The minimum supported Python version was raised from 3.10 to 3.11.
-- The script deobfuscators were renamed so that their commands no longer shadow script interpreters such as `php` or a `js` shell:
-  `js` is now `djs`, `ps1` is now `dps1`, `vba` is now `dvba`, and `php` is now `dphp`.
-  The new names follow the AutoIt deobfuscator `dau3`; the language-detecting `defu` keeps its name.
-  Pipelines that use the old names have to be updated.
-- The meta variable `offset` was renamed to `start`.
-  It is emitted by `carve`, `dnsdomain`, `rex`, `xtp`, `xtw`, all `carve-*` units, `ngrams`, `perc`, `vsect`, `vsnip`, `xtasar`.
-  Every unit that reports a `start` now also reports the matching `end`, which is the position just after the region in the input.
-  Pipelines using `{offset}` or `var:offset` have to be updated; the old name can be restored manually with `swap start offset`.
-- The meta variable `kind` was renamed to `type`, which was already the name used by other units for the same
+- **Breaking:** The minimum supported Python version was raised from 3.10 to 3.11.
+- **Breaking:** The script deobfuscators were renamed so that their commands no longer shadow script interpreters such as `php` or a `js` shell:
+  `js` becomes `djs`, `ps1` becomes `dps1`, `vba` becomes `dvba`, and `php` was renamed to `dphp`.
+- Another script deobfuscator was added; `dau3` for AutoIt3.
+- **Breaking:** The meta variable `offset` was renamed to `start` consistently.
+  It is emitted by `carve`, `rex`, `xtp`, `xtw`, all `carve*` units, `ngrams`, `perc`, `vsect`, `vsnip`, and `xtasar`.
+  Every unit that reports a `start` now also reports the matching `end` offset.
+- **Breaking:** The meta variable `kind` was renamed to `type`, which was already the name used by other units for the same
   concept. This affects `xtw`, where it holds the wallet address format, and `xtpdf`.
-  Pipelines that use `{kind}` or `var:kind` have to be updated.
-- The `xt7z` unit now reports the checksum stored in the archive as `checksum` rather than `crc32`.
+- **Breaking:** The `xt7z` unit now reports the checksum stored in the archive as `checksum` rather than `crc32`.
   The latter is the name of a property that refinery computes from a chunk, and a unit is no longer permitted to overwrite such a name.
-- The units `vbamc` and `vbapc` now extract every module below a folder named after its VBA project,
-  for example `Project/ThisDocument` instead of `Macros/VBA/ThisDocument`.
-  When a document holds more than one project, such as an embedded workbook, every folder is preceded by the number of its project:
-  `1/Project/ThisDocument` and `2/VBAProject/ThisWorkbook`.
-  The location of the module stream in the document is available as the meta variable `stream`.
-  Patterns that name the old storage path, such as `Macros/VBA/*`, no longer match; patterns that name a module, such as `ThisDocument`, still do.
-  The `vbapc` unit now also reads projects embedded in a document, and both units skip a part, project, or module that cannot be read with a warning.
-  An input that is a compound file or an Access database that cannot be read is still an error.
-- The `vbastr` unit now extracts form variables below the folder of their VBA project and form, numbered like the folders of `vbamc`,
-  for example `Project/UserForm1/Label1/Label1.cap` instead of `Label1/Label1.cap`.
-  It reports the location of the object stream of the form as `stream`, falls back to the strings of the object stream, as stored, for each form on its own,
-  reads the same documents as `vbamc`, and gives nothing instead of an error for input that is no such document.
+- **Breaking:** In `struct`, the format modifier `!0` now reads a bit field and `:` was added as a prefix option for peeking a value.
+- **Breaking:** The `pd` (path dirname) and `pb` (path basename) handlers lost their separator argument and now just split on both slash and backslash.
+- Both `djs` and `dps1` now deobfuscate notably better and faster. This continues to be an ongoing development, though.
+- The `csv` unit now outputs minified JSON.
+- The `xtpdf` unit metadata paths now end in `.json`.
+- **New Unit** `xtwim` for unpacking WIM archives
+- **New Unit** `xtiex` for unpacking IExpress setup files
+- **New Unit** `dns` for parsing DNS packets from PCAPs (to be used with the `pcap` and `udp` units).
+- **New Unit** `huffman` as a low level option to directly handle huffman-compressed data
+- **New Unit** `batev` to extract environment variables set during a batch emulation
+- **New Unit** `batfs` to extract file system content extracted during a batch emulation
+- **New Unit** `dumprel` is essentially `dump` but it ensures that data is only written below the current working directory.
+- Better support for several formats:
+  - Inno Setup 7.0 previews 2 and 3
+  - ZIP legacy methods (Shrink, Reduce, Implode)
+  - 7z archives using BCJ2
+  - RAR 7
+  - Raw CD and UDF images
+  - VHD volumes without a readable file system are extracted as raw images
+  - a3x now handles AutoIt 3.2 and later
+- The units `vbamc` and `vbapc` now extract every module below a folder named after its VBA project, e.g. `Project/Doc` instead of `Macros/VBA/Doc`.
+  When a document holds more than one project, every folder is preceded by the number of its project.
+- The `xlmdeobf` unit now uses a bespoke emulator and `xlxtr` needs no third-party packages any longer.
+- Great strides were made to reduce memory use across all units.
+- This release fixes an issue with Cython that previously prevented all cythonized modules from being compiled.
 
 ## Version 0.11.2
 - The `php` unit was added; it parses PHP into an abstract syntax tree and pretty-prints it.
