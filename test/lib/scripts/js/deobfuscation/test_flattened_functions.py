@@ -1,11 +1,12 @@
 """
 Function flattening moves the body of a function into a flat function at the top of the program and
 leaves the function a wrapper that calls it with its arguments and with an object of getters,
-setters and methods standing for the names the body used. Each program below holds functions in
-that shape, written by hand after what the obfuscation writes, and each row says what Node prints
-for it run as a CommonJS file; the deobfuscation prints the same. Where the deobfuscation puts the
-body back into its wrapper, or moves the flat function of an async function into it, the text it
-writes is pinned as well.
+setters and methods standing for the names the body used. The integrity lock leaves a function a
+forwarder of the same kind, `function F() { return G(...arguments); }`, without the object. Each
+program below holds functions in one of these shapes, written by hand after what the obfuscation
+writes, and each row says what Node prints for it run as a CommonJS file; the deobfuscation prints
+the same. Where the deobfuscation puts the body back into its wrapper, or moves the flat function
+of an async function into it, the text it writes is pinned as well.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import unittest
 
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
+from test.lib.scripts.js.deobfuscation.test_selfchecks import DOUBLE, DOUBLE_42, NEW_HELPERS, guarded
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints, wontfix
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
@@ -1212,6 +1214,28 @@ FLATTENED: dict[str, Program] = {
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
+    'a flat body calling a function that reads its caller': Program(
+        a_program("""
+            function who() { return who.caller.name; }
+            function F([x], O) { return who() + x; }
+            function W(...A) { var O = {}; return F(A, O); }
+            console.log(W(1));
+            """),
+        prints('F1'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a flat body calling a function that does not read its caller': Program(
+        a_program("""
+            function who() { return 'who'; }
+            function F([x], O) { return who() + x; }
+            function W(...A) { var O = {}; return F(A, O); }
+            console.log(W(1));
+            """),
+        prints('who1'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
 }
 
 #: The rows of `FLATTENED` whose deobfuscation puts a flat body back into its wrapper or moves a
@@ -1727,6 +1751,7 @@ PUT_BACK: dict[str, str] = {
             console.log(b(1));
         """
     ),
+    'a flat body calling a function that does not read its caller': "console.log('who1');",
 }
 
 
@@ -2325,6 +2350,540 @@ class TestAFlattenedFunctionIsPutBackTogether(TestBase):
         )
 
 
+#: Programs holding a forwarder in the shape the integrity lock writes, mapped to what Node prints
+#: for each run as a CommonJS file: the forwarder called, constructed, handed on, exported, its
+#: `length` read, and a target reading `this`, its `arguments`, itself through `arguments.callee`,
+#: a `caller`, or running as a generator or in strict mode.
+FORWARDED: dict[str, Program] = {
+    'a forwarder of the integrity lock': Program(
+        a_program("""
+            function __p_impl(source, n) {
+              return source.repeat(n);
+            }
+            function twice() {
+              return __p_impl(...arguments);
+            }
+            console.log(twice('ab', 2), twice('x', 3));
+            """),
+        prints('abab xxx'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a target reading this, the forwarder called as a method': Program(
+        a_program("""
+            function __p_impl() {
+              return this === undefined ? 'undef' : typeof this;
+            }
+            function who() {
+              return __p_impl(...arguments);
+            }
+            var o = { who };
+            console.log(o.who(), who());
+            """),
+        prints('object object'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the forwarder constructed, the target returning a primitive': Program(
+        a_program("""
+            function __p_impl(a) {
+              return a + 1;
+            }
+            function Make() {
+              return __p_impl(...arguments);
+            }
+            var m = new Make(1);
+            console.log(typeof m, m instanceof Make, Object.keys(m).length, Make(4));
+            """),
+        prints('object true 0 5'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the forwarder constructed, the target returning an object': Program(
+        a_program("""
+            function __p_impl(a) {
+              return { a };
+            }
+            function Make() {
+              return __p_impl(...arguments);
+            }
+            var m = new Make(1);
+            console.log(JSON.stringify(m), m instanceof Make);
+            """),
+        prints('{"a":1} false'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a target reading its arguments beyond its parameters': Program(
+        a_program("""
+            function __p_impl(a) {
+              return [a, arguments.length, arguments[2]].join(',');
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            console.log(f(1, 2, 3), f());
+            """),
+        prints('1,3,3 ,0,'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a target writing a parameter and reading it through arguments': Program(
+        a_program("""
+            function __p_impl(a) {
+              a = 'changed';
+              return arguments[0];
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            console.log(f('original'));
+            """),
+        prints('changed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a target reaching itself through arguments.callee': Program(
+        a_program("""
+            function __p_impl(n) {
+              return n <= 0 ? 'done' : arguments.callee(n - 1);
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            console.log(f(3), f.length);
+            """),
+        prints('done 0'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the length of the forwarder read': Program(
+        a_program("""
+            function __p_impl(a, b) {
+              return a + b;
+            }
+            function add() {
+              return __p_impl(...arguments);
+            }
+            console.log(add.length, add(1, 2));
+            """),
+        prints('0 3'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a strict target behind a sloppy forwarder': Program(
+        a_program("""
+            function __p_impl() {
+              'use strict';
+              return typeof this;
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            console.log(f());
+            """),
+        prints('undefined'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a target called from elsewhere too': Program(
+        a_program("""
+            function __p_impl(a) {
+              return a * 2;
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            console.log(f(2), __p_impl(3));
+            """),
+        prints('4 6'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a target recursing through the forwarder': Program(
+        a_program("""
+            function __p_impl(n) {
+              return n <= 1 ? 1 : n * fact(n - 1);
+            }
+            function fact() {
+              return __p_impl(...arguments);
+            }
+            console.log(fact(5));
+            """),
+        prints('120'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a default of the target reading arguments': Program(
+        a_program("""
+            function __p_impl(a = arguments.length) {
+              return a;
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            console.log(f(), f(undefined, 2), f(7));
+            """),
+        prints('0 2 7'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the forwarder handed to the target': Program(
+        a_program("""
+            function __p_impl(x) {
+              return typeof x;
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            console.log(f(f));
+            """),
+        prints('function'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the iterator of every array replaced by a generator': Program(
+        a_program("""
+            function __p_impl(a, b) {
+              return [a, b].join('|');
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            Array.prototype[Symbol.iterator] = function* () { yield 'x'; };
+            console.log(f('a', 'b'));
+            """),
+        prints('a|b'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the forwarder exported': Program(
+        a_program("""
+            function __p_impl(a, b) {
+              return a + b;
+            }
+            function add() {
+              return __p_impl(...arguments);
+            }
+            module.exports = add;
+            console.log(module.exports(1, 2), module.exports.length);
+            """),
+        prints('3 0'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the forwarder and the target both strict': Program(
+        a_program("""
+            function __p_impl(a) {
+              'use strict';
+              return typeof this + a;
+            }
+            function f() {
+              'use strict';
+              return __p_impl(...arguments);
+            }
+            console.log(f(1), f.call({}, 2));
+            """),
+        prints('undefined1 undefined2'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a default of the target reading an earlier parameter': Program(
+        a_program("""
+            function __p_impl(a, b = a * 2) {
+              return a + b;
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            console.log(f(1), f(1, 1));
+            """),
+        prints('3 2'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a prototype method on the forwarder': Program(
+        a_program("""
+            function __p_impl(v) {
+              return { v };
+            }
+            function Box() {
+              return __p_impl(...arguments);
+            }
+            Box.prototype.get = function () { return 1; };
+            var b = new Box(3);
+            console.log(b.v, typeof b.get, Box.name);
+            """),
+        prints('3 undefined Box'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a generator target': Program(
+        a_program("""
+            function* __p_impl(n) {
+              yield n;
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            console.log([...f(4)].join());
+            """),
+        prints('4'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the length read, the target writing a parameter it reads through arguments': Program(
+        a_program("""
+            function __p_impl(a, b) {
+              a = 9;
+              return [a, arguments[0]].join();
+            }
+            function F() {
+              return __p_impl(...arguments);
+            }
+            console.log(F.length, F(1, 2));
+            """),
+        prints('0 9,9'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the length read, the target reading arguments in an arrow': Program(
+        a_program("""
+            function __p_impl(a) {
+              var g = () => arguments[0];
+              a = 'changed';
+              return g();
+            }
+            function F() {
+              return __p_impl(...arguments);
+            }
+            console.log(F.length, F('given'));
+            """),
+        prints('0 changed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the length read, the target writing a parameter in a nested arrow': Program(
+        a_program("""
+            function __p_impl(a, b) {
+              (() => { a = 'set'; })();
+              return arguments[0];
+            }
+            function F() {
+              return __p_impl(...arguments);
+            }
+            console.log(F.length, F('given', 2));
+            """),
+        prints('0 set'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the length exported, the target writing a parameter on some runs': Program(
+        a_program("""
+            function __p_impl(a, b) {
+              if (b) {
+                a = b;
+              }
+              return arguments[0];
+            }
+            function F() {
+              return __p_impl(...arguments);
+            }
+            exports.n = F.length;
+            console.log(F(process.argv.length, 'second'));
+            """),
+        prints('second'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the length read, the target normalizing an optional argument': Program(
+        a_program("""
+            function __p_impl(label, value) {
+              if (value === undefined) {
+                value = label;
+                label = 'item';
+              }
+              return arguments[0] + '=' + value;
+            }
+            function describe() {
+              return __p_impl(...arguments);
+            }
+            console.log(describe('x'), describe('k', 'v'), describe.length);
+            """),
+        prints('item=x k=v 0'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the length read, the target writing the parameter it returns through arguments': Program(
+        a_program("""
+            function G(a) { a = 5; return arguments[0]; }
+            function F() { return G(...arguments); }
+            console.log(F(1), F.length);
+            """),
+        prints('5 0'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the forwarder handed on as a callback, the target writing the parameter': Program(
+        a_program("""
+            function G(x) { x = x * 2; return arguments[0]; }
+            function F() { return G(...arguments); }
+            console.log([1, 2].map(F).join());
+            """),
+        prints('2,4'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the forwarder exported, the target writing the parameter': Program(
+        a_program("""
+            function G(a) { a = a || 5; return arguments[0]; }
+            function F() { return G(...arguments); }
+            module.exports = F;
+            console.log(F(0));
+            """),
+        prints('5'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a callee of the target reading its caller': Program(
+        a_program("""
+            function who() {
+              return who.caller.name;
+            }
+            function __p_impl(a) {
+              return who() + a;
+            }
+            function F() {
+              return __p_impl(...arguments);
+            }
+            console.log(F(1));
+            """),
+        prints('__p_impl1'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the caller of a callee of the target compared with the forwarder': Program(
+        a_program("""
+            function check() {
+              return check.caller === F;
+            }
+            function __p_impl(a) {
+              return check();
+            }
+            function F() {
+              return __p_impl(...arguments);
+            }
+            console.log(F(1));
+            """),
+        prints('false'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+}
+
+#: Programs of `FORWARDED` whose forwarder takes the body of its target back, mapped to the text the
+#: deobfuscation writes for each: the parameters of the target as they are where every call of the
+#: forwarder is shown, and an unpacked rest parameter, which keeps its `length` of 0, otherwise.
+FORWARDED_PUT_BACK: dict[str, str] = {
+    'a forwarder of the integrity lock': "console.log('abab', 'xxx');",
+    'a target reading its arguments beyond its parameters': inspect.cleandoc(
+        """
+            function f(a) {
+              return [a, arguments.length, arguments[2]].join(',');
+            }
+            console.log('1,3,3', f());
+        """
+    ),
+    'a target writing a parameter and reading it through arguments': inspect.cleandoc(
+        """
+            function f(a) {
+              a = 'changed';
+              return arguments[0];
+            }
+            console.log(f('original'));
+        """
+    ),
+    'the length of the forwarder read': inspect.cleandoc(
+        """
+            function add(...[a, b]) {
+              return a + b;
+            }
+            console.log(add.length, add(1, 2));
+        """
+    ),
+    'the forwarder exported': inspect.cleandoc(
+        """
+            function add(...[a, b]) {
+              return a + b;
+            }
+            module.exports = add;
+            console.log(module.exports(1, 2), module.exports.length);
+        """
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAForwardedFunctionBehavesAsItDid(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in FORWARDED.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    def test_each_program_still_prints_it_after_the_deobfuscation(self):
+        for label, row in FORWARDED.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
+class TestAForwardedFunctionIsPutBackTogether(TestBase):
+
+    def test_each_function_put_back_reads_as_pinned(self):
+        self.assertEqual(
+            {label: deobfuscated(FORWARDED[label].text) for label in FORWARDED_PUT_BACK},
+            FORWARDED_PUT_BACK,
+        )
+
+
+#: The newer hash helpers with a check of a date inside the window of times a run is assumed to
+#: read inserted into the loop of the hash, which keeps the hash call of a guard the deobfuscation
+#: decides: the check runs on the first call.
+LOOP_DATED_NEW_HELPERS = NEW_HELPERS.replace(
+    'i < str.length; i++) { ',
+    'i < str.length; i++) { if (Date.now() > 4000000000000) { console.log("late"); } ',
+)
+
+#: A forwarder over a hash guard whose helpers carry such a check, which Node prints `42 8` for.
+A_FORWARDER_KEEPING_THE_HASH_CALL_OF_ITS_GUARD = guarded(
+    DOUBLE,
+    'double',
+    42,
+    DOUBLE_42,
+    'console.log(guarded(21), guarded(4));\n',
+    LOOP_DATED_NEW_HELPERS,
+)
+
+
+class TestAForwarderKeepingTheHashCallOfItsGuard(TestBase):
+    """
+    The guard of the integrity lock is decided, and its hash call stays where a helper carries a
+    check that has to run on the first call: `guarded.memo || (guarded.memo = hashOf(double, 42))`
+    then stands before the `return double(...arguments)` of the forwarder. Taking the body of
+    `double` back needs a hash call that names neither function, a read of `guarded.memo` that does
+    not hand the forwarder on, and a forwarder with a statement before its `return`.
+    """
+
+    @unittest.expectedFailure
+    def test_the_forwarder_takes_the_body_back(self):
+        self.assertNotIn('double(...arguments)', deobfuscated(A_FORWARDER_KEEPING_THE_HASH_CALL_OF_ITS_GUARD))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        row = Program(A_FORWARDER_KEEPING_THE_HASH_CALL_OF_ITS_GUARD, prints('42 8'), Reading.COMMONJS, HostEnvironment.node)
+        self.assertEqual(row.read(), row.required())
+
+
 #: Programs whose deobfuscation behaves differently only through a shape made up for it, mapped to
 #: what Node prints for each run as a CommonJS file: a program replacing the iterator of every
 #: array, which the parameter list `(a, b)` does not run where the unpacking did, and a flat
@@ -2356,6 +2915,41 @@ A_SHAPE_MADE_UP_FOR_THE_DEFECT = {
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
+    'a forwarder whose call spreads its arguments through a replaced next of the array iterator': Program(
+        a_program("""
+            function __p_impl(a, b) {
+              return [a, b].join('|');
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            var proto = Object.getPrototypeOf([][Symbol.iterator]());
+            var next = proto.next;
+            proto.next = function () {
+              var step = next.call(this);
+              if (!step.done && typeof step.value === 'string') step.value = step.value.toUpperCase();
+              return step;
+            };
+            console.log(f('a', 'b'));
+            """),
+        prints('A|B'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a forwarder whose text is read': Program(
+        a_program("""
+            function __p_impl(a) {
+              return a;
+            }
+            function f() {
+              return __p_impl(...arguments);
+            }
+            console.log(f(1), f.toString().includes('arguments'));
+            """),
+        prints('1 true'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
 }
 
 
@@ -2383,4 +2977,22 @@ class TestAShapeMadeUpForTheDefect(TestBase):
         row = A_SHAPE_MADE_UP_FOR_THE_DEFECT[
             'a flat function reading the class name directly, the class name reassigned'
         ]
+        self.assertEqual(row.read(), row.required())
+
+    @wontfix(
+        'no program replaces the next method of the array iterator; the deobfuscation trusts it as '
+        'the recovery of flattened control flow does'
+    )
+    def test_a_program_replacing_the_next_of_the_array_iterator_still_prints_it(self):
+        row = A_SHAPE_MADE_UP_FOR_THE_DEFECT[
+            'a forwarder whose call spreads its arguments through a replaced next of the array iterator'
+        ]
+        self.assertEqual(row.read(), row.required())
+
+    @wontfix(
+        'the text of a function is not kept: the deobfuscation rewrites the text of every function '
+        'it touches'
+    )
+    def test_a_program_reading_the_text_of_the_forwarder_still_prints_it(self):
+        row = A_SHAPE_MADE_UP_FOR_THE_DEFECT['a forwarder whose text is read']
         self.assertEqual(row.read(), row.required())

@@ -21,11 +21,11 @@ from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     SemanticModel,
+    aliases_arguments,
     is_direct_eval_call,
+    observes_arguments_aliasing,
     pattern_binds_unread_names,
     pattern_identifiers,
-    references_own_arguments,
-    walk_receiver_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
@@ -83,19 +83,6 @@ def _counted_length(elements: Sequence[Expression | None]) -> int:
     return count
 
 
-def _arguments_may_alias(elements: Sequence[Expression | None], function: JsFunctionNode) -> bool:
-    """
-    Whether plain names in place of *elements* would give *function* an `arguments` object whose
-    elements alias them: in sloppy mode, where its body reads its own `arguments` or holds a direct
-    `eval`, which can.
-    """
-    if not elements or strict_mode_at(function):
-        return False
-    if references_own_arguments(function):
-        return True
-    return any(is_direct_eval_call(node) for node in walk_receiver_scope(function))
-
-
 def parameter_list(
     elements: Sequence[Expression | None],
     function: JsFunctionNode,
@@ -127,9 +114,9 @@ def parameter_list(
     counted = _counted_length(elements)
     plain = all(isinstance(element, JsIdentifier) for element in elements)
     keeps_rest = (
-        plain
-        and (length is None or length == counted)
-        and _arguments_may_alias(elements, function)
+        (length is None or length == counted)
+        and aliases_arguments(elements, strict=strict_mode_at(function))
+        and observes_arguments_aliasing(function)
     )
     if length is None:
         length = 0 if keeps_rest else counted

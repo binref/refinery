@@ -43,6 +43,7 @@ settles when it did, and the flat function moves into the wrapper without the ob
 """
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Iterator
 
@@ -59,6 +60,8 @@ from refinery.lib.scripts.js.analysis.model import (
     Binding,
     Scope,
     SemanticModel,
+    arguments_aliasing_changes,
+    arguments_name_their_function,
     crosses_dynamic_scope,
     is_direct_eval_call,
     references_new_target,
@@ -87,6 +90,7 @@ from refinery.lib.scripts.js.model import (
     JsRestElement,
     JsReturnStatement,
     JsScript,
+    JsSpreadElement,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
@@ -124,14 +128,70 @@ class _Flattened:
     removed: list[Binding]
 
 
+class _Restoration(ABC):
+    """
+    An edit that puts the body of a function moved out of a wrapper back into the wrapper. The
+    function it was moved into, the holder, stays in the body of the program until every edit of
+    the pass is made, which then removes all of them at once.
+    """
+
+    @property
+    @abstractmethod
+    def wrapper(self) -> JsFunctionDeclaration | JsFunctionExpression:
+        ...
+
+    @property
+    @abstractmethod
+    def holder(self) -> JsFunctionDeclaration:
+        ...
+
+    @abstractmethod
+    def apply(self) -> None:
+        ...
+
+
 @dataclass
-class _Plan:
+class _Forwarded(_Restoration):
+    """
+    A function the obfuscation left a forwarder, `function F() { return G(...arguments); }`, with
+    the parameters it takes over from `G`.
+    """
+    forwarder: JsFunctionDeclaration
+    target: JsFunctionDeclaration
+    parameters: list[Expression]
+
+    @property
+    def wrapper(self) -> JsFunctionDeclaration:
+        return self.forwarder
+
+    @property
+    def holder(self) -> JsFunctionDeclaration:
+        return self.target
+
+    def apply(self) -> None:
+        body = self.forwarder.body
+        moved = self.target.body
+        assert body is not None and moved is not None
+        set_child_list(self.forwarder, 'params', self.parameters)
+        set_child_list(body, 'body', list(moved.body))
+
+
+@dataclass
+class _Plan(_Restoration):
     """
     The edit decided for one wrapper: each access through the object with the expression that
     takes its place, and how the flat body moves.
     """
     reading: _Flattened
     substitutions: list[tuple[JsMemberExpression, Expression]]
+
+    @property
+    def wrapper(self) -> JsFunctionDeclaration | JsFunctionExpression:
+        return self.reading.wrapper
+
+    @property
+    def holder(self) -> JsFunctionDeclaration:
+        return self.reading.flat
 
     def apply(self) -> None:
         """
@@ -142,8 +202,9 @@ class _Plan:
             _replace_in_parent(member, stand_in)
         self._move()
 
+    @abstractmethod
     def _move(self) -> None:
-        raise NotImplementedError
+        ...
 
 
 @dataclass
@@ -188,17 +249,17 @@ def _ancestry(node: Node | None) -> Iterator[Node]:
         node = node.parent
 
 
-def _apart(plans: list[_Plan]) -> list[_Plan]:
+def _apart(plans: list[_Restoration]) -> list[_Restoration]:
     """
     The plans to make in one pass: each in turn, unless its wrapper or its flat function holds one
     of a plan taken before it or lies inside one. A plan was decided on the tree as it stands, and
     an edit inside what another plan moves or reads waits for the next pass.
     """
-    taken: list[_Plan] = []
+    taken: list[_Restoration] = []
     ends: set[int] = set()
     around: set[int] = set()
     for plan in plans:
-        own = (plan.reading.wrapper, plan.reading.flat)
+        own = (plan.wrapper, plan.holder)
         if any(id(end) in around for end in own):
             continue
         if any(id(above) in ends for end in own for above in _ancestry(end)):
@@ -208,6 +269,97 @@ def _apart(plans: list[_Plan]) -> list[_Plan]:
             around.update(id(above) for above in _ancestry(end))
         taken.append(plan)
     return taken
+
+
+def _moving_function(
+    binding: Binding | None,
+    callee: JsIdentifier,
+    wrapper: JsFunctionDeclaration | JsFunctionExpression,
+    root: JsScript,
+    model: SemanticModel,
+    options: object,
+) -> JsFunctionDeclaration | None:
+    """
+    The function *binding* names, where its body may move into *wrapper* and *callee* is the only
+    way to it: a function declared once, at the top of the program, under that name, no generator,
+    and async where the wrapper is; nothing writes the name, exports it or reaches it by
+    reflection, and no host reaches it; it holds no `with` and no direct `eval`, and runs in the
+    mode of the wrapper.
+    """
+    if binding is None or len(binding.declarations) != 1:
+        return None
+    name = binding.declarations[0]
+    function = name.parent
+    if (
+        not isinstance(function, JsFunctionDeclaration)
+        or function.id is not name
+        or function.parent is not root
+        or function.generator
+        or function.is_async != wrapper.is_async
+        or function.body is None
+        or wrapper.body is None
+    ):
+        return None
+    if (
+        model.references(binding) != [callee]
+        or binding.writes
+        or binding.dynamic_refs
+        or binding.exported
+        or model.reflection_can_reach(binding)
+        or a_host_reaches_the_binding(model, binding, options)
+    ):
+        return None
+    if strict_mode_at(function.body) != strict_mode_at(wrapper.body):
+        return None
+    for node in function.walk():
+        if is_direct_eval_call(node) or isinstance(node, JsWithStatement):
+            return None
+    return function
+
+
+def _wrapper_scope_holds(
+    wrapper: JsFunctionDeclaration | JsFunctionExpression,
+    wrapper_scope: Scope,
+    model: SemanticModel,
+    merged: bool,
+) -> bool:
+    """
+    Whether a body moved into *wrapper* finds its names where the text says: no `with` and no direct
+    `eval` reach the wrapper's scope. A body *merged* with the wrapper also runs without a frame of
+    its own, which only `caller` can tell, so the program spells none (`spells_caller`).
+    """
+    if crosses_dynamic_scope(wrapper_scope):
+        return False
+    if model.direct_eval_declares_below(wrapper, model.root_scope):
+        return False
+    return not merged or not model.spells_caller()
+
+
+def _names_land(
+    moving: JsFunctionDeclaration,
+    wrapper_scope: Scope,
+    model: SemanticModel,
+    removed: list[Binding],
+    own: Binding | None = None,
+    skipped: JsIdentifier | None = None,
+    barred: str | None = None,
+) -> bool:
+    """
+    Whether every name the function *moving* reads and does not declare, but *own* and the read
+    *skipped*, finds from inside the wrapper, whose bindings *removed* it no longer sees, the
+    binding it finds where it stands; none spells *barred*.
+    """
+    for node in moving.walk():
+        if not isinstance(node, JsIdentifier) or node is skipped or not model.is_reference(node):
+            continue
+        found = model.resolve(node)
+        if found is not None and (found is own or found.declared_within(moving)):
+            continue
+        if node.name == barred:
+            return False
+        if model.lookup(node.name, wrapper_scope, exclude=removed) is not found:
+            return False
+    return True
 
 
 def _read(
@@ -266,28 +418,8 @@ def _read(
         or object_binding.declarations != [object_name]
     ):
         return None
-    flat_binding = model.resolve(callee)
-    if flat_binding is None or len(flat_binding.declarations) != 1:
-        return None
-    flat_name = flat_binding.declarations[0]
-    flat = flat_name.parent
-    if (
-        not isinstance(flat, JsFunctionDeclaration)
-        or flat.id is not flat_name
-        or flat.parent is not root
-        or flat.generator
-        or flat.is_async != wrapper.is_async
-        or flat.body is None
-    ):
-        return None
-    if (
-        model.references(flat_binding) != [callee]
-        or flat_binding.writes
-        or flat_binding.dynamic_refs
-        or flat_binding.exported
-        or model.reflection_can_reach(flat_binding)
-        or a_host_reaches_the_binding(model, flat_binding, options)
-    ):
+    flat = _moving_function(model.resolve(callee), callee, wrapper, root, model, options)
+    if flat is None or flat.id is None or flat.body is None:
         return None
     flat_statements = list(flat.body.body)
     pair = None
@@ -325,7 +457,7 @@ def _read(
     return _Flattened(
         wrapper=wrapper,
         flat=flat,
-        flat_name=flat_name.name,
+        flat_name=flat.id.name,
         call=call,
         declaration=declaration,
         literal=literal,
@@ -420,13 +552,8 @@ def _plan(
     if reading is None:
         return None
     flat = reading.flat
-    flat_body = flat.body
-    wrapper_body = wrapper.body
-    assert flat_body is not None and wrapper_body is not None
     proxy = NameProxy.read(reading.literal, model)
     if proxy is None:
-        return None
-    if strict_mode_at(flat_body) != strict_mode_at(wrapper_body):
         return None
     if not reading.nested and (references_receiver_this(flat) or references_new_target(flat)):
         return None
@@ -438,30 +565,21 @@ def _plan(
             and model.is_reference(node)
         ):
             return None
-    for node in flat.walk():
-        if is_direct_eval_call(node) or isinstance(node, JsWithStatement):
-            return None
-    if crosses_dynamic_scope(reading.wrapper_scope):
-        return None
-    if model.direct_eval_declares_below(wrapper, model.root_scope):
+    if not _wrapper_scope_holds(wrapper, reading.wrapper_scope, model, merged=not reading.nested):
         return None
     parameter = model.binding_of(reading.parameter)
     if parameter is None or parameter.declarations != [reading.parameter]:
         return None
-    for node in flat.walk():
-        if (
-            not isinstance(node, JsIdentifier)
-            or node is reading.source
-            or not model.is_reference(node)
-        ):
-            continue
-        found = model.resolve(node)
-        if found is parameter or found is not None and found.declared_within(flat):
-            continue
-        if reading.nested and node.name == reading.flat_name:
-            return None
-        if model.lookup(node.name, reading.wrapper_scope, exclude=reading.removed) is not found:
-            return None
+    if not _names_land(
+        flat,
+        reading.wrapper_scope,
+        model,
+        reading.removed,
+        own=parameter,
+        skipped=reading.source,
+        barred=reading.flat_name if reading.nested else None,
+    ):
+        return None
     substitutions: list[tuple[JsMemberExpression, Expression]] = []
     for reference in model.references(parameter):
         member = reference.parent
@@ -495,6 +613,82 @@ def _plan(
     return _Merge(reading, substitutions, parameters)
 
 
+def _forwarded(
+    wrapper: JsFunctionDeclaration | JsFunctionExpression,
+    root: JsScript,
+    cache: ModelCache,
+    options: object,
+) -> _Forwarded | None:
+    """
+    The edit that puts the parameters and the body of `G` back into the forwarder *wrapper*,
+    `function F() { return G(...arguments); }`, or `None` where `F` would not compute what it
+    computes now. `F` is a plain function declared at the top of the program, and `G` may move into
+    it (`_moving_function`, `_wrapper_scope_holds`, `_names_land`). The call hands `G` the arguments
+    of `F` and no receiver, so `G` may read its own `arguments` but no `this` and no `new.target`,
+    and may not reach itself through `arguments`. The spread runs the iteration of an array, which
+    the program must leave as the language has it. `F` takes the parameters of `G` as they are
+    where every call of `F` is shown, and otherwise keeps its `length` of 0
+    (`refinery.lib.scripts.js.deobfuscation.parameters.parameter_list`), where its `arguments`
+    object still aliases the parameters exactly where that of `G` did
+    (`refinery.lib.scripts.js.analysis.model.arguments_aliasing_changes`).
+    """
+    model = cache.model
+    body = wrapper.body
+    if (
+        not isinstance(wrapper, JsFunctionDeclaration)
+        or wrapper.parent is not root
+        or wrapper.generator
+        or wrapper.is_async
+        or wrapper.params
+        or body is None
+    ):
+        return None
+    statements = body.body[len(directive_prologue(body)):]
+    if (
+        len(statements) != 1
+        or not isinstance(statement := statements[0], JsReturnStatement)
+        or not isinstance(call := statement.argument, JsCallExpression)
+        or call.optional
+        or not isinstance(callee := call.callee, JsIdentifier)
+        or len(call.arguments) != 1
+        or not isinstance(spread := call.arguments[0], JsSpreadElement)
+        or not isinstance(source := spread.argument, JsIdentifier)
+        or source.name != 'arguments'
+    ):
+        return None
+    wrapper_scope = model.function_scope(wrapper)
+    if wrapper_scope is None:
+        return None
+    own_arguments = wrapper_scope.bindings.get('arguments')
+    if own_arguments is None or model.resolve(source) is not own_arguments:
+        return None
+    target = _moving_function(model.resolve(callee), callee, wrapper, root, model, options)
+    if target is None or target.body is None:
+        return None
+    if (
+        references_receiver_this(target)
+        or references_new_target(target)
+        or arguments_name_their_function(target)
+    ):
+        return None
+    if not _wrapper_scope_holds(wrapper, wrapper_scope, model, merged=True):
+        return None
+    if not _names_land(target, wrapper_scope, model, [own_arguments]):
+        return None
+    if not cache.trust_at(call).chain(list):
+        return None
+    if function_length_unobserved(model, wrapper, options):
+        parameters = list(target.params)
+    elif (built := parameter_list(target.params, target, 0)) is not None:
+        parameters = built.build()
+    else:
+        return None
+    strict = strict_mode_at(target.body)
+    if arguments_aliasing_changes(target, target.params, parameters, strict=strict):
+        return None
+    return _Forwarded(wrapper, target, parameters)
+
+
 class JsFunctionUnflattening(ScriptLevelTransformer):
     """
     Put the body of a flattened function back into its wrapper.
@@ -502,19 +696,22 @@ class JsFunctionUnflattening(ScriptLevelTransformer):
 
     def _process_script(self, node: JsScript) -> None:
         cache = model_cache(self, node)
-        plans: list[_Plan] = []
+        plans: list[_Restoration] = []
         with cache.pinned():
             for function in node.walk():
                 if not isinstance(function, (JsFunctionDeclaration, JsFunctionExpression)):
                     continue
-                if (plan := _plan(function, node, cache, self.options)) is not None:
+                plan = _plan(function, node, cache, self.options)
+                if plan is None:
+                    plan = _forwarded(function, node, cache, self.options)
+                if plan is not None:
                     plans.append(plan)
         taken = _apart(plans)
         if not taken:
             return
         for plan in taken:
             plan.apply()
-        moved = {id(plan.reading.flat) for plan in taken}
+        moved = {id(plan.holder) for plan in taken}
         kept = [statement for statement in node.body if id(statement) not in moved]
         set_child_list(node, 'body', kept)
         self.mark_changed()

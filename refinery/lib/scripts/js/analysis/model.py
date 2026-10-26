@@ -31,7 +31,7 @@ from __future__ import annotations
 import enum
 
 from dataclasses import dataclass, field
-from typing import Callable, Collection, Iterator, NamedTuple
+from typing import Callable, Collection, Iterator, NamedTuple, Sequence
 
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.js.analysis.environment import (
@@ -119,7 +119,6 @@ from refinery.lib.scripts.js.model import (
 from refinery.lib.scripts.js.numbers import canonical_array_index, exact_integer
 from refinery.lib.scripts.js.strict import (
     has_parameter_expressions,
-    has_simple_parameters,
     strict_mode_at,
 )
 
@@ -1857,11 +1856,44 @@ def has_mapped_arguments(fn: Node, *, strict: bool) -> bool:
     The parameter list must also be non-empty: `has_simple_parameters` answers §15.1.3, which an empty
     list satisfies, but with no parameters there is nothing for an element to alias.
     """
-    if strict or not isinstance(fn, (JsFunctionExpression, JsFunctionDeclaration)):
+    if not isinstance(fn, (JsFunctionExpression, JsFunctionDeclaration)):
         return False
-    if not fn.params or not has_simple_parameters(fn):
+    return aliases_arguments(fn.params, strict=strict) and references_own_arguments(fn)
+
+
+def aliases_arguments(params: Sequence[Node | None], *, strict: bool) -> bool:
+    """
+    Whether the parameter list *params* gives a regular function an `arguments` object whose
+    elements alias the parameters: in sloppy code, a list of plain names with one name at least.
+    """
+    return not strict and bool(params) and all(isinstance(param, JsIdentifier) for param in params)
+
+
+def observes_arguments_aliasing(fn: Node) -> bool:
+    """
+    Whether *fn* can tell an `arguments` object whose elements alias its parameters from one whose
+    elements do not: it reads its own `arguments`, or holds a direct `eval`, which can.
+    """
+    if references_own_arguments(fn):
+        return True
+    return any(is_direct_eval_call(node) for node in walk_receiver_scope(fn))
+
+
+def arguments_aliasing_changes(
+    fn: Node,
+    before: Sequence[Node | None],
+    after: Sequence[Node | None],
+    *,
+    strict: bool,
+) -> bool:
+    """
+    Whether *fn* can tell the parameter list *after* from *before* by its `arguments` object: one of
+    them makes its elements alias the parameters and the other does not (`aliases_arguments`), and
+    *fn* can tell (`observes_arguments_aliasing`).
+    """
+    if aliases_arguments(before, strict=strict) == aliases_arguments(after, strict=strict):
         return False
-    return references_own_arguments(fn)
+    return observes_arguments_aliasing(fn)
 
 
 def is_global_object_base(node: Node | None) -> bool:
