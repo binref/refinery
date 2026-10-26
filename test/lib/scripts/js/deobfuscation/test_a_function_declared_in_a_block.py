@@ -1187,6 +1187,41 @@ A_TOP_LEVEL_BLOCK_NAME_READ_THROUGH_THE_GLOBAL_OBJECT = {
 }
 
 
+#: Programs declaring a function in a block that nothing calls, while a statement of the function
+#: around the block writes or reads the variable the copy of Annex B gives the name, mapped to what
+#: Node prints for them. The variable exists only while the declaration does: without it the write
+#: lands on the outer name and the read finds the outer value.
+A_VARIABLE_ONLY_A_BLOCK_FUNCTION_DECLARES = {
+    a_program("""
+        var g = 'outer';
+        function h(x) {
+          if (x) { function g() {} x++; }
+          g = 'inner';
+        }
+        h(0);
+        console.log(g);
+        """): 'outer\n',
+    a_program("""
+        var g = 'outer';
+        function h(x) {
+          if (x) { function g() {} }
+          g = 'inner';
+        }
+        h(0);
+        console.log(g);
+        """): 'outer\n',
+    a_program("""
+        var g = 'outer';
+        function h(x) {
+          var seen = typeof g;
+          if (x) { function g() {} }
+          return seen;
+        }
+        console.log(h(0), g);
+        """): 'undefined outer\n',
+}
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAFunctionDeclaredInABlock(TestBase):
 
@@ -1227,6 +1262,13 @@ class TestNodePrintsTheSameAboutAFunctionDeclaredInABlock(TestBase):
 
     def test_the_name_is_bound_where_the_language_binds_it(self):
         rows = A_BLOCK_FUNCTION_IN_A_SHAPE_OF_ITS_OWN
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_a_variable_only_a_block_function_declares_is_kept_with_the_function(self):
+        rows = A_VARIABLE_ONLY_A_BLOCK_FUNCTION_DECLARES
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),

@@ -1508,24 +1508,12 @@ PUT_BACK: dict[str, str] = {
     ),
     'a sloppy block function in the flat body named like a member name, read after the block': inspect.cleandoc(
         """
-            function W() {
-              {
-                function V() {}
-              }
-              return 'string';
-            }
-            console.log(W());
+            console.log('string');
         """
     ),
     'a sloppy block function in the flat body named like a member name, read before the block': inspect.cleandoc(
         """
-            function W() {
-              {
-                function V() {}
-              }
-              return 'string';
-            }
-            console.log(W());
+            console.log('string');
         """
     ),
     'a wrapper inside a flat function calls its own flat function directly; both merge in one pass': inspect.cleandoc(

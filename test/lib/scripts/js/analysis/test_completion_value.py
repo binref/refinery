@@ -244,6 +244,19 @@ class TestDeobfuscationPreservesWhatAProgramEvaluatesTo(TestBase):
                         F'{chr(10)}{result}',
                     )
 
+    def test_a_block_function_a_script_takes_for_its_value_is_kept(self):
+        """
+        A script takes a sloppy block-level function declaration for its value where an `eval` of
+        the same text does not (`TestWhichStatementSuppliesTheValueOfAProgram`), so a declaration
+        nothing calls stays where it may give the script its value.
+        """
+        programs = ["'a'; { function g() {} }", "'a'; if (true) { function g() {} }"]
+        deobfuscated = [deobfuscate_source(program) for program in programs]
+        self.assertEqual(
+            completion_values(deobfuscated, JsEvaluation.SCRIPT),
+            ['function', 'function'],
+        )
+
 
 #: Single-use wrappers and a `Function` construction whose call ran off its end returning `undefined`,
 #: leaving the body's own last value in the end position the call did not hold. Node evaluates each

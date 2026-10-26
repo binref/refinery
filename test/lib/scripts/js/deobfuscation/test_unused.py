@@ -2857,6 +2857,205 @@ class TestAStandAloneEmptyStatementIsRemoved(TestJsDeobfuscator):
         )
 
 
+class TestAFunctionNothingReachesGoesFromAListOfNothingButFunctions(TestJsDeobfuscator):
+    """
+    A statement list holding nothing but function declarations is skipped only where it is the
+    file's own: such a file is a library that code outside it calls. The body of a function or a
+    block of nothing but functions is reached only from the file, and the functions nothing there
+    reaches go as in any other list.
+    """
+
+    @staticmethod
+    def _remove_unused(source: str) -> str:
+        ast = JsParser(source).parse()
+        for _ in range(10):
+            transform = JsUnusedCodeRemoval()
+            transform.visit(ast)
+            if not transform.changed:
+                break
+        return JsSynthesizer().convert(ast)
+
+    def test_the_functions_of_a_function_body_of_nothing_but_functions_go(self):
+        source = inspect.cleandoc(
+            """
+            function outer() { function a() { return 1; } function b() { return a(); } }
+            outer();
+            """
+        )
+        self.assertEqual(self._remove_unused(source), 'function outer() {}\nouter();')
+
+    def test_a_function_in_the_block_of_a_loop_goes(self):
+        source = inspect.cleandoc(
+            """
+            function f(c) { if (c) { while (true) { function dead() { return 1; } } } return c; }
+            f(0);
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            function f(c) {
+              if (c) {
+                while (true) {}
+              }
+              return c;
+            }
+            f(0);
+            """
+        )
+        self.assertEqual(self._remove_unused(source), expected)
+
+    def test_a_function_in_a_block_of_a_function_goes(self):
+        source = 'function f() { { function g() {} } }\nf();'
+        self.assertEqual(self._remove_unused(source), 'function f() {}\nf();')
+
+    def test_a_file_of_nothing_but_functions_keeps_them(self):
+        source = 'function a() {\n  return 1;\n}\nfunction b() {\n  return a();\n}'
+        self.assertEqual(self._remove_unused(source), source)
+
+    def test_a_block_function_a_script_may_take_for_its_value_is_kept(self):
+        source = '1;\n{\n  function g() {}\n}'
+        self.assertEqual(self._remove_unused(source), source)
+
+    def test_a_block_function_followed_by_the_value_of_the_script_goes(self):
+        self.assertEqual(self._remove_unused('{ function g() {} }\n1;'), '1;')
+
+    def test_a_strict_block_function_goes_where_the_script_ends_with_it(self):
+        source = "'use strict';\n1;\n{ function g() {} }"
+        self.assertEqual(self._remove_unused(source), "'use strict';\n1;")
+
+
+#: Programs holding a list of nothing but function declarations, in a function body, a block, a
+#: loop or a case clause, with each way a function there is reached from outside the list: the copy
+#: Annex B makes, a direct `eval`, a `with` body, an export, a call from another clause, a call
+#: through another function of the block, a read of the text of the function around them, and the
+#: value an `eval` takes; mapped to what Node prints for them.
+A_LIST_OF_NOTHING_BUT_FUNCTIONS = {
+    inspect.cleandoc("""
+        if (Math.random() < 2) {
+          function f() { return 1; }
+        }
+        console.log(f());
+    """): '1\n',
+    inspect.cleandoc("""
+        function g() {
+          {
+            function f() { return 'via eval'; }
+          }
+          return eval('f()');
+        }
+        console.log(g());
+    """): 'via eval\n',
+    inspect.cleandoc("""
+        function outer() {
+          function a() { return 1; }
+          function b() { return a(); }
+        }
+        console.log(outer(), typeof outer);
+    """): 'undefined function\n',
+    inspect.cleandoc("""
+        function f(x) {
+          if (Math.random() > 2) {
+            while (true) {
+              function dead() { return window.location; }
+            }
+          }
+          return x + 1;
+        }
+        console.log(f(1));
+    """): '2\n',
+    inspect.cleandoc("""
+        'use strict';
+        {
+          function f() { return 1; }
+        }
+        console.log(typeof f);
+    """): 'undefined\n',
+    inspect.cleandoc("""
+        function g(k) {
+          switch (k) {
+            case 0:
+              function f() { return 'f'; }
+            case 1:
+              return typeof f === 'function' ? f() : 'none';
+          }
+        }
+        console.log(g(1), g(0));
+    """): 'f f\n',
+    inspect.cleandoc("""
+        var o = {};
+        function g() {
+          with (o) {
+            {
+              function f() { return 'with'; }
+            }
+            return f();
+          }
+        }
+        console.log(g());
+    """): 'with\n',
+    inspect.cleandoc("""
+        {
+          function f() { return 'exported'; }
+        }
+        module.exports = f;
+        console.log(module.exports());
+    """): 'exported\n',
+    inspect.cleandoc("""
+        function outer() {
+          function a() { return 'a'; }
+          function b() { return a(); }
+        }
+        Object.defineProperty(globalThis, 'peek', { get() { return outer.toString().length > 0; } });
+        console.log(peek);
+    """): 'true\n',
+    inspect.cleandoc("""
+        function g() {
+          {
+            function a() { return b(); }
+            function b() { return 'b'; }
+          }
+          return a();
+        }
+        console.log(g());
+    """): 'b\n',
+    inspect.cleandoc("""
+        function g(x) {
+          {
+            function* gen() { yield 1; }
+          }
+          return x * 2;
+        }
+        console.log(g(2));
+    """): '4\n',
+    inspect.cleandoc("""
+        class C {
+          static {
+            {
+              function f() { return 1; }
+            }
+            C.v = typeof f;
+          }
+        }
+        console.log(C.v);
+    """): 'undefined\n',
+    inspect.cleandoc("""
+        var r = eval("'a'; if (true) { function g() {} }");
+        console.log(typeof r);
+    """): 'undefined\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAListOfNothingButFunctions(TestJsDeobfuscator):
+
+    def test_a_function_reached_from_outside_the_list_is_kept(self):
+        rows = A_LIST_OF_NOTHING_BUT_FUNCTIONS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
 class TestAFunctionAnotherFunctionReadsIsKept(TestJsDeobfuscator):
     """
     A function whose only top-level references write its properties is removed with those writes,

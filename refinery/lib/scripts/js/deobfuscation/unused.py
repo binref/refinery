@@ -56,6 +56,7 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     annex_b_suppressor_names,
     enclosing_function,
+    is_a_var_home,
     is_simple_assignment_target,
     is_the_this_of_a_script,
     may_be_global_object_base,
@@ -114,7 +115,11 @@ from refinery.lib.scripts.js.model import (
     value_is_discarded,
 )
 from refinery.lib.scripts.js.options import preserves_script_return
-from refinery.lib.scripts.js.strict import is_bare_string_statement, is_use_strict_directive
+from refinery.lib.scripts.js.strict import (
+    is_bare_string_statement,
+    is_use_strict_directive,
+    strict_mode_at,
+)
 
 
 def _global_alias_read_names(model: SemanticModel, root: Node) -> frozenset[str]:
@@ -963,7 +968,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     def _process_body(self, parent: Node, body: list[Statement]):
         if self.preserve_globals and self._has_reflection and self._binds_names_global_code_sees(parent):
             return
-        removed_functions = self._remove_dead_functions(body)
+        removed_functions = self._remove_dead_functions(parent, body)
         dead_variables, preserved = self._remove_dead_variables(parent, body, removed_functions)
         dead_variables |= self._remove_dead_destructuring(
             parent, body, removed_functions | dead_variables)
@@ -972,14 +977,15 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         self._remove_empty_declarators(parent, body, set())
         self._remove_dead_expressions(body, removed_functions | dead_variables, preserved)
 
-    def _remove_dead_functions(self, body: list[Statement]) -> set[str]:
+    def _remove_dead_functions(self, parent: Node, body: list[Statement]) -> set[str]:
         functions: dict[str, JsFunctionDeclaration] = {}
         for stmt in body:
             if isinstance(stmt, JsFunctionDeclaration) and stmt.id is not None:
                 functions[stmt.id.name] = stmt
         if not functions:
             return set()
-        roots = self._host_entrypoints(functions) | self._referenced_outside(body, functions)
+        roots = self._host_entrypoints(parent, body, functions)
+        roots |= self._referenced_outside(body, functions)
         reachable, write_only_stmts = _reachable_functions(body, functions, roots)
         kept_by_reflection = {
             name for name, func in functions.items()
@@ -989,9 +995,13 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         unreachable = (set(functions.keys()) - reachable) - kept_by_reflection
         if not unreachable:
             return set()
-        non_func_stmts = [s for s in body if not isinstance(s, JsFunctionDeclaration)]
-        if not non_func_stmts:
-            return set()
+        if not is_a_var_home(parent):
+            unreachable = {
+                name for name in unreachable
+                if not self._may_be_the_value_of_the_script(functions[name])
+            }
+            if not unreachable:
+                return set()
         lists = ListRemoval()
         for name in unreachable:
             lists.remove(functions[name])
@@ -1023,6 +1033,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             if declared is not None and declared.copy is not None:
                 names.add(name)
                 continue
+            if self.model.annex_b_copy_observed(func):
+                names.add(name)
+                continue
             for reference in self.model.references(binding):
                 cursor: Node | None = reference
                 while cursor is not None and id(cursor) not in members:
@@ -1032,16 +1045,40 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     break
         return frozenset(names)
 
+    def _may_be_the_value_of_the_script(self, declaration: JsFunctionDeclaration) -> bool:
+        """
+        Whether a script may take the function *declaration*, which stands in a block, for its
+        value: Node takes a sloppy block-level declaration for the value of a script whose
+        completion its position reaches
+        (`refinery.lib.scripts.js.deobfuscation.helpers.reaches_script_completion`), where an
+        `eval` of the same text does not.
+        """
+        if strict_mode_at(declaration):
+            return False
+        return reaches_script_completion(declaration, self.model.root)
+
     def _host_entrypoints(
-        self, functions: dict[str, JsFunctionDeclaration],
+        self,
+        parent: Node,
+        body: list[Statement],
+        functions: dict[str, JsFunctionDeclaration],
     ) -> frozenset[str]:
         """
-        Which of *functions* the caller declared a host invokes by name. Naming one seeds it as a
-        reachability root, so everything it calls is reachable through it and survives too — which is the
-        point, since an entrypoint is usually the root of the whole program. The binding is taken from each
-        declaration's own identifier rather than looked up by name, so a same-named function in a nested
-        body is judged on its own merits.
+        Which of *functions*, declared in the statement list *body* of *parent*, a host invokes.
+        Where *body* is a file that holds nothing but function declarations, the file is a library
+        that code outside it calls, and every one of them is an entrypoint; a list of nothing but
+        functions anywhere else is the body of a function or a block, which only the file reaches.
+        Otherwise they are those the caller declared a host invokes by name. Naming one seeds it as
+        a reachability root, so everything it calls is reachable through it and survives too, which
+        is the point, since an entrypoint is usually the root of the whole program. The binding is
+        taken from each declaration's own identifier rather than looked up by name, so a same-named
+        function in a nested body is judged on its own merits.
         """
+        if (
+            isinstance(parent, JsScript)
+            and all(isinstance(stmt, JsFunctionDeclaration) for stmt in body)
+        ):
+            return frozenset(functions)
         names: set[str] = set()
         for name, func in functions.items():
             if not isinstance(func.id, JsIdentifier):
