@@ -84,6 +84,7 @@ from refinery.lib.scripts.js.model import (
     JsBooleanLiteral,
     JsCallExpression,
     JsConditionalExpression,
+    JsDebuggerStatement,
     JsDoWhileStatement,
     JsEmptyStatement,
     JsExpressionStatement,
@@ -745,12 +746,14 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         in a list is the same non-event — it declares nothing (a declaration inside it would be a
         member keeping it alive) and runs nothing — so it goes too, unless it is labeled, the one
         form a jump can target from within, or it carries comments, which are content rather than
-        residue, or the file ended inside it, which the output has to keep saying.
+        residue, or the file ended inside it, which the output has to keep saying. A `debugger`
+        statement goes the same way: without a debugger it has no observable effect (§14.16), and
+        its completion is empty.
         """
         removals: list[Statement] = []
         for body in self._statement_lists(root):
             for stmt in body:
-                if isinstance(stmt, JsEmptyStatement):
+                if isinstance(stmt, (JsEmptyStatement, JsDebuggerStatement)):
                     removals.append(stmt)
                 elif (
                     isinstance(stmt, JsBlockStatement)

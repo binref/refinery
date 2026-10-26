@@ -2857,6 +2857,97 @@ class TestAStandAloneEmptyStatementIsRemoved(TestJsDeobfuscator):
         )
 
 
+class TestADebuggerStatementInAListIsRemoved(TestJsDeobfuscator):
+    """
+    A `debugger` statement has no effect where no debugger is attached, and its completion is
+    empty, so one standing in a statement list goes as an empty statement does. One standing as the
+    body of a branch or under a label is not a member of a list and stays.
+    """
+
+    @staticmethod
+    def _remove_unused(source: str) -> str:
+        ast = JsParser(source).parse()
+        for _ in range(10):
+            transform = JsUnusedCodeRemoval()
+            transform.visit(ast)
+            if not transform.changed:
+                break
+        return JsSynthesizer().convert(ast)
+
+    def test_a_debugger_statement_in_a_body_goes(self):
+        self.assertEqual(self._remove_unused('a();\ndebugger;\nb();'), 'a();\nb();')
+
+    def test_a_debugger_statement_in_a_nested_block_goes(self):
+        self.assertEqual(
+            self._remove_unused('if (x) {\n  a();\n  debugger;\n}'),
+            'if (x) {\n  a();\n}',
+        )
+
+    def test_a_debugger_statement_as_a_branch_body_stays(self):
+        self.assertEqual(
+            self._remove_unused('if (x) debugger;\na();'),
+            'if (x) {\n  debugger;\n}\na();',
+        )
+
+    def test_a_labeled_debugger_statement_stays(self):
+        source = 'L: debugger;\na();'
+        self.assertEqual(self._remove_unused(source), source)
+
+
+#: Programs holding `debugger` statements in lists, as a branch, under a label, in case clauses and
+#: as the last statement of a text an `eval` runs, mapped to what Node prints for them.
+A_DEBUGGER_STATEMENT = {
+    inspect.cleandoc("""
+        function f(x) {
+          debugger;
+          if (x) {
+            debugger;
+            x++;
+          }
+          return x;
+        }
+        console.log(f(1));
+    """): '2\n',
+    inspect.cleandoc("""
+        console.log(eval('1; debugger;'));
+        console.log(eval('debugger;'));
+        console.log(eval('2; if (true) { debugger; }'));
+    """): '1\nundefined\nundefined\n',
+    inspect.cleandoc("""
+        function f(x) {
+          L: debugger;
+          if (x) debugger; else x = 3;
+          return x;
+        }
+        console.log(f(0), f(1));
+    """): '3 1\n',
+    inspect.cleandoc("""
+        function f(k) {
+          switch (k) {
+            case 1:
+              debugger;
+              return 'one';
+            default:
+              debugger;
+          }
+          return 'other';
+        }
+        console.log(f(1), f(2));
+    """): 'one other\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutADebuggerStatement(TestJsDeobfuscator):
+
+    def test_a_program_prints_the_same_without_its_debugger_statements(self):
+        rows = A_DEBUGGER_STATEMENT
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
 class TestAFunctionNothingReachesGoesFromAListOfNothingButFunctions(TestJsDeobfuscator):
     """
     A statement list holding nothing but function declarations is skipped only where it is the
