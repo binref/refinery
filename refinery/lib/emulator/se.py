@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from functools import partial
-from typing import cast, TYPE_CHECKING, Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 from refinery.lib.emulator.abstract import (
     EmulationError,
@@ -437,8 +437,10 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             raise SpeakeasyNotInitialized
         if emu.get_address_map(address):
             raise ValueError(address)
-        if mm := emu.get_reserve_map(address):
-            mm = cast(MemMap, emu.get_address_map(emu.mem_map_reserve(mm.base)))
+        if reserve := emu.get_reserve_map(address):
+            mm = emu.get_address_map(emu.mem_map_reserve(reserve.base))
+            if mm is None:
+                raise RuntimeError(F'Speakeasy failed to map the reserved region at 0x{reserve.base:X}.')
             if address not in range(mm.base, mm.base + mm.size):
                 raise RuntimeError(F'Speakeasy claimed to map 0x{address:X} in map 0x{mm.base:X}-0x{mm.base + mm.size:X}.')
             map_size = mm.size

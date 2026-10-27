@@ -133,6 +133,16 @@ class TestVStack(TestUnitBase):
         result = shellcode | unit | bytes
         self.assertIn(bytes.fromhex('43434343'), result)
 
+    def test_speakeasy_maps_reserved_regions(self):
+        from refinery.lib.emulator import Arch, SpeakeasyEmulator
+        from refinery.units.formats.exe import vstack
+
+        emu = mixed_class(vstack.VStackEmulator, SpeakeasyEmulator, 'VStackSpeakeasyEmulator')(bytes.fromhex('90'), arch=Arch.X32)
+        emu.reset(None)
+        reserve, = emu.speakeasy.emu.mem_reserves
+        emu.map(reserve.base, 0x1000)
+        self.assertTrue(emu.is_mapped(reserve.base, 0x1000))
+
     def test_zero_overwrites_are_not_logged(self):
         data = bytes.fromhex(
             'c6 44 24 f8 72'            # mov  BYTE PTR [esp-8], 'r'
