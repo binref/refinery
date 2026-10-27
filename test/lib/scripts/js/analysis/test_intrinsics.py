@@ -131,6 +131,23 @@ class TestAWriteThroughAFormThatForwardsItsValueWritesTheRoot(TestBase):
                 self.assertIn('Math', self._written(source))
 
 
+class TestAFunctionStoringThroughItsParameterInAPatternWritesTheRoot(TestBase):
+    """
+    A pattern and the head of a `for`-`in` or `for`-`of` loop store through every member they hold,
+    so a function storing a property of its parameter there writes the root a call hands it.
+    """
+
+    def test_a_root_handed_to_a_function_storing_through_a_pattern_or_a_loop_head_is_written(self):
+        for source in (
+            'function patch(m) { [m.floor] = [f]; } patch(Math);',
+            'function patch(m) { ({ k: m.floor } = { k: f }); } patch(Math);',
+            'function patch(m) { for (m.floor of [f]); } patch(Math);',
+            'function patch(m) { for (m.floor in o); } patch(Math);',
+        ):
+            with self.subTest(source=source):
+                self.assertIn('Math', ModelCache(JsParser(source).parse()).intrinsic_writes.names)
+
+
 #: Programs replacing `Math.floor` through a comma, a logical or a conditional expression before
 #: calling it, mapped to what Node prints for them.
 A_METHOD_REPLACED_THROUGH_A_FORM_THAT_FORWARDS_ITS_VALUE = {

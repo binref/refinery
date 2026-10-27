@@ -4086,7 +4086,6 @@ class TestUndeclaredHostObservableGlobals(TestBase):
             'console.log(3);',
         )
 
-    @unittest.expectedFailure
     def test_module_scoped_dead_function_is_removed_even_when_exported(self):
         source = 'function handler() { return 5; }'
         output = deobfuscate_source(source, execution=ExecutionModel.module, entrypoints=('handler',))

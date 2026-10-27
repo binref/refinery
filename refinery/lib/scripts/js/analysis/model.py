@@ -1347,12 +1347,14 @@ def _writes_own_arguments(
 ) -> bool:
     """
     Whether the copy of *declaration* into *home* writes the `arguments` *home* already has: the
-    name is `arguments` and *home* is a function other than an arrow, or the top of a file that may
-    be CommonJS, which is the body of the function the host wraps around it.
+    name is `arguments`, the declaration stands in a block rather than in the list of *home*
+    itself, which makes no copy (`hoists_its_functions`), and *home* is a function other than an
+    arrow, or the top of a file that may be CommonJS, which is the body of the function the host
+    wraps around it.
     """
     if declaration.id is None or declaration.id.name != 'arguments':
         return False
-    if (held := statement_list_holding(declaration)) is not None and is_a_var_home(held):
+    if (held := statement_list_holding(declaration)) is not None and hoists_its_functions(held):
         return False
     if isinstance(home, JsScript):
         return file_kind.may_be_commonjs
@@ -1623,17 +1625,30 @@ def references_new_target(root: Node) -> bool:
     return False
 
 
-def _spells_caller_at(node: Node) -> bool:
+def _constructs_unseen(node: Node) -> bool:
     """
-    Whether *node* spells the name `caller`, in the sense of `SemanticModel.spells_caller`.
+    Whether *node* constructs a function without naming it, in the sense of
+    `SemanticModel.constructions_may_be_hidden`: a `new` of a `constructor` property, which an
+    instance reaches the function that built it through, or a read of `new.target` that does more
+    than test it or read its `prototype` or its `name`, since it names the function being
+    constructed, a subclass of the one reading it among them.
     """
-    if isinstance(node, JsIdentifier):
-        return node.name == 'caller'
-    if isinstance(node, (JsStringLiteral, JsTemplateLiteral)):
-        return static_string(node) == 'caller'
-    if isinstance(node, JsMemberExpression) and node.computed:
-        return static_property_key(node) == 'caller'
-    return False
+    if not isinstance(node, JsMemberExpression):
+        return False
+    if isinstance(node.object, JsIdentifier) and node.object.name == 'new':
+        if read_is_only_tested(node):
+            return False
+        parent = enclosing_operator(node)
+        return not (
+            isinstance(parent, JsMemberExpression)
+            and strip_parens(parent.object) is node
+            and static_property_key(parent) in ('prototype', 'name')
+            and not is_member_write_target(parent)
+        )
+    if static_property_key(node) != 'constructor':
+        return False
+    parent = enclosing_operator(node)
+    return isinstance(parent, JsNewExpression) and strip_parens(parent.callee) is node
 
 
 _TESTED_FORMS = (
@@ -1853,8 +1868,9 @@ def has_mapped_arguments(fn: Node, *, strict: bool) -> bool:
     because a payload being examined out of place has no tree above it to derive it from, and because
     module code is strict for a reason no node records.
 
-    The parameter list must also be non-empty: `has_simple_parameters` answers §15.1.3, which an empty
-    list satisfies, but with no parameters there is nothing for an element to alias.
+    The parameter list must also be non-empty (`aliases_arguments`): a simple list (§15.1.3,
+    `refinery.lib.scripts.js.strict.has_simple_parameters`) may be empty, but with no parameters
+    there is nothing for an element to alias.
     """
     if not isinstance(fn, (JsFunctionExpression, JsFunctionDeclaration)):
         return False
@@ -2509,6 +2525,8 @@ class SemanticModel:
         self._built = False
         self._spells_caller: bool | None = None
         self._constructors_escape: bool | None = None
+        self._constructions_hidden: bool | None = None
+        self._declares_only_functions: bool | None = None
         self._values_through_calls: dict[Binding, tuple[list[Node], bool]] = {}
         self._shown_calls: dict[Node, tuple[list[JsCallExpression | JsNewExpression], bool]] = {}
         self._module_may_be_reentered = False
@@ -3277,9 +3295,11 @@ class SemanticModel:
         can be constructed without its name (`_constructed_without_its_name`); the function reaches
         itself neither through its own `arguments` beyond an index, its length, a spread or `apply`
         (`arguments_name_their_function`) nor through `new.target` (`references_new_target`); the
-        program spells no `caller` (`spells_caller`); and where a shown call constructs it, no
-        `constructor` property escapes (`constructors_may_escape`), which an instance would call it
-        through. Memoized per function.
+        program spells no `caller` (`spells_caller`); no class among them extends a constructor the
+        program does not declare (`_extends_beyond_the_program`), whose methods construct it; and
+        where a shown call constructs it, no construction is hidden
+        (`constructions_may_be_hidden`), through an escaping `constructor` property, a `new` of one,
+        or `new.target`. Memoized per function.
         """
         cached = self._shown_calls.get(function)
         if cached is not None:
@@ -3298,7 +3318,10 @@ class SemanticModel:
             own = held.id if isinstance(held, (JsFunctionExpression, JsClassExpression)) else None
             cls = held if isinstance(held, (JsClassDeclaration, JsClassExpression)) else None
             forwards = held is root or (cls is not None and _super_calls(cls) is None)
-            if cls is not None and _constructed_without_its_name(cls):
+            if cls is not None and (
+                _constructed_without_its_name(cls)
+                or self._extends_beyond_the_program(cls)
+            ):
                 complete = False
             direct = _call_of(held)
             if direct is not None and forwards:
@@ -3333,7 +3356,7 @@ class SemanticModel:
         if (
             complete
             and any(isinstance(call, JsNewExpression) for call in calls)
-            and self.constructors_may_escape()
+            and self.constructions_may_be_hidden()
         ):
             complete = False
         cached = self._shown_calls[function] = calls, complete
@@ -3603,13 +3626,84 @@ class SemanticModel:
 
     def spells_caller(self) -> bool:
         """
-        Whether the text spells the name `caller` anywhere: as a name, a property key or a string.
-        In sloppy mode `g.caller` is whichever function called `g`, so a program spelling it can
-        reach every function that calls another one without naming it. Memoized.
+        Whether the program may read the `caller` of a function: it spells the name as a property
+        it reads or destructures, in a string, or as a name that no binding of the program holds,
+        which a `with` body may resolve to a property. In sloppy mode `g.caller` is whichever
+        function called `g`, so such a program can reach every function that calls another one
+        without naming it. A variable named `caller` and a key of that name in an object literal or
+        a class read no such property. Memoized.
         """
         if self._spells_caller is None:
-            self._spells_caller = any(_spells_caller_at(node) for node in self.root.walk())
+            self._spells_caller = any(self._may_read_caller_at(node) for node in self.root.walk())
         return self._spells_caller
+
+    def _may_read_caller_at(self, node: Node) -> bool:
+        """
+        Whether *node* may read the `caller` of a function, in the sense of `spells_caller`.
+        """
+        if isinstance(node, (JsStringLiteral, JsTemplateLiteral)):
+            return static_string(node) == 'caller'
+        if isinstance(node, JsMemberExpression) and node.computed:
+            return static_property_key(node) == 'caller'
+        if not isinstance(node, JsIdentifier) or node.name != 'caller':
+            return False
+        parent = node.parent
+        if isinstance(parent, JsProperty) and isinstance(parent.parent, JsObjectPattern):
+            return True
+        if names_a_property(node):
+            return isinstance(parent, JsMemberExpression)
+        return node not in self._binding_of and self.resolve(node) is None
+
+    def declares_only_functions(self) -> bool:
+        """
+        Whether the top level of the file holds function declarations and nothing else. Memoized.
+        """
+        if self._declares_only_functions is None:
+            body = self.root.body
+            self._declares_only_functions = bool(body) and all(
+                isinstance(statement, JsFunctionDeclaration) for statement in body
+            )
+        return self._declares_only_functions
+
+    def constructions_may_be_hidden(self) -> bool:
+        """
+        Whether a function the program constructs may be constructed with arguments no call the
+        text shows passes it: a constructor may escape (`constructors_may_escape`), or the program
+        constructs one without naming it (`_constructs_unseen`), through a `constructor` property or
+        through `new.target`. Memoized.
+        """
+        if self._constructions_hidden is None:
+            self._constructions_hidden = self.constructors_may_escape() or any(
+                _constructs_unseen(node) for node in self.root.walk()
+            )
+        return self._constructions_hidden
+
+    def _extends_beyond_the_program(self, cls: JsClassDeclaration | JsClassExpression) -> bool:
+        """
+        Whether the class *cls* inherits from a constructor the program does not declare, a built-in
+        such as `Array`, `Promise` or `RegExp` among them, whose methods construct a new instance of
+        the class an instance has (`Symbol.species`) with arguments of their own: its `extends`
+        clause, followed through the classes of the program it names, ends at anything but a class
+        without one or a function of the program.
+        """
+        seen: set[int] = set()
+        while id(cls) not in seen:
+            seen.add(id(cls))
+            heritage = strip_parens(cls.super_class)
+            if heritage is None:
+                return False
+            if not isinstance(heritage, JsIdentifier):
+                return True
+            binding = self.resolve(heritage)
+            if binding is None:
+                return True
+            value = strip_parens(self.singular_value(binding))
+            if isinstance(value, (JsFunctionDeclaration, JsFunctionExpression)):
+                return False
+            if not isinstance(value, (JsClassDeclaration, JsClassExpression)):
+                return True
+            cls = value
+        return True
 
     def constructors_may_escape(self) -> bool:
         """
@@ -5433,8 +5527,11 @@ class _ScopeBuilder:
         A function declared inside a block and given a `var` outside it by Annex B is declared here
         too, and in its block as well (`_collect_lexical`). The `var` holds the function only from
         the point the copy runs, which is `binding_establishment_sites`' answer rather than this
-        one's.
+        one's. A copy into the `arguments` the function or the file has of its own is declared
+        where it lands once every `var` of the body is in place (`_own_arguments`), so the order
+        of the statements decides nothing.
         """
+        copied_into_arguments: list[JsIdentifier] = []
         for node in _walk_skipping_functions(stmts):
             if isinstance(node, JsVariableDeclaration) and node.kind is JsVarKind.VAR:
                 for decl in node.declarations:
@@ -5445,10 +5542,15 @@ class _ScopeBuilder:
                 target = annex_b_target(node, self.model.file_kind, self._lexical_names)
                 if target is None or target.home is not func_scope.node:
                     continue
-                if not target.own_arguments:
+                if target.own_arguments:
+                    copied_into_arguments.append(node.id)
+                else:
                     self._declare(func_scope, node.id.name, BindingKind.FUNCTION, node.id)
-                elif (own := self._own_arguments(func_scope, func_scope.node)) is not None:
-                    self._declare(own.scope, 'arguments', BindingKind.ARGUMENTS, node.id)
+        if not copied_into_arguments:
+            return
+        if (own := self._own_arguments(func_scope, func_scope.node)) is not None:
+            for name in copied_into_arguments:
+                self._declare(own.scope, 'arguments', BindingKind.ARGUMENTS, name)
 
     def _collect_imports(self, stmts: list, scope: Scope):
         for stmt in stmts:
@@ -5510,9 +5612,16 @@ class _ScopeBuilder:
     @staticmethod
     def _own_arguments(scope: Scope, home: Node) -> Binding | None:
         """
-        The `arguments` the function or the file *home* has of its own, found from *scope* inside
-        it: the binding of kind `ARGUMENTS` in the scope of its parameters or of its body.
+        The `arguments` of the function or the file *home* that the copy of a block function of
+        that name writes, found from *scope* inside it. The copy writes the variables of the body
+        (§B.3.2.1), so it is the binding of the name in the scope of the body where there is one
+        (`_copy_target`): the object itself where parameters and body share a scope, a function
+        expression's own name too, which the model holds as one binding with the object, or the
+        `var arguments` of a body whose parameters hold an expression and live apart from it.
+        Otherwise it is the object of kind `ARGUMENTS` in the scope of the parameters.
         """
+        if (var := _ScopeBuilder._copy_target(scope, home, 'arguments')) is not None:
+            return var
         cursor: Scope | None = scope
         while cursor is not None:
             if cursor.node is home:

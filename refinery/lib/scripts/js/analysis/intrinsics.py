@@ -618,7 +618,9 @@ def _callee_is_write_free(
     Fails closed on every way the enumeration could be incomplete — an unresolvable callee, a rest
     or destructured parameter whose contents no name tracks, a reachable `arguments` object, or
     recursion past `_CALLEE_DEPTH_LIMIT`. Each of those means a parameter's value could be written
-    through somewhere this scan does not look.
+    through somewhere this scan does not look. The writes are read off the targets as
+    `build_intrinsic_writes` reads them (`_written_members`): a pattern, `[p.now] = [f]`, and the
+    head of a `for`-`in` or `for`-`of` store through a member as a plain assignment does.
 
     The parameter-escape question routes back through `_value_escapes` rather than scanning for
     identifiers, so a callee that merely *reads* through its parameter (`return o.PI`) stays
@@ -653,7 +655,13 @@ def _callee_is_write_free(
             target = node.argument
         elif isinstance(node, JsUnaryExpression) and node.operator == 'delete':
             target = node.operand
-        if any(base.name in params for base in _member_chain_roots(target)):
+        elif isinstance(node, (JsForInStatement, JsForOfStatement)):
+            target = node.left
+        if any(
+            base.name in params
+            for member in _written_members(target)
+            for base in _member_chain_roots(member)
+        ):
             return False
         if isinstance(node, JsIdentifier) and node.name in params:
             if reference_role(node) is Role.READ:

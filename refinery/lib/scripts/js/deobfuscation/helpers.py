@@ -2682,7 +2682,11 @@ def a_host_reaches_the_binding(model: SemanticModel, binding: Binding, options: 
     a top-level declaration under the script execution model. A pattern alone does not decide it:
     `refinery.lib.scripts.js.analysis.model.SemanticModel.reaches_global_object` is what keeps a
     pattern from protecting a nested binding, a `let`, or anything at all under the module model,
-    where a top-level declaration never becomes a property of the global object.
+    where a top-level declaration never becomes a property of the global object. A file whose top
+    level holds nothing but function declarations
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.declares_only_functions`) is a library,
+    which code outside the file calls: each function it declares is reached as if the analyst had
+    named it.
 
     A pass that could delete such a declaration, fold a read of one into its value, or relocate one
     out of the global scope asks here before doing so, so that the answer is one predicate's rather
@@ -2690,11 +2694,23 @@ def a_host_reaches_the_binding(model: SemanticModel, binding: Binding, options: 
     table, a control-flow state, an anti-debug guard, none of which an analyst names an entrypoint —
     never reaches a binding this protects, and does not consult it.
     """
-    if not is_host_entrypoint(options, binding.name):
+    if not is_host_entrypoint(options, binding.name) and not _declared_by_a_library(model, binding):
         return False
     if any(a_host_reaches_the_binding(model, copy.var, options) for copy in binding.copies_made):
         return True
     return model.reaches_global_object(binding)
+
+
+def _declared_by_a_library(model: SemanticModel, binding: Binding) -> bool:
+    """
+    Whether *binding* names a function declared at the top of a file that holds nothing but
+    function declarations.
+    """
+    return model.declares_only_functions() and any(
+        isinstance(function := declaration.parent, JsFunctionDeclaration)
+        and function.parent is model.root
+        for declaration in binding.declarations
+    )
 
 
 def binding_constant(effects: EffectModel, binding: Binding, options: object) -> tuple[bool, Value]:

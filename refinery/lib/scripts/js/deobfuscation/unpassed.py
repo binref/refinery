@@ -184,27 +184,44 @@ def _function_store(statement: Statement, binding: Binding, cache: ModelCache) -
     return _Store(statement, read, function)
 
 
-def _declared_in_the_body(function: JsFunctionNode, name: str) -> bool:
+def _tested_names(statements: list[Statement]) -> dict[str, list[JsIfStatement]]:
     """
-    Whether the body of *function* declares *name* itself, in any of its blocks or clauses. Annex B
+    The statements among *statements* that test a plain name for being falsy and have no `else`,
+    `if (!p) ...`, by the name they test: the only statements that can store a function into a
+    parameter (`_function_store`).
+    """
+    tested: dict[str, list[JsIfStatement]] = {}
+    for statement in statements:
+        if (
+            isinstance(statement, JsIfStatement)
+            and statement.alternate is None
+            and isinstance(test := statement.test, JsUnaryExpression)
+            and test.operator == '!'
+            and isinstance(read := test.operand, JsIdentifier)
+        ):
+            tested.setdefault(read.name, []).append(statement)
+    return tested
+
+
+def _names_declared_in_the_body(function: JsFunctionNode) -> set[str]:
+    """
+    The names the body of *function* declares itself, in any of its blocks or clauses. Annex B
     copies a block function to the body only where its name is no parameter, and with a default in
     the list the body's own `var`s and functions live apart from the parameters; a parameter made a
     declaration of the body would meet either.
     """
+    declared: set[str] = set()
     if function.body is None:
-        return False
+        return declared
     for node in walk_scope(function.body):
         if isinstance(node, (JsFunctionDeclaration, JsClassDeclaration)):
-            declared = [node.id] if node.id is not None else []
+            if node.id is not None:
+                declared.add(node.id.name)
         elif isinstance(node, JsVariableDeclarator):
-            declared = pattern_identifiers(node.id)
+            declared.update(identifier.name for identifier in pattern_identifiers(node.id))
         elif isinstance(node, JsCatchClause):
-            declared = pattern_identifiers(node.param)
-        else:
-            continue
-        if any(identifier.name == name for identifier in declared):
-            return True
-    return False
+            declared.update(identifier.name for identifier in pattern_identifiers(node.param))
+    return declared
 
 
 def _locals(function: JsFunctionNode, cache: ModelCache, options: object) -> list[_Local] | None:
@@ -214,13 +231,23 @@ def _locals(function: JsFunctionNode, cache: ModelCache, options: object) -> lis
     (`refinery.lib.scripts.js.deobfuscation.parameters.every_call_shown`), so nothing else passes
     them or reads the `length`. The run is the obfuscation's only where one of them holds a
     function stored under `if (!p)`, a shape no author writes; a run of plain or defaulted
-    parameters alone is the shape an optional argument has, and stays.
+    parameters alone is the shape an optional argument has, and stays. A function whose body tests
+    none of its parameters that way is therefore passed over before the model is asked anything.
     """
-    model = cache.model
     body = function.body
-    if not isinstance(body, JsBlockStatement) or not every_call_shown(model, function, options):
+    if not isinstance(body, JsBlockStatement):
         return None
     statements = body.body[len(directive_prologue(body)):]
+    tested = _tested_names(statements)
+    if not any(
+        isinstance(parameter, JsIdentifier) and parameter.name in tested
+        for parameter in function.params
+    ):
+        return None
+    model = cache.model
+    if not every_call_shown(model, function, options):
+        return None
+    declared = _names_declared_in_the_body(function)
     found: list[_Local] = []
     for parameter in reversed(function.params):
         default = None
@@ -229,19 +256,20 @@ def _locals(function: JsFunctionNode, cache: ModelCache, options: object) -> lis
             name, default = parameter.left, parameter.right
             if not _made_of_literals(default):
                 break
-        if not isinstance(name, JsIdentifier) or _declared_in_the_body(function, name.name):
+        if not isinstance(name, JsIdentifier) or name.name in declared:
             break
         binding = model.binding_of(name)
         if (
             binding is None
             or not model.parameter_never_passed(binding)
             or model.reflection_can_reach(binding)
-            or not all(reference.is_descendant_of(body) for reference in model.references(binding))
+            or model.references(binding, exclude=body)
         ):
             break
         stored = None
         if default is None:
-            stores = (_function_store(statement, binding, cache) for statement in statements)
+            candidates = tested.get(name.name, [])
+            stores = (_function_store(statement, binding, cache) for statement in candidates)
             stored = next((store for store in stores if store is not None), None)
         if stored is not None:
             reads = [read for read in binding.reads if read is not stored.test]

@@ -3007,6 +3007,19 @@ class TestAFunctionNothingReachesGoesFromAListOfNothingButFunctions(TestJsDeobfu
         source = '1;\n{\n  function g() {}\n}'
         self.assertEqual(self._remove_unused(source), source)
 
+    def test_a_block_function_whose_body_alone_is_strict_is_kept_as_well(self):
+        source = inspect.cleandoc(
+            """
+            1;
+            {
+              function g() {
+                'use strict';
+              }
+            }
+            """
+        )
+        self.assertEqual(self._remove_unused(source), source)
+
     def test_a_block_function_followed_by_the_value_of_the_script_goes(self):
         self.assertEqual(self._remove_unused('{ function g() {} }\n1;'), '1;')
 

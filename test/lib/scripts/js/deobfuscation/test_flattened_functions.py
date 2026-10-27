@@ -19,7 +19,9 @@ from test.lib.scripts.js.deobfuscation.test_selfchecks import DOUBLE, DOUBLE_42,
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints, wontfix
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
+from refinery.lib.scripts.js.deobfuscation.flatfunctions import JsFunctionUnflattening
 from refinery.lib.scripts.js.options import ExecutionModel
+from refinery.lib.scripts.js.parser import JsParser
 
 
 def deobfuscated(source: str) -> str:
@@ -1214,6 +1216,17 @@ FLATTENED: dict[str, Program] = {
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
+    'a flat body calling a function with a parameter named caller': Program(
+        a_program("""
+            function log(caller, message) { return caller + ': ' + message; }
+            function F([x], O) { return log('F', x) + O.k; }
+            function W(...A) { var O = { get k() { return '!'; } }; return F(A, O); }
+            console.log(W(1));
+            """),
+        prints('F: 1!'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
     'a flat body calling a function that reads its caller': Program(
         a_program("""
             function who() { return who.caller.name; }
@@ -1752,6 +1765,7 @@ PUT_BACK: dict[str, str] = {
         """
     ),
     'a flat body calling a function that does not read its caller': "console.log('who1');",
+    'a flat body calling a function with a parameter named caller': "console.log('F: 1!');",
 }
 
 
@@ -2779,6 +2793,23 @@ FORWARDED: dict[str, Program] = {
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
+    'a target holding a flattened function, the length of the forwarder read': Program(
+        a_program("""
+            function flat([v], O) { return v + O.k; }
+            function F() { return G(...arguments); }
+            function G(a_1, b) {
+              var a;
+              a = a_1;
+              var w = function (...A) { var O = { get k() { return k; } }; return flat(A, O); };
+              return w(a) + b;
+            }
+            var k = 1;
+            console.log(F(1, 2), F.length);
+            """),
+        prints('4 0'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
 }
 
 #: Programs of `FORWARDED` whose forwarder takes the body of its target back, mapped to the text the
@@ -2844,6 +2875,47 @@ class TestAForwardedFunctionIsPutBackTogether(TestBase):
             {label: deobfuscated(FORWARDED[label].text) for label in FORWARDED_PUT_BACK},
             FORWARDED_PUT_BACK,
         )
+
+
+#: Programs holding a forwarder that the pass deciding it leaves as it is: taking the body back
+#: would stop the `arguments` of the target from following a parameter it writes, or the target
+#: holds a flattened function, which the same pass puts back first.
+A_FORWARDER_THE_PASS_LEAVES = [
+    inspect.cleandoc("""
+        function G(a) { a = 5; return arguments[0]; }
+        function F() { return G(...arguments); }
+        console.log(F(1), F.length);
+    """),
+    FORWARDED['a target holding a flattened function, the length of the forwarder read'].text,
+]
+
+
+class TestAForwarderOfALibraryStays(TestBase):
+
+    def test_a_script_of_nothing_but_functions_keeps_the_function_a_forwarder_calls(self):
+        source = inspect.cleandoc("""
+            function helper(a, b) {
+              return a + b;
+            }
+            function api() {
+              return helper(...arguments);
+            }
+        """)
+        text = deobfuscate_source(source, execution=ExecutionModel.script, environment=HostEnvironment.node)
+        self.assertEqual(text, source)
+
+
+class TestAForwarderThePassLeavesKeepsTheTreeWhole(TestBase):
+
+    def test_every_node_is_still_the_child_of_the_node_holding_it(self):
+        for source in A_FORWARDER_THE_PASS_LEAVES:
+            with self.subTest(source=source):
+                ast = JsParser(source).parse()
+                JsFunctionUnflattening().visit(ast)
+                detached = [
+                    child for node in ast.walk() for child in node.children() if child.parent is not node
+                ]
+                self.assertEqual(detached, [])
 
 
 #: The newer hash helpers with a check of a date inside the window of times a run is assumed to

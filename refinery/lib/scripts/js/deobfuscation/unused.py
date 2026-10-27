@@ -56,7 +56,6 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     annex_b_suppressor_names,
     enclosing_function,
-    is_a_var_home,
     is_simple_assignment_target,
     is_the_this_of_a_script,
     may_be_global_object_base,
@@ -987,7 +986,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 functions[stmt.id.name] = stmt
         if not functions:
             return set()
-        roots = self._host_entrypoints(parent, body, functions)
+        roots = self._host_entrypoints(functions)
         roots |= self._referenced_outside(body, functions)
         reachable, write_only_stmts = _reachable_functions(body, functions, roots)
         kept_by_reflection = {
@@ -998,10 +997,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         unreachable = (set(functions.keys()) - reachable) - kept_by_reflection
         if not unreachable:
             return set()
-        if not is_a_var_home(parent):
+        if isinstance(parent, JsBlockStatement) and self._may_give_the_script_its_value(parent):
             unreachable = {
                 name for name in unreachable
-                if not self._may_be_the_value_of_the_script(functions[name])
+                if not reaches_script_completion(functions[name], self.model.root)
             }
             if not unreachable:
                 return set()
@@ -1032,10 +1031,6 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             binding = self.model.binding_of(func.id)
             if binding is None:
                 continue
-            declared = self.model.function_names(func)
-            if declared is not None and declared.copy is not None:
-                names.add(name)
-                continue
             if self.model.annex_b_copy_observed(func):
                 names.add(name)
                 continue
@@ -1048,40 +1043,29 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     break
         return frozenset(names)
 
-    def _may_be_the_value_of_the_script(self, declaration: JsFunctionDeclaration) -> bool:
+    @staticmethod
+    def _may_give_the_script_its_value(block: JsBlockStatement) -> bool:
         """
-        Whether a script may take the function *declaration*, which stands in a block, for its
-        value: Node takes a sloppy block-level declaration for the value of a script whose
-        completion its position reaches
+        Whether a function declared in *block* may give the script its value: Node takes a
+        block-level declaration in sloppy code for the value of a script whose completion its
+        position reaches
         (`refinery.lib.scripts.js.deobfuscation.helpers.reaches_script_completion`), where an
-        `eval` of the same text does not.
+        `eval` of the same text does not. That is a block of the script's own code, outside every
+        function, in the mode of the block; a directive of the declaration's own body does not
+        change it.
         """
-        if strict_mode_at(declaration):
-            return False
-        return reaches_script_completion(declaration, self.model.root)
+        return enclosing_function(block) is None and not strict_mode_at(block)
 
-    def _host_entrypoints(
-        self,
-        parent: Node,
-        body: list[Statement],
-        functions: dict[str, JsFunctionDeclaration],
-    ) -> frozenset[str]:
+    def _host_entrypoints(self, functions: dict[str, JsFunctionDeclaration]) -> frozenset[str]:
         """
-        Which of *functions*, declared in the statement list *body* of *parent*, a host invokes.
-        Where *body* is a file that holds nothing but function declarations, the file is a library
-        that code outside it calls, and every one of them is an entrypoint; a list of nothing but
-        functions anywhere else is the body of a function or a block, which only the file reaches.
-        Otherwise they are those the caller declared a host invokes by name. Naming one seeds it as
-        a reachability root, so everything it calls is reachable through it and survives too, which
-        is the point, since an entrypoint is usually the root of the whole program. The binding is
-        taken from each declaration's own identifier rather than looked up by name, so a same-named
-        function in a nested body is judged on its own merits.
+        Which of *functions* a host invokes (`_named_host_entrypoint`): those the caller declared a
+        host invokes by name, and every function of a file that holds nothing but function
+        declarations, a library that code outside it calls. Naming one seeds it as a reachability
+        root, so everything it calls is reachable through it and survives too, which is the point,
+        since an entrypoint is usually the root of the whole program. The binding is taken from each
+        declaration's own identifier rather than looked up by name, so a same-named function in a
+        nested body is judged on its own merits.
         """
-        if (
-            isinstance(parent, JsScript)
-            and all(isinstance(stmt, JsFunctionDeclaration) for stmt in body)
-        ):
-            return frozenset(functions)
         names: set[str] = set()
         for name, func in functions.items():
             if not isinstance(func.id, JsIdentifier):

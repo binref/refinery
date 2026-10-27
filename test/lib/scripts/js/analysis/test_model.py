@@ -2070,6 +2070,12 @@ class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
                 'class C { constructor(p) {} } class D extends C { constructor() { super(2); } } new C(1); new D();',
                 ['1', '2'],
             ),
+            'another parameter named caller' : ('function f(p, caller) { return p; } f(1); f(2);', ['1', '2']),
+            'the prototype of new.target'    : (
+                'class B { constructor() { Object.setPrototypeOf(this, new.target.prototype); } }'
+                ' class C extends B { constructor(p) { super(); } } new C(1); new C(2);',
+                ['1', '2'],
+            ),
         }.items():
             with self.subTest(label):
                 self.assertEqual(self._received(source), (expected, True))
@@ -2097,6 +2103,14 @@ class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
             'a subclass handed on'           : (
                 'class C { constructor(p) {} } class D extends C { constructor() { super(3); } } new C(1); f(D);'
             ),
+            'a new of a constructor property' : (
+                'class C { constructor(p) {} again() { return new this.constructor(2); } } new C(1);'
+            ),
+            'a new of new.target'            : (
+                'class B { constructor() { if (!B.done) { B.done = 1; new new.target(2); } } }'
+                ' class C extends B { constructor(p) { super(); } } new C(1);'
+            ),
+            'a subclass of a built-in'       : 'class C extends RegExp { constructor(p) { super(p); } } new C(1);',
         }.items():
             with self.subTest(label):
                 values, complete = self._received(source)
@@ -2125,16 +2139,16 @@ class TestAFunctionDeclaredInABlockHasTwoNames(TestBase):
         ]
 
     @staticmethod
-    def _declaration(ast) -> JsFunctionDeclaration:
+    def _declaration(ast, name: str = 'f') -> JsFunctionDeclaration:
         return next(
             node for node in ast.walk_in_order()
             if isinstance(node, JsFunctionDeclaration)
             and isinstance(node.id, JsIdentifier)
-            and node.id.name == 'f'
+            and node.id.name == name
         )
 
-    def _block_binding(self, ast, model) -> Binding:
-        declaration = self._declaration(ast)
+    def _block_binding(self, ast, model, name: str = 'f') -> Binding:
+        declaration = self._declaration(ast, name)
         assert isinstance(declaration.id, JsIdentifier)
         binding = model.binding_of(declaration.id)
         assert binding is not None
@@ -2264,3 +2278,36 @@ class TestAFunctionDeclaredInABlockHasTwoNames(TestBase):
                 ast, model = self._model(source)
                 copy = self._block_binding(ast, model).copies_made[0]
                 self.assertEqual(model.copy_stores_the_function(copy), stores)
+
+    def test_the_copy_of_a_function_named_arguments_lands_where_the_body_reads_the_name(self):
+        for source in (
+            'function g() { { function arguments() {} } return typeof arguments; }',
+            'var g = function arguments() { { function arguments() {} } return typeof arguments; };',
+            'function g(a = 1) { var arguments; { function arguments() {} } return typeof arguments; }',
+            'function g(a = 1) { { function arguments() {} } var arguments; return typeof arguments; }',
+        ):
+            with self.subTest(source):
+                ast, model = self._model(source)
+                *_, read = self._names(ast, 'arguments')
+                declaration = self._declaration(ast, 'arguments')
+                copy, = self._block_binding(ast, model, 'arguments').copies_made
+                self.assertIs(copy.var, model.resolve(read))
+                self.assertIn(declaration.id, copy.var.declarations)
+
+    def test_a_function_named_arguments_declared_directly_in_a_body_is_no_copy(self):
+        for source in (
+            'function g() { function arguments() {} return typeof arguments; }',
+            'function g() { lab: function arguments() {} return typeof arguments; }',
+            'function g(a = 1) { function arguments() {} return typeof arguments; }',
+        ):
+            for kind in (FileKind.script, FileKind.commonjs, FileKind.commonjs_or_es_module):
+                with self.subTest(source=source, kind=kind.name):
+                    ast = JsParser(source).parse()
+                    model = build_semantic_model(ast, file_kind=kind)
+                    declaration = self._declaration(ast, 'arguments')
+                    assert isinstance(declaration.id, JsIdentifier)
+                    binding = model.binding_of(declaration.id)
+                    assert binding is not None
+                    self.assertEqual(binding.declarations, [declaration.id])
+                    self.assertEqual(binding.copies_made + binding.copies_received, [])
+                    self.assertFalse(binding.may_be_absent)

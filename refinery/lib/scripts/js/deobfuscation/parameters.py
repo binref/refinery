@@ -69,6 +69,14 @@ class ParameterList(NamedTuple):
             return list(self.head)
         return [*self.head, JsRestElement(argument=JsArrayPattern(elements=self.tail))]
 
+    def aliases_arguments(self, *, strict: bool) -> bool:
+        """
+        Whether the parameters `build` makes give a regular function an `arguments` object whose
+        elements alias them (`refinery.lib.scripts.js.analysis.model.aliases_arguments`), answered
+        without making them: a list that ends in a rest pattern never does.
+        """
+        return not self.tail and aliases_arguments(self.head, strict=strict)
+
 
 def _counted_length(elements: Sequence[Expression | None]) -> int:
     """

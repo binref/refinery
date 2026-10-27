@@ -691,11 +691,12 @@ class ClockWindow(NamedTuple):
 
 ASSUMED_CLOCK = ClockWindow(946771200000, 4102358400000)
 """
-The window a run is assumed to read the host's clock in: 2000-01-02 to 2099-12-31. A lock that hangs
-or breaks the script outside a window of dates compares the clock with the first day of 2000 or of
-2100, moved by some seconds; that defense is not the program's behavior, and the comparison answers
-the same for every reading inside the window. A date inside it, an expiry or a time the program
-waits for, is the program's own and stays.
+The window a run is assumed to read the host's clock in: from the start of 2000-01-02 to the start
+of 2099-12-31, both in UTC, a day after 2000 and a day before 2100. A lock that hangs or breaks the
+script outside a window of dates compares the clock with the first day of 2000 or of 2100, moved by
+some seconds; that defense is not the program's behavior, and the comparison answers the same for
+every reading inside the window. A date inside it, an expiry or a time the program waits for, is
+the program's own and stays.
 """
 
 

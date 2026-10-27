@@ -664,6 +664,60 @@ UNPASSED: dict[str, Program] = {
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
+    'a class constructed again through the constructor of an instance': Program(
+        a_program("""
+            class Vec {
+              constructor(x, scale, norm) {
+                if (!norm) { norm = function (v) { return v * (scale || 1); }; }
+                this.x = norm(x);
+              }
+              scaled(s) { return new this.constructor(this.x, s); }
+            }
+            var v = new Vec(3);
+            console.log(v.x, v.scaled(2).x);
+            """),
+        prints('3 6'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a subclass constructed again through new.target': Program(
+        a_program("""
+            class Base {
+              constructor() {
+                if (!Base.copied) { Base.copied = true; this.copy = new new.target(5, 2); }
+              }
+            }
+            class D extends Base {
+              constructor(x, y, f) {
+                super();
+                if (!f) { f = function () { return x * (y || 1); }; }
+                this.v = f();
+              }
+            }
+            var d = new D(3);
+            console.log(d.v, d.copy.v);
+            """),
+        prints('3 10'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a subclass of a built-in constructed again by a method of the built-in': Program(
+        a_program("""
+            var seen = [];
+            class R extends RegExp {
+              constructor(source, flags, note) {
+                if (!note) { note = function (f) { return f === undefined ? 'none' : f; }; }
+                super(source, flags);
+                seen.push(note(flags));
+              }
+            }
+            'a,b'.split(new R(','));
+            console.log(seen.join(' '));
+            """),
+        prints('none y'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
     'a defaulted parameter named like a block function of the body': Program(
         a_program("""
             function f(a, lim = 2, p) {
@@ -796,8 +850,20 @@ class TestAParameterNoCallPassesIsADeclarationAgain(TestBase):
 class TestAFunctionAHostCallsKeepsItsParameters(TestBase):
     """
     A function a host calls by name may be passed every argument its list names, so a parameter of
-    it is never known to be unpassed, whatever stands before it in the list.
+    it is never known to be unpassed, whatever stands before it in the list. So may every function
+    of a script that holds nothing but function declarations, a library that code outside it calls.
     """
+
+    def test_the_parameters_of_a_function_of_a_library_stay(self):
+        source = inspect.cleandoc("""
+            function fetchData(url, callback) {
+              if (!callback) { callback = function (d) { console.log('default', d); }; }
+              callback(url.length);
+            }
+            function init() { fetchData('abc'); }
+        """)
+        text = deobfuscate_source(source, execution=ExecutionModel.script, environment=HostEnvironment.node)
+        self.assertIn('function fetchData(url, callback) {', text)
 
     def test_the_parameters_of_an_entrypoint_stay(self):
         for source, kept in {

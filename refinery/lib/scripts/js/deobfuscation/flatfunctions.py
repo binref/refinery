@@ -60,10 +60,11 @@ from refinery.lib.scripts.js.analysis.model import (
     Binding,
     Scope,
     SemanticModel,
-    arguments_aliasing_changes,
+    aliases_arguments,
     arguments_name_their_function,
     crosses_dynamic_scope,
     is_direct_eval_call,
+    observes_arguments_aliasing,
     references_new_target,
     walk_receiver_scope,
 )
@@ -154,11 +155,12 @@ class _Restoration(ABC):
 class _Forwarded(_Restoration):
     """
     A function the obfuscation left a forwarder, `function F() { return G(...arguments); }`, with
-    the parameters it takes over from `G`.
+    the parameters it takes over from `G`, which are made of the parameters of `G` only when the
+    edit is made.
     """
     forwarder: JsFunctionDeclaration
     target: JsFunctionDeclaration
-    parameters: list[Expression]
+    parameters: ParameterList
 
     @property
     def wrapper(self) -> JsFunctionDeclaration:
@@ -172,7 +174,7 @@ class _Forwarded(_Restoration):
         body = self.forwarder.body
         moved = self.target.body
         assert body is not None and moved is not None
-        set_child_list(self.forwarder, 'params', self.parameters)
+        set_child_list(self.forwarder, 'params', self.parameters.build())
         set_child_list(body, 'body', list(moved.body))
 
 
@@ -326,7 +328,8 @@ def _wrapper_scope_holds(
     """
     Whether a body moved into *wrapper* finds its names where the text says: no `with` and no direct
     `eval` reach the wrapper's scope. A body *merged* with the wrapper also runs without a frame of
-    its own, which only `caller` can tell, so the program spells none (`spells_caller`).
+    its own, which only `caller` can tell, so the program spells none
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`).
     """
     if crosses_dynamic_scope(wrapper_scope):
         return False
@@ -629,8 +632,9 @@ def _forwarded(
     the program must leave as the language has it. `F` takes the parameters of `G` as they are
     where every call of `F` is shown, and otherwise keeps its `length` of 0
     (`refinery.lib.scripts.js.deobfuscation.parameters.parameter_list`), where its `arguments`
-    object still aliases the parameters exactly where that of `G` did
-    (`refinery.lib.scripts.js.analysis.model.arguments_aliasing_changes`).
+    object still aliases the parameters exactly where that of `G` did, or `G` cannot tell
+    (`refinery.lib.scripts.js.analysis.model.observes_arguments_aliasing`). The list is decided
+    without touching the parameters of `G`, which the edit alone moves.
     """
     model = cache.model
     body = wrapper.body
@@ -662,6 +666,8 @@ def _forwarded(
     own_arguments = wrapper_scope.bindings.get('arguments')
     if own_arguments is None or model.resolve(source) is not own_arguments:
         return None
+    if not cache.trust_at(call).chain(list):
+        return None
     target = _moving_function(model.resolve(callee), callee, wrapper, root, model, options)
     if target is None or target.body is None:
         return None
@@ -675,16 +681,16 @@ def _forwarded(
         return None
     if not _names_land(target, wrapper_scope, model, [own_arguments]):
         return None
-    if not cache.trust_at(call).chain(list):
-        return None
     if every_call_shown(model, wrapper, options):
-        parameters = list(target.params)
-    elif (built := parameter_list(target.params, target, 0)) is not None:
-        parameters = built.build()
+        parameters: ParameterList | None = ParameterList(list(target.params), [])
     else:
+        parameters = parameter_list(target.params, target, 0)
+    if parameters is None:
         return None
     strict = strict_mode_at(target.body)
-    if arguments_aliasing_changes(target, target.params, parameters, strict=strict):
+    before = aliases_arguments(target.params, strict=strict)
+    after = parameters.aliases_arguments(strict=strict)
+    if before != after and observes_arguments_aliasing(target):
         return None
     return _Forwarded(wrapper, target, parameters)
 
