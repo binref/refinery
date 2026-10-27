@@ -124,11 +124,13 @@ jobs:
           node-answers-Windows-${{ github.run_id }}-
           node-answers-Windows-
     - name: Run tests and collect coverage
-      run: '"%CIPY%" -m pytest --disable-warnings --cov-config=.coveragerc --cov refinery -n=4 --dist=worksteal test 2>nul'
+      run: '"%CIPY%" -m pytest --disable-warnings --cov-config=.coveragerc --cov refinery --cov-report=term --cov-report=xml -n=4 --dist=worksteal test 2>nul'
       shell: cmd
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./coverage.xml
+        disable_search: true
         verbose: true
         fail_ci_if_error: true
