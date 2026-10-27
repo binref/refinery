@@ -635,33 +635,6 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         self.assertIn(second, first.successors)
         self.assertTrue(graph.is_exceptional(first, second))
 
-    def test_a_trap_that_declines_hands_the_error_to_the_trap_written_after_it(self):
-        """
-        The counterfactual of a handler is where its errors would go if it were not written, and a
-        set is consulted in order, so for every member but the last that is the member after it.
-        """
-        tree, graph = self._tree_and_graph(
-            "trap { 'o' }\nif ($c) { trap { 'a' }\ntrap { 'b' }\n'x' }")
-        first, second = tree.body[1].clauses[0][1].body[:2]
-        self.assertIs(
-            graph.fallback_of(self._required_node(graph, first)),
-            self._required_node(graph, second),
-        )
-        self.assertIs(
-            graph.fallback_of(self._required_node(graph, second)),
-            self._required_node(graph, tree.body[0]),
-        )
-
-    def test_a_catch_clause_that_declines_hands_the_error_to_the_clause_written_after_it(self):
-        tree, graph = self._tree_and_graph(
-            "try { 'x' } catch [System.IO.IOException] { 'a' } catch { 'b' }")
-        first, second = tree.body[0].catch_clauses
-        self.assertIs(
-            graph.fallback_of(self._required_node(graph, first)),
-            self._required_node(graph, second),
-        )
-        self.assertIs(graph.fallback_of(self._required_node(graph, second)), graph.exit)
-
     def test_a_switch_of_empty_clauses_stays_linear_in_the_number_of_clauses(self):
         """
         The frontier a clause carries into the next one must not accumulate duplicates.

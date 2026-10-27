@@ -464,12 +464,8 @@ class _Builder(CfgBuilder):
         self._trap_body = enclosing
         self._targets = outer_targets
         self._pending_labels = outer_labels
-        trap_set.outward = outward = self.unwinding()
+        trap_set.outward = self.unwinding()
         self.close_handler_set(list(chain), escapes=escapes)
-        untyped = [trap for trap in traps if not trap.type_name.strip()]
-        for trap, following in zip(untyped, [*untyped[1:], None]):
-            target = outward if following is None else trap_set.entry(following)
-            self.set_fallback(trap_set.entry(trap), target)
         self._handlers.append(chain[0])
         if not resumes:
             exits = self.sequence(statements, frontier)

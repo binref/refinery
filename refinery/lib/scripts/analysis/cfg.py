@@ -507,7 +507,6 @@ class ControlFlowGraph:
         self._edge_kinds: dict[tuple[int, int], CfgEdge] = {}
         self._hub_bound: set[int] = set()
         self._resuming = False
-        self._fallback: dict[int, CfgNode] = {}
         self._reached_after: dict[tuple[int, bool], frozenset[int]] = {}
         self._completions: dict[int, tuple[Node, list[CfgNode]]] = {}
         self._spans: dict[int, tuple[Node, range]] = {}
@@ -568,20 +567,6 @@ class ControlFlowGraph:
             return index >= 0 and position < stops[index]
 
         return holds
-
-    def fallback_of(self, handler: CfgNode) -> CfgNode | None:
-        """
-        Where a throw offered to *handler* goes if *handler* does not take it, or `None` when
-        *handler* is not a handler entry of this graph.
-
-        This is recorded rather than read off the edges because the two are not the same claim. The
-        edge is drawn only where some run may decline — a clause with a type filter, a `trap` set
-        that may fail to match — and a handler certain to take the throw has none, which is what
-        makes it shield whatever guards the construct. The fact holds either way, and it is what
-        answers the *counterfactual*: not where the throw goes, but where it would go if this
-        handler were not written at all, which is the question asked before one is deleted.
-        """
-        return self._fallback.get(id(handler))
 
     def edge_kind(self, source: CfgNode, target: CfgNode) -> CfgEdge:
         """
@@ -1101,32 +1086,14 @@ class CfgBuilder:
 
     def close_handler_set(self, entries: Sequence[CfgNode], *, escapes: bool) -> None:
         """
-        Finish a chain of handler entries: record where a throw goes when none of them takes it,
-        and draw the edge there when some run may leave one of them to.
+        Finish a chain of handler entries: draw the edge from the last of them to what guards the
+        construct when some run may leave all of them.
 
         Called once the set's bodies are built and the set itself is off the handler stack, so that
         `unwinding` names what guards the *construct* rather than the set being closed.
-
-        A member that is not the last one falls back to the member after it and not to what guards
-        the construct, because the engine consults the set in order: a throw the first clause
-        declines is offered to the second, which is also where it would go if the first were not
-        written. Recording the construct's fallback for every member reads one clause's
-        counterfactual off another's, and a set whose later member acts then looks deletable.
         """
-        outward = self.unwinding()
-        for index, entry in enumerate(entries):
-            following = entries[index + 1] if index + 1 < len(entries) else outward
-            self.cfg._fallback[id(entry)] = following
         if escapes and entries:
-            self.exceptional_edge(entries[-1], outward)
-
-    def set_fallback(self, handler: CfgNode, target: CfgNode) -> None:
-        """
-        Record where a throw *handler* takes would go were *handler* not written, where a
-        language picks among a set's handlers by a rule other than the order `close_handler_set`
-        chains them in.
-        """
-        self.cfg._fallback[id(handler)] = target
+            self.exceptional_edge(entries[-1], self.unwinding())
 
     def unwinding(self) -> CfgNode:
         """
