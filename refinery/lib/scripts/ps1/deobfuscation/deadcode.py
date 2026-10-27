@@ -864,7 +864,7 @@ class Ps1DeadCodeElimination(Transformer):
         logging handler such as `trap { Write-Host 'err' }` — keeps the trap intact.
 
         Whether anything the trap guards still raises is not asked here at all. It is the question
-        `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_a_handler_is_observed`
+        `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed`
         answers, and it is asked of every proposal this pass files, over the exceptional edges the
         graph wired rather than over a search for the `throw` keyword — which would miss
 

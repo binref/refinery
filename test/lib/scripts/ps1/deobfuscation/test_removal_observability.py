@@ -807,3 +807,77 @@ class TestPs1AProgramOnThePathIsSpelledLikeANoiseBareword(TestPs1):
             } catch {}
             Invoke-Expression $env:ZZQPAYLOAD
         """, 'Invoke-Expression $env:ZZQPAYLOAD')
+
+
+class TestPs1AnErrorNothingTakesInsideATryOrCatchBodySkipsTheRestOfTheTry(TestPs1):
+    """
+    Measured on 5.1: a statement-terminating error raised in a `try` body or a `catch` body that no
+    `trap` and no `catch` takes does not step over to the next statement. It leaves the whole `try`,
+    its `finally` runs, and the script carries on after the `try`. The removal passes read it as
+    stepping over, so they delete the raise, or the `trap` that resumes past it, and the rest of
+    the `try` runs where 5.1 skips it, or is skipped where 5.1 runs it.
+    """
+
+    @unittest.expectedFailure
+    def test_a_cast_that_fails_in_a_try_body_without_a_catch_is_kept(self):
+        """
+        5.1 writes the cast's error and `after`; the output writes `rest` and `after`.
+        """
+        self._assertKept("""
+            try {
+              $null = [int]'a'
+              Write-Host 'rest'
+            } finally {}
+            Write-Host 'after'
+        """)
+
+    @unittest.expectedFailure
+    def test_a_cast_that_fails_in_a_catch_body_is_kept(self):
+        """
+        5.1 writes the cast's error and `after`; the output writes `c-rest` and `after`.
+        """
+        self._assertKept("""
+            try {
+              throw 'x'
+            } catch {
+              $null = [int]'a'
+              Write-Host 'c-rest'
+            }
+            Write-Host 'after'
+        """)
+
+    @unittest.expectedFailure
+    def test_a_trap_that_resumes_inside_a_try_body_without_a_catch_is_kept(self):
+        """
+        5.1 writes `rest ` and `after`; without the `trap` it writes the cast's error and `after`.
+        """
+        self._assertKept("""
+            try {
+              trap {
+                continue
+              }
+              $v = [int]'a'
+              Write-Host "rest ${v}"
+            } finally {}
+            Write-Host 'after'
+        """)
+
+
+class TestPs1ARaiseAResumingTrapSkipsPastIsKept(TestPs1):
+
+    @unittest.expectedFailure
+    def test_a_cast_whose_trap_resumes_past_the_rest_of_its_block_is_kept(self):
+        """
+        5.1 writes `after`: the `trap` resumes past the `if`. The output deletes the cast and writes
+        `t` and `after`.
+        """
+        self._assertKept("""
+            trap {
+              continue
+            }
+            if ((Get-Date).Year -gt 2000) {
+              $v = [int]'a'
+              Write-Host 't'
+            }
+            Write-Host 'after'
+        """)

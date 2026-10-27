@@ -40,12 +40,14 @@ from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, normal_
 from refinery.lib.scripts.ps1 import data
 from refinery.lib.scripts.ps1.analysis.arguments import Ps1WrittenSlots, written_slots
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
+from refinery.lib.scripts.ps1.analysis.cfg import Ps1TrapSet
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1ErrorPaths,
     Ps1FaultReach,
     Ps1SkipQuery,
     Ps1StepOverRegion,
+    handler_acts,
     raiser_of,
 )
 from refinery.lib.scripts.ps1.analysis.identity import object_sources
@@ -1963,7 +1965,7 @@ def fault_is_observed(
     **This is not the question asked before a handler is deleted.** A `trap` cannot raise, so
     nothing about its own position decides anything: what a removal changes is where the errors of
     *other* statements go, and that is the transpose,
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_a_handler_is_observed`.
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed`.
     Nor is it the question asked before a guarded body is emptied, which is
     `emptying_unhooks_a_handler` — a policy about what a listing should still show rather than a
     claim about what runs.
@@ -2246,7 +2248,21 @@ class _SkipVerdicts:
         divergence = paths.divergence(node)
         if divergence is None:
             return False
-        region = paths.region(divergence.slot)
+        return self._query(paths, paths.region(divergence.slot)).skips(node, divergence.step)
+
+    def landing_observed(self, paths: Ps1ErrorPaths, trap_set: Ps1TrapSet) -> bool:
+        if self._stamp.moved():
+            return True
+        landings = paths.landing_regions(trap_set)
+        if landings is None:
+            return True
+        for landing in landings:
+            query = self._query(paths, landing.region)
+            if any(query.reaches_observed(node) for step in landing.steps for node in step):
+                return True
+        return False
+
+    def _query(self, paths: Ps1ErrorPaths, region: Ps1StepOverRegion) -> Ps1SkipQuery:
         query = self._queries.get(region)
         if query is None:
             reads = self._continuation_reads(paths)
@@ -2255,11 +2271,13 @@ class _SkipVerdicts:
 
             def observed(member: CfgNode) -> bool:
                 element = member.element
+                if isinstance(element, Ps1TrapStatement):
+                    return handler_acts(element)
                 return element is not None and _skipped_statement_is_observable(
                     element, resumed, world, reads, self._written(element))
 
             query = self._queries[region] = region.query(observed)
-        return query.skips(node, divergence.step)
+        return query
 
     def _written(self, element: Node) -> _Writes:
         writes = self._writes.get(element)
@@ -2285,13 +2303,13 @@ class _SkipVerdicts:
 
 class Ps1HandlerVerdicts:
     """
-    The semantic half of the question whether deleting a handler changes what runs, for one version
-    of one tree: whether what the handler guards may raise — read without a world, or under the
-    world — and whether a resuming `trap`'s skip is observable under the world. Held in a
-    `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot, so it is rebuilt with the fault
-    model it reads, and handed to
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_a_handler_is_observed` through
-    the removal plan. Each answer is kept by the object that owns the test it was decided with, so
+    The semantic half of the question whether deleting `trap` statements changes what runs, for
+    one version of one tree: whether what a set guards may raise — read without a world, or under
+    the world — and whether what a resuming set skips, or runs before its errors would land, is
+    observable under the world. Held in a `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache`
+    slot, so it is rebuilt with the fault model it reads, and handed to
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed` through the
+    removal plan. Each answer is kept by the object that owns the test it was decided with, so
     no caller can hand in a test and a memo that do not belong together. The world is taken from
     *world* on the first verdict that reads it, so a pass that never weighs a handler under the
     world never has one built.
@@ -2510,7 +2528,7 @@ def statement_can_raise(
 
     It is built here rather than in `refinery.lib.scripts.ps1.analysis.faults` because the predicate
     that decides it lives here, and it is injected into
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_a_handler_is_observed` the way
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed` the way
     `expression_cannot_fault` is asked forward: the fault module stays free of the semantic model
     and takes the answer as a function. `world` widens the one bare-variable read
     `expression_cannot_fault` clears under a closed world, and is left out where a caller has none,

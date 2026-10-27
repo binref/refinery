@@ -617,12 +617,10 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
                 """), Ps1DeadCodeElimination)
                 self.assertIn('trap', result)
 
-    @unittest.expectedFailure
     def test_a_resuming_trap_under_another_resuming_trap_is_kept_where_its_block_goes_on(self):
         """
         The inner `trap` resumes inside the `if` body, so a failing call still writes `tail`; with
-        it gone the outer `trap` resumes after the `if`, and `tail` is skipped. The trap-set work
-        that waits on the batched passes fixes this.
+        it gone the outer `trap` resumes after the `if`, and `tail` is skipped.
         """
         result = self._deobfuscate_iterative(cleandoc("""
             trap {
@@ -641,12 +639,11 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
         guarded = next(node for node in script.walk() if isinstance(node, Ps1IfStatement))
         self.assertTrue(any(isinstance(node, Ps1TrapStatement) for node in guarded.walk()))
 
-    @unittest.expectedFailure
     def test_a_resuming_trap_is_kept_where_an_empty_catch_around_its_loop_would_end_the_loop(self):
         """
         The `trap` resumes after the failing cast, so every pass of the loop writes `tail`; with it
         gone the error leaves the loop for the empty `catch` around it, and the loop ends at its
-        first pass. The trap-set work that waits on the batched passes fixes this.
+        first pass.
         """
         result = self._apply(cleandoc("""
             try {
@@ -664,14 +661,11 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
         loop = next(node for node in script.walk() if isinstance(node, Ps1ForEachLoop))
         self.assertTrue(any(isinstance(node, Ps1TrapStatement) for node in loop.walk()))
 
-    @unittest.expectedFailure
     def test_a_resuming_trap_is_kept_where_the_typed_trap_around_it_would_decline_its_errors(self):
         """
         The inner `trap` resumes after the failing cast, so the script goes on to write `after`.
         With it gone the error reaches the script's only other `trap`, typed for a different error,
-        which declines it, and a declined error with nothing around it stops the script. The
-        verdict on the inner `trap` reads the declining set as an error stepped over at script
-        scope.
+        which declines it, and a declined error with nothing around it stops the script.
         """
         result = self._deobfuscate_iterative(cleandoc("""
             trap [System.IO.IOException] {}
@@ -700,6 +694,126 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
             } catch { }
         """), Ps1DeadCodeElimination)
         self.assertNotIn('trap', result)
+
+
+class TestPs1TheDeadCodePassDeletesTrapsAs51HandsThemErrors(TestPs1):
+    """
+    Each input is a snippet of the oracle corpus. Where the output loses a `trap`, 5.1 runs it as it
+    runs the input, up to the record of an error the deleted `trap` no longer suppresses.
+    """
+
+    def test_the_member_that_breaks_stays_where_it_is_tried_first(self):
+        self.assertEqual(self._apply(cleandoc("""
+            trap { break }
+            trap { continue }
+            [int]'a'
+            Write-Host 'after'
+        """), Ps1DeadCodeElimination), cleandoc("""
+            trap {
+              break
+            }
+            [int]'a'
+            Write-Host 'after'
+        """))
+
+    def test_a_typed_member_that_breaks_stays_although_an_untyped_one_is_written_first(self):
+        self.assertEqual(self._apply(cleandoc("""
+            trap { continue }
+            trap [System.Management.Automation.RuntimeException] { break }
+            $z = 0
+            1/$z
+            Write-Host 'after'
+        """), Ps1DeadCodeElimination), cleandoc("""
+            trap [System.Management.Automation.RuntimeException] {
+              break
+            }
+            $z = 0
+            1 / $z
+            Write-Host 'after'
+        """))
+
+    def test_an_inner_resuming_set_stays_under_an_outer_one(self):
+        self._assertUnchanged(cleandoc("""
+            trap {
+              continue
+            }
+            if ($true) {
+              trap {
+                continue
+              }
+              [int]'a'
+              Write-Host 'tail'
+            }
+            Write-Host 'after'
+        """), Ps1DeadCodeElimination)
+
+    def test_a_breaking_set_between_two_resuming_ones_goes_and_the_innermost_stays(self):
+        self.assertEqual(self._apply(cleandoc("""
+            trap { continue }
+            if ($true) {
+              trap { break }
+              if ($true) {
+                trap { continue }
+                [int]'a'
+                Write-Host 'tail'
+              }
+              Write-Host 'mid'
+            }
+            Write-Host 'after'
+        """), Ps1DeadCodeElimination), cleandoc("""
+            trap {
+              continue
+            }
+            if ($true) {
+              if ($true) {
+                trap {
+                  continue
+                }
+                [int]'a'
+                Write-Host 'tail'
+              }
+              Write-Host 'mid'
+            }
+            Write-Host 'after'
+        """))
+
+    def test_a_trap_that_runs_off_its_end_under_stop_and_the_cast_it_stops_at_both_stay(self):
+        self._assertUnchanged(cleandoc("""
+            $ErrorActionPreference = 'Stop'
+            trap {}
+            $null = [int]'a'
+            Write-Host 'after'
+        """), Ps1DeadCodeElimination)
+
+    def test_an_outer_trap_goes_only_once_the_inner_one_that_re_raises_past_a_finally_is_gone(self):
+        self.assertEqual(self._apply(cleandoc("""
+            trap { continue }
+            try {
+              $v = [int]'a'
+              trap { break }
+            } finally { }
+            Write-Host 'after'
+        """), Ps1DeadCodeElimination), cleandoc("""
+            try {
+              $v = [int]'a'
+            } finally {}
+            Write-Host 'after'
+        """))
+
+    def test_an_outer_trap_goes_only_once_the_inner_typed_one_that_declines_is_gone(self):
+        self.assertEqual(self._apply(cleandoc("""
+            trap { continue }
+            if ((Get-Date).Year -gt 2000) {
+              trap [System.IO.IOException] { continue }
+              $v = [int]'a'
+            }
+            Write-Host 'after'
+        """), Ps1DeadCodeElimination), cleandoc("""
+            if ((Get-Date).Year -gt 2000) {
+              $v = [int]'a'
+            }
+            Write-Host 'after'
+        """))
 
 
 class TestPs1DeadCodeEliminationKeepsATrapOverABlockThatMayRaise(TestPs1):
@@ -1104,6 +1218,23 @@ class TestPs1RemovalPlansFindEachListOncePerBatch(TestPs1):
 
         self.assertWorkGrowsLinearly(work, 100)
 
+    def test_the_work_of_removing_every_trap_and_statement_of_a_body_grows_linearly(self):
+        def work(length: int) -> int:
+            raisers = [F'$v{index} = [int]$s{index}; Write-Host {index}' for index in range(length)]
+            script = Ps1Parser('\n'.join(['trap { continue }'] * length + raisers)).parse()
+            cache = Ps1ModelCache(script)
+            plans = Ps1RemovalPlans(cache.faults, handlers=cache.handlers)
+            statements = list(script.body)
+
+            def remove_all():
+                for statement in statements:
+                    plans.propose(statement)
+                plans.commit()
+
+            return lines_executed(remove_all, scripts, removal)
+
+        self.assertWorkGrowsLinearly(work, 200)
+
 
 class TestPs1CleanupPassesRebuildTheModelsOncePerBatch(TestPs1):
 
@@ -1309,35 +1440,25 @@ class TestPs1RemovalPlansLandOnlyEditsThatStillHoldTogether(TestPs1):
 
     def test_a_trap_whose_removal_is_observed_once_the_outer_trap_is_gone_is_kept(self):
         self.assertEqual(self._apply(cleandoc("""
-            & {
-              foreach ($i in 1..2) {
-                try {
-                  throw 'x'
-                } catch {
-                  'a'
-                  & {}
-                  trap {
-                    break
-                  }
-                }
-                trap {
-                  continue
-                }
-              }
+            function f {
+              trap { continue }
+              try {
+                trap { }
+                $null = [int]$s
+              } catch [System.IO.IOException] { }
             }
+            try { f } catch { Write-Host 'caught' }
         """), Ps1DeadCodeElimination), cleandoc("""
-            & {
-              foreach ($i in 1..2) {
-                try {
-                  throw 'x'
-                } catch {
-                  'a'
-                  & {}
-                  trap {
-                    break
-                  }
-                }
-              }
+            function f {
+              try {
+                trap {}
+                $null = [int]$s
+              } catch [System.IO.IOException] {}
+            }
+            try {
+              f
+            } catch {
+              Write-Host 'caught'
             }
         """))
 

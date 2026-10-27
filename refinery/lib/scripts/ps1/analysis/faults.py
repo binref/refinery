@@ -23,19 +23,28 @@ rather than guessing, and a caller reads it as *unknown* wherever a caller might
 """
 from __future__ import annotations
 
+import enum
+
 from typing import Callable, Iterator, NamedTuple, Protocol, Sequence
 
-from refinery.lib.scripts import Node, tree_root
+from refinery.lib.scripts import Node, tree_root, tree_version
 from refinery.lib.scripts.analysis.cfg import (
     CfgEdge,
     CfgNode,
     ControlFlowGraph,
     ControlFlowModel,
+    Projection,
     distinct,
     plain_successors,
 )
 from refinery.lib.scripts.analysis.components import Condensation
-from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
+from refinery.lib.scripts.ps1.analysis.cfg import (
+    Ps1ControlFlowModel,
+    Ps1TrapDisposition,
+    Ps1TrapSet,
+    build_control_flow_model,
+    names_every_error,
+)
 from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
 from refinery.lib.scripts.ps1.analysis.values import ordinal_of, read
 from refinery.lib.scripts.ps1.ast import (
@@ -166,24 +175,6 @@ def _binds_the_error_action(written: str) -> bool:
     """
     reached = {surface for surface in _COMMON_SURFACES if binds_parameter(written, surface)}
     return bool(reached) and reached <= _ERROR_ACTION
-
-
-def _rethrows(handler: Ps1TrapStatement) -> bool:
-    """
-    Whether *handler* disposes of an error by re-raising it, which a `trap` spells as an unlabelled
-    `break` — measured: `& { trap { break }; [int]'a' }` ends the script where the same block
-    without the handler reports the cast and carries on.
-
-    A `break` written inside a loop of the trap's own body leaves that loop instead and is read here
-    as a rethrow all the same, because the statement list is read rather than the control flow. That
-    keeps a handler rather than dropping one, and the exact reading is the builder's
-    `refinery.lib.scripts.ps1.analysis.cfg` already makes for the block the `trap` is written in.
-    """
-    body = handler.body.body if handler.body is not None else ()
-    return any(
-        isinstance(statement, Ps1BreakStatement) and statement.label is None
-        for statement in body
-    )
 
 
 def _selects_stop(value: Node | None) -> bool:
@@ -516,7 +507,11 @@ def a_stop_may_be_in_force(root: Node) -> bool:
     return False
 
 
-def ends_the_script(element: Node, stop_default: bool = False) -> bool:
+def ends_the_script(
+    element: Node,
+    stop_default: bool = False,
+    converts: Callable[[Ps1TrapStatement], bool] = lambda trap: True,
+) -> bool:
     """
     Whether an error raised at *element* stops the script, rather than being reported and stepped
     over, where no handler takes it.
@@ -550,12 +545,12 @@ def ends_the_script(element: Node, stop_default: bool = False) -> bool:
 
     A `trap` inside the subtree that re-raises is read the same way, because it *converts*: an error
     a nested block would have reported and stepped over ends the script once such a handler takes
-    it. See `_rethrows`.
+    it. *converts* says which `trap` does: one 5.1 may select whose body may re-raise.
     """
     for node in element.walk():
         if isinstance(node, Ps1ThrowStatement):
             return True
-        if isinstance(node, Ps1TrapStatement) and _rethrows(node):
+        if isinstance(node, Ps1TrapStatement) and converts(node):
             return True
         if isinstance(node, Ps1CommandInvocation) and (stop_default or _stops_on_error(node)):
             return True
@@ -599,30 +594,43 @@ class _Route(NamedTuple):
     among four thousand statements pays four hundred thousand steps to say the same thing four
     thousand times. For the same reason a route is of fixed size: the one question asked of the
     empty clauses is whether one resumes somewhere other than a given position steps over to, and
-    two distinct slots settle that for every position, so no more than two are kept.
+    two clauses resuming at distinct slots settle that for every position, so no more than two are
+    kept. A clause is kept rather than its slot because a reader measuring the run up to that slot
+    needs the `try` the clause belongs to.
     """
     acts: bool
     passes_a_trap: bool
     offers_a_handler: bool
     leaves_the_body: bool
-    empty_resumes: tuple[frozenset[CfgNode], ...]
+    empty_catches: tuple[CfgNode, ...]
+
+    @property
+    def empty_resumes(self) -> list[frozenset[CfgNode]]:
+        """
+        The distinct slots the empty clauses of this route resume at.
+        """
+        return [_normal_successors(clause) for clause in self.empty_catches]
 
     def joined(self, other: _Route) -> _Route:
         """
         The route of an error that may take either this stretch or *other*.
         """
-        resumes = self.empty_resumes
-        for slot in other.empty_resumes:
-            if len(resumes) > 1:
-                break
-            if slot not in resumes:
-                resumes = (*resumes, slot)
+        catches = self.empty_catches
+        if other.empty_catches and len(catches) < 2:
+            resumes = self.empty_resumes
+            for clause in other.empty_catches:
+                if len(catches) > 1:
+                    break
+                slot = _normal_successors(clause)
+                if slot not in resumes:
+                    catches = (*catches, clause)
+                    resumes.append(slot)
         return _Route(
             self.acts or other.acts,
             self.passes_a_trap or other.passes_a_trap,
             self.offers_a_handler or other.offers_a_handler,
             self.leaves_the_body or other.leaves_the_body,
-            resumes,
+            catches,
         )
 
 
@@ -630,18 +638,23 @@ class _Route(NamedTuple):
 _NOWHERE = _Route(False, False, False, False, ())
 
 
-def _arrival(graph: ControlFlowGraph, node: CfgNode) -> _Route:
+def _arrival(
+    graph: ControlFlowGraph,
+    node: CfgNode,
+    reraises: Callable[[CfgNode], bool] = lambda node: False,
+) -> _Route:
     """
     What an error arriving at *node* contributes to a route through it: the handler it is offered
-    to there, or the body exit.
+    to there, or the body exit. *reraises* names the `trap` entries that hand the error back up
+    although the graph draws no edge for it — a body that runs off its end where a `Stop` preference
+    may be in force — and the error is read as leaving the body there.
     """
     element = node.element
     if isinstance(element, Ps1CatchClause):
         empty = element.body is None or not element.body.body
-        resumes = (_normal_successors(node),) if empty else ()
-        return _Route(handler_acts(element), False, True, False, resumes)
+        return _Route(handler_acts(element), False, True, False, (node,) if empty else ())
     if isinstance(element, Ps1TrapStatement):
-        return _Route(handler_acts(element), True, True, False, ())
+        return _Route(handler_acts(element), True, True, reraises(node), ())
     if node is graph.exit:
         return _Route(False, False, False, True, ())
     return _NOWHERE
@@ -712,37 +725,63 @@ def _resumption_slot(graph: ControlFlowGraph, node: CfgNode) -> CfgNode | None:
 
 class Ps1StepOverRegion:
     """
-    The plain control flow a resuming `trap` skips for every soft raiser that resumes at one slot:
-    what runs on the untrapped fall-through from those raisers up to `resumed`, the nodes control
-    reaches from the slot.
+    What one run makes that another, carrying on at `resumed`, does not: the code a resuming `trap`
+    skips for every soft raiser that resumes at one slot, which the untrapped run executes from the
+    raiser's step-over up to `resumed`, the nodes control reaches from the slot; or, for a `trap`
+    set whose errors would land at `resumed` without it, the code its own resumption runs first.
 
-    Built once per slot for all of them, because raisers resuming at the same slot skip overlapping
-    stretches of the same statement — the second of two raisers in a block skips a suffix of what
-    the first skips — and a walk per raiser costs the square of the block. The region is condensed
-    over its plain edges from every step-over of the slot, never entering a node of `resumed`, so
-    that whether a raiser skips something observable is one look at the components its step-over
-    reaches. What runs from `resumed` on is shared by the trapped and the untrapped run, so a write
-    the trap skips is observable exactly when something reached from there reads it. Whether a
-    statement is observable is not this class's to say; `query` pairs the region with a reader that
-    says it.
+    The walk follows every forward edge — a later statement that fails runs a `catch` body the
+    trapped run never reaches — and stays inside the statements *within* holds, the ones it
+    measures. A run that leaves them does not come back to `resumed`: it breaks out of a loop,
+    returns, or takes an error further out, while the other run carries on in place. So a node
+    outside them is not walked past and is read as observed, except a `trap` entry, which is read by
+    what its body does and is followed only along the error edges it hands an error on by.
+
+    Built once per slot for all its raisers, because raisers resuming at the same slot skip
+    overlapping stretches of the same statement — the second of two raisers in a block skips a
+    suffix of what the first skips — and a walk per raiser costs the square of the block. The region
+    is condensed from every step-over, never entering a node of `resumed`, so that whether a raiser
+    skips something observable is one look at the components its step-over reaches. What runs from
+    `resumed` on is shared by both runs, so a write skipped is observable exactly when something
+    reached from there reads it. Whether a statement is observable is not this class's to say;
+    `query` pairs the region with a reader that says it.
     """
 
-    def __init__(self, steps: list[frozenset[CfgNode]], resumed: frozenset[CfgNode]):
+    def __init__(
+        self,
+        steps: list[frozenset[CfgNode]],
+        resumed: frozenset[CfgNode],
+        within: Callable[[CfgNode], bool],
+    ):
         self.resumed = resumed
 
+        def leaves(node: CfgNode) -> bool:
+            return not isinstance(node.element, Ps1TrapStatement) and not within(node)
+
         def flows(node: CfgNode) -> list[CfgNode]:
-            return [target for target in plain_successors(node) if target not in resumed]
+            if not within(node):
+                return []
+            if isinstance(node.element, Ps1TrapStatement):
+                return [
+                    target for target in node.successors
+                    if node.graph.is_exceptional(node, target) and target not in resumed
+                ]
+            return [
+                target for target in Projection.FORWARD.successors(node) if target not in resumed
+            ]
 
         starts = [node for step in steps for node in step if node not in resumed]
         self.condensation = Condensation(starts, flows)
         self.members = [member for component in self.condensation.components for member in component]
+        self._leaves = leaves
 
     def query(self, observed: Callable[[CfgNode], bool]) -> Ps1SkipQuery:
         """
         The question whether a raiser of this region skips a statement *observed* reports, with the
         answers it learns kept beside that reader.
         """
-        return Ps1SkipQuery(self, observed)
+        leaves = self._leaves
+        return Ps1SkipQuery(self, lambda node: leaves(node) or observed(node))
 
 
 class Ps1SkipQuery:
@@ -790,6 +829,13 @@ class Ps1SkipQuery:
             found = self._members[number] = tuple(hits)
         return found
 
+    def reaches_observed(self, node: CfgNode) -> bool:
+        """
+        Whether a statement *observed* reports is reached from *node* within the region.
+        """
+        number = self._condensation.number_of(node)
+        return number is not None and self._reaches_observed(number)
+
     def _reaches_observed(self, number: int) -> bool:
         def observed(other: int) -> bool:
             return bool(self._observed_members(other))
@@ -805,6 +851,15 @@ class Ps1Divergence(NamedTuple):
     slot: CfgNode
 
 
+def _is_a_trap_entry(node: CfgNode) -> bool:
+    """
+    Whether *node* is the entry of a `trap`. Behind a set's chain on the error edges, such an entry
+    belongs to an inner set that re-raises or declines the errors it is offered, past any `finally`
+    between the two.
+    """
+    return isinstance(node.element, Ps1TrapStatement)
+
+
 def raiser_of(node: CfgNode) -> Node | None:
     """
     The statement *node* stands for when a handler behind it may be offered that statement's own
@@ -814,6 +869,35 @@ def raiser_of(node: CfgNode) -> Node | None:
     if element is None or isinstance(element, (Ps1CatchClause, Ps1TrapStatement)):
         return None
     return element
+
+
+class Ps1Landing(NamedTuple):
+    """
+    One place the errors a resuming `trap` set takes would land were none of the set written: the
+    region a run covers before it gets there, shared by every set landing at the same place, and the
+    steps this set resumes at, from which it runs into that region.
+    """
+    region: Ps1StepOverRegion
+    steps: tuple[frozenset[CfgNode], ...]
+
+
+class Ps1LandingSite(NamedTuple):
+    """
+    Where control carries on after an error a `trap` set takes, were the set not written: the
+    nodes reached from there, and the statement a run that carries on there leaves to reach them,
+    within which the run the set makes instead is measured.
+    """
+    resumed: frozenset[CfgNode]
+    statement: Node
+
+
+class _Landings(NamedTuple):
+    """
+    The landings of every `trap` set of one graph, keyed by the set's identity, `None` for a set
+    whose landings cannot all be named, and the distinct regions they share.
+    """
+    by_set: dict[int, list[Ps1Landing] | None]
+    regions: list[Ps1StepOverRegion]
 
 
 class _Divergences(NamedTuple):
@@ -837,10 +921,23 @@ class Ps1ErrorPaths:
     Backward, a question about the statements whose errors a handler may be offered is an
     existential over everything behind the handler's component, decided once per component for one
     test.
+
+    The `trap` sets the builder wired into the graph are what the landing questions read: where the
+    errors a set takes would land were it not written, and what the run the set makes instead
+    covers before it gets there.
     """
 
-    def __init__(self, graph: ControlFlowGraph):
+    def __init__(
+        self,
+        graph: ControlFlowGraph,
+        trap_sets: Sequence[Ps1TrapSet],
+        reraises: Callable[[CfgNode], bool] = lambda node: False,
+    ):
         self.graph = graph
+        self._reraises = reraises
+        self._trap_sets = tuple(trap_sets)
+        self._landings: _Landings | None = None
+        self._holders: dict[int, Node] | None = None
         onward = {
             node: distinct(target for target in node.successors if graph.is_exceptional(node, target))
             for node in graph.nodes
@@ -852,7 +949,7 @@ class Ps1ErrorPaths:
         def own(number: int) -> _Route:
             route = _NOWHERE
             for member in components[number]:
-                route = route.joined(_arrival(graph, member))
+                route = route.joined(_arrival(graph, member, reraises))
             return route
 
         self._routes = self._condensation.accumulate(own, _Route.joined, downstream=True)
@@ -875,7 +972,7 @@ class Ps1ErrorPaths:
             if condensation.looped(number):
                 for member in condensation.components[number]:
                     if member is not start:
-                        route = route.joined(_arrival(self.graph, member))
+                        route = route.joined(_arrival(self.graph, member, self._reraises))
             for other in condensation.downstream(number):
                 route = route.joined(self._routes[other])
             self._from[start] = route
@@ -940,14 +1037,174 @@ class Ps1ErrorPaths:
         region = self._regions.get(slot)
         if region is None:
             steps = self._table().steps_by_slot.get(slot, [])
-            region = self._regions[slot] = Ps1StepOverRegion(steps, _normal_successors(slot))
+            region = self._regions[slot] = Ps1StepOverRegion(
+                steps, _normal_successors(slot), self._within([self._holder_of(slot)]))
         return region
+
+    def _holder_of(self, slot: CfgNode) -> Node:
+        """
+        The statement of a resuming block that *slot* resumes past.
+        """
+        holders = self._holders
+        if holders is None:
+            holders = self._holders = {
+                id(resumes_at): statement
+                for trap_set in self._trap_sets
+                for statement in trap_set.statements
+                if (resumes_at := trap_set.slots.get(id(statement))) is not None
+            }
+        return holders[id(slot)]
+
+    def _within(self, statements: list[Node]) -> Callable[[CfgNode], bool]:
+        """
+        The test for a node built for one of *statements*. Each is a statement of a resuming block
+        or the `try` of an empty `catch`, both members of a sequence the graph was built from, so
+        one the graph did not record is a contradiction of the builder.
+        """
+        within = self.graph.builder_of(statements)
+        if within is None:
+            raise LookupError('the graph built no statement sequence holding one of the statements')
+        return within
 
     def regions(self) -> list[Ps1StepOverRegion]:
         """
-        The region of every slot some soft raiser of this graph diverges to.
+        The region of every slot some soft raiser of this graph diverges to, and every region a
+        resuming `trap` set of this graph skips relative to where its errors would land without it.
         """
-        return [self.region(slot) for slot in self._table().steps_by_slot]
+        regions = [self.region(slot) for slot in self._table().steps_by_slot]
+        regions.extend(self._landing_table().regions)
+        return regions
+
+    def arrival_at(self, node: CfgNode) -> _Route:
+        """
+        The route of an error offered to *node*: what *node* itself does with it, joined with
+        everything it may hand the error on to.
+        """
+        return _arrival(self.graph, node, self._reraises).joined(self.route_from(node))
+
+    def landings(self, trap_set: Ps1TrapSet) -> list[Ps1LandingSite] | None:
+        """
+        Where control carries on after an error *trap_set* takes, were none of its members written
+        and the error taken further out instead: after the `try` of an empty `catch` the error
+        reaches, and at the slot an enclosing resuming `trap` set resumes the statement holding this
+        block — the slot the set's own entries are wired to, since they are statements of the block
+        around it. `None` where the route keeps fewer empty catches than it passes, or reaches one
+        whose `try` the graph built no statement for.
+        """
+        outward = trap_set.outward
+        if outward is None:
+            return None
+        route = self.arrival_at(outward)
+        if len(route.empty_catches) > 1:
+            return None
+        landings: list[Ps1LandingSite] = []
+        for clause in route.empty_catches:
+            statement = clause.element.parent if clause.element is not None else None
+            if statement is None or self.graph.builder_of([statement]) is None:
+                return None
+            landings.append(Ps1LandingSite(_normal_successors(clause), statement))
+        slot = _resumption_slot(self.graph, trap_set.chain[0])
+        if slot is not None and route.passes_a_trap:
+            landings.append(Ps1LandingSite(_normal_successors(slot), self._holder_of(slot)))
+        return landings
+
+    def landing_regions(self, trap_set: Ps1TrapSet) -> list[Ps1Landing] | None:
+        """
+        For each landing of *trap_set*, the region a run covers when the set takes an error — from
+        the slot it resumes at after the statement holding each soft raiser behind it — before it
+        reaches that landing. `None` where the landings cannot all be named.
+        """
+        return self._landing_table().by_set[id(trap_set)]
+
+    def _landing_table(self) -> _Landings:
+        """
+        The landings of every `trap` set of this graph. One region is built per landing for all
+        the sets that land there, because sets in sibling blocks of one statement all land past
+        that statement, and sets nested in statements that end together land at the same place, and
+        each would otherwise walk the rest of it again. The region is bounded by all the statements
+        those sets leave to land there: statements that end at one place are nested, or lie apart
+        where no run passes from one to the other without leaving both.
+        """
+        table = self._landings
+        if table is None:
+            found: dict[int, list[tuple[frozenset[CfgNode], list[frozenset[CfgNode]]]] | None] = {}
+            steps_by_landing: dict[frozenset[CfgNode], list[frozenset[CfgNode]]] = {}
+            left: dict[frozenset[CfgNode], dict[int, Node]] = {}
+            for trap_set in self._trap_sets:
+                landings = self.landings(trap_set)
+                if landings is None:
+                    found[id(trap_set)] = None
+                    continue
+                steps = self._resume_points(trap_set)
+                found[id(trap_set)] = [(site.resumed, steps) for site in landings if steps]
+                for site in landings:
+                    steps_by_landing.setdefault(site.resumed, []).extend(steps)
+                    left.setdefault(site.resumed, {})[id(site.statement)] = site.statement
+            regions = {
+                landing: Ps1StepOverRegion(steps, landing, self._within([*left[landing].values()]))
+                for landing, steps in steps_by_landing.items() if steps
+            }
+            by_set = {
+                key: None if pairs is None else [
+                    Ps1Landing(regions[landing], tuple(steps)) for landing, steps in pairs
+                ]
+                for key, pairs in found.items()
+            }
+            table = self._landings = _Landings(by_set, list(regions.values()))
+        return table
+
+    def _resume_points(self, trap_set: Ps1TrapSet) -> list[frozenset[CfgNode]]:
+        """
+        Where *trap_set* carries on after the soft raisers behind it: for each statement of its
+        block that holds one, the nodes the slot after that statement reaches. Each statement is
+        found once however many raisers it holds, by climbing from the raiser and remembering every
+        element climbed through.
+        """
+        condensation = self._condensation
+        start = trap_set.chain[0]
+        number = condensation.number_of(start)
+        assert number is not None
+        block = {id(statement): statement for statement in trap_set.statements}
+        holders: dict[int, Node | None] = {}
+
+        def holder(element: Node) -> Node | None:
+            climbed: list[int] = []
+            cursor: Node | None = element
+            found: Node | None = None
+            while cursor is not None:
+                key = id(cursor)
+                if key in holders:
+                    found = holders[key]
+                    break
+                if key in block:
+                    found = cursor
+                    break
+                climbed.append(key)
+                cursor = cursor.parent
+            for key in climbed:
+                holders[key] = found
+            return found
+
+        seen: set[int] = {number}
+        stack = list(condensation.upstream(number))
+        steps: dict[int, frozenset[CfgNode]] = {}
+        while stack:
+            other = stack.pop()
+            if other in seen:
+                continue
+            seen.add(other)
+            stack.extend(condensation.upstream(other))
+            for node in condensation.components[other]:
+                element = raiser_of(node)
+                if element is None or not is_soft_error_source(element):
+                    continue
+                statement = holder(element)
+                if statement is None:
+                    continue
+                slot = trap_set.slots.get(id(statement))
+                if slot is not None and id(slot) not in steps:
+                    steps[id(slot)] = _normal_successors(slot)
+        return list(steps.values())
 
     def _table(self) -> _Divergences:
         table = self._divergences
@@ -980,6 +1237,107 @@ class Ps1ErrorPaths:
         return Ps1Divergence(step, slot)
 
 
+class _Fate(enum.Enum):
+    """
+    What becomes of an error handed to one member of a `trap` set: the set declines it, the member
+    acts on it, or the member only jumps — resumes the block or re-raises the error.
+    """
+    DECLINED = enum.auto()
+    ACTS = enum.auto()
+    JUMPS = enum.auto()
+
+
+class _Kind(enum.Enum):
+    """
+    The kinds of `trap` set member that 5.1 tries in turn: untyped, typed, and typed naming a type
+    every error is.
+    """
+    UNTYPED = enum.auto()
+    TYPED = enum.auto()
+    UNIVERSAL = enum.auto()
+
+
+class _SetFacts:
+    """
+    What the question whether deleting some members of one `trap` set changes anything reads of the
+    set, read once: which members are typed, which typed ones name a type every error is, the
+    untyped members in order, and how each member 5.1 may select disposes of an error, so that each
+    question costs the members it removes.
+
+    Where no typed member goes, an error a typed member matches goes to the same member either way,
+    and every other error goes to the first untyped member 5.1 tries or past the set, so the two
+    sets agree when those agree. Where a typed member goes, the errors it took may go to any member
+    the smaller set may select — one the whole set may select, or the first untyped member left — so
+    all of those have to dispose of an error alike. A body that runs off its end hands the error to
+    `$ErrorActionPreference`, so it resumes like `continue` and re-raises like `break` where a
+    `Stop` may be in force.
+    """
+
+    def __init__(self, trap_set: Ps1TrapSet, stop: bool):
+        self._trap_set = trap_set
+        self._stop = stop
+        self._typed = {id(trap) for trap in trap_set.members if trap.type_name.strip()}
+        self._universal = {
+            id(trap) for trap in trap_set.members
+            if id(trap) in self._typed and names_every_error(trap.type_name)
+        }
+        self._untyped = [trap for trap in trap_set.members if id(trap) not in self._typed]
+        self._first = self._key(self._first_untyped(set()))
+        self._selectable = {self._key(trap) for trap in trap_set.selectable}
+        self.acts = any(handler_acts(trap) for trap in trap_set.selectable)
+
+    def keepers(self, proposed: Sequence[Ps1TrapStatement]) -> list[Ps1TrapStatement]:
+        """
+        The members of *proposed* worth keeping back, one at a time, where not all of *proposed*
+        can go, in the order they are tried: the last proposed member 5.1 may select of each kind —
+        untyped, typed, typed naming every error. Keeping back any one member of a kind leaves the
+        same members of the other kinds and the same first untyped member, so every member of one
+        kind answers alike, and the last of them is the one a search from the end would keep.
+        """
+        chosen = {id(trap) for trap in proposed}
+        kinds: set[_Kind] = set()
+        keepers: list[Ps1TrapStatement] = []
+        for trap in reversed(self._trap_set.selectable):
+            if id(trap) in chosen and (kind := self._kind(trap)) not in kinds:
+                kinds.add(kind)
+                keepers.append(trap)
+        return keepers
+
+    def _kind(self, trap: Ps1TrapStatement) -> _Kind:
+        key = id(trap)
+        if key in self._universal:
+            return _Kind.UNIVERSAL
+        if key in self._typed:
+            return _Kind.TYPED
+        return _Kind.UNTYPED
+
+    def _key(self, trap: Ps1TrapStatement | None) -> tuple[_Fate, int]:
+        """
+        What *trap* does with an error, as a value two members that dispose of it alike share: a
+        member that acts shares it with no other, since what it writes is its own.
+        """
+        if trap is None:
+            return _Fate.DECLINED, 0
+        if handler_acts(trap):
+            return _Fate.ACTS, id(trap)
+        disposition = self._trap_set.disposition(trap)
+        if Ps1TrapDisposition.FALLS_THROUGH in disposition:
+            disposition &= ~Ps1TrapDisposition.FALLS_THROUGH
+            disposition |= Ps1TrapDisposition.RETHROWS if self._stop else Ps1TrapDisposition.RESUMES
+        return _Fate.JUMPS, disposition.value
+
+    def _first_untyped(self, removed: set[int]) -> Ps1TrapStatement | None:
+        if self._universal - removed:
+            return None
+        return next((trap for trap in self._untyped if id(trap) not in removed), None)
+
+    def disposes_alike_without(self, removed: set[int]) -> bool:
+        after = self._key(self._first_untyped(removed))
+        if not self._typed & removed:
+            return self._first == after
+        return self._selectable | {after} == {after}
+
+
 class RaiseVerdicts(Protocol):
     """
     The semantic half of the transpose's first two questions, which this module cannot answer
@@ -1004,6 +1362,9 @@ class SkipVerdicts(Protocol):
     def skip_observed_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
         ...
 
+    def landing_observed(self, paths: Ps1ErrorPaths, trap_set: Ps1TrapSet) -> bool:
+        ...
+
 
 class Ps1FaultReach:
     """
@@ -1026,6 +1387,9 @@ class Ps1FaultReach:
         self._model: ControlFlowModel | None = None
         self._paths: dict[ControlFlowGraph, Ps1ErrorPaths] = {}
         self._fires: dict[ControlFlowGraph, dict[int, bool]] = {}
+        self._escalating: dict[ControlFlowGraph, dict[int, bool]] = {}
+        self._version: int | None = None
+        self._set_facts: dict[int, _SetFacts] = {}
         self._handled: set[int] | None = None
         self._ending: dict[int, bool] = {}
         self._stopping: bool | None = None
@@ -1046,6 +1410,8 @@ class Ps1FaultReach:
         """
         if self._model is None:
             root = self._script
+            if root is not None:
+                self._version = tree_version(tree_root(root))
             self._model = self._given
             if isinstance(root, Ps1Script) and any(
                 isinstance(node, STATEMENT_LIST_EXPRESSIONS) for node in root.walk()
@@ -1125,7 +1491,7 @@ class Ps1FaultReach:
         script owner as unobserved — right for the statement-terminating errors 5.1 reports and steps
         over, wrong for the terminating ones. So when the error gets past the body unhandled and
         `_terminates` names the raise fatal, it is observed. This is the forward reading of the same
-        termination the transpose `_removal_matters` already weighs.
+        termination the transpose `_removing_the_set_matters` already weighs.
         """
         located = self._control_flow.locate(node)
         if located is None:
@@ -1139,8 +1505,9 @@ class Ps1FaultReach:
     def _reading_is_observed(self, graph: ControlFlowGraph, route: _Route) -> bool:
         """
         Whether an error routed like *route* out of *graph* changes what runs. The one reading of
-        a routing there is, so that the position question, the arrival question `_observed_from`
-        asks of a fallback, and anything later that reads a routing cannot answer it three ways.
+        a routing there is, so that the position question, the set question asking where the errors
+        of a deleted `trap` set arrive, and anything later that reads a routing cannot answer it
+        three ways.
         """
         if _handled_in_the_body(route):
             return True
@@ -1336,68 +1703,120 @@ class Ps1FaultReach:
         """
         return self._terminates(node)
 
-    def removing_a_handler_is_observed(
+    def removable_traps(
         self,
-        handler: Node,
+        traps: Sequence[Ps1TrapStatement],
+        raises: RaiseVerdicts,
+        skips: SkipVerdicts,
+    ) -> list[Ps1TrapStatement]:
+        """
+        The largest part of *traps* this reader finds can be deleted together without changing
+        what runs: per set, all of them; else all but one member 5.1 may select, tried in turn; else
+        those 5.1 never selects. A `trap` the graphs hold in no set is kept.
+        """
+        by_set: dict[int, tuple[Ps1TrapSet, list[Ps1TrapStatement]]] = {}
+        for trap in traps:
+            trap_set = self._trap_set_of(trap)
+            if trap_set is not None:
+                by_set.setdefault(id(trap_set), (trap_set, []))[1].append(trap)
+        removable: list[Ps1TrapStatement] = []
+        for trap_set, proposed in by_set.values():
+            removable.extend(self._removable_from(trap_set, proposed, raises, skips))
+        return removable
+
+    def _removable_from(
+        self,
+        trap_set: Ps1TrapSet,
+        proposed: list[Ps1TrapStatement],
+        raises: RaiseVerdicts,
+        skips: SkipVerdicts,
+    ) -> list[Ps1TrapStatement]:
+        if not self._removing_matters(trap_set, proposed, raises, skips):
+            return proposed
+        for keeper in self._facts(trap_set).keepers(proposed):
+            rest = [trap for trap in proposed if trap is not keeper]
+            if rest and not self._removing_matters(trap_set, rest, raises, skips):
+                return rest
+        spare = [trap for trap in proposed if not trap_set.is_selectable(trap)]
+        if spare and not self._removing_matters(trap_set, spare, raises, skips):
+            return spare
+        return []
+
+    def removing_traps_is_observed(
+        self,
+        traps: Sequence[Ps1TrapStatement],
         raises: RaiseVerdicts,
         skips: SkipVerdicts,
     ) -> bool:
         """
-        Whether deleting *handler* may change which code runs — the transpose, and the question
-        asked before a `trap` is deleted.
+        Whether deleting *traps*, members of one block's `trap` set, may change which code runs —
+        the transpose, and the question asked before any `trap` is deleted.
 
         A `trap` cannot itself raise, so the forward question answers nothing about removing one:
-        what changes is where the errors of *other* statements go. Three things have to be true for
-        that to matter, and asking fewer gets it wrong in some direction.
+        what changes is where the errors of *other* statements go. The set is the unit of the
+        answer, because 5.1 hands an error to one member by the error's type and not by where the
+        member is written (`refinery.lib.scripts.ps1.analysis.cfg.selectable_traps`), so a member
+        alone says nothing about what its block does.
 
-        **Something that may actually raise has to still reach it.** Walking the exceptional edges
-        backwards from the handler's own node finds the statements whose errors it may be offered,
-        and *raises* keeps only those that can raise a terminating error at all — a `trap` beside a
+        **Something that may actually raise has to still reach the set.** Walking the error edges
+        backwards from the head of its chain finds the statements whose errors it may be offered,
+        and *raises* keeps only those that can raise a terminating error at all: a `trap` beside a
         bare constant guards nothing, and one left behind by the removal of the only raise in its
         block becomes removable in turn. That judgment is handed in rather than made here, because
         whether an expression can fault is a fact of the semantic model this module holds none of;
-        `refinery.lib.scripts.ps1.analysis.effects.Ps1HandlerVerdicts` makes it with
-        `refinery.lib.scripts.ps1.analysis.effects.statement_can_raise`, the same
-        `expression_cannot_fault` the forward question asks, and keeps its answers per component of
-        `Ps1ErrorPaths` so that a hundred handlers guarding one block are answered by one walk. The
-        walk crosses other handlers, because a `catch` that misses hands the error on and the
-        statement that raised it is behind that clause rather than at it.
+        `refinery.lib.scripts.ps1.analysis.effects.Ps1HandlerVerdicts` makes it and keeps its
+        answers per component of `Ps1ErrorPaths`, so that a hundred `trap` lines guarding one
+        block are answered by one walk.
 
-        **A handler that acts and is reached by a raiser is load bearing.** A body that writes runs
-        exactly when the handler is offered an error, so `trap { 'h' }` beside a raise puts `h` on
-        the output stream where an unhandled error writes only its record. `handler_acts` of the
-        handler under test decides it, and the precise raisers are what keep this from over-holding
-        a `trap` beside a constant that cannot raise — the injected-noise shape
-        `refinery.lib.scripts.ps1.deobfuscation.deadcode` drops is one whose block offers the
-        handler no statement that may raise, so it is removed by the raiser test before this one is
-        reached.
+        **Deleting some of the members** changes nothing exactly when every error still goes to a
+        member that disposes of it alike; `_SetFacts` says when.
 
-        **And what it would fall back to has to act.** Deleting a handler sends its errors to
-        whatever the graph records as its fallback, so the question is asked again there: an empty
-        `catch` beside it swallows exactly as it did, and a `trap` at script scope with nothing
-        outside it lets an error be reported and stepped over, which is what an unhandled error
-        already did. A fallback the graph does not record is refused, because a handler whose
-        counterfactual is unknown is one whose removal cannot be judged.
+        **Deleting every member** sends the errors the set took to whatever guards its block, and
+        each of the following makes that observable:
 
-        **A `trap` set that may decline is load bearing for declining**, not only for handling. It
-        is what turns an error 5.1 would report and step over into one that ends the body, so
-        deleting it starts running everything written after the raise:
+        - a raise behind the set that would end the run untrapped;
+        - a member 5.1 may select that acts: `trap { 'h' }` puts `h` on the output stream where an
+          unhandled error writes only its record;
+        - the set letting an error past it, by a typed member declining or a `break` re-raising,
+          to a handler that acts or out of the body, which 5.1 answers by ending the body:
 
-            trap [System.IO.IOException] { }
+              trap [System.IO.IOException] { }
 
-        guards nothing yet is still why the script stops where it does.
+          guards nothing, yet it is still why the script stops where it does;
+        - an inner set behind it that re-raises or declines into it, past any `finally` between the
+          two, where the error would then leave the body;
+        - what guards the block taking the error in a way a run can see (`_reading_is_observed`);
+        - where the error would leave the body untrapped, the code the set's resumption skips that
+          the untrapped run executes — read by *skips* over the `Ps1StepOverRegion` of each raiser;
+        - and where the error would land instead, after the `try` of an empty `catch` or at the slot
+          of an enclosing resuming set, the code the set's own resumption runs before it gets
+          there (`Ps1ErrorPaths.landings`), read by *skips* as well.
 
-        **And a resuming `trap` is load bearing when the region it skips is observable.** A soft
-        error caught by a resuming `trap` would, untrapped, step over to the next statement in its
-        own block and carry on; the trap abandons that block and lands past it. Whether the
-        abandoned region does anything a run can see — writes the output stream, or a name a later
-        statement reads — is a fact of the semantic model, so it is handed in as *skips*, which
-        reads the `Ps1StepOverRegion` of each divergence this module finds.
+        A `trap` the graphs hold in no set, and any question asked after the tree moved, is read as
+        observed.
         """
-        if (located := self._handler_node(handler)) is None:
+        if not traps:
+            raise ValueError('no trap was named')
+        trap_set = self._trap_set_of(traps[0])
+        if trap_set is None:
             return True
-        graph, start = located
-        return self._removal_matters(graph, start, raises, skips)
+        if any(self._trap_set_of(trap) is not trap_set for trap in traps):
+            raise ValueError('the traps named belong to more than one set')
+        return self._removing_matters(trap_set, traps, raises, skips)
+
+    def _trap_set_of(self, trap: Ps1TrapStatement) -> Ps1TrapSet | None:
+        model = self._control_flow
+        return model.trap_set_of(trap) if isinstance(model, Ps1ControlFlowModel) else None
+
+    def _moved(self) -> bool:
+        """
+        Whether the tree has changed since the graphs this reader holds were built from it, or no
+        graph was built yet: either way the trap sets it would read are not the tree's.
+        """
+        root = self._script
+        if self._version is None or root is None:
+            return True
+        return tree_version(tree_root(root)) != self._version
 
     def _handler_node(self, handler: Node) -> tuple[ControlFlowGraph, CfgNode] | None:
         """
@@ -1417,20 +1836,20 @@ class Ps1FaultReach:
         raises: RaiseVerdicts,
     ) -> set[int]:
         """
-        Of handler deletions judged apart, one group to each verdict, the indices of the groups
-        whose deletions have to wait until the others have landed and they are judged again.
+        Of `trap` deletions judged apart, one group to each verdict, the indices of the groups whose
+        deletions have to wait until the others have landed and they are judged again.
 
-        `removing_a_handler_is_observed` reads one graph, the body the handler is written in, and
-        within it the blocks around the handler: their handlers decide where its errors go once it
-        is gone, and their resuming sets decide what an error it would have taken steps over
-        instead. Beyond that body it reads only whether a handler that acts is written anywhere
-        else, and a deletion can only make that answer more permissive. Nothing of this is read
-        unless something may raise into the handler, and a deletion elsewhere never puts a raiser
-        behind a handler that had none. So a deletion judged apart from another one still holds
-        once both land unless it may be offered an error and a block around it, in the same body,
-        loses a handler too. The inner group waits; the outer one was judged with the inner one
-        standing, and it still does. The members of one group were weighed against each other by
-        their own verdict and are not asked about here.
+        `removing_traps_is_observed` reads one graph, the body the set is written in, and within it
+        the blocks around the set and the blocks inside it: the handlers around it decide where its
+        errors go once it is gone and where they land, and the sets inside it decide whether errors
+        reach it escalated. Beyond that body it reads only whether a handler that acts is written
+        anywhere else, and a deletion can only make that answer more permissive. Nothing of this is
+        read unless something may raise into the set, and a deletion elsewhere puts a raiser behind
+        a set only by deleting a set inside it that took the raiser's errors. So of two deletions
+        judged apart, only one inside a block that loses a `trap` to the other may stop holding once
+        both land, and only where it may be offered an error. That inner group waits; the outer one
+        was judged with the inner one standing, and it still does. The members of one group were
+        weighed against each other by their own verdict and are not asked about here.
         """
         written: dict[int, set[int]] = {}
         for index, group in enumerate(groups):
@@ -1467,44 +1886,71 @@ class Ps1FaultReach:
                 return True
         return False
 
-    def _removal_matters(
+    def _removing_matters(
         self,
-        graph: ControlFlowGraph,
-        start: CfgNode,
+        trap_set: Ps1TrapSet,
+        traps: Sequence[Ps1TrapStatement],
         raises: RaiseVerdicts,
         skips: SkipVerdicts,
     ) -> bool:
+        if self._moved():
+            return True
+        first = trap_set.chain[0]
+        graph = first.graph
         paths = self.paths_of(graph)
-        if not raises.may_raise_behind(paths, start):
+        if not raises.may_raise_behind(paths, first):
             return False
-        if raises.may_end_the_run_behind(paths, start):
-            return True
-        element = start.element
-        if isinstance(element, Ps1TrapStatement) and handler_acts(element):
-            return True
-        route = paths.route_from(start)
-        if isinstance(element, Ps1TrapStatement) and route.leaves_the_body:
-            return True
-        if route.acts:
-            return True
-        if isinstance(element, Ps1TrapStatement) and skips.skip_observed_behind(paths, start):
-            return True
-        fallback = graph.fallback_of(start)
-        if fallback is None:
-            return True
-        return self._observed_from(graph, fallback)
+        removed = {id(trap) for trap in traps}
+        if len(removed) < len(trap_set.members):
+            return not self._dispose_alike(trap_set, removed)
+        return self._removing_the_set_matters(graph, paths, trap_set, raises, skips)
 
-    def _observed_from(self, graph: ControlFlowGraph, arrival: CfgNode) -> bool:
+    def _facts(self, trap_set: Ps1TrapSet) -> _SetFacts:
+        facts = self._set_facts.get(id(trap_set))
+        if facts is None:
+            facts = _SetFacts(trap_set, self._stops_on_every_error())
+            self._set_facts[id(trap_set)] = facts
+        return facts
+
+    def _dispose_alike(self, trap_set: Ps1TrapSet, removed: set[int]) -> bool:
+        return self._facts(trap_set).disposes_alike_without(removed)
+
+    def _removing_the_set_matters(
+        self,
+        graph: ControlFlowGraph,
+        paths: Ps1ErrorPaths,
+        trap_set: Ps1TrapSet,
+        raises: RaiseVerdicts,
+        skips: SkipVerdicts,
+    ) -> bool:
         """
-        Whether an error arriving at *arrival* changes what runs: *arrival* is a handler that acts,
-        or the routing onward from it is one `_reading_is_observed` calls observable — including the
-        body boundary, because an error that gets past *arrival* is the caller's exactly as one
-        raised at a position is.
+        Whether deleting every member of *trap_set* changes what runs: the errors it took go to
+        what guards the block instead, and land wherever that handler carries on.
         """
-        element = arrival.element
-        if isinstance(element, (Ps1CatchClause, Ps1TrapStatement)) and handler_acts(element):
+        first = trap_set.chain[0]
+        last = trap_set.chain[-1]
+        if raises.may_end_the_run_behind(paths, first):
             return True
-        return self._reading_is_observed(graph, self._route(graph, arrival))
+        if self._facts(trap_set).acts:
+            return True
+        route = paths.route_from(last)
+        if route.leaves_the_body or route.acts:
+            return True
+        outward = trap_set.outward
+        if outward is None:
+            return True
+        arrival = paths.arrival_at(outward)
+        escalating = self._escalating.setdefault(graph, {})
+        if arrival.leaves_the_body and paths.behind(first, _is_a_trap_entry, escalating):
+            return True
+        if self._reading_is_observed(graph, arrival):
+            return True
+        if (
+            (outward is graph.exit or arrival.leaves_the_body)
+            and skips.skip_observed_behind(paths, first)
+        ):
+            return True
+        return skips.landing_observed(paths, trap_set)
 
     def paths_of(self, graph: ControlFlowGraph) -> Ps1ErrorPaths:
         """
@@ -1513,8 +1959,36 @@ class Ps1FaultReach:
         """
         paths = self._paths.get(graph)
         if paths is None:
-            paths = self._paths[graph] = Ps1ErrorPaths(graph)
+            model = self._control_flow
+            trap_sets = model.trap_sets_in(graph) if isinstance(model, Ps1ControlFlowModel) else []
+            paths = self._paths[graph] = Ps1ErrorPaths(graph, trap_sets, self._reraises)
         return paths
+
+    def _reraises(self, node: CfgNode) -> bool:
+        """
+        Whether a `trap` entry hands the errors it takes back up although the graph draws no edge
+        for it: a member 5.1 may select whose body runs off its end, where a `Stop` preference may
+        be in force.
+        """
+        trap = node.element
+        if not isinstance(trap, Ps1TrapStatement) or not self._stops_on_every_error():
+            return False
+        trap_set = self._trap_set_of(trap)
+        return (
+            trap_set is not None
+            and trap_set.is_selectable(trap)
+            and Ps1TrapDisposition.FALLS_THROUGH in trap_set.disposition(trap)
+        )
+
+    def _converts(self, trap: Ps1TrapStatement) -> bool:
+        """
+        Whether *trap* turns an error it takes into one that ends the body: 5.1 may select it and
+        its body may re-raise. A `trap` the graphs hold in no set is read as converting.
+        """
+        trap_set = self._trap_set_of(trap)
+        if trap_set is None:
+            return True
+        return trap_set.is_selectable(trap) and trap_set.may_rethrow(trap)
 
     def _route(self, graph: ControlFlowGraph, start: CfgNode) -> _Route:
         """
@@ -1534,7 +2008,7 @@ class Ps1FaultReach:
         remembered = self._ending.get(id(element))
         if remembered is None:
             remembered = self._ending[id(element)] = ends_the_script(
-                element, self._a_stop_default_is_in_force())
+                element, self._a_stop_default_is_in_force(), self._converts)
         return remembered
 
     def _terminates(self, element: Node) -> bool:

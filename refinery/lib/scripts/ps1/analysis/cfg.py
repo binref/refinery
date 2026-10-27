@@ -32,6 +32,8 @@ alone is not what an advanced function runs.
 """
 from __future__ import annotations
 
+import enum
+
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Sequence
@@ -118,7 +120,7 @@ _CATCHES_EVERY_ERROR = frozenset({
 })
 
 
-def _names_every_error(name: str) -> bool:
+def names_every_error(name: str) -> bool:
     """
     Whether *name* is a type filter every terminating error matches. An empty name is a `trap`
     carrying no type filter, which takes every error the way a bare `catch` does. A `catch` clause
@@ -141,7 +143,7 @@ def _catch_takes_every_error(clause: Ps1CatchClause) -> bool:
     """
     if not clause.filtered:
         return True
-    return any(_names_every_error(name) for name in clause.types)
+    return any(names_every_error(name) for name in clause.types)
 
 
 def swallows_every_error(statement: Ps1TryCatchFinally) -> bool:
@@ -211,6 +213,87 @@ def _declared_traps(statements: Sequence[Node]) -> list[Ps1TrapStatement]:
     return [statement for statement in statements if isinstance(statement, Ps1TrapStatement)]
 
 
+def selectable_traps(traps: Sequence[Ps1TrapStatement]) -> list[Ps1TrapStatement]:
+    """
+    The members of one block's `trap` set that some terminating error may be handed to, in the order
+    5.1 tries them.
+
+    5.1 picks the member by the error's type and not by where it is written: a member naming the
+    error's own type, then one naming a type the error derives from, and only then the first member
+    carrying no type at all. So every typed member may take an error, in source order, and after
+    them the first untyped member takes whatever no typed member matched; an untyped member after
+    that one takes nothing. A typed member naming a type every terminating error is takes everything
+    before the untyped members are tried at all.
+    """
+    typed = [trap for trap in traps if trap.type_name.strip()]
+    if any(names_every_error(trap.type_name) for trap in typed):
+        return typed
+    untyped = next((trap for trap in traps if not trap.type_name.strip()), None)
+    return typed if untyped is None else [*typed, untyped]
+
+
+class Ps1TrapDisposition(enum.Flag):
+    """
+    What running a `trap` body may do with the error it took, read by the builder off the body it
+    builds. A body that branches may do several.
+    """
+    NONE = 0
+    #: An unlabelled `continue` resumes the block at the statement after the one that raised.
+    RESUMES = enum.auto()
+    #: The body runs off its end, which writes the error record and hands the decision to
+    #: `$ErrorActionPreference`: the block resumes, unless the preference is `Stop`.
+    FALLS_THROUGH = enum.auto()
+    #: A `break` that leaves the body re-raises the error to whatever guards the block.
+    RETHROWS = enum.auto()
+
+
+class Ps1TrapSet:
+    """
+    The `trap` statements one block declares, as the builder wired them: each member's entry and
+    disposition, the members 5.1 may select in the order it tries them, and — where the set
+    resumes the block — the slot it resumes at after each statement of the block. `outward` is where
+    an error goes that the set does not take, and where the errors it takes would go if none of it
+    were written.
+    """
+
+    def __init__(
+        self,
+        graph: ControlFlowGraph,
+        statements: Sequence[Node],
+        entries: dict[int, CfgNode],
+        traps: Sequence[Ps1TrapStatement],
+    ):
+        self.graph = graph
+        self.statements = tuple(statements)
+        self.members = tuple(traps)
+        self.entries = entries
+        self.selectable = tuple(selectable_traps(traps))
+        self._chosen = {id(trap) for trap in self.selectable}
+        self.never_selected = tuple(trap for trap in traps if id(trap) not in self._chosen)
+        self.chain = tuple(entries[id(trap)] for trap in self.selectable)
+        self.dispositions: dict[int, Ps1TrapDisposition] = {}
+        self.slots: dict[int, CfgNode] = {}
+        self.outward: CfgNode | None = None
+
+    def entry(self, trap: Ps1TrapStatement) -> CfgNode:
+        return self.entries[id(trap)]
+
+    def disposition(self, trap: Ps1TrapStatement) -> Ps1TrapDisposition:
+        return self.dispositions[id(trap)]
+
+    def is_selectable(self, trap: Ps1TrapStatement) -> bool:
+        """
+        Whether 5.1 may hand *trap* an error.
+        """
+        return id(trap) in self._chosen
+
+    def may_rethrow(self, trap: Ps1TrapStatement) -> bool:
+        """
+        Whether running the body of *trap* may hand the error it took back up with a `break`.
+        """
+        return Ps1TrapDisposition.RETHROWS in self.disposition(trap)
+
+
 @dataclass
 class _TrapBody:
     """
@@ -258,10 +341,17 @@ def _descended_bodies(statement: Node) -> list[list[Node]]:
 
 
 class _Builder(CfgBuilder):
-    def __init__(self, owner: Node, descend: bool = False):
+    def __init__(
+        self,
+        owner: Node,
+        descend: bool = False,
+        trap_sets: dict[int, Ps1TrapSet] | None = None,
+    ):
         super().__init__(owner)
         self._trap_body: _TrapBody | None = None
         self._descend = descend
+        self._trap_sets = {} if trap_sets is None else trap_sets
+        self._open_sets: list[Ps1TrapSet] = []
 
     def block(self, statements: Sequence[Node], frontier: list[CfgNode]) -> list[CfgNode]:
         """
@@ -330,40 +420,59 @@ class _Builder(CfgBuilder):
         traps = _declared_traps(statements)
         if not traps:
             return self.sequence(statements, frontier)
-        entries: list[CfgNode] = []
+        entries = {id(trap): self.detached_node(trap) for trap in traps}
+        trap_set = Ps1TrapSet(self.cfg, statements, entries, traps)
         for trap in traps:
-            handler = self.detached_node(trap)
-            if entries:
-                self.exceptional_edge(entries[-1], handler)
-            entries.append(handler)
-        handling = list(entries)
+            self._trap_sets[id(trap)] = trap_set
+        chain = trap_set.chain
+        for before, after in zip(chain, chain[1:]):
+            self.exceptional_edge(before, after)
+        handling = list(entries.values())
         resumes: list[CfgNode] = []
-        escapes = True
         enclosing = self._trap_body
         outer_targets = self._targets
         outer_labels = self._pending_labels
         self._targets = []
         self._pending_labels = frozenset()
         self._handlers.append(self.unwinding())
-        for trap, handler in zip(traps, entries):
+        for trap in traps:
             self._trap_body = built = _TrapBody()
             body_from = len(self.cfg.nodes)
-            resumes += self._body(trap.body, [handler]) + built.resumes
+            falls_through = self._body(trap.body, [trap_set.entry(trap)])
             handling += self.cfg.nodes[body_from:]
-            if _names_every_error(trap.type_name) and not built.rethrows:
-                escapes = False
+            disposition = Ps1TrapDisposition.NONE
+            if built.resumes:
+                disposition |= Ps1TrapDisposition.RESUMES
+            if falls_through:
+                disposition |= Ps1TrapDisposition.FALLS_THROUGH
+            if built.rethrows:
+                disposition |= Ps1TrapDisposition.RETHROWS
+            trap_set.dispositions[id(trap)] = disposition
+            if trap_set.is_selectable(trap):
+                resumes += falls_through + built.resumes
+        escapes = (
+            not any(names_every_error(trap.type_name) for trap in traps)
+            or any(trap_set.may_rethrow(trap) for trap in trap_set.selectable)
+        )
         self._handlers.pop()
         self._trap_body = enclosing
         self._targets = outer_targets
         self._pending_labels = outer_labels
-        self.close_handler_set(entries, escapes=escapes)
-        self._handlers.append(entries[0])
+        trap_set.outward = outward = self.unwinding()
+        self.close_handler_set(list(chain), escapes=escapes)
+        untyped = [trap for trap in traps if not trap.type_name.strip()]
+        for trap, following in zip(untyped, [*untyped[1:], None]):
+            target = outward if following is None else trap_set.entry(following)
+            self.set_fallback(trap_set.entry(trap), target)
+        self._handlers.append(chain[0])
         if not resumes:
             exits = self.sequence(statements, frontier)
         else:
             self.mark_hub_bound(handling)
+            self._open_sets.append(trap_set)
             with self.resumption(resumes):
                 exits = self._resumable_sequence(statements, frontier)
+            self._open_sets.pop()
         self._handlers.pop()
         return exits
 
@@ -398,8 +507,13 @@ class _Builder(CfgBuilder):
         lands at — no graph knows which statement threw — and what every consumer reads off it is
         where the resumption can go, not where it went.
         """
+        trap_set = self._open_sets[-1]
         for statement in statements:
-            frontier = self.resume_past(self.statement(statement, frontier))
+            built = self.member(statement, frontier)
+            slot = self._resumptions[-1].slot
+            if slot is not None:
+                trap_set.slots[id(statement)] = slot
+            frontier = self.resume_past(built)
         return frontier
 
     def body_blocks(self, owner: Node) -> Sequence[Sequence[Node]]:
@@ -596,8 +710,44 @@ def build_ps1_control_flow(root: Ps1Script, descend: bool = False) -> dict[int, 
     because every consumer but the fault reader wants the coarse one-statement-one-node graph, and
     turning it on changes only the graph the caller who asks for it reads.
     """
-    return build_control_flow(root, partial(_Builder, descend=descend), FUNCTION_NODES)
+    return _build(root, descend, {})
 
 
-def build_control_flow_model(root: Ps1Script, descend: bool = False) -> ControlFlowModel:
-    return ControlFlowModel(build_ps1_control_flow(root, descend), DEFERRED_NODES)
+def _build(
+    root: Ps1Script,
+    descend: bool,
+    trap_sets: dict[int, Ps1TrapSet],
+) -> dict[int, ControlFlowGraph]:
+    builder = partial(_Builder, descend=descend, trap_sets=trap_sets)
+    return build_control_flow(root, builder, FUNCTION_NODES)
+
+
+class Ps1ControlFlowModel(ControlFlowModel):
+    """
+    The control-flow graphs of one script, with the `trap` sets the builder wired into them.
+    """
+
+    def __init__(self, graphs: dict[int, ControlFlowGraph], trap_sets: dict[int, Ps1TrapSet]):
+        super().__init__(graphs, DEFERRED_NODES)
+        self._trap_sets = trap_sets
+        by_graph: dict[ControlFlowGraph, list[Ps1TrapSet]] = {}
+        for trap_set in {id(trap_set): trap_set for trap_set in trap_sets.values()}.values():
+            by_graph.setdefault(trap_set.graph, []).append(trap_set)
+        self._by_graph = by_graph
+
+    def trap_set_of(self, trap: Node) -> Ps1TrapSet | None:
+        """
+        The set of `trap` statements *trap* belongs to, or `None` where the graphs hold none.
+        """
+        return self._trap_sets.get(id(trap))
+
+    def trap_sets_in(self, graph: ControlFlowGraph) -> list[Ps1TrapSet]:
+        """
+        The `trap` sets the builder wired into *graph*.
+        """
+        return self._by_graph.get(graph, [])
+
+
+def build_control_flow_model(root: Ps1Script, descend: bool = False) -> Ps1ControlFlowModel:
+    trap_sets: dict[int, Ps1TrapSet] = {}
+    return Ps1ControlFlowModel(_build(root, descend, trap_sets), trap_sets)

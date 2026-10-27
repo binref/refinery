@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import enum
 
+from bisect import bisect_right
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import AbstractSet as Set
@@ -509,6 +510,8 @@ class ControlFlowGraph:
         self._fallback: dict[int, CfgNode] = {}
         self._reached_after: dict[tuple[int, bool], frozenset[int]] = {}
         self._completions: dict[int, tuple[Node, list[CfgNode]]] = {}
+        self._spans: dict[int, tuple[Node, range]] = {}
+        self._positions: dict[int, int] | None = None
         self.entry = CfgNode(self, None)
         self.exit = CfgNode(self, None)
         self.nodes: list[CfgNode] = [self.entry, self.exit]
@@ -529,6 +532,42 @@ class ControlFlowGraph:
         if (found := self._completions.get(id(statement))) is None or found[0] is not statement:
             return None
         return found[1]
+
+    def builder_of(self, statements: Iterable[Node]) -> Callable[[CfgNode], bool] | None:
+        """
+        A test for whether a node of this graph was built for one of *statements*, each a member of
+        a statement sequence this graph was built from — its own node, those of every construct
+        nested in it, and the synthetic joins and resumption slots its build drew — or `None` where
+        one of them is any other element.
+
+        Read off the order the builder appends nodes in: building a statement is one recursive call,
+        so everything built for it is appended between that call's start and its end, and two such
+        stretches are nested or apart, as the statements are. A test is one search among the
+        outermost stretches however deep the statements nest. A walk that measures what a run does
+        inside some statements asks this of every node it meets to see where the run has left them.
+        """
+        spans: list[range] = []
+        for statement in statements:
+            if (found := self._spans.get(id(statement))) is None or found[0] is not statement:
+                return None
+            spans.append(found[1])
+        starts: list[int] = []
+        stops: list[int] = []
+        for span in sorted(spans, key=lambda span: (span.start, -span.stop)):
+            if stops and span.start < stops[-1]:
+                continue
+            starts.append(span.start)
+            stops.append(span.stop)
+        positions = self._positions
+        if positions is None:
+            positions = self._positions = {id(node): index for index, node in enumerate(self.nodes)}
+
+        def holds(node: CfgNode) -> bool:
+            position = positions.get(id(node), -1)
+            index = bisect_right(starts, position) - 1
+            return index >= 0 and position < stops[index]
+
+        return holds
 
     def fallback_of(self, handler: CfgNode) -> CfgNode | None:
         """
@@ -1081,6 +1120,14 @@ class CfgBuilder:
         if escapes and entries:
             self.exceptional_edge(entries[-1], outward)
 
+    def set_fallback(self, handler: CfgNode, target: CfgNode) -> None:
+        """
+        Record where a throw *handler* takes would go were *handler* not written, where a
+        language picks among a set's handlers by a rule other than the order `close_handler_set`
+        chains them in.
+        """
+        self.cfg._fallback[id(handler)] = target
+
     def unwinding(self) -> CfgNode:
         """
         Where a throw goes when nothing open here takes it: the innermost active handler, or the
@@ -1094,8 +1141,23 @@ class CfgBuilder:
 
     def sequence(self, statements: Sequence[Node], frontier: list[CfgNode]) -> list[CfgNode]:
         for statement in statements:
-            frontier = self.statement(statement, frontier)
+            frontier = self.member(statement, frontier)
             self.cfg._completions[id(statement)] = (statement, list(frontier))
+        return frontier
+
+    def member(self, statement: Node, frontier: list[CfgNode]) -> list[CfgNode]:
+        """
+        Build *statement* as a member of a statement sequence and record the nodes it built, which
+        `ControlFlowGraph.builder_of` answers from. A statement whose own node already exists was
+        started by the construct around it — a declaration its block hoists, or a finalizer whose
+        entry the guarded construct draws first — so the nodes built here are not all of its nodes,
+        and none are recorded.
+        """
+        if self.cfg.node_of(statement) is not None:
+            return self.statement(statement, frontier)
+        start = len(self.cfg.nodes)
+        frontier = self.statement(statement, frontier)
+        self.cfg._spans[id(statement)] = (statement, range(start, len(self.cfg.nodes)))
         return frontier
 
     def opaque(self, element: Node, frontier: list[CfgNode]) -> list[CfgNode]:

@@ -23,7 +23,11 @@ from refinery.lib.scripts.analysis.cfg import (
 )
 from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
-from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model, build_ps1_control_flow
+from refinery.lib.scripts.ps1.analysis.cfg import (
+    Ps1TrapDisposition,
+    build_control_flow_model,
+    build_ps1_control_flow,
+)
 from refinery.lib.scripts.ps1.analysis.model import build_semantic_model
 from refinery.lib.scripts.ps1.ast import get_body
 from refinery.lib.scripts.ps1.model import (
@@ -906,6 +910,151 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         tree = Ps1Parser("switch ($x) { 1 { } }").parse()
         cycles = CycleModel(build_control_flow_model(tree))
         self.assertTrue(cycles.repeats(tree.body[0]))
+
+
+class TestPs1AGraphKnowsWhichNodesEachStatementOfASequenceBuilt(TestBase):
+
+    @staticmethod
+    def _inside(element: Node, statement: Node) -> bool:
+        cursor: Node | None = element
+        while cursor is not None:
+            if cursor is statement:
+                return True
+            cursor = cursor.parent
+        return False
+
+    def test_the_nodes_built_for_a_statement_are_exactly_those_standing_for_a_part_of_it(self):
+        recorded = 0
+        wrong: list[tuple[str, str, str]] = []
+        for source in [
+            *_CORPUS,
+            "trap { continue }\n$x = $([int]'a'; 'b')\nif ($c) { trap { break }\n$y = @([int]$s) }",
+            "trap { continue }\nforeach ($i in $l) { try { if ($c) { break } } catch { continue } }",
+        ]:
+            tree = Ps1Parser(source).parse()
+            for graph in build_control_flow_model(tree, descend=True).graphs.values():
+                for statement in tree.walk():
+                    within = graph.builder_of([statement])
+                    if within is None:
+                        continue
+                    recorded += 1
+                    wrong.extend(
+                        (source, str(statement), str(node.element))
+                        for node in graph.nodes
+                        if node.element is not None
+                        and within(node) != self._inside(node.element, statement)
+                    )
+        self.assertEqual(wrong, [])
+        self.assertGreater(recorded, len(_CORPUS))
+
+    def test_a_trap_its_block_hoists_and_a_finally_block_record_nothing(self):
+        tree = Ps1Parser("trap { 'h' }\ntry { 'a' } finally { 'c' }").parse()
+        graph = build_ps1_control_flow(tree)[id(tree)]
+        trap, guarded = tree.body
+        assert isinstance(guarded, Ps1TryCatchFinally) and guarded.finally_block is not None
+        self.assertIsNone(graph.builder_of([trap]))
+        self.assertIsNone(graph.builder_of([guarded.finally_block]))
+        self.assertIsNotNone(graph.builder_of([guarded.finally_block.body[0]]))
+
+    def test_nested_and_apart_statements_answer_as_the_union_of_their_own_answers(self):
+        tree = Ps1Parser("if ($a) { 'x'\nif ($b) { 'y' } }\n'z'\nif ($c) { 'w' }").parse()
+        graph = build_ps1_control_flow(tree)[id(tree)]
+        outer, _, apart = tree.body
+        nested = next(node for node in outer.walk() if node is not outer and type(node) is type(outer))
+        statements = [outer, nested, apart]
+        together = graph.builder_of(statements)
+        alone = [graph.builder_of([statement]) for statement in statements]
+        assert together is not None and all(within is not None for within in alone)
+        for node in graph.nodes:
+            self.assertEqual(together(node), any(within(node) for within in alone if within is not None))
+
+
+class TestPs1ATrapSetIsWiredInTheOrder51TriesItsMembers(_Ps1ControlFlowGraphs):
+    """
+    5.1 hands an error to one member of a block's `trap` set by the error's type and not by where
+    the member is written: a member naming the error's type or a type it derives from, and only
+    then the first member carrying no type. Measured: `trap { continue }; trap { break }` over a
+    failing cast resumes, and `trap { break }; trap { continue }` stops the script; under
+    `trap { continue }; trap [System.Management.Automation.RuntimeException] { break }` a division
+    by zero stops it, although the typed member is written second.
+    """
+
+    @staticmethod
+    def _sets(source: str):
+        tree = Ps1Parser(source).parse()
+        model = build_control_flow_model(tree)
+        traps = [node for node in tree.walk_in_order() if isinstance(node, Ps1TrapStatement)]
+        return tree, model, traps
+
+    def test_typed_members_are_tried_before_the_first_untyped_one_and_later_untyped_ones_never(self):
+        _, model, (first, typed, second) = self._sets(
+            "trap { 'a' }\ntrap [System.IO.IOException] { 'b' }\ntrap { 'c' }\n'x'")
+        trap_set = model.trap_set_of(first)
+        assert trap_set is not None
+        self.assertEqual(trap_set.selectable, (typed, first))
+        self.assertEqual(trap_set.never_selected, (second,))
+
+    def test_a_member_naming_every_error_leaves_every_untyped_member_unselected(self):
+        _, model, (universal, untyped) = self._sets("trap [System.Exception] { 'a' }\ntrap { 'b' }\n'x'")
+        trap_set = model.trap_set_of(universal)
+        assert trap_set is not None
+        self.assertEqual(trap_set.selectable, (universal,))
+        self.assertEqual(trap_set.never_selected, (untyped,))
+
+    def test_an_error_is_offered_only_to_the_members_51_may_select(self):
+        tree, graph = self._tree_and_graph(
+            "trap { 'a' }\ntrap [System.IO.IOException] { 'b' }\ntrap { 'c' }\n'x'")
+        first, typed, second, guarded = tree.body
+        self.assertEqual(self._reached_by_an_error_at(graph, guarded), self._handlers(graph, typed, first))
+        self.assertEqual(self._required_node(graph, second).predecessors, [])
+
+    def test_a_member_never_selected_does_not_make_its_block_resume(self):
+        tree, graph = self._tree_and_graph("trap { break }\ntrap { 'x'; continue }\n'a'\n'b'")
+        raiser = self._required_node(graph, tree.body[2])
+        self.assertFalse(any(
+            graph.edge_kind(raiser, target) & CfgEdge.RESUMPTION_FORWARD for target in raiser.successors))
+        self.assertIn(graph.exit, self._reached_by_an_error_at(graph, tree.body[2]))
+
+    def test_an_error_gets_past_the_set_exactly_where_the_member_51_picks_may_hand_it_on(self):
+        for source, escapes in [
+            ("trap { break }\ntrap { continue }\n'a'", True),
+            ("trap { continue }\ntrap { break }\n'a'", False),
+            ("trap { continue }\ntrap [System.Management.Automation.RuntimeException] { break }\n'a'", True),
+            ("trap [System.Exception] { continue }\ntrap { break }\n'a'", False),
+        ]:
+            with self.subTest(source):
+                tree, graph = self._tree_and_graph(source)
+                self.assertEqual(graph.exit in self._reached_by_an_error_at(graph, tree.body[-1]), escapes)
+
+    def test_a_set_nested_in_a_resuming_block_is_resumed_where_that_block_resumes_its_statement(self):
+        """
+        The inner `trap { break }` hands the error on to the outer `trap { continue }`, which carries
+        on after the statement of its own block that holds the inner set: the `if`.
+        """
+        tree, model, (outer, inner) = self._sets("trap { continue }\nif ($c) { trap { break }\n'a' }\n'b'")
+        outer_set = model.trap_set_of(outer)
+        inner_set = model.trap_set_of(inner)
+        assert outer_set is not None and inner_set is not None
+        entry = inner_set.entry(inner)
+        resumed = [
+            target for target in entry.successors
+            if entry.graph.edge_kind(entry, target) & CfgEdge.RESUMPTION_FORWARD
+        ]
+        self.assertEqual(resumed, [outer_set.slots[id(tree.body[1])]])
+
+    def test_the_disposition_of_a_member_is_what_its_body_may_do_with_the_error(self):
+        for body, disposition in [
+            ('{ }', Ps1TrapDisposition.FALLS_THROUGH),
+            ('{ continue }', Ps1TrapDisposition.RESUMES),
+            ('{ break }', Ps1TrapDisposition.RETHROWS),
+            ('{ foreach ($i in $l) { break } }', Ps1TrapDisposition.FALLS_THROUGH),
+            ('{ if ($c) { continue }; break }', Ps1TrapDisposition.RESUMES | Ps1TrapDisposition.RETHROWS),
+        ]:
+            with self.subTest(body):
+                _, model, (trap,) = self._sets(F"trap {body}\n'a'")
+                trap_set = model.trap_set_of(trap)
+                assert trap_set is not None
+                self.assertEqual(trap_set.disposition(trap), disposition)
 
 
 class TestPs1ACatchWhoseTypeFilterCannotBeReadIsNotUnfiltered(_Ps1ControlFlowGraphs):

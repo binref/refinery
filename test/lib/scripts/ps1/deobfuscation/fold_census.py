@@ -13,6 +13,10 @@ This says only which folds exist, so that a commit that means to change one has 
 from __future__ import annotations
 
 FOLDS: dict[str, str] = {
+    "$ErrorActionPreference = 'Stop'; trap { }; $null = [int]'a'; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\ntrap {}\n$Null = [int]'a'\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'Stop'; trap { }; trap { continue }; [int]'a'; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\ntrap {}\n[int]'a'\nWrite-Host 'after'",
     "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); trap { continue }; [int]'a'; Write-Output 'after'":
         "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop')\n"
         "[int]'a'\n"
@@ -43,6 +47,8 @@ FOLDS: dict[str, str] = {
         "$a = 'a,b,c' -Split ',', '2'\n$t = $a[1]\nWrite-Output (,$t)\nWrite-Output $t",
     '$a = 1; $b = 2; $a + $b':
         '3',
+    "$a = @('x', '5'); for ($i = 0; $i -lt 2; $i++) { $y = [int]$a[$i] }; Write-Host \"y=$y\"":
+        "$a = @('x', '5')\nfor ($i = 0; $i -LT 2; $i++) {\n  $y = [int]$a[$i]\n}\nWrite-Host \"y=${y}\"",
     "$a = @(0); $t = if ($a) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t":
         "$t = if (@(0)) {\n  'yes'\n} else {\n  'no'\n}\nWrite-Output (,$t)\nWrite-Output $t",
     "$a = @(0, 0); $t = if ($a) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t":
@@ -170,6 +176,12 @@ FOLDS: dict[str, str] = {
         'Write-Output $x',
     '$o = [pscustomobject]@{}; Add-Member -Type NoteProperty k v -InputObject $o; $o.k':
         '$o = [pscustomobject]@{}\nAdd-Member -MemberType NoteProperty k v -InputObject $o\n$o.k',
+    "$out = New-Object byte[] 3; for ($i = 0; $i -lt 3; $i++) { $out[$i] = 7 -bxor $k[$i % $k.Length] }; Write-Host \"out=$($out -join ',')\"":
+        '$out = New-Object byte[] 3\n'
+        'for ($i = 0; $i -LT 3; $i++) {\n'
+        '  $out[$i] = 7 -BXor $k[$i % $k.Length]\n'
+        '}\n'
+        "Write-Host \"out=$($out -Join ',')\"",
     '$p = @(@(1, 2), @(3, 4)); for ($i = 0; $i -lt 1; $i++) { [Array]::Reverse($p[$i]) }; Write-Output $p[0]':
         '$p = @(@(1, 2), @(3, 4))\nfor ($i = 0; $i -LT 1; $i++) {\n  [Array]::Reverse($p[$i])\n}\nWrite-Output $p[0]',
     "$private:x = 'a'; Write-Output $x":
@@ -192,6 +204,11 @@ FOLDS: dict[str, str] = {
         "Write-Output 'x'",
     '$s = 0xFF; $t = "$s"; Write-Output (,$t); Write-Output $t':
         "Write-Output (,'255')\nWrite-Output '255'",
+    "$s = [string][char]256 + 'b'; $k = [char[]]$s | ForEach-Object { [byte][char]$_ }; Write-Host \"count=$($k.Count) key=$($k -join ',')\"":
+        "$k = [char[]]'Āb' | ForEach-Object {\n"
+        '  [byte][char]$_\n'
+        '}\n'
+        "Write-Host \"count=$($k.Count) key=$($k -Join ',')\"",
     "$sb = New-Object Text.StringBuilder -ArgumentList 'aGk='; $x = $sb.ToString(); "
     "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
     ".Invoke($Null, @($x)); Write-Output (,$t); Write-Output $t":
@@ -1652,6 +1669,8 @@ FOLDS: dict[str, str] = {
         'ForEach-Object {\n  Write-Host 1\n}',
     '& { Write-Output $local:ShellId }':
         "& {\n  Write-Output 'Microsoft.PowerShell'\n}",
+    "& { foreach ($i in 1..2) { try { throw 'x' } catch { Write-Host 'a'; $null = [int]'b'; trap { break } }; trap { continue } } }":
+        "& {\n  foreach ($i in 1, 2) {\n    Write-Host 'a'\n  }\n}",
     "&('Write' + '-Output') 'indirect'":
         "Write-Output 'indirect'",
     "'ABC'.ToLower()":
@@ -1902,6 +1921,15 @@ FOLDS: dict[str, str] = {
         '3',
     "if ($true) { 'yes' } else { 'no' }":
         "'yes'",
+    "if ($true) { trap [System.IO.IOException] { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        '    continue\n'
+        '  }\n'
+        "  [int]'a'\n"
+        "  Write-Host 'tail'\n"
+        '}\n'
+        "Write-Host 'after'",
     "if ($true) { trap { continue }; Write-Host 'in'; throw 'e' }; Write-Host 'after'":
         "if ($True) {\n  trap {\n    continue\n  }\n  Write-Host 'in'\n  throw 'e'\n}\nWrite-Host 'after'",
     'switch ($a) { 1 { "x" } default { "y" } }':
@@ -1918,6 +1946,21 @@ FOLDS: dict[str, str] = {
         "trap {\n  Write-Host 'outer'\n  continue\n}\nif ($True) {\n  trap [System.IO.IOException] {\n    Write-Host 'inner'\n    continue\n  }\n  throw 'e'\n  Write-Host 'tail'\n}\nWrite-Host 'next'",
     "trap { Write-Host 'outer'; continue }; if ($true) { trap { Write-Host 'inner'; continue }; throw 'e'; Write-Host 'tail' }; Write-Host 'next'":
         "trap {\n  Write-Host 'outer'\n  continue\n}\nif ($True) {\n  trap {\n    Write-Host 'inner'\n    continue\n  }\n  throw 'e'\n  Write-Host 'tail'\n}\nWrite-Host 'next'",
+    "trap { break }; trap { continue }; [int]'a'; Write-Host 'after'":
+        "trap {\n  break\n}\n[int]'a'\nWrite-Host 'after'",
+    "trap { continue }; $a = @('x', '5'); for ($i = 0; $i -lt 2; $i++) { $y = [int]$a[$i] }; Write-Host \"y=$y\"":
+        "$a = @('x', '5')\nfor ($i = 0; $i -LT 2; $i++) {\n  $y = [int]$a[$i]\n}\nWrite-Host \"y=${y}\"",
+    "trap { continue }; $out = New-Object byte[] 3; for ($i = 0; $i -lt 3; $i++) { $out[$i] = 7 -bxor $k[$i % $k.Length] }; Write-Host \"out=$($out -join ',')\"":
+        '$out = New-Object byte[] 3\n'
+        'for ($i = 0; $i -LT 3; $i++) {\n'
+        '  $out[$i] = 7 -BXor $k[$i % $k.Length]\n'
+        '}\n'
+        "Write-Host \"out=$($out -Join ',')\"",
+    "trap { continue }; $s = [string][char]256 + 'b'; $k = [char[]]$s | ForEach-Object { [byte][char]$_ }; Write-Host \"count=$($k.Count) key=$($k -join ',')\"":
+        "$k = [char[]]'Āb' | ForEach-Object {\n"
+        '  [byte][char]$_\n'
+        '}\n'
+        "Write-Host \"count=$($k.Count) key=$($k -Join ',')\"",
     "trap { continue }; $s = { throw 'x' }; [int]'a'; Write-Host 'after'":
         "trap {\n  continue\n}\n$Null = {\n  throw 'x'\n}\n[int]'a'\nWrite-Host 'after'",
     'trap { continue }; $x = "$(1/0)$(Set-Alias zzq Write-Output)"; zzq \'hi\'':
@@ -1928,22 +1971,112 @@ FOLDS: dict[str, str] = {
         "[int]'a'\nWrite-Host 'after'",
     "trap { continue }; foreach ($i in 1..2) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'":
         "trap {\n  continue\n}\nforeach ($i in 1, 2) {\n  throw 'e'\n  Write-Host 'tail'\n}\nWrite-Host 'next'",
+    "trap { continue }; foreach ($q in (Get-Date).Year) { trap [System.IO.IOException] { continue }; $v = [int]'a' }; Write-Host 'after'":
+        "foreach ($q in (Get-Date).Year) {}\nWrite-Host 'after'",
     "trap { continue }; iex 'throw 1'; Write-Host 'after'":
         'throw 1',
+    "trap { continue }; if ($true) { [int]'a'; Write-Host 'tail' }; Write-Host 'after'":
+        "trap {\n  continue\n}\nif ($True) {\n  [int]'a'\n  Write-Host 'tail'\n}\nWrite-Host 'after'",
     "trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'":
         "trap {\n  continue\n}\nif ($True) {\n  throw 'e'\n  Write-Host 'tail'\n}\nWrite-Host 'next'",
+    "trap { continue }; if ($true) { trap [System.IO.IOException] { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'after'":
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        '    continue\n'
+        '  }\n'
+        "  [int]'a'\n"
+        "  Write-Host 'tail'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "trap { continue }; if ($true) { trap { break }; if ($true) { [int]'a'; Write-Host 'tail' }; Write-Host 'mid' }; Write-Host 'after'":
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'if ($True) {\n'
+        '  if ($True) {\n'
+        "    [int]'a'\n"
+        "    Write-Host 'tail'\n"
+        '  }\n'
+        "  Write-Host 'mid'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "trap { continue }; if ($true) { trap { break }; if ($true) { trap { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'mid' }; Write-Host 'after'":
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'if ($True) {\n'
+        '  if ($True) {\n'
+        '    trap {\n'
+        '      continue\n'
+        '    }\n'
+        "    [int]'a'\n"
+        "    Write-Host 'tail'\n"
+        '  }\n'
+        "  Write-Host 'mid'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "trap { continue }; if ($true) { trap { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'after'":
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'if ($True) {\n'
+        '  trap {\n'
+        '    continue\n'
+        '  }\n'
+        "  [int]'a'\n"
+        "  Write-Host 'tail'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "trap { continue }; if ((Get-Date).Year -gt 2000) { $v = [int]'a'; Write-Host 't' }; Write-Host 'after'":
+        "trap {\n  continue\n}\nif ((Get-Date).Year -GT 2000) {\n  Write-Host 't'\n}\nWrite-Host 'after'",
+    "trap { continue }; if ((Get-Date).Year -gt 2000) { foreach ($q in 1, 2) { [int]'a'; Write-Host \"t $q\" }; trap { break } }; Write-Host 'after'":
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'if ((Get-Date).Year -GT 2000) {\n'
+        '  foreach ($q in 1, 2) {\n'
+        "    [int]'a'\n"
+        '    Write-Host "t ${q}"\n'
+        '  }\n'
+        '}\n'
+        "Write-Host 'after'",
+    "trap { continue }; if ((Get-Date).Year -gt 2000) { trap [System.IO.IOException] { continue }; $v = [int]'a' }; Write-Host 'after'":
+        "if ((Get-Date).Year -GT 2000) {}\nWrite-Host 'after'",
+    "trap { continue }; trap [System.Management.Automation.RuntimeException] { break }; $z = 0; 1/$z; Write-Host 'after'":
+        "trap [System.Management.Automation.RuntimeException] {\n  break\n}\n$z = 0\n1 / 0\nWrite-Host 'after'",
+    "trap { continue }; trap { Write-Host 'p' }; $u = [int]'a'; Write-Host 'after'":
+        "trap {\n  continue\n}\ntrap {\n  Write-Host 'p'\n}\nWrite-Host 'after'",
+    "trap { continue }; trap { break }; [int]'a'; Write-Host 'after'":
+        "[int]'a'\nWrite-Host 'after'",
+    "trap { continue }; try { $v = [int]'a'; trap { break } } finally { }; Write-Host 'after'":
+        "Write-Host 'after'",
+    "trap { continue }; try { trap [System.IO.IOException] { continue }; $v = [int]'a' } finally { }; Write-Host 'after'":
+        "Write-Host 'after'",
     "trap { continue }; zzq0000=5; Write-Host 'after'":
         "zzq0000=5\nWrite-Host 'after'",
     "trap { }; [int]'a'; Write-Host 'after'":
         "[int]'a'\nWrite-Host 'after'",
+    "try { $null = [int]'a'; Write-Host 'rest' } finally { }; Write-Host 'after'":
+        "try {\n  Write-Host 'rest'\n} finally {}\nWrite-Host 'after'",
     'try { 1 } catch { 2 } finally { 3 }':
         'try {\n  1\n} catch {\n  2\n} finally {}',
+    "try { [int]'a'; Write-Host 'tail' } catch { }; Write-Host 'after'":
+        "Write-Host 'after'",
     "try { [void]$undefzz; Write-Host 'quiet' } catch { Write-Host 'caught' }":
         "try {\n  Write-Host 'quiet'\n} catch {\n  Write-Host 'caught'\n}",
     "try { item =5 } catch {}; Write-Host 'after'":
         "try {\n  Get-Item =5\n} catch {}\nWrite-Host 'after'",
+    "try { throw 'x' } catch { $null = [int]'a'; Write-Host 'c-rest' }; Write-Host 'after'":
+        "Write-Host 'c-rest'\nWrite-Host 'after'",
     "try { throw 'x' } catch { 'caught' }":
         "'caught'",
+    "try { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" } finally { }; Write-Host 'after'":
+        "try {\n  $v = [int]'a'\n  Write-Host \"rest ${v}\"\n} finally {}\nWrite-Host 'after'",
+    "try { trap { continue }; [int]'a'; try { throw 'x' } catch { Write-Host 'caught' } } catch { }; Write-Host 'after'":
+        "try {\n  trap {\n    continue\n  }\n  [int]'a'\n  Write-Host 'caught'\n} catch {}\nWrite-Host 'after'",
     "try { zzq0000=5 } catch {}; 'next'":
         "'next'",
     "try { zzq0000=5; 'tail' } catch {}; 'next'":

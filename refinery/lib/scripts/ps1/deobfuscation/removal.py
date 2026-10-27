@@ -286,7 +286,7 @@ class Ps1RemovalPlan:
 
         `handlers` is the semantic half of the question asked before a `trap` is deleted, taken from
         the same cache as `faults` and `world`, and handed to
-        `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_a_handler_is_observed`:
+        `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed`:
         whether what the `trap` guards may raise is read under `world` when one was given and
         without one otherwise, which is the question the replacement veto asks of
         `refinery.lib.scripts.ps1.analysis.effects.statement_can_raise` too, and whether the region
@@ -447,15 +447,6 @@ class Ps1RemovalPlan:
         faults = self.faults
         if faults is None:
             return True
-        if _removes_a_handler(proposal.statement):
-            handlers = self.handlers
-            if handlers is None:
-                return True
-            return faults.removing_a_handler_is_observed(
-                proposal.statement,
-                handlers.raises(self.world is not None),
-                handlers.skips,
-            )
         if not self.removals_may_fault:
             return False
         return deletion_is_observable(
@@ -472,13 +463,39 @@ class Ps1RemovalPlan:
         if self._verdict is not None and self._verdict[0] == epoch:
             return self._verdict[1]
         proposals = list(self._proposals.values())
-        allowed = [p for p in proposals if not self._vetoed(p)]
+        traps = [p for p in proposals if not p.replacement and _removes_a_handler(p.statement)]
+        weighed = {id(p) for p in traps}
+        granted = {id(p) for p in self._trap_removals_allowed(traps)}
+        allowed = [
+            p for p in proposals
+            if id(p) in granted or id(p) not in weighed and not self._vetoed(p)
+        ]
         if self.all_or_nothing and len(allowed) != len(proposals):
             allowed = []
         if self._empties_a_protected_body(allowed):
             allowed = []
         self._verdict = epoch, allowed
         return allowed
+
+    def _trap_removals_allowed(self, traps: list[_Proposal]) -> list[_Proposal]:
+        """
+        The `trap` deletions of this batch that may land, asked of the fault model as one
+        question so that two copies of one handler are never each deleted on the strength of the
+        other.
+        """
+        faults = self.faults
+        handlers = self.handlers
+        if faults is None or handlers is None:
+            return []
+        error_state = self.error_state
+        candidates = [
+            p for p in traps
+            if error_state is None or not error_state.success_flag_write_observed(p.statement)
+        ]
+        statements = [p.statement for p in candidates if isinstance(p.statement, Ps1TrapStatement)]
+        raises = handlers.raises(self.world is not None)
+        granted = {id(trap) for trap in faults.removable_traps(statements, raises, handlers.skips)}
+        return [p for p in candidates if id(p.statement) in granted]
 
     def commit(self) -> bool:
         """

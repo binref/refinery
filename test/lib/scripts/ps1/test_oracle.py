@@ -164,6 +164,15 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
         'so it no longer withholds the strip from the statement below it the way an opener the '
         'flood cannot see past does. The two statements before the read both stay: the '
         '`Get-Command` reports a name and the `Set-Alias` sets the `$?` the read observes.',
+    "trap { continue }; trap { break }; [int]'a'; Write-Host 'after'":
+        'Both handlers are removed. 5.1 hands the cast to the first untyped `trap`, which continues, '
+        'and never to the second, so `after` runs with and without them; the removal only lets '
+        'through the record the first one suppressed.',
+    "trap { continue }; $out = New-Object byte[] 3; "
+    "for ($i = 0; $i -lt 3; $i++) { $out[$i] = 7 -bxor $k[$i % $k.Length] }; Write-Host \"out=$($out -join ',')\"":
+        'The handler is removed. `$k` is unset, so every index divides by zero: with the `trap` the '
+        'first failure resumes past the loop, without it each of the three is reported and stepped '
+        'over, and `$out` holds zeros either way. Only the error records differ.',
 }
 
 #: Snippets whose deobfuscation does not behave like the snippet. Each is a semantics defect: the
@@ -382,6 +391,30 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     '$_ = 5; switch (1) { default { Write-Output $_ } }':
         'The `switch` over a constant is folded to its clause, which then reads the `$_` the '
         'script stored and writes `5` where the snippet writes `1`.',
+    "trap { continue }; $s = [string][char]256 + 'b'; $k = [char[]]$s | ForEach-Object { [byte][char]$_ }; "
+    "Write-Host \"count=$($k.Count) key=$($k -join ',')\"":
+        'The handler is removed. The character above 255 fails inside the `ForEach-Object` block '
+        'and the `trap` resumes past the whole pipeline, so the snippet writes `count=0 key=`; the '
+        'output reports the one failing input, goes on with the next and writes `count=1 key=98`. '
+        'The fault model reads the raise as belonging to the block, not to the statement.',
+    "trap { continue }; $a = @('x', '5'); for ($i = 0; $i -lt 2; $i++) { $y = [int]$a[$i] }; Write-Host \"y=$y\"":
+        'The handler is removed. The first failed cast resumes past the whole loop, so `$y` is '
+        'never set and the snippet writes `y=`; the output steps over the failure, the second run '
+        'sets `$y`, and it writes `y=5`. The later runs of the raiser are not counted as skipped.',
+    "trap { continue }; if ((Get-Date).Year -gt 2000) { $v = [int]'a'; Write-Host 't' }; Write-Host 'after'":
+        'The cast is removed and its `trap` stays. The `trap` resumes past the `if`, so the snippet '
+        'writes `after`; the output writes `t` and `after`.',
+    "try { $null = [int]'a'; Write-Host 'rest' } finally { }; Write-Host 'after'":
+        'The cast is removed. An error nothing takes inside a `try` body leaves the whole `try`, so '
+        'the snippet writes the error and `after`; the output writes `rest` and `after`.',
+    "try { throw 'x' } catch { $null = [int]'a'; Write-Host 'c-rest' }; Write-Host 'after'":
+        'The cast is removed and the `catch` body is run in place of the `try`. An error nothing '
+        'takes inside a `catch` body leaves the whole `try`, so the snippet writes the error and '
+        '`after`; the output writes `c-rest` and `after`.',
+    "try { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" } finally { }; Write-Host 'after'":
+        'The handler is removed. It resumes inside the `try` body, so the snippet writes `rest ` '
+        'and `after`; without it the error leaves the whole `try`, and the output writes the error '
+        'and `after`.',
 }
 
 

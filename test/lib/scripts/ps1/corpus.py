@@ -800,6 +800,61 @@ BEHAVIOURS: tuple[str, ...] = (
     '$x = 1, 2, 3; $b = @(([object[]]$x)); Write-Output ([object]::ReferenceEquals($x, $b))',
     '$x = 1, 2, 3; $a, $b = ,$x; Write-Output ([object]::ReferenceEquals($x, $a))',
     '$x = 1, 2, 3; $b = $null; $b += $x; Write-Output ([object]::ReferenceEquals($x, $b))',
+    "trap { continue }; if ($true) { trap [System.IO.IOException] { continue }; [int]'a'; Write-Host 'tail' }; "
+    "Write-Host 'after'",
+    "if ($true) { trap [System.IO.IOException] { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'after'",
+    "trap { continue }; trap { Write-Host 'p' }; $u = [int]'a'; Write-Host 'after'",
+    "try { trap { continue }; [int]'a'; Write-Host 'tail' } catch { }; Write-Host 'after'",
+    "try { [int]'a'; Write-Host 'tail' } catch { }; Write-Host 'after'",
+    "trap { continue }; if ($true) { trap { break }; if ($true) { trap { continue }; [int]'a'; Write-Host 'tail' }; "
+    "Write-Host 'mid' }; Write-Host 'after'",
+    "trap { continue }; if ($true) { trap { break }; if ($true) { [int]'a'; Write-Host 'tail' }; Write-Host 'mid' }; "
+    "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'; trap { }; $null = [int]'a'; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'; trap { }; Write-Host 'after'",
+    "trap { continue }; if ($true) { trap { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'after'",
+    "trap { continue }; if ($true) { [int]'a'; Write-Host 'tail' }; Write-Host 'after'",
+    "trap { continue }; foreach ($q in 1, 2) { trap { continue }; [int]'a'; Write-Host \"tail $q\" }; "
+    "Write-Host 'after'",
+    "trap { continue }; foreach ($q in 1, 2) { [int]'a'; Write-Host \"tail $q\" }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'; trap { }; trap { continue }; [int]'a'; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'; trap { continue }; [int]'a'; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'; trap { }; [int]'a'; Write-Host 'after'",
+    "trap { break }; trap { Write-Host 'x'; continue }; [int]'a'; Write-Host 'after'",
+    "trap { continue }; trap { Write-Host 'p' }; [int]'a'; Write-Host 'after'",
+    "trap { break }; trap { continue }; [int]'a'; Write-Host 'after'",
+    "trap { continue }; trap { break }; [int]'a'; Write-Host 'after'",
+    "trap { Write-Host 'first'; continue }; trap { Write-Host 'second'; continue }; [int]'a'; Write-Host 'after'",
+    'trap { continue }; trap [System.Management.Automation.RuntimeException] { break }; $z = 0; 1/$z; '
+    "Write-Host 'after'",
+    "trap { continue }; $s = [string][char]256 + 'b'; $k = [char[]]$s | ForEach-Object { [byte][char]$_ }; "
+    "Write-Host \"count=$($k.Count) key=$($k -join ',')\"",
+    "$s = [string][char]256 + 'b'; $k = [char[]]$s | ForEach-Object { [byte][char]$_ }; "
+    "Write-Host \"count=$($k.Count) key=$($k -join ',')\"",
+    "trap { continue }; $a = @('x', '5'); for ($i = 0; $i -lt 2; $i++) { $y = [int]$a[$i] }; Write-Host \"y=$y\"",
+    "$a = @('x', '5'); for ($i = 0; $i -lt 2; $i++) { $y = [int]$a[$i] }; Write-Host \"y=$y\"",
+    'trap { continue }; $out = New-Object byte[] 3; '
+    "for ($i = 0; $i -lt 3; $i++) { $out[$i] = 7 -bxor $k[$i % $k.Length] }; Write-Host \"out=$($out -join ',')\"",
+    '$out = New-Object byte[] 3; for ($i = 0; $i -lt 3; $i++) { $out[$i] = 7 -bxor $k[$i % $k.Length] }; '
+    "Write-Host \"out=$($out -join ',')\"",
+    "trap { continue }; if ((Get-Date).Year -gt 2000) { trap [System.IO.IOException] { continue }; $v = [int]'a' }; "
+    "Write-Host 'after'",
+    "trap { continue }; foreach ($q in (Get-Date).Year) { trap [System.IO.IOException] { continue }; $v = [int]'a' }; "
+    "Write-Host 'after'",
+    "trap { continue }; if ((Get-Date).Year -gt 2000) { foreach ($q in 1, 2) { [int]'a'; Write-Host \"t $q\" }; "
+    "trap { break } }; Write-Host 'after'",
+    "trap { continue }; if ((Get-Date).Year -gt 2000) { $v = [int]'a'; Write-Host 't' }; Write-Host 'after'",
+    "trap { continue }; try { $v = [int]'a'; trap { break } } finally { }; Write-Host 'after'",
+    "trap { continue }; try { trap [System.IO.IOException] { continue }; $v = [int]'a' } finally { }; "
+    "Write-Host 'after'",
+    "try { trap { continue }; [int]'a'; try { throw 'x' } catch { Write-Host 'caught' } } catch { }; "
+    "Write-Host 'after'",
+    "& { foreach ($i in 1..2) { try { throw 'x' } catch { Write-Host 'a'; $null = [int]'b'; trap { break } }; "
+    'trap { continue } } }',
+    "foreach ($i in 1, 2) { try { trap { continue }; [int]'a'; break } catch { }; Write-Host \"after $i\" }",
+    "try { $null = [int]'a'; Write-Host 'rest' } finally { }; Write-Host 'after'",
+    "try { throw 'x' } catch { $null = [int]'a'; Write-Host 'c-rest' }; Write-Host 'after'",
+    "try { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" } finally { }; Write-Host 'after'",
 )
 
 

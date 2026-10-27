@@ -375,7 +375,7 @@ def _expression_cannot_fault_without_the_world(
 
 
 def _removing_a_handler_asked_at_the_handler(
-    self: faults.Ps1FaultReach, handler: Node, raises, skips=None,
+    self: faults.Ps1FaultReach, trap_set, traps, raises, skips=None,
 ) -> bool:
     """
     The transpose answered by the forward question, which is the confusion the two queries exist to
@@ -385,7 +385,7 @@ def _removing_a_handler_asked_at_the_handler(
     transpose takes are accepted and ignored, so the mutation is noticed as a wrong answer rather than
     a broken call.
     """
-    return self.observed_at(handler)
+    return any(self.observed_at(trap) for trap in traps)
 
 
 def _value_after_refusing_an_unsettled_slot(original: Callable) -> Callable:
@@ -840,7 +840,7 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
             [_UNREACHED_TRAP, _HANDLER],
             patch.object(
                 faults.Ps1FaultReach,
-                'removing_a_handler_is_observed',
+                '_removing_matters',
                 _removing_a_handler_asked_at_the_handler),
             notices='test_a_raising_cast_whose_innermost_trap_continues_is_removed')
 

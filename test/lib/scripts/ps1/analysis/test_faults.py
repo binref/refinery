@@ -4,10 +4,11 @@ import unittest
 
 from inspect import cleandoc
 
-from test import TestBase
+from test import TestBase, wontfix
 
-from refinery.lib.scripts import Node, Statement
+from refinery.lib.scripts import Node, Statement, set_body
 from refinery.lib.scripts.analysis.cfg import ControlFlowModel
+from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts
 from refinery.lib.scripts.ps1.analysis.faults import (
@@ -50,6 +51,9 @@ class _Answering:
     def __init__(self, answer: bool):
         self._answer = answer
 
+    def landing_observed(self, paths, trap_set) -> bool:
+        return self._answer
+
     def may_raise_behind(self, paths, start) -> bool:
         return self._answer
 
@@ -66,15 +70,21 @@ def _handler_verdicts(tree: Ps1Script, reach: Ps1FaultReach) -> Ps1HandlerVerdic
     return Ps1HandlerVerdicts(reach, lambda: world, tree)
 
 
-def _handler_removal_is_observed(tree: Ps1Script, reach: Ps1FaultReach, handler: Node) -> bool:
+def _trap(node: Node) -> Ps1TrapStatement:
+    assert isinstance(node, Ps1TrapStatement), F'the fixture names a {type(node).__name__}, not a trap'
+    return node
+
+
+def _handler_removal_is_observed(tree: Ps1Script, reach: Ps1FaultReach, *traps: Node) -> bool:
     """
-    The composed verdict the dead-code pass reads: `removing_a_handler_is_observed` weighing the
+    The composed verdict the dead-code pass reads: `removing_traps_is_observed` weighing the
     real fault-possibility predicate and the real soft-step-over predicate together, so a unit test
     judges a resuming `trap` exactly as the pass does rather than by the always-keep default the
     reader falls back on when a caller supplies neither.
     """
     verdicts = _handler_verdicts(tree, reach)
-    return reach.removing_a_handler_is_observed(handler, verdicts.raises(False), verdicts.skips)
+    return reach.removing_traps_is_observed(
+        [_trap(trap) for trap in traps], verdicts.raises(False), verdicts.skips)
 
 
 #: The subexpression that `TestPs1ATrapWrittenInASubexpressionGuardsThatSubexpression` is measured
@@ -427,9 +437,9 @@ class TestPs1RemovingATrapIsJudgedByWhereItsErrorsWouldGoInstead(TestBase):
             trap { 'h' }
             [int]'a'
         """)
-        trap = tree.body[0]
-        self.assertTrue(reach.removing_a_handler_is_observed(trap, _Answering(True), _Answering(True)))
-        self.assertFalse(reach.removing_a_handler_is_observed(trap, _Answering(False), _Answering(False)))
+        trap = _trap(tree.body[0])
+        self.assertTrue(reach.removing_traps_is_observed([trap], _Answering(True), _Answering(True)))
+        self.assertFalse(reach.removing_traps_is_observed([trap], _Answering(False), _Answering(False)))
 
     def test_a_trap_matters_only_while_its_block_still_holds_something_that_may_raise(self):
         guarding, guarding_reach = _model("""
@@ -477,6 +487,415 @@ class TestPs1RemovingATrapIsJudgedByWhereItsErrorsWouldGoInstead(TestBase):
             swallowing, swallowing_reach, swallowing.body[0].try_block.body[0]))
 
 
+def _traps_of(tree: Ps1Script) -> list[Ps1TrapStatement]:
+    return [node for node in tree.walk_in_order() if isinstance(node, Ps1TrapStatement)]
+
+
+class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
+    """
+    Every script here is a snippet of the oracle corpus or one of its spellings, measured on 5.1
+    with the traps and without the traps the test deletes.
+    """
+
+    def test_a_member_that_breaks_written_before_one_that_continues_is_why_the_script_stops(self):
+        """
+        5.1 stops at the cast; without `trap { break }` it writes `after`.
+        """
+        tree, reach = _model("""
+            trap { break }
+            trap { continue }
+            [int]'a'
+            Write-Host 'after'
+        """)
+        breaks, continues = _traps_of(tree)
+        self.assertTrue(_handler_removal_is_observed(tree, reach, breaks))
+        self.assertFalse(_handler_removal_is_observed(tree, reach, continues))
+
+    def test_a_typed_member_is_tried_before_an_untyped_one_written_above_it(self):
+        """
+        5.1 stops at the division; without the typed `trap` it writes `after`.
+        """
+        tree, reach = _model("""
+            trap { continue }
+            trap [System.Management.Automation.RuntimeException] { break }
+            $z = 0
+            1/$z
+            Write-Host 'after'
+        """)
+        _, typed = _traps_of(tree)
+        self.assertTrue(_handler_removal_is_observed(tree, reach, typed))
+
+    def test_an_inner_resuming_set_is_kept_where_the_outer_one_would_skip_the_rest_of_its_block(self):
+        """
+        5.1 writes `tail` and `after`; without the inner `trap` the outer one resumes past the
+        whole block and only `after` is written.
+        """
+        for opening in ('if ($true) {', 'foreach ($q in 1, 2) {'):
+            with self.subTest(opening):
+                tree, reach = _model(F"""
+                    trap {{ continue }}
+                    {opening}
+                      trap {{ continue }}
+                      [int]'a'
+                      Write-Host 'tail'
+                    }}
+                    Write-Host 'after'
+                """)
+                _, inner = _traps_of(tree)
+                self.assertTrue(_handler_removal_is_observed(tree, reach, inner))
+
+    def test_a_resuming_set_in_a_try_is_kept_where_the_empty_catch_would_skip_the_rest_of_it(self):
+        """
+        5.1 writes `tail` and `after`; without the `trap` only `after`.
+        """
+        tree, reach = _model("""
+            try {
+              trap { continue }
+              [int]'a'
+              Write-Host 'tail'
+            } catch { }
+            Write-Host 'after'
+        """)
+        self.assertTrue(_handler_removal_is_observed(tree, reach, *_traps_of(tree)))
+
+    def test_a_resuming_set_under_a_breaking_one_under_a_resuming_one_is_kept(self):
+        """
+        5.1 writes `tail`, `mid` and `after`; without the innermost `trap` only `after`.
+        """
+        tree, reach = _model("""
+            trap { continue }
+            if ($true) {
+              trap { break }
+              if ($true) {
+                trap { continue }
+                [int]'a'
+                Write-Host 'tail'
+              }
+              Write-Host 'mid'
+            }
+            Write-Host 'after'
+        """)
+        *_, innermost = _traps_of(tree)
+        self.assertTrue(_handler_removal_is_observed(tree, reach, innermost))
+
+    def test_a_member_that_runs_off_its_end_under_stop_is_not_alike_one_that_continues(self):
+        """
+        5.1 stops at the cast; with `trap { continue }` alone it writes `after`.
+        """
+        tree, reach = _model("""
+            $ErrorActionPreference = 'Stop'
+            trap { }
+            trap { continue }
+            [int]'a'
+            Write-Host 'after'
+        """)
+        falls_through, _ = _traps_of(tree)
+        self.assertTrue(_handler_removal_is_observed(tree, reach, falls_through))
+
+    def test_one_of_two_alike_members_may_go_but_not_both(self):
+        """
+        5.1 never hands an error to the second untyped member, and the first one does what the
+        second would; with both gone the outer `trap` resumes past the block, as in the nested row.
+        """
+        tree, reach = _model("""
+            trap { continue }
+            if ($c) {
+              trap { continue }
+              trap { continue }
+              [int]'a'
+              Write-Host 'tail'
+            }
+        """)
+        _, first, second = _traps_of(tree)
+        self.assertFalse(_handler_removal_is_observed(tree, reach, first))
+        self.assertFalse(_handler_removal_is_observed(tree, reach, second))
+        self.assertTrue(_handler_removal_is_observed(tree, reach, first, second))
+        verdicts = _handler_verdicts(tree, reach)
+        self.assertEqual(len(reach.removable_traps([first, second], verdicts.raises(False), verdicts.skips)), 1)
+
+    def test_a_member_never_selected_may_go_although_its_body_acts(self):
+        """
+        5.1 writes `after` and never `p`, with the second `trap` and without it.
+        """
+        tree, reach = _model("""
+            trap { continue }
+            trap { Write-Host 'p' }
+            $u = [int]'a'
+            Write-Host 'after'
+        """)
+        _, acting = _traps_of(tree)
+        self.assertFalse(_handler_removal_is_observed(tree, reach, acting))
+
+    def test_a_typed_member_that_alone_stands_for_the_set_is_the_member_kept(self):
+        """
+        The typed member takes every error, so the untyped one is never selected; without both, the
+        preference stops the script at the cast where the typed member resumes it.
+        """
+        tree, reach = _model("""
+            $ErrorActionPreference = 'Stop'
+            trap [System.Exception] { continue }
+            trap { break }
+            [int]'a'
+            Write-Host 'after'
+        """)
+        typed, untyped = _traps_of(tree)
+        verdicts = _handler_verdicts(tree, reach)
+        self.assertEqual(reach.removable_traps([typed, untyped], verdicts.raises(False), verdicts.skips), [untyped])
+
+    def test_an_outer_set_an_inner_typed_set_declines_into_is_kept(self):
+        """
+        5.1 writes `after`; without the outer `trap` the inner one declines the cast and the script
+        stops.
+        """
+        for opening in ('if ((Get-Date).Year -gt 2000) {', 'foreach ($q in (Get-Date).Year) {'):
+            with self.subTest(opening):
+                tree, reach = _model(F"""
+                    trap {{ continue }}
+                    {opening}
+                      trap [System.IO.IOException] {{ continue }}
+                      $v = [int]'a'
+                    }}
+                    Write-Host 'after'
+                """)
+                outer, _ = _traps_of(tree)
+                self.assertTrue(_handler_removal_is_observed(tree, reach, outer))
+
+    def test_an_outer_set_an_inner_set_hands_errors_to_past_a_finally_is_kept(self):
+        """
+        5.1 writes `after`; without the outer `trap` the inner one re-raises or declines the cast
+        through the `finally` and the script stops.
+        """
+        for inner in ('trap { break }', 'trap [System.IO.IOException] { continue }'):
+            with self.subTest(inner):
+                tree, reach = _model(F"""
+                    trap {{ continue }}
+                    try {{
+                      {inner}
+                      $v = [int]'a'
+                    }} finally {{ }}
+                    Write-Host 'after'
+                """)
+                outer, _ = _traps_of(tree)
+                self.assertTrue(_handler_removal_is_observed(tree, reach, outer))
+
+    def test_an_inner_set_that_re_raises_past_a_finally_to_the_outer_one_may_go(self):
+        """
+        5.1 writes `after` with the inner `trap { break }` and without it: the error it re-raises
+        reaches the outer `trap` as the error itself does once it is gone.
+        """
+        tree, reach = _model("""
+            trap { continue }
+            try {
+              trap { break }
+              $v = [int]'a'
+            } finally { }
+            Write-Host 'after'
+        """)
+        _, inner = _traps_of(tree)
+        self.assertFalse(_handler_removal_is_observed(tree, reach, inner))
+
+    def test_traps_of_two_sets_are_not_one_question(self):
+        tree, reach = _model("""
+            trap { continue }
+            if ($c) {
+              trap { continue }
+              [int]'a'
+            }
+        """)
+        with self.assertRaises(ValueError):
+            _handler_removal_is_observed(tree, reach, *_traps_of(tree))
+        with self.assertRaises(ValueError):
+            _handler_removal_is_observed(tree, reach)
+
+    def test_a_model_held_across_an_edit_refuses_the_question(self):
+        tree, reach = _model("""
+            trap { continue }
+            'a'
+            'b'
+        """)
+        trap, = _traps_of(tree)
+        self.assertFalse(reach.removing_traps_is_observed([trap], _Answering(False), _Answering(False)))
+        set_body(tree, list(tree.body[:-1]))
+        self.assertTrue(reach.removing_traps_is_observed([trap], _Answering(False), _Answering(False)))
+
+
+class TestPs1ATrapIsKeptWhereTheRunWithoutItDoesWhatTheRunWithItDoesNot(TestBase):
+    """
+    Deleting the first `trap` of each script changes what runs after the cast fails: where its
+    errors went past the trap, 5.1 now steps over the cast or lands them elsewhere, and the run in
+    between is compared with the one the trap made. Asked the way the dead-code pass asks it.
+    """
+
+    @staticmethod
+    def _removal_is_observed(source: str) -> bool:
+        tree = _parse(source)
+        cache = Ps1ModelCache(tree)
+        handlers = cache.handlers
+        first = _traps_of(tree)[0]
+        return cache.faults.removing_traps_is_observed([first], handlers.raises(True), handlers.skips)
+
+    def test_a_catch_body_the_trap_runs_before_its_errors_would_land_is_observed(self):
+        """
+        5.1 writes `caught` and `after`; without the `trap` the empty `catch` takes the cast and
+        only `after` is written.
+        """
+        self.assertTrue(self._removal_is_observed("""
+            try {
+              trap { continue }
+              [int]'a'
+              try { throw 'x' } catch { Write-Host 'caught' }
+            } catch { }
+            Write-Host 'after'
+        """))
+
+    def test_a_catch_body_the_untrapped_run_steps_into_is_observed(self):
+        self.assertTrue(self._removal_is_observed("""
+            $s = Read-Host
+            $c = Read-Host
+            trap { continue }
+            if ($c) {
+              $null = [int]'a'
+              try { $q = [int]$s } catch { $global:caught = 1 }
+            }
+            Write-Host $global:caught
+        """))
+
+    def test_what_follows_an_inner_resumption_before_the_errors_would_land_is_observed(self):
+        self.assertTrue(self._removal_is_observed("""
+            try {
+              trap { continue }
+              $null = [int]'a'
+              try {
+                trap { continue }
+                throw 'x'
+                Write-Host 'y'
+              } finally { }
+            } catch { }
+            Write-Host 'after'
+        """))
+
+    def test_an_inner_trap_that_acts_before_the_errors_would_land_is_observed(self):
+        self.assertTrue(self._removal_is_observed("""
+            $s = Read-Host
+            $c = Read-Host
+            try {
+              trap { continue }
+              $null = [int]$s
+              try {
+                trap { Write-Host 'b'; continue }
+                $null = [int]$c
+              } finally { }
+            } catch { }
+            Write-Host 'after'
+        """))
+
+    def test_an_inner_typed_trap_declining_into_a_catch_the_untrapped_run_reaches_is_observed(self):
+        self.assertTrue(self._removal_is_observed("""
+            $s = Read-Host
+            $c = Read-Host
+            trap { continue }
+            if ($c) {
+              $null = [int]$s
+              try { trap [System.IO.IOException] { continue }; $null = [int]$s } catch { Write-Host 'caught' }
+            }
+            Write-Host 'after'
+        """))
+
+    def test_a_loop_the_trap_leaves_by_break_before_the_errors_would_land_is_observed(self):
+        """
+        5.1 writes nothing; without the `trap` the empty `catch` takes the cast and the loop writes
+        `after 1` and `after 2`.
+        """
+        self.assertTrue(self._removal_is_observed("""
+            foreach ($i in 1, 2) {
+              try {
+                trap { continue }
+                $null = [int]'a'
+                break
+              } catch { }
+              Write-Host "after $i"
+            }
+        """))
+
+    def test_a_function_the_trap_leaves_by_return_before_the_errors_would_land_is_observed(self):
+        self.assertTrue(self._removal_is_observed("""
+            function f {
+              try {
+                trap { continue }
+                $null = [int]'a'
+                return
+              } catch { }
+              Write-Host 'after'
+            }
+            f
+        """))
+
+    def test_a_function_the_untrapped_run_leaves_by_return_is_observed(self):
+        """
+        5.1 writes `after` with the `trap`; without it the cast is stepped over to the `return`,
+        and nothing is written.
+        """
+        self.assertTrue(self._removal_is_observed("""
+            function f {
+              trap { continue }
+              if ($c) {
+                $null = [int]$s
+                return
+              }
+              Write-Host 'after'
+            }
+            f
+        """))
+
+    def test_a_loop_the_untrapped_run_leaves_into_code_that_ends_at_a_re_raising_trap_is_observed(self):
+        self.assertTrue(self._removal_is_observed("""
+            $s = Read-Host
+            $c = Read-Host
+            foreach ($i in 1, 2) {
+              trap { continue }
+              if ($c) { $null = [int]$s; break }
+              Write-Host "it $i"
+            }
+            try { trap { break }; throw 'x' } catch { }
+        """))
+
+    def test_a_trap_whose_errors_would_land_where_it_resumes_may_go(self):
+        self.assertFalse(self._removal_is_observed("""
+            try {
+              trap { continue }
+              Write-Host 'x'
+              $null = [int]'a'
+            } catch { }
+            Write-Host 'after'
+        """))
+
+    def test_a_trap_whose_untrapped_run_continues_the_loop_around_it_may_go(self):
+        self.assertFalse(self._removal_is_observed("""
+            $s = Read-Host
+            $c = Read-Host
+            foreach ($i in 1, 2) {
+              trap { continue }
+              if ($c) { $null = [int]$s; continue }
+            }
+            Write-Host 'after'
+        """))
+
+    @wontfix('a run that loops forever after the trap resumes it is compared as if it ended')
+    def test_a_trap_whose_resumption_loops_forever_is_kept(self):
+        """
+        5.1 never returns with the `trap`; without it the empty `catch` takes the cast and `after`
+        is written.
+        """
+        self.assertTrue(self._removal_is_observed("""
+            try {
+              trap { continue }
+              [int]'a'
+              while ($true) { }
+            } catch { }
+            Write-Host 'after'
+        """))
+
+
 class TestPs1ATrapRemovalWaitsOnlyForATrapRemovedFromABlockAroundIt(TestBase):
 
     @staticmethod
@@ -487,64 +906,62 @@ class TestPs1ATrapRemovalWaitsOnlyForATrapRemovedFromABlockAroundIt(TestBase):
     def _waiting(tree: Ps1Script, reach: Ps1FaultReach, groups: list[list[Node]]) -> set[int]:
         return reach.removals_that_wait(groups, _handler_verdicts(tree, reach).raises(False))
 
-    def test_a_trap_waits_for_the_removal_of_the_trap_its_errors_fall_back_to(self):
+    def test_a_trap_waits_for_the_removal_of_the_resuming_trap_its_errors_land_at(self):
         tree, reach = _model("""
-            & {
-              foreach ($i in 1..2) {
-                try {
-                  throw 'x'
-                } catch {
-                  'a'
-                  & {}
-                  trap {
-                    break
-                  }
-                }
-                trap {
-                  continue
-                }
-              }
+            function f {
+              trap { continue }
+              try {
+                trap { }
+                $null = [int]$s
+              } catch [System.IO.IOException] { }
             }
+            try { f } catch { Write-Host 'caught' }
         """)
         without_outer, without_outer_reach = _model("""
-            & {
-              foreach ($i in 1..2) {
-                try {
-                  throw 'x'
-                } catch {
-                  'a'
-                  & {}
-                  trap {
-                    break
-                  }
-                }
-              }
+            function f {
+              try {
+                trap { }
+                $null = [int]$s
+              } catch [System.IO.IOException] { }
             }
-        """)
-        inner, outer = self._traps(tree)
-        self.assertFalse(_handler_removal_is_observed(tree, reach, inner))
-        self.assertFalse(_handler_removal_is_observed(tree, reach, outer))
-        self.assertTrue(_handler_removal_is_observed(without_outer, without_outer_reach, *self._traps(without_outer)))
-        self.assertEqual(self._waiting(tree, reach, [[outer], [inner]]), {1})
-
-    def test_a_trap_waits_for_the_removal_of_a_trap_its_errors_reach_past_a_finally_block(self):
-        tree, reach = _model("""
-            trap { continue }
-            try {
-              $v = $o.M()
-              trap { break }
-            } finally { }
-        """)
-        without_outer, without_outer_reach = _model("""
-            try {
-              $v = $o.M()
-              trap { break }
-            } finally { }
+            try { f } catch { Write-Host 'caught' }
         """)
         outer, inner = self._traps(tree)
         self.assertFalse(_handler_removal_is_observed(tree, reach, inner))
         self.assertFalse(_handler_removal_is_observed(tree, reach, outer))
-        self.assertTrue(_handler_removal_is_observed(without_outer, without_outer_reach, *self._traps(without_outer)))
+        self.assertTrue(_handler_removal_is_observed(
+            without_outer, without_outer_reach, *self._traps(without_outer)))
+        self.assertEqual(self._waiting(tree, reach, [[outer], [inner]]), {1})
+
+    def test_a_trap_waits_for_the_removal_of_a_trap_two_blocks_around_it(self):
+        tree, reach = _model("""
+            function f {
+              trap { continue }
+              try {
+                try {
+                  trap { }
+                  $null = [int]$s
+                } catch [System.IO.IOException] { }
+              } catch [System.IO.IOException] { }
+            }
+            try { f } catch { Write-Host 'caught' }
+        """)
+        without_outer, without_outer_reach = _model("""
+            function f {
+              try {
+                try {
+                  trap { }
+                  $null = [int]$s
+                } catch [System.IO.IOException] { }
+              } catch [System.IO.IOException] { }
+            }
+            try { f } catch { Write-Host 'caught' }
+        """)
+        outer, inner = self._traps(tree)
+        self.assertFalse(_handler_removal_is_observed(tree, reach, inner))
+        self.assertFalse(_handler_removal_is_observed(tree, reach, outer))
+        self.assertTrue(_handler_removal_is_observed(
+            without_outer, without_outer_reach, *self._traps(without_outer)))
         self.assertEqual(self._waiting(tree, reach, [[outer], [inner]]), {1})
 
     def test_a_trap_in_a_function_does_not_wait_for_the_removal_of_a_trap_at_script_scope(self):
@@ -559,35 +976,35 @@ class TestPs1ATrapRemovalWaitsOnlyForATrapRemovedFromABlockAroundIt(TestBase):
         outer, inner = self._traps(tree)
         self.assertEqual(self._waiting(tree, reach, [[outer], [inner]]), set())
 
-    def test_a_trap_waits_for_the_removal_of_a_resuming_trap_in_a_block_around_it(self):
+    def test_a_trap_waits_for_the_removal_of_a_resuming_trap_in_a_finally_block_around_it(self):
         tree, reach = _model("""
-            trap [System.IO.IOException] {}
-            while ($c) {
-              try {} catch {} finally {
+            function f {
+              try {} finally {
                 try {
-                  trap { break }
-                  Write-Host 'a'
-                } catch {}
+                  trap { }
+                  $null = [int]$s
+                } catch [System.IO.IOException] { }
                 trap { continue }
               }
             }
+            try { f } catch { Write-Host 'caught' }
         """)
         without_outer, without_outer_reach = _model("""
-            trap [System.IO.IOException] {}
-            while ($c) {
-              try {} catch {} finally {
+            function f {
+              try {} finally {
                 try {
-                  trap { break }
-                  Write-Host 'a'
-                } catch {}
+                  trap { }
+                  $null = [int]$s
+                } catch [System.IO.IOException] { }
               }
             }
+            try { f } catch { Write-Host 'caught' }
         """)
-        _, inner, outer = self._traps(tree)
+        inner, outer = self._traps(tree)
         self.assertFalse(_handler_removal_is_observed(tree, reach, inner))
         self.assertFalse(_handler_removal_is_observed(tree, reach, outer))
-        _, inner_alone = self._traps(without_outer)
-        self.assertTrue(_handler_removal_is_observed(without_outer, without_outer_reach, inner_alone))
+        self.assertTrue(_handler_removal_is_observed(
+            without_outer, without_outer_reach, *self._traps(without_outer)))
         self.assertEqual(self._waiting(tree, reach, [[outer], [inner]]), {1})
 
     def test_a_trap_nothing_may_raise_into_does_not_wait_for_the_trap_around_it(self):
@@ -747,6 +1164,21 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
             $a = @('x', '5')
             for ($i = 0; $i -lt 2; $i++) { $y = [int]$a[$i] }
             Write-Host $y
+        """)))
+
+    @unittest.expectedFailure
+    def test_a_soft_error_in_a_block_a_pipeline_runs_ends_the_whole_statement_and_keeps_the_trap(self):
+        """
+        With the `trap`, the character above 255 fails inside the `ForEach-Object` block and the
+        `trap` resumes past the whole pipeline, so `$k` is never set and 5.1 writes `count=0 key=`.
+        Delete the `trap` and 5.1 reports the one failing input and goes on with the next, writing
+        `count=1 key=98`. The fault model reads the raise as the block's own, not the statement's.
+        """
+        self.assertTrue(self._trap_removal_is_observed(cleandoc("""
+            trap { continue }
+            $s = [string][char]256 + 'b'
+            $k = [char[]]$s | ForEach-Object { [byte][char]$_ }
+            Write-Host "count=$($k.Count) key=$($k -join ',')"
         """)))
 
     def test_a_soft_error_whose_later_runs_write_what_nothing_reads_lets_the_trap_go(self):

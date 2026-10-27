@@ -14,11 +14,12 @@ from refinery.lib.scripts.analysis.cfg import (
     CfgBuilder,
     CfgNode,
     ControlFlowGraph,
-    normal_reach,
+    Projection,
     plain_successors,
 )
 from refinery.lib.scripts.ps1 import ast
 from refinery.lib.scripts.ps1.analysis import effects, faults, worldflow
+from refinery.lib.scripts.ps1.analysis import cfg as ps1_cfg
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts
@@ -113,12 +114,13 @@ class TestPs1ErrorPathsAgreeWithAWalkOverTheErrorEdges(TestBase):
     def _graphs(self):
         for source in self._SCRIPTS:
             tree = Ps1Parser(source).parse()
-            for graph in build_control_flow_model(tree, descend=True).graphs.values():
-                yield source, graph
+            model = build_control_flow_model(tree, descend=True)
+            for graph in model.graphs.values():
+                yield source, Ps1ErrorPaths(graph, model.trap_sets_in(graph))
 
     def test_the_route_of_every_node_is_what_its_error_edges_reach(self):
-        for source, graph in self._graphs():
-            paths = Ps1ErrorPaths(graph)
+        for source, paths in self._graphs():
+            graph = paths.graph
             for index, start in enumerate(graph.nodes):
                 reached = _closure(graph, start, forward=True)
                 handlers = [
@@ -155,8 +157,8 @@ class TestPs1ErrorPathsAgreeWithAWalkOverTheErrorEdges(TestBase):
                     self.assertEqual(reach.an_empty_catch_skips_a_live_tail(element), expected)
 
     def test_what_lies_behind_every_node_is_what_reaches_it_over_error_edges(self):
-        for source, graph in self._graphs():
-            paths = Ps1ErrorPaths(graph)
+        for source, paths in self._graphs():
+            graph = paths.graph
             for marked in graph.nodes:
                 memo: dict[int, bool] = {}
                 wrong = [
@@ -177,7 +179,7 @@ class TestPs1ErrorPathsAgreeWithAWalkOverTheErrorEdges(TestBase):
         builder.exceptional_edge(a, d)
         builder.exceptional_edge(c, graph.exit)
         builder.add_edge(d, a)
-        paths = Ps1ErrorPaths(graph)
+        paths = Ps1ErrorPaths(graph, ())
         for start in graph.nodes:
             reached = _closure(graph, start, forward=True)
             self.assertEqual(paths.route_from(start).leaves_the_body, any(n is graph.exit for n in reached))
@@ -189,11 +191,39 @@ class TestPs1ErrorPathsAgreeWithAWalkOverTheErrorEdges(TestBase):
                 )
 
 
+def _runs_forward(
+    step: frozenset[CfgNode],
+    barrier: frozenset[CfgNode],
+    within: Callable[[CfgNode], bool],
+) -> tuple[set[int], bool]:
+    """
+    The nodes a run reaches going forward from *step* before *barrier*, and whether it leaves the
+    statement *within* holds on the way. A `trap` entry is reached but not walked past, and so is a
+    node outside the statement.
+    """
+    reached: set[int] = set()
+    leaves = False
+    pending = [node for node in step if node not in barrier]
+    while pending:
+        node = pending.pop()
+        if id(node) in reached:
+            continue
+        reached.add(id(node))
+        if isinstance(node.element, Ps1TrapStatement):
+            continue
+        if not within(node):
+            leaves = True
+            continue
+        pending.extend(target for target in Projection.FORWARD.successors(node) if target not in barrier)
+    return reached, leaves
+
+
 class TestPs1AStepOverRegionHoldsWhatTheFallThroughRunsBeforeTheTrapResumes(TestBase):
     """
-    A raiser skips what runs over plain edges from its own step-over up to where the trap resumes,
-    itself excepted. The region of a slot answers that for every raiser resuming there, and each
-    answer is compared with that walk for the raiser alone.
+    A raiser skips what runs going forward from its own step-over up to where the trap resumes,
+    itself excepted, and everything once that run leaves the statement it was raised in. The region
+    of a slot answers that for every raiser resuming there, and each answer is compared with that
+    walk for the raiser alone.
     """
 
     _SCRIPTS = [
@@ -211,26 +241,50 @@ class TestPs1AStepOverRegionHoldsWhatTheFallThroughRunsBeforeTheTrapResumes(Test
             do { $g = [int]$v; $h = 4 } while ($x)
         """),
         "trap { continue }; $z = $([int]$w; 'k'; [int]$q; 'm')",
+        cleandoc("""
+            foreach ($q in $l) {
+              trap { continue }
+              if ($x) { $a = [int]$s; if ($y) { break }; $b = 1 }
+              if ($x) { $c = [int]$t; try { $d = [int]$u } catch { continue } }
+            }
+        """),
+        cleandoc("""
+            function f {
+              trap { continue }
+              if ($x) { $a = [int]$s; if ($y) { return }; $b = 1 }
+            }
+        """),
     ]
 
     def test_a_raiser_skips_exactly_what_its_own_fall_through_runs(self):
         for source in self._SCRIPTS:
             tree = Ps1Parser(source).parse()
             diverging = 0
-            for graph in build_control_flow_model(tree, descend=True).graphs.values():
-                paths = Ps1ErrorPaths(graph)
+            model = build_control_flow_model(tree, descend=True)
+            for graph in model.graphs.values():
+                trap_sets = model.trap_sets_in(graph)
+                paths = Ps1ErrorPaths(graph, trap_sets)
+                holders = {
+                    id(resumes_at): statement
+                    for trap_set in trap_sets
+                    for statement in trap_set.statements
+                    if (resumes_at := trap_set.slots.get(id(statement))) is not None
+                }
                 for raiser in graph.nodes:
                     divergence = paths.divergence(raiser)
                     if divergence is None:
                         continue
                     diverging += 1
                     region = paths.region(divergence.slot)
-                    skipped = normal_reach(divergence.step, barrier=region.resumed) - {id(raiser)}
+                    within = graph.builder_of([holders[id(divergence.slot)]])
+                    assert within is not None
+                    reached, leaves = _runs_forward(divergence.step, region.resumed, within)
+                    skipped = reached - {id(raiser)}
                     members = {id(member) for member in region.members}
                     wrong = [
                         index for index, node in enumerate(graph.nodes)
                         if region.query(lambda other, node=node: other is node).skips(raiser, divergence.step)
-                        != (id(node) in skipped)
+                        != (leaves or id(node) in skipped)
                     ]
                     with self.subTest(source=source, raiser=str(raiser.element)):
                         self.assertLessEqual(skipped, members)
@@ -255,7 +309,7 @@ class TestPs1HandlerVerdictsAnswerOnlyForTheTreeTheyWereBuiltOver(TestBase):
         for over in (tree, tree.body[2]):
             verdicts = Ps1HandlerVerdicts(reach, lambda: world, over)
             with self.subTest(over=type(over).__name__):
-                self.assertTrue(reach.removing_a_handler_is_observed(trap, verdicts.raises(True), verdicts.skips))
+                self.assertTrue(reach.removing_traps_is_observed([trap], verdicts.raises(True), verdicts.skips))
 
     def test_a_held_verdict_keeps_the_trap_once_the_tree_has_moved(self):
         tree = Ps1Parser("trap { Write-Host 'h'; continue }; $a; 5").parse()
@@ -263,12 +317,12 @@ class TestPs1HandlerVerdictsAnswerOnlyForTheTreeTheyWereBuiltOver(TestBase):
         reach = build_fault_reach(control_flow)
         world = build_world_reach(measure_world(tree), lambda: control_flow)
         verdicts = Ps1HandlerVerdicts(reach, lambda: world, tree)
-        trap = tree.body[0]
-        self.assertFalse(reach.removing_a_handler_is_observed(trap, verdicts.raises(True), verdicts.skips))
+        trap, = _traps(tree)
+        self.assertFalse(reach.removing_traps_is_observed([trap], verdicts.raises(True), verdicts.skips))
         edit = BodyEdit(tree, 'body')
         edit.splice(tree.body[2], [])
         edit.apply()
-        self.assertTrue(reach.removing_a_handler_is_observed(trap, verdicts.raises(True), verdicts.skips))
+        self.assertTrue(reach.removing_traps_is_observed([trap], verdicts.raises(True), verdicts.skips))
 
     def test_what_a_function_reads_follows_an_edit_announced_by_the_epoch(self):
         source = cleandoc("""
@@ -281,7 +335,7 @@ class TestPs1HandlerVerdictsAnswerOnlyForTheTreeTheyWereBuiltOver(TestBase):
         def kept(tree: Ps1Script, cache: Ps1ModelCache) -> bool:
             trap, = _traps(tree)
             handlers = cache.handlers
-            return cache.faults.removing_a_handler_is_observed(trap, handlers.raises(True), handlers.skips)
+            return cache.faults.removing_traps_is_observed([trap], handlers.raises(True), handlers.skips)
 
         tree = Ps1Parser(source).parse()
         cache = Ps1ModelCache(tree)
@@ -310,9 +364,28 @@ def _weighing(source_of: Callable[[int], str]) -> Callable[[int], int]:
         def weigh():
             handlers = cache.handlers
             for trap in traps:
-                reach.removing_a_handler_is_observed(trap, handlers.raises(True), handlers.skips)
+                reach.removing_traps_is_observed([trap], handlers.raises(True), handlers.skips)
 
-        return lines_executed(weigh, faults, effects, components, cfg, ast)
+        return lines_executed(weigh, faults, effects, components, cfg, ps1_cfg, ast)
+    return work
+
+
+def _batching(source_of: Callable[[int], str]) -> Callable[[int], int]:
+    """
+    The work of asking which of every `trap` of the script *source_of* writes for a size may go
+    together, as one batch of the dead-code pass asks it, counted as `_weighing` counts it.
+    """
+    def work(size: int) -> int:
+        script = Ps1Parser(source_of(size)).parse()
+        traps = _traps(script)
+        cache = Ps1ModelCache(script)
+        reach = cache.faults
+
+        def weigh():
+            handlers = cache.handlers
+            reach.removable_traps(traps, handlers.raises(True), handlers.skips)
+
+        return lines_executed(weigh, faults, effects, components, cfg, ps1_cfg, ast)
     return work
 
 
@@ -352,7 +425,145 @@ class TestPs1WeighingEveryTrapCostsLinearWork(TestBase):
                 for index in range(size)
             )
 
-        self.assertWorkGrowsLinearly(_weighing(source), 100)
+        self.assertWorkGrowsLinearly(_weighing(source), 200)
+
+    def test_many_trapped_blocks_inside_one_statement_under_a_resuming_trap(self):
+        def source(size: int) -> str:
+            blocks = [F'if ($x) {{ trap {{ continue }}; $v{index} = [int]$s; Write-Host {index} }}' for index in range(size)]
+            return '\n'.join(['trap { continue }', 'if ($c) {', *blocks, '}'])
+
+        self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_many_trapped_blocks_inside_one_try_with_an_empty_catch(self):
+        def source(size: int) -> str:
+            blocks = [F'if ($x) {{ trap {{ continue }}; $v{index} = [int]$s; Write-Host {index} }}' for index in range(size)]
+            return '\n'.join(['try {', *blocks, '} catch { }', 'Write-Host done'])
+
+        self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_many_typed_blocks_declining_to_one_resuming_trap(self):
+        def source(size: int) -> str:
+            blocks = [
+                F'if ($x) {{ trap [System.IO.IOException] {{ continue }}; $v{index} = [int]$s; Write-Host {index} }}'
+                for index in range(size)
+            ]
+            return '\n'.join(['trap { continue }', 'if ($c) {', *blocks, '}'])
+
+        self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_many_blocks_re_raising_past_a_finally_to_one_resuming_trap(self):
+        def source(size: int) -> str:
+            blocks = [
+                F'try {{ trap {{ break }}; $v{index} = [int]$s; Write-Host {index} }} finally {{ }}'
+                for index in range(size)
+            ]
+            return '\n'.join(['trap { continue }', 'if ($c) {', *blocks, '}'])
+
+        self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_many_typed_blocks_declining_past_a_finally_to_one_resuming_trap(self):
+        def source(size: int) -> str:
+            blocks = [
+                F'try {{ trap [System.IO.IOException] {{ continue }}; $v{index} = [int]$s; Write-Host {index} }} finally {{ }}'
+                for index in range(size)
+            ]
+            return '\n'.join(['trap { continue }', *blocks])
+
+        self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_many_regions_skipped_inside_a_try_with_an_empty_catch_and_a_tail(self):
+        def source(size: int) -> str:
+            blocks = [
+                F'if ($c) {{ trap {{ continue }}; if ($d) {{ $v{index} = [int]$s; $w{index} = [int]$t }}; Write-Host {index} }}'
+                for index in range(size)
+            ]
+            tail = [F'Write-Host t{index}' for index in range(size)]
+            return '\n'.join([
+                'trap { continue }',
+                "if ($c) { $q = [int]$s; Write-Host 'x' }",
+                'try {',
+                *blocks,
+                '} catch { }',
+                *tail,
+            ])
+
+        self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_many_loops_left_by_a_jump_under_a_resuming_trap(self):
+        for jump in ('break', 'continue'):
+            with self.subTest(jump):
+                def source(size: int) -> str:
+                    return '\n'.join(
+                        F'foreach ($q{index} in $l) {{ trap {{ continue }}; if ($c) {{ $v{index} = [int]$s; {jump} }}; Write-Host {index} }}'
+                        for index in range(size)
+                    )
+
+                self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_many_loops_left_by_a_break_through_a_finally_under_a_resuming_trap(self):
+        def source(size: int) -> str:
+            return '\n'.join(
+                F'foreach ($q{index} in $l) {{ try {{ trap {{ continue }}; if ($c) {{ $v{index} = [int]$s; break }}; Write-Host {index} }} finally {{ }} }}'
+                for index in range(size)
+            )
+
+        self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_many_loops_left_by_a_labelled_break_under_a_resuming_trap(self):
+        def source(size: int) -> str:
+            return '\n'.join(
+                F':o{index} foreach ($p{index} in $l) {{ foreach ($q{index} in $m) {{ trap {{ continue }}; if ($c) {{ $v{index} = [int]$s; break o{index} }}; Write-Host {index} }} }}'
+                for index in range(size)
+            )
+
+        self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_many_landings_left_by_a_break(self):
+        def source(size: int) -> str:
+            return '\n'.join(
+                F'foreach ($q{index} in $l) {{ try {{ if ($c) {{ trap {{ continue }}; $v{index} = [int]$s }}; break }} catch {{ }} }}'
+                for index in range(size)
+            )
+
+        self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_many_typed_catches_handing_on_to_a_catch_and_a_tail(self):
+        def source(size: int) -> str:
+            blocks = [
+                F'try {{ if ($c) {{ trap {{ continue }}; $v{index} = [int]$s }}; Write-Host x{index} }} catch [System.IO.IOException] {{ }}'
+                for index in range(size)
+            ]
+            tail = [F'Write-Host t{index}' for index in range(size)]
+            return '\n'.join([
+                'trap { continue }',
+                "if ($c) { $q = [int]$s; Write-Host 'x' }",
+                'try {',
+                *blocks,
+                "} catch { Write-Host 'c' }",
+                *tail,
+            ])
+
+        self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_many_catch_bodies_left_by_a_break_under_a_resuming_trap(self):
+        def source(size: int) -> str:
+            return '\n'.join(
+                F'foreach ($q{index} in $l) {{ trap {{ continue }}; if ($c) {{ $v{index} = [int]$s; try {{ Get-Item x }} catch {{ break }} }}; Write-Host {index} }}'
+                for index in range(size)
+            )
+
+        self.assertWorkGrowsLinearly(_weighing(source), 50)
+
+    def test_one_block_of_many_typed_traps_asked_as_one_batch(self):
+        def source(size: int) -> str:
+            traps = [
+                'trap [System.IO.IOException] { continue }' if index % 2 else 'trap [System.ArgumentException] { break }'
+                for index in range(size)
+            ]
+            raisers = [F'$v{index} = [int]$s{index}; Write-Host {index}' for index in range(size)]
+            return '\n'.join([*traps, 'trap { continue }', *raisers])
+
+        self.assertWorkGrowsLinearly(_batching(source), 100)
 
     def test_a_trap_beside_a_deep_nest_of_plain_blocks(self):
         def source(size: int) -> str:
@@ -430,7 +641,7 @@ class TestPs1TheWorldIsBuiltOnlyForAVerdictThatReadsIt(TestBase):
 
         def weigh():
             handlers = cache.handlers
-            self.assertFalse(reach.removing_a_handler_is_observed(trap, handlers.raises(False), handlers.skips))
+            self.assertFalse(reach.removing_traps_is_observed([trap], handlers.raises(False), handlers.skips))
 
         self.assertEqual(lines_executed(weigh, worldflow), 0)
 
@@ -445,7 +656,7 @@ class TestPs1TheWorldIsBuiltOnlyForAVerdictThatReadsIt(TestBase):
 
         def weigh():
             handlers = cache.handlers
-            reach.removing_a_handler_is_observed(trap, handlers.raises(True), handlers.skips)
+            reach.removing_traps_is_observed([trap], handlers.raises(True), handlers.skips)
 
         self.assertGreater(lines_executed(weigh, worldflow), 0)
 
