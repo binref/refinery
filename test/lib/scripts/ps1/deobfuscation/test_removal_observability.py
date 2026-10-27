@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+from inspect import cleandoc
+
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 #: An acting statement that is never a removal candidate, so its survival says only that the pass
@@ -871,7 +873,7 @@ class TestPs1ARaiseAResumingTrapSkipsPastIsKept(TestPs1):
         5.1 writes `after`: the `trap` resumes past the `if`. The output deletes the cast and writes
         `t` and `after`.
         """
-        self._assertKept("""
+        output = self._deobfuscate(cleandoc("""
             trap {
               continue
             }
@@ -880,4 +882,64 @@ class TestPs1ARaiseAResumingTrapSkipsPastIsKept(TestPs1):
               Write-Host 't'
             }
             Write-Host 'after'
+        """))
+        self.assertIn("[int]'a'", output)
+
+
+class TestPs1AnErrorThatLeavesAFunctionCalledUnderAHandlerEndsTheFunction(TestPs1):
+    """
+    Measured on 5.1: an error the handlers of a function do not take, where a `try` guards the
+    call, leaves the function and ends the call statement, so the rest of the function does not run
+    even where the `catch` is empty. The removal passes read such an error as reported and stepped
+    over unless a handler that acts is written somewhere else, so they delete the function's own
+    `trap`, and the rest of the function no longer runs.
+    """
+
+    @unittest.expectedFailure
+    def test_a_trap_in_a_function_called_in_a_try_with_an_empty_catch_is_kept(self):
+        """
+        5.1 writes `rest ` and `after`; without the `trap` only `after`.
+        """
+        self._assertKept("""
+            function f {
+              trap {
+                continue
+              }
+              $v = [int]'a'
+              Write-Host "rest $v"
+            }
+            try {
+              f
+            } catch {
+            }
+            Write-Host 'after'
+        """)
+
+
+class TestPs1AReadStrictModeFailsIsSkippedPastByTheTrapAroundIt(TestPs1):
+    """
+    Under strict mode, reading a variable that was never set is a statement-terminating error that
+    a `trap` takes. Whether something may raise into a `trap` is asked with a reading that counts it,
+    but what the `trap` skips is measured only from casts, operators, method calls and commands, so
+    the read is never found to skip anything and the `trap` is deleted.
+    """
+
+    @unittest.expectedFailure
+    def test_a_trap_that_resumes_past_a_read_strict_mode_fails_is_kept(self):
+        """
+        5.1 writes `out a`: the `trap` resumes past the `if`. Without it the error is written and
+        the `if` runs on, which writes `in a`.
+        """
+        self._assertKept("""
+            Set-StrictMode -Version 1
+            $w = 'a'
+            $m = 'out'
+            trap {
+              continue
+            }
+            if ($Host) {
+              $w = $undefined
+              $m = 'in'
+            }
+            Write-Host "$m $w"
         """)

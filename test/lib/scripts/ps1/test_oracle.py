@@ -415,6 +415,16 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The handler is removed. It resumes inside the `try` body, so the snippet writes `rest ` '
         'and `after`; without it the error leaves the whole `try`, and the output writes the error '
         'and `after`.',
+    "Set-StrictMode -Version 1; $w = 'a'; $m = 'out'; trap { continue }; "
+    "if ($Host) { $w = $undefined; $m = 'in' }; Write-Host \"$m $w\"":
+        'The handler is removed. Under strict mode the read of the unset variable fails and the '
+        '`trap` resumes past the `if`, so the snippet writes `out a`; the output writes the error '
+        'and `in a`. What the `trap` skips is read only off casts, operators, method calls and '
+        'commands, so the failing read is never found to skip anything.',
+    "function f { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" }; try { f } catch { }; Write-Host 'after'":
+        'The handler is removed. It resumes inside the function, so the snippet writes `rest ` and '
+        '`after`; without it the error leaves the function for the `try` around the call, and the '
+        'output writes only `after`.',
 }
 
 

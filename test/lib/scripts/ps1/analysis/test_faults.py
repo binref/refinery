@@ -7,9 +7,8 @@ from inspect import cleandoc
 from test import TestBase, wontfix
 
 from refinery.lib.scripts import Node, Statement, set_body
-from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
-from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
+from refinery.lib.scripts.ps1.analysis.cfg import Ps1ControlFlowModel, build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts
 from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1FaultReach,
@@ -62,6 +61,10 @@ class _Answering:
 
     def skip_observed_behind(self, paths, start) -> bool:
         return self._answer
+
+
+def _no_trap_is_asked_about(trap: Ps1TrapStatement) -> bool:
+    raise AssertionError(F'the fixture holds a trap: {trap}')
 
 
 def _handler_verdicts(tree: Ps1Script, reach: Ps1FaultReach) -> Ps1HandlerVerdicts:
@@ -592,6 +595,41 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         falls_through, _ = _traps_of(tree)
         self.assertTrue(_handler_removal_is_observed(tree, reach, falls_through))
 
+    def test_a_member_that_breaks_is_not_alike_one_that_runs_off_its_end_where_stop_is_set_after_the_raise(self):
+        """
+        5.1 stops at the cast, which the typed `trap` re-raises; without it, `trap { }` takes the
+        cast before the preference is `Stop`, resumes, and `after` is written.
+        """
+        tree, reach = _model("""
+            trap [System.Management.Automation.PSInvalidCastException] { break }
+            trap { }
+            [int]'a'
+            Write-Host 'after'
+            $ErrorActionPreference = 'Stop'
+        """)
+        breaks, _ = _traps_of(tree)
+        self.assertTrue(_handler_removal_is_observed(tree, reach, breaks))
+
+    def test_a_resuming_set_is_kept_where_a_typed_set_around_it_declines_to_a_resuming_set_further_out(self):
+        """
+        The innermost `trap` resumes inside its block, so `mid` is written; with it gone, the typed
+        `trap` declines the cast and the outermost one resumes past the whole `if`, skipping `mid`.
+        """
+        tree, reach = _model("""
+            trap { continue }
+            if ($true) {
+              trap [System.IO.IOException] { continue }
+              if ($true) {
+                trap { continue }
+                [int]'a'
+              }
+              Write-Host 'mid'
+            }
+            Write-Host 'after'
+        """)
+        *_, innermost = _traps_of(tree)
+        self.assertTrue(_handler_removal_is_observed(tree, reach, innermost))
+
     def test_one_of_two_alike_members_may_go_but_not_both(self):
         """
         5.1 never hands an error to the second untyped member, and the first one does what the
@@ -641,6 +679,23 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         typed, untyped = _traps_of(tree)
         verdicts = _handler_verdicts(tree, reach)
         self.assertEqual(reach.removable_traps([typed, untyped], verdicts.raises(False), verdicts.skips), [untyped])
+
+    def test_a_typed_member_may_go_where_the_member_naming_every_error_takes_its_errors_alike(self):
+        """
+        5.1 writes `after` with both members and with the `Exception` member alone, which takes
+        what the `IOException` member took and resumes as well; without both, the preference stops
+        the script at the cast.
+        """
+        tree, reach = _model("""
+            $ErrorActionPreference = 'Stop'
+            trap [System.IO.IOException] { continue }
+            trap [Exception] { continue }
+            [int]'a'
+            Write-Host 'after'
+        """)
+        narrow, universal = _traps_of(tree)
+        verdicts = _handler_verdicts(tree, reach)
+        self.assertEqual(reach.removable_traps([narrow, universal], verdicts.raises(False), verdicts.skips), [narrow])
 
     def test_an_outer_set_an_inner_typed_set_declines_into_is_kept(self):
         """
@@ -1416,7 +1471,10 @@ class TestPs1ACommandToldToStopEndsTheScriptHoweverItIsTold(TestBase):
     """
 
     def _verdicts(self, commands: list[str]) -> dict[str, bool]:
-        return {command: ends_the_script(_parse(command).body[0]) for command in commands}
+        return {
+            command: ends_the_script(_parse(command).body[0], converts=_no_trap_is_asked_about)
+            for command in commands
+        }
 
     def _assertEveryActionStops(self, actions: list[str]) -> None:
         commands = [F'Get-Item nope -ErrorAction {action}' for action in actions]
@@ -1735,7 +1793,7 @@ class TestPs1AStrictModeArmingIsReadOverTheWholeScript(TestBase):
         removal, so an empty model has to refuse it: a script nothing was read of is not a script
         that was read and found to arm nothing.
         """
-        self.assertTrue(Ps1FaultReach(ControlFlowModel({})).strict_mode_may_be_in_force())
+        self.assertTrue(Ps1FaultReach(Ps1ControlFlowModel({}, {})).strict_mode_may_be_in_force())
 
 
 class TestPs1WhetherAnErrorLeavesTheBodyItWasRaisedIn(TestBase):

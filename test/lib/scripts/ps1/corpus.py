@@ -855,6 +855,15 @@ BEHAVIOURS: tuple[str, ...] = (
     "try { $null = [int]'a'; Write-Host 'rest' } finally { }; Write-Host 'after'",
     "try { throw 'x' } catch { $null = [int]'a'; Write-Host 'c-rest' }; Write-Host 'after'",
     "try { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" } finally { }; Write-Host 'after'",
+    "trap [System.Management.Automation.PSInvalidCastException] { break }; trap { }; [int]'a'; Write-Host 'after'; "
+    "$ErrorActionPreference = 'Stop'",
+    "trap { continue }; if ($true) { trap [System.IO.IOException] { continue }; if ($true) { trap { continue }; "
+    "[int]'a' }; Write-Host 'mid' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'; trap [System.IO.IOException] { continue }; trap [Exception] { continue }; "
+    "[int]'a'; Write-Host 'after'",
+    "Set-StrictMode -Version 1; $w = 'a'; $m = 'out'; trap { continue }; "
+    "if ($Host) { $w = $undefined; $m = 'in' }; Write-Host \"$m $w\"",
+    "function f { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" }; try { f } catch { }; Write-Host 'after'",
 )
 
 

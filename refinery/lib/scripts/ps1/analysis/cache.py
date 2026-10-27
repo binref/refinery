@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from refinery.lib.scripts import Node, Transformer
-from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.modelcache import ModelCacheBase
@@ -22,7 +21,7 @@ from refinery.lib.scripts.ps1.analysis.callgraph import (
     build_call_graph,
     names_used_before_defined,
 )
-from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
+from refinery.lib.scripts.ps1.analysis.cfg import Ps1ControlFlowModel, build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.commands import Ps1CommandModel, build_command_model
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow, build_variable_flow
 from refinery.lib.scripts.ps1.analysis.dominance import build_dominance
@@ -69,7 +68,7 @@ class Ps1ModelCache(ModelCacheBase):
     `refinery.lib.scripts.ps1.analysis.world.Ps1TypeWorld`, the
     `refinery.lib.scripts.ps1.analysis.callgraph.Ps1CallGraph`, the
     `refinery.lib.scripts.ps1.analysis.effects.Ps1OutputFlow`, the
-    `refinery.lib.scripts.analysis.cfg.ControlFlowModel`, the
+    `refinery.lib.scripts.ps1.analysis.cfg.Ps1ControlFlowModel`, the
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach`, the
     `refinery.lib.scripts.ps1.analysis.blocks.Ps1BlockModel` and the
     `refinery.lib.scripts.analysis.cycles.CycleModel` derived from it — each dropped
@@ -102,7 +101,7 @@ class Ps1ModelCache(ModelCacheBase):
     _world_reach: Ps1WorldReach | None
     _call_graph: Ps1CallGraph | None
     _output_flow: Ps1OutputFlow | None
-    _control_flow: ControlFlowModel | None
+    _control_flow: Ps1ControlFlowModel | None
     _faults: Ps1FaultReach | None
     _dominance: DominatorModel | None
     _blocks: Ps1BlockModel | None
@@ -181,7 +180,7 @@ class Ps1ModelCache(ModelCacheBase):
         return self._lazy('_output_flow', lambda: build_output_flow(self.call_graph))
 
     @property
-    def control_flow(self) -> ControlFlowModel:
+    def control_flow(self) -> Ps1ControlFlowModel:
         """
         One control-flow graph per script block and one for the script itself, over this root — see
         `refinery.lib.scripts.ps1.analysis.cfg.FUNCTION_NODES` for what owns one and why.

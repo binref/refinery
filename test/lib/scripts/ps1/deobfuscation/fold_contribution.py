@@ -451,12 +451,15 @@ CONTRIBUTION: dict[str, Contribution] = {
     ),
     'Ps1DeadCodeElimination': Contribution(
         lost=(
+            "$ErrorActionPreference = 'Stop'; trap [System.IO.IOException] { continue }; trap [Exception] { continue }; [int]'a'; Write-Host 'after'",
             "$ErrorActionPreference = 'Stop'; trap { }; trap { continue }; [int]'a'; Write-Host 'after'",
             "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); trap { continue }; [int]'a'; Write-Output 'after'",
             '$_ = 5; switch (1) { default { Write-Output $_ } }',
             "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; [int]'a'; Write-Output 'after'",
+            "Set-StrictMode -Version 1; $w = 'a'; $m = 'out'; trap { continue }; if ($Host) { $w = $undefined; $m = 'in' }; Write-Host \"$m $w\"",
             "Write-Host 'a'; return; Write-Host 'b'",
             "function Raise { throw 'e' }; function Wrap { trap { continue }; Raise; Write-Host 'in' }; Wrap; Write-Host 'after'",
+            "function f { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" }; try { f } catch { }; Write-Host 'after'",
             "function f { try { 'tail' } catch {} }; Write-Host (f)",
             "throw 'e'; Write-Host 'after'",
             'trap [E] { 1 }',

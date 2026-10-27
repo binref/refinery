@@ -13,6 +13,8 @@ This says only which folds exist, so that a commit that means to change one has 
 from __future__ import annotations
 
 FOLDS: dict[str, str] = {
+    "$ErrorActionPreference = 'Stop'; trap [System.IO.IOException] { continue }; trap [Exception] { continue }; [int]'a'; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\ntrap [Exception] {\n  continue\n}\n[int]'a'\nWrite-Host 'after'",
     "$ErrorActionPreference = 'Stop'; trap { }; $null = [int]'a'; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\ntrap {}\n$Null = [int]'a'\nWrite-Host 'after'",
     "$ErrorActionPreference = 'Stop'; trap { }; trap { continue }; [int]'a'; Write-Host 'after'":
@@ -1737,6 +1739,15 @@ FOLDS: dict[str, str] = {
         "Write-Output 'resolved'",
     "Set-Alias zzq iex; zzq 'Write-Output loaded'":
         'Write-Output loaded',
+    "Set-StrictMode -Version 1; $w = 'a'; $m = 'out'; trap { continue }; if ($Host) { $w = $undefined; $m = 'in' }; Write-Host \"$m $w\"":
+        'Set-StrictMode -Version 1\n'
+        "$w = 'a'\n"
+        "$m = 'out'\n"
+        'if ($Host) {\n'
+        '  $w = $undefined\n'
+        "  $m = 'in'\n"
+        '}\n'
+        'Write-Host "${m} ${w}"',
     "Set-Variable global:y 'b'; Write-Host $global:y":
         'Write-Host $global:y',
     'Set-Variable q 5; function fq { $q + 1 }; Write-Output (fq)':
@@ -1903,6 +1914,8 @@ FOLDS: dict[str, str] = {
         'function f {\n  [Object[]]$a = 1, 2\n  [Array]::Reverse(@($a))\n  Write-Output $a\n}\nf',
     'function f { [void]$input; $input | ForEach-Object { Write-Host "seen:$_" } }; 1, 2 | f':
         'function f {\n  [void]$Input\n  $Input | ForEach-Object {\n    Write-Host "seen:${_}"\n  }\n}\n1, 2 | f',
+    "function f { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" }; try { f } catch { }; Write-Host 'after'":
+        "function f {\n  $v = [int]'a'\n  Write-Host \"rest ${v}\"\n}\ntry {\n  f\n} catch {}\nWrite-Host 'after'",
     "function f { try { 'tail' } catch {} }; Write-Host (f)":
         "Write-Host 'tail'",
     'function g { ,(1, 2) }; $t = @(g); Write-Output $t.Count; Write-Output (,$t[0])':
@@ -1989,6 +2002,23 @@ FOLDS: dict[str, str] = {
         '  }\n'
         "  [int]'a'\n"
         "  Write-Host 'tail'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "trap { continue }; if ($true) { trap [System.IO.IOException] { continue }; if ($true) { trap { continue }; [int]'a' }; Write-Host 'mid' }; Write-Host 'after'":
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        '    continue\n'
+        '  }\n'
+        '  if ($True) {\n'
+        '    trap {\n'
+        '      continue\n'
+        '    }\n'
+        "    [int]'a'\n"
+        '  }\n'
+        "  Write-Host 'mid'\n"
         '}\n'
         "Write-Host 'after'",
     "trap { continue }; if ($true) { trap { break }; if ($true) { [int]'a'; Write-Host 'tail' }; Write-Host 'mid' }; Write-Host 'after'":

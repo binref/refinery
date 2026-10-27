@@ -36,7 +36,7 @@ import enum
 
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Sequence
+from typing import AbstractSet, Sequence
 
 from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.analysis.cfg import (
@@ -213,25 +213,6 @@ def _declared_traps(statements: Sequence[Node]) -> list[Ps1TrapStatement]:
     return [statement for statement in statements if isinstance(statement, Ps1TrapStatement)]
 
 
-def selectable_traps(traps: Sequence[Ps1TrapStatement]) -> list[Ps1TrapStatement]:
-    """
-    The members of one block's `trap` set that some terminating error may be handed to, in the order
-    5.1 tries them.
-
-    5.1 picks the member by the error's type and not by where it is written: a member naming the
-    error's own type, then one naming a type the error derives from, and only then the first member
-    carrying no type at all. So every typed member may take an error, in source order, and after
-    them the first untyped member takes whatever no typed member matched; an untyped member after
-    that one takes nothing. A typed member naming a type every terminating error is takes everything
-    before the untyped members are tried at all.
-    """
-    typed = [trap for trap in traps if trap.type_name.strip()]
-    if any(names_every_error(trap.type_name) for trap in typed):
-        return typed
-    untyped = next((trap for trap in traps if not trap.type_name.strip()), None)
-    return typed if untyped is None else [*typed, untyped]
-
-
 class Ps1TrapDisposition(enum.Flag):
     """
     What running a `trap` body may do with the error it took, read by the builder off the body it
@@ -254,6 +235,15 @@ class Ps1TrapSet:
     resumes the block — the slot it resumes at after each statement of the block. `outward` is where
     an error goes that the set does not take, and where the errors it takes would go if none of it
     were written.
+
+    5.1 picks the member by the error's type and not by where it is written: a member naming the
+    error's own type, then one naming a type the error derives from, and only then the first member
+    carrying no type at all. So every typed member may take an error, in source order, and after
+    them the first untyped member takes whatever no typed member matched; an untyped member after
+    that one takes nothing. A typed member naming a type every terminating error is takes everything
+    before the untyped members are tried at all. `selectable` holds the members 5.1 may select, in
+    the order it tries them, and `catching` says which of them take an error no narrower member
+    names.
     """
 
     def __init__(
@@ -267,7 +257,10 @@ class Ps1TrapSet:
         self.statements = tuple(statements)
         self.members = tuple(traps)
         self.entries = entries
-        self.selectable = tuple(selectable_traps(traps))
+        typed = tuple(trap for trap in traps if trap.type_name.strip())
+        self._universal = tuple(trap for trap in typed if names_every_error(trap.type_name))
+        self._untyped = tuple(trap for trap in traps if not trap.type_name.strip())
+        self.selectable = (*typed, *(trap for trap in self.catching() if not trap.type_name.strip()))
         self._chosen = {id(trap) for trap in self.selectable}
         self.never_selected = tuple(trap for trap in traps if id(trap) not in self._chosen)
         self.chain = tuple(entries[id(trap)] for trap in self.selectable)
@@ -280,6 +273,19 @@ class Ps1TrapSet:
 
     def disposition(self, trap: Ps1TrapStatement) -> Ps1TrapDisposition:
         return self.dispositions[id(trap)]
+
+    def catching(self, removed: AbstractSet[int] = frozenset()) -> tuple[Ps1TrapStatement, ...]:
+        """
+        The members that take an error no narrower member names, once the members whose identities
+        *removed* holds are gone: every typed member left naming a type every error is, which of
+        them depending on the error's type, or where none is left, the first untyped member left.
+        Empty where what is left lets such an error past. Costs the members naming every error and
+        the untyped members removed ahead of the first one left, not the whole set.
+        """
+        universal = tuple(trap for trap in self._universal if id(trap) not in removed)
+        if universal:
+            return universal
+        return next(((trap,) for trap in self._untyped if id(trap) not in removed), ())
 
     def is_selectable(self, trap: Ps1TrapStatement) -> bool:
         """
