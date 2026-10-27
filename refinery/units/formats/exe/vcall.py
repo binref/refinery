@@ -9,11 +9,15 @@ from dataclasses import dataclass
 
 from refinery.lib.argformats import DelayedArgument, multibin, number
 from refinery.lib.emulator import CC, EmulationTimeout, Emulator, Hook
-from refinery.lib.structures import StructReader
+from refinery.lib.meta import check_variable_name
+from refinery.lib.structures import StructReader, UnpackType
 from refinery.lib.tools import mixed_class
-from refinery.lib.types import Param, buf
+from refinery.lib.types import Param, buf, isbuffer
 from refinery.units import Arg, Chunk
 from refinery.units.formats.exe import Arch, EmulatingUnit, Engine
+
+
+ExtractType = UnpackType | list[UnpackType] | None
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,7 @@ class ArgSlot:
     name: str | None
     base: ValueBase | AllocBase | LengthBase
     readback: StructType | BytesType | None
+    deref: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,27 +80,24 @@ class RV:
 
 
 @dataclass(frozen=True)
-class ArgRef:
-    index: int
-
-
-@dataclass(frozen=True)
 class Deref:
-    addr: RV | ArgRef | Ref | Literal | Deref
+    addr: RV | Ref | Literal | Deref
 
 
 @dataclass(frozen=True)
 class OutBinding:
     name: str
-    src: RV | ArgRef | Ref | Literal | Deref
+    src: RV | Ref | Literal | Deref
     readback: StructType | BytesType | None
 
 
 _IDENTIFIER = re.compile(r'[A-Za-z_]\w*')
-_ARGUMENT_N = re.compile(r'a(\d+)')
 
 _SIZEOF_SPEC = re.compile(r'(?:\d*[xcbB?hHiIlLqQefdspP])+')
 _DECODE_SPEC = re.compile(r'(?:\d*[xcbB?hHiIlLqQefdspPauwgk])+')
+
+_BODY_CONTENT_VARIABLE = 'B'
+_RETURN_VALUE_VARIABLE = 'R'
 
 
 def _ident(text: str) -> str:
@@ -167,19 +169,27 @@ def _arg_base(token: str) -> tuple[ValueBase | AllocBase | LengthBase, StructTyp
 
 
 def parse_arg_slot(token: str) -> ArgSlot:
+    deref = False
+    head, sep, tail = token.partition('=')
+    if sep and head[:1] == '@' and _IDENTIFIER.fullmatch(head[1:]):
+        deref = True
+        head = head[1:]
+    if sep and _IDENTIFIER.fullmatch(head):
+        name, token = head, tail
+    else:
+        name = None
+    check_variable_name(name)
     boxes = 0
     while token[:1] == '@':
         boxes += 1
         token = token[1:]
-    name = None
-    head, sep, tail = token.partition('=')
-    if sep and _IDENTIFIER.fullmatch(head):
-        name, token = head, tail
     base, readback = _arg_base(token)
-    return ArgSlot(boxes, name, base, readback)
+    if readback is not None and not deref:
+        raise ValueError('a :type read-back requires a named binding with a leading @')
+    return ArgSlot(boxes, name, base, readback, deref)
 
 
-def _parse_addr(text: str) -> RV | ArgRef | Ref | Literal | Deref:
+def _parse_addr(text: str) -> RV | Ref | Literal | Deref:
     if not text:
         raise ValueError('empty address or source')
     if text[0] == '[':
@@ -187,16 +197,14 @@ def _parse_addr(text: str) -> RV | ArgRef | Ref | Literal | Deref:
         if rest:
             raise ValueError(F'unexpected text after dereference: {rest!r}')
         return Deref(_parse_addr(inside))
-    if text == 'rv':
+    if text == _RETURN_VALUE_VARIABLE:
         return RV()
-    if m := _ARGUMENT_N.fullmatch(text):
-        return ArgRef(int(m[1]))
     if _IDENTIFIER.fullmatch(text):
         return Ref(text)
     return Literal(text)
 
 
-def _place(text: str) -> tuple[RV | ArgRef | Ref | Literal | Deref, StructType | BytesType | None]:
+def _place(text: str) -> tuple[RV | Ref | Literal | Deref, StructType | BytesType | None]:
     if not text:
         raise ValueError('empty output place')
     if text[0] == '[':
@@ -215,6 +223,7 @@ def parse_out_binding(token: str) -> OutBinding:
     head, sep, tail = token.partition('=')
     if not sep or not _IDENTIFIER.fullmatch(head):
         raise ValueError(F'output binding must be NAME=PLACE: {token!r}')
+    check_variable_name(head)
     src, readback = _place(tail)
     return OutBinding(head, src, readback)
 
@@ -226,6 +235,7 @@ class Binding:
     length: int
     readback: StructType | BytesType | None
     default_spec: str | None
+    deref: bool = False
 
 
 @dataclass
@@ -248,7 +258,7 @@ class Evaluator:
         self.bindings: dict[str, Binding] = {}
         self._presize: dict[str, tuple[str, int]] = {}
         self._inputs: dict[int, _Core] = {}
-        self._extracted: dict[str, object] = {}
+        self._extracted: dict[str, ExtractType] = {}
         self._pending: set[str] = set()
         self._outmap: dict[str, OutBinding] = {}
 
@@ -371,21 +381,21 @@ class Evaluator:
                 passed = cell
         if slot.name:
             if anchor_addr is None:
-                self.bindings[slot.name] = Binding(None, core.scalar, 0, slot.readback, None)
+                self.bindings[slot.name] = Binding(None, core.scalar, 0, slot.readback, None, slot.deref)
             else:
-                self.bindings[slot.name] = Binding(anchor_addr, None, anchor_len, slot.readback, core.default_spec)
+                self.bindings[slot.name] = Binding(anchor_addr, None, anchor_len, slot.readback, core.default_spec, slot.deref)
         return passed
 
     def invoke(self, start: int, stop: int | None, timeout: int) -> int:
         return self.emu.call(start, *self.passed, until=stop, cc=self.cc, timeout=timeout)
 
-    def extract(self, outputs: list[OutBinding]) -> dict[str, object]:
+    def extract(self, outputs: list[OutBinding]) -> dict[str, ExtractType]:
         self._outmap = {output.name: output for output in outputs}
         names = list(self.bindings)
         names.extend(output.name for output in outputs)
         return {name: self._get(name) for name in names}
 
-    def _get(self, name: str) -> object:
+    def _get(self, name: str) -> ExtractType:
         try:
             return self._extracted[name]
         except KeyError:
@@ -394,7 +404,7 @@ class Evaluator:
             raise ValueError(F'cyclic reference involving {name!r}')
         self._pending.add(name)
         if name in self.bindings:
-            value = self._extract_binding(self.bindings[name])
+            value = self._extract_binding(name, self.bindings[name])
         elif name in self._outmap:
             value = self._extract_place(self._outmap[name])
         else:
@@ -403,13 +413,7 @@ class Evaluator:
         self._extracted[name] = value
         return value
 
-    def _arg(self, index: int) -> int:
-        try:
-            return self.passed[index]
-        except IndexError:
-            raise ValueError(F'argument index a{index} is out of range')
-
-    def _decode(self, address: int, spec: str) -> object:
+    def _decode(self, address: int, spec: str) -> ExtractType:
         spec = self._translate(spec)
         if any(letter in self._CUSTOM for letter in spec):
             data = self._read_window(address)
@@ -434,6 +438,10 @@ class Evaluator:
         if isinstance(count, LengthOf):
             return self._post_length(count.name)
         if isinstance(count, Ref):
+            binding = self.bindings.get(count.name)
+            if binding is not None and binding.address is not None and not binding.deref:
+                raise ValueError(
+                    F'cannot use the pointer of {count.name!r} as a count; use .{count.name} for its length')
             value = self._get(count.name)
             if isinstance(value, int):
                 return value
@@ -451,58 +459,66 @@ class Evaluator:
             return len(value)
         raise ValueError(F'cannot take the length of {name!r}')
 
-    def _extract_binding(self, binding: Binding) -> object:
+    def _natural_readback(self, binding: Binding) -> StructType | BytesType:
+        if binding.readback is not None:
+            return binding.readback
+        if binding.default_spec is not None:
+            return StructType(binding.default_spec)
+        return BytesType(Literal(F'{binding.length}'))
+
+    def _extract_binding(self, name: str, binding: Binding) -> ExtractType:
         if binding.address is None:
+            if binding.deref:
+                raise ValueError(F'cannot capture the contents of scalar binding {name!r}')
             return binding.value
-        readback = binding.readback
-        if readback is None and binding.default_spec is not None:
-            readback = StructType(binding.default_spec)
-        if readback is None:
-            return self.emu.mem_read(binding.address, binding.length)
+        if not binding.deref:
+            return binding.address
+        readback = self._natural_readback(binding)
         if isinstance(readback, StructType):
             return self._decode(binding.address, readback.spec)
         return self.emu.mem_read(binding.address, self._count(readback.count))
 
-    def _extract_place(self, output: OutBinding) -> object:
+    def _extract_place(self, output: OutBinding) -> ExtractType:
         src = output.src
         if isinstance(src, Deref):
-            return self._read_at(self._addr(src.addr), output.readback)
+            readback = output.readback
+            if readback is None and isinstance(src.addr, Ref):
+                binding = self.bindings.get(src.addr.name)
+                if binding is not None and binding.address is not None and not binding.deref:
+                    readback = self._natural_readback(binding)
+            return self._read_at(self._addr(src.addr), readback)
         value = self._src_value(src)
         if output.readback is None:
             return value
         return self._reinterpret(value, output.readback)
 
-    def _src_value(self, src: RV | ArgRef | Ref | Literal) -> object:
+    def _src_value(self, src: RV | Ref | Literal) -> ExtractType:
         if isinstance(src, RV):
             return self.emu.rv
-        if isinstance(src, ArgRef):
-            return self._arg(src.index)
         if isinstance(src, Ref):
             return self._get(src.name)
         return self._number(src.text)
 
-    def _addr(self, addr: RV | ArgRef | Ref | Literal | Deref) -> int:
-        if isinstance(addr, RV):
+    def _addr(self, src: RV | Ref | Literal | Deref) -> int:
+        if isinstance(src, RV):
             return self.emu.rv
-        if isinstance(addr, ArgRef):
-            return self._arg(addr.index)
-        if isinstance(addr, Deref):
-            return self.emu.mem_read_int(self._addr(addr.addr), self._ptr)
-        if isinstance(addr, Ref):
-            value = self._get(addr.name)
+        if isinstance(src, Deref):
+            return self.emu.mem_read_int(self._addr(src.addr), self._ptr)
+        if isinstance(src, Ref):
+            value = self._get(src.name)
             if not isinstance(value, int):
-                raise ValueError(F'binding {addr.name!r} is not usable as an address')
+                raise ValueError(F'binding {src.name!r} is not usable as an address')
             return value
-        return self._number(addr.text)
+        return self._number(src.text)
 
-    def _read_at(self, address: int, readback: StructType | BytesType | None) -> object:
+    def _read_at(self, address: int, readback: StructType | BytesType | None) -> ExtractType:
         if readback is None:
             return self.emu.mem_read_int(address, self._ptr)
         if isinstance(readback, StructType):
             return self._decode(address, readback.spec)
         return self.emu.mem_read(address, self._count(readback.count))
 
-    def _reinterpret(self, value: object, readback: StructType | BytesType) -> object:
+    def _reinterpret(self, value: object, readback: StructType | BytesType) -> ExtractType:
         if not isinstance(value, int):
             raise ValueError('cannot reinterpret a non-integer source value')
         if isinstance(readback, StructType):
@@ -542,13 +558,14 @@ class _DisassemblingEmulator(Emulator):
 class vcall(EmulatingUnit):
     """
     Call a single function inside an input executable with one of the emulator backends and capture
-    its results as meta variables
+    its results as meta variables.
 
     Every positional argument is a binding that describes one function argument. Giving a binding a
     name additionally captures its value after the call. The unit emits the input chunk, enriched
     with each captured value as a meta variable.
 
-    An argument binding has the form `[name=][@...]base[:type]`. The `base` can be:
+    An argument binding has the form `[@]name=[@...]base[:type]`; the name and all `@` modifiers
+    are optional. The `base` can be:
 
     - A multibin value: Scalars are passed by value, byte strings are put into an allocated buffer
       and passed as pointers.
@@ -556,13 +573,16 @@ class vcall(EmulatingUnit):
       and passes a pointer to it.
     - The expression `.name` is the byte length of the binding `name`, passed as an integer.
 
-    A leading `@` adds one level of pointer indirection and may be repeated. The `:type` modifier
-    overrides how a named binding is read back after the call.
+    Each `@` after the name adds one level of pointer indirection to the value that is passed;
+    this can be repeated. By default, a named binding captures the value that was passed to the
+    function: the scalar itself, or the address of the buffer. A `@` before the name instead
+    binds the name to the contents of the buffer, decoded according to the `:type` read-back;
+    a read-back is only valid on such a binding.
 
-    For `[n]` and `:n`, the expression `n` can be a literal number, the name of another binding
-    the expression `.name` for a binding's length, or `#spec` for the size of a struct field. A
-    read-back `type` is `#spec` to decode a struct field, or a plain count to read that many raw
-    bytes. The `spec` is a Python struct format string with refinery extensions:
+    For `[n]` and `:n`, the expression `n` can be a literal number, the name of a number-valued
+    binding, the expression `.name` for a binding's length, or `#spec` for the size of a struct
+    field. A read-back `type` is `#spec` to decode a struct field, or a plain count to read that
+    many raw bytes. The `spec` is a Python struct format string with refinery extensions:
 
     - `a` reads a C string
     - `u` and `w` read wide strings as bytes and as text
@@ -570,25 +590,31 @@ class vcall(EmulatingUnit):
     - `k` reads a 7-bit encoded integer
     - `p` denotes a pointer-sized integer
 
-    Non-argument outputs are added with `--out NAME=PLACE`. A `PLACE` is `rv` for the return value,
-    the name of another binding, an absolute address, `aN` for the `N`th argument value, or any of
-    these wrapped in `[...]` to dereference it; this can be nested.
+    Non-argument outputs are captured with `--put NAME=PLACE`. A `PLACE` is `R` for the return
+    value, the name of another binding (yielding whatever that binding captures), an absolute
+    address, or any of these wrapped in `[...]` to read the memory at the resulting address;
+    this can be nested. A `[name]` without a read-back type reads the memory using the natural
+    size of the binding `name` when it captures a pointer: its read-back if one was declared,
+    the size of its allocated struct, or the full length of its buffer. Use `--out=PLACE` to
+    parse a `PLACE` and replace the chunk body with the output read from it instead of capturing
+    it as a meta variable.
 
     Examples:
 
-    - <this> getLength data=H:0011 .data -r length
-    - <this> decryptString 7 -o text=[rv]:#a
-    - <this> decompress 0x401000 src=H:0011 .src dst=[0x1000]:n n=[#I] -o status=rv:#i
+    - <this> getLength data=H:0011 .data -p length=R
+    - <this> decryptString 7 -p text=[R]:#a
+    - <this> decryptString 7 -o [R]:#a
+    - <this> decompress 0x401000 src=H:0011 .src dst=[0x1000] @n=[#I] -p status=R:#i -o[dst]
     """
 
     def __init__(
         self,
         address: Param[str, Arg.String(help='Address or name of the function to call.')],
         *argument: Param[str, Arg.String(metavar='arg', help='An argument binding; see above.')],
-        out: Param[list | None, Arg('-o', '--out', type=str, action='append', metavar='OUT', help=(
-            'Capture an additional output as NAME=PLACE; may be given more than once.'))] = None,
-        ret: Param[str, Arg.String('-r', '--ret', metavar='NAME', help=(
-            'A shortcut for --out NAME=rv.'))] = '',
+        put: Param[list | None, Arg('-p', '--put', type=str, action='append', metavar='NAME=PLACE', help=(
+            'Capture an additional output as the meta variable NAME=PLACE; may be given more than once.'))] = None,
+        out: Param[str | None, Arg('-o', '--out', type=str, metavar='PLACE', help=(
+            'Parse PLACE and replace the chunk body with the output read from it.'))] = None,
         cc: Param[str | CC, Arg.Option('-c', metavar='CC', choices=CC, help=(
             'Specify the calling convention, default is {default}; pick from {choices}.'))] = CC.StdCall,
         timeout: Param[int, Arg.Number('-t', help='Optionally stop emulating after a given number of instructions.')] = 0,
@@ -599,8 +625,8 @@ class vcall(EmulatingUnit):
         super().__init__(
             address=address,
             argument=argument,
+            put=put,
             out=out,
-            ret=ret,
             cc=Arg.AsOption(cc, CC),
             timeout=timeout,
             max_read=max_read,
@@ -623,9 +649,10 @@ class vcall(EmulatingUnit):
         emu = engine(data, self.args.base, self.args.arch, hook).reset()
         address = self._parse_address(data, emu.exe, self.args.address)
 
-        outputs = [parse_out_binding(token) for token in (self.args.out or ())]
-        if self.args.ret:
-            outputs.append(OutBinding(self.args.ret, RV(), None))
+        outputs = [parse_out_binding(token) for token in (self.args.put or ())]
+        if self.args.out is not None:
+            src, readback = _place(self.args.out)
+            outputs.append(OutBinding(_BODY_CONTENT_VARIABLE, src, readback))
 
         evaluator = Evaluator(emu, data, self.args.cc, self.args.max_read)
         evaluator.setup([parse_arg_slot(token) for token in self.args.argument])
@@ -637,5 +664,15 @@ class vcall(EmulatingUnit):
             )
         except EmulationTimeout:
             pass
-        data.meta.update(evaluator.extract(outputs))
+        extracted = evaluator.extract(outputs)
+        if self.args.out is not None:
+            body = extracted.pop(_BODY_CONTENT_VARIABLE)
+            if isinstance(body, int):
+                body = str(body).encode(self.codec)
+            elif isinstance(body, str):
+                body = body.encode(self.codec)
+            elif not isbuffer(body):
+                body = bytearray(body)
+            data[:] = body
+        data.meta.update(extracted)
         return data

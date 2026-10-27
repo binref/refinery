@@ -431,7 +431,7 @@ def check_variable_name(name: str | None, allow_derivations=False) -> str | None
     if name is None:
         return None
     elif len(name) == 1 and name.upper() == name and name != _TEMPVAL:
-        error = 'a capitalzed single letter, which are reserved for state machines.'
+        error = 'a capitalized single letter, which are reserved for state machines.'
     elif not name.isidentifier():
         error = 'not an identifier.'
     elif not allow_derivations:

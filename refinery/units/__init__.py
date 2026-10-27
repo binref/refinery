@@ -1105,7 +1105,9 @@ class Executable(ABCMeta):
         if docs != '{}':
             mro = {b.__name__: inspect.cleandoc(b.__doc__) for b in cls.__mro__ if b.__doc__}
             cls.__doc__ = docs.format(*mro.values(), **mro, p='\n\n', s='\x20')
-            cls.__doc__ = cls.__doc__.replace('<this>', cls.__name__)
+
+        if ds := cls.__doc__:
+            cls.__doc__ = ds.replace('<this>', cls.__name__)
 
         if not abstract and bases and has_keyword:
             for key, value in bases[0]._argument_specification.items():

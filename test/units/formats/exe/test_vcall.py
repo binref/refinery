@@ -1,6 +1,5 @@
 from refinery.units.formats.exe.vcall import (
     AllocBase,
-    ArgRef,
     ArgSlot,
     BytesType,
     Deref,
@@ -106,8 +105,8 @@ class TestVCallSpec(TestUnitBase):
 
     def test_arg_out_buffer_readback_length(self):
         self.assertEqual(
-            parse_arg_slot('data=[0x1000]:n'),
-            ArgSlot(0, 'data', AllocBase(Literal('0x1000')), BytesType(Ref('n'))))
+            parse_arg_slot('@data=[0x1000]:n'),
+            ArgSlot(0, 'data', AllocBase(Literal('0x1000')), BytesType(Ref('n')), True))
 
     def test_arg_out_buffer_pointer_size(self):
         self.assertEqual(
@@ -121,12 +120,22 @@ class TestVCallSpec(TestUnitBase):
 
     def test_arg_boxed_pointer_to_pointer(self):
         self.assertEqual(
-            parse_arg_slot('@n=[#I]'),
+            parse_arg_slot('n=@[#I]'),
             ArgSlot(1, 'n', AllocBase(StructSpec('I')), None))
+
+    def test_arg_value_capture(self):
+        self.assertEqual(
+            parse_arg_slot('@n=[#I]'),
+            ArgSlot(0, 'n', AllocBase(StructSpec('I')), None, True))
+
+    def test_arg_boxed_value_capture(self):
+        self.assertEqual(
+            parse_arg_slot('@n=@[#I]'),
+            ArgSlot(1, 'n', AllocBase(StructSpec('I')), None, True))
 
     def test_arg_double_boxed(self):
         self.assertEqual(
-            parse_arg_slot('@@k=[16]'),
+            parse_arg_slot('k=@@[16]'),
             ArgSlot(2, 'k', AllocBase(Literal('16')), None))
 
     def test_arg_boxed_scalar(self):
@@ -146,17 +155,17 @@ class TestVCallSpec(TestUnitBase):
 
     def test_out_return_value_typed(self):
         self.assertEqual(
-            parse_out_binding('rc=rv:#i'),
+            parse_out_binding('rc=R:#i'),
             OutBinding('rc', RV(), StructType('i')))
 
     def test_out_return_value_default(self):
         self.assertEqual(
-            parse_out_binding('r=rv'),
+            parse_out_binding('r=R'),
             OutBinding('r', RV(), None))
 
     def test_out_pointer_return_cstring(self):
         self.assertEqual(
-            parse_out_binding('s=[rv]:#a'),
+            parse_out_binding('s=[R]:#a'),
             OutBinding('s', Deref(RV()), StructType('a')))
 
     def test_out_global_bytes(self):
@@ -164,15 +173,15 @@ class TestVCallSpec(TestUnitBase):
             parse_out_binding('table=[0x402000]:256'),
             OutBinding('table', Deref(Literal('0x402000')), BytesType(Literal('256'))))
 
-    def test_out_arg_ref_default(self):
+    def test_out_binding_ref_default(self):
         self.assertEqual(
-            parse_out_binding('p=a2'),
-            OutBinding('p', ArgRef(2), None))
+            parse_out_binding('p=data'),
+            OutBinding('p', Ref('data'), None))
 
-    def test_out_double_deref_arg(self):
+    def test_out_double_deref_binding(self):
         self.assertEqual(
-            parse_out_binding('n=[[a0]]:#I'),
-            OutBinding('n', Deref(Deref(ArgRef(0))), StructType('I')))
+            parse_out_binding('n=[[data]]:#I'),
+            OutBinding('n', Deref(Deref(Ref('data'))), StructType('I')))
 
     def test_reject_variable_length_alloc(self):
         with self.assertRaises(ValueError):
@@ -184,7 +193,19 @@ class TestVCallSpec(TestUnitBase):
 
     def test_reject_out_binding_without_name(self):
         with self.assertRaises(ValueError):
-            parse_out_binding('rv:#i')
+            parse_out_binding('R:#i')
+
+    def test_reject_binding_named_R(self):
+        with self.assertRaises(ValueError) as raised:
+            parse_arg_slot('R=[#I]')
+        self.assertEqual(
+            str(raised.exception),
+            'The variable name "R" is invalid; it is a capitalized single letter, '
+            'which are reserved for state machines.')
+
+    def test_reject_out_binding_named_R(self):
+        with self.assertRaises(ValueError):
+            parse_out_binding('R=[data]')
 
     def test_reject_unbalanced_brackets(self):
         with self.assertRaises(ValueError):
@@ -227,33 +248,70 @@ class TestVCallExtract(TestUnitBase):
 
     def test_out_int_parameter(self):
         code = bytes.fromhex('C70134120000C3')  # mov dword ptr [rcx], 0x1234 ; ret
-        self.assertEqual(self._meta(code, ['n=[#I]'])['n'], 0x1234)
+        self.assertEqual(self._meta(code, ['@n=[#I]'])['n'], 0x1234)
 
     def test_out_buffer(self):
         code = bytes.fromhex('C70141424344C3')  # mov dword ptr [rcx], 0x44434241 ; ret
-        self.assertEqual(self._meta(code, ['out=[4]'])['out'], B'ABCD')
+        self.assertEqual(self._meta(code, ['@out=[4]'])['out'], B'ABCD')
 
     def test_in_place_buffer(self):
         code = bytes.fromhex('830101C3')  # add dword ptr [rcx], 1 ; ret
-        self.assertEqual(self._meta(code, ['data=H:41424344'])['data'], bytes.fromhex('42424344'))
+        self.assertEqual(self._meta(code, ['@data=H:41424344'])['data'], bytes.fromhex('42424344'))
 
     def test_pointer_return_cstring(self):
         code = bytes.fromhex('4889C8C3')  # mov rax, rcx ; ret
-        self.assertEqual(self._meta(code, ['H:48656C6C6F00'], ['s=[rv]:#a'])['s'], B'Hello')
+        self.assertEqual(self._meta(code, ['H:48656C6C6F00'], ['s=[R]:#a'])['s'], B'Hello')
+
+    def test_binding_name_is_pointer(self):
+        code = bytes.fromhex('4889C8C3')  # mov rax, rcx ; ret
+        meta = self._meta(code, ['data=H:48656C6C6F00'], ['p=data', 's=[data]:#a'])
+        self.assertIsInstance(meta['p'], int)
+        self.assertEqual(meta['s'], B'Hello')
+
+    def test_reject_pointer_binding_as_count(self):
+        code = bytes.fromhex('C3')  # ret
+        with self.assertRaises(ValueError) as raised:
+            self._meta(code, ['@data=[4]:n', 'n=[#I]'])
+        self.assertEqual(
+            str(raised.exception),
+            'cannot use the pointer of \'n\' as a count; use .n for its length')
+
+    def test_reject_readback_without_value_capture(self):
+        with self.assertRaises(ValueError) as raised:
+            parse_arg_slot('data=[4]:n')
+        self.assertEqual(
+            str(raised.exception),
+            'a :type read-back requires a named binding with a leading @')
+
+    def test_reject_value_capture_of_scalar_binding(self):
+        code = bytes.fromhex('C3')  # ret
+        with self.assertRaises(ValueError) as raised:
+            self._meta(code, ['@len=0x20'], ['x=len'])
+        self.assertEqual(
+            str(raised.exception),
+            'cannot capture the contents of scalar binding \'len\'')
 
     def test_length_dependent_output(self):
         code = bytes.fromhex('C70141424344C70204000000C3')  # [rcx]=ABCD ; [rdx]=4 ; ret
-        meta = self._meta(code, ['data=[0x40]:n', 'n=[#I]'])
+        meta = self._meta(code, ['@data=[0x40]:n', '@n=[#I]'])
         self.assertEqual(meta['n'], 4)
         self.assertEqual(meta['data'], B'ABCD')
 
     def test_pointer_to_pointer_inner_int(self):
         code = bytes.fromhex('488B01C70099000000C3')  # rax=[rcx] ; [rax]=0x99 ; ret
-        self.assertEqual(self._meta(code, ['@n=[#I]'])['n'], 0x99)
+        self.assertEqual(self._meta(code, ['@n=@[#I]'])['n'], 0x99)
 
     def test_multifield_struct_readback(self):
         code = bytes.fromhex('C70101000000C7410402000000C3')  # [rcx]=1 ; [rcx+4]=2 ; ret
-        self.assertEqual(self._meta(code, ['hdr=[#II]'])['hdr'], [1, 2])
+        self.assertEqual(self._meta(code, ['@hdr=[#II]'])['hdr'], [1, 2])
+
+    def test_deref_binding_reads_natural_length(self):
+        code = bytes.fromhex('C70141424344C3')  # mov dword ptr [rcx], 0x44434241 ; ret
+        self.assertEqual(self._meta(code, ['buf=[16]'], ['x=[buf]'])['x'], B'ABCD' + bytes(12))
+
+    def test_deref_binding_reads_natural_spec(self):
+        code = bytes.fromhex('C70134120000C3')  # mov dword ptr [rcx], 0x1234 ; ret
+        self.assertEqual(self._meta(code, ['n=[#I]'], ['x=[n]'])['x'], 0x1234)
 
 
 class TestVCallUnit(TestUnitBase):
@@ -263,25 +321,44 @@ class TestVCallUnit(TestUnitBase):
         assert isinstance(result, Chunk)
         return result
 
-    def test_return_value_via_ret(self):
+    def test_return_value_via_put(self):
         code = bytes.fromhex('B82A000000C3')  # mov eax, 0x2A ; ret
-        result = self._run(code, '0', arch='x64', ret='retval')
+        result = self._run(code, '0', put=['retval=R'], arch='x64')
         self.assertEqual(result.meta['retval'], 0x2A)
-        self.assertEqual(bytes(result), code)
+        self.assertEqual(result, code)
 
     def test_named_out_int_argument(self):
         code = bytes.fromhex('C70134120000C3')  # mov dword ptr [rcx], 0x1234 ; ret
-        result = self._run(code, '0', 'n=[#I]', arch='x64')
+        result = self._run(code, '0', '@n=[#I]', arch='x64')
         self.assertEqual(result.meta['n'], 0x1234)
 
-    def test_out_binding_cstring(self):
+    def test_get_binding_cstring(self):
         code = bytes.fromhex('4889C8C3')  # mov rax, rcx ; ret
-        result = self._run(code, '0', 'H:48656C6C6F00', out=['s=[rv]:#a'], arch='x64')
+        result = self._run(code, '0', 'H:48656C6C6F00', put=['s=[R]:#a'], arch='x64')
         self.assertEqual(result.meta['s'], B'Hello')
+
+    def test_out_option_replaces_chunk_body(self):
+        code = bytes.fromhex('4889C8C3')  # mov rax, rcx ; ret
+        result = self._run(code, '0', 'H:48656C6C6F00', out='[R]:#a', arch='x64')
+        self.assertEqual(result, B'Hello')
+        self.assertFalse(result.meta)
+
+    def test_out_option_scalar_body(self):
+        code = bytes.fromhex('B82A000000C3')  # mov eax, 0x2A ; ret
+        result = self._run(code, '0', out='R', arch='x64')
+        self.assertEqual(result, B'42')
+
+    def test_out_option_coexists_with_get(self):
+        code = bytes.fromhex('4889C8C3')  # mov rax, rcx ; ret
+        result = self._run(code, '0', 'H:48656C6C6F00', put=['p=R'], out='[R]:#a', arch='x64')
+        self.assertEqual(result, B'Hello')
+        self.assertIn('p', result.meta)
+        self.assertNotIn('\x00body', result.meta)
+        self.assertIsInstance(result.meta['p'], int)
 
     def test_buffer_and_length_arguments(self):
         code = bytes.fromhex('C70141424344C70204000000C3')  # [rcx]=ABCD ; [rdx]=4 ; ret
-        result = self._run(code, '0', 'data=[0x40]:n', 'n=[#I]', arch='x64')
+        result = self._run(code, '0', '@data=[0x40]:n', '@n=[#I]', arch='x64')
         self.assertEqual(result.meta['n'], 4)
         self.assertEqual(result.meta['data'], B'ABCD')
 
@@ -300,7 +377,7 @@ class TestVCallUnit(TestUnitBase):
             '| pop d ]'
             '| vsnip 0x01010648:0xbf4'
             '| alu -B4 L(B@0x10a1,4)+0x77777778'
-            '| vcall 0x940 v:d p=[2M]'
+            '| vcall 0x940 v:d @p=[2M]'
             '| eat p'
             '| pestrip ]'
         ) | bytearray
@@ -358,5 +435,5 @@ class TestVCallX64StackArguments(TestUnitBase):
     def test_pe_module_call_with_stack_arguments_through_the_unit(self):
         data = _minimal_pe64(self.SHELLCODE)
         result = next(data | self.load(
-            '0x140001000', *self._arguments(), engine='speakeasy', ret='rv'))
+            '0x140001000', *self._arguments(), engine='speakeasy', put=['rv=R']))
         self.assertEqual(result.meta['rv'], self.FIFTH)

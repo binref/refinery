@@ -58,7 +58,7 @@ class ToJSON(Protocol):
         raise NotImplementedError
 
 
-UnpackType = int | bool | float | bytes
+UnpackType = str | int | bool | float | bytes | memoryview | bytearray
 
 
 def signed(k: int, bitsize: int):
@@ -610,7 +610,7 @@ class StructReader(MemoryFile[T, T]):
             spec = spec[1:]
         else:
             byteorder = self.byteorder_format
-        data = []
+        data: list[UnpackType] = []
         current_cursor = self.tell()
 
         def unpack_run(run: str):
