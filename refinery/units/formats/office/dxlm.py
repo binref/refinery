@@ -4,7 +4,7 @@ from refinery.lib.types import Param
 from refinery.units.formats import Arg, Unit
 
 
-class xlmdeobf(Unit):
+class dxlm(Unit):
     """
     Deobfuscates Excel v4.0 (XLM) macros from XLS, XLSM, and XLSB documents. By default, the
     program is emulated as the workbook stores it, and every cell the run executes is listed in

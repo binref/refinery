@@ -239,12 +239,12 @@ from refinery.units.formats.network.tcp import tcp as tcp
 from refinery.units.formats.network.udp import udp as udp
 from refinery.units.formats.office.docmeta import docmeta as docmeta
 from refinery.units.formats.office.doctxt import doctxt as doctxt
+from refinery.units.formats.office.dxlm import dxlm as dxlm
 from refinery.units.formats.office.officecrypt import officecrypt as officecrypt
 from refinery.units.formats.office.rtfc import rtfc as rtfc
 from refinery.units.formats.office.vbamc import vbamc as vbamc
 from refinery.units.formats.office.vbapc import vbapc as vbapc
 from refinery.units.formats.office.vbastr import vbastr as vbastr
-from refinery.units.formats.office.xlmdeobf import xlmdeobf as xlmdeobf
 from refinery.units.formats.office.xlxtr import xlxtr as xlxtr
 from refinery.units.formats.office.xtdoc import xtdoc as xtdoc
 from refinery.units.formats.office.xtmdb import xtmdb as xtmdb
