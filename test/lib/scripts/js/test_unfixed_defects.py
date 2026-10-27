@@ -108,6 +108,7 @@ from test.lib.scripts.js.test_parser_recovery import (
     unread_spans,
 )
 
+from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
@@ -2264,6 +2265,201 @@ class TestABuiltInReplacedWithoutSpellingItsNameIsNotFolded(TestBase):
     )
     def test_the_deobfuscation_prints_what_the_program_prints(self):
         rows = A_BUILT_IN_REPLACED_WITHOUT_SPELLING_ITS_NAME
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+class TestABuiltInReplacedThroughAKeyedMemberOfTheGlobalObjectIsWritten(TestBase):
+    """
+    The scan of writes to the built-ins
+    (`refinery.lib.scripts.js.analysis.intrinsics.build_intrinsic_writes`) attributes a write to
+    the names the foot of its chain may be, and the foot of `globalThis['Date'].now` is
+    `globalThis`: the write is recorded against the global object and not against `Date`. A fold
+    that trusts `Date` or `Math` and runs before another pass spells the member `Date.now` answers
+    for the built-in: Node prints `true` for the program below and its deobfuscation `false`.
+
+        globalThis['Date'].now = function () { return 5e12; };
+        console.log(Date.now() > 4102444800000);
+
+    Spelled `globalThis.Date`, the key reads as the name `Date`, which the scan of escapes counts.
+    The fix reads a member of the global object under a known key as the global it names wherever
+    the scans track names.
+    """
+
+    @unittest.expectedFailure
+    def test_a_write_through_a_keyed_member_of_the_global_object_writes_the_built_in(self):
+        written = {
+            source: name in ModelCache(JsParser(source).parse()).intrinsic_writes.names
+            for source, name in (
+                ("globalThis['Date'].now = function () { return 5e12; };", 'Date'),
+                ("globalThis['Math'].floor = function () { return 42; };", 'Math'),
+            )
+        }
+        self.assertEqual(written, {source: True for source in written})
+
+
+class TestAPropertyNamedLikeABuiltInLeavesTheBuiltInTrusted(TestBase):
+    """
+    The scan of escapes (`refinery.lib.scripts.js.analysis.intrinsics.build_intrinsic_writes`)
+    reads every name that is no reference as a read of the global of that name: a property `h.Date`
+    or a key `{ Date: 1 }` counts as `Date` handed on, and a fold that trusts `Date` refuses. Only
+    folds are lost; the output stays correct.
+    """
+
+    @unittest.expectedFailure
+    def test_a_check_of_the_clock_folds_beside_a_property_named_date(self):
+        source = inspect.cleandoc("""
+            function stamp(h) { return h.Date; }
+            console.log(stamp({}));
+            if (Date.now() > 4102444800000) { while (true) {} }
+            console.log('ran');
+        """)
+        self.assertNotIn('Date.now()', deobfuscate_source(source))
+
+
+#: A program that replaces its `arguments` with an array of its elements and reads its length,
+#: called once, run as a CommonJS file, mapped to what Node prints for it.
+A_FUNCTION_REPLACING_ITS_ARGUMENTS = {
+    'arguments replaced by an array of its elements': Program(
+        a_program("""
+            function main() {
+              arguments = Array.prototype.slice.call(arguments);
+              console.log(arguments.length);
+            }
+            main();
+            """),
+        prints('0'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionReadingItsArgumentsIsNotInlined(TestBase):
+    """
+    `refinery.lib.scripts.js.deobfuscation.singleuse.JsSingleUseFunctionInliner` inlines a function
+    called once where its own `arguments` is displaced, and the body then reads the `arguments` of
+    the function around the call: at the top of a CommonJS file, the five parameters of the wrapper.
+    A function that reads its own `arguments` in any way is no body to splice into another one.
+    """
+
+    @unittest.expectedFailure
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        row = A_FUNCTION_REPLACING_ITS_ARGUMENTS['arguments replaced by an array of its elements']
+        self.assertEqual(row.read(), row.required())
+
+
+#: Programs declaring a function named `arguments` in a block of a function that reads its
+#: `arguments` before the declaration runs, run as a CommonJS file, mapped to what Node prints.
+A_BLOCK_FUNCTION_NAMED_ARGUMENTS_AFTER_A_READ_OF_THE_OBJECT = {
+    'a mapped element read before a copy that never runs': Program(
+        a_program("""
+            function f(a, c) {
+              a = 'x';
+              var r = arguments[0];
+              if (c) { function arguments() {} }
+              return r;
+            }
+            console.log(f('orig', 0));
+            """),
+        prints('x'),
+        Reading.COMMONJS,
+    ),
+    'the length of the object read before the copy': Program(
+        a_program("""
+            function main() {
+              console.log(arguments.length);
+              { function arguments() {} }
+            }
+            main();
+            """),
+        prints('0'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheObjectABlockFunctionNamedArgumentsReplacesIsReadBeforeTheCopy(TestBase):
+    """
+    The model records the copy a block function named `arguments` makes as a declaration of the
+    `arguments` of its function (`refinery.lib.scripts.js.analysis.model.annex_b_target`), and
+    every reader then takes the object for one the function never has: a read of an element
+    before the copy runs no longer reads the parameter it aliases, and the function is inlined as
+    one that does not read its own `arguments`.
+    """
+
+    @wontfix('no program names a function it declares in a block arguments: strict code forbids the name, and no renamer picks it')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_BLOCK_FUNCTION_NAMED_ARGUMENTS_AFTER_A_READ_OF_THE_OBJECT.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheScriptValueOfAnUntakenBranchIsHeld(TestBase):
+    """
+    Under `preserve_script_return`, `refinery.lib.scripts.js.deobfuscation.deadcode` prunes an
+    `if` whose test is `false` and has no `else`, which leaves the value the statement before it
+    gave as the value of the script; the `if` gave `undefined`. A check of the clock the window
+    decides ends the same way. Node evaluates the script below to `undefined` under both models.
+    """
+
+    @unittest.expectedFailure
+    def test_the_script_ends_on_the_value_of_the_untaken_branch(self):
+        source = '1;\nif (false) { 2; }\n'
+        deobfuscated = deobfuscate_source(source, preserve_script_return=True)
+        for evaluation in JsEvaluation:
+            with self.subTest(evaluation=evaluation.value):
+                self.assertEqual(
+                    completion_values([deobfuscated], evaluation),
+                    completion_values([source], evaluation),
+                )
+
+
+#: Programs whose deobfuscation behaves differently only through a shape made up for the defect,
+#: mapped to what Node prints for them: `getTime` given a `call` of its own, the arguments object
+#: called as the receiver of a function it holds, and a `caller` read under a key only the run
+#: decodes.
+A_FRAME_OR_A_METHOD_REACHED_ONLY_AT_RUNTIME = {
+    inspect.cleandoc("""
+        Object.assign(Date.prototype.getTime, { call: function () { return 5000000000000; } });
+        console.log(Date.prototype.getTime.call(new Date()) > 4102444800000);
+    """): 'true\n',
+    inspect.cleandoc("""
+        function peek() { return this.callee.name; }
+        function __p_impl(fn) { return arguments[0](); }
+        function F() { return __p_impl(...arguments); }
+        console.log(F(peek));
+    """): '__p_impl\n',
+    inspect.cleandoc("""
+        function who() { return who[Buffer.from('Y2FsbGVy', 'base64').toString()].name; }
+        function __p_impl(a) { return who() + a; }
+        function F() { return __p_impl(...arguments); }
+        console.log(F(1));
+    """): '__p_impl1\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFrameOrAMethodReachedOnlyAtRuntime(TestBase):
+    """
+    A comparison of the clock trusts the `call` of every function where it reads
+    `Date.prototype.getTime.call(new Date())`, and a write to a property of `getTime` handed to
+    `Object.assign` replaces it unseen. A forwarder takes the body of its target back where the
+    target names itself through `arguments` only as `arguments.callee` or a built-in `apply`, and
+    where the program spells `caller`; calling `arguments[0]()` makes the object the receiver, and a
+    key decoded at runtime spells nothing.
+    """
+
+    @wontfix(
+        'no program gives getTime a call of its own, calls a function held in its arguments as a '
+        'method of the object, or decodes the key caller at runtime: each is made up for the defect'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_FRAME_OR_A_METHOD_REACHED_ONLY_AT_RUNTIME
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
