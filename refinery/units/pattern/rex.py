@@ -10,7 +10,7 @@ _FORWARD_VAR = '.'
 
 class rex(SingleRegexTransformUnit, PatternExtractor, docs=(
     '{0}\n\nTransformations are interpreted as format strings: {SingleRegexTransformUnit}'
-    F' The unit also supports the format `{{{{{_FORWARD_VAR}}}}}` to represent the input data.'
+    F'\n\nThe unit also supports the format `{{{{{_FORWARD_VAR}}}}}` to represent the input data.'
 )):
     """
     Apply a regular expression and extract matches, optionally applying multibin suffix
