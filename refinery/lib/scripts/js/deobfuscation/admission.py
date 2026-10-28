@@ -22,13 +22,17 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     GLOBAL_VALUE_NAMES,
     binding_constant,
+    held_constant,
     is_reference,
     names_global_value,
     references_receiver_this,
     walk_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.interpreter import (
+    InterpreterError,
+    IrreducibleExpression,
     JsInterpreter,
+    _ThrowSignal,
     is_runtime_name,
     names_runtime_builtin,
 )
@@ -43,6 +47,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsFunctionNode,
     JsIdentifier,
+    JsMemberExpression,
     JsNumericLiteral,
     JsReturnStatement,
     JsScript,
@@ -51,6 +56,7 @@ from refinery.lib.scripts.js.model import (
     JsSwitchStatement,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    strip_parens,
 )
 
 
@@ -374,14 +380,42 @@ class CallAdmission:
     def binding_constant(self, binding: Binding) -> tuple[bool, Value]:
         """
         The constant *binding* holds once established, as
-        `refinery.lib.scripts.js.deobfuscation.helpers.binding_constant` answers it, asked once per
-        binding for the admission's lifetime.
+        `refinery.lib.scripts.js.deobfuscation.helpers.binding_constant` answers it for a value the
+        text spells; where its one value is a method chain, the value the fold of that chain computes
+        where it stands (`method_chain_value`), which the text need not be able to hold: a table of
+        more strings than a fold may write, split from one string, is read without being written
+        out. Asked once per binding for the admission's lifetime; a binding whose chain reads it
+        back is no constant.
         """
         cached = self._constants.get(binding)
         if cached is None:
+            self._constants[binding] = (False, None)
             cached = binding_constant(self.effects, binding, self.cache.options)
+            if not cached[0]:
+                chain = strip_parens(self.effects.model.singular_value(binding))
+                if isinstance(chain, JsCallExpression):
+                    known, value = self.method_chain_value(chain)
+                    if known:
+                        cached = held_constant(self.effects, binding, value, self.cache.options)
             self._constants[binding] = cached
         return cached
+
+    def method_chain_value(self, call: JsCallExpression) -> tuple[bool, Value]:
+        """
+        The value *call*, a method call, computes where it stands, as `(True, value)`, or
+        `(False, None)`: the shared gate admits it with the trust at *call*
+        (`refinery.lib.scripts.js.analysis.effects.EffectModel.call_is_foldable`) and the
+        interpreter every fold runs in (`interpreter_at`) computes it. A JavaScript exception the
+        call raises is the program's business and no value.
+        """
+        if not self.holds(call) or not isinstance(strip_parens(call.callee), JsMemberExpression):
+            return False, None
+        if not self.effects.call_is_foldable(call, trust=self.trust_at(call)):
+            return False, None
+        try:
+            return True, self.interpreter_at(call).eval_expression(call)
+        except (InterpreterError, IrreducibleExpression, _ThrowSignal):
+            return False, None
 
     def constant_at(self, binding: Binding | None, call: JsCallExpression) -> tuple[bool, Value]:
         """

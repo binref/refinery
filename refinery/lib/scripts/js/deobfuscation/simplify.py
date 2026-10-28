@@ -27,6 +27,7 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_MEMBERS,
+    MAX_RESULT_ARRAY_LEN,
     OBJECT_PROTOTYPE_MEMBERS,
     RELATIONAL_OPS,
     UNARY_OPS,
@@ -38,6 +39,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     escape_js_string,
     eval_binary_op,
     extract_literal_value,
+    folded_literal,
     is_literal,
     is_nullish,
     is_simple_expression,
@@ -602,7 +604,7 @@ class JsSimplifications(Transformer):
             result = builtin(args)
         except Exception:
             return None
-        return value_to_node(result)
+        return folded_literal(result)
 
     def _try_fold_free_function(self, node: JsCallExpression) -> Node | None:
         callee = node.callee
@@ -620,7 +622,7 @@ class JsSimplifications(Transformer):
             result = builtin(args)
         except Exception:
             return None
-        return value_to_node(result)
+        return folded_literal(result)
 
     def _try_fold_instance_method(self, node: JsCallExpression) -> Node | None:
         callee = node.callee
@@ -651,7 +653,7 @@ class JsSimplifications(Transformer):
             result = builtin(receiver, args)
         except Exception:
             return None
-        return value_to_node(result)
+        return folded_literal(result)
 
     def _try_fold_split(self, node: JsCallExpression) -> JsArrayExpression | None:
         if len(node.arguments) != 1:
@@ -671,6 +673,8 @@ class JsSimplifications(Transformer):
         if not self.effects.call_is_foldable(node, receiver_type=str):
             return None
         parts = obj_str.split(sep) if sep else utf16_code_units(obj_str)
+        if len(parts) > MAX_RESULT_ARRAY_LEN:
+            return None
         return JsArrayExpression(
             elements=[make_string_literal(p) for p in parts],
         )

@@ -11,20 +11,25 @@ call made before it.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import (
+    behavior,
     deobfuscate_source,
     host_behavior,
     node_executable,
 )
 from test.lib.scripts.js.ledger import (
+    Program,
+    Reading,
     a_program,
     before_and_after,
     before_and_after_in_a_host,
     each_program_still_prints,
     printed,
+    prints,
 )
 
 from refinery.lib.scripts.js.options import ExecutionModel
@@ -755,4 +760,724 @@ class TestATableReadThroughAnAccessorIsNotYetFolded(TestBase):
                 for source in rows
             },
             {source: False for source in rows},
+        )
+
+
+def with_words(count: int, program: str) -> str:
+    """
+    *program* with its string `"WORDS"` holding *count* words joined by `|`: the table an
+    obfuscation splits into the strings of the program, longer than a fold may write into the text
+    where *count* is above 260.
+    """
+    words = '|'.join(F'w{index:04}' for index in range(count))
+    return program.replace('"WORDS"', F'"{words}"')
+
+
+#: Programs whose functions read a table a method chain builds, mapped to what Node prints for each
+#: run as a CommonJS file: a string split into the strings of the program and read through an
+#: accessor, with the split, the receiver or the table changed before or after, read before it is
+#: built, handed out, built twice, or built by a chain that throws, and chains of other methods.
+A_TABLE_A_METHOD_CHAIN_BUILDS: dict[str, Program] = {
+    'two tables built from each other': Program(
+        with_words(300, a_program("""
+            var a, b;
+            function ra(i) { return a[i]; }
+            function rb(i) { return b[i]; }
+            a = "WORDS".split("|").concat(b);
+            b = a.slice(0, 3).concat(a);
+            var f = globalThis[ra(5)] || function () {};
+            f(rb(6));
+            console.log(ra(3), rb(4));
+            """)),
+        prints('w0003 w0001'),
+        Reading.COMMONJS,
+    ),
+    'a table of 200 words': Program(
+        with_words(200, a_program("""
+            var SC;
+            (function () {
+              var stringArray = "WORDS".split("|");
+              SC = function (index) {
+                return stringArray[index];
+              };
+            })();
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            console.log(SC(3), SC(199));
+            """)),
+        prints('w0003 w0199'),
+        Reading.COMMONJS,
+    ),
+    'a table mapped by a callback reading a name changed later': Program(
+        with_words(300, a_program("""
+            var SC;
+            var k = "-";
+            (function () {
+              var stringArray = "WORDS".split("|").map(function (s) { return s + k; });
+              SC = function (index) {
+                return stringArray[index];
+              };
+            })();
+            k = "+";
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            console.log(SC(3), SC(299));
+            """)),
+        prints('w0003- w0299-'),
+        Reading.COMMONJS,
+    ),
+    'a table mapped by a callback reading a constant': Program(
+        with_words(300, a_program("""
+            var SC;
+            var k = "-";
+            (function () {
+              var stringArray = "WORDS".split("|").map(function (s) { return s + k; });
+              SC = function (index) {
+                return stringArray[index];
+              };
+            })();
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            console.log(SC(3), SC(299));
+            """)),
+        prints('w0003- w0299-'),
+        Reading.COMMONJS,
+    ),
+    'a table handed to the global object': Program(
+        with_words(300, a_program("""
+            var SC;
+            (function () {
+              var stringArray = "WORDS".split("|");
+              globalThis.leak = stringArray;
+              SC = function (index) {
+                return stringArray[index];
+              };
+            })();
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            console.log(SC(3), SC(299));
+            """)),
+        prints('w0003 w0299'),
+        Reading.COMMONJS,
+    ),
+    'a table split on a parameter': Program(
+        with_words(300, a_program("""
+            var SC;
+            function make(sep) {
+              var stringArray = "WORDS".split(sep);
+              return function (index) {
+                return stringArray[index];
+              };
+            }
+            SC = make("|");
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            console.log(SC(3), SC(299));
+            """)),
+        prints('w0003 w0299'),
+        Reading.COMMONJS,
+    ),
+    'a table split by a replaced split': Program(
+        with_words(300, a_program("""
+            String.prototype.split = function () { return ["a", "b", "c", "d"]; };
+            var SC;
+            (function () {
+              var stringArray = "WORDS".split("|");
+              SC = function (index) {
+                return stringArray[index];
+              };
+            })();
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            console.log(SC(3), SC(299));
+            """)),
+        prints('d undefined'),
+        Reading.COMMONJS,
+    ),
+    'a table a timer pushes to': Program(
+        with_words(300, a_program("""
+            var SC;
+            (function () {
+              var stringArray = "WORDS".split("|");
+              setTimeout(function () { stringArray.push("x"); }, 0);
+              SC = function (index) {
+                return stringArray[index];
+              };
+            })();
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            SC.call(null, 0);
+            console.log(SC(3), SC(299));
+            """)),
+        prints('w0003 w0299'),
+        Reading.COMMONJS,
+    ),
+    'a table read at the top of the file': Program(
+        with_words(300, a_program("""
+            var t = "WORDS".split("|");
+            var f = globalThis[t[5]] || function () {};
+            f(t[6]);
+            console.log(t[3], t[299]);
+            """)),
+        prints('w0003 w0299'),
+        Reading.COMMONJS,
+    ),
+    'a table of 300 words': Program(
+        with_words(300, a_program("""
+            var SC;
+            (function () {
+              var stringArray = "WORDS".split("|");
+              SC = function (index) {
+                return stringArray[index];
+              };
+            })();
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            console.log(SC(3), SC(299));
+            """)),
+        prints('w0003 w0299'),
+        Reading.COMMONJS,
+    ),
+    'a table of 3000 words': Program(
+        with_words(3000, a_program("""
+            var SC;
+            (function () {
+              var stringArray = "WORDS".split("|");
+              SC = function (index) {
+                return stringArray[index];
+              };
+            })();
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            console.log(SC(3), SC(2999));
+            """)),
+        prints('w0003 w2999'),
+        Reading.COMMONJS,
+    ),
+    'a table whose chain throws': Program(
+        with_words(300, a_program("""
+            var SC;
+            (function () {
+              var stringArray = "WORDS".repeat(-1).split("|");
+              SC = function (index) { return stringArray[index]; };
+            })();
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            console.log(SC(3));
+            """)),
+        ('', 'RangeError'),
+        Reading.COMMONJS,
+    ),
+    'a table built by each of two calls': Program(
+        with_words(300, a_program("""
+            function mk() {
+              var stringArray = "WORDS".split("|");
+              return function (index) { return stringArray[index]; };
+            }
+            var A = mk(), B = mk();
+            var f = globalThis[A(5)] || function () {};
+            f(B(6));
+            console.log(A(3), B(299));
+            """)),
+        prints('w0003 w0299'),
+        Reading.COMMONJS,
+    ),
+    'chain read before declarator': Program(
+        a_program("""
+            function g() { return t[1]; }
+            var first;
+            try { first = g(); } catch (e) { first = e.name; }
+            var t = 'a|b|c'.split('|');
+            console.log(first, g());
+            """),
+        prints('TypeError b'),
+        Reading.COMMONJS,
+    ),
+    'chain identity': Program(
+        a_program("""
+            var t = 'a|b'.split('|');
+            function g() { return t; }
+            console.log(g() === g(), g() === t, g().length);
+            """),
+        prints('true true 2'),
+        Reading.COMMONJS,
+    ),
+    'chain mutated later': Program(
+        a_program("""
+            var t = 'a|b|c'.split('|');
+            t.reverse();
+            function g(i) { return t[i]; }
+            console.log(g(0), g(2));
+            """),
+        prints('c a'),
+        Reading.COMMONJS,
+    ),
+    'chain aliased and mutated': Program(
+        a_program("""
+            var t = 'a|b|c'.split('|');
+            var u = t;
+            u[0] = 'z';
+            function g(i) { return t[i]; }
+            console.log(g(0));
+            """),
+        prints('z'),
+        Reading.COMMONJS,
+    ),
+    'chain in function read before': Program(
+        a_program("""
+            function outer() {
+              function g() { return t.length; }
+              var r;
+              try { r = g(); } catch (e) { r = e.name; }
+              var t = 'abc'.split('');
+              return [r, g()];
+            }
+            console.log(outer());
+            """),
+        prints("[ 'TypeError', 3 ]"),
+        Reading.COMMONJS,
+    ),
+    'chain const tdz': Program(
+        a_program("""
+            function g() { return t[0]; }
+            var first;
+            try { first = g(); } catch (e) { first = e.name; }
+            const t = 'p|q'.split('|');
+            console.log(first, g());
+            """),
+        prints('ReferenceError p'),
+        Reading.COMMONJS,
+    ),
+    'chain receiver from user object': Program(
+        a_program("""
+            var shared = ['a', 'b'];
+            var o = { m: function () { return shared; } };
+            var t = o.m();
+            shared.push('c');
+            function g() { return t.length; }
+            console.log(g());
+            """),
+        prints('3'),
+        Reading.COMMONJS,
+    ),
+    'chain slice of mutated source': Program(
+        a_program("""
+            var src = ['a', 'b'];
+            var t = src.slice(0);
+            src.push('c');
+            function g() { return t.length + src.length; }
+            console.log(g());
+            """),
+        prints('5'),
+        Reading.COMMONJS,
+    ),
+    'chain freeze literal': Program(
+        a_program("""
+            var t = Object.freeze('a|b'.split('|'));
+            function g() { return Object.isFrozen(t) + ':' + t[1]; }
+            console.log(g());
+            """),
+        prints('true:b'),
+        Reading.COMMONJS,
+    ),
+    'chain concat alias': Program(
+        a_program("""
+            var a = 'x|y'.split('|');
+            var t = a.concat();
+            a[0] = 'changed';
+            function g() { return t[0] + a[0]; }
+            console.log(g());
+            """),
+        prints('xchanged'),
+        Reading.COMMONJS,
+    ),
+    'chain reverse returns receiver': Program(
+        a_program("""
+            var a = 'x|y|z'.split('|');
+            var t = a.reverse();
+            a.push('w');
+            function g() { return t.length + ':' + t[0]; }
+            console.log(g());
+            """),
+        prints('4:z'),
+        Reading.COMMONJS,
+    ),
+    'chain sort returns receiver': Program(
+        a_program("""
+            var t = 'c|a|b'.split('|').sort();
+            function g(i) { return t[i]; }
+            console.log(g(0), g(2));
+            """),
+        prints('a c'),
+        Reading.COMMONJS,
+    ),
+    'chain in loop varies': Program(
+        a_program("""
+            var parts = ['a|b', 'c|d'];
+            var seen = [];
+            for (var i = 0; i < 2; i++) {
+              var t = parts[i].split('|');
+              seen.push(g());
+            }
+            function g() { return t[0]; }
+            console.log(seen.join(), g());
+            """),
+        prints('a,c c'),
+        Reading.COMMONJS,
+    ),
+    'chain receiver var reassigned later': Program(
+        a_program("""
+            var s = 'a|b';
+            var t = s.split('|');
+            s = 'c|d';
+            function g() { return t[0] + s; }
+            console.log(g());
+            """),
+        prints('ac|d'),
+        Reading.COMMONJS,
+    ),
+    'chain stringified': Program(
+        a_program("""
+            var t = 'a|b'.split('|');
+            function g() { return String(t) + t.join('-'); }
+            console.log(g());
+            """),
+        prints('a,ba-b'),
+        Reading.COMMONJS,
+    ),
+    'chain reads global changed before': Program(
+        a_program("""
+            var cfg = { sep: '|' };
+            cfg.sep = ',';
+            var t = 'a|b,c'.split(cfg.sep);
+            function g() { return t[0]; }
+            console.log(g());
+            """),
+        prints('a|b'),
+        Reading.COMMONJS,
+    ),
+    'chain with getter on receiver type': Program(
+        a_program("""
+            Object.defineProperty(Array.prototype, 'first', { get: function () { return this[0]; }, configurable: true });
+            var t = 'm|n'.split('|');
+            function g() { return t.first; }
+            console.log(g());
+            """),
+        prints('m'),
+        Reading.COMMONJS,
+    ),
+    'chain twice in two functions': Program(
+        a_program("""
+            function make() {
+              var t = 'a|b'.split('|');
+              return function () { return t; };
+            }
+            var f1 = make(), f2 = make();
+            f1().push('c');
+            function g() { return f2().length; }
+            console.log(g(), f1().length);
+            """),
+        prints('2 3'),
+        Reading.COMMONJS,
+    ),
+    'a table read by a local accessor': Program(
+        with_words(300, a_program("""
+            function f() {
+              var t = "WORDS".split("|");
+              function SC(i) { return t[i]; }
+              return SC(3) + SC(299);
+            }
+            console.log(f());
+            """)),
+        prints('w0003w0299'),
+        Reading.COMMONJS,
+    ),
+    'read before the chain': Program(
+        with_words(300, a_program("""
+            function f() {
+              function SC(i) { return t[i]; }
+              var first;
+              try { first = SC(3); } catch (e) { first = e.name; }
+              var t = "WORDS".split("|");
+              return first + ':' + SC(3);
+            }
+            console.log(f());
+            """)),
+        prints('TypeError:w0003'),
+        Reading.COMMONJS,
+    ),
+    'let tdz closure': Program(
+        with_words(300, a_program("""
+            function f() {
+              var SC = function (i) { return t[i]; };
+              var first;
+              try { first = SC(3); } catch (e) { first = e.name; }
+              let t = "WORDS".split("|");
+              return first + ':' + SC(3);
+            }
+            console.log(f());
+            """)),
+        prints('ReferenceError:w0003'),
+        Reading.COMMONJS,
+    ),
+    'declarator before the chain': Program(
+        with_words(300, a_program("""
+            function f() {
+              try {
+                var SC = function (i) { return t[i]; }, x = SC(3), t = "WORDS".split("|");
+                return x;
+              } catch (e) {
+                return e.name + ':' + SC(4);
+              }
+            }
+            console.log(f());
+            """)),
+        ('', 'TypeError'),
+        Reading.COMMONJS,
+    ),
+    'declarator after the chain': Program(
+        with_words(300, a_program("""
+            function f() {
+              var t = "WORDS".split("|"), SC = function (i) { return t[i]; }, x = SC(3) + SC(4);
+              return x;
+            }
+            console.log(f());
+            """)),
+        prints('w0003w0004'),
+        Reading.COMMONJS,
+    ),
+    'chain mutated in a later declarator': Program(
+        with_words(300, a_program("""
+            function f() {
+              var t = "WORDS".split("|"), cut = (t.length = 2), SC = function (i) { return t[i]; };
+              return [SC(1), SC(3)].join();
+            }
+            console.log(f());
+            """)),
+        prints('w0001,'),
+        Reading.COMMONJS,
+    ),
+    'chain split on a later declared separator': Program(
+        with_words(300, a_program("""
+            function f() {
+              var t = "WORDS".split(sep), sep = "|";
+              function SC(i) { return t[i]; }
+              return [SC(0).length, typeof SC(1)].join();
+            }
+            console.log(f());
+            """)),
+        prints('1799,undefined'),
+        Reading.COMMONJS,
+    ),
+    'chain table reversed by reader': Program(
+        with_words(300, a_program("""
+            function f() {
+              var t = "WORDS".split("|");
+              function SC(i) { return t[i]; }
+              var a = SC(0);
+              t.reverse();
+              return a + SC(0);
+            }
+            console.log(f());
+            """)),
+        prints('w0000w0299'),
+        Reading.COMMONJS,
+    ),
+    'chain with a hole in operator': Program(
+        with_words(300, a_program("""
+            function f() {
+              var t = "WORDS".split("|").concat([, 'x']);
+              function SC(i) { return (i in t) + ':' + t[i]; }
+              return [SC(300), SC(301), t.length].join();
+            }
+            console.log(f());
+            """)),
+        prints('false:undefined,true:x,302'),
+        Reading.COMMONJS,
+    ),
+    'chain with a hole small control': Program(
+        a_program("""
+            function f() {
+              var t = 'a|b'.split('|').concat([, 'x']);
+              function SC(i) { return (i in t) + ':' + t[i]; }
+              return [SC(2), SC(3), t.length].join();
+            }
+            console.log(f());
+            """),
+        prints('false:undefined,true:x,4'),
+        Reading.COMMONJS,
+    ),
+    'chain hole prototype index': Program(
+        with_words(300, a_program("""
+            Array.prototype[300] = 'proto';
+            function f() {
+              var t = "WORDS".split("|").concat([, 'x']);
+              function SC(i) { return t[i]; }
+              return [SC(300), SC(301)].join();
+            }
+            console.log(f());
+            """)),
+        prints('proto,x'),
+        Reading.COMMONJS,
+    ),
+}
+
+#: Programs reading a table a method chain builds after a call of a function the deobfuscation
+#: cannot see, whose name the table itself supplies, mapped to what Node prints for each run as a
+#: CommonJS file.
+A_TABLE_READ_AFTER_AN_UNKNOWN_CALL: dict[str, Program] = {
+    'a table read after a call of an unknown function': Program(
+        with_words(300, a_program("""
+            var SC;
+            (function () {
+              var stringArray = "WORDS".split("|");
+              SC = function (index) { return stringArray[index]; };
+            })();
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            console.log(SC(3), SC(299));
+            """)),
+        prints('w0003 w0299'),
+        Reading.COMMONJS,
+    ),
+    'read before the chain unknown call': Program(
+        with_words(300, a_program("""
+            function f() {
+              function SC(i) { return t[i]; }
+              var first;
+              try { first = SC(3); } catch (e) { first = e.name; }
+              var t = "WORDS".split("|");
+              var g = globalThis[SC(5)] || function () {};
+              g(SC(6));
+              return first + ':' + SC(3);
+            }
+            console.log(f());
+            """)),
+        prints('TypeError:w0003'),
+        Reading.COMMONJS,
+    ),
+    'hole in operator unknown call': Program(
+        with_words(300, a_program("""
+            var SC;
+            (function () {
+              var stringArray = "WORDS".split("|").concat([, 'x']);
+              SC = function (index) { return (index in stringArray) + ':' + stringArray[index]; };
+            })();
+            var f = globalThis[SC(5)] || function () {};
+            f(SC(6));
+            console.log(SC(300), SC(301));
+            """)),
+        prints('false:undefined true:x'),
+        Reading.COMMONJS,
+    ),
+    'declarators chain after reader call': Program(
+        with_words(300, a_program("""
+            function f() {
+              try {
+                var SC = function (i) { return t[i]; }, x = SC(3), t = "WORDS".split("|");
+                var g = globalThis[SC(5)] || function () {};
+                g(SC(6));
+                return x;
+              } catch (e) {
+                return e.name + ':' + SC(4);
+              }
+            }
+            console.log(f());
+            """)),
+        ('', 'TypeError'),
+        Reading.COMMONJS,
+    ),
+    'chain reads a later declarator separator': Program(
+        with_words(300, a_program("""
+            function f() {
+              var t = "WORDS".split(sep), sep = "|";
+              var g = globalThis[t[5]] || function () {};
+              g(t[6]);
+              function SC(i) { return t[i]; }
+              return [SC(0).length, typeof SC(1)].join();
+            }
+            console.log(f());
+            """)),
+        prints('1799,undefined'),
+        Reading.COMMONJS,
+    ),
+    'out of range negative and string keys': Program(
+        with_words(300, a_program("""
+            var SC;
+            (function () {
+              var stringArray = "WORDS".split("|");
+              SC = function (index) { return stringArray[index]; };
+            })();
+            var f = globalThis[SC(5)] || Function('i', 'Object.prototype.length2 = 1; return i;');
+            f(SC(6));
+            console.log(SC(-1), SC('length'), SC('constructor') === Array, SC('1e2'), SC('0x10'), SC(1.5));
+            """)),
+        prints('undefined 300 true undefined undefined undefined'),
+        Reading.COMMONJS,
+    ),
+}
+
+#: Programs of `A_TABLE_A_METHOD_CHAIN_BUILDS` whose calls of the accessor fold to the strings they
+#: read, mapped to the text the deobfuscation writes for each.
+FOLDED_FROM_A_TABLE_A_METHOD_CHAIN_BUILDS: dict[str, str] = {
+    'a table of 300 words': inspect.cleandoc(
+        """
+            var f = globalThis.w0005 || function() {};
+            f('w0006');
+            console.log('w0003', 'w0299');
+        """
+    ),
+    'a table of 3000 words': inspect.cleandoc(
+        """
+            var f = globalThis.w0005 || function() {};
+            f('w0006');
+            console.log('w0003', 'w2999');
+        """
+    ),
+    'a table mapped by a callback reading a constant': inspect.cleandoc(
+        """
+            var f = globalThis['w0005-'] || function() {};
+            f('w0006-');
+            console.log('w0003-', 'w0299-');
+        """
+    ),
+}
+
+
+def deobfuscated_by_the_unit(source: str) -> str:
+    """
+    The text `refinery.djs` writes for *source* under its default reading of a CommonJS file for
+    Node, which trusts the code `eval` and `Function` run.
+    """
+    return source.encode('utf8') | djs.assemble('-c', '-e', 'node') | str
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestATableAMethodChainBuildsStillPrintsTheSame(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in {**A_TABLE_A_METHOD_CHAIN_BUILDS, **A_TABLE_READ_AFTER_AN_UNKNOWN_CALL}.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    def test_each_program_still_prints_it_after_the_deobfuscation(self):
+        for label, row in {**A_TABLE_A_METHOD_CHAIN_BUILDS, **A_TABLE_READ_AFTER_AN_UNKNOWN_CALL}.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+    def test_each_table_read_after_an_unknown_call_still_prints_it_where_the_unit_trusts_eval(self):
+        for label, row in A_TABLE_READ_AFTER_AN_UNKNOWN_CALL.items():
+            with self.subTest(label=label):
+                self.assertEqual(behavior(deobfuscated_by_the_unit(row.text)), row.prints)
+
+
+class TestATableAMethodChainBuildsIsFolded(TestBase):
+
+    def test_each_call_of_the_accessor_reads_as_pinned(self):
+        self.assertEqual(
+            {
+                label: deobfuscate_source(A_TABLE_A_METHOD_CHAIN_BUILDS[label].text, execution=ExecutionModel.commonjs)
+                for label in FOLDED_FROM_A_TABLE_A_METHOD_CHAIN_BUILDS
+            },
+            FOLDED_FROM_A_TABLE_A_METHOD_CHAIN_BUILDS,
         )

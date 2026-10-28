@@ -32,7 +32,6 @@ from refinery.lib.scripts.js.deobfuscation.interpreter import (
     InterpreterError,
     IrreducibleExpression,
     JsInterpreter,
-    _ThrowSignal,
 )
 from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
@@ -122,32 +121,9 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         own, because every one it would ask — is the prototype intact, does a callback write outside
         itself, is an argument effectful — the gate already asks.
         """
-        if not admission.effects.call_is_foldable(node, trust=admission.trust_at(node)):
-            return
-        self._evaluate_expression_and_replace(node, admission.interpreter_at(node))
-
-    def _evaluate_expression_and_replace(self, node: JsCallExpression, interpreter: JsInterpreter) -> bool:
-        """
-        Evaluate *node* as a standalone expression and replace it with the result. Returns whether the
-        replacement happened. The *interpreter* is the one
-        `refinery.lib.scripts.js.deobfuscation.admission.CallAdmission.interpreter_at` builds for
-        every fold, so a function the expression calls back into is resolved only where it is in
-        place when *node* runs, just as a named call is.
-
-        `_ThrowSignal` is caught alongside the interpreter's own refusals: a JavaScript exception raised
-        inside the evaluated expression is the program's business, not a value this fold may produce, and it
-        reaches here as its own exception type rather than an `InterpreterError`. An `IrreducibleExpression`
-        is a refusal too — the parameter substitution that makes it useful at a call site has no meaning for
-        an expression that takes no parameters.
-        """
-        try:
-            result = interpreter.eval_expression(node)
-        except (InterpreterError, IrreducibleExpression, _ThrowSignal):
-            return False
-        if not replace_with_value(node, result):
-            return False
-        self.mark_changed()
-        return True
+        known, result = admission.method_chain_value(node)
+        if known and replace_with_value(node, result):
+            self.mark_changed()
 
     def _try_named_call(self, node: JsCallExpression, admission: CallAdmission) -> None:
         func = admission.callee(node)

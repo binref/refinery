@@ -10,6 +10,7 @@ from test.lib.scripts.js.ledger import a_program, before_and_after, each_program
 
 from refinery.lib.scripts import tree_version
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
+from refinery.lib.scripts.js.deobfuscation.helpers import MAX_RESULT_ARRAY_LEN
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.parser import JsParser
@@ -2170,3 +2171,30 @@ class TestARespellingMovesTheTreeVersion(TestBase):
         JsSimplifications().visit(script)
         self.assertEqual("SINK('a');", JsSynthesizer().convert(script))
         self.assertGreater(tree_version(script), before)
+
+
+class TestAFoldWritesNoListLongerThanTheCap(TestJsDeobfuscator):
+    """
+    A fold of `split` or of a call computing a list writes the list into the text only where it
+    holds at most `MAX_RESULT_ARRAY_LEN` items, as every fold of a computed value does.
+    """
+
+    @staticmethod
+    def _programs(count: int) -> tuple[str, ...]:
+        words = '|'.join(F'w{index:04}' for index in range(count))
+        letters = 'a' * count
+        return (
+            F'var t = "{words}".split("|"); f(t);',
+            F'var c = "{letters}".split(""); f(c);',
+            F'var c = Array.from("{letters}"); f(c);',
+        )
+
+    def test_a_list_as_long_as_the_cap_is_written(self):
+        for source in self._programs(MAX_RESULT_ARRAY_LEN):
+            with self.subTest(source=source[-24:]):
+                self.assertIn(' = [', self._simplify(source))
+
+    def test_a_list_longer_than_the_cap_is_not_written(self):
+        for source in self._programs(MAX_RESULT_ARRAY_LEN + 1):
+            with self.subTest(source=source[-24:]):
+                self.assertEqual(self._simplify(source), JsSynthesizer().convert(JsParser(source).parse()))

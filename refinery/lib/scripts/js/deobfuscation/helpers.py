@@ -1247,16 +1247,26 @@ def extract_literal_value(node: Node) -> tuple[bool, LiteralValue]:
 MAX_RESULT_ARRAY_LEN = 260
 
 
-def replace_with_value(node: Node, result: object) -> bool:
+def folded_literal(result: object) -> Expression | None:
     """
-    Replace *node* with a literal denoting *result*, refusing when no such literal exists or when
-    the literal would be larger than the expression it replaces. Every path that folds a call to a
-    value shares this, so the result guards cannot be present at one and missing at another.
-    Announcing the change is the caller's — it owns `mark_changed`.
+    The literal a fold writes in place of what computed *result*, or `None` where none may be
+    written: no literal denotes it faithfully (`value_to_node`), or it is a list longer than
+    `MAX_RESULT_ARRAY_LEN`. Every fold that writes a computed value into the text asks here, so the
+    guard on what the text may receive is present at each of them. A value refused here may still
+    answer a read (`refinery.lib.scripts.js.deobfuscation.admission.CallAdmission.binding_constant`):
+    the guard is about the text.
     """
     if isinstance(result, list) and len(result) > MAX_RESULT_ARRAY_LEN:
-        return False
-    replacement = value_to_node(result)
+        return None
+    return value_to_node(result)
+
+
+def replace_with_value(node: Node, result: object) -> bool:
+    """
+    Replace *node* with the literal a fold may write for *result* (`folded_literal`), refusing where
+    there is none. Announcing the change is the caller's — it owns `mark_changed`.
+    """
+    replacement = folded_literal(result)
     if replacement is None:
         return False
     _replace_in_parent(node, replacement)
@@ -2917,7 +2927,19 @@ def binding_constant(effects: EffectModel, binding: Binding, options: object) ->
     """
     model = effects.model
     known, value = denoted_value(model.singular_value(binding), model)
-    if not known or isinstance(value, dict):
+    if not known:
+        return False, None
+    return held_constant(effects, binding, value, options)
+
+
+def held_constant(effects: EffectModel, binding: Binding, value: Value, options: object) -> tuple[bool, Value]:
+    """
+    *value*, the one value *binding* is given, as `(True, value)` where a read of the binding may
+    be answered with it, as `binding_constant` decides for the value the text spells, or
+    `(False, None)`.
+    """
+    model = effects.model
+    if isinstance(value, dict):
         return False, None
     if isinstance(value, list):
         if any(isinstance(item, (list, dict)) for item in value):
