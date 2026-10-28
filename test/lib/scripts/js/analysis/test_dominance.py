@@ -238,8 +238,8 @@ class TestDominance(TestBase):
     def test_does_not_run_before_call_sharing_the_definition_statement(self):
         """
         The earlier declarator `x = f()` calls `f` before the later `c = 5` runs, so `f` reads `c` while
-        it is unset; the call and the definition share one statement, which statement-granularity
-        dominance cannot order, so the definition must not be treated as running before the call.
+        it is unset; the declarator holding the call runs before the one holding the definition, so
+        the definition must not be treated as running before the call.
         """
         ast, dom = self._dominance('var x = f(), c = 5; function f(){ return c; }')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
@@ -643,13 +643,19 @@ class TestDominance(TestBase):
 
     def test_strictly_dominates_refuses_same_statement(self):
         """
-        A pair sharing one statement shares one control-flow node, so strict dominance refuses it —
-        where the reflexive `dominates` accepts the same pair.
+        The operands of a comma expression share one control-flow node, so strict dominance refuses
+        a pair across them — where the reflexive `dominates` accepts the same pair.
         """
+        ast, dom = self._dominance('var a, b; a = 1, b = a;')
+        _, store, use = self._idents(ast, 'a')
+        self.assertTrue(dom.dominates(store, use))
+        self.assertFalse(dom.strictly_dominates(store, use))
+
+    def test_a_declarator_strictly_dominates_the_declarators_after_it(self):
         ast, dom = self._dominance('var a = 1, b = a;')
         decl, use = self._idents(ast, 'a')
-        self.assertTrue(dom.dominates(decl, use))
-        self.assertFalse(dom.strictly_dominates(decl, use))
+        self.assertTrue(dom.strictly_dominates(decl, use))
+        self.assertFalse(dom.dominates(use, decl))
 
     def test_strictly_dominates_refuses_a_node_against_itself(self):
         ast, dom = self._dominance('var a = 1;')
@@ -669,14 +675,32 @@ class TestDominance(TestBase):
 
     def test_runs_before_is_strict_within_a_statement(self):
         """
-        A reference sharing the definition's statement cannot be ordered by statement-granularity
-        dominance, so strict `runs_before` refuses it — where reflexive `dominates` accepts the same
-        pair.
+        A reference sharing the definition's control-flow node, as the operands of a comma
+        expression do, cannot be ordered, so strict `runs_before` refuses it — where reflexive
+        `dominates` accepts the same pair.
         """
+        ast, dom = self._dominance('var a, b; a = 1, b = a;')
+        _, store, use = self._idents(ast, 'a')
+        self.assertTrue(dom.dominates(store, use))
+        self.assertFalse(dom.runs_before(store, use))
+
+    def test_a_declarator_runs_before_the_declarators_after_it(self):
         ast, dom = self._dominance('var a = 1, b = a;')
         decl, use = self._idents(ast, 'a')
-        self.assertTrue(dom.dominates(decl, use))
-        self.assertFalse(dom.runs_before(decl, use))
+        self.assertTrue(dom.runs_before(decl, use))
+
+    def test_a_declarator_runs_before_the_declarators_after_it_wherever_the_declaration_stands(self):
+        for source, kind in (
+            ('L: var a = 1, b = a;', FileKind.script),
+            ('for (var a = 1, b = a; ; ) break;', FileKind.script),
+            ('export var a = 1, b = a;', FileKind.es_module),
+            ('let a = 1, b = a;', FileKind.script),
+        ):
+            with self.subTest(source=source):
+                ast = JsParser(source).parse()
+                dom = build_dominance(build_semantic_model(ast, file_kind=kind))
+                decl, use = self._idents(ast, 'a')
+                self.assertTrue(dom.runs_before(decl, use))
 
     def test_runs_before_reference_in_function_called_after_definition(self):
         ast, dom = self._dominance('var c = 5; function f(){ return c; } f();')

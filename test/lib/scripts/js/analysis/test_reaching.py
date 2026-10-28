@@ -62,9 +62,9 @@ class TestReaching(TestBase):
 
     def test_does_not_reach_across_same_statement(self):
         """
-        The use in `y = x` shares the definition's statement, which statement granularity cannot order,
-        so the value is not reported as reaching it — the conservative verdict that keeps `var y = x,
-        x = 1` from folding `y` to `1` when `x` is undefined at the read.
+        The use in `y = x` is evaluated by the declarator before the definition `x = 1`, so the value
+        is not reported as reaching it — the verdict that keeps `var y = x, x = 1` from folding `y`
+        to `1` when `x` is undefined at the read.
         """
         self.assertFalse(self._query('var y = x, x = 1;'))
 
@@ -188,8 +188,9 @@ class TestReaching(TestBase):
     def test_does_not_reach_across_a_sibling_store_in_one_statement(self):
         """
         The comma evaluates the store before the read that follows it in the same statement, and
-        statement granularity cannot order the two, so the read is not reported as reached — it may
-        observe the written value. Node prints `0` for the twin with the read spelled `x`.
+        the two share one control-flow node, which orders them no further, so the read is not
+        reported as reached — it may observe the written value. Node prints `0` for the twin with
+        the read spelled `x`.
         """
         self.assertFalse(self._query(
             "var x = 'ab'; var k = e; var t = (globalThis[k] = 0, x.length);"
@@ -264,8 +265,8 @@ class TestReaching(TestBase):
 
     def test_does_not_reach_a_read_sharing_the_evals_statement(self):
         """
-        The read is an operand of the same statement as the `eval` call, which statement granularity
-        cannot order, so the value is not reported as reaching it.
+        The read is an argument of the call that also runs the `eval`, and the two share one
+        control-flow node, which orders them no further, so the value is not reported as reaching it.
         """
         self.assertFalse(self._query(
             '(function () { var x = 1; f(eval(input), x); })();'

@@ -23,9 +23,10 @@ the operands the store is computed from (§13.15.5). A direct `eval`, an unread 
 the node of the site spelling it. Kills the model cannot pin to a site — a mutating function that
 escapes, a write through a global-object alias or a dynamic scope, a surface standing outside the
 use's own graph — make the answer conservatively negative, and so does a definition and use that
-share a single statement, which statement granularity cannot order. A point where the body
-suspends, an `await` or a `yield`, is a kill of a binding code outside the body writes, since that
-code may run before the body resumes.
+share a single control-flow node, whose parts the graph does not order: the operands of an
+expression share one, while each declarator of a declaration but the last is a node of its own. A
+point where the body suspends, an `await` or a `yield`, is a kill of a binding code outside the
+body writes, since that code may run before the body resumes.
 """
 from __future__ import annotations
 
@@ -88,7 +89,7 @@ class ReachingModel:
         Whether the value *binding* holds where *definition* is evaluated is the value observed at *use*:
         *definition* has run on every path that reaches *use*
         (`refinery.lib.scripts.js.analysis.dominance.DominanceModel.completes_before`), the two do
-        not merely share one statement, which statement granularity cannot order, and no kill of
+        not merely share one control-flow node, whose parts the graph does not order, and no kill of
         *binding* lies on any control-flow path between them. `False` when either node lies outside
         the graphs or in a different function, when *definition* has not run before *use*, or when
         *binding*'s kills cannot be enumerated. *definition* is the value expression whose binding

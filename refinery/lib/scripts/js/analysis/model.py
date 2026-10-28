@@ -2840,29 +2840,14 @@ class SemanticModel:
         the value the head hands it on every iteration. *store_cannot_throw* is handed on to
         `evaluation_cannot_throw`.
         """
+        if isinstance(statement, JsVariableDeclarator):
+            return self._declarator_cannot_throw(statement, store_cannot_throw)
         if isinstance(statement, JsVariableDeclaration):
-            for declarator in statement.declarations:
-                if not isinstance(declarator, JsVariableDeclarator):
-                    return False
-                target = declarator.id
-                if not isinstance(target, JsIdentifier):
-                    return False
-                binding = self.binding_of(target)
-                if binding is None or crosses_dynamic_scope(self._node_scope.get(target)):
-                    return False
-                init = declarator.init
-                each_iteration = _loop_head_assigns(declarator)
-                if init is not None and each_iteration:
-                    return False
-                if (
-                    (init is not None or each_iteration)
-                    and not binding.is_lexical
-                    and not self._stores_into_without_throwing(binding, declarator)
-                ):
-                    return False
-                if init is not None and not self.evaluation_cannot_throw(init, store_cannot_throw):
-                    return False
-            return True
+            return all(
+                isinstance(declarator, JsVariableDeclarator)
+                and self._declarator_cannot_throw(declarator, store_cannot_throw)
+                for declarator in statement.declarations
+            )
         if isinstance(statement, JsFunctionDeclaration):
             binding = None if statement.id is None else self.binding_of(statement.id)
             if binding is None:
@@ -2874,6 +2859,34 @@ class SemanticModel:
         if isinstance(statement, JsExpressionStatement):
             return self.evaluation_cannot_throw(statement.expression, store_cannot_throw)
         return False
+
+    def _declarator_cannot_throw(
+        self,
+        declarator: JsVariableDeclarator,
+        store_cannot_throw: Callable[[JsAssignmentExpression], bool] | None,
+    ) -> bool:
+        """
+        Whether evaluating *declarator* throws on no run at all, as `statement_cannot_throw` asks
+        it for every declarator of a declaration, and for one the control-flow graph gives a node of
+        its own.
+        """
+        target = declarator.id
+        if not isinstance(target, JsIdentifier):
+            return False
+        binding = self.binding_of(target)
+        if binding is None or crosses_dynamic_scope(self._node_scope.get(target)):
+            return False
+        init = declarator.init
+        each_iteration = _loop_head_assigns(declarator)
+        if init is not None and each_iteration:
+            return False
+        if (
+            (init is not None or each_iteration)
+            and not binding.is_lexical
+            and not self._stores_into_without_throwing(binding, declarator)
+        ):
+            return False
+        return init is None or self.evaluation_cannot_throw(init, store_cannot_throw)
 
     def evaluation_cannot_throw(
         self,

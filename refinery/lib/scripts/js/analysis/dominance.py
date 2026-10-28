@@ -51,6 +51,7 @@ from refinery.lib.scripts.js.analysis.cfg import (
     ControlFlowGraph,
     ControlFlowModel,
     build_control_flow_model,
+    evaluated_part,
 )
 from refinery.lib.scripts.js.analysis.evaluation import (
     evaluated_whenever_completed,
@@ -189,9 +190,11 @@ class DominanceModel(DominatorModel):
         `refinery.lib.scripts.analysis.cfg.ControlFlowGraph.reached_after_a_throw` places after a
         throw out of the statement is ordered after it only when
         `refinery.lib.scripts.js.analysis.model.SemanticModel.statement_cannot_throw` holds for the
-        statement. Not reflexive: a point sharing the statement is refused, since statement
-        granularity cannot order within one statement. The script root as *point* stands for the
-        end of the script (`_completes_before_the_end`).
+        statement. Not reflexive: a point sharing the node is refused, since the graph orders the
+        parts of one node no further; a declarator is a node of its own
+        (`refinery.lib.scripts.js.analysis.cfg.evaluated_part`), the operands of an expression are
+        not. The script root as *point* stands for the end of the script
+        (`_completes_before_the_end`).
         """
         if point is self.model.root:
             return self._completes_before_the_end(definition)
@@ -227,12 +230,17 @@ class DominanceModel(DominatorModel):
     def completes_before_node(self, graph: ControlFlowGraph, a: CfgNode, b: CfgNode) -> bool:
         """
         The counterpart of `_statement_completes_before` for a caller that has already located the
-        two statements in *graph*.
+        two nodes in *graph*. Whether *a* can throw is asked of what its node evaluates
+        (`refinery.lib.scripts.js.analysis.cfg.evaluated_part`).
         """
         if a is b or not self.dominates_node(graph, a, b, Projection.MAY):
             return False
         thrown = graph.reached_after_a_throw(a)
-        return id(b) not in thrown or self.model.statement_cannot_throw(a.element)
+        if id(b) not in thrown:
+            return True
+        return a.element is not None and self.model.statement_cannot_throw(
+            evaluated_part(graph, a.element)
+        )
 
     def runs_before_function(self, definition: Node, function: Node) -> bool:
         """
@@ -247,15 +255,15 @@ class DominanceModel(DominatorModel):
         point lies in, recursing up the call graph. Where *definition* stands in a function the
         program calls where it writes it, a point outside that function is ordered by the call
         instead, once every return of the function follows *definition* (`_lifts`). The ordering is
-        *strict*: a reference sharing the definition's statement — an earlier declarator or sequence
-        operand evaluated before it — is not accepted, since statement-granularity dominance is
-        reflexive and cannot order within one statement. A reference's function is its nearest
-        enclosing function (its `_activation_of`), so a use in a function's parameter defaults is
-        attributed to that function's invocation, not to the statement that declares it. Functions
-        that reach each other's invocations — a recursive function, mutually recursive ones — are
-        answered together (`_solve_invocation_orders`). This is the interprocedural counterpart of
-        `dominates`, and the sound replacement for ordering a cross-function inline by statement
-        position.
+        *strict*: a reference sharing the definition's node — an earlier operand of a sequence
+        evaluated before it — is not accepted, since dominance is reflexive and orders the parts
+        of one node no further; a declarator before it is a node of its own and is ordered. A
+        reference's function is its nearest enclosing function (its `_activation_of`), so a use in
+        a function's parameter defaults is attributed to that function's invocation, not to the
+        statement that declares it. Functions that reach each other's invocations — a recursive
+        function, mutually recursive ones — are answered together
+        (`_solve_invocation_orders`). This is the interprocedural counterpart of `dominates`, and
+        the sound replacement for ordering a cross-function inline by statement position.
 
         Conservatively `False` when a reference point cannot be ordered or enumerated: the named
         binding is reassigned or redeclared (its references no longer pin one function), code
@@ -287,10 +295,10 @@ class DominanceModel(DominatorModel):
         Whether *definition* is guaranteed to have executed before *reference* is evaluated — the
         single-reference form of the ordering `runs_before_function` applies per reference point.
         When *reference* shares *definition*'s activation this is `completes_before` (a reference
-        sharing *definition*'s statement is not accepted, since statement-granularity dominance is
-        reflexive and cannot order within one statement); when *reference* lies inside a function
-        that cannot be invoked until after *definition*, it is the interprocedural
-        runs-before-function query, recursing up the call graph. Conservatively `False` whenever the
+        sharing *definition*'s node is not accepted, since dominance is reflexive and orders the
+        parts of one node no further); when *reference* lies inside a function that cannot be
+        invoked until after *definition*, it is the interprocedural runs-before-function query,
+        recursing up the call graph. Conservatively `False` whenever the
         ordering cannot be established — a reference in an activation that may run before
         *definition*, a reference point that cannot be enumerated, or a statement that may complete
         without evaluating *definition* (`_runs_with_its_node`) — so a caller may treat `True` as
@@ -359,8 +367,9 @@ class DominanceModel(DominatorModel):
     def _runs_with_its_node(self, site: Node) -> bool:
         """
         Whether *site* has run whenever the control-flow node evaluating it has completed. A graph
-        has a node for a statement or a loop head and none for the parts of an expression, so an
-        ordering against that node answers for *site* only where the node evaluates it on every run
+        has a node for a statement, a loop head and a declarator and none for the parts of an
+        expression, so an ordering against that node answers for *site* only where the node
+        evaluates it on every run
         (`refinery.lib.scripts.js.analysis.evaluation.evaluated_whenever_completed`). Memoized by
         identity, since every ordering query of one definition asks it again for each reference.
         """

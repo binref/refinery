@@ -258,8 +258,8 @@ class LivenessModel:
         Whether no reference to *binding* other than *write* within *node* can observe *write*'s value.
         A read nested in *construct* (the assignment or declarator performing the write) consumes the
         prior value, so it is ignored; any other reference — a later read or a second write in the same
-        statement — is treated conservatively as observing the store, since intra-statement order is not
-        modelled.
+        node — is treated conservatively as observing the store, since the graph does not order
+        the parts of one node.
         """
         assert node.element is not None
         for ident in self._shallow_idents(graph, node.element):

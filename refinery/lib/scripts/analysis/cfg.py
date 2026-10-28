@@ -2,10 +2,11 @@
 Per-body control-flow graphs, derived from an AST and independent of the language it came from.
 
 Each function — and the script itself — gets one `ControlFlowGraph`: a graph whose nodes wrap the
-statements and loop-head expressions the body evaluates, connected by the order in which control may
-pass between them. Sequential flow, the branches of a conditional, loop back-edges, the non-local
-jumps a `break`/`continue`/`return` performs, and *exceptional* edges from any point inside a guarded
-block to the handler that would catch a throw.
+statements and loop-head expressions the body evaluates, and the steps a language evaluates one
+after the other inside a statement, connected by the order in which control may pass between them.
+Sequential flow, the branches of a conditional, loop back-edges, the non-local jumps a
+`break`/`continue`/`return` performs, and *exceptional* edges from any point inside a guarded block
+to the handler that would catch a throw.
 
 The graph is keyed to AST node identity (`node_of`) and is a disposable, per-body view — the tree
 stays the spine. It is *conservative by construction*: where modelling control flow precisely would
@@ -187,10 +188,11 @@ class ArmFlow(enum.Enum):
 @dataclass(eq=False, repr=False)
 class CfgNode:
     """
-    One vertex of a control-flow graph. `element` is the AST node it stands for — a statement, or a
-    loop-head expression whose reads and writes occur at this point — or `None` for the synthetic
-    entry and exit. `successors` lists the nodes control may pass to next. `graph` is the body this
-    vertex belongs to, which is what makes the questions below answerable of a node alone.
+    One vertex of a control-flow graph. `element` is the AST node it stands for — a statement, a
+    loop-head expression whose reads and writes occur at this point, or a step a language gives a
+    node of its own inside a statement — or `None` for the synthetic entry and exit. `successors`
+    lists the nodes control may pass to next. `graph` is the body this vertex belongs to, which is
+    what makes the questions below answerable of a node alone.
 
     `is_resumption_hub` marks the synthetic fan-out standing for the over-approximate half of a
     resuming handler — see `CfgEdge`. A walk that wants only the paths going forward declines to
@@ -1129,12 +1131,20 @@ class CfgBuilder:
 
     def opaque(self, element: Node, frontier: list[CfgNode]) -> list[CfgNode]:
         """
-        A statement whose internal control flow this does not model: one node, entered from the
+        An element whose internal control flow this does not model: one node, entered from the
         frontier and falling through. The default for anything a language does not recognise.
         """
         node = self.node(element)
         self.link(frontier, node)
         return [node]
+
+    def evaluated(self, element: Node, frontier: list[CfgNode]) -> list[CfgNode]:
+        """
+        The nodes evaluating *element*, a part of a construct evaluated at a point of its own, such
+        as the initializer of a counted loop: one node, unless a language evaluates the part in
+        steps it gives nodes of their own.
+        """
+        return self.opaque(element, frontier)
 
     def _body(self, body: Node | None, frontier: list[CfgNode]) -> list[CfgNode]:
         return self.statement(body, list(frontier)) if body is not None else list(frontier)
@@ -1286,9 +1296,7 @@ class CfgBuilder:
         """
         labels = self.take_labels()
         if initializer is not None:
-            start = self.node(initializer)
-            self.link(frontier, start)
-            frontier = [start]
+            frontier = self.evaluated(initializer, frontier)
         head = self.node(test) if test is not None else None
         if head is not None:
             self.link(frontier, head)

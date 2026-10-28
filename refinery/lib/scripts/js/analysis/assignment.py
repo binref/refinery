@@ -47,6 +47,7 @@ from refinery.lib.scripts.js.analysis.cfg import (
     ControlFlowGraph,
     ControlFlowModel,
     build_control_flow_model,
+    evaluated_part,
 )
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
@@ -91,6 +92,7 @@ from refinery.lib.scripts.js.model import (
     JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclaration,
+    JsVariableDeclarator,
     is_generator_function,
     strip_parens,
     wraps_return,
@@ -265,11 +267,13 @@ class DefiniteAssignmentModel:
         elements = [
             (graph, node) for graph in graphs for node in graph.nodes if node.element is not None
         ]
+        evaluated: dict[int, Node] = {}
         for graph, node in elements:
             assert node.element is not None
-            self._parts[id(node)] = self._evaluated_parts(graph, node.element)
+            part = evaluated[id(node)] = evaluated_part(graph, node.element)
+            self._parts[id(node)] = self._evaluated_parts(graph, part)
         cannot_throw = {
-            id(node): self.model.statement_cannot_throw(node.element, self._creates_the_property)
+            id(node): self.model.statement_cannot_throw(evaluated[id(node)], self._creates_the_property)
             for _, node in elements
         }
         summaries: dict[int, frozenset[Binding]] = {}
@@ -419,10 +423,12 @@ class DefiniteAssignmentModel:
         """
         The expressions the control-flow node for *element* evaluates itself: the element where it
         is an expression handed its own node (a loop header's init, test, or update, a
-        `for-in`/`for-of` subject or target), a declaration's initializers, nothing for a
-        `for-in`/`for-of` head, and otherwise every child that is neither a function body nor a
-        statement owned by another node.
+        `for-in`/`for-of` subject or target), the initializer of a declarator, a declaration's
+        initializers, nothing for a `for-in`/`for-of` head, and otherwise every child that is
+        neither a function body nor a statement owned by another node.
         """
+        if isinstance(element, JsVariableDeclarator):
+            return [] if element.init is None else [element.init]
         if (
             not isinstance(element, _OWN_HEAD_NODES)
             and not self._is_statement(element)

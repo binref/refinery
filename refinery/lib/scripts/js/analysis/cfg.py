@@ -33,6 +33,7 @@ from refinery.lib.scripts.js.model import (
     JsCatchClause,
     JsContinueStatement,
     JsDoWhileStatement,
+    JsExportNamedDeclaration,
     JsForInStatement,
     JsForOfStatement,
     JsForStatement,
@@ -45,6 +46,7 @@ from refinery.lib.scripts.js.model import (
     JsSwitchStatement,
     JsThrowStatement,
     JsTryStatement,
+    JsVariableDeclaration,
     JsWhileStatement,
     JsWithStatement,
 )
@@ -57,6 +59,7 @@ __all__ = [
     'build_cfg',
     'build_control_flow',
     'build_control_flow_model',
+    'evaluated_part',
 ]
 
 
@@ -166,7 +169,30 @@ class _Builder(CfgBuilder):
             node = self.node(statement)
             self.link(frontier, node)
             return self.statement(statement.body, [node]) if statement.body else [node]
+        if (declaration := _declaration_of(statement)) is not None:
+            return self._in_steps(statement, declaration, frontier)
         return self.opaque(statement, frontier)
+
+    def evaluated(self, element: Node, frontier: list[CfgNode]) -> list[CfgNode]:
+        if isinstance(element, JsVariableDeclaration):
+            return self._in_steps(element, element, frontier)
+        return super().evaluated(element, frontier)
+
+    def _in_steps(
+        self,
+        element: Node,
+        declaration: JsVariableDeclaration,
+        frontier: list[CfgNode],
+    ) -> list[CfgNode]:
+        """
+        The nodes of *element*, which evaluates *declaration*: its declarators run one after the
+        other, so each but the last is a node of its own, and the node of *element* evaluates the
+        last one (`evaluated_part`). In `var s = '…', t = f(s);` the store of `s` completes before
+        `t` is computed.
+        """
+        for declarator in declaration.declarations[:-1]:
+            frontier = self.opaque(declarator, frontier)
+        return self.opaque(element, frontier)
 
     def _switch(self, statement: JsSwitchStatement, frontier: list[CfgNode]) -> list[CfgNode]:
         cases = [case for case in statement.cases if isinstance(case, JsSwitchCase)]
@@ -176,6 +202,31 @@ class _Builder(CfgBuilder):
         exhaustive = any(case.test is None for case in cases)
         return self.dispatch(
             statement, arms, frontier, arm_flow=ArmFlow.SEQUENTIAL, exhaustive=exhaustive)
+
+
+def _declaration_of(statement: Node) -> JsVariableDeclaration | None:
+    """
+    The declaration *statement* evaluates where it is one, standing alone or under `export`.
+    """
+    declared = statement.declaration if isinstance(statement, JsExportNamedDeclaration) else statement
+    return declared if isinstance(declared, JsVariableDeclaration) else None
+
+
+def evaluated_part(graph: ControlFlowGraph, element: Node) -> Node:
+    """
+    What the node of *element* evaluates itself: the last declarator of a declaration, standing
+    alone, under `export` or in a `for` head, whose other declarators are nodes of their own
+    (`_Builder._in_steps`), and *element* otherwise. Every reader of what a node evaluates asks
+    here, so a node standing for part of a statement is never judged by the whole of it.
+    """
+    declaration = _declaration_of(element) or element
+    if (
+        isinstance(declaration, JsVariableDeclaration)
+        and len(declaration.declarations) > 1
+        and graph.node_of(declaration.declarations[0]) is not None
+    ):
+        return declaration.declarations[-1]
+    return element
 
 
 def build_cfg(owner: Node) -> ControlFlowGraph:
