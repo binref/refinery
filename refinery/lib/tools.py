@@ -19,7 +19,7 @@ from math import log
 from types import WrapperDescriptorType
 from typing import Generator, Iterable, Iterator, TypeVar, cast
 
-from refinery.lib.types import buf
+from refinery.lib.types import buf, InfiniteIterable
 
 _T = TypeVar('_T')
 
@@ -335,13 +335,11 @@ def splitchunks(
 
 def infinitize(it: _T | Iterable[_T]) -> Iterable[_T]:
     """
-    Creates an infinite iterable from the input.
+    Creates an infinite iterable from the input. Inputs that are already infinite, i.e. instances
+    of `refinery.lib.types.InfiniteIterable`, are returned unchanged; this includes the infinite
+    iterators of the standard library. Every other iterable is cycled.
     """
-    if isinstance(it, (
-        itertools.cycle,
-        itertools.repeat,
-        itertools.count,
-    )):
+    if isinstance(it, InfiniteIterable):
         return it
     elif isinstance(it, Iterable):
         return itertools.cycle(it)
@@ -551,16 +549,6 @@ def one(iterable: Iterable[_T]) -> _T:
         return top
     else:
         raise NotOne(False)
-
-
-def integers_of_slice(s: slice) -> Iterable[int]:
-    """
-    Returns an iterable that iterates the integers in the range given by the input slice.
-    """
-    if s.stop is None:
-        return itertools.count(s.start or 0, s.step or 1)
-    else:
-        return range(s.start or 0, s.stop, s.step or 1)
 
 
 def normalize_word_separators(words: str, unified_separator: str, strip: bool = True):

@@ -133,7 +133,7 @@ from refinery.lib.tools import (
     normalize_to_identifier,
     one,
 )
-from refinery.lib.types import RepeatedInteger, bounds, buf, isbuffer
+from refinery.lib.types import RepeatedInteger, bounds, buf, isbuffer, InfiniteIterable
 
 if TYPE_CHECKING:
     from refinery import Unit
@@ -883,7 +883,7 @@ class DelayedArgument(LazyEvaluation):
             return read
 
     @handler.register('range', final=True)
-    def range(self, region: str) -> Iterable[int]:
+    def range(self, region: str):
         """
         Implements the final modifier `range:bounds` to generate a sequence of bytes, where
         `bounds` is parsed as a `refinery.lib.argformats.sliceobj` with one exception: If
@@ -900,6 +900,8 @@ class DelayedArgument(LazyEvaluation):
             if isinstance(s, int):
                 s = slice(None, s, None)
             result = bounds[s]
+            if result.infinite:
+                return InfiniteIterable(result)
             result.max -= 1
             if 0 <= result.min and result.max <= 0x100:
                 result = bytearray(result)
@@ -910,10 +912,10 @@ class DelayedArgument(LazyEvaluation):
             return compute_range
 
     @handler.register('env', final=True)
-    def env(self, name: str) -> bytes:
+    def env(self, name: str) -> str:
         """
-        The final modifier `env:name` returns the UTF8-encoded value of the environment variable
-        with the given name.
+        The final modifier `env:name` returns the value of the environment variable with the
+        given name.
         """
         import os
         return os.environ[name]
@@ -1169,7 +1171,7 @@ class DelayedArgument(LazyEvaluation):
         return chunks.pack(integers, size, bigE)
 
     @handler.register('inc')
-    def inc(self, it: Iterable[int], precision=None) -> Iterable[int]:
+    def inc(self, it: Iterable[int], precision=None) -> InfiniteIterable:
         """
         The modifier `inc:it` or `inc[N=64]:it` expects a sequence `it` of integers (a binary
         string is interpreted as the sequence of its byte values), iterates it cyclically and
@@ -1181,16 +1183,17 @@ class DelayedArgument(LazyEvaluation):
         if precision:
             def delay(_):
                 mask = (1 << precision) - 1
-                for a, b in zip(it, itertools.cycle(range(mask + 1))):
-                    yield a + b & mask
+                return InfiniteIterable(
+                    a + b & mask
+                    for a, b in zip(it, itertools.cycle(range(mask + 1))))
         else:
             def delay(_):
-                for a, b in zip(it, itertools.count()):
-                    yield a + b
+                return InfiniteIterable(
+                    a + b for a, b in zip(it, itertools.count()))
         return delay
 
     @handler.register('dec')
-    def dec(self, it: Iterable[int], precision=None) -> Iterable[int]:
+    def dec(self, it: Iterable[int], precision=None) -> InfiniteIterable:
         """
         Identical to `refinery.lib.argformats.DelayedNumSeqArgument.inc`, but decreasing the counter
         rather than increasing it.
@@ -1200,32 +1203,36 @@ class DelayedArgument(LazyEvaluation):
         if precision:
             def delay(_):
                 mask = (1 << precision) - 1
-                for a, b in zip(it, itertools.cycle(range(mask + 1))):
-                    yield a - b & mask
+                return InfiniteIterable(
+                    a - b & mask
+                    for a, b in zip(it, itertools.cycle(range(mask + 1))))
         else:
             def delay(_):
-                for a, b in zip(it, itertools.count()):
-                    yield a - b
+                return InfiniteIterable(
+                    a - b for a, b in zip(it, itertools.count()))
         return delay
 
     @handler.register('take')
-    def take(self, it: Iterable[int], bounds: str | None = None):
+    def take(self, it: Iterable[int], _bounds: str | None = None):
         """
         The handler `take[start:stop:step]` expects an integer sequence as input and applies a slice
         to it. Slices are given in Python syntax, so `take[::2]` will extract every second item from
         the incoming data. The default sequence is `1:`, i.e. skipping the first element.
         """
         def sliced(bounds):
-            try:
+            if isinstance(it, (bytes, bytearray, memoryview, list, tuple)):
                 return it[bounds]
-            except TypeError:
-                subsequence = itertools.islice(it, bounds.start, bounds.stop, bounds.step)
-                if bounds.stop is not None:
-                    subsequence = list(subsequence)
-                    if all(t in range(0x100) for t in subsequence):
-                        subsequence = bytearray(subsequence)
+            subsequence = itertools.islice(it, bounds.start, bounds.stop, bounds.step)
+            if bounds.stop is None:
+                if isinstance(it, InfiniteIterable):
+                    return InfiniteIterable(subsequence)
                 return subsequence
-        bounds = bounds and sliceobj(bounds) or slice(1, None)
+            subsequence = list(subsequence)
+            if all(t in range(0x100) for t in subsequence):
+                subsequence = bytearray(subsequence)
+            return subsequence
+        bounds = _bounds and sliceobj(_bounds) or slice(1, None)
+        assert not isinstance(bounds, int)
         if isinstance(bounds, slice):
             return sliced(bounds)
         return lambda d: sliced(bounds(d))
@@ -1235,7 +1242,7 @@ class DelayedArgument(LazyEvaluation):
         """
         The `cycle` handler turns a finite integer sequence into an infinitely repeating integer sequence.
         """
-        if isinstance(it, itertools.cycle):
+        if isinstance(it, InfiniteIterable):
             return it
         return itertools.cycle(it)
 
@@ -1301,7 +1308,7 @@ class DelayedArgument(LazyEvaluation):
         type: str,
         seed: str | None = None,
         skip: str | None = None,
-    ) -> Iterable[int]:
+    ) -> InfiniteIterable:
         """
         The final handler
 
@@ -1336,7 +1343,7 @@ class DelayedArgument(LazyEvaluation):
         _skip = 1 if skip is None else int(skip, 0)
         _mask = (1 << precision) - 1
 
-        def finalize(data: Chunk | None = None):
+        def sequence(data: Chunk | None = None):
             meta = {} if data is None else dict(metavars(data))
             S: int = _seed(meta)
             F: int = _feed(meta, S=S)
@@ -1348,6 +1355,10 @@ class DelayedArgument(LazyEvaluation):
                     K = K - 1
                 S = _rand(meta, S=S) & _mask
                 F = _feed(meta, S=S)
+
+        def finalize(data: Chunk | None = None):
+            return InfiniteIterable(sequence(data))
+
         try:
             _rand(S=_seed())
         except ParserVariableMissing:
@@ -1484,6 +1495,8 @@ class DelayedNumSeqArgument(DelayedArgument):
             return value
         if isinstance(value, str):
             return value.encode()
+        if isinstance(value, InfiniteIterable):
+            return value
         if hasattr(value, '__iter__'):
             try:
                 if len(value) == 1:

@@ -11,6 +11,7 @@ import weakref
 from unittest import mock
 
 from refinery.lib import tools, colors
+from refinery.lib.types import RepeatedInteger, bounds
 
 
 from .. import TestBase
@@ -169,6 +170,19 @@ class TestInfinitize(TestBase):
         c = itertools.count(0)
         self.assertIs(tools.infinitize(c), c)
 
+    def test_repeated_integer_passthrough(self):
+        ri = RepeatedInteger(3)
+        self.assertIs(tools.infinitize(ri), ri)
+
+    def test_unbounded_bounds_passthrough(self):
+        b = bounds[5:]
+        self.assertIs(tools.infinitize(b), b)
+
+    def test_bounded_bounds_are_cycled(self):
+        inf = tools.infinitize(bounds[1:3])
+        result = list(itertools.islice(inf, 7))
+        self.assertEqual(result, [1, 2, 3, 1, 2, 3, 1])
+
 
 class TestOne(TestBase):
 
@@ -184,25 +198,6 @@ class TestOne(TestBase):
         with self.assertRaises(tools.NotOne) as ctx:
             tools.one([1, 2])
         self.assertFalse(ctx.exception.empty)
-
-
-class TestIntegersOfSlice(TestBase):
-
-    def test_basic_range(self):
-        result = list(tools.integers_of_slice(slice(0, 5)))
-        self.assertEqual(result, [0, 1, 2, 3, 4])
-
-    def test_with_step(self):
-        result = list(tools.integers_of_slice(slice(0, 10, 3)))
-        self.assertEqual(result, [0, 3, 6, 9])
-
-    def test_infinite(self):
-        result = list(itertools.islice(tools.integers_of_slice(slice(0, None, 2)), 5))
-        self.assertEqual(result, [0, 2, 4, 6, 8])
-
-    def test_none_start(self):
-        result = list(tools.integers_of_slice(slice(None, 3)))
-        self.assertEqual(result, [0, 1, 2])
 
 
 class TestNormalize(TestBase):

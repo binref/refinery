@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from refinery.lib import chunks
 from refinery.lib.inline import iterspread
 from refinery.lib.tools import infinitize
-from refinery.lib.types import INF, Param, asbuffer, buf, isq
+from refinery.lib.types import INF, InfiniteIterable, Param, asbuffer, buf, isq
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
@@ -170,17 +170,23 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         return it, False
 
     def _infinitize_argument(self, min_size: int, it: _I, masked=False) -> Iterator[int]:
-        def _mask(it: Iterable[int]):
-            warnings = 3
-            for block in it:
-                out = block & self.fmask
-                assert isinstance(out, int)
-                if warnings and out != block:
-                    warnings -= 1
-                    self.log_warn(F'reduced argument to 0x{out:0{self.fbits // 4}X}; original value was 0x{block:X}')
-                    if not warnings:
-                        self.log_warn('additional warnings are suppressed')
-                yield out
+        def _mask(it: Iterable[int]) -> Iterable[int]:
+            def reduced(it: Iterable[int]):
+                mask = self.fmask
+                warnings = 3
+                for block in it:
+                    out = block & mask
+                    if warnings and out != block:
+                        warnings -= 1
+                        self.log_warn(F'reduced argument to 0x{out:0{self.fbits // 4}X}; original value was 0x{block:X}')
+                        if not warnings:
+                            self.log_warn('additional warnings are suppressed')
+                    yield out
+
+            if isinstance(it, InfiniteIterable):
+                return InfiniteIterable(reduced(it))
+            return reduced(it)
+
         if isinstance(it, (bytes, bytearray)) and (n := len(it)) > 0x400:
             quotient, remainder = divmod(min_size, n)
             if remainder > 0:
@@ -192,7 +198,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             it = (it,)
         if not masked:
             it = _mask(it)
-        return iter(infinitize(iter(it)))
+        return iter(infinitize(it))
 
     @abc.abstractmethod
     def operate(self, block: _T, *args) -> _T:

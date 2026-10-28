@@ -2,6 +2,7 @@ from argparse import ArgumentTypeError
 
 from refinery.lib import argformats
 from refinery.lib.tools import entropy
+from refinery.lib.types import InfiniteIterable
 
 from .. import TestBase
 
@@ -44,6 +45,10 @@ class TestArgumentFormats(TestBase):
         key = argformats.DelayedArgument('take[1:16]:cycle:KITTY')()
         self.assertEqual(key, B'ITTYKITTYKITTYK')
 
+    def test_take_negative_bounds(self):
+        self.assertEqual(argformats.DelayedArgument('take[-2:]:KITTY')(), B'TY')
+        self.assertEqual(argformats.DelayedArgument('take[::-1]:KITTY')(), B'YTTIK')
+
     def test_with_seed(self):
         key = argformats.DelayedBinaryArgument('snip[:2]:snip[1:]', seed=B'FOO')()
         self.assertEqual(key, B'OO')
@@ -63,6 +68,23 @@ class TestArgumentFormats(TestBase):
     def test_range_can_be_infinite(self):
         pipeline = self.ldu('put', 't', 0x30) [ self.ldu('xor', 'range:t:') ] # noqa
         self.assertEqual(pipeline(bytearray(10)), B'0123456789')
+
+    def test_infinite_sequences_are_marked(self):
+        for expression in (
+            'inc:eval:0x30',
+            'dec:eval:0x30',
+            'range:0x30:',
+            'take[1:]:cycle:KITTY',
+            'rand:msvc',
+        ):
+            value = argformats.DelayedArgument(expression)(B'')
+            self.assertIsInstance(value, InfiniteIterable, expression)
+        for expression in (
+            'range:1:5',
+            'take[1:5]:cycle:KITTY',
+        ):
+            value = argformats.DelayedArgument(expression)(B'')
+            self.assertNotIsInstance(value, InfiniteIterable, expression)
 
     def test_slices_can_be_variables(self):
         pipeline = self.ldu('put', 'rg', '2:') [ self.ldu('snip', 'rg') ] # noqa

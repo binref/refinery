@@ -75,6 +75,9 @@ class TestXOR(TestUnitBase):
         xor = self.load('inc:eval:1+1')
         self.assertEqual(xor(bytes(5)), bytes(range(2, 7)))
         self.assertEqual(xor(bytes(5)), bytes(range(2, 7)))
+        xor = self.load('range:0x30:')
+        self.assertEqual(xor(bytes(10)), b'0123456789')
+        self.assertEqual(xor(bytes(10)), b'0123456789')
 
     def test_no_argument_rejected(self):
         from refinery.units.blockwise.xor import xor

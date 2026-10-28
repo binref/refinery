@@ -4,21 +4,27 @@ It also exports important singleton types used throughout refinery.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
+import itertools
+
+from abc import ABCMeta
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    ClassVar,
+    Collection,
+    Generator,
+    Iterable,
+    Iterator,
+    NamedTuple,
+    Self,
+    TYPE_CHECKING,
+    TypeVar,
+)
 
 _T = TypeVar('_T')
 
 if TYPE_CHECKING:
-    from typing import (
-        Annotated,
-        Callable,
-        ClassVar,
-        Collection,
-        Generator,
-        Iterable,
-        Self,
-    )
-
     Param = Annotated
     JSON = (
         None
@@ -30,27 +36,17 @@ if TYPE_CHECKING:
         | list[Any]
     )
     JSONDict = dict[str, JSON]
-
     buf = bytes | bytearray | memoryview
     isq = int | Iterable[int]
-
 else:
     class __P:
         def __getitem__(self, annotation):
             return annotation[1]
-
     Param = __P()
     JSON = Any
     JSONDict = Any
     buf = Any
     isq = Any
-
-    Callable = Any
-    ClassVar = Any
-    Collection = Any
-    Iterable = Any
-    Self = Any
-    Generator = Any
 
 
 __all__ = [
@@ -66,6 +62,7 @@ __all__ = [
     'NIL',
     'Generator',
     'INF',
+    'InfiniteIterable',
     'isbuffer',
     'isq',
     'isstream',
@@ -132,6 +129,37 @@ def convert(x: _T | Any, t: type[_T]) -> _T:
     Convert the given object `x` to the type `t`.
     """
     return x if isinstance(x, t) else t(x) # type:ignore
+
+
+class InfiniteIterableMeta(ABCMeta):
+    """
+    The metaclass of `refinery.lib.types.InfiniteIterable`. It makes an `isinstance` check against
+    that class recognize the infinite iterators of the standard library, `RepeatedInteger`, and
+    unbounded `BoundsType` objects.
+    """
+    def __instancecheck__(cls, instance: Any) -> bool:
+        if super().__instancecheck__(instance):
+            return True
+        if isinstance(instance, BoundsType):
+            return instance.infinite
+        return isinstance(instance, (
+            itertools.cycle,
+            itertools.count,
+            itertools.repeat,
+            RepeatedInteger,
+        ))
+
+
+class InfiniteIterable(Iterable[_T], metaclass=InfiniteIterableMeta):
+    """
+    A wrapper to declare an iterable as infinite. Calling `refinery.lib.tools.infinitize` checks
+    for this marker.
+    """
+    def __init__(self, it: Iterable[_T]):
+        self.it = it
+
+    def __iter__(self) -> Iterator[_T]:
+        return iter(self.it)
 
 
 class Singleton(type):
@@ -467,7 +495,7 @@ class BoundsType:
     def __getitem__(self, k: slice):
         return BoundsType(k)
 
-    def __init__(self, bounds: int | slice[int, int | None | INF, int | None] | None):
+    def __init__(self, bounds: int | slice[int, int | None | INF, int | None] | None = None):
         if bounds is None:
             self.min = 0
             self.max = INF()
@@ -489,7 +517,6 @@ class BoundsType:
         k = self.min
         i = self.inc
         if (m := self.max) is INF:
-            import itertools
             yield from itertools.count(k, i)
         else:
             while k <= m:
@@ -506,5 +533,9 @@ class BoundsType:
             return False
         return (value - self.min) % self.inc == 0
 
+    @property
+    def infinite(self):
+        return self.max is INF
 
-bounds = BoundsType(slice(None, None))
+
+bounds = BoundsType()
