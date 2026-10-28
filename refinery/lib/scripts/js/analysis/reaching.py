@@ -23,7 +23,9 @@ the operands the store is computed from (§13.15.5). A direct `eval`, an unread 
 the node of the site spelling it. Kills the model cannot pin to a site — a mutating function that
 escapes, a write through a global-object alias or a dynamic scope, a surface standing outside the
 use's own graph — make the answer conservatively negative, and so does a definition and use that
-share a single statement, which statement granularity cannot order.
+share a single statement, which statement granularity cannot order. A point where the body
+suspends, an `await` or a `yield`, is a kill of a binding code outside the body writes, since that
+code may run before the body resumes.
 """
 from __future__ import annotations
 
@@ -38,11 +40,14 @@ from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import Binding
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
+    JsAwaitExpression,
     JsCallExpression,
+    JsForOfStatement,
     JsFunctionDeclaration,
     JsIdentifier,
     JsMemberExpression,
     JsVariableDeclarator,
+    JsYieldExpression,
     strip_parens,
 )
 
@@ -74,6 +79,7 @@ class ReachingModel:
         self.model = effects.model
         self._kill_cache: dict[tuple[int, int, int], _Kills | None] = {}
         self._call_cache: dict[int, list[tuple[JsCallExpression, CfgNode]]] = {}
+        self._suspension_cache: dict[int, list[CfgNode | None]] = {}
         self._cycle_cache: dict[int, bool] = {}
         self._between = ReachabilityQuery(dominance, Projection.MAY)
 
@@ -150,6 +156,10 @@ class ReachingModel:
         own node, while any that lies elsewhere, or that no graph places at all, makes the value
         volatile: a surface running in another function's graph runs at that function's invocation,
         a point no node here stands for.
+
+        A point where the body stops and other code runs before it resumes — an `await`, a
+        `yield`, the head of a `for await` loop (`_graph_suspensions`) — is a kill of a binding
+        some definition outside this graph writes: that code may be the code that writes it.
         """
         if (
             binding.has_indefinite_write
@@ -164,6 +174,7 @@ class ReachingModel:
         if located is None:
             return None
         kills, opaque = located
+        written_elsewhere = False
         for definition in self._value_definitions(binding):
             if definition is def_write:
                 continue
@@ -173,6 +184,13 @@ class ReachingModel:
             def_graph, def_node = located_def
             if def_graph is graph:
                 kills.add(id(def_node))
+            else:
+                written_elsewhere = True
+        if written_elsewhere:
+            for suspension in self._graph_suspensions(graph):
+                if suspension is None:
+                    return None
+                kills.add(id(suspension))
         for call, node in self._graph_calls(graph):
             target = self.effects.static_callee(call)
             if target is None:
@@ -259,6 +277,30 @@ class ReachingModel:
                 elif located[0] is graph:
                     cached.append((node, located[1]))
             self._call_cache[id(graph)] = cached
+        return cached
+
+    def _graph_suspensions(self, graph: ControlFlowGraph) -> list[CfgNode | None]:
+        """
+        The control-flow nodes of *graph*'s body at which its run may stop and resume later, with
+        other code run in between: an `await`, a `yield`, and the head of a `for await` loop, which
+        awaits each value. `None` stands for one the graphs place nowhere. One inside a nested
+        function suspends that function and is left out. Memoized per graph.
+        """
+        cached = self._suspension_cache.get(id(graph))
+        if cached is None:
+            cached = []
+            for node in graph.owner.walk():
+                if not (
+                    isinstance(node, (JsAwaitExpression, JsYieldExpression))
+                    or (isinstance(node, JsForOfStatement) and node.is_await)
+                ):
+                    continue
+                located = self.dominance.locate(node)
+                if located is None:
+                    cached.append(None)
+                elif located[0] is graph:
+                    cached.append(located[1])
+            self._suspension_cache[id(graph)] = cached
         return cached
 
     @staticmethod

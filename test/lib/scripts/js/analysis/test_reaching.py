@@ -295,3 +295,26 @@ class TestReaching(TestBase):
         self.assertFalse(self._query(
             '(function () { var x = 1; with (o) { x; } f(x); })();'
         ))
+
+    def test_does_not_reach_past_a_point_where_the_body_suspends_and_other_code_writes_the_binding(self):
+        """
+        Other code runs while the body waits at an `await`, a `yield` or the head of a `for await`
+        loop, and the store `x = 2` outside the body may be that code.
+        """
+        for source in (
+            'var x = 1; async function f() { var r = x; await 0; return r; } x = 2;',
+            'var x = 1; function* f() { var r = x; yield 0; return r; } x = 2;',
+            'var x = 1; async function f(list) { var r = x; for await (var v of list) {} return r; } x = 2;',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._free_variable_reaches(source))
+
+    def test_reaches_past_a_point_where_the_body_suspends_when_only_the_body_writes_the_binding(self):
+        self.assertTrue(self._free_variable_reaches(
+            'async function f() { var x = 1; var r = x; await 0; return r; }'
+        ))
+
+    def test_reaches_past_a_suspension_inside_a_nested_function(self):
+        self.assertTrue(self._free_variable_reaches(
+            'var x = 1; function f() { var r = x; async function g() { await 0; } return r; } x = 2;'
+        ))

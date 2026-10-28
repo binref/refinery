@@ -42,6 +42,7 @@ from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAwaitExpression,
+    JsBinaryExpression,
     JsCallExpression,
     JsClassExpression,
     JsForInStatement,
@@ -129,7 +130,9 @@ def _is_primitive_and_pure(node: Node) -> bool:
     admits containers whose identity is known to be new. Their answers are disjoint by construction.
 
     A `delete` is observable — it removes a binding or property — so its unary form is rejected while
-    the operator's other uses, none of which touch what they name, stay admitted.
+    the operator's other uses, none of which touch what they name, stay admitted. An `in` reads a
+    property of its right operand and an `instanceof` the prototype chain of its left, so each is a
+    property access by another spelling and is rejected as one.
     """
     for n in node.walk():
         if isinstance(n, (
@@ -149,6 +152,8 @@ def _is_primitive_and_pure(node: Node) -> bool:
         )):
             return False
         if isinstance(n, JsUnaryExpression) and n.operator == 'delete':
+            return False
+        if isinstance(n, JsBinaryExpression) and n.operator in ('in', 'instanceof'):
             return False
     return True
 

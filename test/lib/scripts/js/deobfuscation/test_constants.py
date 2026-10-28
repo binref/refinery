@@ -10,9 +10,13 @@ from test.lib.scripts.js.analysis.differential import (
 )
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
+    Program,
+    Reading,
+    a_program,
     before_and_after,
     each_program_still_prints,
     folded,
+    prints,
 )
 
 from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
@@ -2358,3 +2362,182 @@ class TestNodePrintsTheSameAboutAStoreItsStatementDoesNotAlwaysRun(TestBase):
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+class TestAnInOrInstanceofIsNotMovedPastAChangeToWhatItReads(TestJsDeobfuscator):
+
+    def test_the_inliner_leaves_its_declaration_where_it_stands(self):
+        for source in (
+            "var o = {k: 1}; var r = 'k' in o; delete o.k; f(r);",
+            'function C() {} var o = new C(); var r = o instanceof C; C.prototype = {}; f(r);',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(self._inline(source), JsSynthesizer().convert(JsParser(source).parse()))
+
+
+#: Programs reading a property with `in` or a prototype chain with `instanceof` and then changing
+#: it, in one declaration and in separate statements, mapped to what Node prints for each run as a
+#: CommonJS file.
+AN_IN_OR_INSTANCEOF_BEFORE_A_CHANGE: dict[str, Program] = {
+    'in operator across declarators': Program(
+        a_program("""
+            function f() {
+              var o = {}, s = (o.k = 1), r = 'k' in o, d = delete o.k, q = 'k' in o;
+              return [r, q].join();
+            }
+            console.log(f());
+            """),
+        prints('true,false'),
+        Reading.COMMONJS,
+    ),
+    'in operator separate statements': Program(
+        a_program("""
+            function f() {
+              var o = {};
+              var s = o.k = 1;
+              var r = 'k' in o;
+              var d = delete o.k;
+              var q = 'k' in o;
+              return [r, q].join();
+            }
+            console.log(f());
+            """),
+        prints('true,false'),
+        Reading.COMMONJS,
+    ),
+    'instanceof moved past prototype swap': Program(
+        a_program("""
+            function f() {
+              function C() {}
+              var o = new C(), was = o instanceof C, swap = (C.prototype = {}), now = o instanceof C;
+              return [was, now].join();
+            }
+            console.log(f());
+            """),
+        prints('true,false'),
+        Reading.COMMONJS,
+    ),
+    'instanceof separate statements': Program(
+        a_program("""
+            function f() {
+              function C() {}
+              var o = new C();
+              var was = o instanceof C;
+              var swap = (C.prototype = {});
+              var now = o instanceof C;
+              return [was, now].join();
+            }
+            console.log(f());
+            """),
+        prints('true,false'),
+        Reading.COMMONJS,
+    ),
+}
+
+#: Programs reading a value before an `await` or a `yield` that code outside the body changes
+#: before the body resumes, in one declaration and in separate statements, mapped to what Node
+#: prints for each run as a CommonJS file.
+A_VALUE_READ_BEFORE_A_SUSPENSION: dict[str, Program] = {
+    'async await between declarators': Program(
+        a_program("""
+            var shared = 'before';
+            async function f() {
+              var a = shared, b = await null, c = a + shared;
+              return c;
+            }
+            f().then(function (v) { console.log(v); });
+            shared = 'after';
+            """),
+        prints('beforeafter'),
+        Reading.COMMONJS,
+    ),
+    'async await separate statements': Program(
+        a_program("""
+            var shared = 'before';
+            async function f() {
+              var a = shared;
+              var b = await null;
+              var c = a + shared;
+              return c;
+            }
+            f().then(function (v) { console.log(v); });
+            shared = 'after';
+            """),
+        prints('beforeafter'),
+        Reading.COMMONJS,
+    ),
+    'yield between declarators': Program(
+        a_program("""
+            var shared = 'before';
+            function* g() {
+              var a = shared, b = yield 0, c = a + shared;
+              return c;
+            }
+            var it = g();
+            it.next();
+            shared = 'after';
+            console.log(it.next().value);
+            """),
+        prints('beforeafter'),
+        Reading.COMMONJS,
+    ),
+    'yield separate statements': Program(
+        a_program("""
+            var shared = 'before';
+            function* g() {
+              var a = shared;
+              var b = yield 0;
+              var c = a + shared;
+              return c;
+            }
+            var it = g();
+            it.next();
+            shared = 'after';
+            console.log(it.next().value);
+            """),
+        prints('beforeafter'),
+        Reading.COMMONJS,
+    ),
+    'await minified shape': Program(
+        a_program("""
+            var state = { ready: false };
+            async function load() {
+              var flag = state.ready, wait = await Promise.resolve(), now = state.ready;
+              return [flag, now].join();
+            }
+            load().then(function (v) { console.log(v); });
+            state.ready = true;
+            """),
+        prints('false,true'),
+        Reading.COMMONJS,
+    ),
+    'await local counter minified': Program(
+        a_program("""
+            var count = 0;
+            async function tick() { count++; }
+            async function f() {
+              var before = count, w = await tick(), after = count;
+              return before + ':' + after;
+            }
+            f().then(function (v) { console.log(v); });
+            """),
+        prints('0:1'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAReadBeforeAChangeOrASuspension(TestBase):
+
+    rows = {**AN_IN_OR_INSTANCEOF_BEFORE_A_CHANGE, **A_VALUE_READ_BEFORE_A_SUSPENSION}
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in self.rows.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    def test_each_program_still_prints_it_after_the_deobfuscation(self):
+        for label, row in self.rows.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
