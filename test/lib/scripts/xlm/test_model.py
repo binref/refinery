@@ -79,8 +79,8 @@ def _with_macrosheet_replacement(data: bytes, old: bytes, new: bytes) -> bytes:
 
 class TestXlmModelInventory(TestBase):
 
-    def test_sheet_inventory_of_every_embedded_sample(self):
-        for data, expected in [
+    def test_sheet_inventory_of_every_sample_of_the_store(self):
+        for key, expected in [
             (XLM_MACRO_RPN_BIFF8, [('mP9mScF1m5', 1179, 0)]),
             (XLM_MACRO_NAMES_BIFF8, [('Acf444', 11, 0)]),
             (XLM_MACRO_ASSIGN_BIFF8, [('sod', 426, 0)]),
@@ -88,7 +88,7 @@ class TestXlmModelInventory(TestBase):
             (XLM_MACRO_FORMULA_XLSM, [('PCWV', 1, 0)]),
         ]:
             with self.subTest(sample=expected[0][0]):
-                macrosheets = _model(data)
+                macrosheets = _model(self.download_sample(key))
                 self.assertEqual(
                     [
                         (sheet.name, sheet.kind, len(sheet.body))
@@ -126,10 +126,10 @@ class TestXlmModelInventory(TestBase):
         )
 
     def test_cells_that_hold_neither_a_formula_nor_a_value_are_skipped(self):
-        workbook = open_workbook(XLM_MACRO_TEXT_XLSM)
+        workbook = open_workbook(self.download_sample(XLM_MACRO_TEXT_XLSM))
         sheet = next(sheet for sheet in workbook.sheets() if sheet.name == 'Doc1')
         self.assertEqual(sum(1 for _ in sheet.cells()), 10529)
-        macrosheets = _model(XLM_MACRO_TEXT_XLSM)
+        macrosheets = _model(self.download_sample(XLM_MACRO_TEXT_XLSM))
         self.assertEqual(
             [
                 cell
@@ -143,7 +143,7 @@ class TestXlmModelInventory(TestBase):
 class TestXlmModelCells(TestBase):
 
     def test_pinned_formula_texts(self):
-        for data, name, row, col, text in [
+        for key, name, row, col, text in [
             (
                 XLM_MACRO_RPN_BIFF8, 'mP9mScF1m5', 1, 2,
                 'CHAR(A1-1)',
@@ -197,29 +197,29 @@ class TestXlmModelCells(TestBase):
             ),
         ]:
             with self.subTest(name=name, row=row, col=col):
-                self.assertEqual(_formula_text(_model(data), name, row, col), text)
+                self.assertEqual(_formula_text(_model(self.download_sample(key)), name, row, col), text)
 
     def test_value_only_cells_keep_the_cached_value(self):
         self.assertEqual(
-            _cell(_model(XLM_MACRO_RPN_BIFF8), 'mP9mScF1m5', 1, 1).value,
+            _cell(_model(self.download_sample(XLM_MACRO_RPN_BIFF8)), 'mP9mScF1m5', 1, 1).value,
             62,
         )
         self.assertEqual(
-            _cell(_model(XLM_MACRO_NAMES_BIFF8), 'Acf444', 9581, 1).value,
+            _cell(_model(self.download_sample(XLM_MACRO_NAMES_BIFF8)), 'Acf444', 9581, 1).value,
             '132',
         )
         self.assertEqual(
-            _cell(_model(XLM_MACRO_FORMULA_XLSM), 'PCWV', 8, 7).value,
+            _cell(_model(self.download_sample(XLM_MACRO_FORMULA_XLSM)), 'PCWV', 8, 7).value,
             True,
         )
 
     def test_cells_keep_the_kind_of_their_cached_value(self):
-        macrosheets = _model(XLM_MACRO_TEXT_XLSM)
+        macrosheets = _model(self.download_sample(XLM_MACRO_TEXT_XLSM))
         self.assertEqual(_cell(macrosheets, 'Doc1', 91, 56).kind, CellKind.BOOLEAN)
         self.assertEqual(_cell(macrosheets, 'Doc1', 97, 59).kind, CellKind.TEXT)
 
     def test_the_program_of_the_pcwv_macrosheet_spans_ten_formula_calls(self):
-        cell = _cell(_model(XLM_MACRO_FORMULA_XLSM), 'PCWV', 8, 7)
+        cell = _cell(_model(self.download_sample(XLM_MACRO_FORMULA_XLSM)), 'PCWV', 8, 7)
         formula = cell.formula
         assert isinstance(formula, XlBinaryExpression)
         self.assertEqual(formula.operator, XlBinaryOperator.EQ)
@@ -240,11 +240,11 @@ class TestXlmModelDefects(TestBase):
 
     def test_a_macrosheet_whose_walk_fails_keeps_the_cells_before_the_defect(self):
         broken = _with_macrosheet_replacement(
-            XLM_MACRO_TEXT_XLSM,
+            self.download_sample(XLM_MACRO_TEXT_XLSM),
             b'<c r="BI116" s="9" t="s"><v>26</v></c>',
             b'<c r="BI116" s="9" t="s"><v>99999</v></c>',
         )
-        intact = _sheet(_model(XLM_MACRO_TEXT_XLSM), 'Doc1')
+        intact = _sheet(_model(self.download_sample(XLM_MACRO_TEXT_XLSM)), 'Doc1')
         kept = [(cell.row, cell.col) for cell in _body(_sheet(_model(broken), 'Doc1'))]
         self.assertEqual(
             kept,
@@ -254,7 +254,7 @@ class TestXlmModelDefects(TestBase):
 
     def test_a_coordinate_stored_twice_holds_its_last_record(self):
         data = _with_macrosheet_replacement(
-            XLM_MACRO_TEXT_XLSM,
+            self.download_sample(XLM_MACRO_TEXT_XLSM),
             b'<c r="BG97" ',
             b'<c r="BG97" s="9" t="s"><v>26</v></c><c r="BG97" ',
         )
@@ -277,7 +277,7 @@ class TestXlmAssignmentNormalization(TestBase):
 
     def _assigned(self, formula: bytes) -> XlmCell:
         data = _with_macrosheet_replacement(
-            XLM_MACRO_TEXT_XLSM,
+            self.download_sample(XLM_MACRO_TEXT_XLSM),
             self._STRING_CELL_FORMULA,
             b'<f bx="1">' + formula + b'</f>',
         )
@@ -318,7 +318,7 @@ class TestXlmAssignmentNormalization(TestBase):
 
     def test_bx_on_a_comparison_that_names_nothing_keeps_the_tree(self):
         data = _with_macrosheet_replacement(
-            XLM_MACRO_TEXT_XLSM,
+            self.download_sample(XLM_MACRO_TEXT_XLSM),
             b'<c r="BD91" s="9" t="b"><f>',
             b'<c r="BD91" s="9" t="b"><f bx="1">',
         )
@@ -330,7 +330,7 @@ class TestXlmAssignmentNormalization(TestBase):
         self.assertIsInstance(formula.left, XlBinaryExpression)
         self.assertEqual(
             _formula_text(_model(data), 'Doc1', 91, 56),
-            _formula_text(_model(XLM_MACRO_TEXT_XLSM), 'Doc1', 91, 56),
+            _formula_text(_model(self.download_sample(XLM_MACRO_TEXT_XLSM)), 'Doc1', 91, 56),
         )
 
 
@@ -345,9 +345,9 @@ class TestXlmRowFallThrough(TestBase):
     ]
 
     def test_the_anchor_falls_through_to_the_next_formula_cell(self):
-        for data, name, row, col, target in self._ANCHORS:
+        for key, name, row, col, target in self._ANCHORS:
             with self.subTest(name=name, row=row):
-                cell = _sheet(_model(data), name).next_formula_cell(row, col)
+                cell = _sheet(_model(self.download_sample(key)), name).next_formula_cell(row, col)
                 assert cell is not None
                 self.assertEqual((cell.row, cell.col), target)
 
@@ -358,7 +358,7 @@ class TestXlmRowFallThrough(TestBase):
         self.assertEqual((cell.row, cell.col), (25, 7))
 
     def test_the_fall_through_is_bounded_to_ten_thousand_rows_below_the_anchor(self):
-        sheet = _sheet(_model(XLM_MACRO_NAMES_BIFF8), 'Acf444')
+        sheet = _sheet(_model(self.download_sample(XLM_MACRO_NAMES_BIFF8)), 'Acf444')
         cell = sheet.next_formula_cell(19999, 1)
         assert cell is not None
         self.assertEqual((cell.row, cell.col), (29999, 1))
@@ -369,7 +369,7 @@ class TestXlmListing(TestBase):
 
     def test_value_cells_follow_the_formula_cells_in_document_order(self):
         self.assertEqual(
-            [(cell.row, cell.col) for cell in _model(XLM_MACRO_NAMES_BIFF8)[0].listing()],
+            [(cell.row, cell.col) for cell in _model(self.download_sample(XLM_MACRO_NAMES_BIFF8))[0].listing()],
             [
                 (2, 1),
                 (9584, 1),
@@ -389,7 +389,7 @@ class TestXlmListing(TestBase):
         self.assertEqual(
             [
                 (cell.row, cell.col)
-                for cell in _model(XLM_MACRO_TEXT_XLSM)[0].listing(sort_formulas=True)
+                for cell in _model(self.download_sample(XLM_MACRO_TEXT_XLSM))[0].listing(sort_formulas=True)
             ],
             [
                 (109, 52),

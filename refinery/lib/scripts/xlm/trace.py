@@ -4,27 +4,24 @@ the output level that decides which steps a trace shows.
 """
 from __future__ import annotations
 
-import enum
-import re
-
-from typing import NamedTuple
+from enum import auto, Enum
+from typing import Iterable, NamedTuple
 
 from refinery.lib.scripts.xlm.commands import XlmSeverity
 
 
-class XlmStatus(enum.Enum):
+class XlmStatus(Enum):
     """
     The state one executed cell left the program in.
     """
-
-    FullEvaluation = enum.auto()
-    PartialEvaluation = enum.auto()
-    Error = enum.auto()
-    NotImplemented = enum.auto()
-    End = enum.auto()
-    Branching = enum.auto()
-    FullBranching = enum.auto()
-    IGNORED = enum.auto()
+    FullEvaluation = auto()
+    PartialEvaluation = auto()
+    Error = auto()
+    NotImplemented = auto()
+    End = auto()
+    Branching = auto()
+    FullBranching = auto()
+    IGNORED = auto()
 
 
 class XlmStep(NamedTuple):
@@ -34,7 +31,6 @@ class XlmStep(NamedTuple):
     branch, and the output level it prints at — the level of its command, or the lowest level
     when the cell is no command call at all.
     """
-
     sheet: str
     row: int
     col: int
@@ -44,22 +40,15 @@ class XlmStep(NamedTuple):
     severity: XlmSeverity
 
 
-_QUOTED_TEXT = re.compile(R'"([^"]|"")*"')
-
-
-def visible_steps(steps, level: int):
+def visible_steps(steps: Iterable[XlmStep], level: int):
     """
     The steps a trace at the given output level shows: a step the interpreter ignored never
-    shows, at the string-extraction level only the triage commands show and only the quoted
-    string literals their text carries, and otherwise a step shows when its own level
-    reaches the requested one.
+    shows, and otherwise a step shows when its own level reaches the requested one; a level
+    above the highest shows the steps of the highest.
     """
+    level = min(level, max(s.value for s in XlmSeverity))
     for step in steps:
         if step.status is XlmStatus.IGNORED:
             continue
-        if level >= 3 and step.severity is XlmSeverity.IMPORTANT:
-            strings = [match.group(0) for match in _QUOTED_TEXT.finditer(step.text)]
-            if strings:
-                yield step._replace(text='\n'.join(strings))
         elif step.severity.value >= level:
             yield step

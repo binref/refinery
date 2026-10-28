@@ -61,8 +61,8 @@ def _references_a_defined_name(expression: Expression) -> bool:
 class TestXlsbFormulaDecoding(TestBase):
 
     def test_literals_operators_and_references(self):
-        self.assertEqual(_formula_texts(TEST_XLSB), _TEST_FORMULA_TEXTS)
-        self.assertEqual(_formula_texts(TEST_1904_XLSB), _TEST_FORMULA_TEXTS)
+        self.assertEqual(_formula_texts(self.download_sample(TEST_XLSB)), _TEST_FORMULA_TEXTS)
+        self.assertEqual(_formula_texts(self.download_sample(TEST_1904_XLSB)), _TEST_FORMULA_TEXTS)
 
     def test_defined_names_of_the_workbook_part(self):
         data = self.download_sample(_MALDOC)
@@ -139,9 +139,9 @@ class TestXlsbFormulaAgainstPyxlsb2(TestBase):
         except ImportError:
             self.skipTest('the pyxlsb2 oracle is not installed')
         samples = [
-            ('test_xlsb', TEST_XLSB),
-            ('dates_xlsb', DATES_XLSB),
-            ('test_1904_xlsb', TEST_1904_XLSB),
+            ('test_xlsb', self.download_sample(TEST_XLSB)),
+            ('dates_xlsb', self.download_sample(DATES_XLSB)),
+            ('test_1904_xlsb', self.download_sample(TEST_1904_XLSB)),
             ('maldoc', self.download_sample(_MALDOC)),
         ]
         for name, data in samples:
@@ -264,7 +264,7 @@ class TestXlsbFormulaDefects(TestBase):
         return buffer.getvalue()
 
     def test_first_token_cut_inside_a_formula_record_is_a_carrier(self):
-        data = self._corrupt_first_formula_token(TEST_XLSB, 'xl/worksheets/sheet1.bin')
+        data = self._corrupt_first_formula_token(self.download_sample(TEST_XLSB), 'xl/worksheets/sheet1.bin')
         self.assertEqual(
             _formula_texts(data),
             {
@@ -285,7 +285,7 @@ class TestXlsbFormulaDefects(TestBase):
 
     def test_a_string_token_that_does_not_decode_is_a_carrier(self):
         part = 'xl/worksheets/sheet1.bin'
-        source = zipfile.ZipFile(io.BytesIO(TEST_XLSB))
+        source = zipfile.ZipFile(io.BytesIO(self.download_sample(TEST_XLSB)))
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, 'w') as target:
             for info in source.infolist():
@@ -315,9 +315,9 @@ class TestXlsbFormulaDefects(TestBase):
         self.assertIsInstance(workbook.formula(cell.formula), XlUnparsedFormula)
 
     def test_cells_still_yield_when_the_token_stream_is_cut(self):
-        original = open_workbook(TEST_XLSB)
+        original = open_workbook(self.download_sample(TEST_XLSB))
         cut = open_workbook(
-            self._corrupt_first_formula_token(TEST_XLSB, 'xl/worksheets/sheet1.bin'))
+            self._corrupt_first_formula_token(self.download_sample(TEST_XLSB), 'xl/worksheets/sheet1.bin'))
         self.assertEqual(
             [
                 (cell.row, cell.col, cell.kind, cell.value)

@@ -7,7 +7,7 @@ from refinery.lib.excel.formula.model import XlNumber
 from refinery.lib.scripts.xlm import XlmCursor, XlmEngine, XlmReference, XlmValue, XlmView
 from refinery.lib.scripts.xlm.names import XlmNameEntry
 from refinery.lib.scripts.xlm.trace import XlmSeverity, XlmStatus
-from test import TestBase
+from test import TestBase, download_sample
 from test.lib.excel.samples import (
     XLM_MACRO_ASSIGN_BIFF8,
     XLM_MACRO_FORMULA_XLSM,
@@ -34,10 +34,12 @@ def _macrosheet(view: XlmView, name: str):
 
 def _run(
     *replacements: tuple[str, str],
-    data: bytes = XLM_MACRO_TEXT_XLSM,
+    data: bytes | str = XLM_MACRO_TEXT_XLSM,
     start: str = '',
     **options,
 ):
+    if isinstance(data, str):
+        data = download_sample(data)
     for cell, formula in replacements:
         data = replace_cell_formula(data, cell, formula)
     engine = XlmEngine(XlmView(data), **options)
@@ -72,9 +74,9 @@ class TestXlmEngineEntries(TestBase):
     ]
 
     def test_every_run_starts_at_the_fall_through_anchor_of_its_entry_name(self):
-        for data, sheet, row, col in self._ANCHORS:
+        for key, sheet, row, col in self._ANCHORS:
             with self.subTest(sheet=sheet):
-                steps = list(XlmEngine(XlmView(data)).run())
+                steps = list(XlmEngine(XlmView(self.download_sample(key))).run())
                 self.assertNotEqual(steps, [])
                 self.assertEqual(
                     (steps[0].sheet, steps[0].row, steps[0].col),
@@ -95,7 +97,7 @@ class TestXlmEngineEntries(TestBase):
             ('AZ112', 'NEXT()'),
             ('AZ113', 'SET.VALUE(BD214,"closed")'),
             ('AZ114', 'HALT()'),
-            data=add_defined_name(XLM_MACRO_TEXT_XLSM, 'auto_close', "'Doc1'!$AZ$112"),
+            data=add_defined_name(download_sample(XLM_MACRO_TEXT_XLSM), 'auto_close', "'Doc1'!$AZ$112"),
         )
         self.assertEqual(_rows(steps), [109, 110, 113, 114])
         self.assertEqual(_value(engine, 214, 56), 'closed')
@@ -106,7 +108,7 @@ class TestXlmEngineEntries(TestBase):
 class TestXlmEngineTraces(TestBase):
 
     def test_the_names_sample_answers_one_partial_step(self):
-        steps = list(XlmEngine(XlmView(XLM_MACRO_NAMES_BIFF8)).run())
+        steps = list(XlmEngine(XlmView(self.download_sample(XLM_MACRO_NAMES_BIFF8))).run())
         self.assertEqual(len(steps), 1)
         self.assertEqual(steps[0].status, XlmStatus.PartialEvaluation)
         self.assertEqual(
@@ -116,7 +118,7 @@ class TestXlmEngineTraces(TestBase):
         )
 
     def test_the_rpn_sample_walks_its_column_one_row_at_a_time(self):
-        steps = list(XlmEngine(XlmView(XLM_MACRO_RPN_BIFF8)).run())
+        steps = list(XlmEngine(XlmView(self.download_sample(XLM_MACRO_RPN_BIFF8))).run())
         self.assertEqual([(step.sheet, step.row, step.col) for step in steps], [
             ('mP9mScF1m5', row, 19) for row in range(41, 52)
         ] + [
@@ -137,7 +139,7 @@ class TestXlmEngineTraces(TestBase):
     def test_the_rpn_sample_executes_the_formulas_its_own_column_writes(self):
         # the ten writes the sample performs install executable trees, so the run does not end
         # at the jump target but walks the written column until the CLOSE it wrote there
-        steps = list(XlmEngine(XlmView(XLM_MACRO_RPN_BIFF8)).run())
+        steps = list(XlmEngine(XlmView(self.download_sample(XLM_MACRO_RPN_BIFF8))).run())
         self.assertEqual(steps[11].row, 1)
         self.assertEqual(steps[11].text, 'IF(GET.WORKSPACE(13)<770,CLOSE(FALSE),)')
         self.assertEqual(steps[17].text, '=ALERT('
@@ -145,7 +147,7 @@ class TestXlmEngineTraces(TestBase):
             'corrupt.",2)')
 
     def test_the_assign_sample_enters_through_a_cell_call(self):
-        steps = list(XlmEngine(XlmView(XLM_MACRO_ASSIGN_BIFF8)).run())
+        steps = list(XlmEngine(XlmView(self.download_sample(XLM_MACRO_ASSIGN_BIFF8))).run())
         self.assertNotEqual(steps, [])
         self.assertEqual(
             (steps[0].row, steps[0].col, steps[0].text),
@@ -252,7 +254,7 @@ class TestXlmEngineControl(TestBase):
         self.assertEqual(steps[1].text, '=FOO(1,,2)')
 
     def test_a_partial_condition_branches_into_both_arms_in_turn(self):
-        steps = _steps(('AZ110', 'IF(AZ112,1+1,2+2)'))
+        steps = _steps(('AZ110', 'IF(AZ112,1+1,2+2)'), ('AZ112', 'FOO(1)'))
         texts = [step.text for step in steps]
         true_arm = texts.index('[TRUE] 2')
         false_arm = texts.index('[FALSE] 4')
@@ -272,7 +274,10 @@ class TestXlmEngineControl(TestBase):
         )
 
     def test_a_false_branch_rolls_back_the_name_its_true_branch_defined(self):
-        steps, engine = _run(('AZ110', 'IF(AZ112,SET.NAME("probe",42),1)'))
+        steps, engine = _run(
+            ('AZ110', 'IF(AZ112,SET.NAME("probe",42),1)'),
+            ('AZ112', 'FOO(1)'),
+        )
         self.assertEqual(steps[2].text, '[TRUE] SET.NAME(probe,42)')
         self.assertEqual(engine.view.names.resolve('probe'), None)
 
@@ -333,7 +338,7 @@ class TestXlmEngineControl(TestBase):
 
     def test_a_macro_call_inside_an_expression_takes_the_value_its_subroutine_returns(self):
         data = replace_cell_element(
-            XLM_MACRO_TEXT_XLSM,
+            download_sample(XLM_MACRO_TEXT_XLSM),
             'BH120',
             '<c r="BH120"><f>RETURN("x")</f></c>',
         )
@@ -496,7 +501,7 @@ class TestXlmEngineControl(TestBase):
             ('AZ113', 'SET.VALUE(BD217,"arm")'),
             ('AZ116', 'END.IF()'),
             ('AZ118', 'HALT()'),
-            data=drop_defined_names(XLM_MACRO_TEXT_XLSM),
+            data=drop_defined_names(download_sample(XLM_MACRO_TEXT_XLSM)),
             start='Doc1!AZ112',
         )
         self.assertEqual(_rows(steps), [112, 116, 118])
@@ -510,7 +515,7 @@ class TestXlmEngineControl(TestBase):
             ('AZ113', 'SET.VALUE(BD217,"arm")'),
             ('AZ116', 'END.IF()'),
             ('AZ118', 'HALT()'),
-            data=drop_defined_names(XLM_MACRO_TEXT_XLSM),
+            data=drop_defined_names(download_sample(XLM_MACRO_TEXT_XLSM)),
             start='Doc1!AZ112',
         )
         self.assertEqual(_rows(steps), [112, 116, 118])
@@ -590,6 +595,7 @@ class TestXlmEngineControl(TestBase):
         steps, engine = _run(
             ('AZ110', 'IF(AZ113)'),
             ('AZ112', 'SET.VALUE(BD108,"body")'),
+            ('AZ113', 'FOO(1)'),
             ('AZ114', 'ELSE()'),
             ('AZ115', 'SET.VALUE(BD209,"arm")'),
             ('AZ116', 'END.IF()'),
@@ -614,6 +620,7 @@ class TestXlmEngineControl(TestBase):
         steps = _steps(
             ('AZ110', 'IF(AZ113)'),
             ('AZ112', 'ELSE()'),
+            ('AZ113', 'FOO(1)'),
             ('AZ115', 'SET.VALUE(BD209,"arm")'),
             ('AZ116', 'END.IF()'),
         )
@@ -630,6 +637,7 @@ class TestXlmEngineControl(TestBase):
         steps, engine = _run(
             ('AZ110', 'IF(AZ113)'),
             ('AZ112', 'ELSE.IF(TRUE)'),
+            ('AZ113', 'FOO(1)'),
             ('AZ114', 'SET.VALUE(BD209,"arm")'),
             ('AZ116', 'ELSE()'),
             ('AZ118', 'SET.VALUE(BD208,"other")'),
@@ -651,7 +659,7 @@ class TestXlmEngineControl(TestBase):
         self.assertEqual(engine.view.cell('Doc1', 208, 56), None)
 
     def test_the_assign_samples_partial_block_if_runs_both_of_its_arms(self):
-        steps = list(XlmEngine(XlmView(XLM_MACRO_ASSIGN_BIFF8)).run())
+        steps = list(XlmEngine(XlmView(self.download_sample(XLM_MACRO_ASSIGN_BIFF8))).run())
         self.assertEqual(
             [step.row for step in steps if step.sheet == 'sod' and step.col == 148],
             [25268]
@@ -730,6 +738,7 @@ class TestXlmEngineControl(TestBase):
         steps, engine = _run(
             ('AZ110', 'WHILE(BD213&lt;2)'),
             ('AZ112', 'IF(AZ113)'),
+            ('AZ113', 'FOO(1)'),
             ('AZ114', 'SET.VALUE(BD213,BD213+1)'),
             ('AZ115', 'NEXT()'),
             ('AZ116', 'END.IF()'),
@@ -845,7 +854,7 @@ class TestXlmEngineValues(TestBase):
 
     def test_a_value_cell_that_holds_quotes_reads_with_its_quotes(self):
         data = replace_cell_element(
-            XLM_MACRO_TEXT_XLSM,
+            download_sample(XLM_MACRO_TEXT_XLSM),
             'BH120',
             '<c r="BH120" t="str"><v>"abc"</v></c>',
         )
@@ -871,7 +880,7 @@ class TestXlmEngineValues(TestBase):
 class TestXlmEngineNames(TestBase):
 
     def test_a_set_name_replaces_the_name_scoped_to_the_sheet_that_reads_it(self):
-        data = add_defined_name(XLM_MACRO_TEXT_XLSM, 'probe', '"stored"', sheet=1)
+        data = add_defined_name(download_sample(XLM_MACRO_TEXT_XLSM), 'probe', '"stored"', sheet=1)
         _, engine = _run(
             ('AZ110', 'SET.NAME("probe",42)'),
             ('AZ112', 'SET.VALUE(BD108,probe&amp;"|")'),
@@ -890,13 +899,13 @@ class TestXlmEngineNames(TestBase):
 class TestXlmEngineDayGuess(TestBase):
 
     def _dated(self, *replacements: tuple[str, str]) -> bytes:
-        data = date_cell(XLM_MACRO_TEXT_XLSM, 'AZ113', '2026-10-01T00:00:00')
+        data = date_cell(download_sample(XLM_MACRO_TEXT_XLSM), 'AZ113', '2026-10-01T00:00:00')
         for cell, formula in replacements:
             data = replace_cell_formula(data, cell, formula)
         return data
 
     def test_a_guessed_day_runs_the_same_cells_as_a_given_day(self):
-        data = date_cell(XLM_MACRO_TEXT_XLSM, 'BI116', '2026-10-01T00:00:00')
+        data = date_cell(download_sample(XLM_MACRO_TEXT_XLSM), 'BI116', '2026-10-01T00:00:00')
         replacements = (('AZ109', 'DAY(BI116)'), ('AZ110', 'FORMULA("x",AZ112)'))
         guessed, _ = _run(*replacements, data=data)
         given, _ = _run(*replacements, data=data, day=5)
@@ -932,7 +941,7 @@ class TestXlmEngineDayGuess(TestBase):
 class TestXlmEngineJournal(TestBase):
 
     def test_a_cell_the_program_writes_is_visible_to_the_fall_through(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         cursor = XlmCursor('Doc1', 116, 52)
         self.assertEqual(
             engine.next_formula_cell(cursor),
@@ -951,7 +960,7 @@ class TestXlmEngineJournal(TestBase):
         )
 
     def test_a_rollback_removes_a_cell_the_rolled_back_writes_created(self):
-        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM))
         engine = XlmEngine(view)
         position = engine.snapshot()
         engine.write_cell(
@@ -978,7 +987,7 @@ class TestXlmEngineJournal(TestBase):
         )
 
     def test_a_rollback_restores_the_value_and_formula_of_an_overwritten_cell(self):
-        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM))
         engine = XlmEngine(view)
         cell = view.cell('Doc1', 109, 52)
         assert cell is not None
@@ -996,7 +1005,7 @@ class TestXlmEngineJournal(TestBase):
         self.assertEqual((cell.value, cell.formula is None), (False, False))
 
     def test_a_rollback_undoes_a_name_the_rolled_back_run_defined(self):
-        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM))
         engine = XlmEngine(view)
         position = engine.snapshot()
         engine.define_name(XlmNameEntry(name='probe', sheet=None, formula=XlNumber(value=42)))
@@ -1007,7 +1016,7 @@ class TestXlmEngineJournal(TestBase):
         self.assertEqual(view.names.resolve('probe'), None)
 
     def test_a_rollback_restores_the_name_a_rolled_back_run_replaced(self):
-        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM))
         engine = XlmEngine(view)
         entry = view.names.resolve('auto_open')
         assert entry is not None
@@ -1024,7 +1033,7 @@ class TestXlmEngineJournal(TestBase):
         self.assertEqual(view.names.resolve('auto_open'), entry)
 
     def test_a_rollback_undoes_an_alias_the_rolled_back_run_registered(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         engine.register_alias('old', 'Kernel32.Sleep')
         position = engine.snapshot()
         engine.register_alias('old', 'urlmon.URLDownloadToFileA')
@@ -1037,7 +1046,7 @@ class TestXlmEngineJournal(TestBase):
         self.assertEqual(engine.aliases, {'old': 'Kernel32.Sleep'})
 
     def test_a_rollback_undoes_the_files_a_run_opened_and_wrote(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         position = engine.snapshot()
         engine.open_file(r'C:\Users\Public\note.txt')
         self.assertTrue(engine.write_file(r'C:\Users\Public\note.txt', 'payload'))
@@ -1046,7 +1055,7 @@ class TestXlmEngineJournal(TestBase):
         self.assertFalse(engine.write_file(r'C:\Users\Public\note.txt', 'payload'))
 
     def test_a_rollback_undoes_the_memory_a_run_allocated_and_wrote(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         position = engine.snapshot()
         base = engine.allocate_memory(4194304, 4096)
         self.assertTrue(engine.write_memory(base, b'\xde\xad\xbe\xef', 4))
@@ -1056,7 +1065,7 @@ class TestXlmEngineJournal(TestBase):
         self.assertFalse(engine.write_memory(base, b'\xde\xad\xbe\xef', 4))
 
     def test_a_rollback_undoes_the_failed_write_marks_a_run_made(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         first = XlmReference('Doc1', 200, 52)
         second = XlmReference('Doc1', 201, 52)
         engine.mark_failed(first)

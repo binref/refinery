@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from refinery.lib.scripts.xlm import XlmEngine, XlmView
 from refinery.lib.scripts.xlm.trace import XlmStatus
-from test import TestBase
+from test import TestBase, download_sample
 from test.lib.excel.samples import XLM_MACRO_TEXT_XLSM
 from test.lib.scripts.xlm.modify import date_cell, replace_cell_formula
 
@@ -13,7 +13,7 @@ def _sample() -> bytes:
     made to spell one character whose code the day of the month decides: every day but the
     fourth spells a control character, so the day the guess keeps is the fourth.
     """
-    data = date_cell(XLM_MACRO_TEXT_XLSM, 'AZ113', '2026-10-01T00:00:00')
+    data = date_cell(download_sample(XLM_MACRO_TEXT_XLSM), 'AZ113', '2026-10-01T00:00:00')
     return replace_cell_formula(data, 'AZ110', 'CHAR(DAY(AZ113)*8)')
 
 
@@ -42,7 +42,7 @@ class TestDayGuess(TestBase):
         self.assertEqual(reference.value, 'URLMo')
 
     def test_a_serial_that_is_no_date_stays_unimplemented(self):
-        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ110', 'DAY(AZ109)')
+        data = replace_cell_formula(self.download_sample(XLM_MACRO_TEXT_XLSM), 'AZ110', 'DAY(AZ109)')
         steps = list(XlmEngine(XlmView(data)).run())
         self.assertEqual(steps[1].status, XlmStatus.NotImplemented)
         self.assertEqual(steps[1].text, 'DAY(Serial Date)')

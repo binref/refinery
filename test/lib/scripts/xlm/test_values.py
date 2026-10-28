@@ -114,11 +114,13 @@ class TestBinaryOperators(TestBase):
         self.assertEqual(result.value, 111)
         self.assertEqual(result.text, '111')
 
-    def test_division_and_the_rounding_of_the_quotient(self):
+    def test_division_keeps_every_digit_of_the_quotient(self):
         whole = apply_binary(XlBinaryOperator.DIV, XlmValue(value=8), XlmValue(value=2))
         self.assertEqual(whole.text, '4')
         third = apply_binary(XlBinaryOperator.DIV, XlmValue(value=10), XlmValue(value=3))
-        self.assertEqual(third.text, '3.3333333333')
+        self.assertEqual(third.text, '3.3333333333333335')
+        half = apply_binary(XlBinaryOperator.DIV, XlmValue(value=1), XlmValue(value=1.5))
+        self.assertEqual(half.text, '0.6666666666666666')
 
     def test_a_division_by_zero_is_the_excel_error(self):
         result = apply_binary(XlBinaryOperator.DIV, XlmValue(value=1), XlmValue(value=0))
@@ -132,18 +134,37 @@ class TestBinaryOperators(TestBase):
     def test_true_and_false_coerce_to_one_and_zero(self):
         true = apply_binary(XlBinaryOperator.ADD, XlmValue(value=True), XlmValue(value=1))
         self.assertEqual(true.text, '2')
-        spelled = apply_binary(XlBinaryOperator.ADD, XlmValue(value='true'), XlmValue(value=1))
-        self.assertEqual(spelled.text, '2')
-        false = apply_binary(XlBinaryOperator.MUL, XlmValue(value='false'), XlmValue(value=5))
+        false = apply_binary(XlBinaryOperator.MUL, XlmValue(value=False), XlmValue(value=5))
         self.assertEqual(false.text, '0')
 
-    def test_an_empty_text_is_zero(self):
-        result = apply_binary(XlBinaryOperator.ADD, XlmValue(), XlmValue(value=5))
+    def test_the_spelling_of_a_truth_value_holds_no_number(self):
+        for spelled in ('true', 'TRUE', 'false', 'FALSE'):
+            added = apply_binary(
+                XlBinaryOperator.ADD,
+                XlmValue(value=spelled),
+                XlmValue(value=1),
+            )
+            self.assertEqual(added.text, '#VALUE!', spelled)
+
+    def test_the_empty_text_holds_no_number(self):
+        result = apply_binary(XlBinaryOperator.ADD, XlmValue(value=''), XlmValue(value=5))
+        self.assertEqual(result.text, '#VALUE!')
+
+    def test_the_blank_of_an_empty_cell_is_zero(self):
+        blank = XlmValue(value='', text='')
+        result = apply_binary(XlBinaryOperator.ADD, blank, XlmValue(value=5))
         self.assertEqual(result.text, '5')
 
     def test_exponentiation(self):
         result = apply_binary(XlBinaryOperator.POW, XlmValue(value=2), XlmValue(value=10))
         self.assertEqual(result.text, '1024')
+        fraction = apply_binary(XlBinaryOperator.POW, XlmValue(value=2), XlmValue(value=1.5))
+        self.assertEqual(fraction.text, '2.82842712474619')
+
+    def test_zero_to_the_power_of_zero_is_the_excel_error(self):
+        for zero in (XlmValue(value=0), XlmValue(value=False), XlmValue(value='', text='')):
+            result = apply_binary(XlBinaryOperator.POW, zero, XlmValue(value=0))
+            self.assertEqual(result.text, '#NUM!')
 
     def test_comparisons_answer_true_and_false(self):
         self.assertEqual(
@@ -156,6 +177,68 @@ class TestBinaryOperators(TestBase):
         )
         self.assertEqual(
             apply_binary(XlBinaryOperator.LT, XlmValue(value='a'), XlmValue(value='b')).text,
+            'TRUE',
+        )
+
+    def test_texts_compare_their_letters_case_insensitively(self):
+        self.assertEqual(
+            apply_binary(XlBinaryOperator.EQ, XlmValue(value='a'), XlmValue(value='A')).text,
+            'TRUE',
+        )
+        self.assertEqual(
+            apply_binary(XlBinaryOperator.LT, XlmValue(value='a'), XlmValue(value='B')).text,
+            'TRUE',
+        )
+
+    def test_a_comparison_never_crosses_the_types_of_its_operands(self):
+        for left, right in (
+            (XlmValue(value=1), XlmValue(value='1')),
+            (XlmValue(value=1), XlmValue(value=True)),
+            (XlmValue(value='TRUE'), XlmValue(value=True)),
+        ):
+            self.assertEqual(
+                apply_binary(XlBinaryOperator.EQ, left, right).text,
+                'FALSE',
+            )
+            self.assertEqual(
+                apply_binary(XlBinaryOperator.NE, left, right).text,
+                'TRUE',
+            )
+
+    def test_numbers_order_below_texts_and_texts_below_truth_values(self):
+        self.assertEqual(
+            apply_binary(XlBinaryOperator.GT, XlmValue(value='a'), XlmValue(value=999)).text,
+            'TRUE',
+        )
+        self.assertEqual(
+            apply_binary(XlBinaryOperator.LT, XlmValue(value=999), XlmValue(value='a')).text,
+            'TRUE',
+        )
+        self.assertEqual(
+            apply_binary(XlBinaryOperator.GT, XlmValue(value=False), XlmValue(value='zzz')).text,
+            'TRUE',
+        )
+        self.assertEqual(
+            apply_binary(XlBinaryOperator.LT, XlmValue(value=True), XlmValue(value=False)).text,
+            'FALSE',
+        )
+
+    def test_the_blank_of_an_empty_cell_adopts_the_type_of_the_other_operand(self):
+        blank = XlmValue(value='', text='')
+        self.assertEqual(
+            apply_binary(XlBinaryOperator.EQ, blank, XlmValue(value=0)).text,
+            'TRUE',
+        )
+        self.assertEqual(
+            apply_binary(XlBinaryOperator.EQ, blank, XlmValue(value='FALSE')).text,
+            'FALSE',
+        )
+        self.assertEqual(
+            apply_binary(XlBinaryOperator.EQ, blank, XlmValue(value=False)).text,
+            'TRUE',
+        )
+        self.assertEqual(
+            apply_binary(XlBinaryOperator.LT, blank, XlmValue(value='a')).text,
             'TRUE',
         )
 

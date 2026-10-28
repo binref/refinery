@@ -36,6 +36,7 @@ _EXPECTED_SEVERITIES = {
     'ELSE.IF': XlmSeverity.NORMAL,
     'END.IF': XlmSeverity.NORMAL,
     'ERROR': XlmSeverity.NORMAL,
+    'FACT': XlmSeverity.NORMAL,
     'FILES': XlmSeverity.NORMAL,
     'FILE.DELETE': XlmSeverity.NORMAL,
     'FOR.CELL': XlmSeverity.NORMAL,
@@ -76,6 +77,7 @@ _EXPECTED_SEVERITIES = {
     'OR': XlmSeverity.NORMAL,
     'PRODUCT': XlmSeverity.NORMAL,
     'QUOTIENT': XlmSeverity.NORMAL,
+    'RAND': XlmSeverity.NORMAL,
     'RANDBETWEEN': XlmSeverity.NORMAL,
     'REGISTER': XlmSeverity.IMPORTANT,
     'REGISTER.ID': XlmSeverity.NORMAL,
@@ -90,6 +92,8 @@ _EXPECTED_SEVERITIES = {
     'SET.VALUE': XlmSeverity.NORMAL,
     'SQRT': XlmSeverity.NORMAL,
     'SUM': XlmSeverity.NORMAL,
+    'SUMPRODUCT': XlmSeverity.NORMAL,
+    'SUMXMY2': XlmSeverity.NORMAL,
     'T': XlmSeverity.NORMAL,
     'TEXT': XlmSeverity.NORMAL,
     'TRUNC': XlmSeverity.NORMAL,
@@ -124,7 +128,7 @@ class TestXlmCommandRegistry(TestBase):
         self.assertEqual(severity('FREAD'), XlmSeverity.IMPORTANT)
 
     def test_commands_outside_the_registry_are_ordinary(self):
-        for name in ('EXEC', 'WORKBOOK.UNHIDE', 'ALERT', 'SUMPRODUCT'):
+        for name in ('EXEC', 'WORKBOOK.UNHIDE', 'ALERT', 'SUMSQ'):
             with self.subTest(command=name):
                 self.assertEqual(severity(name), XlmSeverity.NORMAL)
 
@@ -132,7 +136,7 @@ class TestXlmCommandRegistry(TestBase):
 class TestXlmCommandClassificationOfSamples(TestBase):
 
     def test_top_level_commands_of_the_samples_and_their_severity(self):
-        for sample, data, commands, severities in [
+        for sample, key, commands, severities in [
             (
                 'rpn_biff8',
                 XLM_MACRO_RPN_BIFF8,
@@ -192,7 +196,7 @@ class TestXlmCommandClassificationOfSamples(TestBase):
             ('formula_xlsm', XLM_MACRO_FORMULA_XLSM, [], {}),
         ]:
             with self.subTest(sample=sample):
-                found = _top_level_commands(data)
+                found = _top_level_commands(self.download_sample(key))
                 self.assertEqual(found, commands)
                 self.assertEqual(
                     {name: severity(name) for name in found},

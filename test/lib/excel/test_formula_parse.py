@@ -350,7 +350,7 @@ class TestFormulaStoredText(TestBase):
         formula in the embedded sample must survive a synthesis and a re-parse unchanged.
         """
         count = 0
-        for sheet in open_workbook(REVENG1).sheets():
+        for sheet in open_workbook(self.download_sample(REVENG1)).sheets():
             for cell in sheet.cells():
                 if not isinstance(cell.formula, str):
                     continue

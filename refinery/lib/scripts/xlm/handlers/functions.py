@@ -7,7 +7,6 @@ from __future__ import annotations
 import datetime
 import decimal
 import math
-import random
 
 from typing import TYPE_CHECKING
 
@@ -226,6 +225,68 @@ def _round_up(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
     return _round_to_digits(engine, call, cursor, decimal.ROUND_UP)
 
 
+def _fact(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    The factorial of the number cut to its integer part: a negative number — negative before
+    the cut, so `FACT(-0.5)` leaves the command unevaluated as well — and a factorial no finite
+    number holds leave the command unevaluated.
+    """
+    spelled = synthesize_formula(call)
+    argument = _numeric(engine, call, cursor)
+    if argument is None:
+        return _partial(spelled)
+    number = float(argument.value)
+    if number < 0:
+        return _partial(spelled)
+    whole = math.trunc(number)
+    if whole > 170:
+        return _partial(spelled)
+    return XlmOutcome(value=XlmValue(value=float(math.factorial(whole))))
+
+
+def _rand(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    A number of the chance of the engine, which the fixed seed of its generator makes the same
+    for every run of the same program; the call's arguments name nothing it reads.
+    """
+    return XlmOutcome(value=XlmValue(value=engine.random.random()))
+
+
+def _sumproduct(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    The product of the arguments; a result no finite number holds leaves the command
+    unevaluated.
+    """
+    spelled = synthesize_formula(call)
+    total = 1.0
+    seen = 0
+    for node in call.arguments:
+        argument = evaluate_expression(engine, node, cursor)
+        if argument.partial or not is_number(argument.value):
+            return _partial(spelled)
+        total *= float(argument.value)
+        seen += 1
+    if not seen or not math.isfinite(total):
+        return _partial(spelled)
+    return XlmOutcome(value=XlmValue(value=total))
+
+
+def _sumxmy2(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    The squared difference of the two operands; a result no finite number holds leaves the
+    command unevaluated.
+    """
+    spelled = synthesize_formula(call)
+    operands = _pair(engine, call, cursor)
+    if operands is None:
+        return _partial(spelled)
+    left, right = operands
+    result = (float(left.value) - float(right.value)) ** 2
+    if not math.isfinite(result):
+        return _partial(spelled)
+    return XlmOutcome(value=XlmValue(value=result))
+
+
 def _randbetween(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     spelled = synthesize_formula(call)
     operands = _pair(engine, call, cursor)
@@ -233,7 +294,7 @@ def _randbetween(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> 
         return _partial(spelled)
     left, right = operands
     try:
-        result = random.randint(int(float(left.value)), int(float(right.value)))
+        result = engine.random.randint(int(float(left.value)), int(float(right.value)))
     except ValueError:
         return _partial(spelled)
     return XlmOutcome(value=XlmValue(value=result))
@@ -473,6 +534,7 @@ FUNCTION_HANDLERS = {
     'AND': _and,
     'COUNT': _count,
     'DAY': _day,
+    'FACT': _fact,
     'INT': _int,
     'ISERROR': _iserror,
     'ISNUMBER': _isnumber,
@@ -484,11 +546,14 @@ FUNCTION_HANDLERS = {
     'OR': _or,
     'PRODUCT': _product,
     'QUOTIENT': _quotient,
+    'RAND': _rand,
     'RANDBETWEEN': _randbetween,
     'ROUND': _round,
     'ROUNDUP': _round_up,
     'SQRT': _sqrt,
     'SUM': _sum,
+    'SUMPRODUCT': _sumproduct,
+    'SUMXMY2': _sumxmy2,
     'TRUNC': _trunc,
     'VALUE': _value,
     '_xlfn.ARABIC': _arabic,

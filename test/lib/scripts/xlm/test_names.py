@@ -34,7 +34,7 @@ def _text(formula: Expression | None) -> str:
 class TestXlmNameResolution(TestBase):
 
     def test_auto_open_resolves_to_a_cell_reference_on_every_sample(self):
-        for data, expected in [
+        for key, expected in [
             (XLM_MACRO_RPN_BIFF8, 'mP9mScF1m5!$S$41'),
             (XLM_MACRO_NAMES_BIFF8, 'Acf444!$A$9591'),
             (XLM_MACRO_ASSIGN_BIFF8, 'sod!$ER$25268'),
@@ -42,7 +42,7 @@ class TestXlmNameResolution(TestBase):
             (XLM_MACRO_FORMULA_XLSM, 'PCWV!$G$1'),
         ]:
             with self.subTest(expected=expected):
-                table = _table(data)
+                table = _table(self.download_sample(key))
                 entry = _resolve(table, 'AUTO_OPEN')
                 self.assertEqual(entry.sheet, None)
                 self.assertEqual(_text(entry.formula), expected)
@@ -55,7 +55,7 @@ class TestXlmNameResolution(TestBase):
         self.assertEqual(_text(_resolve(table, 'Ropaasf').formula), '-679215104')
 
     def test_name_sets_of_the_samples(self):
-        for sample, data, expected in [
+        for sample, key, expected in [
             ('rpn_biff8', XLM_MACRO_RPN_BIFF8, ['_xlfn.CONCAT', 'auto_open']),
             (
                 'names_biff8',
@@ -96,44 +96,44 @@ class TestXlmNameResolution(TestBase):
         ]:
             with self.subTest(sample=sample):
                 self.assertEqual(
-                    [entry.name for entry in _table(data).entries()],
+                    [entry.name for entry in _table(self.download_sample(key)).entries()],
                     expected,
                 )
 
     def test_a_name_the_reader_cannot_decode_stays_the_carrier(self):
-        table = _table(XLM_MACRO_NAMES_BIFF8)
+        table = _table(self.download_sample(XLM_MACRO_NAMES_BIFF8))
         formula = _resolve(table, 'gefg').formula
         assert isinstance(formula, XlUnparsedFormula)
         self.assertEqual(formula.text, '3a000000000000')
         self.assertIsInstance(_resolve(table, 'Application.Quit').formula, XlUnparsedFormula)
 
     def test_a_name_scoped_to_one_sheet_resolves_only_under_that_sheet(self):
-        table = _table(XLM_MACRO_NAMES_BIFF8)
+        table = _table(self.download_sample(XLM_MACRO_NAMES_BIFF8))
         self.assertEqual(_resolve(table, 'ubdhh', 0).sheet, 0)
         self.assertEqual(_text(_resolve(table, 'ubdhh', 0).formula), '#NAME?')
         self.assertEqual(table.resolve('ubdhh'), None)
 
     def test_a_name_defined_for_several_sheets_keeps_an_entry_per_sheet(self):
         self.assertEqual(
-            [entry.sheet for entry in _table(ISSUE20).entries() if entry.name == 'print_area'],
+            [entry.sheet for entry in _table(self.download_sample(ISSUE20)).entries() if entry.name == 'print_area'],
             [0, 1, 2],
         )
 
     def test_a_scope_the_table_is_asked_for_wins_over_the_first_entry(self):
-        table = _table(ISSUE20)
+        table = _table(self.download_sample(ISSUE20))
         for sheet, name in [(0, 'print_area'), (1, 'print_area'), (2, 'sheet_title')]:
             with self.subTest(sheet=sheet, name=name):
                 self.assertEqual(_resolve(table, name, sheet).sheet, sheet)
 
     def test_an_unqualified_name_answers_only_a_global_entry(self):
-        table = _table(ISSUE20)
+        table = _table(self.download_sample(ISSUE20))
         self.assertEqual(table.resolve('print_area'), None)
         table.define(XlmNameEntry(name='print_area', sheet=None, formula=None))
         self.assertEqual(_resolve(table, 'print_area').sheet, None)
         self.assertEqual(_resolve(table, 'print_area', 2).sheet, 2)
 
     def test_define_replaces_the_entry_of_the_same_name_and_scope(self):
-        table = _table(ISSUE20)
+        table = _table(self.download_sample(ISSUE20))
         renamed = _resolve(table, 'print_area', 1)._replace(name='Print_Area')
         table.define(renamed)
         self.assertEqual(
@@ -156,31 +156,31 @@ class TestXlmNameDiscovery(TestBase):
 
     def test_prefix_matches_list_every_entry_that_starts_with_the_pattern(self):
         self.assertEqual(
-            [entry.name for entry in _table(XLM_MACRO_FORMULA_XLSM).fuzzy('NEVR')],
+            [entry.name for entry in _table(self.download_sample(XLM_MACRO_FORMULA_XLSM)).fuzzy('NEVR')],
             ['NEVR1', 'NEVR2', 'NEVR3', 'NEVR4', 'NEVR5', 'NEVR6', 'NEVR7'],
         )
 
     def test_a_prefix_match_suppresses_the_subsequence_fallback(self):
         self.assertEqual(
-            [entry.name for entry in _table(XLM_MACRO_NAMES_BIFF8).fuzzy('app')],
+            [entry.name for entry in _table(self.download_sample(XLM_MACRO_NAMES_BIFF8)).fuzzy('app')],
             ['Application.Quit'],
         )
 
     def test_without_a_prefix_match_the_characters_in_order_match(self):
         self.assertEqual(
-            [entry.name for entry in _table(XLM_MACRO_NAMES_BIFF8).fuzzy('ao')],
+            [entry.name for entry in _table(self.download_sample(XLM_MACRO_NAMES_BIFF8)).fuzzy('ao')],
             ['Application.Quit', 'auto_open'],
         )
 
     def test_each_character_of_a_name_matches_one_character_of_the_pattern(self):
         # of the names that contain a u, only one contains two of them
         self.assertEqual(
-            [entry.name for entry in _table(XLM_MACRO_NAMES_BIFF8).fuzzy('uu')],
+            [entry.name for entry in _table(self.download_sample(XLM_MACRO_NAMES_BIFF8)).fuzzy('uu')],
             ['hf3iCgNUuxNu1WDT'],
         )
 
     def test_a_pattern_no_name_matches_yields_no_entries(self):
-        self.assertEqual(_table(XLM_MACRO_NAMES_BIFF8).fuzzy('xyzzy'), [])
+        self.assertEqual(_table(self.download_sample(XLM_MACRO_NAMES_BIFF8)).fuzzy('xyzzy'), [])
 
     def test_the_maldoc_entry_point_is_found_by_prefix_alone(self):
         table = _table(self.download_sample(_MALDOC))
@@ -193,7 +193,7 @@ class TestXlmNameDiscovery(TestBase):
 class TestXlmNameTableMutation(TestBase):
 
     def test_undefine_removes_and_define_installs_an_entry(self):
-        table = _table(XLM_MACRO_TEXT_XLSM)
+        table = _table(self.download_sample(XLM_MACRO_TEXT_XLSM))
         entry = _resolve(table, 'auto_open')
         table.undefine('AUTO_OPEN')
         self.assertEqual(table.resolve('auto_open'), None)
@@ -202,7 +202,7 @@ class TestXlmNameTableMutation(TestBase):
         self.assertEqual(_resolve(table, 'entrypoint'), renamed)
 
     def test_every_listed_name_resolves_to_its_entry_after_a_redefinition(self):
-        table = _table(XLM_MACRO_FORMULA_XLSM)
+        table = _table(self.download_sample(XLM_MACRO_FORMULA_XLSM))
         table.define(_resolve(table, 'nevr1')._replace(name='Nevr1'))
         table.undefine('NEVR2')
         self.assertEqual(

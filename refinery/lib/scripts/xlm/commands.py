@@ -14,7 +14,6 @@ class XlmSeverity(enum.Enum):
     The output level a macro command shows at: the commands that move execution print at
     level 0, ordinary commands at level 1, and the commands that matter for triage at level 2.
     """
-
     JUMP = 0
     NORMAL = 1
     IMPORTANT = 2
@@ -59,6 +58,7 @@ _COMMAND_NAMES = frozenset((
     'ELSE.IF',
     'END.IF',
     'ERROR',
+    'FACT',
     'FILES',
     'FILE.DELETE',
     'FOR.CELL',
@@ -99,6 +99,7 @@ _COMMAND_NAMES = frozenset((
     'OR',
     'PRODUCT',
     'QUOTIENT',
+    'RAND',
     'RANDBETWEEN',
     'REGISTER',
     'REGISTER.ID',
@@ -113,6 +114,8 @@ _COMMAND_NAMES = frozenset((
     'SET.VALUE',
     'SQRT',
     'SUM',
+    'SUMPRODUCT',
+    'SUMXMY2',
     'T',
     'TEXT',
     'TRUNC',

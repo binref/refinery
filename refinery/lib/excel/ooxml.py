@@ -142,6 +142,7 @@ class OoxmlSheet(ExcelSheet):
         formula: str | None = None
         assignment = False
         value_text: str | None = None
+        value_present = False
         inline: str | None = None
         for child in element:
             local = local_name(child.tag)
@@ -150,6 +151,7 @@ class OoxmlSheet(ExcelSheet):
                 assignment = (child.get('bx') or '').lower() in ('1', 'true')
             elif local == 'v':
                 value_text = child.text
+                value_present = True
             elif local == 'is':
                 inline = decode_xstring(_collect_text(child))
         workbook = self._workbook
@@ -168,6 +170,8 @@ class OoxmlSheet(ExcelSheet):
         if kind_hint == 'inlineStr' and inline is not None:
             return Cell(row, col, CellKind.TEXT, inline, formula, assignment)
         if value_text is None:
+            if value_present and kind_hint == 'str':
+                return Cell(row, col, CellKind.TEXT, '', formula, assignment)
             if formula is not None:
                 return Cell(row, col, CellKind.FORMULA, None, formula, assignment)
             return Cell(row, col, CellKind.BLANK, None, None)

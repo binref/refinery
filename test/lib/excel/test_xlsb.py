@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime
 import io
-import tempfile
 import zipfile
 
 from refinery.lib.excel import (
@@ -149,13 +148,13 @@ _TEST_FORMULAS = {
 class TestXlsbWorkbook(TestBase):
 
     def test_detect_xlsb(self):
-        for data in (TEST_XLSB, DATES_XLSB, TEST_1904_XLSB):
-            self.assertEqual(detect_format(data), ExcelFormat.XLSB)
+        for key in (TEST_XLSB, DATES_XLSB, TEST_1904_XLSB):
+            self.assertEqual(detect_format(self.download_sample(key)), ExcelFormat.XLSB)
 
     def test_parts_outside_the_conventional_folder_are_not_detected(self):
         # A workbook whose parts do not sit inside the `xl` folder is one the reader cannot
         # resolve, and it is not detected as a workbook at all.
-        source = zipfile.ZipFile(io.BytesIO(TEST_XLSB))
+        source = zipfile.ZipFile(io.BytesIO(self.download_sample(TEST_XLSB)))
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, 'w') as target:
             for info in source.infolist():
@@ -164,15 +163,19 @@ class TestXlsbWorkbook(TestBase):
         self.assertIsNone(detect_format(buffer.getvalue()))
 
     def test_sheets(self):
-        for data, name in ((TEST_XLSB, 'Test'), (DATES_XLSB, 'Sheet1'), (TEST_1904_XLSB, 'Test')):
-            sheets = open_workbook(data).sheets()
+        for key, name in (
+            (TEST_XLSB, 'Test'),
+            (DATES_XLSB, 'Sheet1'),
+            (TEST_1904_XLSB, 'Test'),
+        ):
+            sheets = open_workbook(self.download_sample(key)).sheets()
             self.assertEqual(len(sheets), 1)
             self.assertEqual(sheets[0].name, name)
             self.assertEqual(sheets[0].kind, SheetKind.WORKSHEET)
 
     def test_values(self):
-        self.assertEqual(_cells(TEST_XLSB), _TEST_VALUES)
-        self.assertEqual(_cells(TEST_1904_XLSB), _TEST_1904_VALUES)
+        self.assertEqual(_cells(self.download_sample(TEST_XLSB)), _TEST_VALUES)
+        self.assertEqual(_cells(self.download_sample(TEST_1904_XLSB)), _TEST_1904_VALUES)
 
     def test_date_serials_resolve_their_values(self):
         self.assertEqual(
@@ -193,10 +196,11 @@ class TestXlsbWorkbook(TestBase):
         )
 
     def test_formula_cells_carry_token_streams(self):
-        self.assertEqual(_formulas(TEST_XLSB), _TEST_FORMULAS)
+        self.assertEqual(_formulas(self.download_sample(TEST_XLSB)), _TEST_FORMULAS)
 
     def test_dates_of_second_sample(self):
-        self.assertEqual(_cells(DATES_XLSB), {
+        data = self.download_sample(DATES_XLSB)
+        self.assertEqual(_cells(data), {
             (1, 1): (CellKind.DATE, 43893),
             (2, 1): (CellKind.DATE, 0.9201388888888888),
             (3, 1): (CellKind.DATE, 43893.92013888889),
@@ -207,11 +211,11 @@ class TestXlsbWorkbook(TestBase):
             ((3, 1), datetime.datetime(2020, 3, 3, 22, 5)),
         ]:
             with self.subTest(key=key):
-                self.assertEqual(serial_to_datetime(_cells(DATES_XLSB)[key][1], False), expected)
+                self.assertEqual(serial_to_datetime(_cells(data)[key][1], False), expected)
 
     def test_truncated_sheet_part_yields_partial_cells(self):
         part = 'xl/worksheets/sheet1.bin'
-        data = _truncate_inside_cell_record(TEST_XLSB, part, 4)
+        data = _truncate_inside_cell_record(self.download_sample(TEST_XLSB), part, 4)
         sheet = open_workbook(data).sheets()[0]
         cells = []
         with self.assertRaises(ExcelFormatError):
@@ -221,13 +225,13 @@ class TestXlsbWorkbook(TestBase):
         self.assertEqual((cells[0].row, cells[0].col, cells[0].value), (1, 1, 'A'))
 
     def test_lone_surrogate_in_shared_strings_is_a_defect(self):
-        data = _with_lone_surrogate(TEST_XLSB, 'xl/sharedStrings.bin')
+        data = _with_lone_surrogate(self.download_sample(TEST_XLSB), 'xl/sharedStrings.bin')
         with self.assertRaises(ExcelFormatError):
             open_workbook(data)
 
     def test_relationships_that_declare_an_entity_read_like_missing_relationships(self):
         part = 'xl/_rels/workbook.bin.rels'
-        source = zipfile.ZipFile(io.BytesIO(TEST_XLSB))
+        source = zipfile.ZipFile(io.BytesIO(self.download_sample(TEST_XLSB)))
 
         def package(relationships: bytes | None) -> bytes:
             buffer = io.BytesIO()
@@ -256,17 +260,19 @@ class TestAgainstPyxlsb2(TestBase):
             from pyxlsb2.xlsbpackage import XlsbPackage
         except ImportError:
             self.skipTest('the pyxlsb2 oracle is not installed')
-        for data in (TEST_XLSB, DATES_XLSB, TEST_1904_XLSB):
+        for key in (TEST_XLSB, DATES_XLSB, TEST_1904_XLSB):
+            data = self.download_sample(key)
             mine = _cells(data)
             oracle = {}
-            with tempfile.TemporaryDirectory() as folder:
-                sample = F'{folder}/sample.xlsb'
-                with open(sample, 'wb') as stream:
-                    stream.write(data)
-                with Pyxlsb2Workbook(XlsbPackage(sample)) as book:
-                    for row in book.get_sheet_by_index(0).rows():
-                        for cell in row:
-                            oracle[(cell.r + 1, cell.c + 1)] = cell
+            # the oracle wants a path on disk, which a sample from the store must never get, so
+            # its package is assembled around the zip that already sits in memory
+            package = object.__new__(XlsbPackage)
+            package._zf_path = '<memory>'
+            package._zf = zipfile.ZipFile(io.BytesIO(data))
+            with Pyxlsb2Workbook(package) as book:
+                for row in book.get_sheet_by_index(0).rows():
+                    for cell in row:
+                        oracle[(cell.r + 1, cell.c + 1)] = cell
             self.assertEqual(set(mine), set(oracle))
             for key in sorted(mine):
                 kind, value = mine[key]

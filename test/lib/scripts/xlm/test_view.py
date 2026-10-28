@@ -53,14 +53,14 @@ def _with_part_replacement(data: bytes, part: str, old: bytes, new: bytes) -> by
 class TestXlmViewCells(TestBase):
 
     def test_worksheet_cells_read_as_the_reader_spelled_them(self):
-        view = XlmView(XLM_MACRO_FORMULA_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_FORMULA_XLSM))
         self.assertEqual(_cell(view, 'Tgbfgs', 4, 9).value, 'r"&"eg"&"s"&"vr3"&"2.e"&"x"&"e')
         self.assertEqual(_cell(view, 'Cdfea', 2, 16).value, '-')
         self.assertEqual(_cell(view, 'Tgbs', 14, 6).value, '"http://buchhave.net/cache/t82rF5S/",')
         self.assertEqual(view.cell('Tgbfgs', 1000, 1), None)
 
     def test_worksheet_formulas_decode_into_the_formula_model(self):
-        cell = _cell(XlmView(XLM_MACRO_FORMULA_XLSM), 'Cdfea', 2, 5)
+        cell = _cell(XlmView(self.download_sample(XLM_MACRO_FORMULA_XLSM)), 'Cdfea', 2, 5)
         assert cell.formula is not None
         self.assertEqual(synthesize_formula(cell.formula), 'CHAR(113-2)')
 
@@ -70,7 +70,7 @@ class TestXlmViewCells(TestBase):
         self.assertEqual(synthesize_formula(cell.formula), '".dat"')
 
     def test_a_date_cell_keeps_the_serial_number_excel_stores(self):
-        worksheet = XlmView(DATES_XLSB).worksheet('Sheet1')
+        worksheet = XlmView(self.download_sample(DATES_XLSB)).worksheet('Sheet1')
         assert worksheet is not None
         self.assertEqual(
             [worksheet[row, 1].value for row in (1, 2, 3)],
@@ -78,7 +78,7 @@ class TestXlmViewCells(TestBase):
         )
 
     def test_a_worksheet_is_materialized_as_a_coordinate_dictionary(self):
-        view = XlmView(XLM_MACRO_FORMULA_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_FORMULA_XLSM))
         worksheet = view.worksheet('Tgbfgs')
         assert worksheet is not None
         self.assertEqual(
@@ -87,7 +87,7 @@ class TestXlmViewCells(TestBase):
         )
 
     def test_a_worksheet_holds_no_cells_without_formula_or_value(self):
-        worksheet = XlmView(XLM_MACRO_TEXT_XLSM).worksheet('Doc2')
+        worksheet = XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)).worksheet('Doc2')
         assert worksheet is not None
         self.assertEqual(len(worksheet), 50)
         self.assertEqual(
@@ -97,7 +97,7 @@ class TestXlmViewCells(TestBase):
 
     def test_a_worksheet_whose_walk_fails_keeps_the_cells_before_the_defect(self):
         view = XlmView(_with_part_replacement(
-            XLM_MACRO_TEXT_XLSM,
+            self.download_sample(XLM_MACRO_TEXT_XLSM),
             'xl/worksheets/sheet2.xml',
             b'<c r="AP76" s="7" t="s"><v>7</v></c>',
             b'<c r="AP76" s="7" t="s"><v>99999</v></c>',
@@ -122,7 +122,7 @@ class TestXlmViewCells(TestBase):
 
     def test_a_macrosheet_whose_walk_fails_keeps_the_rest_of_the_workbook(self):
         view = XlmView(_with_part_replacement(
-            XLM_MACRO_TEXT_XLSM,
+            self.download_sample(XLM_MACRO_TEXT_XLSM),
             'xl/macrosheets/intlsheet1.xml',
             b'<c r="BI116" s="9" t="s"><v>26</v></c>',
             b'<c r="BI116" s="9" t="s"><v>99999</v></c>',
@@ -134,27 +134,27 @@ class TestXlmViewCells(TestBase):
         self.assertEqual([entry.name for entry in view.names.entries()], ['auto_open'])
 
     def test_macrosheet_cells_read_as_cells_of_the_model(self):
-        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM))
         cell = view.cell('Doc1', 97, 59)
         self.assertIsInstance(cell, XlmCell)
         self.assertEqual(_macrosheet(view, 'Doc1').cell(97, 59), cell)
         self.assertEqual(_cell(view, 'Doc1', 97, 59).value, '..\\iekdhfe.dsk')
 
     def test_sheet_names_match_case_insensitively(self):
-        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM))
         self.assertEqual(view.macrosheet('DOC1'), view.macrosheet('Doc1'))
         self.assertEqual(view.cell('doc1', 97, 59), view.cell('Doc1', 97, 59))
         self.assertEqual(view.worksheet('dOC2'), view.worksheet('Doc2'))
         self.assertEqual(_cell(view, 'doc2', 84, 44).value, 0)
 
     def test_sheets_the_workbook_does_not_have_answer_none(self):
-        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM))
         self.assertEqual(view.cell('Nope', 1, 1), None)
         self.assertEqual(view.macrosheet('Nope'), None)
         self.assertEqual(view.worksheet('Nope'), None)
 
     def test_a_macrosheet_is_not_a_worksheet(self):
-        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM))
         self.assertEqual(view.worksheet('Doc1'), None)
         self.assertEqual(view.macrosheet('Doc2'), None)
 
@@ -170,9 +170,9 @@ class TestXlmViewExecution(TestBase):
     ]
 
     def test_the_auto_open_anchor_falls_through_to_the_next_formula_cell(self):
-        for data, name, row, col, target in self._ANCHORS:
+        for key, name, row, col, target in self._ANCHORS:
             with self.subTest(name=name, row=row):
-                cell = _macrosheet(XlmView(data), name).next_formula_cell(row, col)
+                cell = _macrosheet(XlmView(self.download_sample(key)), name).next_formula_cell(row, col)
                 assert cell is not None
                 self.assertEqual((cell.row, cell.col), target)
 
@@ -186,7 +186,7 @@ class TestXlmViewExecution(TestBase):
 class TestXlmViewWorkbook(TestBase):
 
     def test_workbook_name_follows_the_container_family(self):
-        for data, expected in [
+        for key, expected in [
             (XLM_MACRO_RPN_BIFF8, 'workbook.xls'),
             (XLM_MACRO_NAMES_BIFF8, 'workbook.xls'),
             (XLM_MACRO_ASSIGN_BIFF8, 'workbook.xls'),
@@ -194,11 +194,11 @@ class TestXlmViewWorkbook(TestBase):
             (XLM_MACRO_FORMULA_XLSM, 'workbook.xlsm'),
         ]:
             with self.subTest(expected=expected):
-                self.assertEqual(XlmView(data).workbook_name, expected)
+                self.assertEqual(XlmView(self.download_sample(key)).workbook_name, expected)
         self.assertEqual(XlmView(self.download_sample(_MALDOC)).workbook_name, 'workbook.xlsb')
 
     def test_international_characters_are_the_defaults(self):
-        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM))
         self.assertEqual(view.international, International())
         self.assertEqual(
             (
@@ -210,7 +210,7 @@ class TestXlmViewWorkbook(TestBase):
         )
 
     def test_the_name_table_of_the_view_resolves_entry_points(self):
-        view = XlmView(XLM_MACRO_FORMULA_XLSM)
+        view = XlmView(self.download_sample(XLM_MACRO_FORMULA_XLSM))
         entry = view.names.resolve('NEVR3')
         assert entry is not None
         assert entry.formula is not None
@@ -282,7 +282,7 @@ def _with_chartsheet_between_two_worksheets(data: bytes) -> bytes:
 class TestXlmViewSheetIndex(TestBase):
 
     def test_sheet_indexes_count_every_sheet_of_the_workbook(self):
-        view = XlmView(_with_chartsheet_between_two_worksheets(ISSUE20))
+        view = XlmView(_with_chartsheet_between_two_worksheets(self.download_sample(ISSUE20)))
         self.assertEqual(
             [view.sheet_index(name) for name in ('Sheet1', 'Graf', 'Sheet2', 'Sheet3')],
             [0, 1, 2, 3],
@@ -290,17 +290,18 @@ class TestXlmViewSheetIndex(TestBase):
         self.assertEqual(view.sheet_index('nope'), None)
 
     def test_sheet_indexes_match_case_insensitively(self):
-        self.assertEqual(XlmView(ISSUE20).sheet_index('sheet2'), 1)
+        self.assertEqual(XlmView(self.download_sample(ISSUE20)).sheet_index('sheet2'), 1)
 
     def test_a_name_resolves_through_the_sheet_index_of_its_scope(self):
         # the scope of a name counts every sheet of the workbook, so the chart sheet between
         # Sheet1 and Sheet2 moves the index of Sheet2 and every name scoped to it with it
+        issue20 = self.download_sample(ISSUE20)
         for data, name, sheet, text in [
-            (ISSUE20, 'sheet_title', 'Sheet1', '"Sheet1"'),
-            (ISSUE20, 'sheet_title', 'Sheet2', '"Sheet2"'),
-            (ISSUE20, 'sheet_title', 'Sheet3', '"Sheet3"'),
-            (_with_chartsheet_between_two_worksheets(ISSUE20), 'sheet_title', 'Sheet2', '"Sheet2"'),
-            (_with_chartsheet_between_two_worksheets(ISSUE20), 'sheet_title', 'Sheet3', '"Sheet3"'),
+            (issue20, 'sheet_title', 'Sheet1', '"Sheet1"'),
+            (issue20, 'sheet_title', 'Sheet2', '"Sheet2"'),
+            (issue20, 'sheet_title', 'Sheet3', '"Sheet3"'),
+            (_with_chartsheet_between_two_worksheets(issue20), 'sheet_title', 'Sheet2', '"Sheet2"'),
+            (_with_chartsheet_between_two_worksheets(issue20), 'sheet_title', 'Sheet3', '"Sheet3"'),
         ]:
             with self.subTest(sheet=sheet, text=text):
                 view = XlmView(data)

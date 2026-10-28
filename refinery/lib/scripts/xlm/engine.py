@@ -10,6 +10,7 @@ from __future__ import annotations
 import bisect
 import dataclasses
 import hashlib
+import random
 import time
 
 from typing import Any, Iterator, NamedTuple, Protocol
@@ -345,7 +346,6 @@ class XlmEngine:
     def __init__(
         self,
         view,
-        output_level: int = 0,
         day: int = -1,
         timeout: int = 0,
         max_steps: int = 1_000_000,
@@ -353,7 +353,6 @@ class XlmEngine:
         cells: _CellIndex | None = None,
     ):
         self.view = view
-        self.output_level = output_level
         self.day = day
         self.timeout = timeout
         self.max_steps = max_steps
@@ -365,6 +364,7 @@ class XlmEngine:
         self.arrival = XlmArrival.JUMP
         self.now_count = 0
         self.char_errors = 0
+        self.random = random.Random(0)
         self.iserror_at: XlmCursor | None = None
         self.iserror_flag = False
         self.iserror_repeats = 0
@@ -416,7 +416,6 @@ class XlmEngine:
         """
         trial = XlmEngine(
             self.view,
-            self.output_level,
             day,
             0,
             self.max_steps,

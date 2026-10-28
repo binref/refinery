@@ -78,7 +78,7 @@ class TestBiffFormulaDecoding(TestBase):
 
     def test_literals_operators_and_references(self):
         self.assertEqual(
-            _formula_texts(FORMULA_TEST_SJMACHIN),
+            _formula_texts(self.download_sample(FORMULA_TEST_SJMACHIN)),
             {
                 ('Sheet1', 3, 2): '1/7',
                 ('Sheet1', 4, 2): '"ABC"&"DEF"',
@@ -93,13 +93,13 @@ class TestBiffFormulaDecoding(TestBase):
         # the identifier 0x8060 names FORMULA in the macro-command half of the id space, while
         # the worksheet function of the base id 0x60 is RESULT
         self.assertEqual(
-            _formula_texts(XLM_MACRO_ASSIGN_BIFF8)[('sod', 14678, 148)],
+            _formula_texts(self.download_sample(XLM_MACRO_ASSIGN_BIFF8))[('sod', 14678, 148)],
             'RETURN(FORMULA.FILL(xofsDmlZLmJV,jRiUYymkewtQ))',
         )
 
     def test_macro_command_call_with_two_arguments(self):
         self.assertEqual(
-            _formula_texts(XLM_MACRO_RPN_BIFF8)[('mP9mScF1m5', 41, 19)],
+            _formula_texts(self.download_sample(XLM_MACRO_RPN_BIFF8))[('mP9mScF1m5', 41, 19)],
             'FORMULA(B1&B3&B4&B5&B6&B7&B8&B9&B10&B11&B12&B13&B14&B15&B16&B17&B18&B19&B20&B21'
             '&B22&B23&B24&B25&B26&B27&B28&B29&B30&B31&B32&B33&B34&B35&B36&B37&B38&B39&B40&B41'
             '&B42,T1)',
@@ -107,20 +107,20 @@ class TestBiffFormulaDecoding(TestBase):
 
     def test_assignment_attribute_and_defined_name_operand(self):
         self.assertEqual(
-            _formula_texts(XLM_MACRO_ASSIGN_BIFF8)[('sod', 7064, 99)],
+            _formula_texts(self.download_sample(XLM_MACRO_ASSIGN_BIFF8))[('sod', 7064, 99)],
             'SET.NAME("xofsDmlZLmJV",$GM$58975&$FU$44596&$HF$14661&$C$21018&$FX$28366&$FQ$7632)',
         )
 
     def test_user_defined_call_names_its_callee_from_the_stack(self):
         self.assertEqual(
-            _formula_texts(XLM_MACRO_ASSIGN_BIFF8)[('sod', 25270, 148)],
+            _formula_texts(self.download_sample(XLM_MACRO_ASSIGN_BIFF8))[('sod', 25270, 148)],
             'pjZFOONS($GN$30239,0)',
         )
 
     def test_relative_flags_of_a_cross_sheet_area_survive_decoding(self):
         # the column words of this token carry both relative flags set
         self.assertEqual(
-            _formula_texts(PROFILES_BIFF8)[('PROFILELEVELS', 2, 3)],
+            _formula_texts(self.download_sample(PROFILES_BIFF8))[('PROFILELEVELS', 2, 3)],
             'AXISDATUMLEVELS!B2:AXISDATUMLEVELS!B15',
         )
 
@@ -128,12 +128,13 @@ class TestBiffFormulaDecoding(TestBase):
         # the stored row of this relative area is the row above the formula, which Excel
         # resolves against the cell the reference is anchored at
         self.assertEqual(
-            _formula_texts(XLM_MACRO_NAMES_BIFF8)[('Acf444', 9591, 1)],
+            _formula_texts(self.download_sample(XLM_MACRO_NAMES_BIFF8))[('Acf444', 9591, 1)],
             'EXEC("po"&"wershel"&"l -Command "&Acf444!A9590:Acf444!A9590&"")',
         )
 
     def test_shared_formula_members_carry_the_template(self):
-        workbook = open_workbook(XLM_MACRO_RPN_BIFF8)
+        data = self.download_sample(XLM_MACRO_RPN_BIFF8)
+        workbook = open_workbook(data)
         decoded = carriers = 0
         for sheet in workbook.sheets():
             for cell in sheet.cells():
@@ -146,12 +147,12 @@ class TestBiffFormulaDecoding(TestBase):
         self.assertEqual(decoded, 595)
         self.assertEqual(carriers, 0)
         self.assertEqual(
-            _formula_texts(XLM_MACRO_RPN_BIFF8)[('mP9mScF1m5', 66, 12)],
+            _formula_texts(data)[('mP9mScF1m5', 66, 12)],
             'CHAR(RC[-1])',
         )
 
     def test_a_relative_column_reads_its_low_byte_whatever_the_unused_bits_hold(self):
-        stream = bytes(OleFile(XLM_MACRO_RPN_BIFF8).openstream('Workbook'))
+        stream = bytes(OleFile(self.download_sample(XLM_MACRO_RPN_BIFF8)).openstream('Workbook'))
         # a ptgRefN to RC[-1] in the shared formula templates, its column word written as the
         # fourteen-bit offset rather than the byte that Excel writes
         stored = bytes.fromhex('4c0000ffc0416f00')
@@ -181,12 +182,12 @@ class TestBiffFormulaAgainstXlrd(TestBase):
         except ImportError:
             self.skipTest('the xlrd2 oracle is not installed')
         for name, data in [
-            ('formula_test_names', FORMULA_TEST_NAMES),
-            ('formula_test_sjmachin', FORMULA_TEST_SJMACHIN),
-            ('profiles', PROFILES_BIFF8),
-            ('xlm_macro_rpn', XLM_MACRO_RPN_BIFF8),
-            ('xlm_macro_assign', XLM_MACRO_ASSIGN_BIFF8),
-            ('xlm_macro_names', XLM_MACRO_NAMES_BIFF8),
+            ('formula_test_names', self.download_sample(FORMULA_TEST_NAMES)),
+            ('formula_test_sjmachin', self.download_sample(FORMULA_TEST_SJMACHIN)),
+            ('profiles', self.download_sample(PROFILES_BIFF8)),
+            ('xlm_macro_rpn', self.download_sample(XLM_MACRO_RPN_BIFF8)),
+            ('xlm_macro_assign', self.download_sample(XLM_MACRO_ASSIGN_BIFF8)),
+            ('xlm_macro_names', self.download_sample(XLM_MACRO_NAMES_BIFF8)),
         ]:
             with self.subTest(sample=name):
                 book = xlrd2.open_workbook(file_contents=data)
@@ -257,13 +258,15 @@ class TestBiffFormulaDefects(TestBase):
         return bytes(stream)
 
     def test_extern_sheets_refuse_a_sheet_of_another_document(self):
-        workbook = open_workbook(self._with_foreign_supbook(XLM_MACRO_RPN_BIFF8))
+        data = self.download_sample(XLM_MACRO_RPN_BIFF8)
+        workbook = open_workbook(self._with_foreign_supbook(data))
         with self.assertRaises(RpnError):
             workbook.extern_sheets(1)
 
     def test_extern_sheets_still_resolve_the_workbook_itself(self):
-        original = open_workbook(XLM_MACRO_RPN_BIFF8)
-        modified = open_workbook(self._with_foreign_supbook(XLM_MACRO_RPN_BIFF8))
+        data = self.download_sample(XLM_MACRO_RPN_BIFF8)
+        original = open_workbook(data)
+        modified = open_workbook(self._with_foreign_supbook(data))
         self.assertEqual(
             modified.extern_sheets(0),
             original.extern_sheets(0),
@@ -296,7 +299,7 @@ class TestBiffFormulaDefects(TestBase):
         return bytes(modified)
 
     def test_token_stream_cut_inside_a_token_is_a_carrier(self):
-        truncated = self._truncate_inside_formula_record(FORMULA_TEST_SJMACHIN)
+        truncated = self._truncate_inside_formula_record(self.download_sample(FORMULA_TEST_SJMACHIN))
         self.assertEqual(
             _formula_texts(truncated),
             {
@@ -332,12 +335,12 @@ class TestBiffFormulaDefects(TestBase):
         return bytes(stream)
 
     def test_a_token_byte_that_names_no_token_is_a_carrier(self):
-        expected = _formula_texts(FORMULA_TEST_SJMACHIN)
+        expected = _formula_texts(self.download_sample(FORMULA_TEST_SJMACHIN))
         del expected[('Sheet1', 3, 2)]
         # no ptg is numbered 0x00, and none in the range from 0x30 to 0x37
         for token in (0x00, 0x36):
             with self.subTest(token=token):
-                data = self._with_first_formula_token(FORMULA_TEST_SJMACHIN, token)
+                data = self._with_first_formula_token(self.download_sample(FORMULA_TEST_SJMACHIN), token)
                 self.assertEqual(_formula_texts(data), expected)
                 workbook = open_workbook(data)
                 cell = next(
@@ -349,8 +352,8 @@ class TestBiffFormulaDefects(TestBase):
                 self.assertIsInstance(workbook.formula(cell.formula), XlUnparsedFormula)
 
     def test_cells_still_yield_when_the_token_stream_is_cut(self):
-        original = open_workbook(FORMULA_TEST_SJMACHIN)
-        truncated = open_workbook(self._truncate_inside_formula_record(FORMULA_TEST_SJMACHIN))
+        original = open_workbook(self.download_sample(FORMULA_TEST_SJMACHIN))
+        truncated = open_workbook(self._truncate_inside_formula_record(self.download_sample(FORMULA_TEST_SJMACHIN)))
         self.assertEqual(
             [sheet.name for sheet in truncated.sheets()],
             [sheet.name for sheet in original.sheets()],

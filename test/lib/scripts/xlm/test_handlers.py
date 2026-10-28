@@ -7,7 +7,7 @@ from refinery.lib.excel.formula.model import XlFunctionCall
 from refinery.lib.scripts.xlm import XlmCursor, XlmEngine, XlmReference, XlmView
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.trace import XlmStatus
-from test import TestBase
+from test import TestBase, download_sample
 from test.lib.excel.samples import XLM_MACRO_TEXT_XLSM
 from test.lib.scripts.xlm.modify import date_cell, replace_cell_formula
 from test.lib.scripts.xlm.test_engine import _steps
@@ -22,7 +22,7 @@ def _parsed_call(formula: str) -> XlFunctionCall:
 
 
 def _answer(formula: str):
-    engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+    engine = XlmEngine(XlmView(download_sample(XLM_MACRO_TEXT_XLSM)))
     return engine.call(_parsed_call(formula), _CURSOR)
 
 
@@ -84,7 +84,7 @@ class TestNumericCommands(TestBase):
                 self.assertEqual(outcome.status, None)
 
     def test_count_counts_only_the_arguments_that_are_numbers(self):
-        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ113', '123')
+        data = replace_cell_formula(self.download_sample(XLM_MACRO_TEXT_XLSM), 'AZ113', '123')
         data = replace_cell_formula(data, 'AZ114', '"text"')
         engine = XlmEngine(XlmView(data))
         for formula, expected in [
@@ -114,19 +114,67 @@ class TestNumericCommands(TestBase):
         self.assertEqual(outcome.value.text, '0')
         self.assertEqual(outcome.status, None)
 
+    def test_fact_answers_the_examples_excel_documents(self):
+        for formula, expected in [
+            ('FACT(5)', '120'),
+            ('FACT(1.9)', '1'),
+            ('FACT(0)', '1'),
+            ('FACT(1)', '1'),
+        ]:
+            with self.subTest(formula=formula):
+                outcome = _answer(formula)
+                self.assertEqual(outcome.value.text, expected)
+                self.assertEqual(outcome.status, None)
+
+    def test_fact_leaves_a_negative_number_unevaluated(self):
+        for formula in ['FACT(-1)', 'FACT(-0.5)']:
+            with self.subTest(formula=formula):
+                outcome = _answer(formula)
+                self.assertEqual(outcome.value.partial, True)
+                self.assertEqual(outcome.value.text, formula)
+
+    def test_fact_leaves_a_factorial_no_finite_number_holds_unevaluated(self):
+        for formula in ['FACT(171)', 'FACT(1000000000)']:
+            with self.subTest(formula=formula):
+                outcome = _answer(formula)
+                self.assertEqual(outcome.value.partial, True)
+
+    def test_rand_answers_a_number_between_zero_and_one(self):
+        value = _answer('RAND()').value.value
+        self.assertGreaterEqual(value, 0.0)
+        self.assertLess(value, 1.0)
+
+    def test_two_engines_answer_the_same_rand(self):
+        self.assertEqual(_answer('RAND()').value.value, _answer('RAND()').value.value)
+
+    def test_sumxmy2_answers_the_squared_difference(self):
+        outcome = _answer('SUMXMY2(3,1)')
+        self.assertEqual(outcome.value.text, '4')
+        self.assertEqual(outcome.status, None)
+
+    def test_sumproduct_answers_the_product_of_its_arguments(self):
+        outcome = _answer('SUMPRODUCT(2,3,4)')
+        self.assertEqual(outcome.value.text, '24')
+        self.assertEqual(outcome.status, None)
+
+    def test_sumproduct_leaves_a_product_no_finite_number_holds_unevaluated(self):
+        outcome = _answer('SUMPRODUCT(1E308,1E308)')
+        self.assertEqual(outcome.value.partial, True)
+
+
     def test_a_partial_operand_leaves_mod_unevaluated(self):
         steps = _steps(('AZ110', 'MOD(FOO(1),2)'))
         self.assertEqual(steps[1].status, XlmStatus.PartialEvaluation)
         self.assertEqual(steps[1].text, 'MOD(FOO(1),2)')
 
     def test_now_advances_two_seconds_per_call(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         first = engine.call(_parsed_call('NOW()'), _CURSOR).value.value
         second = engine.call(_parsed_call('NOW()'), _CURSOR).value.value
         self.assertAlmostEqual((second - first) * 86400, 2, delta=1)
 
     def test_iserror_flips_after_ten_repeats_at_one_cell(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         call = _parsed_call('ISERROR(1)')
         answers = [engine.call(call, _CURSOR).value.value for _ in range(12)]
         self.assertEqual(answers, [False] * 10 + [True, False])
@@ -174,7 +222,7 @@ class TestNumericCommands(TestBase):
         self.assertEqual(_answer('ISNUMBER("19")').value.value, False)
 
     def test_isnumber_answers_the_type_of_the_value_it_reads(self):
-        data = date_cell(XLM_MACRO_TEXT_XLSM, 'BH120', '2017-12-27T00:00:00')
+        data = date_cell(self.download_sample(XLM_MACRO_TEXT_XLSM), 'BH120', '2017-12-27T00:00:00')
         engine = XlmEngine(XlmView(data))
         for formula, expected in [
             ('ISNUMBER(BH120)', True),
@@ -297,19 +345,19 @@ class TestLookupCommands(TestBase):
         self.assertEqual(outcome.status, None)
 
     def test_index_reads_the_cell_of_a_range_at_a_position(self):
-        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ113', '123')
+        data = replace_cell_formula(self.download_sample(XLM_MACRO_TEXT_XLSM), 'AZ113', '123')
         engine = XlmEngine(XlmView(data))
         outcome = engine.call(_parsed_call('INDEX(AZ112:AZ116,2)'), _CURSOR)
         self.assertEqual(outcome.value.value, 123)
 
     def test_indirect_reads_the_cell_its_text_names(self):
-        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ113', '123')
+        data = replace_cell_formula(self.download_sample(XLM_MACRO_TEXT_XLSM), 'AZ113', '123')
         engine = XlmEngine(XlmView(data))
         outcome = engine.call(_parsed_call('INDIRECT("AZ113")'), _CURSOR)
         self.assertEqual(outcome.value.value, 123)
 
     def test_hlookup_finds_the_column_of_its_needle_in_the_top_row(self):
-        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ112', '"needle"')
+        data = replace_cell_formula(self.download_sample(XLM_MACRO_TEXT_XLSM), 'AZ112', '"needle"')
         data = replace_cell_formula(data, 'AZ114', '123')
         engine = XlmEngine(XlmView(data))
         call = _parsed_call('HLOOKUP("needle",AZ112:AZ116,3,FALSE)')
@@ -318,7 +366,7 @@ class TestLookupCommands(TestBase):
         self.assertEqual(outcome.status, None)
 
     def test_hlookup_answers_nothing_when_the_top_row_holds_no_match(self):
-        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ114', '"needle"')
+        data = replace_cell_formula(self.download_sample(XLM_MACRO_TEXT_XLSM), 'AZ114', '"needle"')
         engine = XlmEngine(XlmView(data))
         call = _parsed_call('HLOOKUP("needle",AZ112:AZ116,3,FALSE)')
         outcome = engine.call(call, _CURSOR)
@@ -326,7 +374,7 @@ class TestLookupCommands(TestBase):
         self.assertEqual(outcome.value.text, 'HLOOKUP("needle",AZ112:AZ116,3,FALSE)')
 
     def test_hlookup_answers_nothing_for_an_index_below_one(self):
-        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ112', '"leaked"')
+        data = replace_cell_formula(self.download_sample(XLM_MACRO_TEXT_XLSM), 'AZ112', '"leaked"')
         data = replace_cell_formula(data, 'AZ113', '"needle"')
         engine = XlmEngine(XlmView(data))
         call = _parsed_call('HLOOKUP("needle",AZ113:AZ116,0,FALSE)')
@@ -339,7 +387,7 @@ class TestLookupCommands(TestBase):
         self.assertEqual(_answer('COUNTA(AZ200:AZ210)').value.value, 0)
 
     def test_counta_counts_a_cell_that_holds_empty_text(self):
-        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ113', '""')
+        data = replace_cell_formula(self.download_sample(XLM_MACRO_TEXT_XLSM), 'AZ113', '""')
         engine = XlmEngine(XlmView(data))
         outcome = engine.call(_parsed_call('COUNTA(AZ113:AZ113)'), _CURSOR)
         self.assertEqual(outcome.value.value, 1)
@@ -348,7 +396,7 @@ class TestLookupCommands(TestBase):
 class TestMutationCommands(TestBase):
 
     def test_a_formula_write_installs_a_tree_that_a_later_read_executes(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         engine.call(_parsed_call('FORMULA("=1+2",BA110)'), _CURSOR)
         self.assertEqual(
             engine.read_reference(XlmReference('Doc1', 110, 53), _CURSOR).value,
@@ -356,7 +404,7 @@ class TestMutationCommands(TestBase):
         )
 
     def test_a_set_value_write_keeps_a_formula_text_a_literal_value(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         engine.call(_parsed_call('SET.VALUE(BA110,"=1+2")'), _CURSOR)
         self.assertEqual(
             engine.read_reference(XlmReference('Doc1', 110, 53), _CURSOR).value,
@@ -364,7 +412,7 @@ class TestMutationCommands(TestBase):
         )
 
     def test_a_partial_source_fails_the_write_and_marks_the_destination(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         outcome = engine.call(_parsed_call('FORMULA(FOO(1),BA110)'), _CURSOR)
         self.assertEqual(outcome.value.partial, True)
         read = engine.read_reference(XlmReference('Doc1', 110, 53), _CURSOR)
@@ -372,7 +420,7 @@ class TestMutationCommands(TestBase):
         self.assertEqual(read.partial, True)
 
     def test_set_name_stores_the_value_a_later_resolution_reads(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         engine.call(_parsed_call('SET.NAME("carry",42)'), _CURSOR)
         entry = engine.view.names.resolve('carry')
         assert entry is not None
@@ -383,7 +431,7 @@ class TestMutationCommands(TestBase):
         self.assertEqual(synthesize_formula(entry.formula), 'AZ109')
 
     def test_define_name_stores_the_value_its_argument_evaluated_to(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         outcome = engine.call(_parsed_call('DEFINE.NAME("result",""&7)'), _CURSOR)
         self.assertEqual(outcome.value.text, 'DEFINE.NAME("result",7)')
         entry = engine.view.names.resolve('result')
@@ -394,7 +442,7 @@ class TestMutationCommands(TestBase):
         call = 'CALL("Kernel32","VirtualAlloc","JJJJJ",0,16,4096,64)'
         for command in ('SET.NAME', 'DEFINE.NAME'):
             with self.subTest(command=command):
-                engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+                engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
                 outcome = engine.call(_parsed_call(F'{command}("addr",{call})'), _CURSOR)
                 self.assertEqual(outcome.status, None)
                 entry = engine.view.names.resolve('addr')
@@ -410,13 +458,13 @@ class TestMutationCommands(TestBase):
         )
 
     def test_select_moves_the_cell_that_active_cell_reads(self):
-        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ112', '42')
+        data = replace_cell_formula(self.download_sample(XLM_MACRO_TEXT_XLSM), 'AZ112', '42')
         engine = XlmEngine(XlmView(data))
         engine.call(_parsed_call('SELECT(AZ112)'), _CURSOR)
         self.assertEqual(engine.call(_parsed_call('ACTIVE.CELL()'), _CURSOR).value.value, 42)
 
     def test_active_cell_without_a_selection_degrades(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         outcome = engine.call(_parsed_call('ACTIVE.CELL()'), _CURSOR)
         self.assertEqual(outcome.value.partial, True)
         self.assertEqual(outcome.value.text, 'ACTIVE.CELL()')
@@ -426,7 +474,7 @@ class TestSystemCommands(TestBase):
 
     @unittest.expectedFailure
     def test_get_cell_answers_the_contents_of_the_cell_it_reads(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         contents = engine.call(_parsed_call('GET.CELL(5,Doc2!AT74)'), _CURSOR)
         read = evaluate_expression(engine, parse_formula('Doc2!AT74'), _CURSOR)
         self.assertEqual(contents.value.value, read.value)
@@ -460,7 +508,7 @@ class TestSystemCommands(TestBase):
                 self.assertEqual(outcome.value.text, expected)
 
     def test_the_file_commands_write_and_measure_the_emulated_files(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         engine.call(_parsed_call('FOPEN("stager.js")'), _CURSOR)
         engine.call(_parsed_call('FWRITE("stager.js","var x = 1;")'), _CURSOR)
         outcome = engine.call(_parsed_call('FSIZE("stager.js")'), _CURSOR)
@@ -470,7 +518,7 @@ class TestSystemCommands(TestBase):
         self.assertEqual(outcome.value.value, 22)
 
     def test_a_write_that_names_no_file_answers_the_first_opened_one(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         engine.call(_parsed_call('FOPEN("one.tmp")'), _CURSOR)
         engine.call(_parsed_call('FOPEN("two.tmp")'), _CURSOR)
         outcome = engine.call(_parsed_call('FWRITE("","payload")'), _CURSOR)
@@ -492,14 +540,14 @@ class TestSystemCommands(TestBase):
                 self.assertEqual(outcome.status, None)
 
     def test_register_makes_its_alias_answer_under_the_registered_name(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         outcome = engine.call(_parsed_call(
             'REGISTER("urlmon","URLDownloadToFileA","JJCCJJ","load",0,0)'), _CURSOR)
         self.assertEqual(outcome.status, None)
         self.assertEqual(engine.aliases['load'], 'urlmon.URLDownloadToFileA')
 
     def test_a_register_with_a_missing_argument_keeps_the_alias_at_its_position(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         outcome = engine.call(_parsed_call(
             'REGISTER("urlmon","URLDownloadToFileA",,"load")'), _CURSOR)
         self.assertEqual(outcome.status, None)
@@ -510,14 +558,14 @@ class TestSystemCommands(TestBase):
         )
 
     def test_register_id_names_the_function_but_registers_nothing(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         outcome = engine.call(_parsed_call(
             'REGISTER.ID("urlmon","URLDownloadToFileA","x")'), _CURSOR)
         self.assertEqual(outcome.value.value, 'urlmon.URLDownloadToFileA')
         self.assertEqual(engine.aliases, {})
 
     def test_the_kernel32_commands_write_through_the_emulated_memory(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         outcome = engine.call(_parsed_call('Kernel32.VirtualAlloc(0,16)'), _CURSOR)
         base = outcome.value.value
         outcome = engine.call(_parsed_call(
@@ -533,7 +581,7 @@ class TestSystemCommands(TestBase):
         self.assertEqual(outcome.value.text, F'Kernel32.RtlCopyMemory({base + 8},"4344",2)')
 
     def test_a_short_memory_write_keeps_the_length_of_its_region(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         base = engine.call(_parsed_call('Kernel32.VirtualAlloc(0,16)'), _CURSOR).value.value
         outcome = engine.call(_parsed_call(
             F'Kernel32.WriteProcessMemory(-1,{base},"AB",4,0)'), _CURSOR)
@@ -541,7 +589,7 @@ class TestSystemCommands(TestBase):
         self.assertEqual(engine.memory.peek(base, 16), b'AB' + bytes(14))
 
     def test_a_memory_write_of_a_negative_size_writes_nothing(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         base = engine.call(_parsed_call('Kernel32.VirtualAlloc(0,16)'), _CURSOR).value.value
         outcome = engine.call(_parsed_call(
             F'Kernel32.WriteProcessMemory(-1,{base + 4},"AB",-2,0)'), _CURSOR)
@@ -549,7 +597,7 @@ class TestSystemCommands(TestBase):
         self.assertEqual(engine.memory.peek(base, 16), bytes(16))
 
     def test_a_memory_write_spells_a_character_beyond_latin1_by_its_code_page_byte(self):
-        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine = XlmEngine(XlmView(self.download_sample(XLM_MACRO_TEXT_XLSM)))
         base = engine.call(_parsed_call('Kernel32.VirtualAlloc(0,16)'), _CURSOR).value.value
         outcome = engine.call(_parsed_call(
             F'Kernel32.RtlCopyMemory({base},"€Ā",2)'), _CURSOR)

@@ -130,12 +130,12 @@ def _split_shared_string_table_between_strings(stream: bytes) -> bytes:
 class TestBiffWorkbook(TestBase):
 
     def test_detect_biff(self):
-        for data in _ALL_SAMPLES:
-            with self.subTest(data=data[:8]):
-                self.assertIs(detect_format(data), ExcelFormat.BIFF)
+        for key in _ALL_SAMPLES:
+            with self.subTest(sample=key[:8]):
+                self.assertIs(detect_format(self.download_sample(key)), ExcelFormat.BIFF)
 
     def test_a_code_page_without_a_codec_is_read_as_latin_1(self):
-        data = bytearray(FORMATE_BIFF8)
+        data = bytearray(self.download_sample(FORMATE_BIFF8))
         record = data.find(B'\x42\x00\x02\x00')
         data[record + 4:record + 6] = (708).to_bytes(2, 'little')
         workbook = open_workbook(bytes(data))
@@ -144,7 +144,7 @@ class TestBiffWorkbook(TestBase):
 
     def test_sheets_of_formate(self):
         self.assertEqual(
-            [(sheet.name, sheet.kind) for sheet in open_workbook(FORMATE_BIFF8).sheets()],
+            [(sheet.name, sheet.kind) for sheet in open_workbook(self.download_sample(FORMATE_BIFF8)).sheets()],
             [
                 ('Blätt1', SheetKind.WORKSHEET),
                 ('ÖÄÜ', SheetKind.WORKSHEET),
@@ -154,7 +154,7 @@ class TestBiffWorkbook(TestBase):
         )
 
     def test_dates_carry_the_serial_by_cell_format(self):
-        cells = _cells(FORMATE_BIFF8)
+        cells = _cells(self.download_sample(FORMATE_BIFF8))
         self.assertEqual(cells[('Blätt1', 1, 2)], Cell(1, 2, CellKind.DATE, 2741, None))
         self.assertEqual(cells[('Blätt1', 2, 2)], Cell(2, 2, CellKind.DATE, 38406, None))
         self.assertEqual(cells[('Blätt1', 4, 2)], Cell(4, 2, CellKind.DATE, 0.2736111111111111, None))
@@ -168,11 +168,11 @@ class TestBiffWorkbook(TestBase):
             (('Blätt1', 4, 2), datetime.time(6, 34)),
         ]:
             with self.subTest(key=key):
-                cell = _cells(FORMATE_BIFF8)[key]
+                cell = _cells(self.download_sample(FORMATE_BIFF8))[key]
                 self.assertEqual(serial_to_datetime(cell.value, False), expected)
 
     def test_formula_cells_carry_cached_results(self):
-        cells = _cells(FORMULA_TEST_SJMACHIN)
+        cells = _cells(self.download_sample(FORMULA_TEST_SJMACHIN))
         sheet = 'Sheet1'
         number = cells[(sheet, 3, 2)]
         self.assertEqual((number.row, number.col, number.kind, number.value), (3, 2, CellKind.NUMBER, 1 / 7))
@@ -188,17 +188,17 @@ class TestBiffWorkbook(TestBase):
         self.assertIsNone(literal.formula)
 
     def test_error_and_boolean_cells(self):
-        cells = _cells(FORMULA_TEST_SJMACHIN)
+        cells = _cells(self.download_sample(FORMULA_TEST_SJMACHIN))
         boolean = cells[('Sheet1', 6, 2)]
         self.assertEqual((boolean.row, boolean.col, boolean.kind, boolean.value), (6, 2, CellKind.BOOLEAN, True))
         self.assertIsInstance(boolean.formula, bytes)
         error = cells[('Sheet1', 7, 2)]
         self.assertEqual((error.row, error.col, error.kind, error.value), (7, 2, CellKind.ERROR, '#DIV/0!'))
-        boolean = _cells(FORMULA_TEST_NAMES)[('Sheet1', 8, 2)]
+        boolean = _cells(self.download_sample(FORMULA_TEST_NAMES))[('Sheet1', 8, 2)]
         self.assertEqual((boolean.row, boolean.col, boolean.kind, boolean.value), (8, 2, CellKind.BOOLEAN, True))
 
     def test_blank_cells(self):
-        cells = _cells(ISSUE20)
+        cells = _cells(self.download_sample(ISSUE20))
         blanks = [key for key, cell in cells.items() if cell.kind is CellKind.BLANK]
         self.assertEqual(blanks, [
             ('Sheet1', 12, 4),
@@ -209,17 +209,18 @@ class TestBiffWorkbook(TestBase):
         ])
         # a sheet whose only cell carries formatting but no value reads as one blank cell
         self.assertEqual(
-            [(cell.row, cell.col, cell.kind) for cell in open_workbook(PICTURE_IN_CELL).sheets()[0].cells()],
+            [(cell.row, cell.col, cell.kind) for cell in open_workbook(self.download_sample(PICTURE_IN_CELL)).sheets()[0].cells()],
             [(1, 1, CellKind.BLANK)],
         )
 
     def test_raw_biff4_worksheet_stream(self):
-        workbook = open_workbook(BIFF4_RAW)
+        data = self.download_sample(BIFF4_RAW)
+        workbook = open_workbook(data)
         self.assertEqual(
             [(sheet.name, sheet.kind) for sheet in workbook.sheets()],
             [('Sheet 1', SheetKind.WORKSHEET)],
         )
-        cells = _cells(BIFF4_RAW)
+        cells = _cells(data)
         self.assertEqual(cells[('Sheet 1', 1, 1)], Cell(1, 1, CellKind.TEXT, 'ID', None))
         self.assertEqual(len(cells), 108)
         self.assertTrue(all(cell.kind is CellKind.TEXT for cell in cells.values()))
@@ -227,10 +228,11 @@ class TestBiffWorkbook(TestBase):
     def test_defective_ole_container(self):
         # the OLE container of this workbook is defective; the cells of all nine sheets are
         # still readable
-        workbook = open_workbook(CORRUPTED_ERROR)
+        data = self.download_sample(CORRUPTED_ERROR)
+        workbook = open_workbook(data)
         self.assertEqual(len(workbook.sheets()), 9)
         self.assertEqual(workbook.sheets()[0].name, 'Трубы ВГП')
-        cells = _cells(CORRUPTED_ERROR)
+        cells = _cells(data)
         self.assertEqual(cells[('Трубы ВГП', 1, 1)], Cell(1, 1, CellKind.TEXT, 'ПРАЙС-ЛИСТ', None))
         self.assertGreater(len(cells), 20000)
 
@@ -242,7 +244,7 @@ class TestBiffWorkbook(TestBase):
     def test_sheet_without_eof_record(self):
         # truncating the last two bytes of the stream removes the EOF record of the last
         # sheet, which ends its extraction after the cells before the defect have been read
-        stream = bytes(OleFile(FORMULA_TEST_SJMACHIN).openstream('Workbook'))[:-2]
+        stream = bytes(OleFile(self.download_sample(FORMULA_TEST_SJMACHIN)).openstream('Workbook'))[:-2]
         sheets = open_workbook(stream).sheets()
         self.assertEqual(len(list(sheets[0].cells())), 16)
         self.assertEqual(len(list(sheets[1].cells())), 0)
@@ -253,10 +255,10 @@ class TestBiffWorkbook(TestBase):
         # The BOF of the raw stream is turned into the globals substream of a BIFF4W
         # workbook, followed by a sheet header that announces a negative substream length;
         # rewinding the record stream to that extent is a defect.
-        stream = bytearray(BIFF4_RAW[:10])
+        stream = bytearray(self.download_sample(BIFF4_RAW)[:10])
         struct.pack_into('<H', stream, 6, 0x0100)
         stream += struct.pack('<HH', 0x008F, 6) + struct.pack('<i', -1) + b'\x01X'
-        stream += BIFF4_RAW[10:]
+        stream += self.download_sample(BIFF4_RAW)[10:]
         with self.assertRaises(ExcelFormatError):
             open_workbook(bytes(stream))
 
@@ -264,8 +266,9 @@ class TestBiffWorkbook(TestBase):
         # A LABEL record that announces more characters than its body holds must not
         # silently decode to the characters that are present; the length field of its
         # string sits at offset six of the record body.
-        position = next(p for p, opcode, _, _ in _records(BIFF4_RAW) if opcode == 0x0204)
-        stream = bytearray(BIFF4_RAW)
+        data = self.download_sample(BIFF4_RAW)
+        position = next(p for p, opcode, _, _ in _records(data) if opcode == 0x0204)
+        stream = bytearray(data)
         struct.pack_into('<H', stream, position + 4 + 6, 100)
         sheet = open_workbook(bytes(stream)).sheets()[0]
         with self.assertRaises(ExcelFormatError):
@@ -274,7 +277,7 @@ class TestBiffWorkbook(TestBase):
     def test_inflated_boundsheet_name_is_a_defect(self):
         # The name of a BIFF8 BOUNDSHEET record is announced by a one-byte length that
         # must not exceed the record body.
-        stream = bytes(OleFile(FORMATE_BIFF8).openstream('Workbook'))
+        stream = bytes(OleFile(self.download_sample(FORMATE_BIFF8)).openstream('Workbook'))
         position = next(p for p, opcode, _, _ in _records(stream) if opcode == 0x0085)
         modified = bytearray(stream)
         modified[position + 4 + 6] = 200
@@ -289,13 +292,13 @@ class TestSharedStringContinueRecords(TestBase):
     """
 
     def _stream(self) -> bytes:
-        return bytes(OleFile(FORMULA_TEST_SJMACHIN).openstream('Workbook'))
+        return bytes(OleFile(self.download_sample(FORMULA_TEST_SJMACHIN)).openstream('Workbook'))
 
     def test_split_stream_reads_like_the_original(self):
         original = self._stream()
         split = _split_shared_string_table(original)
         self.assertNotEqual(original, split)
-        expected = _cells(FORMULA_TEST_SJMACHIN)
+        expected = _cells(self.download_sample(FORMULA_TEST_SJMACHIN))
         actual = _cells(split)
         self.assertEqual(actual, expected)
         self.assertNotEqual(len(original), len(split))
@@ -304,7 +307,7 @@ class TestSharedStringContinueRecords(TestBase):
         original = self._stream()
         split = _split_shared_string_table_between_strings(original)
         self.assertNotEqual(original, split)
-        self.assertEqual(_cells(split), _cells(FORMULA_TEST_SJMACHIN))
+        self.assertEqual(_cells(split), _cells(self.download_sample(FORMULA_TEST_SJMACHIN)))
 
     def test_negative_section_size_is_a_defect(self):
         # The phonetic section size of a string in the table is signed and must not be
@@ -341,7 +344,7 @@ class TestAgainstXlrd(TestBase):
             import xlrd2
         except ImportError:
             self.skipTest('the xlrd2 oracle is not installed')
-        for name, data in [
+        for name, key in [
             ('formate', FORMATE_BIFF8),
             ('profiles', PROFILES_BIFF8),
             ('formula_test_names', FORMULA_TEST_NAMES),
@@ -353,6 +356,7 @@ class TestAgainstXlrd(TestBase):
             ('corrupted_error', CORRUPTED_ERROR),
         ]:
             with self.subTest(sample=name):
+                data = self.download_sample(key)
                 kwargs = {'ignore_workbook_corruption': True} if name == 'corrupted_error' else {}
                 book = xlrd2.open_workbook(file_contents=data, **kwargs)
                 expected = {}

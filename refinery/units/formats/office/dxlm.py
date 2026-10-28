@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from refinery.lib.excel.common import column_letters
+from refinery.lib.meta import MV
+from refinery.lib.scripts.xlm import XlmEngine, XlmView
+from refinery.lib.scripts.xlm.trace import visible_steps
 from refinery.lib.types import Param
 from refinery.units.formats import Arg, Unit
 
@@ -8,9 +12,9 @@ class dxlm(Unit):
     """
     Deobfuscates Excel v4.0 (XLM) macros from XLS, XLSM, and XLSB documents. By default, the
     program is emulated as the workbook stores it, and every cell the run executes is listed in
-    the order it ran. An extraction lists the macrosheet cells instead: every statically
-    computable formula is folded into the value it computes, and the cells that no formula or
-    entry point leads to are left out.
+    the order it ran: the unit emits one chunk per executed cell whose data is the formula of
+    the cell and whose meta holds the address of the cell, the status the run left it in, and
+    the indentation of its loop depth.
     """
     @classmethod
     def handles(cls, data) -> bool | None:
@@ -22,105 +26,26 @@ class dxlm(Unit):
 
     def __init__(
         self,
-        extract_only: Param[bool, Arg.Switch(
-            '-x', help=(
-                'List the macrosheet cells instead of emulating the program, with every '
-                'statically computable formula folded and the cells nothing leads to left out.'
-            )
-        )] = False,
-        sort_formulas: Param[bool, Arg.Switch(
-            '-s', '--sort-formulas',
-            help='Sort extracted formulas based on their cell address (implies -x).',
-        )] = False,
-        day: Param[int, Arg.Number(
-            '-d',
-            '--day',
-            help='Specify the day of month',
-        )] = -1,
-        output_formula_format: Param[str, Arg.String(
-            '-O', '--output-format',
-            metavar='FMT',
-            help=(
-                'Specify the format for output formulas '
-                '(using [[CELL-ADDR]], [[INT-FORMULA]], and [[STATUS]])'
-            ),
-        )] = 'CELL:[[CELL-ADDR]], [[STATUS]], [[INT-FORMULA]]',
-        extract_formula_format: Param[str, Arg.String(
-            '-E', '--extract-format',
-            metavar='FMT',
-            help=(
-                'Specify the format for extracted formulas '
-                '(using [[CELL-ADDR]], [[CELL-FORMULA]], and [[CELL-VALUE]])'
-            ),
-        )] = 'CELL:[[CELL-ADDR]], [[CELL-FORMULA]], [[CELL-VALUE]]',
-        no_indent: Param[bool, Arg.Switch(
-            '-I', '--no-indent',
-            help='Do not show indent before formulas',
-        )] = False,
-        start_point: Param[str, Arg.String(
-            '-c', '--start-point',
-            help='Start interpretation from a specific cell address',
-            metavar='CELL',
-        )] = '',
-        output_level: Param[int, Arg.Number(
-            '-o',
-            '--output-level',
-            help=(
-                'Set the level of details to be shown '
-                '(0:all commands, 1: commands no jump 2:important '
-                'commands 3:strings in important commands).'
-            ),
-        )] = 0,
-        timeout: Param[int, Arg.Number(
-            '-t',
-            '--timeout',
-            help=(
-                'Stop emulation after N seconds '
-                '(0: not interruption N>0: stop emulation after N seconds)'
-            ),
-        )] = 0,
+        filter: Param[int, Arg.Counts('-f', help=(
+            'Filter amount of details shown. Specify once to remove jump commands and twice to '
+            'restrict to the most relevant commands.'))] = 0,
+        cell: Param[str, Arg.String('-c', metavar='CELL', help=(
+            'Optionally start interpretation from a specific cell address.'))] = '',
+        day: Param[int, Arg.Number('-d', help=(
+            'The day of month the DAY command answers instead of searching the date it reads; '
+            'the default {default} leaves the day to that search.'))] = -1,
+        timeout: Param[int, Arg.Number('-t', help=(
+            'Stop emulation after N seconds; the default {default} means no limit.'))] = 0,
     ):
-        extract_only = sort_formulas or extract_only
-        self.superinit(super(), **vars())
+        super().__init__(filter=filter, day=day, cell=cell, timeout=timeout)
 
     def process(self, data: bytearray):
-        from refinery.lib.excel.common import column_letters
-        from refinery.lib.excel.formula import synthesize_formula
-        from refinery.lib.scripts.xlm import XlmEngine, XlmView, deobfuscate
-        from refinery.lib.scripts.xlm.trace import visible_steps
-
         view = XlmView(data)
-        lines: list[str] = []
-        if self.args.extract_only:
-            deobfuscate(view, self.args.start_point)
-            for macrosheet in view.macrosheets():
-                lines.append(F'SHEET: {macrosheet.name}, {macrosheet.kind.name.lower()}')
-                for cell in macrosheet.listing(self.args.sort_formulas):
-                    formula = (
-                        F'={synthesize_formula(cell.formula)}'
-                        if cell.formula is not None
-                        else 'None'
-                    )
-                    line = self.args.extract_formula_format
-                    line = line.replace('[[CELL-ADDR]]', F'{column_letters(cell.col)}{cell.row}')
-                    line = line.replace('[[CELL-FORMULA]]', formula)
-                    line = line.replace('[[CELL-VALUE]]', str(cell.value))
-                    lines.append(line)
-        else:
-            engine = XlmEngine(
-                view,
-                output_level=self.args.output_level,
-                day=self.args.day,
-                timeout=self.args.timeout,
-            )
-            for step in visible_steps(engine.run(self.args.start_point), self.args.output_level):
-                formula = step.text
-                if not self.args.no_indent:
-                    formula = '\t' * step.indent + formula
-                address = F'{column_letters(step.col)}{step.row}'
-                line = self.args.output_formula_format
-                line = line.replace('[[CELL-ADDR]]', F'{address:10}')
-                line = line.replace('[[STATUS]]', F'{step.status.name:20}')
-                line = line.replace('[[INT-FORMULA]]', formula)
-                lines.append(line)
-        return '\n'.join(lines).encode(self.codec)
+        engine = XlmEngine(view, self.args.day, self.args.timeout)
+        for step in visible_steps(engine.run(self.args.cell), self.args.filter):
+            meta = {
+                MV.TYPE: step.status.name,
+                MV.ADDR: F'{column_letters(step.col)}{step.row}',
+                'indent': step.indent,
+            }
+            yield self.labelled(step.text.encode(self.codec), **meta)

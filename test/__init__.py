@@ -129,7 +129,7 @@ class TestBase(unittest.TestCase):
             random.randrange(0, len(string.printable))] for _ in range(size)).encode('UTF8')
 
     def download_sample(self, sha256hash, key=None):
-        return self._STORE.get(sha256hash, key)
+        return download_sample(sha256hash, key)
 
     def setUp(self):
         random.seed(0xBAADF00D)  # guarantee deterministic 'random' buffers
@@ -182,3 +182,11 @@ class TestBase(unittest.TestCase):
             unit.log_level = LogLevel.DETACHED
             unit = unit.source
         return pl
+
+
+def download_sample(sha256hash: str, key: str | None = None) -> bytes:
+    """
+    The module-level counterpart of `TestBase.download_sample`, for test helpers outside a test
+    method. Returns the decoded bytes of the test data store entry with the given sha256.
+    """
+    return TestBase._STORE.get(sha256hash, key)

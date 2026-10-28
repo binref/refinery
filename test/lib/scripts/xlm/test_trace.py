@@ -39,43 +39,10 @@ class TestVisibleSteps(TestBase):
             ignored = _step(status=XlmStatus.IGNORED)
             self.assertEqual(list(visible_steps([ignored], level)), [])
 
-    def test_level_three_shows_the_strings_of_a_triage_command(self):
-        step = _step(
-            text='=EXEC("regsvr32  C:\\ProgramData\\Ropedjo1.ocx")',
-            severity=XlmSeverity.IMPORTANT,
-        )
-        visible = list(visible_steps([step], 3))
-        self.assertEqual(len(visible), 1)
-        self.assertEqual(visible[0].text, '"regsvr32  C:\\ProgramData\\Ropedjo1.ocx"')
-
-    def test_level_three_joins_the_strings_of_one_step(self):
-        step = _step(
-            text='=CALL("a","b")',
-            severity=XlmSeverity.IMPORTANT,
-        )
-        visible = list(visible_steps([step], 3))
-        self.assertEqual(visible[0].text, '"a"\n"b"')
-
-    def test_level_three_drops_a_triage_command_without_strings(self):
-        step = _step(text='=HALT()', severity=XlmSeverity.IMPORTANT)
-        self.assertEqual(list(visible_steps([step], 3)), [])
-
-    def test_level_three_drops_the_commands_below_the_triage_class(self):
-        for severity in (XlmSeverity.JUMP, XlmSeverity.NORMAL):
-            step = _step(text='=EXEC("x")', severity=severity)
-            self.assertEqual(list(visible_steps([step], 3)), [])
-
-    def test_a_step_keeps_its_place_indent_and_status_through_extraction(self):
-        step = XlmStep(
-            'Doc1', 12, 3, XlmStatus.PartialEvaluation,
-            '=FWRITE(1,"cache.dat")', 2, XlmSeverity.IMPORTANT,
-        )
-        visible = list(visible_steps([step], 3))
-        self.assertEqual(len(visible), 1)
-        self.assertEqual(
-            visible[0],
-            XlmStep(
-                'Doc1', 12, 3, XlmStatus.PartialEvaluation,
-                '"cache.dat"', 2, XlmSeverity.IMPORTANT,
-            ),
-        )
+    def test_a_level_above_the_highest_shows_the_steps_of_the_highest(self):
+        steps = [
+            _step(severity=XlmSeverity.JUMP),
+            _step(severity=XlmSeverity.NORMAL),
+            _step(severity=XlmSeverity.IMPORTANT),
+        ]
+        self.assertEqual(list(visible_steps(steps, 3)), list(visible_steps(steps, 2)))

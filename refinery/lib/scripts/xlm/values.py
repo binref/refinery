@@ -261,22 +261,12 @@ _OPERATOR_SYMBOLS = {
 }
 
 
-def _operand(value: XlmValue) -> Any:
+def _is_blank(value: XlmValue) -> bool:
     """
-    The operand the operator table applies: a boolean is its number, an empty text is zero,
-    and the spellings of TRUE and FALSE are theirs.
+    Whether a value is the blank of a cell that holds nothing: every operator reads it as the
+    zero of the other operand's type, unlike the empty text, which the trace spells `""`.
     """
-    if isinstance(value.value, bool):
-        return value.value
-    if value.unwrap() == '':
-        return 0
-    if isinstance(value.value, str):
-        lowered = value.value.lower()
-        if lowered == 'true':
-            return 1
-        if lowered == 'false':
-            return 0
-    return value.value
+    return value.text == ''
 
 
 _ARITHMETIC_OPERATORS = frozenset((
@@ -288,6 +278,48 @@ _ARITHMETIC_OPERATORS = frozenset((
 ))
 
 
+def _comparison_rank(value: XlmValue) -> int:
+    """
+    The rank that orders the three types of a comparison: the numbers order below the texts,
+    the texts below the two truth values.
+    """
+    if isinstance(value.value, bool):
+        return 2
+    if isinstance(value.value, str):
+        return 1
+    return 0
+
+
+def _zero_like(value: XlmValue) -> XlmValue:
+    """
+    The blank of an empty cell read as the type of the given operand: the zero of a number, the
+    empty text of a text, and `FALSE` of a truth value.
+    """
+    if isinstance(value.value, bool):
+        return XlmValue(value=False)
+    if isinstance(value.value, str):
+        return XlmValue(value='')
+    return XlmValue(value=0)
+
+
+def _arithmetic_operand(value: XlmValue) -> float | None:
+    """
+    The number an arithmetic operator reads in an operand, or `None` for one that holds none: a
+    truth value is one or zero, the blank of an empty cell is zero, and a text is the number it
+    spells — every other text, the empty text included, holds none.
+    """
+    if _is_blank(value):
+        return 0.0
+    data = value.value
+    if isinstance(data, bool):
+        return 1.0 if data else 0.0
+    if isinstance(data, (int, float)):
+        return float(data)
+    if isinstance(data, str) and is_number(data):
+        return float(data)
+    return None
+
+
 def _numeric_result(result: Any) -> XlmValue:
     if isinstance(result, bool):
         return XlmValue(value=result)
@@ -295,8 +327,6 @@ def _numeric_result(result: Any) -> XlmValue:
         return error_value('#NUM!')
     if isinstance(result, float) and result.is_integer():
         return XlmValue(value=int(result))
-    if isinstance(result, float):
-        return XlmValue(value=round(result, 10))
     return XlmValue(value=result)
 
 
@@ -317,15 +347,71 @@ def concat(left: XlmValue, right: XlmValue) -> XlmValue:
     return XlmValue(value=joined)
 
 
+def _arithmetic(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) -> XlmValue:
+    """
+    The value of an arithmetic operation. An operand that holds no number degrades to the
+    `#VALUE!` error Excel answers for it, the two zeros of an exponentiation to the `#NUM!`
+    error Excel answers for `0^0`, a division by zero to `#DIV/0!`, and a result no finite
+    number holds to `#NUM!`. An exponentiation of a positive base is the exponential of the
+    product of the exponent and the logarithm of the base — the arithmetic Excel itself
+    applies, whose result can miss the correctly rounded one in the last digits.
+    """
+    operand_left = _arithmetic_operand(left)
+    operand_right = _arithmetic_operand(right)
+    if operand_left is None or operand_right is None:
+        return error_value('#VALUE!')
+    if operator is XlBinaryOperator.POW:
+        if operand_left == 0 and operand_right == 0:
+            return error_value('#NUM!')
+        if operand_left > 0:
+            try:
+                return _numeric_result(math.exp(operand_right * math.log(operand_left)))
+            except OverflowError:
+                return error_value('#NUM!')
+    function = _OPERATOR_FUNCTIONS[operator]
+    try:
+        return _numeric_result(function(operand_left, operand_right))
+    except ZeroDivisionError:
+        return error_value('#DIV/0!')
+    except OverflowError:
+        return error_value('#NUM!')
+
+
+def _compare(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) -> XlmValue:
+    """
+    The value of a comparison. Two texts that name moments compare the moments they name, the
+    blank of an empty cell orders as the zero of the other operand's type, texts compare their
+    letters case-insensitively, and the types never cross: a number is never equal to a text or
+    a truth value, and the numbers order below the texts, the texts below the two truth values.
+    """
+    moment_left = left.unwrap_date()
+    moment_right = right.unwrap_date()
+    if moment_left is not None and moment_right is not None:
+        return _numeric_result(_OPERATOR_FUNCTIONS[operator](moment_left, moment_right))
+    if _is_blank(left) and _is_blank(right):
+        left = XlmValue(value=0)
+        right = XlmValue(value=0)
+    elif _is_blank(left):
+        left = _zero_like(right)
+    elif _is_blank(right):
+        right = _zero_like(left)
+    rank_left = _comparison_rank(left)
+    rank_right = _comparison_rank(right)
+    if rank_left != rank_right:
+        return _numeric_result(_OPERATOR_FUNCTIONS[operator](rank_left, rank_right))
+    if isinstance(left.value, str):
+        return _numeric_result(
+            _OPERATOR_FUNCTIONS[operator](left.value.lower(), right.value.lower())
+        )
+    return _numeric_result(_OPERATOR_FUNCTIONS[operator](left.value, right.value))
+
+
 def apply_binary(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) -> XlmValue:
     """
     The value of a binary operation. A partial operand leaves the operation unevaluated,
     spelled as its two operands around the operator, and an operand that is an error value is
-    the value of the whole operation. Complete operands apply the operator table to numbers,
-    compare the moments an ISO-spelled text names, and compare anything else as text. A
-    division by zero degrades to `#DIV/0!`, a result no finite number holds to `#NUM!`, and an
-    arithmetic operand or a coercion that fails to `#VALUE!`, the errors Excel displays for
-    them.
+    the value of the whole operation. Complete operands compare by the rules of `_compare` and
+    compute by the rules of `_arithmetic`.
     """
     if operator is XlBinaryOperator.CONCAT:
         return concat(left, right)
@@ -348,31 +434,9 @@ def apply_binary(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) ->
         return left
     if right.error:
         return right
-    operand_left = _operand(left)
-    operand_right = _operand(right)
-    if is_number(operand_left) and is_number(operand_right):
-        function = _OPERATOR_FUNCTIONS[operator]
-        try:
-            return _numeric_result(function(float(operand_left), float(operand_right)))
-        except ZeroDivisionError:
-            return error_value('#DIV/0!')
-        except OverflowError:
-            return error_value('#NUM!')
-    moment_left = left.unwrap_date()
-    moment_right = right.unwrap_date()
-    if moment_left is not None and moment_right is not None:
-        function = _OPERATOR_FUNCTIONS[operator]
-        try:
-            return _numeric_result(function(moment_left, moment_right))
-        except TypeError:
-            return error_value('#VALUE!')
     if operator in _ARITHMETIC_OPERATORS:
-        return error_value('#VALUE!')
-    function = _OPERATOR_FUNCTIONS[operator]
-    try:
-        return _numeric_result(function(left.unwrap(), right.unwrap()))
-    except TypeError:
-        return error_value('#VALUE!')
+        return _arithmetic(operator, left, right)
+    return _compare(operator, left, right)
 
 
 class XlmOutcome:
