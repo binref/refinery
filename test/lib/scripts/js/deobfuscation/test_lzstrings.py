@@ -732,3 +732,37 @@ class TestAProgramAnObfuscatorCompressedTheStringsOf(TestBase):
 
     def test_where_other_files_load_the_input_the_strings_stay_compressed(self):
         self.assertIn('.decompressFromUTF16(', self._deobfuscated('-c', '-l', '-e', 'node'))
+
+
+#: What `refinery.djs` writes for a file whose strings an obfuscation compressed, besides scrambling
+#: its statements into calls of a wrapper, minifying it, moving its declarations and concealing its
+#: strings, run as a CommonJS file for Node.
+COMPRESSED_AND_SCRAMBLED_DEOBFUSCATED = inspect.cleandoc(
+    """
+    function* countdown(n) {
+      while (n > 0) {
+        yield n--;
+      }
+    }
+    var counter;
+    counter = 0;
+    for (const value of countdown(3)) {
+      counter += value;
+    }
+    console.log('<alpha>', '<beta>', '<none>');
+    console.log(60, counter);
+    """
+)
+
+COMPRESSED_AND_SCRAMBLED_SHA256 = '1a89b9d17ffb848b2ee337f39b8468db1db1f659d61bcc07815766d3814d6283'
+
+
+class TestTheFileTheObfuscationCompressedAndScrambled(TestBase):
+    """
+    SECURITY: the file read from the sample store is deobfuscated and compared as text, and never
+    run.
+    """
+
+    def test_the_file_reads_as_pinned(self):
+        source = self.download_sample(COMPRESSED_AND_SCRAMBLED_SHA256)
+        self.assertEqual(source | djs.assemble('-c', '-e', 'node') | str, COMPRESSED_AND_SCRAMBLED_DEOBFUSCATED)
