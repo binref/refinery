@@ -66,6 +66,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     Scope,
     SemanticModel,
+    enclosing_operator,
     is_invocation_target,
     is_use_position,
     pattern_identifiers,
@@ -112,6 +113,7 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsSequenceExpression,
     JsSpreadElement,
+    JsStaticBlock,
     JsStringLiteral,
     JsTaggedTemplateExpression,
     JsThisExpression,
@@ -2699,6 +2701,188 @@ def a_host_reaches_the_binding(model: SemanticModel, binding: Binding, options: 
     if any(a_host_reaches_the_binding(model, copy.var, options) for copy in binding.copies_made):
         return True
     return model.reaches_global_object(binding)
+
+
+def _is_expression_wrapper(node: JsFunctionDeclaration) -> bool:
+    """
+    Test whether a function declaration matches the self-disabling wrapper pattern:
+
+        function NAME() {
+            NAME = function() {};
+        }
+    """
+    if node.id is None or node.body is None:
+        return False
+    if node.params:
+        return False
+    if not isinstance(node.body, JsBlockStatement):
+        return False
+    body = node.body.body
+    if len(body) != 1:
+        return False
+    stmt = body[0]
+    if not isinstance(stmt, JsExpressionStatement):
+        return False
+    expr = stmt.expression
+    if not isinstance(expr, JsAssignmentExpression):
+        return False
+    if expr.operator != '=':
+        return False
+    if not isinstance(expr.left, JsIdentifier):
+        return False
+    if expr.left.name != node.id.name:
+        return False
+    rhs = expr.right
+    if not isinstance(rhs, JsFunctionExpression):
+        return False
+    if wraps_return(rhs):
+        return False
+    if rhs.params:
+        return False
+    if isinstance(rhs.body, JsBlockStatement) and rhs.body.body:
+        return False
+    return True
+
+
+def _stands_as_a_statement_of_a_function_or_the_script(node: JsFunctionDeclaration) -> bool:
+    """
+    Whether *node* is a statement of the script or of a function body, which is the only placement
+    the whole of a declaration can be read from.
+
+    A block-scoped function declaration is one thing in strict code, where it is scoped to the
+    block, and another in sloppy code, where the enclosing scope holds the name from the start and
+    reaching the block is what puts the function in it; a labeled or exported declaration sits in a
+    slot `_remove_from_parent` cannot take it from.
+
+    The three placements a Directive Prologue can open are the same three, which is why
+    `refinery.lib.scripts.js.strict.is_prologue_host` answers this. A class static block is the one
+    of them left out: it is a scope of its own that nothing here has measured the model against, and
+    admitting it would buy a shape no obfuscator writes.
+    """
+    parent = node.parent
+    return is_prologue_host(parent) and not isinstance(parent, JsStaticBlock)
+
+
+def _a_bare_var_declarator_outside_a_loop_head(declared: Node) -> bool:
+    """
+    Whether *declared* declares a `var` with no initializer outside a loop head, which is the one
+    further declaration of a wrapper's name that says nothing about what the name holds.
+
+    An initializer is a declaration and not a write, and the store a `for-in` or `for-of` head makes
+    is neither, so the model reports no reference for either of them. A binding carrying one is a
+    binding something puts a value into that the expansion would never have seen.
+    """
+    declarator = declared.parent
+    if not isinstance(declarator, JsVariableDeclarator) or declarator.init is not None:
+        return False
+    declaration = declarator.parent
+    if declaration is None:
+        return False
+    return not isinstance(declaration.parent, (JsForInStatement, JsForOfStatement))
+
+
+def _the_calls_that_reach(
+    model: SemanticModel,
+    binding: Binding,
+    declaration: JsFunctionDeclaration,
+) -> list[JsCallExpression] | None:
+    """
+    Every call that reaches the wrapper *declaration* declares, or `None` where the expansion is not
+    equivalent for *binding*, the binding it declares, at all.
+
+    Expanding a call to the statements its arguments carry is equivalent only where the name holds
+    this wrapper when the call runs and nothing observes that the call then disabled it. That is
+    three questions about the binding:
+
+    - it is declared once, here, but for a bare `var` of the same name, which stores nothing;
+    - every write to it is the self-disabling assignment inside this declaration, so nothing else
+      ever puts a value into the name;
+    - every reference to it is the callee of a call, so that no read of the name can tell the
+      wrapper from what it left behind. The parentheses around a callee and around the call itself
+      are looked through, which is what `refinery.lib.scripts.js.analysis.model.enclosing_operator`
+      and `refinery.lib.scripts.js.model.strip_parens` are for;
+      `refinery.lib.scripts.js.analysis.model.is_invocation_target` answers a wider question than
+      this one, counting the tag of a tagged template, which no expansion here is written for. An
+      export list naming the wrapper is such a reference — the local half of a sourceless list
+      reads the binding — and is never the callee of a call, so an exported wrapper is refused
+      here without being looked for separately.
+
+    A reference that is not an identifier stands in for an access made through an object aliasing
+    the binding, which is not a name this pass can follow.
+
+    `refinery.lib.scripts.js.analysis.effects.EffectModel.function_escapes` asks a question the
+    same shape as this one and answers `True` for every self-disabling wrapper there is: it refuses
+    a written binding, a dynamic reference and a second declaration outright, and those three are
+    exactly what the carve-outs above are about. It cannot stand in for this.
+
+    A reference a `with` body resolves at run time is counted as a call that reaches the wrapper,
+    which the object supplying the name instead would make wrong. That acceptance, and the reason
+    it is made rather than refused, is
+    `test.lib.scripts.js.test_unfixed_defects.TestAWithObjectMayCarryTheNameAWrapperAnswersTo`; the
+    opaque reflective surfaces are accepted for the reason
+    `test.lib.scripts.js.test_unfixed_defects.TestAnUnreadableEvalMayRebindAWrapper` states. A
+    dynamic reference that resolves to another binding is not such a reference: it reaches this
+    wrapper only in the reading where that binding is absent
+    (`refinery.lib.scripts.js.analysis.model.Binding.may_be_absent`) and reaches the other one in
+    the reading where it is not, so the wrapper is refused.
+    """
+    for name in binding.declarations:
+        if name is not declaration.id and not _a_bare_var_declarator_outside_a_loop_head(name):
+            return None
+    for write in (*binding.writes, *binding.indefinite_writes):
+        if not isinstance(write, JsIdentifier) or not write.is_descendant_of(declaration):
+            return None
+    if any(model.resolve(reference) is not None for reference in binding.dynamic_refs):
+        return None
+    calls: list[JsCallExpression] = []
+    for reference in (*binding.reads, *binding.dynamic_refs):
+        if not isinstance(reference, JsIdentifier):
+            return None
+        call = enclosing_operator(reference)
+        if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not reference:
+            return None
+        calls.append(call)
+    return calls
+
+
+def declares_a_self_disabling_wrapper(node: JsFunctionDeclaration) -> bool:
+    """
+    Whether *node* declares a self-disabling wrapper (`_is_expression_wrapper`) standing where the
+    whole of it can be read (`_stands_as_a_statement_of_a_function_or_the_script`), whose call
+    answers neither a promise nor a generator object: the shape, asked before any model is read.
+    """
+    return (
+        not wraps_return(node)
+        and _stands_as_a_statement_of_a_function_or_the_script(node)
+        and _is_expression_wrapper(node)
+    )
+
+
+def self_disabling_wrapper_calls(
+    model: SemanticModel,
+    binding: Binding,
+    options: object,
+) -> list[JsCallExpression] | None:
+    """
+    Every call through *binding* where it names a self-disabling wrapper
+    (`declares_a_self_disabling_wrapper`) and each of these calls does nothing but evaluate its
+    arguments (`_the_calls_that_reach`), or `None`. A wrapper a host may reach by name
+    (`a_host_reaches_the_binding`) is none: the host may have replaced it before any of these calls
+    runs. The template matcher reads such a call as its arguments
+    (`refinery.lib.scripts.js.deobfuscation.templates.empty_functions_called`), and the wrapper pass
+    expands it into them (`refinery.lib.scripts.js.deobfuscation.argwrap`).
+    """
+    if a_host_reaches_the_binding(model, binding, options):
+        return None
+    for declared in binding.declarations:
+        declaration = declared.parent
+        if (
+            isinstance(declaration, JsFunctionDeclaration)
+            and declaration.id is declared
+            and declares_a_self_disabling_wrapper(declaration)
+        ):
+            return _the_calls_that_reach(model, binding, declaration) or None
+    return None
 
 
 def _declared_by_a_library(model: SemanticModel, binding: Binding) -> bool:

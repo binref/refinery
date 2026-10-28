@@ -21,6 +21,7 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     static_property_key,
 )
+from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.parser import JsParser
 
 INDEX_IN_ALPHABET = Template('function F(s) { return ALPHABET.indexOf(s); }', frozenset({'ALPHABET'}))
@@ -29,7 +30,7 @@ INDEX_IN_ALPHABET = Template('function F(s) { return ALPHABET.indexOf(s); }', fr
 def _matches(script: JsScript, template: Template, nodes: dict[int, str] | None = None) -> bool:
     function = script.body[0]
     assert isinstance(function, JsFunctionDeclaration)
-    return matches(build_semantic_model(script), function, [template], {}, nodes)
+    return matches(build_semantic_model(script), function, [template], {}, DeobfuscationOptions(), nodes)
 
 
 def _alphabet(script: JsScript) -> dict[int, str]:
@@ -82,6 +83,38 @@ class TestTemplates(TestBase):
         script = JsParser('function g(t) { return t === undefined; } var undefined = 5;').parse()
         self.assertFalse(_matches(script, Template('function F(s) { return s === undefined; }')))
 
+    def test_a_call_of_a_self_disabling_wrapper_matches_its_arguments_written_as_statements(self):
+        template = Template('function F(s, u) { switch (s) { case 1: u++; s = u; break; } return s; }')
+        wrapper = 'function W() { W = function () {}; }'
+        called = 'function g(t, w) { switch (t) { case 1: W(w++, t = w); break; } return t; }'
+        for source, matched in {
+            F'{wrapper} {called} g(1, 2);': True,
+            F'{wrapper} {called.replace("W(w++, t = w)", "W(t = w, w++)")} g(1, 2);': False,
+            F'{wrapper} {called} var v = W; g(1, 2);': False,
+            F'{wrapper} {called} W = 1; g(1, 2);': False,
+            F'{wrapper} {called}': False,
+        }.items():
+            with self.subTest(source):
+                script = JsParser(source).parse()
+                function = script.body[1]
+                assert isinstance(function, JsFunctionDeclaration)
+                self.assertEqual(
+                    matches(build_semantic_model(script), function, [template], {}, DeobfuscationOptions()),
+                    matched,
+                )
+
+    def test_a_sequence_matches_its_parts_written_as_statements_wherever_a_list_holds_it(self):
+        template = Template(
+            'function F(s, u) { switch (s) { case 1: u++, s = u; break; } { u++, s = u; } return s; }'
+        )
+        for source, matched in {
+            'function g(t, w) { switch (t) { case 1: w++; t = w; break; } { w++; t = w; } return t; }': True,
+            'function g(t, w) { switch (t) { case 1: w++, t = w; break; } { w++, t = w; } return t; }': True,
+            'function g(t, w) { switch (t) { case 1: t = w; w++; break; } { w++; t = w; } return t; }': False,
+        }.items():
+            with self.subTest(source):
+                self.assertEqual(_matches(JsParser(source).parse(), template), matched)
+
 
 SHUFFLED = Template(
     'function F(s, u) { s = s | 0; if (s === 1) { return "a"; } if (u === 2) { return "b"; }'
@@ -107,7 +140,7 @@ def _fit(body: str, template: Template = SHUFFLED) -> tuple[int, ...] | None:
     script = JsParser(F'function g(t, w) {{ {body} }}').parse()
     function = script.body[0]
     assert isinstance(function, JsFunctionDeclaration)
-    found = match(build_semantic_model(script), function, [template], {})
+    found = match(build_semantic_model(script), function, [template], {}, DeobfuscationOptions())
     return None if found is None else found[1]
 
 

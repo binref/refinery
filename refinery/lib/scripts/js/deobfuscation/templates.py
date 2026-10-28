@@ -27,7 +27,10 @@ from refinery.lib.scripts.js.analysis.model import (
     build_semantic_model,
     statement_list_of,
 )
-from refinery.lib.scripts.js.deobfuscation.helpers import names_global_value
+from refinery.lib.scripts.js.deobfuscation.helpers import (
+    names_global_value,
+    self_disabling_wrapper_calls,
+)
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     LOOP_NODES,
@@ -45,6 +48,7 @@ from refinery.lib.scripts.js.model import (
     JsNumericLiteral,
     JsParenthesizedExpression,
     JsSequenceExpression,
+    JsSwitchStatement,
     JsUnaryExpression,
     JsVariableDeclaration,
     JsVarKind,
@@ -134,19 +138,19 @@ class NormalForm:
     becomes that helper's placeholder, `undefined` where it still names the global value becomes
     `void 0`, parentheses go, a computed key that is a fixed name becomes a dotted one, the body of
     an `if` or a loop becomes a block, a `var` or `let` declaration becomes the assignments it
-    makes, a sequence or a call of an empty function in statement position becomes one statement
-    per operand, a negated number literal becomes the negative number constant folding leaves, and
-    `!0` and `!1` become the `true` and `false` a minifier spells that way.
+    makes, a sequence or a call that only evaluates its arguments in statement position becomes one
+    statement per operand, a negated number literal becomes the negative number constant folding
+    leaves, and `!0` and `!1` become the `true` and `false` a minifier spells that way.
     Those are the changes minifying, moving declarations and the other transforms of the obfuscator
     make to a helper. A negated zero stays negated, since a literal compares by its value and zero
     equals its negation.
 
     The names *placeholders* maps by the identity of their binding stand for the placeholder they
     are mapped to, and so does every node *nodes* maps by its identity, whatever it spells: the
-    literal holding a decoder's alphabet, or the callee of the call it returns through. The names
-    *empty* holds by the identity of their binding hold an empty function. A statement of the
-    function *left_out* holds is no part of the form, with every name it spells: another transform
-    inserted it, and the template does not hold it.
+    literal holding a decoder's alphabet, or the callee of the call it returns through. A call of a
+    name *empty* holds by the identity of its binding does nothing but evaluate its arguments
+    (`empty_functions_called`). A statement of the function *left_out* holds is no part of the form,
+    with every name it spells: another transform inserted it, and the template does not hold it.
     """
 
     def __init__(
@@ -274,10 +278,12 @@ class NormalForm:
                 else:
                     set_child(node, 'init', JsSequenceExpression(expressions=assignments))
         for node in list(root.walk()):
-            if not isinstance(node, JsBlockStatement):
+            if isinstance(node, (JsSwitchStatement, *FUNCTION_NODES)):
+                continue
+            if (statements := statement_list_of(node)) is None:
                 continue
             body: list[Node] = []
-            for statement in node.body:
+            for statement in statements:
                 assignments = None
                 if isinstance(statement, JsVariableDeclaration):
                     assignments = self._assignments(statement)
@@ -406,18 +412,26 @@ def template_form(template: Template) -> Shape:
     )
 
 
-def empty_functions_called(model: SemanticModel, function: Node) -> set[int]:
+def empty_functions_called(model: SemanticModel, function: Node, options: object) -> set[int]:
     """
-    The names *function* calls that hold one function with no parameters and an empty body, the
-    wrapper the obfuscator puts around a sequence of statements, by the identity of their binding.
+    The names *function* calls whose calls do nothing but evaluate their arguments, the wrapper the
+    obfuscator puts around a sequence of statements, by the identity of their binding: a name
+    holding one function with no parameters and an empty body, and a self-disabling wrapper of the
+    run *options* describe
+    (`refinery.lib.scripts.js.deobfuscation.helpers.self_disabling_wrapper_calls`), which empties
+    itself on its first call.
     """
     empty: set[int] = set()
     for node in function.walk():
         if not isinstance(node, JsCallExpression) or not isinstance(node.callee, JsIdentifier):
             continue
-        binding = model.resolve(node.callee)
-        value = None if binding is None else model.singular_value(binding)
-        if isinstance(value, FUNCTION_NODES) and not value.params and statement_list_of(value) == []:
+        if (binding := model.resolve(node.callee)) is None or id(binding) in empty:
+            continue
+        value = model.singular_value(binding)
+        if (
+            (isinstance(value, FUNCTION_NODES) and not value.params and statement_list_of(value) == [])
+            or self_disabling_wrapper_calls(model, binding, options) is not None
+        ):
             empty.add(id(binding))
     return empty
 
@@ -427,6 +441,7 @@ def match(
     function: JsFunctionNode,
     templates: Iterable[Template],
     placeholders: dict[int, str],
+    options: object,
     nodes: dict[int, str] | None = None,
     left_out: Collection[Node] = (),
 ) -> tuple[Template, tuple[int, ...]] | None:
@@ -435,12 +450,13 @@ def match(
     the nodes *nodes* maps standing for the placeholders they are mapped to, and the statements of
     *left_out* left out; with it, which statement of the template each statement of the body of
     *function* is (`Shape.fit`). A function whose number of parameters no template has is refused
-    before its form is built, which costs a copy of the whole function.
+    before its form is built, which costs a copy of the whole function. *options* describe the run,
+    which decides whether a host may reach a wrapper the function calls (`empty_functions_called`).
     """
     templates = list(templates)
     if all(len(function.params) != len(template_form(template).params) for template in templates):
         return None
-    empty = empty_functions_called(model, function)
+    empty = empty_functions_called(model, function, options)
     form = NormalForm(model, placeholders, empty, nodes, left_out).of(function)
     if form is None:
         return None
@@ -455,10 +471,11 @@ def matches(
     function: JsFunctionNode,
     templates: Iterable[Template],
     placeholders: dict[int, str],
+    options: object,
     nodes: dict[int, str] | None = None,
     left_out: Collection[Node] = (),
 ) -> bool:
     """
     Whether *function* has the normal form of one of *templates* (`match`).
     """
-    return match(model, function, templates, placeholders, nodes, left_out) is not None
+    return match(model, function, templates, placeholders, options, nodes, left_out) is not None
