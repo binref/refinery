@@ -49,6 +49,10 @@ from test.lib.scripts.js.analysis.differential import (
 from test.lib.scripts.js.deobfuscation.test_array_length_reads import (
     A_COUNT_THE_FOLD_DOES_NOT_REACH,
 )
+from test.lib.scripts.js.deobfuscation.test_a_table_read_through_an_accessor import (
+    deobfuscated_by_the_unit,
+    with_words,
+)
 from test.lib.scripts.js.deobfuscation.test_b91strings import (
     DEFAULTED_HEAD,
     HEAD,
@@ -3567,9 +3571,10 @@ class TestAnObjectPropertyFlagVariantIsStillRemoved(TestBase):
 #: A program whose only side effect between two observations runs inside a `toString` or `valueOf`
 #: the conversion of a binary operand fires, mapped to the behavior Node gives it. The first two
 #: rows drop the converting store outright; the third is the family's plainest witness, a global
-#: written during the conversion and read after it; the last three keep the store alive through a
+#: written during the conversion and read after it; the next three keep the store alive through a
 #: later use of its value, and the substitution moves the conversion past the read it was ordered
-#: before.
+#: before; the two after them move it past a later declarator or statement whose effect it
+#: observes, and the last past a store of `undefined` its own conversion is overwritten by.
 A_CONVERSION_WITH_AN_EFFECT_THE_SCAN_CANNOT_SEE = {
     'X = 5;\n'
     "var o = { toString: function () { delete globalThis.X; return ''; } };\n"
@@ -3593,6 +3598,33 @@ A_CONVERSION_WITH_AN_EFFECT_THE_SCAN_CANNOT_SEE = {
     'X = 5;\n'
     'var o = { valueOf: function () { delete globalThis.X; return 7; } };\n'
     'var s = o < 8;\nX;\nconsole.log(s);\n': ('', 'ReferenceError'),
+
+    'function f(o) {\n'
+    '  var log = [];\n'
+    '  o.log = log;\n'
+    "  var a = o + 1, b = (log.push('b'), 0), c = a;\n"
+    "  return log.join('') + c;\n"
+    '}\n'
+    "console.log(f({ valueOf: function () { this.log.push('v'); return 1; } }));\n": ('vb2\n', None),
+
+    'function f(o) {\n'
+    '  var log = [];\n'
+    '  o.log = log;\n'
+    '  var a = o + 1;\n'
+    "  var b = (log.push('b'), 0);\n"
+    '  var c = a;\n'
+    "  return log.join('') + c;\n"
+    '}\n'
+    "console.log(f({ valueOf: function () { this.log.push('v'); return 1; } }));\n": ('vb2\n', None),
+
+    'function f() {\n'
+    '  var x;\n'
+    "  var o = { toString: function () { x = 5; return 'o'; } };\n"
+    "  var s = '' + o;\n"
+    '  x = undefined;\n'
+    '  return [s, x];\n'
+    '}\n'
+    'console.log(f());\n': ("[ 'o', undefined ]\n", None),
 }
 
 
@@ -6087,3 +6119,300 @@ class TestAnAnonymousFunctionStoredOnANamespaceKeepsItsEmptyName(TestBase):
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+#: Programs declaring a `var` of the name of a parameter and reading the mapped `arguments` before
+#: and after its value, run as a CommonJS file, mapped to what Node prints for each.
+A_VAR_REDECLARING_A_PARAMETER_READ_THROUGH_ARGUMENTS = {
+    'in separate declarations': Program(
+        a_program("""
+            function f(a) {
+              var x = arguments[0];
+              var a = 5;
+              var y = arguments[0];
+              return [x, y, a].join();
+            }
+            console.log(f(1));
+            """),
+        prints('1,5,5'),
+        Reading.COMMONJS,
+    ),
+    'in one declaration': Program(
+        a_program("""
+            function f(a) {
+              var x = arguments[0], a = 5, y = arguments[0];
+              return [x, y, a].join();
+            }
+            console.log(f(1));
+            """),
+        prints('1,5,5'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAVarRedeclaringAParameterWritesTheMappedArguments(TestBase):
+    """
+    In sloppy code a function with simple parameters maps `arguments[0]` to its first parameter,
+    and a `var` of that name declares no new binding: `var a = 5` writes the parameter, and so the
+    element. The function evaluator
+    (`refinery.lib.scripts.js.deobfuscation.evaluator.JsFunctionEvaluator`) reads the element as
+    the argument the call passed after the store as well, and folds the call to `'1,1,5'`.
+    """
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in A_VAR_REDECLARING_A_PARAMETER_READ_THROUGH_ARGUMENTS.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    @unittest.expectedFailure
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_VAR_REDECLARING_A_PARAMETER_READ_THROUGH_ARGUMENTS.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
+#: Programs storing into a `var` whose function declaration of the same name is in place when the
+#: function starts, run as a CommonJS file, mapped to what Node prints for each.
+A_STORE_INTO_THE_NAME_OF_A_FUNCTION_DECLARATION = {
+    'a number stored before the declaration': Program(
+        a_program("""
+            function f() {
+              x = 2;
+              function x() {}
+              return typeof x;
+            }
+            console.log(f());
+            """),
+        prints('number'),
+        Reading.COMMONJS,
+    ),
+    'undefined stored before the declaration': Program(
+        a_program("""
+            function f() {
+              var x;
+              x = undefined;
+              function x() {}
+              return typeof x;
+            }
+            console.log(f());
+            """),
+        prints('undefined'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionDeclarationDoesNotStoreWhereItStands(TestBase):
+    """
+    A function declaration puts its function into its name when the function around it starts, and
+    reaching the declaration does nothing. The function evaluator
+    (`refinery.lib.scripts.js.deobfuscation.evaluator.JsFunctionEvaluator`) runs `f` as if the
+    declaration stored the function where it stands, after the store, and folds `f()` to
+    `'function'`.
+    """
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in A_STORE_INTO_THE_NAME_OF_A_FUNCTION_DECLARATION.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    @unittest.expectedFailure
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_STORE_INTO_THE_NAME_OF_A_FUNCTION_DECLARATION.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
+#: Programs whose code built by `Function` defines `define` before a check of `typeof define`, the
+#: function reaching the call through an array, a rest parameter, an object and a parameter, run as
+#: a CommonJS file, mapped to what Node prints for each.
+A_CHECK_OF_DEFINE_AFTER_CODE_FUNCTION_BUILDS = {
+    'through an array': Program(
+        a_program("""
+            var a = [Function];
+            a[0]('globalThis.define = function (f) { console.log(f()); }; globalThis.define.amd = 1;')();
+            "function" == typeof define && define.amd ? define(function () { return 'defined'; }) : console.log('none');
+            """),
+        prints('defined'),
+        Reading.COMMONJS,
+    ),
+    'through a rest parameter': Program(
+        a_program("""
+            function run(...a) { a.length = 2; return a[0](a[1]); }
+            run(Function, 'globalThis.define = function (f) { console.log(f()); }; globalThis.define.amd = 1;')();
+            "function" == typeof define && define.amd ? define(function () { return 'defined'; }) : console.log('none');
+            """),
+        prints('defined'),
+        Reading.COMMONJS,
+    ),
+    'through an object': Program(
+        a_program("""
+            var a = { f: Function };
+            a.f('globalThis.define = function (f) { console.log(f()); }; globalThis.define.amd = 1;')();
+            "function" == typeof define && define.amd ? define(function () { return 'defined'; }) : console.log('none');
+            """),
+        prints('defined'),
+        Reading.COMMONJS,
+    ),
+    'through a parameter': Program(
+        a_program("""
+            function run(g, s) { return g(s); }
+            run(Function, 'globalThis.define = function (f) { console.log(f()); }; globalThis.define.amd = 1;')();
+            "function" == typeof define && define.amd ? define(function () { return 'defined'; }) : console.log('none');
+            """),
+        prints('defined'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestACheckOfDefineIsNotDecidedPastCodeFunctionBuilds(TestBase):
+    """
+    The unit's default reading writes the code `Function` builds where the call stands, and that
+    code defines `define`. Where `Function` reaches the call through an array, a rest parameter, an
+    object or a parameter, the check of `typeof define` after it is still decided as false, so the
+    deobfuscation prints `none` right after the definition. Called by its name, the check stays.
+    """
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in A_CHECK_OF_DEFINE_AFTER_CODE_FUNCTION_BUILDS.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    @unittest.expectedFailure
+    def test_the_deobfuscation_by_the_unit_prints_what_the_program_prints(self):
+        for label, row in A_CHECK_OF_DEFINE_AFTER_CODE_FUNCTION_BUILDS.items():
+            with self.subTest(label=label):
+                self.assertEqual(behavior(deobfuscated_by_the_unit(row.text)), row.prints)
+
+
+#: Programs calling a member of a rest parameter's array through a chain of members whose length
+#: is written for the rest array, run as a CommonJS file, mapped to what Node prints for each: the
+#: array stored on a local object, and another object's array.
+A_REST_ARRAY_READ_THROUGH_A_CHAIN_OF_MEMBERS = {
+    'the rest array stored on a local object': Program(
+        a_program("""
+            var f = function (...a) {
+              var s = { k: a };
+              s.k.length = 2;
+              return s.k[1](s.k[0]);
+            };
+            console.log(f(1, function () { return this.length; }));
+            """),
+        prints('2'),
+        Reading.COMMONJS,
+    ),
+    'an array of another object': Program(
+        a_program("""
+            var s = { k: [] };
+            var f = function (...a) {
+              s.k.length = 2;
+              return s.k[1](s.k[0]);
+            };
+            s.k[1] = function (x) { return x; };
+            console.log(f(5, 6));
+            """),
+        prints('undefined'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestARestArrayIsUnpackedOnlyFromItsOwnName(TestBase):
+    """
+    Unpacking a rest parameter into named parameters
+    (`refinery.lib.scripts.js.deobfuscation.restunpack`) takes any chain of members whose `length`
+    is written as the rest array, `s.k.length = 2` included, so an unrelated object's array becomes
+    the parameters (the output throws a `TypeError`) and a local object holding the array keeps
+    naming the array the unpacking removed (a `ReferenceError`).
+    `test.lib.scripts.js.deobfuscation.test_restunpack.TestRestUnpack.test_frame_qualified` pins
+    the unpacking of such a chain; the fix changes that test.
+    """
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in A_REST_ARRAY_READ_THROUGH_A_CHAIN_OF_MEMBERS.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    @unittest.expectedFailure
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_REST_ARRAY_READ_THROUGH_A_CHAIN_OF_MEMBERS.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
+#: Programs reading through an accessor a table of more strings than a fold may write, which a
+#: function called in place or a named call returns.
+A_TABLE_A_CALL_RETURNS = {
+    'a function called in place': with_words(300, a_program("""
+        var SC;
+        (function () {
+          var stringArray = (function () { return "WORDS".split("|"); })();
+          SC = function (index) {
+            return stringArray[index];
+          };
+        })();
+        console.log(SC(3), SC(299));
+        """)),
+    'a named call': with_words(300, a_program("""
+        var SC;
+        (function () {
+          function make() { return "WORDS".split("|"); }
+          var stringArray = make();
+          SC = function (index) {
+            return stringArray[index];
+          };
+        })();
+        console.log(SC(3), SC(299));
+        """)),
+}
+
+
+class TestATableACallReturnsIsReadByTheAccessorFold(TestBase):
+    """
+    A free name of a folded function holds the value of its method-chain initializer
+    (`refinery.lib.scripts.js.deobfuscation.admission.CallAdmission.binding_constant`), so an
+    accessor over a table `"…".split("|")` of more strings than a fold may write folds its calls.
+    A table a function called in place or a named call returns is not read: its callee is admitted
+    by the same fixpoint that asks for the constant. The calls stay and the table stays split.
+    """
+
+    @unittest.expectedFailure
+    def test_each_call_of_the_accessor_folds(self):
+        self.assertEqual(
+            {
+                label: deobfuscate_source(program, execution=ExecutionModel.commonjs)
+                for label, program in A_TABLE_A_CALL_RETURNS.items()
+            },
+            {label: "console.log('w0003', 'w0299');" for label in A_TABLE_A_CALL_RETURNS},
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAMaskedFunctionCalledAsAMethodIsUnmasked(TestBase):
+    """
+    Unmasking `m` reads `a[1](a[0])` as a call of the second parameter with the first, which is
+    sound only where every call of `m` passes a function that ignores its receiver. Both calls of
+    the masked function are calls of a method of the library object, `v.m(…)` and `L.twice(…)`,
+    and the calls a model sees go through names only, so `m` stays masked. Following calls through
+    the properties of an object is analysis no pass has.
+    """
+
+    @unittest.expectedFailure
+    def test_the_rest_parameter_of_the_method_is_unpacked(self):
+        source = a_program("""
+            var L = function () {
+              var v = {
+                m: function (...a) { a.length = 2; return a[1](a[0]); },
+                twice: function (x) { return v.m(x, function (y) { return y * 2; }); }
+              };
+              return v;
+            }();
+            console.log(L.twice(21));
+            """)
+        self.assertNotIn('...a', deobfuscate_source(source, execution=ExecutionModel.commonjs))
