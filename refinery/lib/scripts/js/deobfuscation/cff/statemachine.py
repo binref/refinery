@@ -213,6 +213,7 @@ class _CallSiteInfo(NamedTuple):
     undefined_reads: list[Expression]
     initial_args: list[Expression]
     call_index: int
+    reset: bool
 
 
 class _WrapperFunctionInfo(NamedTuple):
@@ -326,6 +327,7 @@ class _MachineMatch:
     initial_args: list[Expression] = field(default_factory=list)
     calls: _Calls | None = None
     call_index: int = -1
+    reset: bool = False
 
     @property
     def call_start(self) -> int:
@@ -1059,6 +1061,7 @@ def _match_generator_cff(body: list[Statement], idx: int, design: _Design) -> _M
         scope_default_inits=scope_default_inits,
         namespaces=namespaces,
         namespace_homes=namespace_homes,
+        reset=call_info.reset,
     )
 
 
@@ -1191,6 +1194,7 @@ def _match_array_machine(body: list[Statement], idx: int, design: _Design) -> _M
         runtime_name=runtime.name,
         initial_args=call_info.initial_args,
         call_index=call_info.call_index,
+        reset=call_info.reset,
     )
 
 
@@ -1390,10 +1394,12 @@ def _spells_undefined(node: Expression | None) -> list[Expression] | None:
     return None
 
 
-def _did_return_reset(stmt: Statement) -> tuple[_Flag, list[Expression]] | None:
+def _did_return_reset(stmt: Statement) -> tuple[_Flag, list[Expression], bool] | None:
     """
-    The flag *stmt* resets ahead of the generator's call, as `var didReturn;` or as a store of
-    `undefined` to it (`_spells_undefined`), with the names that store relies on, or `None`.
+    The flag *stmt* names ahead of the generator's call, as `var didReturn;` or as a store of
+    `undefined` to it (`_spells_undefined`), with the names that store relies on and whether it
+    resets the flag on every run of the call site, or `None`. Only the store does: a `var` resets
+    nothing.
     """
     if isinstance(stmt, JsVariableDeclaration):
         decls = stmt.declarations
@@ -1403,7 +1409,7 @@ def _did_return_reset(stmt: Statement) -> tuple[_Flag, list[Expression]] | None:
             and isinstance(decls[0].id, JsIdentifier)
             and decls[0].init is None
         ):
-            return _FlagVariable(decls[0].id.name), []
+            return _FlagVariable(decls[0].id.name), [], False
     if isinstance(stmt, JsExpressionStatement):
         expr = stmt.expression
         if (
@@ -1412,7 +1418,7 @@ def _did_return_reset(stmt: Statement) -> tuple[_Flag, list[Expression]] | None:
             and (flag := _flag_spelled(expr.left)) is not None
             and (reads := _spells_undefined(expr.right)) is not None
         ):
-            return flag, reads
+            return flag, reads, True
     return None
 
 
@@ -1480,20 +1486,23 @@ def _find_generator_call_site(
         var result = genName(args)["next"]()["value"];
         if (didReturn) { return result; }
 
-    The flag may be reset with `didReturn = void 0;` instead, the result assigned to a variable
-    declared elsewhere, and the call returned directly or made for nothing. The guard is part of
-    the scaffolding in exactly this form: one that does anything else stays, and the flag it reads
-    keeps the recovery from going ahead (`_scaffolding_is_private`). Where *plain*, the call is the
-    plain call `M(array)` of a machine that is no generator, and *start* is the index the call site
-    begins at where it does not stand right behind the machine. Returns a `_CallSiteInfo` or
-    `None`.
+    The flag may be reset with `didReturn = void 0;` instead, or not at all where the guard names
+    it, the result assigned to a variable declared elsewhere, and the call returned directly or
+    made for nothing. Only a store resets the flag on every run of the call site (`reset`); a
+    `var` resets nothing, and its flag holds `undefined` there only on the first run
+    (`_scaffolding_is_private`). The guard is part of the scaffolding in exactly this form: one
+    that does anything else stays, and the flag it reads keeps the recovery from going ahead
+    (`_scaffolding_is_private`). Where *plain*, the call is the plain call `M(array)` of a machine
+    that is no generator, and *start* is the index the call site begins at where it does not stand
+    right behind the machine. Returns a `_CallSiteInfo` or `None`.
     """
     pos = gen_idx + 1 if start is None else start
     call_index = pos
     undefined_reads: list[Expression] = []
     flag: _Flag | None = None
-    if pos < len(body) and (reset := _did_return_reset(body[pos])) is not None:
-        flag, undefined_reads = reset
+    reset = False
+    if pos < len(body) and (found := _did_return_reset(body[pos])) is not None:
+        flag, undefined_reads, reset = found
         pos += 1
     if pos >= len(body):
         return None
@@ -1511,6 +1520,16 @@ def _find_generator_call_site(
     scaffolding_end = pos
     ends_a_function = (owner := body[gen_idx].parent) is not None and _is_a_function_body(owner)
     guard_reads = None
+    read_off_the_guard = False
+    if (
+        flag is None
+        and result_var is not None
+        and scaffolding_end + 1 < len(body)
+        and isinstance(guard := body[scaffolding_end + 1], JsIfStatement)
+        and isinstance(spelled := _flag_spelled(guard.test), _FlagVariable)
+    ):
+        flag = spelled
+        read_off_the_guard = True
     if flag is not None and result_var is not None and scaffolding_end + 1 < len(body):
         guard_reads = _is_result_guard(
             body[scaffolding_end + 1],
@@ -1519,6 +1538,8 @@ def _find_generator_call_site(
             ends_a_function and scaffolding_end + 2 == len(body),
         )
     guarded = guard_reads is not None
+    if read_off_the_guard and not guarded:
+        flag = None
     if guard_reads is not None:
         undefined_reads.extend(guard_reads)
         scaffolding_end += 1
@@ -1539,6 +1560,7 @@ def _find_generator_call_site(
         undefined_reads,
         list(call_node.arguments),
         call_index,
+        reset,
     )
 
 
@@ -5233,10 +5255,12 @@ def _scaffolding_is_private(
     function holding the call, as the obfuscator writes them, or a function declaration. The flag
     lives as long as one call of that function does: a variable it declares, or a property of an
     object it makes for each call (`_property_flag_is_private`). A flag every call shares could be
-    raised by a call the recovered code makes before the guard reads it. Every name that spells
-    `undefined` in the scaffolding has to denote it. No opaque reflective surface, such as a direct
-    `eval` in the code of the generator, may name one of its parameters: the recovery moves that
-    code out of the generator, where the name no longer exists
+    raised by a call the recovered code makes before the guard reads it. A variable no store of
+    `undefined` resets right before the call holds `undefined` there only where the call runs once
+    for each call of the function declaring it: its statement stands in the body of that
+    function. Every name that spells `undefined` in the scaffolding has to denote it. No opaque
+    reflective surface, such as a direct `eval` in the code of the generator, may name one of its
+    parameters: the recovery moves that code out of the generator, where the name no longer exists
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.reflection_surface_sites`).
     """
     if any(
@@ -5266,6 +5290,12 @@ def _scaffolding_is_private(
         anchors.setdefault(anchor.name, binding)
     if isinstance(flag, _FlagVariable):
         if (binding := anchors.get(flag.name)) is None or not binding.declared_within(home.node):
+            return False
+        if not match.reset and not (
+            isinstance(owner := body[match.call_start].parent, JsBlockStatement)
+            and _is_a_function_body(owner)
+            and binding.scope.node is owner.parent
+        ):
             return False
     elif isinstance(flag, _FlagProperty):
         if not _property_flag_is_private(model, body, match, flag, home, inside, absent):

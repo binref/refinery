@@ -67,6 +67,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     access_key,
     collect_identifier_names,
     definitely_answers_the_completion,
+    denoted_value,
     extract_literal_value,
     insert_after_prologue,
     is_binding_site,
@@ -481,6 +482,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 self._names_read_in_the_script = None
                 self._has_reflection = cache.model.has_reflection_surface()
                 self._remove_discarded_completions(node)
+                self._remove_stores_of_undefined(node)
                 self._remove_dead_stores(node)
                 self._remove_redundant_global_stores(node)
                 self._remove_empty_statements(node)
@@ -514,6 +516,59 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     def reaching(self) -> ReachingModel:
         assert self._cache is not None
         return self._cache.reaching
+
+    def _remove_stores_of_undefined(self, root: JsScript):
+        """
+        Drop `x = undefined` where the `var` it stores holds `undefined` already, so its other
+        value is the one it ever holds: the store moving a declaration leaves where a `var` without
+        a value stood. The `var` belongs to a function, or to a file that scopes its declarations to
+        itself, so it starts out `undefined` each time its scope runs; a script's `var` names a
+        property of the global object another script may have set. No reflection reaches it, the
+        store stands in the statement list of that scope, so it runs at most once per run of the
+        scope, and every other way a value reaches the `var`
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.binding_value_sites`) runs after it
+        (`refinery.lib.scripts.js.analysis.dominance.DominanceModel.runs_before`). A `var` given no
+        other value keeps the store, which then gives it its one value.
+        """
+        assert self._cache is not None
+        model = self.model
+        dominance = self._cache.dominance
+        removals: list[Statement] = []
+        for body in self._statement_lists(root):
+            for statement in body:
+                if (
+                    not isinstance(statement, JsExpressionStatement)
+                    or not isinstance(store := statement.expression, JsAssignmentExpression)
+                    or store.operator != '='
+                    or not isinstance(target := store.left, JsIdentifier)
+                ):
+                    continue
+                known, value = denoted_value(store.right, model)
+                if not known or value is not None:
+                    continue
+                binding = model.resolve(target)
+                if (
+                    binding is None
+                    or binding.kind is not BindingKind.VAR
+                    or binding.dynamic_refs
+                    or model.reflection_can_reach(binding)
+                ):
+                    continue
+                scope = binding.scope
+                owner = statement.parent
+                if isinstance(owner, JsBlockStatement) and isinstance(owner.parent, FUNCTION_NODES):
+                    owner = owner.parent
+                if owner is not scope.node or not (
+                    scope.kind is ScopeKind.FUNCTION
+                    or (scope.kind is ScopeKind.SCRIPT and model.file_kind.scopes_declarations_to_the_file)
+                ):
+                    continue
+                if (sites := model.binding_value_sites(binding)) is None:
+                    continue
+                others = [site for site in sites if site is not target]
+                if others and all(dominance.runs_before(statement, site) for site in others):
+                    removals.append(statement)
+        self._remove_all(statement for statement in removals if statement.parent is not None)
 
     def _remove_dead_stores(self, root: JsScript):
         """

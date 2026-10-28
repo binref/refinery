@@ -905,13 +905,12 @@ class TestAFunctionAHostCallsKeepsItsParameters(TestBase):
 #: does: no check, no hash, no forwarder and no moved parameter is left.
 MOVED_DECLARATIONS_AND_LOCKS_DEOBFUSCATED = inspect.cleandoc(
     """
-    var counter;
-    counter = undefined;
     function* countdown(n) {
       while (n > 0) {
         yield n--;
       }
     }
+    var counter;
     counter = 0;
     for (const value of countdown(3)) {
       counter += value;

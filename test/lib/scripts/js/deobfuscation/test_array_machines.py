@@ -3,13 +3,19 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_within, node_executable
+from test import TestBase
+from test.lib.scripts.js.analysis.differential import (
+    behavior,
+    deobfuscate_source,
+    deobfuscate_within,
+    node_executable,
+)
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import wontfix
+from test.lib.scripts.js.ledger import Program, Reading, a_program, prints, wontfix
 
 from refinery.lib.scripts.js.deobfuscation.cff import JsStateMachineUnflattening
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
-from refinery.lib.scripts.js.options import DeobfuscationOptions
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
@@ -1142,3 +1148,283 @@ class TestNodePrintsTheSameForEachArrayMachine(TestJsDeobfuscator):
     def test_a_machine_whose_start_state_spreads_through_a_stopped_array_iterator_prints_what_it_printed(self):
         source = THE_ITERATOR_OF_EVERY_ARRAY_IS_STOPPED_AND_THE_START_STATE_SPREADS_A_LITERAL
         self.assertEqual(behavior(source), behavior(self._deobfuscate(source)))
+
+
+#: A machine whose function returns through a flag: the machine sets `ret` where it returns, and the
+#: function returns what the machine returned where `ret` is set after the call. `ret` is reset to
+#: `undefined` right before the call.
+A_MACHINE_RETURNING_THROUGH_A_FLAG = a_program(
+    """
+    function sum(array) {
+      for (var total = 0, i = 0; i < array["length"]; i++) {
+        total += array[i];
+      }
+      return total;
+    }
+    var seq = [4, 5, 6, 7];
+    function slice(min, max) {
+      return seq["slice"](min, max);
+    }
+    function grade(n) {
+      function M(states, scope_1 = { A: {} }, runtime_1) {
+        var runtime, scope;
+        scope = scope_1, runtime = runtime_1;
+        while (sum(states) !== 0) {
+          L: switch (sum(states)) {
+            case 15:
+              scope.A.label = n > 10 ? 'big' : 'small';
+              states[0] += states[1] - 4;
+              break L;
+            case 16:
+              return ret = true, scope.A.label + '!';
+          }
+        }
+        return undefined;
+      }
+      var res, ret;
+      var X = {};
+      X.n = n;
+      ret = undefined;
+      res = M([...slice(0, 3)]);
+      if (ret) {
+        return res;
+      }
+      return undefined;
+    }
+    console.log(grade(3), grade(30));
+    """
+)
+
+_RESET = ('  ret = undefined;\n', '')
+_CALL = '  res = M([...slice(0, 3)]);\n  if (ret) {\n    return res;\n  }\n'
+_DECLARED = '  var res, ret;\n'
+_A_RUN_LEAVES_WITHOUT_THE_FLAG = (
+    'states[0] += states[1] - 4;',
+    'states[0] += n > 50 ? -15 : states[1] - 4;',
+)
+_A_RUN_EXITS_WITHOUT_RETURNING = (
+    "      scope.A.label = n > 10 ? 'big' : 'small';\n",
+    "      scope.A.label = n > 10 ? 'big' : 'small';\n"
+    '          if (n > 50) { states[0] += states[1] - 20; break L; }\n',
+)
+_FELL_THROUGH = (
+    '  return undefined;\n}\nconsole.log(grade(3), grade(30));',
+    "  return 'fell';\n}\nconsole.log(grade(3), grade(30), grade(60));",
+)
+
+
+def flagged(*edits: tuple[str, str]) -> str:
+    """
+    `A_MACHINE_RETURNING_THROUGH_A_FLAG` with the first text of each of *edits* replaced by its
+    second.
+    """
+    text = A_MACHINE_RETURNING_THROUGH_A_FLAG
+    for old, new in edits:
+        assert text.count(old) == 1, old
+        text = text.replace(old, new)
+    return text
+
+
+#: Machines returning through a flag, mapped to what Node prints for each run as a CommonJS file:
+#: the flag reset before the call or not, set or written before it, a parameter, a property, a
+#: variable of an outer function, declared after the call or as a function, the call in a loop or a
+#: block, and a run of the machine that ends without setting the flag.
+A_FLAG_THE_FUNCTION_RETURNS_THROUGH: dict[str, Program] = {
+    'the flag reset before the call': Program(
+        flagged(),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'no store resetting the flag': Program(
+        flagged(_RESET),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'no store resetting the flag of a call in a loop': Program(
+        flagged((_RESET[0] + _CALL, '  for (var k = 0; k < 1; k++) {\n' + _CALL + '  }\n')),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'the flag set before the call': Program(
+        flagged((_RESET[0], '  ret = true;\n')),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'the flag a parameter': Program(
+        flagged(('function grade(n) {', 'function grade(n, ret) {'), (_DECLARED, '  var res;\n'), _RESET),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'the flag a property': Program(
+        flagged(('return ret = true,', 'return X.ret = true,'), _RESET, ('  if (ret) {', '  if (X.ret) {')),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'the flag a variable of an outer function': Program(
+        flagged(('function grade(n) {', 'var ret;\nfunction grade(n) {'), (_DECLARED, '  var res;\n'), _RESET),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'the flag declared with a value': Program(
+        flagged((_DECLARED, '  var res, ret = true;\n'), _RESET),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'the flag read after the call': Program(
+        flagged(_RESET, ('  return undefined;\n}\nconsole', '  return ret;\n}\nconsole')),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'the flag declared after the call': Program(
+        flagged((_DECLARED, '  var res;\n'), _RESET, ('    return res;\n  }\n', '    return res;\n  }\n  var ret;\n')),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'no store resetting the flag of a call in a block': Program(
+        flagged((_RESET[0] + _CALL, '  {\n' + _CALL + '  }\n')),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'a run leaving without the flag': Program(
+        flagged(_A_RUN_LEAVES_WITHOUT_THE_FLAG, _RESET, _FELL_THROUGH),
+        prints('small! big! fell'),
+        Reading.COMMONJS,
+    ),
+    'a run leaving without the flag, a function of its name declared': Program(
+        flagged(_A_RUN_LEAVES_WITHOUT_THE_FLAG, (_DECLARED, _DECLARED + '  function ret() {}\n'), _RESET, _FELL_THROUGH),
+        prints('small! big! undefined'),
+        Reading.COMMONJS,
+    ),
+    'a run leaving without the flag, a function of its name in a block': Program(
+        flagged(
+            _A_RUN_LEAVES_WITHOUT_THE_FLAG,
+            (_DECLARED, _DECLARED + '  { function ret() {} }\n'),
+            _RESET,
+            _FELL_THROUGH,
+        ),
+        prints('small! big! undefined'),
+        Reading.COMMONJS,
+    ),
+    'a run leaving without the flag a closure set before the call': Program(
+        flagged(
+            _A_RUN_LEAVES_WITHOUT_THE_FLAG,
+            (_DECLARED, _DECLARED + '  (function () { ret = 1; })();\n'),
+            _RESET,
+            _FELL_THROUGH,
+        ),
+        prints('small! big! undefined'),
+        Reading.COMMONJS,
+    ),
+    'a run leaving without the flag, also a parameter': Program(
+        flagged(('function grade(n) {', 'function grade(n, ret) {'), _A_RUN_LEAVES_WITHOUT_THE_FLAG, _RESET, _FELL_THROUGH),
+        prints('small! big! fell'),
+        Reading.COMMONJS,
+    ),
+    'a function of the name of the flag declared': Program(
+        flagged((_DECLARED, _DECLARED + '  function ret() {}\n'), _RESET),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'a function of the name of the flag in a block': Program(
+        flagged((_DECLARED, _DECLARED + '  { function ret() {} }\n'), _RESET),
+        prints('small! big!'),
+        Reading.COMMONJS,
+    ),
+    'the machine reads the flag': Program(
+        flagged(
+            ("scope.A.label = n > 10 ? 'big' : 'small';", "scope.A.label = (typeof ret) + (n > 10 ? 'big' : 'small');"),
+            (_DECLARED, _DECLARED + '  { function ret() {} }\n'),
+            _RESET,
+        ),
+        prints('functionsmall! functionbig!'),
+        Reading.COMMONJS,
+    ),
+    'a run exiting without returning': Program(
+        flagged(_A_RUN_EXITS_WITHOUT_RETURNING, _RESET, _FELL_THROUGH),
+        prints('small! big! fell'),
+        Reading.COMMONJS,
+    ),
+    'a run exiting without returning, a function of the name of the flag declared': Program(
+        flagged(_A_RUN_EXITS_WITHOUT_RETURNING, (_DECLARED, _DECLARED + '  function ret() {}\n'), _RESET, _FELL_THROUGH),
+        prints('small! big! undefined'),
+        Reading.COMMONJS,
+    ),
+    'a run exiting without returning, the flag a parameter with a default': Program(
+        flagged(
+            ('function grade(n) {', 'function grade(n, ret = 0) {'),
+            _A_RUN_EXITS_WITHOUT_RETURNING,
+            _RESET,
+            (_FELL_THROUGH[0], _FELL_THROUGH[1].replace('grade(60));', 'grade(60), grade(60, 1));')),
+        ),
+        prints('small! big! fell undefined'),
+        Reading.COMMONJS,
+    ),
+    'a run exiting without returning, a function of the name of the flag in a block': Program(
+        flagged(
+            _A_RUN_EXITS_WITHOUT_RETURNING,
+            (_DECLARED, _DECLARED + '  { function ret() {} }\n'),
+            _RESET,
+            _FELL_THROUGH,
+        ),
+        prints('small! big! undefined'),
+        Reading.COMMONJS,
+    ),
+    'a run exiting without returning, the flag declared in a loop right before the call': Program(
+        flagged(
+            _A_RUN_EXITS_WITHOUT_RETURNING,
+            (
+                _RESET[0] + _CALL,
+                '  for (var round = 0; round < 2; round++) {\n'
+                '    var ret;\n'
+                '    res = M([...slice(0, 3)]);\n'
+                '    if (ret) {\n'
+                '      return res;\n'
+                '    }\n'
+                '    n = n + 0;\n'
+                '  }\n',
+            ),
+            _FELL_THROUGH,
+        ),
+        prints('small! big! fell'),
+        Reading.COMMONJS,
+    ),
+    'a run exiting without returning, the flag reset before the call': Program(
+        flagged(_A_RUN_EXITS_WITHOUT_RETURNING, _FELL_THROUGH),
+        prints('small! big! fell'),
+        Reading.COMMONJS,
+    ),
+}
+
+#: Machines of `A_FLAG_THE_FUNCTION_RETURNS_THROUGH` recovered where no store resets the flag,
+#: mapped to the text the deobfuscation writes for each.
+RECOVERED_WITHOUT_A_RESET: dict[str, str] = {
+    'no store resetting the flag': "console.log('small!', 'big!');",
+    'the flag a property': "console.log('small!', 'big!');",
+    'the flag declared after the call': "console.log('small!', 'big!');",
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameForEachMachineReturningThroughAFlag(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in A_FLAG_THE_FUNCTION_RETURNS_THROUGH.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    def test_each_program_still_prints_it_after_the_deobfuscation(self):
+        for label, row in A_FLAG_THE_FUNCTION_RETURNS_THROUGH.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
+class TestAMachineReturningThroughAFlagNoStoreResets(TestBase):
+
+    def test_each_machine_recovered_reads_as_pinned(self):
+        self.assertEqual(
+            {
+                label: deobfuscate_source(A_FLAG_THE_FUNCTION_RETURNS_THROUGH[label].text, execution=ExecutionModel.commonjs)
+                for label in RECOVERED_WITHOUT_A_RESET
+            },
+            RECOVERED_WITHOUT_A_RESET,
+        )
