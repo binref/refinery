@@ -18,6 +18,7 @@ from typing import Iterator, NamedTuple
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.components import strongly_connected_components
 from refinery.lib.scripts.js.analysis.model import (
+    _TESTED_FORMS,
     FUNCTION_NODES,
     Binding,
     Role,
@@ -498,6 +499,8 @@ def _value_escapes(
     - an operator operand, which reads a value without capturing the object (`typeof Math`), except
       the left of `instanceof`, which is handed to the right operand's `Symbol.hasInstance` method
     - a hole of an untagged template; a tagged template hands its holes to the tag as arguments
+    - the test of a branch or a loop, which converts it to a boolean and calls nothing on an object
+      (`if (String.prototype)`)
     - a rebinding whose target the alias analysis still resolves to the same names (`var m = Math`)
 
     That last arm is what makes one predicate serve both this scan and the parameter-escape question
@@ -512,6 +515,8 @@ def _value_escapes(
     if value is None:
         return False
     parent = value.parent
+    if isinstance(parent, _TESTED_FORMS) and parent.test is value:
+        return False
     if isinstance(parent, JsNewExpression) and parent.callee is value:
         return False
     if isinstance(parent, JsCallExpression):
@@ -558,6 +563,8 @@ def _forwarded_value(node: JsIdentifier) -> Node | None:
                 return None
             cursor = parent
             continue
+        if isinstance(parent, JsConditionalExpression) and parent.test is cursor:
+            return cursor
         if isinstance(parent, _VALUE_FORWARDING_NODES):
             cursor = parent
             continue

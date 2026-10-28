@@ -4,11 +4,19 @@ import inspect
 import unittest
 
 from test import TestBase
-from test.lib.scripts.js.analysis.differential import node_executable
-from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
+from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
+from test.lib.scripts.js.ledger import (
+    Program,
+    Reading,
+    a_program,
+    before_and_after,
+    each_program_still_prints,
+    prints,
+)
 
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.model import JsAssignmentExpression, JsExpressionStatement, JsIdentifier
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -174,4 +182,283 @@ class TestNodePrintsTheSameAboutAMethodReplacedThroughAFormThatForwardsItsValue(
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
+        )
+
+
+class TestTheTestOfABranchOrALoopHandsItsValueToNothing(TestBase):
+    """
+    The test of an `if`, a loop or a conditional is converted to a boolean, which runs no code of
+    an object, so a value read there reaches nothing that could write a property on it.
+    """
+
+    @staticmethod
+    def _written(source: str) -> frozenset[str]:
+        return ModelCache(JsParser(source).parse()).intrinsic_writes.names
+
+    def test_an_intrinsic_read_as_a_test_is_not_written(self):
+        for source in (
+            'if (String.prototype) { f(); }',
+            'var t = String.prototype ? 1 : 2;',
+            'while (String.prototype && i) { i--; }',
+            'for (; String.prototype; ) { break; }',
+            'do {} while (String.prototype);',
+            'if ((0, String.prototype)) {}',
+            'var S = String; if (S[k]) {}',
+        ):
+            with self.subTest(source=source):
+                self.assertNotIn('String', self._written(source))
+
+    def test_an_intrinsic_a_test_reads_and_a_call_is_handed_is_written(self):
+        for source in (
+            'var v = String.prototype; if (v) { g(v); }',
+            'if (g(String.prototype)) {}',
+        ):
+            with self.subTest(source=source):
+                self.assertIn('String', self._written(source))
+
+
+#: Programs reading `String.prototype` or a key of `String` as the test of a branch or a loop,
+#: alone, beside a call it is handed to, or beside a store of it, mapped to what Node prints for
+#: each run as a CommonJS file.
+AN_INTRINSIC_READ_AS_A_TEST: dict[str, Program] = {
+    'an if test of String.prototype': Program(
+        a_program("""
+            function f() { if (String.prototype) { return 'ab'.toUpperCase(); } return 'none'; }
+            console.log(f());
+            """),
+        prints('AB'),
+        Reading.COMMONJS,
+    ),
+    'a handed prototype still counts': Program(
+        a_program("""
+            function patch(p) { p.toUpperCase = function () { return 'P'; }; return true; }
+            if (patch(String.prototype)) { console.log('a'.toUpperCase()); }
+            """),
+        prints('P'),
+        Reading.COMMONJS,
+    ),
+    'conditional test': Program(
+        a_program("""
+            function f() { var t = String.prototype ? 'y' : 'n'; return t + 'q'.toUpperCase(); }
+            console.log(f());
+            """),
+        prints('yQ'),
+        Reading.COMMONJS,
+    ),
+    'conditional branch forwards the prototype': Program(
+        a_program("""
+            var p = (1 ? String.prototype : 0);
+            p.toUpperCase = function () { return 'P'; };
+            console.log('a'.toUpperCase());
+            """),
+        prints('P'),
+        Reading.COMMONJS,
+    ),
+    'assignment in a test': Program(
+        a_program("""
+            var q;
+            if (q = String.prototype) { q.toUpperCase = function () { return 'P'; }; }
+            console.log('a'.toUpperCase());
+            """),
+        prints('P'),
+        Reading.COMMONJS,
+    ),
+    'comma in a test hands nothing': Program(
+        a_program("""
+            function f() { if ((String.prototype, true)) { return 'c'.toUpperCase(); } }
+            console.log(f());
+            """),
+        prints('C'),
+        Reading.COMMONJS,
+    ),
+    'logical in a while test': Program(
+        a_program("""
+            function f() { var i = 0, r = ''; while (String.prototype && i < 2) { r += 'w'.toUpperCase(); i++; } return r; }
+            console.log(f());
+            """),
+        prints('WW'),
+        Reading.COMMONJS,
+    ),
+    'a computed key in a test': Program(
+        a_program("""
+            var S = String;
+            function f(k) { if (S[k]) { return 'ab'.split('').join('-'); } return 'no'; }
+            console.log(f('prototype'), f('fromCodePoint'));
+            """),
+        prints('a-b a-b'),
+        Reading.COMMONJS,
+    ),
+    'a test then a call hands it on': Program(
+        a_program("""
+            function patch(p) { p.toUpperCase = function () { return 'P'; }; }
+            var v = String.prototype;
+            if (v) { patch(v); }
+            console.log('a'.toUpperCase());
+            """),
+        prints('P'),
+        Reading.COMMONJS,
+    ),
+    'test then member write through same key': Program(
+        a_program("""
+            var S = String;
+            function f(k) {
+              if (S[k]) { S[k].toUpperCase = function () { return 'P'; }; }
+              return 'ab'.toUpperCase();
+            }
+            console.log(f('prototype'));
+            """),
+        prints('P'),
+        Reading.COMMONJS,
+    ),
+    'test then assign through same key': Program(
+        a_program("""
+            var S = String;
+            function f(k) {
+              if (S[k]) { Object.assign(S[k], { toUpperCase: function () { return 'Q'; } }); }
+              return 'ab'.toUpperCase();
+            }
+            console.log(f('prototype'));
+            """),
+        prints('Q'),
+        Reading.COMMONJS,
+    ),
+    'while test and assignment': Program(
+        a_program("""
+            var q;
+            function f() {
+              var n = 0;
+              while (String.prototype && (q = String.prototype) && n < 1) {
+                q.toUpperCase = function () { return 'W'; };
+                n++;
+              }
+              return 'a'.toUpperCase();
+            }
+            console.log(f());
+            """),
+        prints('W'),
+        Reading.COMMONJS,
+    ),
+    'for test alias': Program(
+        a_program("""
+            function f() {
+              for (var p = String.prototype; p; p = null) { p.toUpperCase = function () { return 'F'; }; }
+              return 'a'.toUpperCase();
+            }
+            console.log(f());
+            """),
+        prints('F'),
+        Reading.COMMONJS,
+    ),
+    'conditional test and branch same value': Program(
+        a_program("""
+            function f(k) {
+              var S = String;
+              var p = S[k] ? S[k] : {};
+              p.toUpperCase = function () { return 'C'; };
+              return 'a'.toUpperCase();
+            }
+            console.log(f('prototype'));
+            """),
+        prints('C'),
+        Reading.COMMONJS,
+    ),
+    'test value stored by logical assignment': Program(
+        a_program("""
+            var keep = null;
+            function f(k) {
+              var S = String;
+              if (keep ??= S[k]) { keep.toUpperCase = function () { return 'L'; }; }
+              return 'a'.toUpperCase();
+            }
+            console.log(f('prototype'));
+            """),
+        prints('L'),
+        Reading.COMMONJS,
+    ),
+}
+
+#: Programs of `AN_INTRINSIC_READ_AS_A_TEST` whose method of a string folds since the test hands
+#: the prototype to nothing, mapped to the text the deobfuscation writes for each.
+FOLDED_PAST_A_TEST: dict[str, str] = {
+    'an if test of String.prototype': inspect.cleandoc(
+        """
+            function f() {
+              if (String.prototype) {
+                return 'AB';
+              }
+              return 'none';
+            }
+            console.log(f());
+        """
+    ),
+    'conditional test': inspect.cleandoc(
+        """
+            function f() {
+              var t = String.prototype ? 'y' : 'n';
+              return t + 'Q';
+            }
+            console.log(f());
+        """
+    ),
+    'comma in a test hands nothing': inspect.cleandoc(
+        """
+            function f() {
+              if ((String.prototype, true)) {
+                return 'C';
+              }
+            }
+            console.log(f());
+        """
+    ),
+    'logical in a while test': inspect.cleandoc(
+        """
+            function f() {
+              var i = 0, r = '';
+              while (String.prototype && i < 2) {
+                r += 'W';
+                i++;
+              }
+              return r;
+            }
+            console.log(f());
+        """
+    ),
+    'a computed key in a test': inspect.cleandoc(
+        """
+            var S = String;
+            function f(k) {
+              if (S[k]) {
+                return 'a-b';
+              }
+              return 'no';
+            }
+            console.log(f('prototype'), f('fromCodePoint'));
+        """
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAnIntrinsicReadAsATest(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in AN_INTRINSIC_READ_AS_A_TEST.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    def test_each_program_still_prints_it_after_the_deobfuscation(self):
+        for label, row in AN_INTRINSIC_READ_AS_A_TEST.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
+class TestAMethodOfAStringFoldsPastATestOfItsPrototype(TestBase):
+
+    def test_each_program_reads_as_pinned(self):
+        self.assertEqual(
+            {
+                label: deobfuscate_source(AN_INTRINSIC_READ_AS_A_TEST[label].text, execution=ExecutionModel.commonjs)
+                for label in FOLDED_PAST_A_TEST
+            },
+            FOLDED_PAST_A_TEST,
         )
