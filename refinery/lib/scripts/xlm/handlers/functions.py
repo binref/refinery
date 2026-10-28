@@ -7,8 +7,9 @@ from __future__ import annotations
 import datetime
 import decimal
 import math
+import operator
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from refinery.lib.excel import synthesize_formula
 from refinery.lib.excel.common import datetime_to_serial
@@ -78,9 +79,12 @@ def _numeric(
     index: int = 0,
 ) -> XlmValue | None:
     """
-    One numeric operand of a command, or `None` when the command cannot compute: an operand
-    the program never finished, or one that spells no number, leaves the command unevaluated.
+    One numeric operand of a command, or `None` when the command cannot compute: a call that
+    names no operand for the position, an operand the program never finished, or one that spells
+    no number leaves the command unevaluated.
     """
+    if len(call.arguments) <= index:
+        return None
     argument = evaluate_expression(engine, call.arguments[index], cursor)
     if argument.partial or not is_number(argument.value):
         return None
@@ -184,8 +188,11 @@ def _pair(
     cursor: XlmCursor,
 ) -> tuple[XlmValue, XlmValue] | None:
     """
-    The two numeric operands of a command, or `None` when the command cannot compute.
+    The two numeric operands of a command, or `None` when the command cannot compute: a call
+    that names fewer than two operands leaves it unevaluated as well.
     """
+    if len(call.arguments) < 2:
+        return None
     left = evaluate_expression(engine, call.arguments[0], cursor)
     right = evaluate_expression(engine, call.arguments[1], cursor)
     if (
@@ -252,23 +259,33 @@ def _rand(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutc
     return XlmOutcome(value=XlmValue(value=engine.random.random()))
 
 
-def _sumproduct(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+def _fold_numbers(
+    engine: XlmEngine,
+    call: XlFunctionCall,
+    cursor: XlmCursor,
+    start: float,
+    combine: Callable[[float, float], float],
+) -> XlmOutcome:
     """
-    The product of the arguments; a result no finite number holds leaves the command
-    unevaluated.
+    The fold of the number of every argument of the call into one number, which starts at the
+    given number and combines it with the number of every argument by the given operation; an
+    argument the program never finished, one that spells no number, a call that names no
+    argument, and a result no finite number holds leave the command unevaluated.
     """
     spelled = synthesize_formula(call)
-    total = 1.0
-    seen = 0
+    total = start
     for node in call.arguments:
         argument = evaluate_expression(engine, node, cursor)
         if argument.partial or not is_number(argument.value):
             return _partial(spelled)
-        total *= float(argument.value)
-        seen += 1
-    if not seen or not math.isfinite(total):
+        total = combine(total, float(argument.value))
+    if not call.arguments or not math.isfinite(total):
         return _partial(spelled)
     return XlmOutcome(value=XlmValue(value=total))
+
+
+def _sumproduct(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    return _fold_numbers(engine, call, cursor, 1.0, operator.mul)
 
 
 def _sumxmy2(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -281,7 +298,10 @@ def _sumxmy2(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmO
     if operands is None:
         return _partial(spelled)
     left, right = operands
-    result = (float(left.value) - float(right.value)) ** 2
+    try:
+        result = (float(left.value) - float(right.value)) ** 2
+    except OverflowError:
+        return _partial(spelled)
     if not math.isfinite(result):
         return _partial(spelled)
     return XlmOutcome(value=XlmValue(value=result))
@@ -338,29 +358,11 @@ def _min(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
 
 
 def _product(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
-    spelled = synthesize_formula(call)
-    total = 1.0
-    seen = 0
-    for node in call.arguments:
-        argument = evaluate_expression(engine, node, cursor)
-        if argument.partial or not is_number(argument.value):
-            return _partial(spelled)
-        total *= float(argument.value)
-        seen += 1
-    if not seen:
-        return _partial(spelled)
-    return XlmOutcome(value=XlmValue(value=total))
+    return _fold_numbers(engine, call, cursor, 1.0, operator.mul)
 
 
 def _sum(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
-    spelled = synthesize_formula(call)
-    total = 0.0
-    for node in call.arguments:
-        argument = evaluate_expression(engine, node, cursor)
-        if argument.partial or not is_number(argument.value):
-            return _partial(spelled)
-        total += float(argument.value)
-    return XlmOutcome(value=XlmValue(value=total))
+    return _fold_numbers(engine, call, cursor, 0.0, operator.add)
 
 
 def _and(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:

@@ -9,6 +9,8 @@ import io
 import re
 import zipfile
 
+from test import download_sample
+
 _MACROSHEET_PART = 'xl/macrosheets/intlsheet1.xml'
 _WORKBOOK_PART = 'xl/workbook.xml'
 
@@ -70,6 +72,18 @@ def date_cell(data: bytes, cell: str, iso: str) -> bytes:
     moment as its cached value.
     """
     return replace_cell_element(data, cell, F'<c r="{cell}" t="d"><v>{iso}</v></c>')
+
+
+def replaced_formulas(*replacements: tuple[str, str], data: bytes | str) -> bytes:
+    """
+    The workbook with the stored formula of every given cell replaced, a sample key resolved to
+    the stored bytes of its sample.
+    """
+    if isinstance(data, str):
+        data = download_sample(data)
+    for cell, formula in replacements:
+        data = replace_cell_formula(data, cell, formula)
+    return data
 
 
 def drop_defined_names(data: bytes) -> bytes:

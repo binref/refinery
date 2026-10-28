@@ -161,6 +161,26 @@ class TestNumericCommands(TestBase):
         outcome = _answer('SUMPRODUCT(1E308,1E308)')
         self.assertEqual(outcome.value.partial, True)
 
+    def test_the_folding_sum_commands_leave_a_sum_no_finite_number_holds_unevaluated(self):
+        for formula in ['SUM(1E308,1E308)', 'PRODUCT(1E308,10)', 'SUMXMY2(1E154,-1E154)']:
+            with self.subTest(formula=formula):
+                outcome = _answer(formula)
+                self.assertEqual(outcome.value.partial, True)
+                self.assertEqual(outcome.value.text, formula)
+
+    def test_a_command_that_names_no_operand_leaves_it_unevaluated(self):
+        for formula in [
+            'ABS()',
+            'SQRT()',
+            'FACT()',
+            'MOD(1)',
+            'QUOTIENT(1)',
+            'SUMXMY2(3)',
+        ]:
+            with self.subTest(formula=formula):
+                outcome = _answer(formula)
+                self.assertEqual(outcome.value.partial, True)
+                self.assertEqual(outcome.value.text, formula)
 
     def test_a_partial_operand_leaves_mod_unevaluated(self):
         steps = _steps(('AZ110', 'MOD(FOO(1),2)'))

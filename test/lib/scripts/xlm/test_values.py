@@ -246,6 +246,20 @@ class TestBinaryOperators(TestBase):
         result = apply_binary(XlBinaryOperator.SUB, XlmValue(value='a'), XlmValue(value='b'))
         self.assertEqual(result.text, '#VALUE!')
 
+    def test_a_reference_never_orders_against_a_number(self):
+        reference = XlmValue(value=XlmReference('Doc1', 120, 60))
+        for operator in (XlBinaryOperator.LT, XlBinaryOperator.GT):
+            self.assertEqual(
+                apply_binary(operator, reference, XlmValue(value=1)).text,
+                '#VALUE!',
+                operator,
+            )
+
+    def test_a_number_too_large_for_a_double_is_the_excel_error(self):
+        for operator in (XlBinaryOperator.ADD, XlBinaryOperator.SUB):
+            result = apply_binary(operator, XlmValue(value=10 ** 400), XlmValue(value=1))
+            self.assertEqual(result.text, '#VALUE!', operator)
+
     def test_the_texts_of_dates_compare_as_moments(self):
         first = XlmValue(value='2017-12-27 00:00:00.000000')
         second = XlmValue(value='2017-12-28 00:00:00.000000')

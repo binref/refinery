@@ -261,12 +261,20 @@ _OPERATOR_SYMBOLS = {
 }
 
 
-def _is_blank(value: XlmValue) -> bool:
+def is_blank(value: XlmValue) -> bool:
     """
     Whether a value is the blank of a cell that holds nothing: every operator reads it as the
     zero of the other operand's type, unlike the empty text, which the trace spells `""`.
     """
     return value.text == ''
+
+
+def blank_value(reference: XlmReference | None = None) -> XlmValue:
+    """
+    The value of a cell that holds nothing: every operator reads it as the zero of the other
+    operand's type. The blank of the cell at the given address, or of no cell in particular.
+    """
+    return XlmValue(value='', text='', reference=reference)
 
 
 _ARITHMETIC_OPERATORS = frozenset((
@@ -306,15 +314,19 @@ def _arithmetic_operand(value: XlmValue) -> float | None:
     """
     The number an arithmetic operator reads in an operand, or `None` for one that holds none: a
     truth value is one or zero, the blank of an empty cell is zero, and a text is the number it
-    spells — every other text, the empty text included, holds none.
+    spells — every other text, the empty text included, holds none, and so does a number too
+    large for a finite double to hold.
     """
-    if _is_blank(value):
+    if is_blank(value):
         return 0.0
     data = value.value
     if isinstance(data, bool):
         return 1.0 if data else 0.0
     if isinstance(data, (int, float)):
-        return float(data)
+        try:
+            return float(data)
+        except OverflowError:
+            return None
     if isinstance(data, str) and is_number(data):
         return float(data)
     return None
@@ -383,17 +395,20 @@ def _compare(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) -> Xlm
     blank of an empty cell orders as the zero of the other operand's type, texts compare their
     letters case-insensitively, and the types never cross: a number is never equal to a text or
     a truth value, and the numbers order below the texts, the texts below the two truth values.
+    An operand that names a cell address rather than a value leaves the comparison the `#VALUE!`
+    error Excel answers for one it cannot make.
     """
-    moment_left = left.unwrap_date()
-    moment_right = right.unwrap_date()
-    if moment_left is not None and moment_right is not None:
-        return _numeric_result(_OPERATOR_FUNCTIONS[operator](moment_left, moment_right))
-    if _is_blank(left) and _is_blank(right):
+    if isinstance(left.value, str) and isinstance(right.value, str):
+        moment_left = left.unwrap_date()
+        moment_right = right.unwrap_date()
+        if moment_left is not None and moment_right is not None:
+            return _numeric_result(_OPERATOR_FUNCTIONS[operator](moment_left, moment_right))
+    if is_blank(left) and is_blank(right):
         left = XlmValue(value=0)
         right = XlmValue(value=0)
-    elif _is_blank(left):
+    elif is_blank(left):
         left = _zero_like(right)
-    elif _is_blank(right):
+    elif is_blank(right):
         right = _zero_like(left)
     rank_left = _comparison_rank(left)
     rank_right = _comparison_rank(right)
@@ -403,7 +418,10 @@ def _compare(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) -> Xlm
         return _numeric_result(
             _OPERATOR_FUNCTIONS[operator](left.value.lower(), right.value.lower())
         )
-    return _numeric_result(_OPERATOR_FUNCTIONS[operator](left.value, right.value))
+    try:
+        return _numeric_result(_OPERATOR_FUNCTIONS[operator](left.value, right.value))
+    except TypeError:
+        return error_value('#VALUE!')
 
 
 def apply_binary(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) -> XlmValue:

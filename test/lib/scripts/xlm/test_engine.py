@@ -19,6 +19,7 @@ from test.lib.scripts.xlm.modify import (
     add_defined_name,
     date_cell,
     drop_defined_names,
+    replaced_formulas,
     replace_cell_element,
     replace_cell_formula,
 )
@@ -38,10 +39,7 @@ def _run(
     start: str = '',
     **options,
 ):
-    if isinstance(data, str):
-        data = download_sample(data)
-    for cell, formula in replacements:
-        data = replace_cell_formula(data, cell, formula)
+    data = replaced_formulas(*replacements, data=data)
     engine = XlmEngine(XlmView(data), **options)
     return list(engine.run(start)), engine
 
@@ -225,6 +223,11 @@ class TestXlmEngineControl(TestBase):
             [XlmStatus.FullEvaluation] * 1018,
         )
 
+    def test_a_goto_loop_that_only_draws_chance_keeps_running_to_its_end(self):
+        steps = _steps(('AZ110', 'GOTO(IF(RAND()>0.9999,BH120,AZ110))'))
+        self.assertEqual(steps[-1].row, 121)
+        self.assertEqual(steps[-1].status, XlmStatus.PartialEvaluation)
+
     def test_a_while_whose_condition_does_not_hold_ignores_the_rest_of_the_column(self):
         steps = _steps(('AZ110', 'WHILE(FALSE)'))
         self.assertEqual(
@@ -280,6 +283,14 @@ class TestXlmEngineControl(TestBase):
         )
         self.assertEqual(steps[2].text, '[TRUE] SET.NAME(probe,42)')
         self.assertEqual(engine.view.names.resolve('probe'), None)
+
+    def test_a_false_branch_rolls_back_the_chance_its_true_branch_drew(self):
+        _, branching = _run(
+            ('AZ110', 'IF(AZ112,SET.VALUE(BD108,RAND()),SET.VALUE(BD109,RAND()))'),
+            ('AZ112', 'FOO(1)'),
+        )
+        _, alone = _run(('AZ110', 'SET.VALUE(BD109,RAND())'))
+        self.assertEqual(_value(branching, 109, 56), _value(alone, 109, 56))
 
     def test_a_set_value_keeps_the_formula_of_the_cell_it_writes(self):
         steps = _steps(('AZ110', 'SET.VALUE(AZ113,"x")'), ('AZ113', 'HALT()'))
@@ -852,6 +863,10 @@ class TestXlmEngineValues(TestBase):
         self.assertEqual(_value(engine, 108, 56), '')
         self.assertEqual(_value(engine, 109, 56), '0')
 
+    def test_a_step_that_computes_the_blank_of_a_cell_keeps_it_blank(self):
+        _, engine = _run(('AZ109', 'BD9999'), ('AZ110', 'AZ109+1'))
+        self.assertEqual(_value(engine, 110, 52), 1)
+
     def test_a_value_cell_that_holds_quotes_reads_with_its_quotes(self):
         data = replace_cell_element(
             download_sample(XLM_MACRO_TEXT_XLSM),
@@ -899,10 +914,10 @@ class TestXlmEngineNames(TestBase):
 class TestXlmEngineDayGuess(TestBase):
 
     def _dated(self, *replacements: tuple[str, str]) -> bytes:
-        data = date_cell(download_sample(XLM_MACRO_TEXT_XLSM), 'AZ113', '2026-10-01T00:00:00')
-        for cell, formula in replacements:
-            data = replace_cell_formula(data, cell, formula)
-        return data
+        return replaced_formulas(
+            *replacements,
+            data=date_cell(download_sample(XLM_MACRO_TEXT_XLSM), 'AZ113', '2026-10-01T00:00:00'),
+        )
 
     def test_a_guessed_day_runs_the_same_cells_as_a_given_day(self):
         data = date_cell(download_sample(XLM_MACRO_TEXT_XLSM), 'BI116', '2026-10-01T00:00:00')

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.excel.common import column_letters
+from refinery.lib.excel.common import rc2ref
 from refinery.lib.meta import MV
 from refinery.lib.scripts.xlm import XlmEngine, XlmView
 from refinery.lib.scripts.xlm.trace import visible_steps
@@ -45,7 +45,7 @@ class dxlm(Unit):
         for step in visible_steps(engine.run(self.args.cell), self.args.filter):
             meta = {
                 MV.TYPE: step.status.name,
-                MV.ADDR: F'{column_letters(step.col)}{step.row}',
+                MV.ADDR: rc2ref(step.row, step.col),
                 'indent': step.indent,
             }
             yield self.labelled(step.text.encode(self.codec), **meta)

@@ -59,8 +59,11 @@ class TestOperatorOracle(TestBase):
                 formula,
                 XlmCursor(sheet.name, cell.row, cell.col),
             )
-            with self.subTest(formula=synthesize_formula(formula)):
-                self.assertEqual(_computed(computed), _cached(cell))
+            answer = _computed(computed)
+            expected = _cached(cell)
+            with self.subTest(cell=(cell.row, cell.col)):
+                if answer != expected:
+                    self.assertEqual(answer, expected, synthesize_formula(formula))
             checked += 1
         return checked
 

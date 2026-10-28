@@ -45,7 +45,13 @@ from refinery.lib.scripts.xlm.references import (
     resolve_reference,
 )
 from refinery.lib.scripts.xlm.trace import XlmSeverity, XlmStatus, XlmStep
-from refinery.lib.scripts.xlm.values import XlmOutcome, XlmReference, XlmValue
+from refinery.lib.scripts.xlm.values import (
+    XlmOutcome,
+    XlmReference,
+    XlmValue,
+    blank_value,
+    is_blank,
+)
 from refinery.lib.tools import RecursionDepth
 
 _FALL_THROUGH = frozenset((
@@ -104,14 +110,6 @@ def callee_name(call: XlFunctionCall) -> str:
     return ''
 
 
-def _blank(reference: XlmReference) -> XlmValue:
-    """
-    The value of a cell that holds nothing: the empty text, which an arithmetic operator reads
-    as zero.
-    """
-    return XlmValue(value='', text='', reference=reference)
-
-
 def _held(value: XlmValue) -> XlmValue:
     """
     The value a cell holds once a step, a value command, or a return left a value in it. The
@@ -127,8 +125,8 @@ def _held(value: XlmValue) -> XlmValue:
             date=value.date,
             cells=value.cells,
         )
-    if value.value is None:
-        return XlmValue(value='', text='')
+    if value.value is None or is_blank(value):
+        return blank_value()
     return XlmValue(
         value=value.value,
         date=value.date,
@@ -442,7 +440,7 @@ class XlmEngine:
             if reference in self.failed_writes:
                 address = F'{column_letters(reference.col)}{reference.row}'
                 return XlmValue(value=address, partial=True)
-            return _blank(reference)
+            return blank_value(reference)
         held = self._index.held.get(id(cell))
         if held is not None:
             return dataclasses.replace(held, reference=reference)
@@ -707,6 +705,7 @@ class XlmEngine:
             tuple(self.call_stack),
             tuple(loop.copy() for loop in self.while_stack),
             self.active_cell,
+            self.random.getstate(),
         )
 
     def state_digest(self) -> bytes:
@@ -714,7 +713,8 @@ class XlmEngine:
         The digest of the whole state a run can observe: the cells its index holds, with the
         value each holds and the formula it spells, the entries of the name table, the
         registered aliases, the failed-write marks, the content of every open file, every
-        region of memory, and the cell the program selected. A run that returns to the digest
+        region of memory, the cell the program selected, and the state of the chance
+        generator, which a run that draws chance advances. A run that returns to the digest
         it anchored changes nothing the program can see.
         """
         parts: list[str] = []
@@ -740,6 +740,7 @@ class XlmEngine:
         for base, data in self.memory.snapshot():
             parts.append(F'memory:{base}={len(data)}:{data.hex()}')
         parts.append(F'active:{self.active_cell}')
+        parts.append(F'chance:{self.random.getstate()}')
         return hashlib.sha256('\n'.join(parts).encode()).digest()
 
     def rollback(self, snapshot: XlmSnapshot) -> None:
@@ -747,13 +748,14 @@ class XlmEngine:
         Return to a snapshot: every change the journal holds past its position is undone —
         cells, names, aliases, files, memory regions, and failed-write marks return to what they
         carried, and cells the writes created leave their sheet again — and the call stack, the
-        open loops, and the selected cell are what they were.
+        open loops, the selected cell, and the chance generator are what they were.
         """
         while len(self._journal) > snapshot.journal:
             self._journal.pop().undo(self)
         self.call_stack = list(snapshot.call_stack)
         self.while_stack = [loop.copy() for loop in snapshot.loops]
         self.active_cell = snapshot.active_cell
+        self.random.setstate(snapshot.random_state)
 
     def write_value(self, cell: XlmCell, value: XlmValue) -> None:
         """
@@ -1113,7 +1115,7 @@ class XlmEngine:
 
     def _stored(self, cell: XlmCell, reference: XlmReference) -> XlmValue:
         if cell.value is None:
-            return _blank(reference)
+            return blank_value(reference)
         return XlmValue(
             value=cell.value,
             date=cell.kind is CellKind.DATE,

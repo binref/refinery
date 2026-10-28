@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import random
-
 from refinery.lib.excel import synthesize_formula
 from refinery.lib.excel.formula.model import XlFunctionCall
 from refinery.lib.scripts.xlm import XlmEngine, XlmView
 from refinery.lib.scripts.xlm.deobfuscation import deobfuscate, fold, sweep
 from refinery.lib.scripts.xlm.model import XlmCell
-from test import TestBase, download_sample
+from test import TestBase
 from test.lib.excel.samples import (
     XLM_MACRO_ASSIGN_BIFF8,
     XLM_MACRO_FORMULA_XLSM,
@@ -17,19 +15,15 @@ from test.lib.excel.samples import (
 )
 from test.lib.scripts.xlm.modify import (
     drop_defined_names,
+    replaced_formulas,
     replace_cell_element,
-    replace_cell_formula,
 )
 
 _MALDOC = 'dc44bbfc845fc078cf38b9a3543a32ae1742be8c6320b81cf6cd5a8cee3c696a'
 
 
 def _replaced(*replacements: tuple[str, str], data: bytes | str = XLM_MACRO_TEXT_XLSM) -> bytes:
-    if isinstance(data, str):
-        data = download_sample(data)
-    for cell, formula in replacements:
-        data = replace_cell_formula(data, cell, formula)
-    return data
+    return replaced_formulas(*replacements, data=data)
 
 
 def _cells(view: XlmView) -> set[tuple[str, int, int]]:
@@ -156,10 +150,7 @@ class TestDeadCellSweep(TestBase):
         data = self.download_sample(_MALDOC)
         plain = XlmView(data)
         before = len(_cells(plain))
-        random.seed(0xBAADF00D)
-        plain_trace = _trace(plain)
-        random.seed(0xBAADF00D)
-        self.assertEqual(plain_trace, _trace(self._sweeped(data)))
+        self.assertEqual(_trace(plain), _trace(self._sweeped(data)))
         self.assertEqual(len(_cells(self._sweeped(data))), before - 63)
 
 
@@ -212,6 +203,19 @@ class TestConstantFolding(TestBase):
                 ('mP9mScF1m5', 51, 19): 'GOTO(T1)',
             },
         )
+
+    def test_the_scalar_arithmetic_commands_fold_into_their_numbers(self):
+        for formula, expected in [
+            ('FACT(5)', 'SET.VALUE(BD108,120)'),
+            ('SUMPRODUCT(2,3,4)', 'SET.VALUE(BD108,24)'),
+            ('SUMXMY2(3,1)', 'SET.VALUE(BD108,4)'),
+        ]:
+            with self.subTest(formula=formula):
+                data = _replaced(('AZ109', F'SET.VALUE(BD108,{formula})'))
+                self.assertEqual(
+                    _calls(self._deobfuscated(data), 'Doc1', 109, 52, 'SET.VALUE'),
+                    [expected],
+                )
 
     def test_the_maldoc_listing_carries_its_paths_after_folding(self):
         data = self.download_sample(_MALDOC)

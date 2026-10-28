@@ -135,13 +135,15 @@ class XlmSnapshot(NamedTuple):
     """
     The state a false branch of a partial `IF` starts from: the journal position the writes of
     the true branch roll back to, and the state of the run the journal does not hold — the
-    call stack, the open loops with their positions, and the cell the program selected.
+    call stack, the open loops with their positions, the cell the program selected, and the
+    state of the chance generator the true branch may have advanced.
     """
 
     journal: int
     call_stack: tuple[XlmCursor | XlmReturnSlot, ...]
     loops: tuple[XlmLoop, ...]
     active_cell: XlmReference | None
+    random_state: tuple[int, tuple[int, ...], float | None]
 
 
 def resolve_reference(
