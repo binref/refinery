@@ -238,6 +238,23 @@ class Test7zipFileExtractor(TestUnitBase):
         self.assertTrue(elf.startswith(b'\x7fELF'))
         self.assertEqual(len(elf), 808)
 
+    def test_arm64_filter_restores_the_branch_and_page_addresses_of_a_compiled_binary(self):
+        data = base64.b64decode(
+            'N3q8ryccAATPlQ3SqQEAAAAAAABaAAAAAAAAAD5ESI7gA/8BoV0AP5FFhGg9iabaisyW0qLC2GZroZQphAVLDdoLZrY/CG5yYNnl'
+            'jmOJjuq2KwpT4vluJDZ9KSwcz6a6wzKcuAY6c4VoRnD+o43lyFSw6znHhcsid9dtYCnBv+cm0/ICl+6lbW0Y3DV1ZpH3+wH+pxET'
+            'NIgdgov8oQ7ngK+HO0LHP/gLeqwjmmOQWPn5mBPKKW+nsRNdvivRyb43RLZt8as/d1qd+d9RxJOCORRXzBnJEblW6xs/Rz7p2wHi'
+            'bzETxu9CgDTMGEIykLfyAWS/qUfaokXHJv/QCB81mxw9n/ikXQYeVpXe4HWfVdnBf8nB1pXffRg17ebx5cBZsQXHsiBCXcA0NYCH'
+            'l0giBvzQ2ukscJ5csrA83W6zJIgL2JIdxk7F1iD3uRZu9nhTXyChWPEZtGkRsINkDCu1j4KbFA8bmtHHEWE2fKrlP0LJ9iVspiuH'
+            'uwhpKQiKMkCqwuypc9MYfxLPjiv5lO0C//WYbNukqHqmoEuu6WYIE8uDpmXGd4ntUupc3MDaQl02ZtHOyF/nKS96K/3rNKVaAghb'
+            'F8cszLWMAAEEBgABCYGpAAcLAQACISEBAAEKAQAMhACEAAAICgGfKjLLAAAFARkEAAAAABEVAGEAcgBtADYANAAuAGUAbABmAAAA'
+            'FAoBACCfTSbcZt0BFQYBACCA7YEAAA=='
+        )
+        elf = bytes(data | self.load('arm64.elf'))
+        self.assertEqual(
+            hashlib.sha256(elf).hexdigest(),
+            'c20ef7a780167b3a346befd520dd3e29ce8f16ea69892e4cd9978f1d93c6b0ef',
+        )
+
     def test_riscv_lzma2_archive(self):
         data = base64.b64decode(
             'N3q8ryccAAQgXy3PfgEAAAAAAABaAAAAAAAAAH0JNffgA/8Bdl0AP5FFhGg9iabaisyYKV2u6UPlnY7JVDj4RKZHPxqX'

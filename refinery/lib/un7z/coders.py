@@ -309,8 +309,8 @@ def _filter_arm64(data: bytes | bytearray | memoryview, props: bytes) -> bytearr
     mask = (1 << 24) - (flag << 1)
     while pos < size:
         v = int.from_bytes(buf[pos:pos + 4], 'little')
-        pos += 4
         pc = ip + pos
+        pos += 4
         if ((v - 0x94000000) & 0xFC000000) == 0:
             c = pc >> 2
             v = (v - c) & M32
@@ -319,8 +319,8 @@ def _filter_arm64(data: bytes | bytearray | memoryview, props: bytes) -> bytearr
             buf[pos - 4:pos] = v.to_bytes(4, 'little')
             continue
         if ((v - 0x90000000) & 0x9F000000) == 0:
-            t = v + flag
-            if t & mask:
+            v = (v - 0x90000000 + flag) & M32
+            if v & mask:
                 continue
             z = (v & 0xFFFFFFE0) | (v >> 26)
             c = (pc >> (12 - 3)) & (M32 ^ 7)
