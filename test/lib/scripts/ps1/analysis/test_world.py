@@ -105,6 +105,14 @@ class TestPs1WorldOpeners(Ps1TypeWorldTest):
             with self.subTest(source):
                 self.assertFalse(self._closed(source))
 
+    def test_a_member_named_by_a_value_may_be_a_command_lookup_hook(self):
+        for source in (
+            '$ExecutionContext.InvokeCommand.($n) = { 1 }',
+            '$ic = $ExecutionContext.InvokeCommand; $ic.($n)({ 1 })',
+        ):
+            with self.subTest(source):
+                self.assertFalse(self._closed(source))
+
     def test_scriptblock_execution_opens_the_world(self):
         for source in (
             '[scriptblock]::Create($s)',

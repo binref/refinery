@@ -236,7 +236,6 @@ class CfgNode:
     predecessors: list[CfgNode] = field(default_factory=list)
     is_resumption_hub: bool = False
     is_hub_bound: bool = False
-    carries_on_after: Node | None = None
 
 
 def flood(
@@ -1129,6 +1128,14 @@ class CfgBuilder:
         """
         return self.unwinding()
 
+    def handler_body_guard(self) -> CfgNode | None:
+        """
+        What guards the handler bodies of a guarded block that has no finalizer, or `None` where
+        nothing beyond what guards the construct does. A language that hands an error leaving a
+        handler body to something that is not a handler names it here.
+        """
+        return None
+
     def link(self, frontier: Iterable[CfgNode], target: CfgNode) -> None:
         for node in frontier:
             self.add_edge(node, target)
@@ -1439,7 +1446,6 @@ class CfgBuilder:
         frontier: list[CfgNode],
         *,
         escapes: bool,
-        clauses_guarded: bool = False,
     ) -> list[CfgNode]:
         """
         A guarded block with any number of handlers and an optional finalizer.
@@ -1481,8 +1487,8 @@ class CfgBuilder:
             self._handlers.pop()
         normal_exits = list(block_exits)
         clause_guard = finalizer_entry
-        if clause_guard is None and clauses_guarded and entries:
-            clause_guard = self.escape()
+        if clause_guard is None and entries:
+            clause_guard = self.handler_body_guard()
         if clause_guard is not None:
             self._handlers.append(clause_guard)
         for index, ((_, body), entry) in enumerate(zip(handlers, entries)):
@@ -1492,8 +1498,7 @@ class CfgBuilder:
                 self.statement(body, [entry]) if body is not None else [entry])
         if clause_guard is not None:
             self._handlers.pop()
-        if escapes and entries:
-            self.close_handler_set(entries, escapes=escapes, outward=self.escape())
+        self.close_handler_set(entries, escapes=escapes, outward=self.escape())
         if finalizer_entry is not None and finalizer is not None:
             self.link(normal_exits, finalizer_entry)
             final_exits = self.sequence(list(finalizer_body), [finalizer_entry])

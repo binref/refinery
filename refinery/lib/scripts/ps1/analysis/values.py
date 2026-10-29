@@ -2197,7 +2197,12 @@ def evaluate(
         _EVALUATIONS.clear()
         _CALL_EVALUATIONS.clear()
         _EVALUATED_AT = epoch
-    table = _EVALUATIONS if calls is None else _CALL_EVALUATIONS.setdefault(calls, WeakKeyDictionary())
+    if calls is None:
+        table = _EVALUATIONS
+    else:
+        table = _CALL_EVALUATIONS.get(calls)
+        if table is None:
+            table = _CALL_EVALUATIONS[calls] = WeakKeyDictionary()
     remembered = table.get(node)
     if remembered is not None:
         return remembered

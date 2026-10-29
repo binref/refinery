@@ -236,7 +236,11 @@ class Ps1ReflectionMembers(VariableTypeAwareTransformer):
         judged = []
         for argument, parameter in zip(arguments, selected.get('parameters') or ()):
             origin = non_null_type(
-                argument, self._type_of_variable, self._origin_of_variable, self._calls)
+                argument,
+                self._type_of_variable,
+                self._origin_of_variable,
+                self._calls,
+            )
             if origin is None or not self._argument_binds_identically(origin, parameter):
                 return None
             judged.append(origin)

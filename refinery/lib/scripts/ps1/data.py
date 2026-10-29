@@ -1884,9 +1884,9 @@ _NUMBERS = frozenset({
 })
 
 #: What 5.1 was measured to do with the calls listed here, each through the rows of `corpus.CALLS`
-#: and `corpus.TYPES` in `test.lib.scripts.ps1` that the oracle tests name for it. A call these facts
-#: cover is one a removal may treat as unable to fail, and one whose value an origin judgment may
-#: follow; `refinery.lib.scripts.ps1.analysis.calls.Ps1CallReader` is the one reader.
+#: and `corpus.TYPES` in `test.lib.scripts.ps1` that the oracle tests name for it. A call these
+#: facts cover is one a removal may treat as unable to fail, and one whose value an origin judgment
+#: may follow; `refinery.lib.scripts.ps1.analysis.calls.Ps1CallReader` is the one reader.
 CALL_FACTS = _call_fact_table((
     _method_fact(CallKind.STATIC, 'math', 'sqrt', (_NUMBERS,), fails=False),
     _method_fact(CallKind.STATIC, 'array', 'reverse', (frozenset({'object[]'}),), fails=False),

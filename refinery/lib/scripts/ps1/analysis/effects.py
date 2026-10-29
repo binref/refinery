@@ -1888,7 +1888,8 @@ def deletion_is_observable(
     test of an `if` and a statement inside an `@( )` are points of their own. A point inside a
     script block written in *stmt* is not one of them, for the reason `_leaves_a_block_of` gives:
     what its error skips inside the block is deleted with *stmt*, and an error that leaves the block
-    arrives where one raised by *stmt*'s own point does, or nowhere where the block is not run there.
+    arrives where one raised by *stmt*'s own point does, or nowhere where the block is not run
+    there.
 
     The third is a read of the record the raise leaves behind. Windows PowerShell 5.1 files every
     terminating error in `$Error` whether or not a handler ran, so a later read of that record
@@ -2219,11 +2220,12 @@ class Ps1HandlerVerdicts:
     statements changes what runs — whether what a set guards may raise, read without a world or
     under the world, and whether what a resuming set skips, or runs before its errors would land, is
     observable under the world — and whether an error raised inside a statement may be taken past
-    it, which the `catch` lift and the store sweep ask. Held in a `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache`
-    slot, so it is rebuilt with the fault model it reads, and handed to
+    it, which the `catch` lift and the store sweep ask. Held in a
+    `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot, so it is rebuilt with the fault
+    model it reads, and handed to
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed` through the
-    removal plan. Each answer is kept by the object that owns the test it was decided with, so
-    no caller can hand in a test and a memo that do not belong together. The world is taken from
+    removal plan. Each answer is kept by the object that owns the test it was decided with, so no
+    caller can hand in a test and a memo that do not belong together. The world is taken from
     *world* on the first verdict that reads it, so a pass that never weighs a handler under the
     world never has one built.
     """

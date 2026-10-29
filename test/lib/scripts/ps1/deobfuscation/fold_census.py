@@ -4229,6 +4229,8 @@ FOLDS: dict[str, str] = {
         "Write-Output 'A'\nWrite-Output 'A'",
     "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('aGk='))":
         "'hi'",
+    "[int]$i = 0; try { throw 'x' } catch { foreach ($i in 'a') { }; Write-Host 'rest' }; Write-Host 'after'":
+        "foreach ($i in 'a') {}\nWrite-Host 'rest'\nWrite-Host 'after'",
     '[int]$q = 5; Write-Output $q.ToString()':
         "Write-Output '5'",
     "[int]'42' + 1":
@@ -4578,6 +4580,10 @@ FOLDS: dict[str, str] = {
         "try {\n  throw 'x'\n} catch {\n  $x = 'two'\n  $Null = [int]'a'\n  $x = 'three'\n}\nWrite-Host $x",
     "try { throw 'x' } catch { 'caught' }":
         "'caught'",
+    "try { throw 'x' } catch { Get-Random -Bogus 1; Write-Host 'rest' }; Write-Host 'after'":
+        "Get-Random -Bogus 1\nWrite-Host 'rest'\nWrite-Host 'after'",
+    "try { throw 'x' } catch { New-Object Foo.Bar; Write-Host 'rest' }; Write-Host 'after'":
+        "New-Object Foo.Bar\nWrite-Host 'rest'\nWrite-Host 'after'",
     "try { throw 'x' } catch { if ($Host) { $null = [int]'a'; Write-Host 'rest' } }; Write-Host 'after'":
         "if ($Host) {\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
     "try { throw 'x' } catch { if ($false) { } elseif ([int]'a') { }; Write-Host 'rest' }; Write-Host 'after'":

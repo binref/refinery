@@ -16,6 +16,7 @@ from refinery.lib.scripts.analysis.cfg import (
     flood,
     flood_labels,
     normal_reach,
+    plain_successors,
     normal_reach_labels,
     reachable_forward_from_any,
     reachable_forward_labels,
@@ -24,6 +25,7 @@ from refinery.lib.scripts.analysis.cfg import (
 from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.ps1.analysis.cfg import (
+    Ps1ReportNode,
     Ps1TrapDisposition,
     build_control_flow_model,
     build_ps1_control_flow,
@@ -1505,8 +1507,8 @@ class TestPs1AnErrorNothingTakesIsReportedPastItsStatement(_Ps1ControlFlowGraphs
     nothing is in force. The graph draws that as one report node per such statement.
     """
 
-    def _reports(self, graph: ControlFlowGraph) -> list[CfgNode]:
-        return [node for node in graph.nodes if node.carries_on_after is not None]
+    def _reports(self, graph: ControlFlowGraph) -> list[Ps1ReportNode]:
+        return [node for node in graph.nodes if isinstance(node, Ps1ReportNode)]
 
     def _reachable(self, source: str, statement: int) -> bool:
         tree, graph = self._tree_and_graph(cleandoc(source))
@@ -1529,6 +1531,19 @@ class TestPs1AnErrorNothingTakesIsReportedPastItsStatement(_Ps1ControlFlowGraphs
         report, = self._reports(graph)
         self.assertIs(report.carries_on_after, construct)
         self.assertIn(self._required_node(graph, rest), report.successors)
+
+    @unittest.expectedFailure
+    def test_the_report_node_of_the_last_statement_carries_on_to_the_exit(self):
+        """
+        The report node carries on after its statement and, under a `Stop`, ends the run, so it has
+        a plain edge and an error edge out. Where the statement is the last of its body both go to
+        the exit, and the graph keeps one kind for each pair of nodes, so the plain edge reads as an
+        error edge. The last line of a `try` body enters its `finally` both ways and loses its plain
+        edge the same way; the single dispatch evaluator of the error roadmap answers both.
+        """
+        graph = self._script_graph("try { throw 'x' } catch { Write-Host 'a'; $null = [int]$s }")
+        report, = self._reports(graph)
+        self.assertIn(graph.exit, plain_successors(report))
 
     def test_no_report_node_stands_where_no_error_reaches_one(self):
         for source in ("try { throw 'x' } catch { 'b' }", 'try { } catch { }', "try { 'a' } catch { continue }"):
@@ -1585,6 +1600,6 @@ class TestPs1AnErrorNothingTakesIsReportedPastItsStatement(_Ps1ControlFlowGraphs
                 model = build_control_flow_model(tree)
                 inner = [node for node in tree.walk_in_order() if isinstance(node, Ps1TrapStatement)][-1]
                 trap_set = model.trap_set_of(inner)
-                assert trap_set is not None and trap_set.outward is not None
+                assert trap_set is not None and isinstance(trap_set.outward, Ps1ReportNode)
                 self.assertIs(trap_set.outward.carries_on_after, tree.body[holder])
                 self.assertTrue(any(node is trap_set.outward for node in trap_set.graph.nodes))

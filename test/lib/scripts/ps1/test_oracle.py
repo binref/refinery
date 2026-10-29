@@ -467,6 +467,21 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The `trap` takes the `throw` before the `catch` does, so the snippet writes `T` and '
         '`after`; the output writes `after`. The dispatch evaluator of the error roadmap answers '
         'it.',
+    "try { throw 'x' } catch { New-Object Foo.Bar; Write-Host 'rest' }; Write-Host 'after'":
+        'The `catch` body is lifted out of the `try` that always throws. `New-Object` ends its '
+        'statement with an error for a type that does not exist, which leaves the `catch` body, so '
+        'the snippet writes the error and `after`; the output writes `rest` as well. No command is '
+        'read as able to fail; the one answer to whether a line can fail answers it.',
+    "try { throw 'x' } catch { Get-Random -Bogus 1; Write-Host 'rest' }; Write-Host 'after'":
+        'The `catch` body is lifted out of the `try` that always throws. A parameter the command '
+        'does not have ends its statement with an error, which leaves the `catch` body, so the '
+        'snippet writes the error and `after`; the output writes `rest` as well. No command is '
+        'read as able to fail; the one answer to whether a line can fail answers it.',
+    "[int]$i = 0; try { throw 'x' } catch { foreach ($i in 'a') { }; Write-Host 'rest' }; Write-Host 'after'":
+        'The `catch` body is lifted out of the `try` that always throws, and the constraint on '
+        '`$i` is dropped as a dead store. `foreach` stores `a` through the constraint, which fails '
+        'and leaves the `catch` body, so the snippet writes the error and `after`; the output writes '
+        '`rest` and `after`. No obfuscator enumerates into a variable whose type it constrained.',
 }
 
 
@@ -4851,8 +4866,8 @@ class TestPs1CallFactsRestOnMeasuredBeliefs(Ps1OracleTest):
 class TestPs1EveryCallFactRestsOnMeasuredRows(TestBase):
     """
     A call fact is a claim about 5.1, and the transcripts hold what 5.1 was measured to do on the
-    rows it names. Each fact names rows, each row is one the oracle tests run, and the rows of a fact
-    that says the call cannot fail recorded no error and the type the fact says it hands back.
+    rows it names. Each fact names rows, each row is one the oracle tests run, and the rows of a
+    fact that says the call cannot fail recorded no error and the type the fact says it hands back.
     """
 
     @staticmethod

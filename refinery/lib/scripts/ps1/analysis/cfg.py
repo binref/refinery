@@ -303,15 +303,25 @@ class Ps1TrapSet:
         return Ps1TrapDisposition.RETHROWS in self.disposition(trap)
 
 
+@dataclass(eq=False, repr=False)
+class Ps1ReportNode(CfgNode):
+    """
+    The node standing for 5.1 reporting an error that leaves a `try` body, a `catch` body or a
+    `trap` body where nothing is in force, and carrying on after the statement `carries_on_after`
+    names. It is not a handler: an edge into it makes what follows that statement reachable, and the
+    error a `Stop` makes terminating ends the run from it.
+    """
+    carries_on_after: Node = field(kw_only=True)
+
+
 @dataclass
 class _ReportFrame:
     """
-    A statement being built where no `try` and no `trap` is in force, and the node standing for 5.1
-    reporting an error that leaves a `try` body, a `catch` body or a `trap` body inside it, and
-    carrying on after the statement: `CfgNode.carries_on_after` names the statement. The node joins
-    the graph once an error edge enters it, or once a `trap` set names it as its `outward`, which is
-    `named`: where the errors that set takes would go were none of it written is a position the
-    landing questions read, whether or not any error reaches it as written.
+    A statement being built where no `try` and no `trap` is in force, and the `Ps1ReportNode` that
+    carries on after it. The node joins the graph once an error edge enters it, or once a `trap` set
+    names it as its `outward`, which is `named`: where the errors that set takes would go were none
+    of it written is a position the landing questions read, whether or not any error reaches it as
+    written.
     """
     statement: Node
     node: CfgNode | None = None
@@ -376,8 +386,10 @@ class _Builder(CfgBuilder):
         self._descend = descend
         self._trap_sets = {} if trap_sets is None else trap_sets
         session = session_of(owner)
-        self._throws_step_over = session.silenced or (
-            session.silenced_by_a_call and not isinstance(owner, Ps1Script))
+        self._throws_step_over = (
+            session.silenced
+            or session.silenced_by_a_call and not isinstance(owner, Ps1Script)
+        )
         self._open_sets: list[Ps1TrapSet] = []
         self._frames: list[_ReportFrame] = []
 
@@ -390,8 +402,15 @@ class _Builder(CfgBuilder):
             return self.unwinding()
         frame = self._frames[-1]
         if frame.node is None:
-            frame.node = CfgNode(self.cfg, None, carries_on_after=frame.statement)
+            frame.node = Ps1ReportNode(self.cfg, None, carries_on_after=frame.statement)
         return frame.node
+
+    def handler_body_guard(self) -> CfgNode | None:
+        """
+        A `catch` body is guarded where its `try` stands: an error leaving it is reported after the
+        statement that holds the `try` where nothing is in force, which `escape` names.
+        """
+        return self.escape()
 
     def member(self, statement: Node, frontier: list[CfgNode]) -> list[CfgNode]:
         """
@@ -421,7 +440,7 @@ class _Builder(CfgBuilder):
         that may fail is joined to one: a point evaluating nothing, as a `break` does, or only what
         `refinery.lib.scripts.ps1.analysis.values.is_fault_free` clears, is not.
         """
-        if target.carries_on_after is None:
+        if not isinstance(target, Ps1ReportNode):
             return True
         operands = point_operands(element)
         return operands is None or not all(is_fault_free(operand) for operand in operands)
@@ -433,7 +452,7 @@ class _Builder(CfgBuilder):
         body exit, since 5.1 ends the run on a `throw` nothing takes.
         """
         handler = self._handlers[-1] if self._handlers else None
-        if handler is not None and handler.carries_on_after is None:
+        if handler is not None and not isinstance(handler, Ps1ReportNode):
             return handler
         if self._throws_step_over:
             return handler
@@ -797,7 +816,6 @@ class _Builder(CfgBuilder):
             (finalizer,) if finalizer is not None else (),
             frontier,
             escapes=not swallows_every_error(statement),
-            clauses_guarded=True,
         )
 
 

@@ -1,8 +1,8 @@
 """
 What a call answers where a measured fact covers it.
 
-`refinery.lib.scripts.ps1.data.CALL_FACTS` says what Windows PowerShell 5.1 was measured to do with a
-call: which arguments the fact covers, whether such a call can still fail, and what it hands back.
+`refinery.lib.scripts.ps1.data.CALL_FACTS` says what Windows PowerShell 5.1 was measured to do with
+a call: which arguments the fact covers, whether such a call can still fail, and what it hands back.
 A fact holds only where the call still runs what was measured. That is a question about the script
 around the call, so it is answered here, and nowhere else, before a fact is read: no write to the
 type system may have run before a method call, the name of a command must still denote the command,
@@ -72,8 +72,8 @@ class Ps1CallReader:
     The calls `refinery.lib.scripts.ps1.data.CALL_FACTS` covers, answered for one script under one
     world. A static call is matched by the type literal it names, a call on a value by the type the
     value is known to carry, and a command by its literal name. A command is matched only where it
-    writes to no redirection, is not reached through a call operator, and receives no pipeline input,
-    because every fact about a command was measured on a call standing on its own.
+    writes to no redirection, is not reached through a call operator, and receives no pipeline
+    input, because every fact about a command was measured on a call standing on its own.
 
     The world is held weakly, so that the reader `call_reader` keeps for a world never keeps that
     world, or the tree it was measured over, alive. A reader whose world is gone trusts no position
@@ -145,7 +145,7 @@ class Ps1CallReader:
         return NOTHING if fact is None else self.recorded(fact, receiver, arguments)
 
     def _command(self, command: Ps1CommandInvocation) -> Ps1Outcome:
-        if command.redirections or command.invocation_operator or session_of(command).defaults:
+        if command.redirections or command.invocation_operator:
             return NOTHING
         name = get_command_name(command)
         if name is None or not self._may_trust_command_name_at(name.lower(), command):
@@ -157,8 +157,9 @@ class Ps1CallReader:
                 return NOTHING
         arguments = None if command.arguments else []
         fact = _matching_fact(call_facts(CallKind.COMMAND, None, name), arguments)
-        receiver = Ps1Outcome(Ps1Throws.NEVER, UNKNOWN)
-        return NOTHING if fact is None else self.recorded(fact, receiver, arguments or [])
+        if fact is None or session_of(command).defaults:
+            return NOTHING
+        return self.recorded(fact, Ps1Outcome(Ps1Throws.NEVER, UNKNOWN), arguments or [])
 
     @staticmethod
     def recorded(fact: CallFact, receiver: Ps1Outcome, arguments: list[Ps1Outcome]) -> Ps1Outcome:

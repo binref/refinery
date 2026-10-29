@@ -859,13 +859,16 @@ def point_operands(point: Node) -> list[Node] | None:
     The expressions evaluated where the control-flow graphs place *point*, or `None` where this
     cannot say. The graphs stand a compound statement for the first thing it evaluates — an `if` for
     its first test, a `while` or `do` loop for its condition, a `foreach` loop for the collection it
-    enumerates, a `switch` for its subject — and every other test, and each part of a `for` loop, is
-    a point of its own, spelled by its expression. A jump evaluates its label, `return`, `exit` and
+    enumerates — and every other test, and each part of a `for` loop, is a point of its own, spelled
+    by its expression. A `switch` is the one exception: its point stands for the whole dispatch, the
+    subject and every clause condition it tests. A jump evaluates its label, `return`, `exit` and
     `throw` the value they are handed, and a handler entry nothing.
 
     A statement that is one expression evaluates what `fault_operand` says it does, so that a
-    discard is judged by what it evaluates. A `switch -File` reads a file this cannot see, and is
-    one this cannot say anything about.
+    discard is judged by what it evaluates. This cannot say anything about a `switch -File`, which
+    reads a file this cannot see, nor about a `switch` that runs a script block as a condition or
+    reads its conditions as patterns, which `-Regex` and `-Wildcard` do and which fails on a
+    malformed one.
     """
     if isinstance(point, Ps1ExpressionStatement):
         operand = fault_operand(point)
@@ -883,7 +886,14 @@ def point_operands(point: Node) -> list[Node] | None:
     if isinstance(point, Ps1ForEachLoop):
         return None if point.iterable is None else [point.iterable]
     if isinstance(point, Ps1SwitchStatement):
-        return None if point.file or point.value is None else [point.value]
+        if point.file or point.value is None:
+            return None
+        conditions = [condition for condition, _ in point.clauses if condition is not None]
+        if conditions and (point.regex or point.wildcard):
+            return None
+        if any(isinstance(condition, Ps1ScriptBlock) for condition in conditions):
+            return None
+        return [point.value, *conditions]
     if isinstance(point, Expression):
         return [point]
     return None

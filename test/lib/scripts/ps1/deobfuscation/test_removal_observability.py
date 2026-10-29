@@ -4,6 +4,7 @@ import unittest
 
 from inspect import cleandoc
 
+from test import wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.ast import get_command_name
@@ -989,8 +990,9 @@ class TestPs1ACallMeasuredNeverToFailSkipsNothing(TestPs1):
 class TestPs1AFailingTestOrCollectionSkipsTheRestOfTheBody(TestPs1):
     """
     Measured on 5.1: the test of an `if`, `elseif`, `while`, `do` or `for`, the collection a
-    `foreach` enumerates and the subject of a `switch` fail the way a statement does, and a failure
-    in a `try` or `catch` body skips the rest of that body. Each shape is kept whole.
+    `foreach` enumerates, and the subject, a clause condition and a malformed `-Regex` or
+    `-Wildcard` pattern of a `switch` fail the way a statement does, and a failure in a `try` or
+    `catch` body skips the rest of that body. Each shape is kept whole.
     """
 
     def test_a_failing_test_keeps_a_catch_body_from_being_run_in_place_of_its_try(self):
@@ -1024,6 +1026,40 @@ class TestPs1AFailingTestOrCollectionSkipsTheRestOfTheBody(TestPs1):
                     }}
                     Write-Host 'after'
                 """)
+
+    def test_a_failing_clause_condition_or_pattern_skips_the_rest_of_the_catch_body(self):
+        for construct in (
+            "switch (1) {\n    ([int]'a') {}\n  }",
+            "switch -Regex ('a') {\n    '[' {}\n  }",
+            "switch -Wildcard ('a') {\n    '[' {}\n  }",
+        ):
+            with self.subTest(construct):
+                self._assertKept(F"""
+                    try {{
+                      throw 'x'
+                    }} catch {{
+                      {construct}
+                      Write-Host 'rest'
+                    }}
+                    Write-Host 'after'
+                """)
+
+    @wontfix('no obfuscator enumerates into a variable whose type it constrained before')
+    def test_a_loop_variable_whose_type_is_constrained_skips_the_rest_of_the_catch_body(self):
+        """
+        Measured on 5.1: `foreach` stores every item it enumerates through the type its variable is
+        constrained to, and an item that does not convert fails the loop.
+        """
+        self._assertKept("""
+            [int]$i = 0
+            try {
+              throw 'x'
+            } catch {
+              foreach ($i in 'a') {}
+              Write-Host 'rest'
+            }
+            Write-Host 'after'
+        """)
 
     def test_a_store_above_a_failing_test_is_the_one_read_after_the_try(self):
         self._assertKept("""
@@ -1168,6 +1204,39 @@ class TestPs1ACommandLookupHookTakesEveryCommandOver(TestPs1):
             isinstance(node, Ps1CommandInvocation) and get_command_name(node) == 'Get-Random'
             for node in Ps1Parser(result).parse().walk()
         ))
+
+    def test_a_call_a_fact_covers_stays_after_a_member_named_by_a_value_is_set(self):
+        hook = "{ param($n, $e) if ($n -eq 'Get-Random') { $e.CommandScriptBlock = { throw 'hijack' } } }"
+        for install in (
+            F'$ExecutionContext.InvokeCommand.($args[0]) = {hook}',
+            F'$ExecutionContext.InvokeCommand.($args[0])({hook})',
+        ):
+            with self.subTest(install):
+                result = self._deobfuscate(F"{install}; try {{ $null = Get-Random; Write-Host 'a' }} catch {{ Write-Host 'caught' }}")
+                self.assertTrue(any(
+                    isinstance(node, Ps1CommandInvocation) and get_command_name(node) == 'Get-Random'
+                    for node in Ps1Parser(result).parse().walk()
+                ))
+
+
+class TestPs1ACommandThatFailsInACatchBodyLeavesIt(TestPs1):
+    """
+    Measured on 5.1: a command that ends its statement with an error fails a `catch` body the way a
+    cast does, so the rest of the body is skipped and the `catch` is not run in place of its `try`.
+    Whether a line can fail is answered for casts, operators and the calls the facts cover, never
+    for a command; the one answer to whether a line can fail, which the error roadmap builds,
+    answers it for commands too.
+    """
+
+    @unittest.expectedFailure
+    def test_a_command_naming_a_type_that_does_not_exist_keeps_its_catch_body_in_place(self):
+        self.assertIn('catch {', self._deobfuscate(
+            "try { throw 'x' } catch { New-Object Foo.Bar; Write-Host 'rest' }; Write-Host 'after'"))
+
+    @unittest.expectedFailure
+    def test_a_command_handed_a_parameter_it_does_not_have_keeps_its_catch_body_in_place(self):
+        self.assertIn('catch {', self._deobfuscate(
+            "try { throw 'x' } catch { Get-Random -Bogus 1; Write-Host 'rest' }; Write-Host 'after'"))
 
 
 class TestPs1AnErrorInABodyACatchOrTryBodyRunsLeavesThatBody(TestPs1):

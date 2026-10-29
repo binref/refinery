@@ -21,9 +21,10 @@ import typing
 
 from weakref import WeakKeyDictionary
 
-from refinery.lib.scripts import Node, mutation_epoch, tree_root
+from refinery.lib.scripts import Node, tree_root, tree_version
 from refinery.lib.scripts.ps1.analysis.model import Ps1OccurrenceRole, occurrence_role
 from refinery.lib.scripts.ps1.analysis.naming import (
+    Ps1NamedReference,
     Ps1NameRole,
     named_references,
     unreadable_name_target,
@@ -37,12 +38,11 @@ from refinery.lib.scripts.ps1.ast import (
     binds_parameter,
     bound_argument_value,
     free_positional_values,
-    get_command_name,
     get_member_name,
     resolve_command_name,
     string_value,
 )
-from refinery.lib.scripts.ps1.data import COMMON_PARAMETERS, abbreviated_parameter
+from refinery.lib.scripts.ps1.data import COMMON_PARAMETERS
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1CommandArgument,
@@ -143,20 +143,40 @@ def selects_stop(value: Node | None) -> bool:
     arrives in — selects `Stop` by its ordinal whatever enum it is a member of, because 5.1
     converts one enum to another by ordinal: `-ErrorAction ([ConfirmImpact]::Low)` is `Stop`.
     """
+    return _selects_a_member(value, _STOP_MEMBER)
+
+
+class _ActionMembers(typing.NamedTuple):
+    """
+    Members of `ActionPreference`, by the ordinals they are and the names they answer to.
+    """
+    ordinals: frozenset[int]
+    names: tuple[str, ...]
+
+
+_STOP_MEMBER = _ActionMembers(frozenset({_STOP_ORDINAL}), (_STOP,))
+_SILENT_MEMBERS = _ActionMembers(frozenset({0, 4}), ('silentlycontinue', 'ignore'))
+
+
+def _selects_a_member(value: Node | None, members: _ActionMembers) -> bool:
+    """
+    Whether *value* selects one of *members*, read as `selects_stop` reads `Stop`: a numeral by the
+    number it denotes, an enum member by its ordinal, a name by prefix, and a value this cannot read
+    as selecting one.
+    """
     if isinstance(value, (Ps1IntegerLiteral, Ps1RealLiteral)):
-        return value.value == _STOP_ORDINAL
+        return value.value in members.ordinals
     ordinal = ordinal_of(read(value))
     if ordinal is not None:
-        return ordinal == _STOP_ORDINAL
+        return ordinal in members.ordinals
     text = argument_text(value)
     if text is None:
         return True
     text = text.strip().lower()
-    return bool(text) and (text == str(_STOP_ORDINAL) or _STOP.startswith(text))
-
-
-_SILENT_ORDINALS = frozenset({0, 4})
-_SILENT_NAMES = ('silentlycontinue', 'ignore')
+    return bool(text) and (
+        text in {str(ordinal) for ordinal in members.ordinals}
+        or any(name.startswith(text) for name in members.names)
+    )
 
 
 def selects_silence(value: Node | None) -> bool:
@@ -165,26 +185,16 @@ def selects_silence(value: Node | None) -> bool:
     neither reported nor stops anything, read the way `selects_stop` reads `Stop`: a value this
     cannot read selects them.
     """
-    if isinstance(value, (Ps1IntegerLiteral, Ps1RealLiteral)):
-        return value.value in _SILENT_ORDINALS
-    ordinal = ordinal_of(read(value))
-    if ordinal is not None:
-        return ordinal in _SILENT_ORDINALS
-    text = argument_text(value)
-    if text is None:
-        return True
-    text = text.strip().lower()
-    return bool(text) and (
-        text in {str(ordinal) for ordinal in _SILENT_ORDINALS}
-        or any(name.startswith(text) for name in _SILENT_NAMES)
-    )
+    return _selects_a_member(value, _SILENT_MEMBERS)
 
 
-def _binds_silence(command: Ps1CommandInvocation) -> bool:
+def _binds_an_error_action(
+    command: Ps1CommandInvocation,
+    selects: typing.Callable[[Node | None], bool],
+) -> bool:
     """
-    Whether *command* may be handed a silent `-ErrorAction`: the parameter bound to a value
-    `selects_silence` reads as silent or cannot read, or a splat, whose table this cannot see into.
-    Read the way `stops_on_error` reads `Stop`.
+    Whether *command* binds `-ErrorAction` to a value *selects* answers for, or carries a splat,
+    whose table this cannot see into. Read as `stops_on_error` describes.
     """
     arguments = [
         argument for argument in command.arguments
@@ -201,7 +211,7 @@ def _binds_silence(command: Ps1CommandInvocation) -> bool:
             value = None
             if following is not None and following.kind is Ps1CommandArgumentKind.POSITIONAL:
                 value = following.value
-        if selects_silence(value):
+        if selects(value):
             return True
     return False
 
@@ -231,13 +241,32 @@ def _value_written_by(reference_node: Node) -> Node | None:
     return None
 
 
-def _may_write(node: Node, key: str, harmless: typing.Callable[[Node], bool]) -> bool:
+class _Names(typing.NamedTuple):
     """
-    Whether *node* may leave the session variable named by *key* holding a value *harmless* does not
-    clear, read the wide way: a read and a plain assignment of a value *harmless* clears are the
-    only occurrences of the variable that pass; a write by name passes where it binds such a value;
-    a variable written by a name nobody can read, and a string that holds the name anywhere else,
-    never pass.
+    What one node does to names addressed other than as a variable: the references it makes to
+    names spelled as strings, and whether it writes a variable by a name nobody can read. Read once
+    per node, for every session variable asked about.
+    """
+    references: list[Ps1NamedReference]
+    unreadable: bool
+
+
+def _names_of(node: Node) -> _Names:
+    return _Names(named_references(node), unreadable_name_target(node) is not None)
+
+
+def _may_write(
+    node: Node,
+    names: _Names,
+    key: str,
+    harmless: typing.Callable[[Node], bool],
+) -> bool:
+    """
+    Whether *node*, which does to names what *names* says, may leave the session variable named by
+    *key* holding a value *harmless* does not clear, read the wide way: a read and a plain
+    assignment of a value *harmless* clears are the only occurrences of the variable that pass; a
+    write by name passes where it binds such a value; a variable written by a name nobody can read,
+    and a string that holds the name anywhere else, never pass.
     """
     if isinstance(node, Ps1Variable) and binding_key(node) == key:
         role = occurrence_role(node)
@@ -251,9 +280,9 @@ def _may_write(node: Node, key: str, harmless: typing.Callable[[Node], bool]) ->
             and assignment.value is not None
             and harmless(assignment.value)
         )
-    if unreadable_name_target(node) is not None:
+    if names.unreadable:
         return True
-    for reference in named_references(node):
+    for reference in names.references:
         if reference.key != key or reference.role is Ps1NameRole.READS:
             continue
         value = _value_written_by(reference.node)
@@ -263,49 +292,45 @@ def _may_write(node: Node, key: str, harmless: typing.Callable[[Node], bool]) ->
     return written is not None and key in written.lower() and not _resolved_as_a_reference(node, key)
 
 
-def _mentions(node: Node, key: str) -> bool:
+def _mentions(node: Node, names: _Names, key: str) -> bool:
     """
-    Whether *node* names the session variable *key* at all, as a variable, inside a string, or
-    possibly as a variable written by a name nobody can read.
+    Whether *node*, which does to names what *names* says, names the session variable *key* at all,
+    as a variable, inside a string, or possibly as a variable written by a name nobody can read.
     """
     if isinstance(node, Ps1Variable):
         return binding_key(node) == key
-    if unreadable_name_target(node) is not None:
+    if names.unreadable:
         return True
-    if any(reference.key == key for reference in named_references(node)):
+    if any(reference.key == key for reference in names.references):
         return True
     written = string_value(node)
     return written is not None and key in written.lower()
 
 
-#: The parameter of `Get-Random` that seeds the generator every later call reads.
-_SET_SEED = 'SetSeed'
+#: The parameter of `Get-Random` that seeds the generator every later call reads, lowercased.
+_SET_SEED = 'setseed'
 
 
 def _may_seed(node: Node) -> bool:
     """
-    Whether *node* may seed the random generator: a call of `Get-Random`, or of a command whose name
-    this cannot read, that binds `-SetSeed` or a splat, or a string that holds the parameter's name.
+    Whether *node* may seed the random generator: a command that binds a splat or a parameter name
+    `-SetSeed` answers to, or a string that holds the parameter's name. Any command counts, whatever
+    its name: the name a script calls `Get-Random` by may be one it defines as an alias, or one 5.1
+    reaches through the implicit `Get-` retry, and asking which is a question about the script this
+    does not read.
     """
     if isinstance(node, Ps1CommandInvocation):
-        name = get_command_name(node)
-        resolved = resolve_command_name(node)
-        if name is None or resolved == 'get-random':
-            for argument in node.arguments:
-                if not isinstance(argument, Ps1CommandArgument):
-                    continue
-                value = argument.value
-                if isinstance(value, Ps1Variable) and value.splatted:
-                    return True
-                written = argument.name
-                if written and (
-                    abbreviated_parameter('get-random', written) == _SET_SEED
-                    or name is None and binds_parameter(written, _SET_SEED)
-                ):
-                    return True
+        for argument in node.arguments:
+            if not isinstance(argument, Ps1CommandArgument):
+                continue
+            value = argument.value
+            if isinstance(value, Ps1Variable) and value.splatted:
+                return True
+            if argument.name and binds_parameter(argument.name, _SET_SEED):
+                return True
         return False
     written = string_value(node)
-    return written is not None and _SET_SEED.lower() in written.lower()
+    return written is not None and _SET_SEED in written.lower()
 
 
 def stops_on_error(command: Ps1CommandInvocation) -> bool:
@@ -324,24 +349,7 @@ def stops_on_error(command: Ps1CommandInvocation) -> bool:
     command carrying a splat is read as carrying the parameter for the same reason: the names it
     binds are in a table this cannot see into.
     """
-    arguments = [
-        argument for argument in command.arguments
-        if isinstance(argument, Ps1CommandArgument)
-    ]
-    for index, argument in enumerate(arguments):
-        value = argument.value
-        if isinstance(value, Ps1Variable) and value.splatted:
-            return True
-        if not binds_the_error_action(argument.name):
-            continue
-        if argument.kind is not Ps1CommandArgumentKind.NAMED:
-            following = arguments[index + 1] if index + 1 < len(arguments) else None
-            value = None
-            if following is not None and following.kind is Ps1CommandArgumentKind.POSITIONAL:
-                value = following.value
-        if selects_stop(value):
-            return True
-    return False
+    return _binds_an_error_action(command, selects_stop)
 
 
 def writes_stop_to_the_preference(node: Node) -> bool:
@@ -514,11 +522,12 @@ def a_stop_may_be_in_force(root: Node) -> bool:
     an expected failure.
 
     A caller asking whether a *statement completed* cannot inherit those. Reading a script as arming
-    nothing where it does says a command that in fact raised ran to its end, and a value it was going
-    to establish is then resolved through at every use below it — which rewrites calls a run never
-    makes. So this asks the wider question: does the script touch either name at all, in any way,
-    including naming one in a string that a command could set it through. What that costs is the
-    recall of every script that so much as mentions the preference, which is a shape worth refusing.
+    nothing where it does says a command that in fact raised ran to its end, and a value it was
+    going to establish is then resolved through at every use below it — which rewrites calls a run
+    never makes. So this asks the wider question: does the script touch either name at all, in any
+    way, including naming one in a string that a command could set it through. What that costs is
+    the recall of every script that so much as mentions the preference, which is a shape worth
+    refusing.
 
     A variable occurrence must carry the name exactly; a string value need only *contain* one,
     which is the same asymmetry `refinery.lib.scripts.ps1.analysis.worldflow._names_own_path`
@@ -545,12 +554,12 @@ class Ps1Session(typing.NamedTuple):
     where a missed write deletes code that runs.
 
     `silenced` is whether `$ErrorActionPreference` may hold `SilentlyContinue` or `Ignore` anywhere,
-    so that a `throw` may be reported and stepped over in every body. `silenced_by_a_call` is whether
-    a call may be handed a silent `-ErrorAction` or the default table may hand one, which sets the
-    preference in the body called and in every body that body runs: every body but the script's own.
-    `defaults` is whether `$PSDefaultParameterValues` may bind a value into any command, which
-    changes what the command does without a word at the call. `seeded` is whether the random
-    generator may be seeded, after which every call of `Get-Random` changes what the next one
+    so that a `throw` may be reported and stepped over in every body. `silenced_by_a_call` is
+    whether a call may be handed a silent `-ErrorAction` or the default table may hand one, which
+    sets the preference in the body called and in every body that body runs: every body but the
+    script's own. `defaults` is whether `$PSDefaultParameterValues` may bind a value into any
+    command, which changes what the command does without a word at the call. `seeded` is whether the
+    random generator may be seeded, after which every call of `Get-Random` changes what the next one
     hands back.
     """
     silenced: bool
@@ -559,14 +568,23 @@ class Ps1Session(typing.NamedTuple):
     seeded: bool
 
 
+def _keeps_reporting(value: Node) -> bool:
+    return not selects_silence(value)
+
+
 def _session(root: Node) -> Ps1Session:
     silenced = silenced_by_a_call = defaults = seeded = False
     for node in root.walk():
-        silenced = silenced or _may_write(node, _ERROR_ACTION_PREFERENCE, lambda value: not selects_silence(value))
-        silenced_by_a_call = silenced_by_a_call or (
-            isinstance(node, Ps1CommandInvocation) and _binds_silence(node))
-        defaults = defaults or _mentions(node, _DEFAULT_PARAMETER_VALUES)
-        seeded = seeded or _may_seed(node)
+        if not (silenced and defaults):
+            names = _names_of(node)
+            if not silenced:
+                silenced = _may_write(node, names, _ERROR_ACTION_PREFERENCE, _keeps_reporting)
+            if not defaults:
+                defaults = _mentions(node, names, _DEFAULT_PARAMETER_VALUES)
+        if not silenced_by_a_call and isinstance(node, Ps1CommandInvocation):
+            silenced_by_a_call = _binds_an_error_action(node, selects_silence)
+        if not seeded:
+            seeded = _may_seed(node)
     return Ps1Session(
         silenced,
         silenced_by_a_call or defaults,
@@ -577,22 +595,16 @@ def _session(root: Node) -> Ps1Session:
 
 def session_of(node: Node) -> Ps1Session:
     """
-    The `Ps1Session` of the script holding *node*, remembered until some tree changes, the way
-    `refinery.lib.scripts.ps1.analysis.values.evaluate` remembers what it answered.
+    The `Ps1Session` of the script holding *node*, remembered until that script changes, the way
+    `refinery.lib.scripts.modelcache.ModelCacheBase` remembers a model: by the version its root
+    stood at, so that a change to some other tree keeps it.
     """
-    global _SESSIONS_AT
     root = tree_root(node)
-    epoch = mutation_epoch()
-    if epoch != _SESSIONS_AT:
-        _SESSIONS.clear()
-        _SESSIONS_AT = epoch
+    version = tree_version(root)
     found = _SESSIONS.get(root)
-    if found is None:
-        found = _session(root)
-        if mutation_epoch() == epoch:
-            _SESSIONS[root] = found
-    return found
+    if found is None or found[0] != version:
+        found = _SESSIONS[root] = version, _session(root)
+    return found[1]
 
 
-_SESSIONS: WeakKeyDictionary[Node, Ps1Session] = WeakKeyDictionary()
-_SESSIONS_AT = -1
+_SESSIONS: WeakKeyDictionary[Node, tuple[int, Ps1Session]] = WeakKeyDictionary()

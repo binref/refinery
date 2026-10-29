@@ -39,6 +39,7 @@ from refinery.lib.scripts.analysis.cfg import (
 from refinery.lib.scripts.analysis.components import Condensation
 from refinery.lib.scripts.ps1.analysis.cfg import (
     Ps1ControlFlowModel,
+    Ps1ReportNode,
     Ps1TrapDisposition,
     Ps1TrapSet,
     build_control_flow_model,
@@ -116,9 +117,10 @@ def _arms_strict_mode(node: Node) -> bool:
 
     A string value need only *contain* a name, which is the asymmetry
     `refinery.lib.scripts.ps1.analysis.worldflow._names_own_path` makes and that
-    `refinery.lib.scripts.ps1.analysis.session.a_stop_may_be_in_force` makes beside it. `Invoke-Expression 'Set-StrictMode -Version 1'`
-    arms it as surely as writing the command does, and a script that spells either name anywhere is
-    read as arming it — the direction that refuses a removal rather than granting one.
+    `refinery.lib.scripts.ps1.analysis.session.a_stop_may_be_in_force` makes beside it.
+    `Invoke-Expression 'Set-StrictMode -Version 1'` arms it as surely as writing the command does,
+    and a script that spells either name anywhere is read as arming it — the direction that refuses
+    a removal rather than granting one.
     """
     if (
         isinstance(node, Ps1CommandInvocation)
@@ -242,8 +244,8 @@ class _EmptyCatch(NamedTuple):
     """
     A place an error may reach that takes it and carries on after a statement: an empty `catch`
     clause, which carries on after its `try`, or a report node, which carries on after the statement
-    `refinery.lib.scripts.analysis.cfg.CfgNode.carries_on_after` names. Kept with the nodes control
-    reaches from there, and that statement.
+    `refinery.lib.scripts.ps1.analysis.cfg.Ps1ReportNode.carries_on_after` names. Kept with the
+    nodes control reaches from there, and that statement.
     """
     clause: CfgNode
     resumes: frozenset[CfgNode]
@@ -331,23 +333,33 @@ def _arrival(
     may be in force — and the error is read as leaving the body there.
     """
     element = node.element
-    reported = node.carries_on_after
-    if reported is not None:
+    if isinstance(node, Ps1ReportNode):
+        reported = node.carries_on_after
         catch = _EmptyCatch(node, _normal_successors(node), reported)
         return _Route(False, False, False, False, (catch,), depth(reported))
     if isinstance(element, Ps1CatchClause):
         empty = element.body is None or not element.body.body
         catches = (_EmptyCatch(node, _normal_successors(node), element.parent),) if empty else ()
-        acts = handler_acts(element)
-        taken = depth(element.parent) if (acts or empty) and element.parent is not None else float('inf')
-        return _Route(acts, False, True, False, catches, taken)
+        taken = float('inf') if element.parent is None else depth(element.parent)
+        return _Route(handler_acts(element), False, True, False, catches, taken)
     if isinstance(element, Ps1TrapStatement):
         acts = handler_acts(element)
-        taken = depth(element.parent) if acts and element.parent is not None else float('inf')
+        takes = acts or not _breaks_at_once(element)
+        taken = depth(element.parent) if takes and element.parent is not None else float('inf')
         return _Route(acts, True, True, reraises(node), (), taken)
     if node is graph.exit:
         return _Route(False, False, False, True, ())
     return _NOWHERE
+
+
+def _breaks_at_once(trap: Ps1TrapStatement) -> bool:
+    """
+    Whether the body of *trap* begins with a `break`, which hands the error it took back up before
+    anything else runs. Every other `trap` either acts or carries on after the statement that
+    raised, the way an empty body and a `continue` do.
+    """
+    body = trap.body.body if trap.body is not None else ()
+    return bool(body) and isinstance(body[0], Ps1BreakStatement)
 
 
 def _handled_in_the_body(route: _Route) -> bool:
@@ -1311,12 +1323,12 @@ class Ps1FaultReach:
         predicate, the way every removal site pairs a position with a fault of its own.
 
         A handler that *acts* is not among them: it already makes the fault observable through
-        `observed_at`, so pairing this with it would only re-derive that keep. Emptiness is read from
-        the body directly rather than through `handler_acts`, so the answer is a property of where
-        the handler sits and not of a predicate a caller may be mutating. The tail is live exactly
-        when *node*'s fall-through successor is not the slot the landing carries on at: equal
-        successors mean the fault steps over to where the code went anyway, and deleting it changes
-        nothing.
+        `observed_at`, so pairing this with it would only re-derive that keep. Emptiness is read
+        from the body directly rather than through `handler_acts`, so the answer is a property of
+        where the handler sits and not of a predicate a caller may be mutating. The tail is live
+        exactly when *node*'s fall-through successor is not the slot the landing carries on at:
+        equal successors mean the fault steps over to where the code went anyway, and deleting it
+        changes nothing.
         """
         located = self._control_flow.locate(node)
         if located is None:

@@ -25,6 +25,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CastExpression,
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
+    Ps1IfStatement,
     Ps1Script,
     Ps1SubExpression,
     Ps1TrapStatement,
@@ -1915,3 +1916,30 @@ class TestPs1ARaiseEscapesAFiringTrapBodyOnlyWhereItsBlockProvablyFiresTheTrap(T
             and isinstance(node.expression, Ps1CastExpression)
         )
         self.assertFalse(faults.escapes_a_firing_trap_body(inner))
+
+
+class TestPs1AnErrorIsTakenPastAStatementARunCarriesOnAfter(TestBase):
+    """
+    An error raised inside a statement is taken past it where the run carries on after a statement
+    holding it, which is what the `catch` lift asks before it runs a `catch` body in place of its
+    `try`. A `trap` that resumes carries on after the statement of its block that holds the raise,
+    whether its body acts or not.
+    """
+
+    @staticmethod
+    def _raises_past_the_guard(trap: str) -> bool:
+        tree = _parse(F"""
+            {trap}
+            try {{ throw 'a' }} catch {{ if ($x) {{ throw 'b' }}; Write-Host 'b' }}
+            Write-Host 'after'
+        """)
+        guard = next(node for node in tree.walk() if isinstance(node, Ps1IfStatement))
+        return Ps1ModelCache(tree).handlers.raises_past(guard)
+
+    def test_a_trap_that_resumes_takes_a_throw_past_the_statement_holding_it(self):
+        for trap in ('trap { continue }', 'trap { }', "trap { Write-Host 't' }"):
+            with self.subTest(trap):
+                self.assertTrue(self._raises_past_the_guard(trap))
+
+    def test_a_trap_that_breaks_at_once_takes_no_throw_past_it(self):
+        self.assertFalse(self._raises_past_the_guard('trap { break }'))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from test import TestBase
 
+from refinery.lib.scripts import set_body
 from refinery.lib.scripts.ps1.analysis.session import Ps1Session, session_of
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
@@ -73,3 +74,18 @@ class TestPs1TheSessionAScriptMaySet(TestBase):
             with self.subTest(source):
                 self.assertTrue(self._session(source).seeded)
         self.assertFalse(self._session('Get-Random -Maximum 5').seeded)
+
+    def test_a_seed_bound_under_any_command_name_is_read_as_seeding_it(self):
+        for source in (
+            'random -SetSeed 7',
+            'Set-Alias r Get-Random; r -SetSeed 7',
+            '& $command -SetSeed 7',
+        ):
+            with self.subTest(source):
+                self.assertTrue(self._session(source).seeded)
+
+    def test_the_session_of_a_script_follows_a_change_to_it(self):
+        tree = Ps1Parser('Get-Random -Maximum 5').parse()
+        self.assertFalse(session_of(tree).seeded)
+        set_body(tree, [*tree.body, *Ps1Parser('Get-Random -SetSeed 7').parse().body])
+        self.assertTrue(session_of(tree).seeded)

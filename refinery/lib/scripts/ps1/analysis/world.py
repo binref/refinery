@@ -988,18 +988,23 @@ _COMMAND_LOOKUP_HOOKS = frozenset({
 
 def _installs_a_command_lookup_hook(node: Node) -> bool:
     """
-    Whether *node* stores a block in a hook of the command lookup, by assignment or through the
+    Whether *node* may store a block in a hook of the command lookup, by assignment or through the
     setter, on whatever object it is reached through: after that no command name is sure to run what
-    the metadata says, and the block that decides it is in plain sight.
+    the metadata says, and the block that decides it is in plain sight. A member name this cannot
+    read may name a hook, so an assignment to one is read as storing one, and so is a call of one
+    with the single argument a setter takes.
     """
     if isinstance(node, Ps1AssignmentExpression):
         target = node.target
         if not isinstance(target, Ps1MemberAccess):
             return False
         member = get_member_name(target.member)
-        return member is not None and member.lower() in _COMMAND_LOOKUP_HOOKS
-    if isinstance(node, Ps1InvokeMember) and isinstance(node.member, str):
-        member = node.member.lower()
+        return member is None or member.lower() in _COMMAND_LOOKUP_HOOKS
+    if isinstance(node, Ps1InvokeMember):
+        member = get_member_name(node.member)
+        if member is None:
+            return len(node.arguments) == 1
+        member = member.lower()
         return member.startswith('set_') and member[4:] in _COMMAND_LOOKUP_HOOKS
     return False
 

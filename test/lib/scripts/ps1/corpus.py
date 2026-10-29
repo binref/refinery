@@ -920,6 +920,12 @@ BEHAVIOURS: tuple[str, ...] = (
     "try { try { throw 'x' } finally { $null = [int]'a' } } finally { }; Write-Host 'after'",
     "try { throw 'x' } catch { if ($Host) { $null = [int]'a'; Write-Host 'rest' } }; Write-Host 'after'",
     "try { throw 'x'; trap { Write-Host 'T'; break } } catch { }; Write-Host 'after'",
+    "try { throw 'x' } catch { switch (1) { ([int]'a') { } }; Write-Host 'rest' }; Write-Host 'after'",
+    "try { throw 'x' } catch { switch -Regex ('a') { '[' { } }; Write-Host 'rest' }; Write-Host 'after'",
+    "try { throw 'x' } catch { switch -Wildcard ('a') { '[' { } }; Write-Host 'rest' }; Write-Host 'after'",
+    "try { throw 'x' } catch { New-Object Foo.Bar; Write-Host 'rest' }; Write-Host 'after'",
+    "try { throw 'x' } catch { Get-Random -Bogus 1; Write-Host 'rest' }; Write-Host 'after'",
+    "[int]$i = 0; try { throw 'x' } catch { foreach ($i in 'a') { }; Write-Host 'rest' }; Write-Host 'after'",
 )
 
 
