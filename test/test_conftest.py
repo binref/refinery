@@ -59,7 +59,9 @@ class TestASessionKeepsWhatNodeAnsweredWhenItEnds(TestBase):
 
     def test_the_one_answer_of_a_session_is_in_the_store_of_its_cache_after_it(self):
         root = Path(__file__).resolve().parents[1]
-        session = F'{Path(__file__).relative_to(root).as_posix()}::TestASessionThatAsksNodeAboutOneProgram'
+        # The session id has to be built from the resolved path as well: when pytest is started
+        # through a mapped drive, the unresolved test file path is not relative to the root.
+        session = F'{Path(__file__).resolve().relative_to(root).as_posix()}::TestASessionThatAsksNodeAboutOneProgram'
         with tempfile.TemporaryDirectory() as cache:
             completed = subprocess.run(
                 [sys.executable, '-m', 'pytest', '-q', '-o', F'cache_dir={cache}', session],
