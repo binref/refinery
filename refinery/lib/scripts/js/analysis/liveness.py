@@ -20,16 +20,15 @@ a conditional write, or one on a path that may throw before it runs (an exceptio
 does not mask an earlier live store. Only a function's own, uncaptured `var`/`let` bindings are analysed
 — anything a closure or another scope might read is conservatively kept.
 
-Beyond the dead-store query, the same liveness answers a scope-tightening question. A script-scope
-`var` whose every reference is owned by one function, and which that function overwrites before reading,
-behaves as a local of it: no value carried into the call from a previous invocation or from load is ever
-observed, so the declaration can be relocated into the function. `localization_target` reports that
-function. The tracking this needs is kept separate from `is_dead_store`, which retains its strict
-function-local candidacy, so widening the dataflow never widens what counts as a removable dead store.
+Beyond the locals, the dataflow tracks a script-scope `var` every read and store of which lies in
+the body of one function inside that function's graph (`pseudo_local_owner`), so that
+`refinery.lib.scripts.js.analysis.localization` can ask where it is live there. The tracking is kept
+separate from `is_dead_store`, which retains its strict function-local candidacy, so widening the
+dataflow never widens what counts as a removable dead store.
 
-The public surface — `LivenessModel.live_in`, `live_out`, `node_of`, `is_dead_store`, `dead_stores`,
-`is_dead_on_entry`, `localization_target`, `localizable_bindings`, `build_liveness` — is keyed to AST
-node identity, matching the contract of the model and effect layers.
+The public surface — `LivenessModel.live_in`, `live_out`, `live_around`, `node_of`,
+`is_dead_store`, `dead_stores`, `is_dead_on_entry`, `pseudo_local_owner`, `build_liveness` — is
+keyed to AST node identity, matching the contract of the model and effect layers.
 """
 from __future__ import annotations
 
@@ -80,6 +79,7 @@ class LivenessModel:
         self._live_in: dict[int, frozenset[Binding]] = {}
         self._live_out: dict[int, frozenset[Binding]] = {}
         self._pseudo_locals: dict[int, frozenset[Binding]] = {}
+        self._pseudo_local_owners: dict[Binding, Node] = {}
         self._index_pseudo_locals()
         for graph in self._flow.graphs.values():
             self._compute_graph(graph)
@@ -97,6 +97,19 @@ class LivenessModel:
         including the path taken if *node* throws.
         """
         return self._live_out.get(id(node), frozenset())
+
+    def live_around(self, element: Node) -> frozenset[Binding] | None:
+        """
+        The bindings live on entry to or on exit from the control-flow node that evaluates
+        *element*, climbing out of any expression it is nested in, or `None` when no graph places
+        it. The graph does not order the parts of one node, so a binding live here may be read
+        after *element* is evaluated.
+        """
+        located = self._flow.locate(element)
+        if located is None:
+            return None
+        node = located[1]
+        return self.live_in(node) | self.live_out(node)
 
     def node_of(self, element: Node) -> CfgNode | None:
         """
@@ -155,52 +168,20 @@ class LivenessModel:
             return False
         return binding not in self.live_in(graph.entry)
 
-    def localization_target(self, binding: Binding) -> Node | None:
+    def pseudo_local_owner(self, binding: Binding) -> Node | None:
         """
-        The function into which *binding*, a script-scope `var`, can be soundly relocated, or `None`. A
-        binding qualifies when every reference is owned by one function, that function writes it before
-        any read (so a value carried across calls or from load is never observed), it has no initializer
-        whose load-time effect the move would strand, no reference reaches it through a global-object
-        alias member (`globalThis.x`, which would no longer find it once it leaves the global object),
-        it is not exported (an importer reads its value where the module leaves it, which a body local
-        cannot answer), the program keeps no reflection surface that could read it by name, and the
-        program stores no property on the global object under a runtime key
-        (`SemanticModel.has_opaque_global_write`) — such a write may target the binding's own name,
-        which a relocation would no longer receive.
-        Relocating it tightens a pseudo-global into the local it behaves as.
+        The function whose graph tracks *binding*, a script-scope `var`, as one of its locals: the
+        one function whose body holds every read of it and every site that stores into it
+        (`refinery.lib.scripts.js.analysis.model.Binding.store_sites`), none at script scope, in the
+        parameter list or in a function nested below it. `None` for every other binding.
         """
-        if self.model.has_reflection_surface() or self.model.has_opaque_global_write():
-            return None
-        if binding.kind is not BindingKind.VAR or binding.scope is not self.model.root_scope:
-            return None
-        if binding.exported or binding.has_member_reference:
-            return None
-        if self._has_initializer(binding):
-            return None
-        function = self._sole_owning_function(binding)
-        if function is None:
-            return None
-        if not self.is_dead_on_entry(binding, function):
-            return None
-        return function
-
-    def localizable_bindings(self) -> list[tuple[Binding, Node]]:
-        """
-        Every script-scope `var` binding that can be relocated into a function, each paired with that
-        function, in the order the script declares them.
-        """
-        result: list[tuple[Binding, Node]] = []
-        for binding in self.model.root_scope.bindings.values():
-            function = self.localization_target(binding)
-            if function is not None:
-                result.append((binding, function))
-        return result
+        return self._pseudo_local_owners.get(binding)
 
     def _index_pseudo_locals(self):
         """
-        Group the script-scope `var` bindings that each behave as a single function's locals, keyed by
-        that function, so the dataflow can track them inside it. A binding qualifies when every reference
-        lies in one function and none at script scope or in a function nested below it.
+        Group the script-scope `var` bindings that each behave as a single function's locals, keyed
+        by that function, so the dataflow can track them inside it: those `_sole_owning_function`
+        finds an owner for.
         """
         grouped: dict[int, set[Binding]] = {}
         for binding in self.model.root_scope.bindings.values():
@@ -209,6 +190,7 @@ class LivenessModel:
             function = self._sole_owning_function(binding)
             if function is not None:
                 grouped.setdefault(id(function), set()).add(binding)
+                self._pseudo_local_owners[binding] = function
         self._pseudo_locals = {owner: frozenset(bindings) for owner, bindings in grouped.items()}
 
     def _compute_graph(self, graph: ControlFlowGraph):
@@ -378,10 +360,10 @@ class LivenessModel:
         self, graph: ControlFlowGraph, binding: Binding, owner_scope: Scope | None,
     ) -> bool:
         """
-        Whether *binding* is tracked in *graph*: either an uncaptured function-local of the graph's own
-        function (the strict store candidate) or a script-scope `var` whose every reference is owned by
-        that function and so behaves as one of its locals. The second case feeds only the entry-liveness
-        `localization_target` reads; it never reaches `is_dead_store`, which keeps the strict candidacy.
+        Whether *binding* is tracked in *graph*: either an uncaptured function-local of the graph's
+        own function (the strict store candidate) or a script-scope `var` that function owns
+        (`pseudo_local_owner`). The second case feeds only the live sets; it never reaches
+        `is_dead_store`, which keeps the strict candidacy.
         """
         if self._trackable(binding, owner_scope):
             return True
@@ -389,28 +371,29 @@ class LivenessModel:
 
     def _sole_owning_function(self, binding: Binding) -> Node | None:
         """
-        The one function whose body lexically contains every reference to *binding*, or `None` when the
-        references span more than one function, include one at script scope, or do not exist. A reference
-        inside a function nested below the candidate counts as a separate owner, so a binding captured by
-        such a nested closure is rejected.
+        The one function whose body lexically contains every read of *binding* and every site that
+        stores into it, or `None` when they span more than one function, include one at script
+        scope, or do not exist. A declaration that stores where it runs is such a site, so a
+        declarator with an initializer or a loop head at script scope rejects the binding. A site
+        inside a function nested below the candidate counts as a separate owner, so a binding
+        captured by such a nested closure is rejected, and so is one the candidate's parameter list
+        reads or writes: parameter expressions run in a scope of their own, which a `var` the body
+        declares does not reach.
         """
         owner: Node | None = None
-        for ref in (*binding.reads, *binding.writes):
-            function = enclosing_function(ref)
+        body: Node | None = None
+        for site in (*binding.reads, *binding.store_sites):
+            function = enclosing_function(site)
             if function is None:
                 return None
             if owner is None:
                 owner = function
+                body = getattr(function, 'body', None)
             elif function is not owner:
                 return None
+            if body is None or not site.is_descendant_of(body):
+                return None
         return owner
-
-    def _has_initializer(self, binding: Binding) -> bool:
-        for declaration in binding.declarations:
-            declarator = self._enclosing_declarator(declaration)
-            if declarator is not None and declarator.init is not None:
-                return True
-        return False
 
 
 def build_liveness(

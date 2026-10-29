@@ -114,7 +114,9 @@ from test.lib.scripts.js.test_parser_recovery import (
 
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
-from refinery.lib.scripts.js.options import ExecutionModel
+from refinery.lib.scripts.js.analysis.localization import localization_target
+from refinery.lib.scripts.js.model import JsAssignmentExpression, JsIdentifier, JsReturnStatement
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -6418,48 +6420,31 @@ class TestAMaskedFunctionCalledAsAMethodIsUnmasked(TestBase):
         self.assertNotIn('...a', deobfuscate_source(source, execution=ExecutionModel.commonjs))
 
 
-#: Programs with a file-level `var` one function writes before it reads it, which another run of
-#: that function writes in between, run as a CommonJS file, mapped to what Node prints for each:
-#: the run waits at an `await` or a `yield`, calls itself, or calls code that calls it.
-A_VAR_ANOTHER_RUN_OF_ITS_FUNCTION_WRITES = {
-    'an await': Program(
-        a_program("""
-            var x;
-            async function f(v) {
-              x = v;
-              await null;
-              console.log(x);
-            }
-            f(1);
-            f(2);
-            """),
-        prints('2', '2'),
-        Reading.COMMONJS,
-    ),
-    'a yield': Program(
-        a_program("""
-            var x;
-            function* f(v) {
-              x = v;
-              yield;
-              console.log(x);
-            }
-            var a = f(1);
-            var b = f(2);
-            a.next();
-            b.next();
-            a.next();
-            b.next();
-            """),
-        prints('2', '2'),
-        Reading.COMMONJS,
-    ),
-    'a call of itself': Program(
+#: Programs in which a function's body runs where no call of its name shows, mapped to what Node
+#: prints for each: called through the global object, through its own `arguments`, through the
+#: `caller` of a function it calls, and a generator's body run by a step of its object. In the first
+#: five a file-level `var` the function writes before it reads it is moved into it; in the last two
+#: a value is read past the run.
+A_FUNCTION_RUN_WHERE_NO_CALL_OF_ITS_NAME_SHOWS = {
+    'a call of itself through the global object': Program(
         a_program("""
             var x;
             function f(n) {
               x = n;
-              if (n) f(n - 1);
+              if (n) globalThis.f(n - 1);
+              console.log(x);
+            }
+            f(2);
+            """),
+        prints('0', '0', '0'),
+        Reading.SCRIPT,
+    ),
+    'a call of itself through its arguments': Program(
+        a_program("""
+            var x;
+            function f(n) {
+              x = n;
+              if (n) arguments.callee(n - 1);
               console.log(x);
             }
             f(2);
@@ -6467,33 +6452,117 @@ A_VAR_ANOTHER_RUN_OF_ITS_FUNCTION_WRITES = {
         prints('0', '0', '0'),
         Reading.COMMONJS,
     ),
-    'a call of code that calls it': Program(
+    'a call of it through the caller of a function it calls': Program(
         a_program("""
             var x;
-            function f(n, g) {
+            function g() {
+              g.caller(0);
+            }
+            function f(n) {
               x = n;
-              g();
+              if (n) g();
               console.log(x);
             }
-            f(1, function () { f(2, function () {}); });
+            f(1);
             """),
-        prints('2', '2'),
+        prints('0', '0'),
+        Reading.COMMONJS,
+    ),
+    'a step of a generator that calls it': Program(
+        a_program("""
+            var x;
+            function* gen() {
+              f(0);
+              yield 1;
+            }
+            var it = gen();
+            function f(n) {
+              x = n;
+              if (n) it.next();
+              console.log(x);
+            }
+            f(1);
+            """),
+        prints('0', '0'),
+        Reading.COMMONJS,
+    ),
+    'a step of another generator object of itself': Program(
+        a_program("""
+            var x;
+            var other;
+            function* f(n) {
+              x = n;
+              if (n) other.next();
+              console.log(x);
+              yield;
+            }
+            other = f(0);
+            f(1).next();
+            """),
+        prints('0', '0'),
+        Reading.COMMONJS,
+    ),
+    'a value read past a call of its writer through the global object': Program(
+        a_program("""
+            var x = 1;
+            function f() {
+              x = 2;
+            }
+            globalThis.f();
+            console.log(x);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+    'a value read past a step of a generator that writes it': Program(
+        a_program("""
+            function g() {
+              function* gen() {
+                y = 2;
+                yield;
+              }
+              var it = gen();
+              var y = 1;
+              it.next();
+              console.log(y);
+            }
+            g();
+            """),
+        prints('2'),
         Reading.COMMONJS,
     ),
 }
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_VAR_ANOTHER_RUN_OF_ITS_FUNCTION_WRITES)
-class TestAVarAnotherRunOfItsFunctionWritesStaysShared(TestBase):
+@one_expected_failure_per_program(A_FUNCTION_RUN_WHERE_NO_CALL_OF_ITS_NAME_SHOWS)
+class TestAFunctionRunWhereNoCallOfItsNameShowsIsSeenToRun(TestBase):
     """
-    A file-level `var` whose every reference lies in one function, and which that function writes
-    before it reads it, is moved into the function
-    (`refinery.lib.scripts.js.analysis.liveness.LivenessModel.localization_target`), so each run
-    gets one of its own. A run that waits at an `await` or a `yield` lets another run start, and
-    so does a call of the function from inside it; the program reads what the last run stored,
-    the deobfuscation what its own run stored. The rule has to find the `var` dead at every point
-    of the function where another run may write it: the suspensions and the calls the reaching
-    model already counts as kills of it
-    (`refinery.lib.scripts.js.analysis.reaching.ReachingModel`).
+    The effect model takes a function whose name is used only as the callee of calls to run only at
+    those calls (`refinery.lib.scripts.js.analysis.effects.EffectModel.function_escapes`), and the
+    reaching model lists the points where a binding may change from there. A body also runs where
+    the program calls the function through the global object, reads it off `arguments.callee` or
+    another function's `caller`, or steps the object a generator call returned; the tampering model
+    reads two of these channels for its own question and the effect model reads none. A value is
+    then taken to survive a run that writes it, and a file-level `var` is moved into a function
+    another run of which writes it.
     """
+
+    @unittest.expectedFailure
+    def test_the_value_does_not_reach_past_a_call_of_the_function_through_its_arguments(self):
+        source = 'var x; function f(n) { x = n; if (n) arguments.callee(n - 1); return x; } f(2);'
+        cache = ModelCache(JsParser(source).parse())
+        store = next(node for node in cache.root.walk() if isinstance(node, JsAssignmentExpression))
+        returned = next(node for node in cache.root.walk() if isinstance(node, JsReturnStatement))
+        read = returned.argument
+        assert isinstance(store.left, JsIdentifier) and store.right is not None and read is not None
+        binding = cache.model.resolve(store.left)
+        assert binding is not None
+        self.assertFalse(cache.reaching.value_preserved(binding, store.right, read))
+
+    @unittest.expectedFailure
+    def test_a_var_of_a_function_the_host_may_run_again_while_it_runs_stays_at_the_top(self):
+        source = 'var x; function onClick(n) { x = n; if (n) dispatch(); log(x); }'
+        cache = ModelCache(JsParser(source).parse(), DeobfuscationOptions(entrypoints=('onClick',)))
+        binding = cache.model.root_scope.bindings['x']
+        self.assertIsNone(localization_target(cache.liveness, cache.reaching, binding))

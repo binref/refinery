@@ -17,11 +17,11 @@ This transformer performs seven phases:
    keeps it). Only an uncaptured function-local `var`/`let` store qualifies; the side effects of the
    value expression are preserved.
 
-4. **Pseudo-global localization** — a script-scope `var` whose every reference is owned by one
-   function, and which that function overwrites before any read, is relocated into that function as a
-   true local, tightening a global the obfuscator hoisted back to where it is used. The liveness model
-   proves the move observes no value carried across calls or from load; the later sweeps then act on
-   the tightened scope.
+4. **Pseudo-global localization** — a script-scope `var` read and stored only in the body of one
+   function, every run of which reads only what that run stored, is relocated into that function as
+   a true local, tightening a global the obfuscator hoisted back to where it is used
+   (`refinery.lib.scripts.js.analysis.localization`); the later sweeps then act on the tightened
+   scope.
 
 5. **Redundant global member store removal** — a store to a member of the global object whose value
    an earlier store in the same unbroken run of such stores already left there, judged per run of
@@ -45,6 +45,7 @@ from refinery.lib.scripts import ListRemoval, Node, set_child, tree_root
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel
+from refinery.lib.scripts.js.analysis.localization import localizable_bindings
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     GLOBAL_OBJECT_ALIASES,
@@ -832,16 +833,17 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     def _localize_pseudo_globals(self, root: JsScript):
         """
-        Relocate a script-scope `var` that behaves as one function's local into that function. The
-        liveness model identifies a binding every reference of which is owned by a single function that
-        overwrites it before any read and whose declaration carries no initializer — a global the
-        obfuscator hoisted that observes no value across calls or from load. Its script-scope declarator
-        is removed and a bare `var` for the name is hoisted into the function body, where the later
-        sweeps act on the tightened scope; the next pass, over a fresh model, sees it as a local.
+        Relocate a script-scope `var` that behaves as one function's local into that function
+        (`refinery.lib.scripts.js.analysis.localization.localizable_bindings`): a global the
+        obfuscator hoisted, every run of the function reading only what that run stored. Its
+        script-scope declarator is removed and a bare `var` for the name is hoisted into the
+        function body, where the later sweeps act on the tightened scope; the next pass, over a
+        fresh model, sees it as a local.
 
-        Targets are gathered from the pass-start liveness before any mutation. Relocating one binding
-        removes no reference to another, and a localization candidate is never a dead-store candidate
-        (one is script-scope, the other strictly function-local), so the batch stays mutually consistent.
+        Targets are gathered from the pass-start models before any mutation. Relocating one binding
+        removes no reference to another, and a localization candidate is never a dead-store
+        candidate (one is script-scope, the other strictly function-local), so the batch stays
+        mutually consistent.
 
         Relocation takes the name out of the global scope, so a binding the analyst declared a host
         reaches by name is left where it stands. The localizer's own eligibility rule keeps a
@@ -851,7 +853,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         """
         relocations: dict[int, tuple[JsBlockStatement, list[str]]] = {}
         declarators: list[JsVariableDeclarator] = []
-        for binding, function in self.liveness.localizable_bindings():
+        for binding, function in localizable_bindings(self.liveness, self.reaching):
             if self._named_host_entrypoint(binding):
                 continue
             body = getattr(function, 'body', None)
