@@ -58,10 +58,32 @@ class TestCabFolders(TestBase):
         files = self.files(self.download_sample(THREE_FILES_IN_ONE_LZX_FOLDER))
         folder, = {id(file.folder): file.folder for file in files}.values()
         extractors = [file.extractor() for file in files]
-        with mock.patch.object(LzxDecoder, 'decompress', autospec=True, side_effect=LzxDecoder.decompress) as lzx:
+
+        class CountingLzx:
+            """
+            The compiled `refinery.lib.seven.lzx.LzxDecoder` is an immutable extension type, so its
+            `refinery.lib.seven.lzx.LzxDecoder.decompress` method cannot be patched on the class.
+            """
+
+            calls = 0
+
+            def __init__(self, wim_mode: bool = False):
+                object.__setattr__(self, '_lzx', LzxDecoder(wim_mode))
+
+            def __getattr__(self, name):
+                return getattr(object.__getattribute__(self, '_lzx'), name)
+
+            def __setattr__(self, name, value):
+                setattr(object.__getattribute__(self, '_lzx'), name, value)
+
+            def decompress(self, data: memoryview, expected_output_size: int = 0):
+                CountingLzx.calls += 1
+                return self._lzx.decompress(data, expected_output_size)
+
+        with mock.patch('refinery.lib.cab.LzxDecoder', CountingLzx):
             sizes = [len(extract()) for extract in reversed(extractors)]
         self.assertEqual(sizes, [file.size for file in reversed(files)])
-        self.assertEqual(lzx.call_count, len(folder.blocks))
+        self.assertEqual(CountingLzx.calls, len(folder.blocks))
 
     def test_file_cut_short_by_the_end_of_its_folder_reports_its_size(self):
         data = self.download_sample(THREE_FILES_IN_ONE_LZX_FOLDER)
