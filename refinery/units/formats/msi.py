@@ -87,6 +87,41 @@ class MSITableColumnInfo(NamedTuple):
 
 _NEGATED_MSI_SIGNATURE = B'\x2F\x30\xEE\x1F\x5E\x4E\xE5\x1E'
 
+_MSI_FOLDER_PROPERTIES = frozenset({
+    'AdminToolsFolder',
+    'AppDataFolder',
+    'CommonAppDataFolder',
+    'CommonFiles64Folder',
+    'CommonFilesFolder',
+    'DesktopFolder',
+    'FavoritesFolder',
+    'FontsFolder',
+    'LocalAppDataFolder',
+    'MyPicturesFolder',
+    'NetHoodFolder',
+    'PersonalFolder',
+    'PrintHoodFolder',
+    'ProgramFiles64Folder',
+    'ProgramFilesFolder',
+    'ProgramMenuFolder',
+    'RecentFolder',
+    'SendToFolder',
+    'StartMenuFolder',
+    'StartupFolder',
+    'System16Folder',
+    'System64Folder',
+    'SystemFolder',
+    'TempFolder',
+    'TemplateFolder',
+    'WindowsFolder',
+    'WindowsVolume',
+})
+"""
+The names of the properties that Windows Installer defines as the path of a system folder. A
+directory whose key is one of them is located at that path, no matter what its `Directory_Parent`
+entry says.
+"""
+
 
 class _ScriptItem(NamedTuple):
     row_index: int
@@ -162,6 +197,105 @@ def _format(
     return ''.join(stack[0])
 
 
+def _default_dir_target(default_dir: str) -> str:
+    """
+    The long target name of a value of the `DefaultDir` column of the `Directory` table: the
+    target is the part before the colon, or the whole value when there is none, and the long
+    name is the part after the pipe.
+    """
+    target = default_dir.partition(':')[0]
+    short, _, long = target.partition('|')
+    return long or short
+
+
+def _property_segments(
+    value: str,
+    properties: dict[str, str],
+    visiting: frozenset[str] = frozenset(),
+) -> tuple[str, ...]:
+    """
+    The path segments of the value of a property that anchors a directory: a backslash separates
+    segments like a slash does, an empty segment and a drive prefix add nothing, and a bracketed
+    name contributes the segments of the property it names, or the name itself when that property
+    is not defined.
+    """
+    segments: list[str] = []
+    for part in value.replace('\\', '/').split('/'):
+        if not part or (len(part) == 2 and part[1] == ':'):
+            continue
+        for index, piece in enumerate(re.split(r'\[([^\[\]]*)\]', part)):
+            if not piece:
+                continue
+            if not index % 2:
+                segments.append(piece)
+            elif piece not in visiting and (inner := properties.get(piece)) is not None:
+                segments.extend(_property_segments(inner, properties, visiting | {piece}))
+            else:
+                segments.append(piece)
+    return tuple(segments)
+
+
+def _install_directories(tables: dict[str, list[dict[str, str]]]) -> dict[str, tuple[str, ...]]:
+    """
+    The path segments of the install location of every directory in the `Directory` table,
+    resolved the way the CostFinalize action of Windows Installer resolves them: a directory
+    whose key is a defined property, in the `Property` table or among the system folder
+    properties, is located at the property's value no matter what its `Directory_Parent` entry
+    says, and any other directory is located in its parent under the target part of its
+    `DefaultDir` entry. A directory whose parent chain neither terminates nor reaches a defined
+    property has no segments of its own.
+    """
+    properties = {
+        row['Property']: row['Value']
+        for row in tables.get('Property', ())
+        if row.get('Property') is not None
+    }
+    parent_of: dict[str, str] = {}
+    target_of: dict[str, str] = {}
+    for row in tables.get('Directory', ()):
+        key = row.get('Directory')
+        if not key:
+            continue
+        parent = row.get('Directory_Parent') or ''
+        parent_of[key] = '' if parent == key else parent
+        target_of[key] = _default_dir_target(row.get('DefaultDir') or '')
+
+    def anchored(key: str) -> tuple[str, ...] | None:
+        if key in _MSI_FOLDER_PROPERTIES:
+            return (key,)
+        if (value := properties.get(key)) is not None:
+            return _property_segments(value, properties)
+
+    resolved: dict[str, tuple[str, ...]] = {}
+    for key in parent_of:
+        chain: list[str] = []
+        current = key
+        while current not in resolved:
+            if (segments := anchored(current)) is not None:
+                resolved[current] = segments
+                break
+            parent = parent_of[current]
+            if parent and parent not in parent_of:
+                xtmsi.log_warn(F'directory {current} has an unknown parent directory {parent}')
+                parent = ''
+            if not parent or current in chain:
+                if current in chain:
+                    xtmsi.log_warn(F'the parent directories of {current} form a cycle')
+                resolved[current] = ()
+                break
+            chain.append(current)
+            current = parent
+        segments = resolved[current]
+        for member in reversed(chain):
+            segments = tuple(
+                segment
+                for segment in (*segments, target_of[member])
+                if segment and segment != '.'
+            )
+            resolved[member] = segments
+    return resolved
+
+
 class MSIStringData:
     def __init__(self, string_data: buf, string_pool: buf):
         data = StructReader(string_data)
@@ -217,7 +351,9 @@ class xtmsi(xtdoc, docs=(
     """
     The synthetic file %s contains parsed MSI table information, similar to the output of the Orca
     tool. Binary streams are placed in a virtual folder called "Binary", and extracted scripts from
-    custom actions are separately extracted in a virtual folder named "Action".
+    custom actions are separately extracted in a virtual folder named "Action". Files from embedded
+    cabinets are extracted at their install path, which the File, Component, and Directory tables
+    give for each of them.
     """
 
     _SYNTHETIC_STREAMS_FILENAME = 'MsiTables.json'
@@ -422,17 +558,28 @@ class xtmsi(xtdoc, docs=(
             for cab in cabs:
                 self.log_info(F'found cab file: {cab.path}')
         if cabs:
-            file_names: dict[str, str] = {}
+            directories = _install_directories(processed_table_data)
+            component_directory: dict[str, str] = {}
+            for component_info in processed_table_data.get('Component', []):
+                try:
+                    component_directory[component_info['Component']] = component_info['Directory']
+                except KeyError:
+                    continue
+            separator = self._get_path_separator()
+            file_paths: dict[str, str] = {}
 
             for file_info in processed_table_data.get('File', []):
                 try:
                     src_name = file_info['File']
                     dst_name = file_info['FileName']
+                    component = file_info['Component']
                 except KeyError:
                     continue
                 _, _, long = dst_name.partition('|')
                 dst_name = long or dst_name
-                file_names[src_name] = dst_name
+                directory = component_directory.get(component)
+                segments = directories.get(directory, ()) if directory else ()
+                file_paths[src_name] = separator.join((*segments, dst_name))
 
             for cab in cabs:
                 path = cab.path
@@ -448,8 +595,8 @@ class xtmsi(xtdoc, docs=(
                 else:
                     cab.path = F'{path}.cab'
                 for result in unpacked:
-                    sub_path = file_names.get(result.name, result.name)
-                    sub_path = self._get_path_separator().join((path, sub_path))
+                    sub_path = file_paths.get(result.name, result.name)
+                    sub_path = separator.join((path, sub_path))
                     streams.append(UnpackResult(sub_path, result.extractor()))
 
         for item in streams:

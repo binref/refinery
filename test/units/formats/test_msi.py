@@ -94,11 +94,18 @@ class TestMSIRepeatedNames(TestUnitBase):
     READMES = [B'readme of folder one\r\n', B'readme of folder two\r\n']
 
     def _readmes(self, data: bytes | bytearray) -> list[bytes]:
-        return [bytes(chunk) for chunk in data | self.load('files/readme.txt')]
+        return [bytes(chunk) for chunk in data | self.load('readme.txt')]
 
     def test_files_with_the_same_name_in_different_folders_are_all_extracted(self):
         data = self.download_sample('b963435f5bc9ddc70142637688a17ee16227f7c8171608b074c64fd92320e7da')
         self.assertCountEqual(self._readmes(data), self.READMES)
+
+    def test_files_from_the_cabinet_are_extracted_at_their_install_path(self):
+        data = self.download_sample('b963435f5bc9ddc70142637688a17ee16227f7c8171608b074c64fd92320e7da')
+        self.assertEqual(data | self.load('files/*') | {'path': bytes}, {
+            'files/one/readme.txt': B'readme of folder one\r\n',
+            'files/two/readme.txt': B'readme of folder two\r\n',
+        })
 
     def test_the_streams_of_the_tables_are_not_extracted_next_to_the_tables(self):
         data = self.download_sample('b963435f5bc9ddc70142637688a17ee16227f7c8171608b074c64fd92320e7da')
