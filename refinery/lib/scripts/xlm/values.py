@@ -427,9 +427,10 @@ def _compare(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) -> Xlm
 def apply_binary(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) -> XlmValue:
     """
     The value of a binary operation. A partial operand leaves the operation unevaluated,
-    spelled as its two operands around the operator, and an operand that is an error value is
-    the value of the whole operation. Complete operands compare by the rules of `_compare` and
-    compute by the rules of `_arithmetic`.
+    spelled from its unfinished operands around the operator — an operand the program finished
+    computing is the value the cell shows and spells no fragment — and an operand that is an
+    error value is the value of the whole operation. Complete operands compare by the rules
+    of `_compare` and compute by the rules of `_arithmetic`.
     """
     if operator is XlBinaryOperator.CONCAT:
         return concat(left, right)
@@ -446,7 +447,9 @@ def apply_binary(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) ->
             partial=True,
         )
     if left.partial or right.partial:
-        fragment = F'{left.unwrap()}{_OPERATOR_SYMBOLS[operator]}{right.unwrap()}'
+        fragment = _OPERATOR_SYMBOLS[operator].join(
+            side.unwrap() for side in (left, right) if side.partial
+        )
         return XlmValue(value=fragment, partial=True)
     if left.error:
         return left

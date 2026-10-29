@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 from refinery.lib.excel.common import rc2ref
-from refinery.lib.meta import MV
 from refinery.lib.scripts.xlm import XlmEngine, XlmView
 from refinery.lib.scripts.xlm.trace import visible_steps
 from refinery.lib.types import Param
 from refinery.units.formats import Arg, Unit
 
 
-class dxlm(Unit):
+class xlm(Unit):
     """
-    Deobfuscates Excel v4.0 (XLM) macros from XLS, XLSM, and XLSB documents. By default, the
-    program is emulated as the workbook stores it, and every cell the run executes is listed in
-    the order it ran: the unit emits one chunk per executed cell whose data is the formula of
-    the cell and whose meta holds the address of the cell, the status the run left it in, and
-    the indentation of its loop depth.
+    Deobfuscates Excel v4.0 (XLM) macros from XLS, XLSM, and XLSB documents.
+
+    The program is emulated and every cell that contains a command or doesn't reduce to a value is
+    listed in the order it ran. The unit emits one chunk per cell whose data is the formula of the
+    cell and whose meta variables hold the cell address, its emulation method, call depth, and the
+    sheet name. A meta variable "severity" encodes the likely relevance of the cell data.
     """
     @classmethod
     def handles(cls, data) -> bool | None:
@@ -44,8 +44,10 @@ class dxlm(Unit):
         engine = XlmEngine(view, self.args.day, self.args.timeout)
         for step in visible_steps(engine.run(self.args.cell), self.args.filter):
             meta = {
-                MV.TYPE: step.status.name,
-                MV.ADDR: rc2ref(step.row, step.col),
-                'indent': step.indent,
+                'cell': rc2ref(step.row, step.col),
+                'depth': step.indent,
+                'severity': step.severity,
+                'sheet': step.sheet,
+                'status': step.status.name,
             }
             yield self.labelled(step.text.encode(self.codec), **meta)

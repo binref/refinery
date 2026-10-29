@@ -36,7 +36,7 @@ class TestVisibleSteps(TestBase):
 
     def test_an_ignored_step_never_shows(self):
         for level in range(4):
-            ignored = _step(status=XlmStatus.IGNORED)
+            ignored = _step(status=XlmStatus.Ignored)
             self.assertEqual(list(visible_steps([ignored], level)), [])
 
     def test_a_level_above_the_highest_shows_the_steps_of_the_highest(self):

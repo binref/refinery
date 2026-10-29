@@ -36,6 +36,7 @@ _EXPECTED_SEVERITIES = {
     'ELSE.IF': XlmSeverity.NORMAL,
     'END.IF': XlmSeverity.NORMAL,
     'ERROR': XlmSeverity.NORMAL,
+    'EXEC': XlmSeverity.IMPORTANT,
     'FACT': XlmSeverity.NORMAL,
     'FILES': XlmSeverity.NORMAL,
     'FILE.DELETE': XlmSeverity.NORMAL,
@@ -128,7 +129,7 @@ class TestXlmCommandRegistry(TestBase):
         self.assertEqual(severity('FREAD'), XlmSeverity.IMPORTANT)
 
     def test_commands_outside_the_registry_are_ordinary(self):
-        for name in ('EXEC', 'WORKBOOK.UNHIDE', 'ALERT', 'SUMSQ'):
+        for name in ('WORKBOOK.UNHIDE', 'ALERT', 'SUMSQ'):
             with self.subTest(command=name):
                 self.assertEqual(severity(name), XlmSeverity.NORMAL)
 
@@ -153,7 +154,7 @@ class TestXlmCommandClassificationOfSamples(TestBase):
                 XLM_MACRO_NAMES_BIFF8,
                 ['EXEC', 'HALT', 'RETURN', 'SET.NAME'],
                 {
-                    'EXEC': XlmSeverity.NORMAL,
+                    'EXEC': XlmSeverity.IMPORTANT,
                     'HALT': XlmSeverity.IMPORTANT,
                     'RETURN': XlmSeverity.NORMAL,
                     'SET.NAME': XlmSeverity.NORMAL,

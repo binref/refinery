@@ -10,7 +10,7 @@ from typing import Iterable, NamedTuple
 from refinery.lib.scripts.xlm.commands import XlmSeverity
 
 
-class XlmStatus(Enum):
+class XlmStatus(str, Enum):
     """
     The state one executed cell left the program in.
     """
@@ -21,7 +21,7 @@ class XlmStatus(Enum):
     End = auto()
     Branching = auto()
     FullBranching = auto()
-    IGNORED = auto()
+    Ignored = auto()
 
 
 class XlmStep(NamedTuple):
@@ -48,7 +48,7 @@ def visible_steps(steps: Iterable[XlmStep], level: int):
     """
     level = min(level, max(s.value for s in XlmSeverity))
     for step in steps:
-        if step.status is XlmStatus.IGNORED:
+        if step.status is XlmStatus.Ignored:
             continue
         elif step.severity.value >= level:
             yield step

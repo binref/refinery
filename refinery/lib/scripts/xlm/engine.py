@@ -23,8 +23,10 @@ from refinery.lib.excel.formula.model import (
     XlBinaryOperator,
     XlDefinedName,
     XlFunctionCall,
+    XlParenExpression,
     XlR1C1Reference,
     XlString,
+    XlUnaryExpression,
 )
 from refinery.lib.scripts import TREE_RECURSION_DEPTH, BodyEdit, set_body, set_child, set_value
 from refinery.lib.scripts.xlm.blocks import XlmBlock, marker_of, pair_blocks
@@ -58,7 +60,7 @@ _FALL_THROUGH = frozenset((
     XlmStatus.FullEvaluation,
     XlmStatus.PartialEvaluation,
     XlmStatus.NotImplemented,
-    XlmStatus.IGNORED,
+    XlmStatus.Ignored,
 ))
 
 _ROW_FALL_THROUGH_LIMIT = 10000
@@ -108,6 +110,31 @@ def callee_name(call: XlFunctionCall) -> str:
     if isinstance(callee, XlDefinedName):
         return callee.name
     return ''
+
+
+def _step_severity(node) -> XlmSeverity:
+    """
+    The severity of the step that runs a formula: the most severe command the formula spells, at
+    its top or nested inside it. A formula that spells no command only moves execution, and so
+    does a call to another macro cell. The walk keeps its own stack, for a formula deeper than
+    the interpreter stack spells a tree deeper than it.
+    """
+    worst = XlmSeverity.JUMP
+    pending = [node]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, XlFunctionCall):
+            if isinstance(node.callee, str):
+                own = severity(node.callee.strip('"'))
+                if own.value > worst.value:
+                    worst = own
+            pending.extend(node.arguments)
+        elif isinstance(node, XlBinaryExpression):
+            pending.append(node.left)
+            pending.append(node.right)
+        elif isinstance(node, (XlUnaryExpression, XlParenExpression)):
+            pending.append(node.operand)
+    return worst
 
 
 def _held(value: XlmValue) -> XlmValue:
@@ -506,7 +533,7 @@ class XlmEngine:
         if self.ignore_processing and name not in _LOOP_COMMANDS:
             return XlmOutcome(
                 value=XlmValue(value=0, text='', partial=True),
-                status=XlmStatus.IGNORED,
+                status=XlmStatus.Ignored,
             )
         if isinstance(call.callee, XlFunctionCall):
             inner = self.call(call.callee, cursor, nested)
@@ -938,8 +965,8 @@ class XlmEngine:
         The run of a subroutine names the call it returns to: its branches are its own, it ends
         with the first value it returns, and a halt ends it together with the branch of every
         run that called it, each after its calling step; a budget or deadline it exhausts ends
-        the run that called it at once. The steps of the subroutines a step called precede the
-        step.
+        the run that called it at once. The steps of the subroutines a step called follow the
+        step, one indent deeper.
         """
         observed: list[tuple[str, int, int]] = []
         anchors: dict[tuple[tuple[str, int, int], ...], bytes] = {}
@@ -1003,16 +1030,21 @@ class XlmEngine:
                             else:
                                 anchors[window] = self.state_digest()
                                 digest_step = self._steps
-                    if status is not XlmStatus.IGNORED:
+                    if status is not XlmStatus.Ignored:
                         self.write_value(cell, outcome.value)
                     if stack_record:
                         text = (frame.desc + ' ' + text).strip()
                     if self.indent_current_line:
                         previous_indent = self.indent_level
                         self.indent_current_line = False
-                    yield from buffer
-                    buffer.clear()
-                    if status is not XlmStatus.IGNORED:
+                    if (
+                        status is not XlmStatus.Ignored
+                        and (
+                            outcome.value.partial
+                            or isinstance(node, XlFunctionCall)
+                            or (stack_record and frame.desc)
+                        )
+                    ):
                         yield XlmStep(
                             cursor.sheet,
                             cursor.row,
@@ -1020,8 +1052,10 @@ class XlmEngine:
                             status,
                             text,
                             previous_indent,
-                            self._step_severity(node),
+                            _step_severity(node),
                         )
+                    yield from buffer
+                    buffer.clear()
                     if caller is not None:
                         if outcome.halts:
                             self._halted = True
@@ -1044,13 +1078,14 @@ class XlmEngine:
                     node = None
                     stack_record = False
         except _Exhausted as exhausted:
-            yield from buffer
             if caller is not None:
+                yield from buffer
                 raise
             yield self._error_step(cursor or anchor, str(exhausted))
-        except Exception as error:
             yield from buffer
+        except Exception as error:
             yield self._error_step(cursor or anchor, F'{type(error).__name__}: {error}')
+            yield from buffer
         finally:
             self._buffers.pop()
             self.branch_stack = branches
@@ -1058,10 +1093,10 @@ class XlmEngine:
     def _subroutine(self, reference: XlmReference, spelled: str) -> XlmValue:
         """
         The value a macro call inside an expression computes: the subroutine runs from where
-        the call names it until it returns, its steps join the trace ahead of the step that
-        called it, and the value it returns is the value of the call. Calls and loops the
-        subroutine leaves open end with it. A subroutine that never returns — it halts, runs out
-        of formulas, or nests too deeply — leaves the call unfinished.
+        the call names it until it returns, its steps join the trace below the step that called
+        it, one indent deeper, and the value it returns is the value of the call. Calls and
+        loops the subroutine leaves open end with it. A subroutine that never returns — it
+        halts, runs out of formulas, or nests too deeply — leaves the call unfinished.
         """
         anchor = self.anchor(reference)
         if anchor is None or self._depth >= _SUBROUTINE_DEPTH_LIMIT:
@@ -1081,7 +1116,9 @@ class XlmEngine:
             del self.call_stack[calls:]
             del self.while_stack[loops:]
             if self._buffers:
-                self._buffers[-1].extend(steps)
+                self._buffers[-1].extend(
+                    step._replace(indent=step.indent + 1) for step in steps
+                )
         if caller.value is None:
             return XlmValue(value=spelled, partial=True)
         return _held(caller.value)
@@ -1110,7 +1147,7 @@ class XlmEngine:
         skipping = self.ignore_processing
         value = evaluate_expression(self, node, cursor)
         if skipping:
-            return XlmOutcome(value=value, status=XlmStatus.IGNORED)
+            return XlmOutcome(value=value, status=XlmStatus.Ignored)
         return XlmOutcome(value=value)
 
     def _stored(self, cell: XlmCell, reference: XlmReference) -> XlmValue:
@@ -1121,11 +1158,6 @@ class XlmEngine:
             date=cell.kind is CellKind.DATE,
             reference=reference,
         )
-
-    def _step_severity(self, node) -> XlmSeverity:
-        if isinstance(node, XlFunctionCall) and isinstance(node.callee, str):
-            return severity(node.callee.strip('"'))
-        return XlmSeverity.JUMP
 
     def _error_step(self, cursor: XlmCursor, message: str) -> XlmStep:
         return XlmStep(

@@ -2,11 +2,6 @@ from __future__ import annotations
 
 import time
 
-from refinery.lib.excel import synthesize_formula
-from refinery.lib.excel.formula.model import XlNumber
-from refinery.lib.scripts.xlm import XlmCursor, XlmEngine, XlmReference, XlmValue, XlmView
-from refinery.lib.scripts.xlm.names import XlmNameEntry
-from refinery.lib.scripts.xlm.trace import XlmSeverity, XlmStatus
 from test import TestBase, download_sample
 from test.lib.excel.samples import (
     XLM_MACRO_ASSIGN_BIFF8,
@@ -19,10 +14,15 @@ from test.lib.scripts.xlm.modify import (
     add_defined_name,
     date_cell,
     drop_defined_names,
-    replaced_formulas,
     replace_cell_element,
-    replace_cell_formula,
+    replaced_formulas,
 )
+
+from refinery.lib.excel import synthesize_formula
+from refinery.lib.excel.formula.model import XlNumber
+from refinery.lib.scripts.xlm import XlmCursor, XlmEngine, XlmReference, XlmValue, XlmView
+from refinery.lib.scripts.xlm.names import XlmNameEntry
+from refinery.lib.scripts.xlm.trace import XlmSeverity, XlmStatus
 
 _MALDOC = 'dc44bbfc845fc078cf38b9a3543a32ae1742be8c6320b81cf6cd5a8cee3c696a'
 
@@ -58,7 +58,7 @@ def _rows(steps) -> list[int]:
     return [step.row for step in steps if step.sheet == 'Doc1' and step.col == 52]
 
 
-_PROGRAM_ROWS = [109, 110, 112, 113, 114, 115, 116, 118, 120, 121]
+_PROGRAM_ROWS = [109, 110, 118, 120, 121]
 
 
 class TestXlmEngineEntries(TestBase):
@@ -68,7 +68,7 @@ class TestXlmEngineEntries(TestBase):
         (XLM_MACRO_NAMES_BIFF8, 'Acf444', 9591, 1),
         (XLM_MACRO_ASSIGN_BIFF8, 'sod', 25268, 148),
         (XLM_MACRO_TEXT_XLSM, 'Doc1', 109, 52),
-        (XLM_MACRO_FORMULA_XLSM, 'PCWV', 8, 7),
+        (XLM_MACRO_FORMULA_XLSM, 'PCWV', 13, 7),
     ]
 
     def test_every_run_starts_at_the_fall_through_anchor_of_its_entry_name(self):
@@ -225,8 +225,8 @@ class TestXlmEngineControl(TestBase):
 
     def test_a_goto_loop_that_only_draws_chance_keeps_running_to_its_end(self):
         steps = _steps(('AZ110', 'GOTO(IF(RAND()>0.9999,BH120,AZ110))'))
-        self.assertEqual(steps[-1].row, 121)
-        self.assertEqual(steps[-1].status, XlmStatus.PartialEvaluation)
+        self.assertEqual((steps[-1].row, steps[-1].col), (114, 62))
+        self.assertEqual(steps[-1].status, XlmStatus.End)
 
     def test_a_while_whose_condition_does_not_hold_ignores_the_rest_of_the_column(self):
         steps = _steps(('AZ110', 'WHILE(FALSE)'))
@@ -245,7 +245,7 @@ class TestXlmEngineControl(TestBase):
         )
         self.assertEqual(
             [step.row for step in steps if step.col == 52],
-            [109] + [110, 112] * 3 + [110, 113, 114, 115, 116, 118, 120, 121],
+            [109] + [110, 112] * 3 + [110, 118, 120, 121],
         )
         entry = engine.view.names.resolve('counter')
         assert entry is not None and entry.formula is not None
@@ -269,11 +269,11 @@ class TestXlmEngineControl(TestBase):
         self.assertEqual(steps[false_arm + 1].row, 112)
         self.assertEqual(
             [step.row for step in steps[true_arm:false_arm] if step.col == 52],
-            [110, 112, 113, 114, 115, 116, 118, 120, 121],
+            [110, 112, 118, 120, 121],
         )
         self.assertEqual(
             [step.row for step in steps[false_arm:] if step.col == 52],
-            [110, 112, 113, 114, 115, 116, 118, 120, 121],
+            [110, 112, 118, 120, 121],
         )
 
     def test_a_false_branch_rolls_back_the_name_its_true_branch_defined(self):
@@ -294,17 +294,17 @@ class TestXlmEngineControl(TestBase):
 
     def test_a_set_value_keeps_the_formula_of_the_cell_it_writes(self):
         steps = _steps(('AZ110', 'SET.VALUE(AZ113,"x")'), ('AZ113', 'HALT()'))
-        self.assertEqual(_rows(steps), [109, 110, 112, 113])
+        self.assertEqual(_rows(steps), [109, 110, 113])
         self.assertEqual((steps[-1].status, steps[-1].text), (XlmStatus.End, 'HALT()'))
 
     def test_a_formula_written_to_a_computed_address_runs_there(self):
         steps = _steps(('AZ109', 'FORMULA("=HALT()","Doc1!R"&amp;"113"&amp;"C52")'))
-        self.assertEqual(_rows(steps), [109, 110, 112, 113])
+        self.assertEqual(_rows(steps), [109, 110, 113])
         self.assertEqual((steps[-1].status, steps[-1].text), (XlmStatus.End, 'HALT()'))
 
     def test_a_formula_that_names_no_destination_writes_the_selected_cell(self):
         steps = _steps(('AZ109', 'SELECT(AZ113)'), ('AZ110', 'FORMULA("=HALT()")'))
-        self.assertEqual(_rows(steps), [109, 110, 112, 113])
+        self.assertEqual(_rows(steps), [109, 110, 113])
         self.assertEqual((steps[-1].status, steps[-1].text), (XlmStatus.End, 'HALT()'))
 
     def test_a_loop_inside_a_skipped_body_does_not_end_the_skipping(self):
@@ -357,8 +357,20 @@ class TestXlmEngineControl(TestBase):
         self.assertEqual(_value(engine, 108, 56), 'xy')
         self.assertEqual(
             [(step.row, step.col, step.text) for step in steps[:2]],
-            [(120, 60, '"x"'), (109, 52, 'SET.VALUE(BD108,"xy")')],
+            [(109, 52, 'SET.VALUE(BD108,"xy")'), (120, 60, '"x"')],
         )
+        self.assertEqual([step.indent for step in steps[:2]], [0, 1])
+
+    def test_a_cell_that_spells_no_command_and_finished_leaves_no_step(self):
+        steps = _steps(('AZ110', '1+1'), ('AZ112', 'HALT()'))
+        self.assertEqual(
+            [(step.row, step.text) for step in steps if step.row == 110],
+            [],
+        )
+
+    def test_a_step_whose_formula_nests_a_triage_command_shows_at_the_triage_level(self):
+        steps = _steps(('AZ110', '1+EXEC("cmd")'))
+        self.assertEqual(steps[1].severity, XlmSeverity.IMPORTANT)
 
     def test_a_condition_on_an_unfinished_value_branches_into_both_arms(self):
         steps = _steps(
@@ -443,7 +455,7 @@ class TestXlmEngineControl(TestBase):
 
     def test_a_block_if_whose_condition_fails_skips_to_its_end_if(self):
         steps = _steps(('AZ110', 'IF(FALSE)'), ('AZ113', 'END.IF()'))
-        self.assertEqual(_rows(steps), [109, 110, 113, 114, 115, 116, 118, 120, 121])
+        self.assertEqual(_rows(steps), [109, 110, 113, 118, 120, 121])
 
     def test_a_block_if_on_a_condition_that_spells_no_truth_value_halts(self):
         steps = _steps(('AZ110', 'IF("junk")'), ('AZ113', 'END.IF()'))
@@ -458,7 +470,7 @@ class TestXlmEngineControl(TestBase):
             ('AZ120', 'SET.VALUE(BD206,"arm")'),
             ('AZ121', 'END.IF()'),
         )
-        self.assertEqual(_rows(steps), [109, 110, 112, 113, 114, 115, 116, 118, 121])
+        self.assertEqual(_rows(steps), [109, 110, 112, 118, 121])
         self.assertEqual(_value(engine, 205, 56), 'body')
         self.assertEqual(engine.view.cell('Doc1', 206, 56), None)
 
@@ -543,7 +555,7 @@ class TestXlmEngineControl(TestBase):
         )
         self.assertEqual(
             [(step.row, step.col, step.text) for step in steps[:2]],
-            [(111, 58, 'ELSE'), (113, 58, 'END.IF')],
+            [(109, 52, 'SET.VALUE(BD108,BF111()&x)'), (111, 58, 'ELSE')],
         )
         self.assertEqual(
             [(step.row, step.col) for step in steps if (step.row, step.col) == (112, 58)],
@@ -656,7 +668,7 @@ class TestXlmEngineControl(TestBase):
         )
         self.assertEqual(
             _rows(steps),
-            [109, 110, 112, 121, 112, 113, 114, 115, 116, 121],
+            [109, 110, 112, 121, 112, 113, 114, 116, 121],
         )
         self.assertEqual(
             [step.text for step in steps if (step.row, step.col) == (112, 52)],
@@ -701,8 +713,8 @@ class TestXlmEngineControl(TestBase):
             ('AZ116', 'END.IF()'),
         )
         self.assertEqual(_rows(steps), [
-            109, 110, 112, 113, 114, 115,
-            112, 113, 114, 115,
+            109, 110, 112, 113, 115,
+            112, 113, 115,
             112, 116, 118, 120, 121,
         ])
         self.assertEqual(_value(engine, 211, 56), 2)
@@ -716,8 +728,8 @@ class TestXlmEngineControl(TestBase):
             ('AZ116', 'END.IF()'),
         )
         self.assertEqual(_rows(steps), [
-            109, 110, 112, 113, 114, 115,
-            112, 113, 114, 115,
+            109, 110, 112, 113, 115,
+            112, 113, 115,
             112, 116, 118, 120, 121,
         ])
         self.assertEqual(
@@ -819,8 +831,8 @@ class TestXlmEngineControl(TestBase):
             ('AZ116', 'END.IF()'),
         )
         self.assertEqual(_rows(steps), [
-            109, 110, 112, 113, 114, 115,
-            110, 112, 113, 114, 115,
+            109, 110, 112, 113, 115,
+            110, 112, 113, 115,
             110, 116, 118, 120, 121,
         ])
         self.assertEqual(_value(engine, 210, 56), 2)

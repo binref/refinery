@@ -491,6 +491,18 @@ class Chunk(bytearray):
         else:
             bytearray.__setitem__(self, bounds, value)
 
+    def meta_var_int(self, key: str) -> int:
+        value = self._meta.__getitem__(key)
+        if not isinstance(value, int):
+            raise ValueError(F'The variable {key} was of type {type(value).__name__}, not int.')
+        return value
+
+    def meta_var_str(self, key: str) -> str:
+        value = self._meta.__getitem__(key)
+        if not isinstance(value, str):
+            raise ValueError(F'The variable {key} was of type {type(value).__name__}, not str.')
+        return value
+
     def truncate(self, scope: int = 0):
         """
         Truncate the `refinery.lib.frame.Chunk.path` and `refinery.lib.frame.Chunk.view` lists

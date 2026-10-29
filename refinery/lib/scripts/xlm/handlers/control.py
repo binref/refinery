@@ -307,7 +307,7 @@ def _skipped_loop(engine: XlmEngine, cursor: XlmCursor) -> XlmOutcome:
     """
     engine.while_stack.append(XlmLoop(cursor, base=engine.indent_level))
     engine.indent_level += 1
-    return XlmOutcome(value=XlmValue(value=0, text='', partial=True), status=XlmStatus.IGNORED)
+    return XlmOutcome(value=XlmValue(value=0, text='', partial=True), status=XlmStatus.Ignored)
 
 
 def _while(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -372,12 +372,12 @@ def _next(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutc
     as an ignored step.
     """
     if not engine.while_stack:
-        return XlmOutcome(value=XlmValue(value=0, text='NEXT'), status=XlmStatus.IGNORED)
+        return XlmOutcome(value=XlmValue(value=0, text='NEXT'), status=XlmStatus.Ignored)
     top = engine.while_stack.pop()
     engine.indent_level = top.base
     engine.indent_current_line = True
     if not top.holds:
-        return XlmOutcome(value=XlmValue(value=0, text='NEXT'), status=XlmStatus.IGNORED)
+        return XlmOutcome(value=XlmValue(value=0, text='NEXT'), status=XlmStatus.Ignored)
     if top.cells is not None:
         engine.while_stack.append(top)
     return XlmOutcome(value=XlmValue(value=0, text='NEXT'), jump=top.cursor)

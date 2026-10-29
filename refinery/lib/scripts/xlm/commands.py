@@ -23,6 +23,7 @@ _JUMP_COMMANDS = frozenset(('GOTO', 'RUN'))
 
 _IMPORTANT_COMMANDS = frozenset((
     'CALL',
+    'EXEC',
     'FOPEN',
     'FWRITE',
     'FREAD',
@@ -36,7 +37,7 @@ _IMPORTANT_COMMANDS = frozenset((
 
 #: Every macro command a handler answers — including the three Kernel32 pseudo-commands the
 #: CALL emulation installs and `_xlfn.ARABIC` — together with the names the severity sets spell
-#: without a handler: FREAD, FILE.DELETE, and WORKBOOK.HIDE.
+#: without a handler: EXEC, FREAD, FILE.DELETE, and WORKBOOK.HIDE.
 _COMMAND_NAMES = frozenset((
     'ABS',
     'ABSREF',
@@ -58,6 +59,7 @@ _COMMAND_NAMES = frozenset((
     'ELSE.IF',
     'END.IF',
     'ERROR',
+    'EXEC',
     'FACT',
     'FILES',
     'FILE.DELETE',

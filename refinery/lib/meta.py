@@ -543,9 +543,10 @@ STRING_FORMAT_HELP = inspect.cleandoc(
 
     The `field` can specify an extracted meta variable, or the positional index of an extracted
     value. The optional multibin suffix `handlers` is used to post-process the value of this field.
-    For example, `{2:hex:zl:b64}` means: Take the second match group, hex-decode it, decompress it
-    using zl, and finally decode it using base64. The optional modifier can be one of these:
+    For example, `{x:hex:zl:b64}` means: Take `x`, hex-decode it, decompress it using zl, and
+    finally decode it using base64. The optional modifier can be one of these:
 
+    - `!p`: Use Python formatting instead; `{x!p:#x}` formats an integer `x` as hex.
     - `!r`: Computes the Python `repr()` of the field before processing it.
     - `!s`: Field is a UTF-8 string literal, not a variable.
     - `!a`: Field is a latin1 string literal.
@@ -850,6 +851,7 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
         with stream:
             for prefix, field, modifier, conversion in formatter.parse(spec):
                 value = None
+                usepy = False
 
                 if prefix:
                     if escaped:
@@ -873,7 +875,9 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
 
                 if conversion:
                     conversion = conversion.lower()
-                    if conversion == 's':
+                    if conversion == 'p':
+                        usepy = True
+                    elif conversion == 's':
                         value = field.encode('utf-8')
                     elif conversion == 'a':
                         value = field.encode('latin-1')
@@ -893,7 +897,7 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
                     else:
                         raise ValueError(
                             F'Unknown format modifier !{conversion}; the supported modifiers'
-                            F' are: !r, !s, !a, !u, !h, !q, !n, !z.')
+                            F' are: !p, !r, !s, !a, !u, !h, !q, !n, !z.')
 
                 _literal = conversion in ('s', 'a', 'u', 'h', 'q', 'n')
 
@@ -958,35 +962,46 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
                         continue
                     raise KeyError(F'The expression "{field}" could not be resolved. Use {{{{ and }}}} for literal braces.')
 
-                if modifier:
-                    if not _literal:
-                        try:
-                            converted = ByteStringWrapper.Wrap(value, codec)
-                        except TypeError:
-                            if conversion == 'r':
-                                converted = value
-                            elif isinstance(value, CustomStringRepresentation):
-                                converted = str(value)
-                            else:
-                                converted = value
-                        if not isbuffer(converted):
-                            try:
-                                output = converted.__format__(modifier)
-                            except Exception:
-                                output = None
-                            if output is not None:
-                                _write(output)
-                                continue
-                    else:
-                        converted = value
-                    modifier_resolved = modifier.strip()
-                    expression = self.format(
-                        modifier_resolved, codec, args, symb, used, escaped)
-                    output = DelayedNumSeqArgument(
-                        expression.decode(codec), reverse=True, seed=converted)
-                    _write(output(Chunk(converted, meta=self)))
-                else:
+                if not modifier:
                     _write(value)
+                    continue
+
+                if usepy:
+                    try:
+                        value = value.__format__(modifier)
+                    except AttributeError:
+                        value = repr(value)
+                    finally:
+                        _write(value)
+                    continue
+
+                if not _literal:
+                    try:
+                        converted = ByteStringWrapper.Wrap(value, codec)
+                    except TypeError:
+                        if conversion == 'r':
+                            converted = value
+                        elif isinstance(value, CustomStringRepresentation):
+                            converted = str(value)
+                        else:
+                            converted = value
+                    if not isbuffer(converted):
+                        try:
+                            output = converted.__format__(modifier)
+                        except Exception:
+                            output = None
+                        if output is not None:
+                            _write(output)
+                            continue
+                else:
+                    converted = value
+                modifier_resolved = modifier.strip()
+                expression = self.format(
+                    modifier_resolved, codec, args, symb, used, escaped)
+                output = DelayedNumSeqArgument(
+                    expression.decode(codec), reverse=True, seed=converted)
+                _write(output(Chunk(converted, meta=self)))
+
 
         return stream.getvalue()
 

