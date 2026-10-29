@@ -28,6 +28,12 @@ expression share one, while each declarator of a declaration but the last is a n
 point where the body suspends, an `await` or a `yield`, is a kill of a binding code outside the
 body writes, and of one every run of the body shares and the body writes, since that code, or
 another run of the body, may run before the body resumes.
+
+The same kills answer a second question: at which points of a body may code other than the body's
+own statements change a binding? These are the kills less the stores the body spells — a mutating
+call, a suspension, a located reflective hazard — and `ReachingModel.foreign_kills` lists them for
+`refinery.lib.scripts.js.analysis.localization`, which asks whether a script-scope `var` is live at
+any of them.
 """
 from __future__ import annotations
 
@@ -81,15 +87,29 @@ class _BodyEvents(NamedTuple):
     `await`, a `yield`, and the head of a `for await` loop, which awaits each value.
     """
     calls: list[tuple[JsCallExpression, CfgNode | None]]
-    suspensions: list[CfgNode | None]
+    suspensions: list[tuple[Node, CfgNode | None]]
+
+
+class _Changes(NamedTuple):
+    """
+    The sites in one graph at which a binding may change value, each with the control-flow node
+    that evaluates it: the *stores* the body's own statements spell, and the *foreign* kills, at
+    which code other than those statements may write it — a mutating call, a point where the body
+    suspends, a located reflective hazard. The opaque global writes among the hazards are kept
+    apart as *opaque*, because a use can be exempt from such a store (`_Kills`).
+    """
+    stores: tuple[tuple[Node, CfgNode], ...]
+    foreign: tuple[tuple[Node, CfgNode], ...]
+    opaque: tuple[tuple[JsMemberExpression, CfgNode], ...]
 
 
 class ReachingModel:
     """
     Reaching-value verdicts for one script, built over a
     `refinery.lib.scripts.js.analysis.dominance.DominanceModel` and a
-    `refinery.lib.scripts.js.analysis.effects.EffectModel`. Ask whether the value a binding holds at a
-    definition is the value observed at a use with `value_preserved`. Build through `build_reaching`.
+    `refinery.lib.scripts.js.analysis.effects.EffectModel`. Ask whether the value a binding holds at
+    a definition is the value observed at a use with `value_preserved`, and where code other than a
+    body's own statements may change a binding with `foreign_kills`. Build through `build_reaching`.
     """
 
     def __init__(self, dominance: DominanceModel, effects: EffectModel):
@@ -97,6 +117,7 @@ class ReachingModel:
         self.effects = effects
         self.model = effects.model
         self._kill_cache: dict[tuple[int, int, int], _Kills | None] = {}
+        self._change_cache: dict[tuple[int, int], _Changes | None] = {}
         self._event_cache: dict[int, _BodyEvents] = {}
         self._cycle_cache: dict[int, bool] = {}
         self._between = ReachabilityQuery(dominance, Projection.MAY)
@@ -133,6 +154,22 @@ class ReachingModel:
         }
         return not self._between.any_between(graph_d, node_d, node_u, kill_nodes)
 
+    def foreign_kills(self, binding: Binding, owner: Node) -> list[Node] | None:
+        """
+        The sites in the body of *owner*, a function or the script, at which *binding* may change
+        value other than through a store the body spells: a call that may write it, a point where
+        the body suspends while other code or another run of the body may write it, and a located
+        reflective hazard. `None` where these cannot be listed, under the refusals `value_preserved`
+        answers `False` for, and where *owner* has no graph.
+        """
+        graph = self.dominance.graph_of(owner)
+        if graph is None:
+            return None
+        changes = self._changes(binding, graph)
+        if changes is None:
+            return None
+        return [site for site, _ in (*changes.foreign, *changes.opaque)]
+
     def _kill_nodes(
         self, binding: Binding, graph: ControlFlowGraph, definition: Node,
     ) -> _Kills | None:
@@ -156,12 +193,33 @@ class ReachingModel:
     ) -> _Kills | None:
         """
         The nodes of *graph* at which *binding*'s definition stops holding, or `None` where they
-        cannot be listed and the caller must treat the value as reaching nowhere.
+        cannot be listed and the caller must treat the value as reaching nowhere: every site
+        `_changes` lists but the write the definition is tracked from.
+        """
+        changes = self._changes(binding, graph)
+        if changes is None:
+            return None
+        kills = {id(node) for _, node in changes.foreign}
+        kills.update(id(node) for site, node in changes.stores if site is not def_write)
+        return _Kills(frozenset(kills), changes.opaque)
 
-        Every node that stores into the binding
-        (`refinery.lib.scripts.js.analysis.model.Binding.store_sites`) is a kill but the write the
-        definition is tracked from, whatever it stores: `var {k: x} = o`, the head of
-        `for (var x of xs)` and a `let x;` alike.
+    def _changes(self, binding: Binding, graph: ControlFlowGraph) -> _Changes | None:
+        """
+        The sites of *graph* at which *binding* may change value, memoized per graph.
+        """
+        key = (id(binding), id(graph))
+        if key not in self._change_cache:
+            self._change_cache[key] = self._compute_changes(binding, graph)
+        return self._change_cache[key]
+
+    def _compute_changes(self, binding: Binding, graph: ControlFlowGraph) -> _Changes | None:
+        """
+        The sites of *graph* at which *binding* may change value, or `None` where they cannot be
+        listed.
+
+        Every site that stores into the binding
+        (`refinery.lib.scripts.js.analysis.model.Binding.store_sites`) is one, whatever it stores:
+        `var {k: x} = o`, the head of `for (var x of xs)` and a `let x;` alike.
 
         A call this file binds the name of but whose function the model will not state kills the
         binding, wherever some function of this file writes it. Not knowing which function runs is
@@ -183,9 +241,9 @@ class ReachingModel:
         A point where the body stops and other code runs before it resumes — an `await`, a `yield`,
         the head of a `for await` loop (`_BodyEvents.suspensions`) — is a kill of a binding some
         store outside this graph writes: that code may be the code that writes it. It is a kill as
-        well of a binding a store in this graph writes, the tracked one included, where every run of
-        the body shares the binding (`_shared_by_every_run`): another run of the same body may write
-        it while this one waits. The calls `f(1)` and `f(2)` of
+        well of a binding a store in this graph writes, where every run of the body shares the
+        binding (`_shared_by_every_run`): another run of the same body may write it while this one
+        waits. The calls `f(1)` and `f(2)` of
 
             var x; async function f(v) { x = v; var r = x; await 0; return r; }
 
@@ -203,27 +261,24 @@ class ReachingModel:
         located = self._located_hazards(hazards, graph)
         if located is None:
             return None
-        kills, opaque = located
-        written_here = written_elsewhere = False
+        foreign, opaque = located
+        stores: list[tuple[Node, CfgNode]] = []
+        written_elsewhere = False
         for site in binding.store_sites:
-            if site is def_write:
-                written_here = True
-                continue
             located_site = self.dominance.locate(site)
             if located_site is None:
                 return None
             site_graph, site_node = located_site
             if site_graph is graph:
-                kills.add(id(site_node))
-                written_here = True
+                stores.append((site, site_node))
             else:
                 written_elsewhere = True
         events = self._body_events(graph)
-        if written_elsewhere or (written_here and self._shared_by_every_run(binding, graph)):
-            for suspension in events.suspensions:
-                if suspension is None:
+        if written_elsewhere or (stores and self._shared_by_every_run(binding, graph)):
+            for suspension, node in events.suspensions:
+                if node is None:
                     return None
-                kills.add(id(suspension))
+                foreign.append((suspension, node))
         for call, node in events.calls:
             target = self.effects.static_callee(call)
             if target is None:
@@ -235,20 +290,19 @@ class ReachingModel:
                 continue
             if node is None:
                 return None
-            kills.add(id(node))
-        return _Kills(frozenset(kills), tuple(opaque))
+            foreign.append((call, node))
+        return _Changes(tuple(stores), tuple(foreign), tuple(opaque))
 
     def _located_hazards(
         self, sites: list[Node], graph: ControlFlowGraph,
-    ) -> tuple[set[int], list[tuple[JsMemberExpression, CfgNode]]] | None:
+    ) -> tuple[list[tuple[Node, CfgNode]], list[tuple[JsMemberExpression, CfgNode]]] | None:
         """
-        Every reflective hazard site of *sites* located into *graph* — the plain ones as
-        control-flow node ids, and the opaque global writes among them as the site-and-node pairs
-        whose per-use exemption the caller applies — or `None` when any of them lies outside it:
-        another function's graph, whose hazards run at its invocation, or a point no graph places
-        at all.
+        Every reflective hazard site of *sites* located into *graph*, each with its node — the
+        plain ones, and apart from them the opaque global writes whose per-use exemption the caller
+        applies — or `None` when any of them lies outside it: another function's graph, whose
+        hazards run at its invocation, or a point no graph places at all.
         """
-        kills: set[int] = set()
+        plain: list[tuple[Node, CfgNode]] = []
         opaque: list[tuple[JsMemberExpression, CfgNode]] = []
         for site in sites:
             pair = self.dominance.locate(site)
@@ -257,8 +311,8 @@ class ReachingModel:
             if isinstance(site, JsMemberExpression):
                 opaque.append((site, pair[1]))
             else:
-                kills.add(id(pair[1]))
-        return kills, opaque
+                plain.append((site, pair[1]))
+        return plain, opaque
 
     def _store_kills_the_use(
         self, site: JsMemberExpression, node: CfgNode, use: Node,
@@ -304,9 +358,9 @@ class ReachingModel:
                 ):
                     located = self.dominance.locate(node)
                     if located is None:
-                        cached.suspensions.append(None)
+                        cached.suspensions.append((node, None))
                     elif located[0] is graph:
-                        cached.suspensions.append(located[1])
+                        cached.suspensions.append((node, located[1]))
             self._event_cache[id(graph)] = cached
         return cached
 

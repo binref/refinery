@@ -5,7 +5,13 @@ from test import TestBase
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.model import Binding
-from refinery.lib.scripts.js.model import JsIdentifier, JsVariableDeclarator
+from refinery.lib.scripts.js.model import (
+    JsAwaitExpression,
+    JsCallExpression,
+    JsFunctionDeclaration,
+    JsIdentifier,
+    JsVariableDeclarator,
+)
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -343,3 +349,48 @@ class TestReaching(TestBase):
         self.assertTrue(self._free_variable_reaches(
             'var x = 1; function f() { var r = x; async function g() { await 0; } return r; } x = 2;'
         ))
+
+    def _foreign_kills(self, source: str) -> tuple[Node, list[Node] | None]:
+        """
+        The tree of *source* and the points `ReachingModel.foreign_kills` lists for `x` in the body
+        of the function `f`.
+        """
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast)
+        function = next(
+            node for node in ast.walk_in_order()
+            if isinstance(node, JsFunctionDeclaration)
+            and node.id is not None
+            and node.id.name == 'f'
+        )
+        return ast, cache.reaching.foreign_kills(self._reference(cache, ast, 'x'), function)
+
+    def test_foreign_kills_are_the_suspensions_and_the_calls_of_a_function_that_writes_the_binding(self):
+        ast, sites = self._foreign_kills(
+            'var x;'
+            ' function m() { x = 0; }'
+            ' function n() { return 1; }'
+            ' async function f(v) { x = v; await 0; m(); n(); return x; }'
+        )
+        suspension = next(
+            node for node in ast.walk_in_order()
+            if isinstance(node, JsAwaitExpression)
+        )
+        call = next(
+            node for node in ast.walk_in_order()
+            if isinstance(node, JsCallExpression)
+            and isinstance(node.callee, JsIdentifier)
+            and node.callee.name == 'm'
+        )
+        assert sites is not None
+        self.assertCountEqual(sites, [suspension, call])
+
+    def test_a_suspension_is_no_foreign_kill_of_a_local_of_each_run(self):
+        _, sites = self._foreign_kills('async function f() { var x = 1; await 0; return x; }')
+        self.assertEqual(sites, [])
+
+    def test_foreign_kills_cannot_be_listed_when_a_writer_escapes(self):
+        _, sites = self._foreign_kills(
+            'var x; function m() { x = 0; } g(m); function f() { x = 1; return x; }'
+        )
+        self.assertIsNone(sites)

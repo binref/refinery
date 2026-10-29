@@ -228,6 +228,13 @@ class DominatorModel:
         """
         return self._flow.locate(element)
 
+    def graph_of(self, owner: Node) -> ControlFlowGraph | None:
+        """
+        The control-flow graph of the body of *owner*, a function node or the script root, or `None`
+        when it has none.
+        """
+        return self._flow.graph_of(owner)
+
     def cfg_node_of(self, element: Node) -> CfgNode | None:
         """
         The control-flow node of the statement or loop head that evaluates *element*, or `None` when
