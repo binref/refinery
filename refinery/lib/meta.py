@@ -1002,7 +1002,6 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
                     expression.decode(codec), reverse=True, seed=converted)
                 _write(output(Chunk(converted, meta=self)))
 
-
         return stream.getvalue()
 
     def knows(self, key):
