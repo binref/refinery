@@ -12,8 +12,8 @@ Eleven sites across ten passes do it. Each has its own entry here, and each entr
 ways:
 
 - the shape the pass exists for, folded, so that a guard which refuses too much is caught by the
-  control rather than by silence — killing `stringarray._match_wrapper` outright leaves the rest of
-  the suite green, and a site witnessed by nothing is a site a guard can quietly empty;
+  control rather than by silence — a site witnessed by nothing is a site a guard can quietly empty
+  while the rest of the suite stays green;
 - the same shape with the keyword, read for what still stands in the output, which needs no engine
   and so is the reading that survives on a machine with no Node.js;
 - the same shape run in Node before and after, which is what says the two agree.
@@ -885,8 +885,7 @@ class TestEachPassStillAnswersTheShapeItIsFor(TestBase):
     """
     The admission control, one row per site, with no keyword anywhere. Each states the text that pass
     folds its own shape to, so that a guard which refuses the shape rather than the keyword fails
-    here. Without it a guard could empty a site and leave the suite green, which is what
-    `stringarray._match_wrapper` is witnessed by nothing enough to allow.
+    here. Without it a guard could empty a site and leave the suite green.
     """
 
     def test_every_site_folds_the_shape_it_exists_for(self):

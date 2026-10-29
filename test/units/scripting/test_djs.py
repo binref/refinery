@@ -1,6 +1,7 @@
 from .. import TestUnitBase
 
 import inspect
+import re
 
 
 class TestJsDeobfuscator(TestUnitBase):
@@ -179,6 +180,26 @@ class TestJsDeobfuscator(TestUnitBase):
         test = test | u('csd', 'b64') | u('xtzip') | j() | str
         self.assertIn(
             "const vAr77 = rEf67([iTem98, '/F:*', iTem37], 'expand.exe', null, 'ignore', false, true);", test)
+
+    def test_string_array_with_indices_spelled_as_strings(self):
+        data = self.download_sample('6577cce638a8dcbaa931abec340b5b0cbd66a2788d36017a7fbdaf0376add786')
+        test = data | self.load() | str
+        self.assertEqual(re.findall(r"require\(\s*'([^']*)'\s*\)", test), [
+            './KhakiAmberMauve',
+            './LimeSepia',
+            './FuchsiaCopper',
+            './CobaltUmberRuby',
+            './CobaltOcean',
+            './EcruTanTeal',
+            './SiennaTan',
+            './RubyTeal',
+            './EmberLime',
+            './SepiaOliveTan',
+            './GoldPlum',
+            'ws',
+            './handlers/SandVioletLime',
+        ])
+        self.assertNotIn('decodeURIComponent', test)
 
 
 class TestJsHostEnvironmentPin(TestUnitBase):

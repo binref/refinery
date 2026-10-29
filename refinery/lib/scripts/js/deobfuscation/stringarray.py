@@ -22,13 +22,12 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.model import SemanticModel
+from refinery.lib.scripts.js.analysis.model import Binding, Role, SemanticModel, reference_role
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BINARY_OPS,
     ScopeProcessingTransformer,
     make_string_literal,
     nothing_still_names,
-    property_key,
     remove_declarator,
     string_value,
 )
@@ -44,11 +43,8 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsIdentifier,
     JsIfStatement,
-    JsMemberExpression,
     JsNumericLiteral,
-    JsObjectExpression,
     JsParenthesizedExpression,
-    JsProperty,
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
@@ -62,7 +58,7 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
     wraps_return,
 )
-from refinery.lib.scripts.js.numbers import exact_integer, js_parse_int
+from refinery.lib.scripts.js.numbers import exact_integer, js_parse_int, js_string_to_number
 
 
 class Encoding(enum.Enum):
@@ -94,8 +90,6 @@ class ChecksumInfo(NamedTuple):
     node: Node
     local_accessors: frozenset[str]
     alias_map: dict[str, str]
-    wrappers: dict[str, 'AccessorWrapperInfo']
-    prop_maps: dict[str, dict[str, int | str]]
 
 
 def _answers_a_wrapper(node: Node | None) -> bool:
@@ -189,6 +183,11 @@ def _find_all_accessor_functions(
           };
           return NAME(B, I);
         }
+
+    In both, subtracting the offset is the first thing the function does with its index, so the
+    position a call asks for is the Number the subtraction reads from its argument, which is what
+    `_decoder_index` computes. An accessor that does anything else with its index first is not
+    recognized.
     """
     results: list[AccessorFunction] = []
     for stmt in body:
@@ -204,50 +203,84 @@ def _find_all_accessor_functions(
         first_param = stmt.params[0]
         if not isinstance(first_param, JsIdentifier):
             continue
-        param_name = first_param.name
-        base_offset: int | None = None
-        calls_array_fn = False
-        for s in stmt.body.body:
-            if isinstance(s, JsExpressionStatement) and isinstance(s.expression, JsAssignmentExpression):
-                assign = s.expression
-                if (
-                    isinstance(assign.left, JsIdentifier)
-                    and assign.left.name == param_name
-                    and isinstance(assign.right, JsBinaryExpression)
-                    and assign.right.operator == '-'
-                    and isinstance(assign.right.left, JsIdentifier)
-                    and assign.right.left.name == param_name
-                    and assign.right.right is not None
-                ):
-                    try:
-                        base_offset = _as_position(_eval_arithmetic(assign.right.right))
-                    except _EvalError:
-                        pass
-            elif isinstance(s, JsVariableDeclaration):
-                for decl in s.declarations:
-                    if isinstance(decl, JsVariableDeclarator) and isinstance(decl.init, JsCallExpression):
-                        if isinstance(decl.init.callee, JsIdentifier) and decl.init.callee.name == array_fn_name:
-                            calls_array_fn = True
-        if base_offset is not None and calls_array_fn:
-            results.append(AccessorFunction(stmt, fn_name, base_offset))
-            continue
+        statements = stmt.body.body
+        calls_array_fn = any(
+            isinstance(decl, JsVariableDeclarator)
+            and isinstance(decl.init, JsCallExpression)
+            and isinstance(decl.init.callee, JsIdentifier)
+            and decl.init.callee.name == array_fn_name
+            for s in statements if isinstance(s, JsVariableDeclaration)
+            for decl in s.declarations
+        )
         if not calls_array_fn:
             continue
-        base_offset = _extract_self_overwriting_offset(stmt.body.body, fn_name)
+        base_offset = _index_shift(statements, first_param.name)
+        if base_offset is None:
+            base_offset = _extract_self_overwriting_offset(statements, fn_name, first_param.name)
         if base_offset is not None:
             results.append(AccessorFunction(stmt, fn_name, base_offset))
     return results
 
 
+def _index_shift(statements: Sequence[Node], param_name: str) -> int | None:
+    """
+    The offset the first of *statements* subtracts from the index parameter, when it is the plain
+    assignment `param = param - OFFSET`, or `None`.
+    """
+    if not statements:
+        return None
+    first = statements[0]
+    if not isinstance(first, JsExpressionStatement):
+        return None
+    assign = first.expression
+    if not (
+        isinstance(assign, JsAssignmentExpression)
+        and assign.operator == '='
+        and isinstance(assign.left, JsIdentifier)
+        and assign.left.name == param_name
+        and isinstance(assign.right, JsBinaryExpression)
+        and assign.right.operator == '-'
+        and isinstance(assign.right.left, JsIdentifier)
+        and assign.right.left.name == param_name
+        and assign.right.right is not None
+    ):
+        return None
+    try:
+        return _as_position(_eval_arithmetic(assign.right.right))
+    except _EvalError:
+        return None
+
+
 def _extract_self_overwriting_offset(
     body: Sequence[Node],
     fn_name: str,
+    param_name: str,
 ) -> int | None:
     """
     Detect the self-overwriting accessor variant where the function reassigns itself to an inner
-    function expression containing the offset subtraction. Returns the base offset or None.
+    function expression containing the offset subtraction. Returns the base offset or None. The
+    outer function hands its index on untouched: it names it only as the first argument of the
+    call to its replacement that it returns.
     """
-    for s in body:
+    if not body:
+        return None
+    forward = body[-1]
+    if not (
+        isinstance(forward, JsReturnStatement)
+        and isinstance(call := forward.argument, JsCallExpression)
+        and isinstance(call.callee, JsIdentifier)
+        and call.callee.name == fn_name
+        and call.arguments
+        and isinstance(index := call.arguments[0], JsIdentifier)
+        and index.name == param_name
+    ):
+        return None
+    if any(
+        isinstance(node, JsIdentifier) and node.name == param_name and node is not index
+        for s in body for node in s.walk()
+    ):
+        return None
+    for s in body[:-1]:
         if not isinstance(s, JsExpressionStatement):
             continue
         if not isinstance(s.expression, JsAssignmentExpression):
@@ -265,26 +298,7 @@ def _extract_self_overwriting_offset(
         inner_param = inner_fn.params[0]
         if not isinstance(inner_param, JsIdentifier):
             continue
-        inner_param_name = inner_param.name
-        for inner_s in inner_fn.body.body:
-            if not isinstance(inner_s, JsExpressionStatement):
-                continue
-            if not isinstance(inner_s.expression, JsAssignmentExpression):
-                continue
-            inner_assign = inner_s.expression
-            if (
-                isinstance(inner_assign.left, JsIdentifier)
-                and inner_assign.left.name == inner_param_name
-                and isinstance(inner_assign.right, JsBinaryExpression)
-                and inner_assign.right.operator == '-'
-                and isinstance(inner_assign.right.left, JsIdentifier)
-                and inner_assign.right.left.name == inner_param_name
-                and inner_assign.right.right is not None
-            ):
-                try:
-                    return _as_position(_eval_arithmetic(inner_assign.right.right))
-                except _EvalError:
-                    pass
+        return _index_shift(inner_fn.body.body, inner_param.name)
     return None
 
 
@@ -399,292 +413,14 @@ def _as_position(value: float) -> int:
     return int(value)
 
 
-class AccessorWrapperInfo(NamedTuple):
-    """
-    Describes an inner wrapper function inside the rotation IIFE that forwards to the main
-    accessor with reordered arguments and an additional offset subtraction.
-    """
-    target: str
-    offset: int
-    idx_param_pos: int
-    key_param_pos: int
-
-
-def _resolve_member_access(
-    node: JsMemberExpression,
-    prop_maps: dict[str, dict[str, int | str]],
-) -> int | str | None:
-    """
-    Resolve a member expression `OBJ.KEY` against a set of known property maps collected from
-    object literals in the IIFE body. Returns the resolved value or None.
-    """
-    if not isinstance(node.object, JsIdentifier):
-        return None
-    obj_name = node.object.name
-    if obj_name not in prop_maps:
-        return None
-    prop = node.property
-    if isinstance(prop, JsIdentifier):
-        key = prop.name
-    elif isinstance(prop, JsStringLiteral) and prop.value is not None:
-        key = prop.value
-    else:
-        return None
-    return prop_maps[obj_name].get(key)
-
-
-def _resolve_constant(
-    node: Node,
-    prop_maps: dict[str, dict[str, int | str]],
-) -> int | None:
-    """
-    Resolve a node to an integer constant, handling numeric literals, member accesses against known
-    property maps, unary negation, and parenthesized expressions. Returns None on failure.
-    """
-    if isinstance(node, JsNumericLiteral):
-        return exact_integer(node.value)
-    if isinstance(node, JsParenthesizedExpression) and node.expression:
-        return _resolve_constant(node.expression, prop_maps)
-    if isinstance(node, JsMemberExpression):
-        resolved = _resolve_member_access(node, prop_maps)
-        return resolved if isinstance(resolved, int) else None
-    if isinstance(node, JsUnaryExpression) and node.operator == '-' and node.operand:
-        inner = _resolve_constant(node.operand, prop_maps)
-        return -inner if inner is not None else None
-    try:
-        return _as_position(_eval_arithmetic(node))
-    except _EvalError:
-        return None
-
-
-def _extract_wrapper_offset(
-    idx_arg: Node,
-    prop_maps: dict[str, dict[str, int | str]],
-) -> tuple[str, int] | None:
-    """
-    Analyze the index argument of a wrapper's forwarding call and extract `(param_name, offset)`
-    where offset is the constant subtracted from the call-site argument. The effective accessor
-    index is `call_arg - offset`. Handles these patterns:
-
-        param             => (param, 0)
-        param -   CONST   => (param, CONST)
-        param -  -CONST   => (param, -CONST)
-        param - (-CONST)  => (param, -CONST)
-        param +   CONST   => (param, -CONST)
-    """
-    if isinstance(idx_arg, JsIdentifier):
-        return idx_arg.name, 0
-    if isinstance(idx_arg, JsBinaryExpression) and isinstance(idx_arg.left, JsIdentifier):
-        if idx_arg.right is None:
-            return None
-        right_val = _resolve_constant(idx_arg.right, prop_maps)
-        if right_val is None:
-            return None
-        if idx_arg.operator == '-':
-            return idx_arg.left.name, right_val
-        if idx_arg.operator == '+':
-            return idx_arg.left.name, -right_val
-    return None
-
-
-def _parse_object_props(
-    obj: JsObjectExpression,
-    allow_strings: bool = False,
-) -> dict[str, int | str]:
-    """
-    Extract `{key: value}` pairs from an object expression. Keys are identifier names or string
-    literal values. Values are integers (via `_eval_arithmetic`) and optionally strings (via
-    `refinery.lib.scripts.js.deobfuscation.helpers.string_value`) when `allow_strings` is True.
-    """
-    props: dict[str, int | str] = {}
-    for prop in obj.properties:
-        if not isinstance(prop, JsProperty) or prop.value is None:
-            continue
-        key = property_key(prop)
-        if key is None:
-            continue
-        if allow_strings:
-            sv = string_value(prop.value)
-            if sv is not None:
-                props[key] = sv
-                continue
-        try:
-            props[key] = _as_position(_eval_arithmetic(prop.value))
-        except _EvalError:
-            pass
-    return props
-
-
-def _collect_local_prop_maps(
-    body: Sequence[Node],
-) -> dict[str, dict[str, int | str]]:
-    """
-    Scan the leading variable declarations in a function body for object literals and return a
-    mapping from variable name to its `{key: int}` property map. Stops at the first non-variable
-    declaration statement.
-    """
-    local_props: dict[str, dict[str, int | str]] = {}
-    for s in body:
-        if not isinstance(s, JsVariableDeclaration):
-            break
-        for decl in s.declarations:
-            if (
-                isinstance(decl, JsVariableDeclarator)
-                and isinstance(decl.id, JsIdentifier)
-                and isinstance(decl.init, JsObjectExpression)
-                and (lp := _parse_object_props(decl.init))
-            ):
-                local_props[decl.id.name] = lp
-    return local_props
-
-
-def _collect_all_prop_maps(root: Node) -> dict[str, dict[str, int | str]]:
-    """
-    Walk the entire AST collecting all variable-declared object literals whose properties are
-    integer or string constants. Used to resolve member-expression arguments in accessor calls
-    that appear inside nested scopes (class methods, function bodies).
-    """
-    result: dict[str, dict[str, int | str]] = {}
-    for node in root.walk():
-        if (
-            isinstance(node, JsVariableDeclarator)
-            and isinstance(node.id, JsIdentifier)
-            and isinstance(node.init, JsObjectExpression)
-        ):
-            props = _parse_object_props(node.init, allow_strings=True)
-            if props:
-                result[node.id.name] = props
-    return result
-
-
-def _match_wrapper(
-    fn: JsFunctionDeclaration,
-    accessor_name: str,
-    prop_maps: dict[str, dict[str, int | str]],
-) -> AccessorWrapperInfo | None:
-    """
-    Check whether a function declaration is a wrapper that forwards to *accessor_name* with
-    reordered arguments and a constant offset. Returns a `AccessorWrapperInfo` on match, else None.
-    """
-    if wraps_return(fn):
-        return None
-    if fn.id is None or fn.body is None:
-        return None
-    if len(fn.body.body) < 1 or len(fn.params) < 2:
-        return None
-    ret = fn.body.body[-1]
-    if not isinstance(ret, JsReturnStatement) or ret.argument is None:
-        return None
-    call = ret.argument
-    if not isinstance(call, JsCallExpression) or not isinstance(call.callee, JsIdentifier):
-        return None
-    if call.callee.name != accessor_name:
-        return None
-    if len(call.arguments) != 2:
-        return None
-    local_props = dict(prop_maps)
-    local_props.update(_collect_local_prop_maps(fn.body.body[:-1]))
-    idx_arg = call.arguments[0]
-    key_arg = call.arguments[1]
-    if not isinstance(key_arg, JsIdentifier):
-        return None
-    offset = _extract_wrapper_offset(idx_arg, local_props)
-    if offset is None:
-        return None
-    idx_param_name, offset_value = offset
-    param_names = [p.name for p in fn.params if isinstance(p, JsIdentifier)]
-    if idx_param_name not in param_names or key_arg.name not in param_names:
-        return None
-    return AccessorWrapperInfo(
-        target=accessor_name,
-        offset=offset_value,
-        idx_param_pos=param_names.index(idx_param_name),
-        key_param_pos=param_names.index(key_arg.name),
-    )
-
-
-def _first_wrapper_match(
-    fn: JsFunctionDeclaration,
-    accessor_names: set[str],
-    prop_maps: dict[str, dict[str, int | str]],
-) -> tuple[str, AccessorWrapperInfo] | None:
-    if fn.id is None:
-        return None
-    for acc_name in accessor_names:
-        info = _match_wrapper(fn, acc_name, prop_maps)
-        if info is not None:
-            return fn.id.name, info
-    return None
-
-
-def _collect_iife_wrappers(
-    iife_body: Sequence[Node],
-    accessor_names: set[str],
-) -> tuple[dict[str, AccessorWrapperInfo], dict[str, dict[str, int | str]]]:
-    """
-    Scan the rotation IIFE body for inner wrapper functions and their associated offset objects.
-    Returns `(wrappers, prop_maps)` where `wrappers` maps wrapper function names to their
-    `AccessorWrapperInfo` and `prop_maps` maps object variable names to their `{key: value}` dicts.
-
-    Inner wrappers follow the pattern::
-
-        var a = { p: 0x4 };
-        function f(x, y) {
-          return g(y - a.p, x);
-        }
-
-    The wrapper swaps argument order and subtracts a constant offset from the index parameter.
-    """
-    prop_maps: dict[str, dict[str, int | str]] = {}
-    wrappers: dict[str, AccessorWrapperInfo] = {}
-    for s in iife_body:
-        if isinstance(s, JsVariableDeclaration):
-            for decl in s.declarations:
-                if (
-                    isinstance(decl, JsVariableDeclarator)
-                    and isinstance(decl.id, JsIdentifier)
-                    and isinstance(decl.init, JsObjectExpression)
-                ):
-                    props = _parse_object_props(decl.init, allow_strings=True)
-                    if props:
-                        prop_maps[decl.id.name] = props
-        if isinstance(s, JsFunctionDeclaration):
-            match = _first_wrapper_match(s, accessor_names, prop_maps)
-            if match is not None:
-                name, info = match
-                wrappers[name] = info
-    return wrappers, prop_maps
-
-
-def _collect_all_wrappers(
-    root: Node,
-    accessor_names: set[str],
-    prop_maps: dict[str, dict[str, int | str]] | None = None,
-) -> dict[str, AccessorWrapperInfo]:
-    """
-    Walk the entire AST to find all function declarations that forward to any of the given accessor
-    functions with a constant offset. Unlike `_collect_iife_wrappers`, this finds wrappers at any
-    nesting level and handles local offset objects declared inside the wrapper body.
-    """
-    outer_props = prop_maps or {}
-    wrappers: dict[str, AccessorWrapperInfo] = {}
-    for s in root.walk():
-        if isinstance(s, JsFunctionDeclaration):
-            match = _first_wrapper_match(s, accessor_names, outer_props)
-            if match is not None:
-                name, info = match
-                wrappers[name] = info
-    return wrappers
-
-
 def _extract_checksum_expression(
     iife_body: Sequence[Node],
     accessor_names: set[str],
     target_param: str | None = None,
 ) -> ChecksumInfo | None:
     """
-    Extract the checksum expression AST node, local accessor aliases, and inner wrapper resolution
-    data from the rotation IIFE body. Handles two structural variants:
+    Extract the checksum expression AST node and the local accessor aliases from the rotation IIFE
+    body. Handles two structural variants:
 
     1. Variable declaration: `var x = CHECKSUM; if (x === target) break;`
     2. Inline if-condition: `if (CHECKSUM === target) break;`
@@ -735,13 +471,10 @@ def _extract_checksum_expression(
         break
     if checksum_node is None:
         return None
-    wrappers, prop_maps = _collect_iife_wrappers(iife_body, accessor_names)
     return ChecksumInfo(
         checksum_node,
         frozenset(local_accessors),
         alias_map,
-        wrappers,
-        prop_maps,
     )
 
 
@@ -798,14 +531,11 @@ def _eval_checksum(
     strings: list[str],
     base_offset: int,
     encoding_map: dict[str, Encoding],
-    wrappers: dict[str, AccessorWrapperInfo] | None = None,
-    prop_maps: dict[str, dict[str, int | str]] | None = None,
 ) -> float:
     """
     Evaluate a checksum expression against the current array state. Handles the arithmetic
     operators (`+`, `-`, `*`, `/`), unary negation, parentheses, `parseInt` calls on accessor
-    lookups, and numeric literals. When inner wrapper functions are present, wrapper calls are
-    resolved to direct accessor calls on the fly without modifying the AST.
+    lookups, and numeric literals.
 
     Raises `_EvalError` on any unrecognized pattern.
     """
@@ -815,8 +545,6 @@ def _eval_checksum(
         strings=strings,
         base_offset=base_offset,
         encoding_map=encoding_map,
-        wrappers=wrappers,
-        prop_maps=prop_maps,
     )
     if isinstance(node, JsNumericLiteral):
         return float(node.value)
@@ -846,10 +574,12 @@ def _eval_checksum(
                 if result is None:
                     raise _EvalError
                 return result
-            if isinstance(inner, JsCallExpression) and isinstance(inner.callee, JsIdentifier):
-                idx, key = _resolve_accessor_call(
-                    inner, local_accessors, wrappers, prop_maps,
-                )
+            if (
+                isinstance(inner, JsCallExpression)
+                and isinstance(inner.callee, JsIdentifier)
+                and inner.callee.name in local_accessors
+            ):
+                idx, key = _read_decoder_call(inner)
                 if 0 <= (i := idx - base_offset) < len(strings):
                     raw = strings[i]
                     encoding = encoding_map.get(inner.callee.name, Encoding.NONE)
@@ -880,58 +610,34 @@ def _checksum_radix(
     return radix
 
 
-def _resolve_accessor_call(
-    call: JsCallExpression,
-    local_accessors: frozenset[str],
-    wrappers: dict[str, AccessorWrapperInfo] | None,
-    prop_maps: dict[str, dict[str, int | str]] | None,
-) -> tuple[int, str | None]:
+def _decoder_index(node: Node) -> int | None:
     """
-    Resolve an accessor or wrapper call to `(index, rc4_key)`. Handles both direct accessor calls
-    (`accessor(idx, key)`) and inner wrapper calls (`wrapper(obj.key, obj.idx)`). Raises
-    `_EvalError` when the call cannot be resolved.
+    The position a call to the decoder asks for, as the decoder's subtraction reads it from the
+    argument: the Number the argument evaluates to, where it is a whole number. The obfuscator
+    spells an index as a numeric string as often as a number, and the subtraction reads a string
+    through StringToNumber, so `'0x13d'` asks for 317 where `'1_72'` asks for no position at all.
     """
-    callee_name = call.callee.name if isinstance(call.callee, JsIdentifier) else None
-    pm = prop_maps or {}
-    if callee_name is not None and callee_name in local_accessors and len(call.arguments) >= 1:
-        idx = _resolve_constant(call.arguments[0], pm)
-        if idx is None:
-            raise _EvalError
-        key: str | None = None
-        if len(call.arguments) >= 2:
-            key = _resolve_string_arg(call.arguments[1], pm)
-        return idx, key
-    if wrappers and callee_name is not None:
-        wrapper = wrappers.get(callee_name)
-        if wrapper is not None:
-            n_args = max(wrapper.idx_param_pos, wrapper.key_param_pos) + 1
-            if len(call.arguments) >= n_args:
-                raw_idx = call.arguments[wrapper.idx_param_pos]
-                raw_key = call.arguments[wrapper.key_param_pos]
-                idx_value = _resolve_constant(raw_idx, pm)
-                if idx_value is None:
-                    raise _EvalError
-                idx_value -= wrapper.offset
-                key_value = _resolve_string_arg(raw_key, pm)
-                return idx_value, key_value
-    raise _EvalError
+    if isinstance(node, JsStringLiteral) and (text := string_value(node)) is not None:
+        return exact_integer(js_string_to_number(text))
+    try:
+        return exact_integer(_eval_arithmetic(node))
+    except _EvalError:
+        return None
 
 
-def _resolve_string_arg(
-    node: Node,
-    prop_maps: dict[str, dict[str, int | str]],
-) -> str | None:
+def _read_decoder_call(call: JsCallExpression) -> tuple[int, str | None]:
     """
-    Resolve an argument node to a string, handling member access against known property maps.
-    Returns None when the argument is not a string (non-RC4 case).
+    The position and the RC4 key a call to the decoder passes. The key is `None` where the call
+    passes none, which the encodings without one never read. Raises `_EvalError` when the position
+    is not one `_decoder_index` can read.
     """
-    if isinstance(node, JsStringLiteral):
-        return node.value
-    if isinstance(node, JsMemberExpression):
-        resolved = _resolve_member_access(node, prop_maps)
-        if isinstance(resolved, str):
-            return resolved
-    return None
+    if not call.arguments:
+        raise _EvalError
+    index = _decoder_index(call.arguments[0])
+    if index is None:
+        raise _EvalError
+    key = string_value(call.arguments[1]) if len(call.arguments) >= 2 else None
+    return index, key
 
 
 def _simulate_rotation(
@@ -941,8 +647,6 @@ def _simulate_rotation(
     local_accessors: frozenset[str],
     target: int,
     encoding_map: dict[str, Encoding],
-    wrappers: dict[str, AccessorWrapperInfo] | None = None,
-    prop_maps: dict[str, dict[str, int | str]] | None = None,
 ) -> list[str] | None:
     """
     Simulate the array rotation loop. For each rotation position, evaluate the checksum
@@ -954,7 +658,7 @@ def _simulate_rotation(
     for _ in range(n):
         try:
             if _as_position(_eval_checksum(
-                checksum_node, local_accessors, array, base_offset, encoding_map, wrappers, prop_maps,
+                checksum_node, local_accessors, array, base_offset, encoding_map,
             )) == target:
                 return array
         except _EvalError:
@@ -963,32 +667,75 @@ def _simulate_rotation(
     return None
 
 
-def _collect_accessor_aliases(body: Sequence[Node], accessor_name: str) -> set[str]:
+class _Decoders(NamedTuple):
     """
-    Collect all variable names that are transitively assigned the accessor function identifier,
-    walking the entire AST. An obfuscator creates multi-level alias chains:
+    The bindings a call names the decoder through, each mapped to the encoding the decoder it
+    denotes applies, and the declarators that make the aliases among them.
+    """
+    encodings: dict[Binding, Encoding]
+    alias_declarators: list[JsVariableDeclarator]
 
-        const a0x = a0d;
-        const z = a0x, A = a0x;
+
+def _is_written_only_by_itself(model: SemanticModel, binding: Binding, function: Node) -> bool:
     """
-    assigned_from: dict[str, set[str]] = {}
-    for stmt in body:
-        for node in stmt.walk():
-            if (
-                isinstance(node, JsVariableDeclarator)
-                and isinstance(node.id, JsIdentifier)
-                and isinstance(node.init, JsIdentifier)
-            ):
-                assigned_from.setdefault(node.init.name, set()).add(node.id.name)
-    aliases: set[str] = set()
-    pending = {accessor_name}
-    while pending:
-        current = pending.pop()
-        for name in assigned_from.get(current, ()):
-            if name not in aliases:
-                aliases.add(name)
-                pending.add(name)
-    return aliases
+    Whether every store into *binding* happens inside *function*, the one it declares. The
+    self-overwriting decoder replaces itself with the function that does the work, and a store
+    anywhere else means a call may reach some other function under the same name.
+    """
+    if binding.exported or binding.reachable_through_a_handed_object:
+        return False
+    writes = [
+        *binding.writes,
+        *binding.indefinite_writes,
+        *(ref for ref in model.dynamic_references(binding) if reference_role(ref) is not Role.READ),
+    ]
+    return all(write.is_descendant_of(function) for write in writes)
+
+
+def _find_decoders(
+    model: SemanticModel,
+    scope: Node,
+    accessors: Sequence[AccessorFunction],
+    encodings: dict[str, Encoding],
+) -> _Decoders:
+    """
+    Every binding through which a call reaches one of the *accessors*: the binding each declares,
+    where nothing else stores into it, and every name declared with one of those as its only value,
+    such as `const a0x = a0d` and the chains an obfuscator builds from it. A call is read as a call
+    to the decoder when its callee resolves to one of these bindings, never by spelling alone: a
+    parameter or a local of the same name inside some function is another binding.
+    """
+    found: dict[Binding, Encoding] = {}
+    for accessor in accessors:
+        assert accessor.node.id is not None
+        binding = model.binding_of(accessor.node.id)
+        if binding is not None and _is_written_only_by_itself(model, binding, accessor.node):
+            found[binding] = encodings[accessor.name]
+    declarators = [
+        node for node in scope.walk()
+        if isinstance(node, JsVariableDeclarator)
+        and isinstance(node.id, JsIdentifier)
+        and isinstance(node.init, JsIdentifier)
+    ]
+    aliases: list[JsVariableDeclarator] = []
+    while True:
+        grown = False
+        for declarator in declarators:
+            assert isinstance(declarator.id, JsIdentifier)
+            assert isinstance(declarator.init, JsIdentifier)
+            alias = model.binding_of(declarator.id)
+            if alias is None or alias in found:
+                continue
+            source = model.resolve(declarator.init)
+            if source is None or source not in found:
+                continue
+            if model.singular_value(alias) is not declarator.init:
+                continue
+            found[alias] = found[source]
+            aliases.append(declarator)
+            grown = True
+        if not grown:
+            return _Decoders(found, aliases)
 
 
 _B64_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/='
@@ -1083,82 +830,59 @@ def _decrypt_rc4(s: str, key: str) -> str:
 
 def _replace_accessor_calls(
     root: Node,
-    aliases: set[str],
+    model: SemanticModel,
+    decoders: _Decoders,
     raw_lookup: dict[int, str],
-    encoding_map: dict[str, Encoding],
-    wrappers: dict[str, AccessorWrapperInfo] | None = None,
-    prop_maps: dict[str, dict[str, int | str]] | None = None,
 ) -> int:
     """
-    Walk the entire AST and replace accessor calls with decoded string literals. Handles direct
-    accessor calls where the first argument is a pure arithmetic expression, and also wrapper calls
-    that forward to the accessor with reordered arguments and an offset subtraction. For RC4, the
-    decryption key is taken from the second argument (or resolved from the wrapper's key parameter).
-    Returns the number of replaced calls.
+    Replace every call to a decoder below *root* whose position `_read_decoder_call` reads with the
+    string it decodes. A call is one to a decoder when its callee resolves to a binding of
+    *decoders*. Returns the number of replaced calls.
     """
+    calls: list[tuple[JsCallExpression, Encoding]] = []
+    for node in root.walk():
+        if not isinstance(node, JsCallExpression) or not isinstance(node.callee, JsIdentifier):
+            continue
+        binding = model.resolve(node.callee)
+        if binding is None or (encoding := decoders.encodings.get(binding)) is None:
+            continue
+        calls.append((node, encoding))
     count = 0
-    local_accessors = frozenset(aliases)
-    wrapper_names = set(wrappers) if wrappers else set()
-    for node in list(root.walk()):
-        if not isinstance(node, JsCallExpression):
-            continue
-        if not isinstance(node.callee, JsIdentifier):
-            continue
-        callee_name = node.callee.name
-        if callee_name not in aliases and callee_name not in wrapper_names:
-            continue
+    for call, encoding in calls:
         try:
-            idx, key = _resolve_accessor_call(node, local_accessors, wrappers, prop_maps)
+            idx, key = _read_decoder_call(call)
         except _EvalError:
             continue
         raw = raw_lookup.get(idx)
         if raw is None:
             continue
-        encoding = encoding_map.get(callee_name, Encoding.NONE)
         try:
             value = _decode_string(raw, encoding, key)
         except _EvalError:
             continue
-        _replace_in_parent(node, make_string_literal(value))
+        _replace_in_parent(call, make_string_literal(value))
         count += 1
     return count
 
 
 def _infrastructure_nodes(
-    root: Node,
     array: ArrayFunction,
     accessors: list[AccessorFunction],
     rotation: RotationIIFE | None,
-    wrapper_names: set[str],
-    aliases: set[str],
+    decoders: _Decoders,
 ) -> list[Node]:
     """
     Every node the string-array infrastructure occupies: the array function, the accessor functions,
-    the rotation IIFE that puts the strings in order, the wrapper declarations that forward to an
-    accessor, and the declarators that alias one. They are collected before anything is removed, so
-    that the names they declare can be asked about together — a reference from one of them into
-    another goes with the removal, and only a reference from outside all of them keeps the
-    infrastructure alive.
+    the rotation IIFE that puts the strings in order, and the declarators that alias an accessor.
+    They are collected before anything is removed, so that the names they declare can be asked about
+    together — a reference from one of them into another goes with the removal, and only a reference
+    from outside all of them keeps the infrastructure alive.
     """
     nodes: list[Node] = [array.node]
     nodes.extend(accessor.node for accessor in accessors)
     if rotation is not None:
         nodes.append(rotation.node)
-    for node in root.walk():
-        if (
-            isinstance(node, JsFunctionDeclaration)
-            and node.id is not None
-            and node.id.name in wrapper_names
-        ):
-            nodes.append(node)
-        elif (
-            isinstance(node, JsVariableDeclarator)
-            and isinstance(node.id, JsIdentifier)
-            and node.id.name in aliases
-            and isinstance(node.init, JsIdentifier)
-            and node.init.name in aliases
-        ):
-            nodes.append(node)
+    nodes.extend(decoders.alias_declarators)
     return nodes
 
 
@@ -1245,8 +969,6 @@ class JsStringArrayResolver(ScopeProcessingTransformer):
             checksum.local_accessors,
             rotation.target,
             checksum_encoding_map,
-            checksum.wrappers,
-            checksum.prop_maps,
         )
         if resolved is None:
             return None
@@ -1264,30 +986,16 @@ class JsStringArrayResolver(ScopeProcessingTransformer):
         encoding_map: dict[str, Encoding] = {}
         for acc in accessors:
             encoding_map[acc.name] = _detect_encoding(acc.node)
-        accessor_names = set(encoding_map)
         rotation = _find_rotation_iife(body, array.name)
         resolved = self._strings_in_read_order(scope, array, accessors, encoding_map, rotation)
         if resolved is None:
             return
-        aliases: set[str] = set()
-        for acc in accessors:
-            aliases.add(acc.name)
-            for alias in _collect_accessor_aliases(body, acc.name):
-                aliases.add(alias)
-                encoding_map[alias] = encoding_map[acc.name]
-        raw_lookup = {i + primary.base_offset: s for i, s in enumerate(resolved)}
-        all_prop_maps = _collect_all_prop_maps(scope)
-        all_wrappers = _collect_all_wrappers(scope, accessor_names, all_prop_maps)
-        for wname, winfo in all_wrappers.items():
-            if wname not in encoding_map:
-                encoding_map[wname] = encoding_map.get(winfo.target, Encoding.NONE)
-        replaced = _replace_accessor_calls(
-            scope, aliases, raw_lookup, encoding_map, all_wrappers, all_prop_maps,
-        )
         assert self._root is not None
-        infrastructure = _infrastructure_nodes(
-            scope, array, accessors, rotation, set(all_wrappers), aliases,
-        )
+        model = model_cache(self, self._root).model
+        decoders = _find_decoders(model, scope, accessors, encoding_map)
+        raw_lookup = {i + primary.base_offset: s for i, s in enumerate(resolved)}
+        replaced = _replace_accessor_calls(scope, model, decoders, raw_lookup)
+        infrastructure = _infrastructure_nodes(array, accessors, rotation, decoders)
         if nothing_still_names(model_cache(self, self._root).model, infrastructure):
             _remove_infrastructure(infrastructure)
             self.mark_changed()
