@@ -1073,15 +1073,15 @@ class EffectModel:
 
     def function_escapes(self, func: Node) -> bool:
         """
-        Whether *func* may be invoked at a point the surrounding scope cannot enumerate as a resolvable
-        `name(...)` call site: an anonymous function (an IIFE, a callback, stored and called later), or a
-        named function whose binding is exported, which hands it to every importer, reassigned,
-        redeclared, or referenced anywhere other than as the callee of a direct call (aliased, passed
-        as an argument, `f.call(...)`). A reference inside a dynamic scope — a name a `with` body
-        resolves at runtime — counts too: the model cannot order or resolve it, so the function may be
-        invoked or aliased there with no static call site. A call to such a function can land at a
-        point no call site pins down; a function only ever called directly by name has all its
-        invocations enumerated by those call sites.
+        Whether *func* may be invoked at a point the surrounding scope cannot enumerate as a
+        resolvable `name(...)` call site: an anonymous function (an IIFE, a callback, stored and
+        called later), or a named function whose binding is exported, which hands it to every
+        importer, reassigned, redeclared, or referenced anywhere other than as the callee of a
+        direct call (aliased, passed as an argument, `f.call(...)`). A reference inside a dynamic
+        scope — a name a `with` body resolves at runtime — counts too: the model cannot order or
+        resolve it, so the function may be invoked or aliased there with no static call site. A call
+        to such a function can land at a point no call site pins down; a function only ever called
+        directly by name has all its invocations enumerated by those call sites.
         """
         names = self.model.function_names(func)
         if names is None:

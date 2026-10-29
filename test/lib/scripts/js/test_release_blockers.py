@@ -34,14 +34,16 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import (
     Program,
+    Reading,
     a_program,
     one_expected_failure_per_program,
     prints,
 )
 
 
-#: Programs reading a variable in the initializer of an instance field and changing the variable
-#: between the class statement and the construction, mapped to the behavior an engine gives them.
+#: Programs reading or writing a variable in the initializer of an instance field, and changing or
+#: reading the variable between the class statement and the construction, mapped to the behavior an
+#: engine gives them.
 A_VARIABLE_READ_BY_A_FIELD_WHEN_AN_INSTANCE_IS_CONSTRUCTED = {
     'a var reassigned after the class': Program(
         a_program("""
@@ -57,6 +59,31 @@ A_VARIABLE_READ_BY_A_FIELD_WHEN_AN_INSTANCE_IS_CONSTRUCTED = {
             """),
         prints('2'),
     ),
+    'a file-level var a field of a class its function returns reads': Program(
+        a_program("""
+            var x;
+            function f(n) {
+              x = n;
+              console.log(x);
+              return class { y = x; };
+            }
+            var C = f(1);
+            f(2);
+            console.log(new C().y);
+            """),
+        prints('1', '2', '2'),
+        Reading.COMMONJS,
+    ),
+    'a var a field writes and a function reads across a construction': Program(
+        a_program("""
+            var x = 1;
+            class C { y = (x = 2); }
+            function h() { var t = x; new C(); return t; }
+            console.log(h());
+            """),
+        prints('1'),
+        Reading.COMMONJS,
+    ),
 }
 
 
@@ -70,4 +97,10 @@ class TestAFieldReadsAVariableWhenAnInstanceIsConstructed(TestBase):
     `x = 2`: the dead-store removal drops that store as one nothing reads, and constant inlining
     writes the earlier value into the field. A class whose fields read state the program sets after
     declaring the class is a shape real input plausibly holds.
+
+    The same placement hides the field from the questions asked about the function around it. A
+    file-level `var` the function writes and a field reads is moved into the function, so each
+    class it returns keeps the value of the run that made it rather than the last one stored. And a
+    write in a field is not seen at `new C()`, so a value read before the construction is taken to
+    hold after it.
     """

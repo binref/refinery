@@ -6561,3 +6561,212 @@ class TestAFunctionRunWhereNoCallOfItsNameShowsIsSeenByTheModels(TestBase):
         cache = ModelCache(JsParser(source).parse(), DeobfuscationOptions(entrypoints=('onClick',)))
         binding = cache.model.root_scope.bindings['x']
         self.assertIsNone(localization_target(cache.liveness, cache.reaching, binding))
+
+
+#: Programs with a binding every reference of which lies in one function, which a helper nested in
+#: that function writes by calling the function again, mapped to what Node prints for each: the run
+#: that called the helper reads what the inner run stored.
+A_WRITE_CONFINED_TO_A_FUNCTION_THE_RUN_THAT_CALLED_IT_AGAIN_READS = {
+    'a file-level var': Program(
+        a_program("""
+            var x;
+            function f(n) {
+              x = n;
+              function h() { if (n) f(0); }
+              h();
+              return x;
+            }
+            console.log(f(1));
+            """),
+        prints('0'),
+        Reading.COMMONJS,
+    ),
+    'a var of an enclosing function': Program(
+        a_program("""
+            function outer() {
+              var x;
+              function f(n) {
+                x = n;
+                function h() { if (n) f(0); }
+                h();
+                return x;
+              }
+              return f(1);
+            }
+            console.log(outer());
+            """),
+        prints('0'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_WRITE_CONFINED_TO_A_FUNCTION_THE_RUN_THAT_CALLED_IT_AGAIN_READS)
+class TestAWriteConfinedToAFunctionIsSeenByTheRunThatCalledItAgain(TestBase):
+    """
+    The effect model does not count a write to a binding every reference of which lies in one
+    function (`refinery.lib.scripts.js.analysis.effects.EffectModel._confined_to`): no code outside
+    the function sees it once the call returns. That holds only while no two runs of the function
+    overlap. Here a helper nested in the function calls it again, the inner run stores into the
+    binding, and the outer run reads that value after the helper returns. The helper's call is
+    taken to do nothing and removed, so the outer run reads its own store.
+    """
+
+
+#: Programs leaving the body of a `for await` loop by a `break`, which waits for the iterator to
+#: close, while another run of the function may store into a file-level `var` the function reads
+#: after the loop, mapped to what Node prints for each.
+A_FOR_AWAIT_LOOP_LEFT_EARLY = {
+    'a break out of the loop': Program(
+        a_program("""
+            var x;
+            async function f(v) {
+              out: {
+                for await (var e of [0]) {
+                  x = v;
+                  break out;
+                }
+                x = 0;
+              }
+              console.log(x);
+            }
+            f(1);
+            f(2);
+            """),
+        prints('2', '2'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_FOR_AWAIT_LOOP_LEFT_EARLY)
+class TestAForAwaitLoopLeftEarlyWaitsForItsIteratorToClose(TestBase):
+    """
+    A `for await` loop left by a `break`, a `continue` to an outer label, a `return` or a throw
+    waits for its iterator to close, and other code, another run of the same function among it,
+    runs while it waits. The reaching model takes only the head of the loop for a point where the
+    body waits (`refinery.lib.scripts.js.analysis.reaching.ReachingModel.foreign_kills`), so a
+    file-level `var` read after the loop is moved into the function. Listing the exits needs the
+    control-flow graph to say which edges leave the loop.
+    """
+
+
+#: Programs that call a function again from the initializer of an instance field of a class the
+#: function constructs, mapped to what Node prints for each: the inner run stores into a file-level
+#: `var` the outer one reads after the construction.
+A_FUNCTION_CALLED_AGAIN_FROM_A_FIELD_OF_A_CLASS_IT_CONSTRUCTS = {
+    'a class declared outside the function': Program(
+        a_program("""
+            var x;
+            class K { y = f(0); }
+            function f(n) {
+              x = n;
+              if (n) new K();
+              console.log(x);
+            }
+            f(1);
+            """),
+        prints('0', '0'),
+        Reading.COMMONJS,
+    ),
+    'a class declared inside the function': Program(
+        a_program("""
+            var x;
+            function f(n) {
+              class C { y = n ? f(0) : 0; }
+              x = n;
+              new C();
+              console.log(x);
+            }
+            f(1);
+            """),
+        prints('0', '0'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionCalledAgainFromAFieldOfAClassItConstructsIsSeenToRunAgain(TestBase):
+    """
+    The initializer of an instance field runs at each construction, and the models place it at the
+    class statement (the release blocker `TestAFieldReadsAVariableWhenAnInstanceIsConstructed` of
+    `test.lib.scripts.js.test_release_blockers`), so a call in it is not seen where `new` runs it.
+    A function that calls itself again through such a field keeps the file-level `var` it reads
+    moved into it.
+    """
+
+    @wontfix(
+        'no program re-enters a function through a field initializer of a class it constructs; '
+        'the release blocker for field initializers covers the placement this rests on'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_FUNCTION_CALLED_AGAIN_FROM_A_FIELD_OF_A_CLASS_IT_CONSTRUCTS.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.deobfuscated(), row.prints)
+
+
+#: Classic scripts with a file-level `var` that the deobfuscation moves into a function or removes,
+#: whose presence on the global object the program observes, mapped to what Node prints for each:
+#: an `in` test of the global object for the name, and a `var undefined` assigned to, which every
+#: engine but JScript leaves undefined.
+A_FILE_LEVEL_VAR_OBSERVED_AS_A_PROPERTY_OF_THE_GLOBAL_OBJECT = {
+    'an in test of the global object': Program(
+        a_program("""
+            var x;
+            function f() { x = 1; return x; }
+            f();
+            console.log('x' in globalThis);
+            """),
+        prints('true'),
+        Reading.SCRIPT,
+    ),
+    'a var undefined assigned to': Program(
+        a_program("""
+            var undefined;
+            function f() { undefined = 5; return undefined; }
+            console.log(f());
+            """),
+        prints('undefined'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFileLevelVarObservedAsAPropertyOfTheGlobalObjectStays(TestBase):
+    """
+    A file-level `var` of a classic script is a property of the global object. An `in` test for its
+    name reads that property without naming the binding, so the removal of the declaration goes
+    unseen; and a `var undefined` declares nothing new, the global object holding `undefined`
+    already as a property no assignment changes, so moving it into a function makes a writable
+    local of it.
+    """
+
+    @wontfix(
+        'no program tests the global object for a var it declares itself, nor assigns to a var '
+        'named undefined'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_FILE_LEVEL_VAR_OBSERVED_AS_A_PROPERTY_OF_THE_GLOBAL_OBJECT.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.deobfuscated(), row.prints)
+
+
+class TestAFileLevelVarABrowserDefinesAsAnAccessorIsNotReadAsAPlainVariable(TestBase):
+    """
+    A browser defines some properties of the global object as accessors, `name` and `status` among
+    them, whose setter keeps the value as a string. A file-level `var` with such a name declares no
+    new property: it is that accessor, so `var name = 1` stores the string `'1'`. The deobfuscation
+    reads it as a plain variable and folds `typeof name` to `'number'`. Node defines no such
+    accessor, so the entry asks the deobfuscation for the browser host and states what the HTML
+    standard gives the setter.
+    """
+
+    @unittest.expectedFailure
+    def test_the_type_of_a_number_stored_into_name_is_not_folded_to_number(self):
+        source = 'var name = 1; console.log(typeof name);'
+        deobfuscated = deobfuscate_source(source, environment=HostEnvironment.browser)
+        self.assertNotIn("'number'", deobfuscated)
