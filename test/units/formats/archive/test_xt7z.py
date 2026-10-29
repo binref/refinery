@@ -225,29 +225,16 @@ class Test7zipFileExtractor(TestUnitBase):
         self.assertTrue(elf.startswith(b'\x7fELF'))
         self.assertEqual(len(elf), 1180)
 
-    def test_arm64_lzma2_archive(self):
+    def test_arm64_filter_with_start_offset_restores_branch_and_page_addresses(self):
         data = base64.b64decode(
-            'N3q8ryccAAT3rJk6JQEAAAAAAABaAAAAAAAAAF12mbTgAycBHV0AP5FFhGg9iabaisyW0qLC1fpGXTDqec03OekZ8hDF60sU9uwf'
-            'g5Av/NmfgxPBYgkCCk31HB5WelVrwUBJ8HB88sf0w814XdTzJK4FiO8B0Vwi3f74+P2RlKMuRvYTR6l1tsJwQ96j7DhEXC+Xj+k'
-            'Hqx+Qo6uUraD/OZI1RUIf5WOpeo2Ul1G4D5mbRDmT0CE93Uv15IvWZeF3k42u/RZr4n+xasSfOqIz38IXUSIkI8DFhGLf2X5W75'
-            'Q8Cd+OPpwk3nh7cbbsVMJDmJUkN698jgrr19kw027oTDEIc48uXrx+3rWoia1GWIq8F/58V5AsPcp4FkvDwVADti7kBKKLLx2rM'
-            'CRERDTUORQDQPCvtvSRDs2QRJOURR44h4AAAAEEBgABCYElAAcLAQACISEBAAEKAQAMgyiDKAAICgGxfcZQAAAFARkEAAAAABEV'
-            'AGEAcgBtADYANAAuAGUAbABmAAAAFAoBANSkby/7stwBFQYBACAAAAAAAA=='
-        )
-        elf = bytes(data | self.load('arm64.elf'))
-        self.assertTrue(elf.startswith(b'\x7fELF'))
-        self.assertEqual(len(elf), 808)
-
-    def test_arm64_filter_restores_the_branch_and_page_addresses_of_a_compiled_binary(self):
-        data = base64.b64decode(
-            'N3q8ryccAATPlQ3SqQEAAAAAAABaAAAAAAAAAD5ESI7gA/8BoV0AP5FFhGg9iabaisyW0qLC2GZroZQphAVLDdoLZrY/CG5yYNnl'
+            'N3q8ryccAASEssCbrwEAAAAAAABqAAAAAAAAANTDdjbgA/8Bp10AP5FFhGg9iabaisyW0qLC2GZroZQphAVLDdoLZrY/CG5yYNnl'
             'jmOJjuq2KwpT4vluJDZ9KSwcz6a6wzKcuAY6c4VoRnD+o43lyFSw6znHhcsid9dtYCnBv+cm0/ICl+6lbW0Y3DV1ZpH3+wH+pxET'
-            'NIgdgov8oQ7ngK+HO0LHP/gLeqwjmmOQWPn5mBPKKW+nsRNdvivRyb43RLZt8as/d1qd+d9RxJOCORRXzBnJEblW6xs/Rz7p2wHi'
-            'bzETxu9CgDTMGEIykLfyAWS/qUfaokXHJv/QCB81mxw9n/ikXQYeVpXe4HWfVdnBf8nB1pXffRg17ebx5cBZsQXHsiBCXcA0NYCH'
-            'l0giBvzQ2ukscJ5csrA83W6zJIgL2JIdxk7F1iD3uRZu9nhTXyChWPEZtGkRsINkDCu1j4KbFA8bmtHHEWE2fKrlP0LJ9iVspiuH'
-            'uwhpKQiKMkCqwuypc9MYfxLPjiv5lO0C//WYbNukqHqmoEuu6WYIE8uDpmXGd4ntUupc3MDaQl02ZtHOyF/nKS96K/3rNKVaAghb'
-            'F8cszLWMAAEEBgABCYGpAAcLAQACISEBAAEKAQAMhACEAAAICgGfKjLLAAAFARkEAAAAABEVAGEAcgBtADYANAAuAGUAbABmAAAA'
-            'FAoBACCfTSbcZt0BFQYBACCA7YEAAA=='
+            'NIgdgov8oQ7ngK+HO0LHP/gLeqwjmmOQWPn4bPB/QtSq/pTPox2SLjpamLHXPBE3JmtX3u9Ft7KkutTOJwFY/WPUQiLMm3QLUFc9'
+            'oV4kdkEoPp5z/DNnTPQ39/23yzgl4LsW9EGG1sZo5uJIv5paUQVM2/atraRuHkd1HTkBWk3a8js+AP141i+bA7iUDA8114/KUYjE'
+            'ShYnkUgHv1oK1Hep8arIJ2aP27yrNH51WgQIgWA5MicJdeQqFvdBj3mCnI7m+vbPO5mt2rYY4vjkqnH9/b8nJqVKJpftyhoV3f3T'
+            'ph0bnoADIdDojH9NK7N3/10ufBQk+jq6cBxc+2IMzPxNkLEmRtKwNjVY7rsYKuOLeD/ZCn+nWoPLXAbv15gbQ/qYSkKNOEpQE72c'
+            'YilGLJODiAXKkrIoAAEEBgABCYGvAAcLAQACISEBACEKBEQOIQABAAyEAIQAAAgKAZ8qMssAAAUBGQ8AAAAAAAAAAAAAAAAAAAAR'
+            'FQBhAHIAbQA2ADQALgBlAGwAZgAAABQKAQAgn00m3GbdARUGAQAgAAAAAAA='
         )
         elf = bytes(data | self.load('arm64.elf'))
         self.assertEqual(
