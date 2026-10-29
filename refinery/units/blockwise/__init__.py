@@ -18,7 +18,7 @@ from refinery.lib.types import INF, InfiniteIterable, Param, buf, isq
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
-    from typing import Generator, Iterable, Iterator, Literal, TypeVar
+    from typing import Callable, Generator, Iterable, Iterator, Literal, TypeVar
 
     from numpy import ndarray
     _I = Iterable[int] | list[int] | int
@@ -172,6 +172,24 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     def _log_argument_reduction(self, original: int, reduced: int):
         self.log_warn(F'reduced argument to 0x{reduced:0{self.fbits // 4}X}; original value was 0x{original:X}')
 
+    def _argument_reduction_logger(self) -> Callable[[int, int], None]:
+        """
+        Returns a function that logs argument reductions, warning about the first three of them
+        before suppressing all further warnings.
+        """
+        warnings = 3
+
+        def log(original: int, reduced: int):
+            nonlocal warnings
+            if not warnings:
+                return
+            warnings -= 1
+            self._log_argument_reduction(original, reduced)
+            if not warnings:
+                self.log_warn('additional warnings are suppressed')
+
+        return log
+
     def _mask_argument(self, it: _I) -> _I:
         """
         Reduces the given argument to the unit's block precision, warning about the first few
@@ -180,20 +198,20 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         wrapped so that the result is still recognized as infinite.
         """
         if isinstance(it, int):
-            return it & self.fmask
+            out = it & self.fmask
+            if out != it:
+                self._log_argument_reduction(it, out)
+            return out
         if isinstance(it, (bytes, bytearray)):
             return it
 
         def reduced(it: Iterable[int]):
             mask = self.fmask
-            warnings = 3
+            log = self._argument_reduction_logger()
             for block in it:
                 out = block & mask
-                if warnings and out != block:
-                    warnings -= 1
-                    self._log_argument_reduction(block, out)
-                    if not warnings:
-                        self.log_warn('additional warnings are suppressed')
+                if out != block:
+                    log(block, out)
                 yield out
 
         if isinstance(it, InfiniteIterable):
@@ -227,11 +245,10 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         """
         Prepares an argument returned by `_argument_parse_hook`: unless the hook has already reduced
         it to the unit's block precision, the argument is masked and then infinitized. When `vector`
-        is set, infinite arguments are not reduced here because the caller applies the reduction
-        with vectorized operations; this is used only by the numpy code path in `_fastblock`, which
-        reduces them in `_argument_array`.
+        is set, integers and infinite arguments are not reduced here because the caller reduces them
+        itself; this is used only by the numpy code path in `_fastblock`.
         """
-        if not masked and not (vector and isinstance(it, InfiniteIterable)):
+        if not masked and not (vector and isinstance(it, (int, InfiniteIterable))):
             it = self._mask_argument(it)
         return self._infinitize_argument(min_size, it)
 
@@ -250,28 +267,25 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         import numpy
         return numpy
 
-    def _argument_array(self, na: Iterator[int], dtype, num_blocks: int) -> ndarray:
+    def _argument_array(
+        self,
+        na: Iterator[int],
+        dtype,
+        num_blocks: int,
+        log: Callable[[int, int], None],
+    ) -> ndarray:
         """
         Converts an infinite argument that has not been reduced yet into a numpy array of the given
-        dtype, reducing all values to the unit's block precision. The argument is pulled and
-        converted in chunks so that the temporary memory usage does not grow with the input size.
-        Every chunk is staged in a list before it is converted: values too large for the wide
-        integer type are reduced in Python, so that the pull can never fail halfway through an
-        argument, which shared one-shot arguments would not survive.
+        dtype, reducing all values to the unit's block precision and reporting reductions via
+        `log`. The argument is pulled and converted in chunks so that the temporary memory usage
+        does not grow with the input size. Every chunk is staged in a list before it is converted,
+        and values too large for the wide integer type are reduced in Python: an overflow would
+        otherwise abort the pull halfway through the argument, which the one-shot arguments shared
+        with the fallback paths would not survive.
         """
         numpy = self._numpy
         wide = numpy.dtype(F'{self._byte_order_symbol}u8')
         result = numpy.empty(num_blocks, dtype)
-        warnings = 3
-
-        def warn(original: int, reduced: int):
-            nonlocal warnings
-            if not warnings:
-                return
-            warnings -= 1
-            self._log_argument_reduction(original, reduced)
-            if not warnings:
-                self.log_warn('additional warnings are suppressed')
 
         pos = 0
         while pos < num_blocks:
@@ -285,12 +299,12 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                 reduced = [v & self.fmask for v in chunk]
                 for original, masked in zip(chunk, reduced):
                     if original != masked:
-                        warn(original, masked)
+                        log(original, masked)
                 block = numpy.fromiter(reduced, wide, take)
             else:
                 excess = numpy.flatnonzero(block > self.fmask)
                 for k in excess[:3].tolist():
-                    warn(chunk[k], int(block[k]) & self.fmask)
+                    log(chunk[k], int(block[k]) & self.fmask)
                 block &= self.fmask
             result[pos:pos + take] = block
             pos += take
@@ -329,19 +343,26 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
 
         br_args = []
         np_args = []
+        loggers = []
 
         for it, masked, na in _hooks_executed:
-            br_args.append(na)
+            log = self._argument_reduction_logger()
             if isinstance(it, int):
                 if not masked:
-                    it &= self.fmask
+                    reduced = it & self.fmask
+                    if reduced != it:
+                        log(it, reduced)
+                    it = reduced
+                na = itertools.repeat(int(it))
                 npa = int(it)
             elif self.precision is INF:
                 npa = numpy.array(list(itertools.islice(na, num_blocks)), dtype=dtype)
             elif isinstance(it, InfiniteIterable):
-                npa = self._argument_array(na, dtype, num_blocks)
+                npa = self._argument_array(na, dtype, num_blocks, log)
             else:
                 npa = numpy.fromiter(na, dtype, num_blocks)
+            loggers.append(log)
+            br_args.append(na)
             np_args.append(npa)
 
         if (_truncate := self._truncate) >= 2 or (_t := len(data) - num_blocks * self.blocksize) <= 0:
@@ -350,11 +371,11 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             rest = data[-_t:]
             if _truncate < 1:
                 last_ops = []
-                for a in br_args:
+                for a, log in zip(br_args, loggers):
                     block = next(a)
                     reduced = block & self.fmask
                     if reduced != block:
-                        self._log_argument_reduction(block, reduced)
+                        log(block, reduced)
                     last_ops.append(reduced)
                 last_int = int.from_bytes(rest, self._byte_order_adjective)
                 dst_tail = self.operate(last_int, *last_ops) & self.fmask
