@@ -254,6 +254,10 @@ class TestLiveness(TestBase):
                 _, lv = self._build(source)
                 self.assertIsNone(lv.pseudo_local_owner(self._binding(lv, 'x')))
 
+    def test_a_var_a_function_reads_before_any_write_is_not_dead_on_its_entry(self):
+        ast, lv = self._build('var x; function f() { return x; } function g() { x = 1; }')
+        self.assertFalse(lv.is_dead_on_entry(self._binding(lv, 'x'), self._func(ast, 'f')))
+
     def test_a_binding_read_after_a_call_is_live_around_it(self):
         ast, lv = self._build('function f() { var x = 1; g(); return x; }')
         self.assertIn(self._local(lv, ast, 'x'), self._live_around_the_call(lv, ast, 'g'))

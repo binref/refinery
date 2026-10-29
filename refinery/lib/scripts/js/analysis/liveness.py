@@ -21,14 +21,16 @@ does not mask an earlier live store. Only a function's own, uncaptured `var`/`le
 — anything a closure or another scope might read is conservatively kept.
 
 Beyond the locals, the dataflow tracks a script-scope `var` every read and store of which lies in
-the body of one function inside that function's graph (`pseudo_local_owner`), so that
+the body of one function inside that function's graph (`LivenessModel.pseudo_local_owner`), so that
 `refinery.lib.scripts.js.analysis.localization` can ask where it is live there. The tracking is kept
-separate from `is_dead_store`, which retains its strict function-local candidacy, so widening the
-dataflow never widens what counts as a removable dead store.
+separate from `LivenessModel.is_dead_store`, which retains its strict function-local candidacy, so
+widening the dataflow never widens what counts as a removable dead store.
 
-The public surface — `LivenessModel.live_in`, `live_out`, `live_around`, `node_of`,
-`is_dead_store`, `dead_stores`, `is_dead_on_entry`, `pseudo_local_owner`, `build_liveness` — is
-keyed to AST node identity, matching the contract of the model and effect layers.
+The public surface — `LivenessModel.live_in`, `LivenessModel.live_out`,
+`LivenessModel.live_around`, `LivenessModel.node_of`, `LivenessModel.is_dead_store`,
+`LivenessModel.dead_stores`, `LivenessModel.is_dead_on_entry`, `LivenessModel.pseudo_local_owner`,
+`build_liveness` — is keyed to AST node identity, matching the contract of the model and effect
+layers.
 """
 from __future__ import annotations
 
@@ -78,7 +80,6 @@ class LivenessModel:
         self._flow = control_flow if control_flow is not None else build_control_flow_model(model.root)
         self._live_in: dict[int, frozenset[Binding]] = {}
         self._live_out: dict[int, frozenset[Binding]] = {}
-        self._pseudo_locals: dict[int, frozenset[Binding]] = {}
         self._pseudo_local_owners: dict[Binding, Node] = {}
         self._index_pseudo_locals()
         for graph in self._flow.graphs.values():
@@ -166,6 +167,8 @@ class LivenessModel:
         graph = self._flow.graph_of(function)
         if graph is None:
             return False
+        if not self._analysable(graph, binding, self.model.function_scope(graph.owner)):
+            return False
         return binding not in self.live_in(graph.entry)
 
     def pseudo_local_owner(self, binding: Binding) -> Node | None:
@@ -179,19 +182,15 @@ class LivenessModel:
 
     def _index_pseudo_locals(self):
         """
-        Group the script-scope `var` bindings that each behave as a single function's locals, keyed
-        by that function, so the dataflow can track them inside it: those `_sole_owning_function`
-        finds an owner for.
+        Record, for each script-scope `var` binding that behaves as a single function's local, that
+        function, so the dataflow can track it inside it: the owner `_sole_owning_function` finds.
         """
-        grouped: dict[int, set[Binding]] = {}
         for binding in self.model.root_scope.bindings.values():
             if binding.kind is not BindingKind.VAR:
                 continue
             function = self._sole_owning_function(binding)
             if function is not None:
-                grouped.setdefault(id(function), set()).add(binding)
                 self._pseudo_local_owners[binding] = function
-        self._pseudo_locals = {owner: frozenset(bindings) for owner, bindings in grouped.items()}
 
     def _compute_graph(self, graph: ControlFlowGraph):
         owner_scope = self.model.function_scope(graph.owner)
@@ -362,12 +361,12 @@ class LivenessModel:
         """
         Whether *binding* is tracked in *graph*: either an uncaptured function-local of the graph's
         own function (the strict store candidate) or a script-scope `var` that function owns
-        (`pseudo_local_owner`). The second case feeds only the live sets; it never reaches
-        `is_dead_store`, which keeps the strict candidacy.
+        (`LivenessModel.pseudo_local_owner`). The second case feeds only the live sets; it never
+        reaches `LivenessModel.is_dead_store`, which keeps the strict candidacy.
         """
         if self._trackable(binding, owner_scope):
             return True
-        return binding in self._pseudo_locals.get(id(graph.owner), frozenset())
+        return self._pseudo_local_owners.get(binding) is graph.owner
 
     def _sole_owning_function(self, binding: Binding) -> Node | None:
         """

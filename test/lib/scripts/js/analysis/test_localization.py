@@ -44,7 +44,8 @@ class TestLocalization(TestBase):
         self.assertMovesIntoF(
             'var x;'
             ' function f(n) { x = []; for (var i = 0; i < n; i++) { x.push(i); } return x; }'
-            ' console.log(f(3));')
+            ' console.log(f(3));'
+        )
 
     def test_pseudo_global_read_before_write_is_not_localizable(self):
         self.assertStays('var x; function f() { x = (x || 0) + 1; return x; } f(); f();')
@@ -64,23 +65,36 @@ class TestLocalization(TestBase):
     def test_reflection_surface_disables_localization(self):
         self.assertStays('var x; function f() { x = 1; return x; } eval(payload);')
 
+    def test_a_var_the_function_reaches_through_a_name_holding_the_global_object_stays(self):
+        for source in (
+            'var G = this; var x; function f(v) { x = v; console.log(G.x); } f(1);',
+            'var G = this; var x; function f(v) { x = v; G.x = 5; console.log(x); } f(1);',
+        ):
+            with self.subTest(source=source):
+                self.assertStays(source)
+
     def test_localizable_bindings_lists_each_pseudo_global_with_its_function(self):
         ast, cache = self._build(
             'var a, b;'
             ' function f() { a = []; b = 0; while (b < 3) { a.push(b); b = b + 1; } return a; }'
-            ' f();')
+            ' f();'
+        )
         f = self._func(ast, 'f')
         bindings = cache.model.root_scope.bindings
-        self.assertEqual(localizable_bindings(cache.liveness, cache.reaching), [
-            (bindings['a'], f),
-            (bindings['b'], f),
-        ])
+        self.assertEqual(
+            localizable_bindings(cache.liveness, cache.reaching),
+            [
+                (bindings['a'], f),
+                (bindings['b'], f),
+            ],
+        )
 
     def test_a_var_read_after_the_body_waits_while_another_run_may_store_it_stays(self):
         for source in (
             'var x; async function f(v) { x = v; await null; return x; }',
             'var x; function* f(v) { x = v; yield; return x; }',
             'var x; async function f(v) { x = v; for await (var e of [0]); return x; }',
+            'var x; async function* f(v) { x = v; try { return 0; } finally { console.log(x); } }',
         ):
             with self.subTest(source=source):
                 self.assertStays(source)
@@ -116,6 +130,7 @@ class TestLocalization(TestBase):
             'var x; function f(n) { x = n; console.log(x); if (n) f(n - 1); }',
             'var x; function f(n) { if (n) f(n - 1); x = n; console.log(x); }',
             'var x; async function f(v) { await null; x = v; console.log(x); }',
+            'var x; async function f(v) { x = v; try { return 0; } finally { console.log(x); } }',
             'var x; function g(v) { return v + 1; } function f(n) { x = g(n); console.log(x); }',
             'var x; function f(n) { x = [n]; x.push(n); return x; }',
         ):

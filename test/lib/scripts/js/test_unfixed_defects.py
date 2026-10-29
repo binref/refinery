@@ -3267,17 +3267,6 @@ A_GLOBAL_REACHED_INSIDE_A_CALL_THROUGH_A_NAME_HOLDING_THE_GLOBAL_OBJECT = {
         prints('2'),
         Reading.SCRIPT,
     ),
-    'a read after a write by name in a function called twice': Program(
-        a_program("""
-            var g;
-            var w = global || {};
-            function f() { g = 1; console.log(w.g); }
-            f();
-            f();
-            """),
-        prints('1', '1'),
-        Reading.SCRIPT,
-    ),
 }
 
 
@@ -3289,9 +3278,8 @@ class TestAGlobalReachedInsideACallThroughANameHoldingTheGlobalObjectIsReachedTh
     is reached through the global object is decided a second time, from how the base of each
     recorded member access is spelled: `w` is not a spelling of the global object, so `g` is taken
     for a variable no member access reaches. The effect summary of a function writing `w.g` does
-    not list `g` either, so a read after the call is folded to the value the declaration spelled;
-    and `g = 1` inside `f` is removed as a store no other code reads. The same write made at the
-    top level is read correctly; the law
+    not list `g` either, so a read after the call is folded to the value the declaration spelled.
+    The same write made at the top level is read correctly; the law
     `test.lib.scripts.js.deobfuscation.test_a_name_holding_the_global_object` holds it.
 
     The rule that closes it: the model marks each reference it records through the global object as
@@ -6546,6 +6534,13 @@ class TestAFunctionRunWhereNoCallOfItsNameShowsIsSeenToRun(TestBase):
     reads two of these channels for its own question and the effect model reads none. A value is
     then taken to survive a run that writes it, and a file-level `var` is moved into a function
     another run of which writes it.
+    """
+
+
+class TestAFunctionRunWhereNoCallOfItsNameShowsIsSeenByTheModels(TestBase):
+    """
+    The defect of `TestAFunctionRunWhereNoCallOfItsNameShowsIsSeenToRun`, asked of the reaching
+    model and of the localization rule directly, which needs no engine.
     """
 
     @unittest.expectedFailure

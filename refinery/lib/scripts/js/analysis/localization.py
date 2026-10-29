@@ -25,6 +25,7 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel
 from refinery.lib.scripts.js.analysis.model import Binding
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
+from refinery.lib.scripts.js.model import JsIdentifier
 
 
 def localization_target(
@@ -36,9 +37,10 @@ def localization_target(
     The function into which *binding*, a script-scope `var`, can be soundly relocated, or `None`. A
     binding qualifies when one function's body holds every read of it and every store into it
     (`refinery.lib.scripts.js.analysis.liveness.LivenessModel.pseudo_local_owner`), every run of
-    that function reads only what the run stored (see the module documentation), no reference
-    reaches it through a global-object alias member (`globalThis.x`, which would no longer find it
-    once it leaves the global object), it is not exported (an importer reads its value where the
+    that function reads only what the run stored (see the module documentation), every reference
+    spells its name rather than reaching it through an object — a member of a name that may hold
+    the global object, `globalThis.x` as much as `G.x` after `var G = this`, would no longer find it
+    once it leaves the global object — it is not exported (an importer reads its value where the
     module leaves it, which a body local cannot answer), the program keeps no reflection surface
     that could read it by name, and the program stores no property on the global object under a
     runtime key (`refinery.lib.scripts.js.analysis.model.SemanticModel.has_opaque_global_write`):
@@ -47,7 +49,9 @@ def localization_target(
     model = liveness.model
     if model.has_reflection_surface() or model.has_opaque_global_write():
         return None
-    if binding.exported or binding.has_member_reference:
+    if binding.exported:
+        return None
+    if not all(isinstance(ref, JsIdentifier) for ref in (*binding.reads, *binding.writes)):
         return None
     function = liveness.pseudo_local_owner(binding)
     if function is None:

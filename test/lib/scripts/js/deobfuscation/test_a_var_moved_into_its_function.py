@@ -3,7 +3,8 @@ A file-level `var` whose every reference lies in one function, which
 `refinery.lib.scripts.js.deobfuscation.unused.JsUnusedCodeRemoval` moves into that function where
 every run of it reads only what that run stored
 (`refinery.lib.scripts.js.analysis.localization`). Each program is written by hand, and each row
-says what Node prints for it run as a CommonJS file.
+says what Node prints for it run the way its reading names: as a CommonJS file, or as a classic
+script where the row reaches the global object.
 """
 from __future__ import annotations
 
@@ -17,8 +18,9 @@ from refinery.lib.scripts.js.options import ExecutionModel
 
 #: Programs with a file-level `var` one function writes before it reads it, which another run of
 #: that function writes in between, mapped to what Node prints for each: the run waits at an
-#: `await`, a `yield` or the head of a `for await` loop, calls itself, calls code that calls it, or
-#: reads the `var` after such a call in the statement that makes it.
+#: `await`, a `yield`, the head of a `for await` loop or the `return` of an async generator, calls
+#: itself, calls code that calls it, or reads the `var` after such a call in the statement that
+#: makes it.
 ANOTHER_RUN_WRITES: dict[str, Program] = {
     'an await': Program(
         a_program("""
@@ -62,6 +64,23 @@ ANOTHER_RUN_WRITES: dict[str, Program] = {
             }
             f(1);
             f(2);
+            """),
+        prints('2', '2'),
+        Reading.COMMONJS,
+    ),
+    'the return of an async generator': Program(
+        a_program("""
+            var x;
+            async function* f(v) {
+              x = v;
+              try {
+                return 0;
+              } finally {
+                console.log(x);
+              }
+            }
+            f(1).next();
+            f(2).next();
             """),
         prints('2', '2'),
         Reading.COMMONJS,
@@ -155,9 +174,40 @@ READ_OR_WRITTEN_IN_THE_PARAMETERS: dict[str, Program] = {
     ),
 }
 
+#: Classic scripts with a file-level `var` one function writes before it reads it, which the
+#: function also reaches as a property of a name holding the global object, mapped to what Node
+#: prints for each: the `var` is that property only while the file declares it.
+REACHED_THROUGH_THE_GLOBAL_OBJECT: dict[str, Program] = {
+    'a member of a name holding the global object': Program(
+        a_program("""
+            var G = this;
+            var x;
+            function f(v) {
+              x = v;
+              console.log(G.x);
+            }
+            f(1);
+            """),
+        prints('1'),
+        Reading.SCRIPT,
+    ),
+    'a read after a write by name in a function called twice': Program(
+        a_program("""
+            var g;
+            var w = global || {};
+            function f() { g = 1; console.log(w.g); }
+            f();
+            f();
+            """),
+        prints('1', '1'),
+        Reading.SCRIPT,
+    ),
+}
+
 #: Programs with a file-level `var` one function writes before it reads it, which no other run of
 #: that function writes in between, mapped to what Node prints for each: the run reads it before
-#: it calls itself, calls itself or waits before it stores it, or calls code that cannot run it.
+#: it calls itself, calls itself or waits before it stores it, calls code that cannot run it, or
+#: returns from an async function, which does not wait there.
 NO_OTHER_RUN_WRITES: dict[str, Program] = {
     'a read before the call': Program(
         a_program("""
@@ -215,22 +265,41 @@ NO_OTHER_RUN_WRITES: dict[str, Program] = {
         prints('2', '3'),
         Reading.COMMONJS,
     ),
+    'the return of an async function': Program(
+        a_program("""
+            var x;
+            async function f(v) {
+              x = v;
+              try {
+                return 0;
+              } finally {
+                console.log(x);
+              }
+            }
+            f(1);
+            f(2);
+            """),
+        prints('1', '2'),
+        Reading.COMMONJS,
+    ),
 }
 
 
 STAYS = {**ANOTHER_RUN_WRITES, **READ_OR_WRITTEN_IN_THE_PARAMETERS}
+
+EVERY_PROGRAM = {**STAYS, **REACHED_THROUGH_THE_GLOBAL_OBJECT, **NO_OTHER_RUN_WRITES}
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAVarMovedIntoItsFunctionBehavesAsItDid(TestBase):
 
     def test_node_prints_what_each_row_pins(self):
-        for label, row in {**STAYS, **NO_OTHER_RUN_WRITES}.items():
+        for label, row in EVERY_PROGRAM.items():
             with self.subTest(label=label):
                 self.assertEqual(row.behaves(), row.prints)
 
     def test_each_program_still_prints_it_after_the_deobfuscation(self):
-        for label, row in {**STAYS, **NO_OTHER_RUN_WRITES}.items():
+        for label, row in EVERY_PROGRAM.items():
             with self.subTest(label=label):
                 self.assertEqual(row.read(), row.required())
 

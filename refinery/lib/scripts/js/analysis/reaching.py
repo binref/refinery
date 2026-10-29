@@ -47,15 +47,19 @@ from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import Binding
 from refinery.lib.scripts.js.model import (
+    FUNCTION_NODES,
     JsAssignmentExpression,
     JsAwaitExpression,
     JsCallExpression,
     JsForOfStatement,
     JsIdentifier,
     JsMemberExpression,
+    JsReturnStatement,
     JsScript,
     JsVariableDeclarator,
     JsYieldExpression,
+    is_async_function,
+    is_generator_function,
     strip_parens,
 )
 
@@ -84,10 +88,23 @@ class _BodyEvents(NamedTuple):
     — a parameter default of a function *expression* is one — so it can neither be ordered here
     nor dismissed, and the caller has to refuse rather than drop the kill. The *suspensions* are
     the points at which its run may stop and resume later, with other code run in between: an
-    `await`, a `yield`, and the head of a `for await` loop, which awaits each value.
+    `await`, a `yield`, the head of a `for await` loop, which awaits each value, and the `return`
+    of a value in an async generator, which awaits that value before any `finally` around it runs.
     """
     calls: list[tuple[JsCallExpression, CfgNode | None]]
     suspensions: list[tuple[Node, CfgNode | None]]
+
+
+class _CallWriters(NamedTuple):
+    """
+    The calls of one graph's body grouped by the function they run, each with the control-flow node
+    that evaluates it, or with `None` where the graphs place it nowhere (`_BodyEvents`): *stated*
+    maps each function the model states a call runs to the calls that run it, and *unstated* holds
+    the calls whose callee a name this file binds holds while the model will not state which
+    function that is. A call of anything else is in neither.
+    """
+    stated: dict[Node, list[tuple[JsCallExpression, CfgNode | None]]]
+    unstated: list[tuple[JsCallExpression, CfgNode | None]]
 
 
 class _Changes(NamedTuple):
@@ -108,8 +125,9 @@ class ReachingModel:
     Reaching-value verdicts for one script, built over a
     `refinery.lib.scripts.js.analysis.dominance.DominanceModel` and a
     `refinery.lib.scripts.js.analysis.effects.EffectModel`. Ask whether the value a binding holds at
-    a definition is the value observed at a use with `value_preserved`, and where code other than a
-    body's own statements may change a binding with `foreign_kills`. Build through `build_reaching`.
+    a definition is the value observed at a use with `ReachingModel.value_preserved`, and where code
+    other than a body's own statements may change a binding with `ReachingModel.foreign_kills`.
+    Build through `build_reaching`.
     """
 
     def __init__(self, dominance: DominanceModel, effects: EffectModel):
@@ -119,6 +137,7 @@ class ReachingModel:
         self._kill_cache: dict[tuple[int, int, int], _Kills | None] = {}
         self._change_cache: dict[tuple[int, int], _Changes | None] = {}
         self._event_cache: dict[int, _BodyEvents] = {}
+        self._writer_cache: dict[int, _CallWriters] = {}
         self._cycle_cache: dict[int, bool] = {}
         self._between = ReachabilityQuery(dominance, Projection.MAY)
 
@@ -159,8 +178,8 @@ class ReachingModel:
         The sites in the body of *owner*, a function or the script, at which *binding* may change
         value other than through a store the body spells: a call that may write it, a point where
         the body suspends while other code or another run of the body may write it, and a located
-        reflective hazard. `None` where these cannot be listed, under the refusals `value_preserved`
-        answers `False` for, and where *owner* has no graph.
+        reflective hazard. `None` where these cannot be listed, under the refusals
+        `ReachingModel.value_preserved` answers `False` for, and where *owner* has no graph.
         """
         graph = self.dominance.graph_of(owner)
         if graph is None:
@@ -239,15 +258,15 @@ class ReachingModel:
         a point no node here stands for.
 
         A point where the body stops and other code runs before it resumes — an `await`, a `yield`,
-        the head of a `for await` loop (`_BodyEvents.suspensions`) — is a kill of a binding some
-        store outside this graph writes: that code may be the code that writes it. It is a kill as
-        well of a binding a store in this graph writes, where every run of the body shares the
-        binding (`_shared_by_every_run`): another run of the same body may write it while this one
-        waits. The calls `f(1)` and `f(2)` of
+        the head of a `for await` loop, the `return` of a value in an async generator
+        (`_BodyEvents.suspensions`) — is a kill of a binding some store outside this graph writes:
+        that code may be the code that writes it. It is a kill as well of a binding a store in this
+        graph writes, where every run of the body shares the binding (`_shared_by_every_run`):
+        another run of the same body may write it while this one waits. In
 
             var x; async function f(v) { x = v; var r = x; await 0; return r; }
 
-        leave `x` holding `2` when the first one resumes.
+        the calls `f(1)` and `f(2)` leave `x` holding `2` when the first one resumes.
         """
         if (
             binding.has_indefinite_write
@@ -279,18 +298,18 @@ class ReachingModel:
                 if node is None:
                     return None
                 foreign.append((suspension, node))
-        for call, node in events.calls:
-            target = self.effects.static_callee(call)
-            if target is None:
-                if not self.effects.a_name_this_file_binds_holds_the_callee(call):
-                    continue
-                if not self.effects.some_function_can_mutate(binding):
-                    continue
-            elif not self.effects.function_can_mutate(target, binding):
-                continue
-            if node is None:
-                return None
-            foreign.append((call, node))
+        writers = self._call_writers(graph)
+        mutating = [
+            calls for target, calls in writers.stated.items()
+            if self.effects.function_can_mutate(target, binding)
+        ]
+        if writers.unstated and self.effects.some_function_can_mutate(binding):
+            mutating.append(writers.unstated)
+        for calls in mutating:
+            for call, node in calls:
+                if node is None:
+                    return None
+                foreign.append((call, node))
         return _Changes(tuple(stores), tuple(foreign), tuple(opaque))
 
     def _located_hazards(
@@ -345,7 +364,13 @@ class ReachingModel:
         cached = self._event_cache.get(id(graph))
         if cached is None:
             cached = _BodyEvents([], [])
-            for node in graph.owner.walk():
+            owner = graph.owner
+            awaits_what_it_returns = (
+                isinstance(owner, FUNCTION_NODES)
+                and is_async_function(owner)
+                and is_generator_function(owner)
+            )
+            for node in owner.walk():
                 if isinstance(node, JsCallExpression):
                     located = self.dominance.locate(node)
                     if located is None:
@@ -355,6 +380,11 @@ class ReachingModel:
                 elif (
                     isinstance(node, (JsAwaitExpression, JsYieldExpression))
                     or (isinstance(node, JsForOfStatement) and node.is_await)
+                    or (
+                        awaits_what_it_returns
+                        and isinstance(node, JsReturnStatement)
+                        and node.argument is not None
+                    )
                 ):
                     located = self.dominance.locate(node)
                     if located is None:
@@ -362,6 +392,24 @@ class ReachingModel:
                     elif located[0] is graph:
                         cached.suspensions.append((node, located[1]))
             self._event_cache[id(graph)] = cached
+        return cached
+
+    def _call_writers(self, graph: ControlFlowGraph) -> _CallWriters:
+        """
+        The calls of *graph*'s body grouped by the function they run, memoized per graph: each
+        callee is resolved once, so a binding is asked about once per function the body calls and
+        not once per call.
+        """
+        cached = self._writer_cache.get(id(graph))
+        if cached is None:
+            cached = _CallWriters({}, [])
+            for call, node in self._body_events(graph).calls:
+                target = self.effects.static_callee(call)
+                if target is not None:
+                    cached.stated.setdefault(target, []).append((call, node))
+                elif self.effects.a_name_this_file_binds_holds_the_callee(call):
+                    cached.unstated.append((call, node))
+            self._writer_cache[id(graph)] = cached
         return cached
 
     def _shared_by_every_run(self, binding: Binding, graph: ControlFlowGraph) -> bool:

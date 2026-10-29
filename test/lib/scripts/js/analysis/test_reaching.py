@@ -10,6 +10,7 @@ from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsFunctionDeclaration,
     JsIdentifier,
+    JsReturnStatement,
     JsVariableDeclarator,
 )
 from refinery.lib.scripts.js.parser import JsParser
@@ -352,8 +353,9 @@ class TestReaching(TestBase):
 
     def _foreign_kills(self, source: str) -> tuple[Node, list[Node] | None]:
         """
-        The tree of *source* and the points `ReachingModel.foreign_kills` lists for `x` in the body
-        of the function `f`.
+        The tree of *source* and the points
+        `refinery.lib.scripts.js.analysis.reaching.ReachingModel.foreign_kills` lists for `x` in the
+        body of the function `f`.
         """
         ast = JsParser(source).parse()
         cache = ModelCache(ast)
@@ -387,6 +389,15 @@ class TestReaching(TestBase):
 
     def test_a_suspension_is_no_foreign_kill_of_a_local_of_each_run(self):
         _, sites = self._foreign_kills('async function f() { var x = 1; await 0; return x; }')
+        self.assertEqual(sites, [])
+
+    def test_the_return_of_a_value_in_an_async_generator_is_a_foreign_kill(self):
+        ast, sites = self._foreign_kills('var x; async function* f(v) { x = v; return 0; }')
+        returned = next(node for node in ast.walk_in_order() if isinstance(node, JsReturnStatement))
+        self.assertEqual(sites, [returned])
+
+    def test_the_return_of_a_value_in_an_async_function_is_no_foreign_kill(self):
+        _, sites = self._foreign_kills('var x; async function f(v) { x = v; return 0; }')
         self.assertEqual(sites, [])
 
     def test_foreign_kills_cannot_be_listed_when_a_writer_escapes(self):
