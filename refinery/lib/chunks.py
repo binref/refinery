@@ -16,7 +16,8 @@ _TYPE_CODES = {array.array(t).itemsize: t for t in 'BHILQ'}
 def unpack(data: bytes, blocksize: int, bigendian: bool = False, step: int = 0, pad: bool = False) -> Iterable[int]:
     """
     Returns an iterable of integers which have been unpacked from the given `data`
-    buffer as chunks of `blocksize` many bytes.
+    buffer as chunks of `blocksize` many bytes. If `pad` is set, an incomplete final
+    chunk is padded with zero bytes at its end before it is unpacked.
     """
     view = memoryview(data)
     if not step:
@@ -29,6 +30,10 @@ def unpack(data: bytes, blocksize: int, bigendian: bool = False, step: int = 0, 
     ub = len(view)
     if not pad:
         ub = ub + 1 - blocksize
+
+    def padded(overlap: int):
+        return int.from_bytes(bytes(view[-overlap:]) + bytes(blocksize - overlap), bo)
+
     if step == blocksize and blocksize in _TYPE_CODES:
         overlap = len(data) % blocksize
         if overlap:
@@ -38,13 +43,13 @@ def unpack(data: bytes, blocksize: int, bigendian: bool = False, step: int = 0, 
         if _BIG_ENDIAN != bigendian:
             unpacked.byteswap()
         if pad and overlap:
-            unpacked.append(int.from_bytes(view[-overlap:], bo))
+            unpacked.append(padded(overlap))
         return unpacked
     elif bigendian and pad and (overlap := len(view) % blocksize):
         def chunks():
             for k in range(0, ub - overlap, step):
                 yield int.from_bytes(view[k:k + blocksize], bo)
-            yield int.from_bytes(view[-blocksize:], bo) << ((blocksize - overlap) * 8)
+            yield padded(overlap)
         return chunks()
     else:
         return (int.from_bytes(view[k:k + blocksize], bo) for k in range(0, ub, step))

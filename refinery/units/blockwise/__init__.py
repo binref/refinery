@@ -377,7 +377,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                     if reduced != block:
                         log(block, reduced)
                     last_ops.append(reduced)
-                last_int = int.from_bytes(rest, self._byte_order_adjective)
+                last_int, = self.chunk(rest)
                 dst_tail = self.operate(last_int, *last_ops) & self.fmask
                 dst_tail = dst_tail.to_bytes(self.blocksize, self._byte_order_adjective)
                 rest = dst_tail[:_t]

@@ -1,6 +1,5 @@
 import contextlib
 import logging
-import unittest
 
 from unittest import mock
 
@@ -145,19 +144,25 @@ class TestArithmeticUnits(TestUnitBase):
                         self.assertPathsAgree(
                             name, argument, data, blocksize=blocksize, bigendian=True)
 
-    @unittest.expectedFailure
     def test_xor_bigendian_partial_block_paths_agree(self):
-        """
-        The Cryptodome fallback of `xor` packs each argument block to full block size and
-        truncates the result, while every other path reads a partial final block as a shorter
-        integer. In big endian mode, the fallback produces different bytes for such a block.
-        The divergence predates the argument reduction rework and is tracked here until the
-        fallback is aligned with the other paths.
-        """
         data = self.generate_random_buffer(0x101)
         for argument in REDUCTION_ARGUMENTS:
             with self.subTest(argument):
                 self.assertPathsAgree('xor', argument, data, blocksize=2, bigendian=True)
+
+    def test_xor_with_block_key_equals_xor_with_its_bytes(self):
+        data = self.generate_random_buffer(2 * 8 + 3)
+        key = 0x123456789ABCDEF0
+        for blocksize in (2, 3, 4, 8):
+            block_key = key & ((1 << (8 * blocksize)) - 1)
+            for bigendian in (False, True):
+                byte_key = block_key.to_bytes(blocksize, 'big' if bigendian else 'little')
+                with self.subTest(F'-B{blocksize} bigendian={bigendian}'):
+                    self.assertPathsAgree('xor', str(block_key), data, blocksize=blocksize, bigendian=bigendian)
+                    self.assertEqual(
+                        self.ldu('xor', str(block_key), blocksize=blocksize, bigendian=bigendian)(data),
+                        self.ldu('xor', byte_key)(data),
+                    )
 
     def test_integer_argument_reduction_warning(self):
         data = self.generate_random_buffer(0x21)
