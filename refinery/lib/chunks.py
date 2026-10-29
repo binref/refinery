@@ -36,10 +36,9 @@ def unpack(data: buf, blocksize: int, bigendian: bool = False, step: int = 0, pa
 
     if step == blocksize and blocksize in _TYPE_CODES:
         overlap = len(data) % blocksize
-        if overlap:
-            data = data[:-overlap]
+        aligned = data[:-overlap] if overlap else data
         unpacked = array.array(_TYPE_CODES[blocksize])
-        unpacked.frombytes(data)
+        unpacked.frombytes(aligned)
         if _BIG_ENDIAN != bigendian:
             unpacked.byteswap()
         if pad and overlap:
