@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import io
 
-from typing import Iterator, NamedTuple, TypeGuard
+from typing import Callable, Iterator, NamedTuple, TypeGuard
 
 from refinery.lib.scripts import Block, Node, Statement, owning_field
 from refinery.lib.scripts.ps1.data import (
@@ -32,15 +32,21 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CastExpression,
+    Ps1CatchClause,
     Ps1Code,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
+    Ps1DoLoop,
+    Ps1Exit,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
+    Ps1ForEachLoop,
     Ps1HereString,
+    Ps1IfStatement,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
+    Ps1Jump,
     Ps1MemberAccess,
     Ps1ParamBlock,
     Ps1ParenExpression,
@@ -51,9 +57,12 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1SubExpression,
+    Ps1SwitchStatement,
+    Ps1TrapStatement,
     Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
+    Ps1WhileLoop,
 )
 
 
@@ -708,26 +717,37 @@ _FALLIBLE_BINARY_OPERATORS = frozenset({
 _FALLIBLE_UNARY_OPERATORS = frozenset({'-bnot'})
 
 
-def _reaches_a_raising_leaf(node: Node, *, commands: bool) -> bool:
+def _reaches_a_raising_leaf(
+    node: Node,
+    *,
+    commands: bool,
+    cleared: Callable[[Node], bool] | None,
+) -> bool:
     """
     Whether the subtree of `node` holds a leaf that can raise, where `commands` decides whether a
     command invocation counts as one. The walk and its stop rule are shared by the two public
     predicates below so that the leaf roster — and the case-fold on the operator spellings the
     normalize pass canonicalizes — live in one place.
 
+    A leaf that `cleared` answers for cannot raise, and nothing it evaluates can either; it is how a
+    caller holding a judgment of values hands it to a walk that reads only shapes.
+
     The walk stops at a `STATEMENT_LIST_EXPRESSIONS` construct and at a nested script block, because a
     source inside one becomes that construct's own node in the finer control-flow graph: claiming it
     here would double-count a raiser the descent already isolated.
     """
-    def raises(element: Node) -> bool:
+    def leaf(element: Node) -> bool:
         if isinstance(element, (Ps1CastExpression, Ps1InvokeMember)):
             return True
         if commands and isinstance(element, Ps1CommandInvocation):
             return True
         if isinstance(element, Ps1BinaryExpression) and element.operator.lower() in _FALLIBLE_BINARY_OPERATORS:
             return True
-        if isinstance(element, Ps1UnaryExpression) and element.operator.lower() in _FALLIBLE_UNARY_OPERATORS:
-            return True
+        return isinstance(element, Ps1UnaryExpression) and element.operator.lower() in _FALLIBLE_UNARY_OPERATORS
+
+    def raises(element: Node) -> bool:
+        if leaf(element):
+            return cleared is None or not cleared(element)
         for child in element.children():
             if isinstance(child, (Ps1ScriptBlock, *STATEMENT_LIST_EXPRESSIONS)):
                 continue
@@ -737,7 +757,7 @@ def _reaches_a_raising_leaf(node: Node, *, commands: bool) -> bool:
     return raises(node)
 
 
-def is_soft_error_source(node: Node) -> bool:
+def is_soft_error_source(node: Node, cleared: Callable[[Node], bool] | None = None) -> bool:
     """
     Whether evaluating `node` can raise a *statement-terminating* (soft) error — one PowerShell
     reports and steps over to the next statement, as opposed to a terminating error that ends the
@@ -765,11 +785,13 @@ def is_soft_error_source(node: Node) -> bool:
     Deliberately *not* sources: a property access `x.m` and an index `x[i]`, which under the default
     (non-strict) semantics yield `$null` rather than raising — only strict mode makes them fault, and
     that arming is read elsewhere. A comparison or a logical operator does not raise either.
+
+    A leaf that `cleared` answers for is not a source.
     """
-    return _reaches_a_raising_leaf(node, commands=True)
+    return _reaches_a_raising_leaf(node, commands=True, cleared=cleared)
 
 
-def raises_a_caught_terminating_error(node: Node) -> bool:
+def raises_a_caught_terminating_error(node: Node, cleared: Callable[[Node], bool] | None = None) -> bool:
     """
     Whether evaluating `node` can raise a fault a `try` catches *without* consulting the script's
     error preferences — `is_soft_error_source` minus the command invocation.
@@ -780,8 +802,10 @@ def raises_a_caught_terminating_error(node: Node) -> bool:
     — deleting the command therefore changes nothing on that path. A command becomes catchable only
     under `Stop`, which is a fact of the script rather than of the shape and is read from the fault
     model (`Ps1FaultReach`), not here.
+
+    A leaf that `cleared` answers for is not a source.
     """
-    return _reaches_a_raising_leaf(node, commands=False)
+    return _reaches_a_raising_leaf(node, commands=False, cleared=cleared)
 
 
 def is_void_cast(node: Node) -> TypeGuard[Ps1CastExpression]:
@@ -828,6 +852,41 @@ def fault_operand(stmt: Node) -> Node | None:
     if is_null_discard(expression):
         return expression.value
     return expression
+
+
+def point_operands(point: Node) -> list[Node] | None:
+    """
+    The expressions evaluated where the control-flow graphs place *point*, or `None` where this
+    cannot say. The graphs stand a compound statement for the first thing it evaluates — an `if` for
+    its first test, a `while` or `do` loop for its condition, a `foreach` loop for the collection it
+    enumerates, a `switch` for its subject — and every other test, and each part of a `for` loop, is
+    a point of its own, spelled by its expression. A jump evaluates its label, `return`, `exit` and
+    `throw` the value they are handed, and a handler entry nothing.
+
+    A statement that is one expression evaluates what `fault_operand` says it does, so that a
+    discard is judged by what it evaluates. A `switch -File` reads a file this cannot see, and is
+    one this cannot say anything about.
+    """
+    if isinstance(point, Ps1ExpressionStatement):
+        operand = fault_operand(point)
+        return None if operand is None else [operand]
+    if isinstance(point, Ps1Exit):
+        return [] if point.pipeline is None else [point.pipeline]
+    if isinstance(point, Ps1Jump):
+        return [] if point.label is None else [point.label]
+    if isinstance(point, (Ps1CatchClause, Ps1TrapStatement)):
+        return []
+    if isinstance(point, Ps1IfStatement):
+        return [point.clauses[0][0]] if point.clauses else None
+    if isinstance(point, (Ps1WhileLoop, Ps1DoLoop)):
+        return [] if point.condition is None else [point.condition]
+    if isinstance(point, Ps1ForEachLoop):
+        return None if point.iterable is None else [point.iterable]
+    if isinstance(point, Ps1SwitchStatement):
+        return None if point.file or point.value is None else [point.value]
+    if isinstance(point, Expression):
+        return [point]
+    return None
 
 
 def unwrap_assignment_target(target: Node | None) -> Node | None:

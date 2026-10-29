@@ -34,6 +34,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BreakStatement,
     Ps1ContinueStatement,
     Ps1FunctionDefinition,
+    Ps1IfStatement,
     Ps1Script,
     Ps1ScriptBlock,
     Ps1TrapStatement,
@@ -1495,3 +1496,95 @@ class TestPs1ALabelledWalkAnswersEveryLabelAsItsOwnWalkWould(TestBase):
         assert inside is not None
         with self.assertRaises(ValueError):
             reachable_forward_labels(graphs[id(tree)], {'inside': [inside]})
+
+
+class TestPs1AnErrorNothingTakesIsReportedPastItsStatement(_Ps1ControlFlowGraphs):
+    """
+    Measured on 5.1: an error no `catch` or `trap` takes inside a `try` body, a `catch` body or a
+    `trap` body is reported, and the run carries on after the outermost statement standing where
+    nothing is in force. The graph draws that as one report node per such statement.
+    """
+
+    def _reports(self, graph: ControlFlowGraph) -> list[CfgNode]:
+        return [node for node in graph.nodes if node.carries_on_after is not None]
+
+    def _reachable(self, source: str, statement: int) -> bool:
+        tree, graph = self._tree_and_graph(cleandoc(source))
+        return id(self._required_node(graph, tree.body[statement])) in self._forward(graph.entry)
+
+    def test_the_report_node_carries_on_after_the_innermost_statement_nothing_guards(self):
+        # Measured on 5.1: the same shape writes `if-rest` and `after`.
+        tree, graph = self._tree_and_graph(cleandoc("""
+            if ($x) {
+              try {
+                [int]$s
+              } finally {}
+              'if-rest'
+            }
+            'after'
+        """))
+        branch = tree.body[0]
+        assert isinstance(branch, Ps1IfStatement)
+        construct, rest = branch.clauses[0][1].body
+        report, = self._reports(graph)
+        self.assertIs(report.carries_on_after, construct)
+        self.assertIn(self._required_node(graph, rest), report.successors)
+
+    def test_no_report_node_stands_where_no_error_reaches_one(self):
+        for source in ("try { throw 'x' } catch { 'b' }", 'try { } catch { }', "try { 'a' } catch { continue }"):
+            with self.subTest(source):
+                self.assertEqual(self._reports(self._script_graph(source)), [])
+
+    def test_a_throw_nothing_takes_ends_the_run_rather_than_carrying_on(self):
+        self.assertFalse(self._reachable("""
+            try {
+              throw 'x'
+            } catch {
+              throw 'y'
+            }
+            'after'
+        """, 1))
+
+    def test_a_line_that_cannot_fail_is_not_reported_past_its_statement(self):
+        self.assertFalse(self._reachable("""
+            try {
+              throw 'x'
+            } catch {
+              'b'
+              return
+            }
+            'after'
+        """, 1))
+
+    def test_a_line_that_may_fail_is_reported_past_its_statement(self):
+        self.assertTrue(self._reachable("""
+            try {
+              throw 'x'
+            } catch {
+              [int]$s
+              return
+            }
+            'after'
+        """, 1))
+
+    def test_a_line_that_cannot_fail_is_still_offered_to_the_handler_guarding_it(self):
+        tree, graph = self._tree_and_graph("try { 'a' } catch { 'b' }")
+        construct = tree.body[0]
+        assert isinstance(construct, Ps1TryCatchFinally) and construct.try_block is not None
+        clause, = construct.catch_clauses
+        line = self._required_node(graph, construct.try_block.body[0])
+        self.assertIn(self._required_node(graph, clause), line.successors)
+
+    def test_a_trap_set_taking_every_error_inside_a_body_nothing_guards_names_a_node_of_the_graph(self):
+        for source, holder in (
+            ("try { throw 'x' } catch { trap { continue }; 'v' }\n'after'", 0),
+            ("if ($x) { trap { if ($True) { trap { continue }; 'v' } }; [int]$s }\n'after'", 0),
+        ):
+            with self.subTest(source):
+                tree = Ps1Parser(source).parse()
+                model = build_control_flow_model(tree)
+                inner = [node for node in tree.walk_in_order() if isinstance(node, Ps1TrapStatement)][-1]
+                trap_set = model.trap_set_of(inner)
+                assert trap_set is not None and trap_set.outward is not None
+                self.assertIs(trap_set.outward.carries_on_after, tree.body[holder])
+                self.assertTrue(any(node is trap_set.outward for node in trap_set.graph.nodes))

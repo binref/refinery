@@ -1143,10 +1143,12 @@ class TestPs1ACallThatWritesNothingGoesOnlyWhereNothingObservesIt(TestPs1):
                     self._ANCHOR,
                 )
 
-    def test_a_static_call_that_produces_a_value_is_kept(self):
-        for call in ('[Math]::Sqrt(36)', "[Array]::IndexOf('abc'.ToCharArray(), [Char]98)"):
-            with self.subTest(call):
-                self._assertUnchanged(F'{call}\n{self._ANCHOR}', Ps1JunkStatementRemoval)
+    def test_a_static_call_that_produces_a_value_no_fact_covers_is_kept(self):
+        self._assertUnchanged(
+            F"[Array]::IndexOf('abc'.ToCharArray(), [Char]98)\n{self._ANCHOR}", Ps1JunkStatementRemoval)
+
+    def test_a_static_call_that_cannot_fail_and_only_prints_goes(self):
+        self.assertEqual(self._apply(F'[Math]::Sqrt(36)\n{self._ANCHOR}', Ps1JunkStatementRemoval), self._ANCHOR)
 
     def test_a_void_static_call_that_writes_to_the_host_is_kept(self):
         for call in ("[Console]::WriteLine('x')", "[Console]::Write('x')"):

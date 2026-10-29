@@ -601,7 +601,6 @@ class TestPs1UnreachableStatementRemoval(TestPs1):
             """
         ))
 
-    @unittest.expectedFailure
     def test_a_statement_after_a_throw_is_kept_where_errors_silently_continue(self):
         """
         Where the error preference silently continues and no `trap` is in force, 5.1 carries on

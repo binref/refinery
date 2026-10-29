@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unittest
+
 from inspect import cleandoc
 
 from refinery.lib.scripts.ps1.deobfuscation.unused import Ps1JunkStatementRemoval
@@ -78,6 +80,16 @@ class TestPs1TrustedEvalDoesNotExcuseAMutationTheScriptWritesDown(TestPs1):
         "[PSObject+TypeAccelerators]::Add('zzq', [int])",
         '$o.PSObject.Members.Add($m)',
     )
+
+    @unittest.expectedFailure
+    def test_a_write_to_the_accelerator_table_found_by_name_keeps_the_junk_below_it(self):
+        """
+        Measured on 5.1, `[System.Management.Automation.PSObject+TypeAccelerators]` names no type, so
+        a script finds the table by name; that spelling is read as no write to it.
+        """
+        self._assertKept(
+            "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('zzq', [int])\n"
+            F'{_JUNK}')
 
     def test_the_junk_below_one_is_kept_by_default(self):
         for mutation in self._MUTATES_IN_PLAIN_SIGHT:

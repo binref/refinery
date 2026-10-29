@@ -10,6 +10,7 @@ from refinery.lib.scripts.ps1.analysis.cache import Ps1UnseenReads, model_cache
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
 from refinery.lib.scripts.ps1.analysis.effects import (
     OutputSink,
+    Ps1HandlerVerdicts,
     StatementEffect,
     body_is_inert,
     expression_cannot_fault,
@@ -727,7 +728,7 @@ class Ps1DeadStoreElimination(Transformer):
         world = cache.world_reach
         plans = Ps1RemovalPlans(cache.faults, world, cache.error_state)
         for owner in list(node.walk()):
-            self._propose_dead_stores(owner, model, world, unseen, plans)
+            self._propose_dead_stores(owner, model, world, unseen, plans, cache.handlers)
         if plans.commit():
             self.mark_changed()
 
@@ -738,6 +739,7 @@ class Ps1DeadStoreElimination(Transformer):
         world: Ps1WorldReach,
         unseen: Ps1UnseenReads,
         plans: Ps1RemovalPlans,
+        handlers: Ps1HandlerVerdicts,
     ) -> None:
         body = get_body(node)
         scope = model.scope_of(node)
@@ -747,6 +749,8 @@ class Ps1DeadStoreElimination(Transformer):
         dead: list[Ps1ExpressionStatement] = []
         has_read: set[str] = set()
         for stmt in body:
+            if pending and handlers.raises_past(stmt):
+                pending.clear()
             reads, kills, writes = self._classify_statement(stmt, scope, model)
             for var in kills:
                 if var in pending:

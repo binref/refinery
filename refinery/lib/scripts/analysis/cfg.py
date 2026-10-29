@@ -236,6 +236,7 @@ class CfgNode:
     predecessors: list[CfgNode] = field(default_factory=list)
     is_resumption_hub: bool = False
     is_hub_bound: bool = False
+    carries_on_after: Node | None = None
 
 
 def flood(
@@ -910,12 +911,23 @@ class CfgBuilder:
 
         The handler edge is added here rather than at each site that creates a node, because *any*
         statement inside a guarded block may throw and the whole point of the edge is that it does
-        not depend on which statement it is.
+        not depend on which statement it is; `offers` is where a language says otherwise.
         """
         node = self.detached_node(element)
         if self._handlers:
-            self.exceptional_edge(node, self._handlers[-1])
+            target = self._handlers[-1]
+            if self.offers(element, target):
+                self.exceptional_edge(node, target)
         return node
+
+    def offers(self, element: Node, target: CfgNode) -> bool:
+        """
+        Whether the node for *element* gets an error edge to *target*, the innermost entry of the
+        handler stack. An edge into a handler stands for a position, so that a question about where
+        an error raised there would go is answered whatever stands there, and it is always drawn. A
+        language whose stack holds something other than a handler may refuse an edge into that.
+        """
+        return True
 
     def synthetic_node(self) -> CfgNode:
         """
@@ -1086,7 +1098,13 @@ class CfgBuilder:
         self.resumption_forward_edge(node, frame.slot)
         self.resumption_hub_edge(frame.hub, node)
 
-    def close_handler_set(self, entries: Sequence[CfgNode], *, escapes: bool) -> None:
+    def close_handler_set(
+        self,
+        entries: Sequence[CfgNode],
+        *,
+        escapes: bool,
+        outward: CfgNode | None = None,
+    ) -> None:
         """
         Finish a chain of handler entries: draw the edge from the last of them to what guards the
         construct when some run may leave all of them.
@@ -1095,7 +1113,7 @@ class CfgBuilder:
         `unwinding` names what guards the *construct* rather than the set being closed.
         """
         if escapes and entries:
-            self.exceptional_edge(entries[-1], self.unwinding())
+            self.exceptional_edge(entries[-1], self.unwinding() if outward is None else outward)
 
     def unwinding(self) -> CfgNode:
         """
@@ -1103,6 +1121,13 @@ class CfgBuilder:
         body's exit, which is how the graph says the throw leaves the body.
         """
         return self._handlers[-1] if self._handlers else self.cfg.exit
+
+    def escape(self) -> CfgNode:
+        """
+        Where an error goes once it gets past every handler of the construct being closed. That is
+        `unwinding` unless the language hands such an error to something that is not a handler.
+        """
+        return self.unwinding()
 
     def link(self, frontier: Iterable[CfgNode], target: CfgNode) -> None:
         for node in frontier:
@@ -1414,6 +1439,7 @@ class CfgBuilder:
         frontier: list[CfgNode],
         *,
         escapes: bool,
+        clauses_guarded: bool = False,
     ) -> list[CfgNode]:
         """
         A guarded block with any number of handlers and an optional finalizer.
@@ -1454,20 +1480,24 @@ class CfgBuilder:
         if guard is not None:
             self._handlers.pop()
         normal_exits = list(block_exits)
-        if finalizer_entry is not None:
-            self._handlers.append(finalizer_entry)
+        clause_guard = finalizer_entry
+        if clause_guard is None and clauses_guarded and entries:
+            clause_guard = self.escape()
+        if clause_guard is not None:
+            self._handlers.append(clause_guard)
         for index, ((_, body), entry) in enumerate(zip(handlers, entries)):
             if index:
                 self.exceptional_edge(entries[index - 1], entry)
             normal_exits += (
                 self.statement(body, [entry]) if body is not None else [entry])
-        if finalizer_entry is not None:
+        if clause_guard is not None:
             self._handlers.pop()
-        self.close_handler_set(entries, escapes=escapes)
+        if escapes and entries:
+            self.close_handler_set(entries, escapes=escapes, outward=self.escape())
         if finalizer_entry is not None and finalizer is not None:
             self.link(normal_exits, finalizer_entry)
             final_exits = self.sequence(list(finalizer_body), [finalizer_entry])
-            self.exceptional_edge(finalizer_entry, self.unwinding())
+            self.exceptional_edge(finalizer_entry, self.escape())
             return final_exits
         return normal_exits
 

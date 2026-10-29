@@ -21,6 +21,7 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1FlowUnknown, Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.model import Binding, is_mutated_in_place
 from refinery.lib.scripts.ps1.analysis.values import (
+    Ps1Calls,
     convert,
     non_null_type,
     read,
@@ -129,7 +130,11 @@ def _type_at(
     return named.pop() if len(named) == 1 else None
 
 
-def non_null_type_at(var: Ps1Variable, flow: Ps1VariableFlow) -> Ps1TypeName | None:
+def non_null_type_at(
+    var: Ps1Variable,
+    flow: Ps1VariableFlow,
+    calls: Ps1Calls | None,
+) -> Ps1TypeName | None:
     """
     The non-null type the value *var* reads carries where it stands, or `None` where no origin
     establishes one. This is `type_at`'s question narrowed to the reaching write — whether a
@@ -139,26 +144,28 @@ def non_null_type_at(var: Ps1Variable, flow: Ps1VariableFlow) -> Ps1TypeName | N
     of assignments is followed where `type_at` stops. The chase set bounds that recursion, so a
     cycle like `$a = $b; $b = $a` answers `None` instead of recursing. A `foreach` binding and a
     compound assignment are refused where `type_at` answers their *type*: a non-null value is
-    not something a slot's type can vouch for.
+    not something a slot's type can vouch for. A call is vouched for only by *calls*.
     """
-    return _non_null_type_at(var, flow, frozenset())
+    return _non_null_type_at(var, flow, frozenset(), calls)
 
 
 def _non_null_type_at(
     var: Ps1Variable,
     flow: Ps1VariableFlow,
     chased: frozenset[int],
+    calls: Ps1Calls | None,
 ) -> Ps1TypeName | None:
     observed = _observed_write(var, flow)
     if observed is None or observed[1] is None:
         return None
-    return _origin_installed_by(observed[1], flow, chased)
+    return _origin_installed_by(observed[1], flow, chased, calls)
 
 
 def _origin_installed_by(
     write: Node,
     flow: Ps1VariableFlow,
     chased: frozenset[int],
+    calls: Ps1Calls | None,
 ) -> Ps1TypeName | None:
     """
     The non-null type the write a read observes installs, with the same chase `_installed_by`
@@ -168,14 +175,15 @@ def _origin_installed_by(
         return None
     chased = chased | {id(write)}
     if not _stores_through(write):
-        return _origin_established_by(write, flow, chased)
-    return _non_null_type_at(write, flow, chased)
+        return _origin_established_by(write, flow, chased, calls)
+    return _non_null_type_at(write, flow, chased, calls)
 
 
 def _origin_established_by(
     write: Node,
     flow: Ps1VariableFlow,
     chased: frozenset[int],
+    calls: Ps1Calls | None,
 ) -> Ps1TypeName | None:
     """
     The non-null type *write* puts under the name, judged from the value it stores. Only a plain
@@ -195,16 +203,17 @@ def _origin_established_by(
         return None
     if stored.constraint is not None:
         converted = value_under_declared_constraint(write, value)
-        return None if converted is None else _judged(converted, flow, chased)
+        return None if converted is None else _judged(converted, flow, chased, calls)
     if constraint_converts(flow.semantic.binding_of(write), value):
         return None
-    return _judged(value, flow, chased)
+    return _judged(value, flow, chased, calls)
 
 
 def _judged(
     value: Expression,
     flow: Ps1VariableFlow,
     chased: frozenset[int],
+    calls: Ps1Calls | None,
 ) -> Ps1TypeName | None:
     """
     The judgment on a stored value, wired with the two callbacks a variable needs there:
@@ -214,7 +223,8 @@ def _judged(
     return non_null_type(
         value,
         lambda var: type_at(var, flow),
-        lambda var: _non_null_type_at(var, flow, chased),
+        lambda var: _non_null_type_at(var, flow, chased, calls),
+        calls,
     )
 
 

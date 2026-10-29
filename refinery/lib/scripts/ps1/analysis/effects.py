@@ -40,6 +40,7 @@ from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, normal_
 from refinery.lib.scripts.ps1 import data
 from refinery.lib.scripts.ps1.analysis.arguments import Ps1WrittenSlots, written_slots
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
+from refinery.lib.scripts.ps1.analysis.calls import call_reader
 from refinery.lib.scripts.ps1.analysis.cfg import Ps1TrapSet
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import (
@@ -52,13 +53,13 @@ from refinery.lib.scripts.ps1.analysis.faults import (
 )
 from refinery.lib.scripts.ps1.analysis.identity import object_sources
 from refinery.lib.scripts.ps1.analysis.model import occurrence_role, scope_local_nodes
+from refinery.lib.scripts.ps1.analysis.session import session_of
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
     candidate_types,
     convert,
     evaluate,
-    integer_of,
-    read,
+    is_fault_free,
 )
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
@@ -75,6 +76,7 @@ from refinery.lib.scripts.ps1.ast import (
     is_null_discard,
     is_reference_cast,
     is_void_cast,
+    point_operands,
     resolve_command_name,
     unwrap_parens,
 )
@@ -122,6 +124,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1StringLiteral,
     Ps1SubExpression,
     Ps1SwitchStatement,
+    Ps1ThrowStatement,
     Ps1TrapStatement,
     Ps1TryCatchFinally,
     Ps1TypeExpression,
@@ -560,6 +563,12 @@ _PURE_CMDLETS = _canonical_command_set({
     'where-object',
 })
 
+#: The pure command whose every call advances a state a script can make observable: measured on 5.1,
+#: after `Get-Random -SetSeed 7` the next `Get-Random -Maximum 1000` is 819, and 832 once another
+#: call stands between them. So it is pure only where the generator is never seeded; see
+#: `refinery.lib.scripts.ps1.analysis.session.Ps1Session.seeded`.
+_SEEDABLE_CMDLET = 'get-random'
+
 _PURE_PIPELINE_CMDLETS = _canonical_command_set({
     'foreach-object',
     'select-object',
@@ -980,6 +989,8 @@ def is_side_effect_free(node, world: Ps1WorldReach) -> bool:
         # below unreachable for `Where-Object`, `Select-Object` and `Sort-Object`.
         if name not in _PURE_CMDLETS and name not in _PURE_PIPELINE_CMDLETS:
             return False
+        if name == _SEEDABLE_CMDLET and session_of(node).seeded:
+            return False
         if not _command_arguments_are_pure(node, world):
             return False
         # Routed through `_grant` like every other grant. `may_trust_command_name_at` above refuses
@@ -1000,146 +1011,6 @@ def is_side_effect_free(node, world: Ps1WorldReach) -> bool:
         )
     if isinstance(node, Ps1ExpandableString):
         return all(is_side_effect_free(p, world) for p in node.parts)
-    return False
-
-
-#: The widest and narrowest values PowerShell's range operator accepts. Both bounds go through
-#: `Int32`, so an endpoint outside this window raises the same conversion error a bad cast does.
-_INT32_MIN = -0x80000000
-_INT32_MAX = +0x7FFFFFFF
-
-#: How many elements a range may span before *building* it is the fault rather than converting its
-#: endpoints. PowerShell materializes the whole array eagerly, so `0..2147483647` is two perfectly
-#: good `Int32` bounds and an `OutOfMemoryException` an enclosing handler may well be catching.
-_MAX_FAULT_FREE_RANGE = 0x10000
-
-
-def _is_numeric_constant(node) -> bool:
-    """
-    Whether `node` is a constant that PowerShell reads as a number without running a conversion that
-    can fail: a numeric literal or one of the built-in constants, through parentheses and a further
-    unary sign.
-
-    A string literal is deliberately not one, which is the whole of why this is separate from
-    `is_fault_free`. `is_fault_free('abc')` is `True` because *evaluating* a string cannot raise,
-    while `-'abc'` raises the `Int32` conversion error the caller is trying to rule out.
-    """
-    if isinstance(node, (Ps1IntegerLiteral, Ps1RealLiteral)):
-        return True
-    if is_builtin_variable(node):
-        return True
-    if isinstance(node, Ps1ParenExpression):
-        return _is_numeric_constant(node.expression)
-    if isinstance(node, Ps1UnaryExpression) and node.operator in ('+', '-'):
-        return _is_numeric_constant(node.operand)
-    return False
-
-
-def _signed_integer_value(node) -> int | None:
-    """
-    The integer an expression names, read through any number of unary signs, or `None` when it
-    names something else.
-
-    The value is asked of the domain and not of the node, because a node reports the digits it was
-    written with rather than the number they denote: `0xFFFFFFFF` is the Int32 -1 and reading it as
-    4294967295 rejected a two-element range as one that might exhaust memory.
-
-    A sign is *applied* rather than walked past, for the spelling that still has one of its own —
-    the parser puts a sign written against a numeral inside the numeral, so what reaches here is
-    `- 5` with a space, and discarding that sign weighs a value the source never names.
-    """
-    if isinstance(node, Ps1UnaryExpression) and node.operator in ('+', '-'):
-        value = _signed_integer_value(node.operand)
-        if value is None:
-            return None
-        return -value if node.operator == '-' else value
-    return integer_of(read(node))
-
-
-def _range_is_fault_free(node: Ps1RangeExpression) -> bool:
-    """
-    Whether the range operator provably neither converts nor allocates its way into a fault.
-
-    Two separate faults, and weighing only the first would delete a range that already stops the
-    script. Both endpoints go through `Int32`, so `4242424242..4242424245` is two
-    perfectly good integer literals that still raise — the reason this is narrower than
-    `_is_numeric_constant`, which merely reads a number, and why a real literal is not an endpoint
-    at all since it rounds rather than converting cleanly. Then the operator materializes the whole
-    array eagerly, so `0..2147483647` converts cleanly and raises `OutOfMemoryException` instead;
-    only a span under `_MAX_FAULT_FREE_RANGE` provably survives both.
-    """
-    start = _signed_integer_value(node.start)
-    end = _signed_integer_value(node.end)
-    if start is None or end is None:
-        return False
-    if not _INT32_MIN <= start <= _INT32_MAX or not _INT32_MIN <= end <= _INT32_MAX:
-        return False
-    return abs(end - start) < _MAX_FAULT_FREE_RANGE
-
-
-def is_fault_free(node) -> bool:
-    """
-    Whether evaluating an expression provably cannot raise. Two readings grant that, and neither
-    subsumes the other: the value domain answers it for anything it can actually compute, and a
-    syntactic allow-list answers it for the constructions the domain does not model. Everything
-    else answers `False`, including expressions that are obviously fine, because the safe answer to
-    an expression neither reading claims is that it might raise.
-
-    **The value domain is asked first, because it is the one that knows.**
-    `refinery.lib.scripts.ps1.analysis.values.Ps1Outcome.may_throw` is `False` only where that
-    module claims an operation cannot throw, and not knowing is a throw there as it is here, so the
-    two axes already agree about which direction is safe. It reaches what no list of shapes can:
-    `6 * 7`, `[Int]'42'` and `'ab' + 'cd'` cannot raise and are not literals, and a gate that called
-    them unsafe refused to delete the padding an obfuscator writes by the hundred. It declines every
-    call and every expression naming a variable, which is why the sweep behind this grant is a grid
-    of constants — 9210 expressions it calls throw-free, every one of them confirmed against a
-    Windows PowerShell 5.1 host.
-
-    **The allow-list is what the domain does not model**, not a weaker copy of it: a range and a
-    hash literal are constructions rather than operations, and the domain names no value for either.
-    The container arm recurses into the elements rather than granting the form, so `@{ a = 1 }`
-    cannot fail while `@{ a = [Int]'x' }` still can and is rejected by the element it holds. A hash
-    literal with a duplicate key is the one construction PowerShell refuses outright, so the keys
-    are compared rather than trusted; see `_hash_literal_is_fault_free`.
-
-    Purity is a different question and neither implies the other. `is_side_effect_free` accepts
-    `[Int]$x`, `$a / $b` and `$a[$i]`, all of which raise on the wrong operand, so it cannot answer
-    this: a `try` body cannot be hoisted out of its own construct on a purity argument, because an
-    empty `catch` would swallow what the hoisted statement raises into the caller.
-
-    **A unary sign and a range coerce, and coercion is the fault this predicate exists to see.**
-    Both read their operands through `Int32`, so `-'abc'` and `'a'..'z'` raise exactly what
-    `[Int]'abc'` raises; neither may inherit the string-literal grant, and both go through
-    `_is_numeric_constant` and `_range_is_fault_free` instead.
-
-    **A removal site asks `expression_cannot_fault` and not this**, because one fault is decided by
-    the script rather than by the operands. What still reads this directly asks a narrower question
-    on purpose: `may_be_dropped` and the range fold weigh work a rewrite would stop doing, where
-    the operand's own faults are the whole question, and
-    `refinery.lib.scripts.ps1.deobfuscation.deadcode._try_body_survivors` needs a second property
-    beside fault-freedom — that what it accepts is a constant it can carry out of the construct.
-    """
-    if not evaluate(node).may_throw:
-        return True
-    if isinstance(node, (Ps1IntegerLiteral, Ps1RealLiteral, Ps1StringLiteral)):
-        return True
-    if is_builtin_variable(node):
-        return True
-    if isinstance(node, Ps1ParenExpression):
-        return is_fault_free(node.expression)
-    if isinstance(node, Ps1UnaryExpression) and node.operator in ('+', '-'):
-        return _is_numeric_constant(node.operand)
-    if isinstance(node, Ps1ArrayLiteral):
-        return all(is_fault_free(element) for element in node.elements)
-    if isinstance(node, Ps1RangeExpression):
-        return _range_is_fault_free(node)
-    if isinstance(node, Ps1HashLiteral):
-        return _hash_literal_is_fault_free(node)
-    if isinstance(node, Ps1ArrayExpression):
-        if len(node.body) == 1:
-            stmt = node.body[0]
-            return isinstance(stmt, Ps1ExpressionStatement) and is_fault_free(stmt.expression)
-        return len(node.body) == 0
     return False
 
 
@@ -1166,32 +1037,6 @@ def may_be_dropped(node, world: Ps1WorldReach) -> bool:
     whose second half nothing can be shown to notice.
     """
     return is_side_effect_free(node, world) and is_fault_free(node)
-
-
-def _hash_literal_is_fault_free(node: Ps1HashLiteral) -> bool:
-    """
-    Whether building a hash literal is guaranteed to succeed. Every key and value has to be
-    fault-free in its own right, and the keys additionally have to be distinct — PowerShell rejects
-    `@{ a = 1; a = 2 }` outright, so a script carrying one never runs at all, and deleting it would
-    make the rest of the script run. That is exactly the change this predicate exists to prevent,
-    and it is why the keys are compared here rather than assumed apart.
-
-    Only a string or integer key is compared, folded to a lowercased string, so the case-insensitive
-    collision and the `@{ 1 = 'a'; '1' = 'b' }` cross-type one both count. Anything else — a real
-    literal, a computed key — is rejected without comparison, since a key this cannot read is a
-    duplicate it cannot rule out.
-    """
-    keys: set[str] = set()
-    for key, value in node.pairs:
-        if not isinstance(key, (Ps1IntegerLiteral, Ps1StringLiteral)):
-            return False
-        if not is_fault_free(value):
-            return False
-        written = str(key.value).lower()
-        if written in keys:
-            return False
-        keys.add(written)
-    return True
 
 
 class StatementEffect(enum.Enum):
@@ -1889,12 +1734,48 @@ def expression_cannot_fault(
     """
     if is_fault_free(operand):
         return True
+    if world is None:
+        return False
+    if not evaluate(operand, calls=call_reader(world)).may_throw:
+        return True
     return (
         _is_bare_variable_read(operand)
-        and world is not None
         and world.closed_at(position)
         and not faults.strict_mode_may_be_in_force()
     )
+
+
+def cleared_at(
+    position: Node,
+    faults: Ps1FaultReach,
+    world: Ps1WorldReach | None,
+) -> Callable[[Node], bool]:
+    """
+    `expression_cannot_fault` at *position*, as the judgment a walk over shapes asks of each part
+    it would read as a raise; see
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.fault_the_try_catches`.
+    """
+    return lambda operand: expression_cannot_fault(operand, position, faults, world)
+
+
+def point_may_raise_a_caught_error(
+    point: Node,
+    position: Node,
+    faults: Ps1FaultReach,
+    world: Ps1WorldReach | None,
+) -> bool:
+    """
+    Whether what the graphs evaluate at *point* may raise an error a `try` catches, judged at
+    *position*: an expression it evaluates that
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.fault_the_try_catches` reads as raising
+    one, with every part `expression_cannot_fault` clears read as raising nothing. A point whose
+    operands `refinery.lib.scripts.ps1.ast.point_operands` cannot name may raise one.
+    """
+    operands = point_operands(point)
+    if operands is None:
+        return True
+    cleared = cleared_at(position, faults, world)
+    return any(faults.fault_the_try_catches(operand, cleared) for operand in operands)
 
 
 def _lies_in_a_block_within(site: Node, stmt: Node) -> bool:
@@ -1999,10 +1880,15 @@ def deletion_is_observable(
     is dead only for that reason — deleting the raiser starts the continuation running. Two
     mechanisms resurrect such a continuation and both are one observable: an empty `catch` swallows
     the error and resumes past the tail of the `try` body, and a firing `trap` body raise ends the
-    scope that would otherwise run on past it.
+    scope that would otherwise run on past it, and an error nothing takes inside a `try` or `catch`
+    body is reported past the whole statement.
     `Ps1FaultReach.deleting_the_raise_resurrects_a_continuation` is the position half and
-    `Ps1FaultReach.fault_the_try_catches` the raise half, paired over `fault_operand` so that a
-    `$Null =`/`[Void]` discard is judged by what it evaluates.
+    `point_may_raise_a_caught_error` the raise half, paired at every point the graphs place inside
+    *stmt*, because a construct is deleted whole and each of its parts raises where it stands: the
+    test of an `if` and a statement inside an `@( )` are points of their own. A point inside a
+    script block written in *stmt* is not one of them, for the reason `_leaves_a_block_of` gives:
+    what its error skips inside the block is deleted with *stmt*, and an error that leaves the block
+    arrives where one raised by *stmt*'s own point does, or nowhere where the block is not run there.
 
     The third is a read of the record the raise leaves behind. Windows PowerShell 5.1 files every
     terminating error in `$Error` whether or not a handler ran, so a later read of that record
@@ -2021,13 +1907,14 @@ def deletion_is_observable(
     `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan._vetoed`, over the same
     `Ps1ErrorStateReach` model through `success_flag_write_observed`.
     """
-    operand = fault_operand(stmt)
-    if (
-        operand is not None
-        and faults.fault_the_try_catches(operand)
-        and faults.deleting_the_raise_resurrects_a_continuation(stmt)
-    ):
-        return True
+    for point in faults.points_in(stmt):
+        if (
+            not isinstance(point, Ps1ThrowStatement)
+            and not _lies_in_a_block_within(point, stmt)
+            and point_may_raise_a_caught_error(point, stmt, faults, world)
+            and faults.deleting_the_raise_resurrects_a_continuation(point)
+        ):
+            return True
     if (
         error_state is not None
         and statement_can_raise(stmt, faults, world)
@@ -2216,6 +2103,31 @@ class _RaiseVerdicts:
         return paths.behind(start, self._ends_the_run, self._memos.setdefault((paths, True), {}))
 
 
+class _PastVerdicts:
+    """
+    Whether an error raised inside a statement may be taken past it, with the raises read by
+    `Ps1FaultReach.fault_the_try_catches` under one world, which clears what
+    `expression_cannot_fault` clears. One table per tree, refused once the tree moves, as "taken
+    past".
+    """
+
+    def __init__(self, faults: Ps1FaultReach, world: Callable[[], Ps1WorldReach], stamp: _TreeStamp):
+        self._faults = faults
+        self._world = world
+        self._stamp = stamp
+        self._memo: dict[int, float] = {}
+
+    def _raises(self, element: Node) -> bool:
+        if isinstance(element, Ps1ThrowStatement):
+            return True
+        return point_may_raise_a_caught_error(element, element, self._faults, self._world())
+
+    def raises_past(self, statement: Node) -> bool:
+        if self._stamp.moved():
+            return True
+        return self._faults.raises_past(statement, self._raises, self._memo)
+
+
 class _SkipVerdicts:
     """
     Whether some soft raiser behind a resuming handler would, untrapped, run a statement a run can
@@ -2303,10 +2215,11 @@ class _SkipVerdicts:
 
 class Ps1HandlerVerdicts:
     """
-    The semantic half of the question whether deleting `trap` statements changes what runs, for
-    one version of one tree: whether what a set guards may raise — read without a world, or under
-    the world — and whether what a resuming set skips, or runs before its errors would land, is
-    observable under the world. Held in a `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache`
+    The semantic half of where an error goes, for one version of one tree: whether deleting `trap`
+    statements changes what runs — whether what a set guards may raise, read without a world or
+    under the world, and whether what a resuming set skips, or runs before its errors would land, is
+    observable under the world — and whether an error raised inside a statement may be taken past
+    it, which the `catch` lift and the store sweep ask. Held in a `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache`
     slot, so it is rebuilt with the fault model it reads, and handed to
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed` through the
     removal plan. Each answer is kept by the object that owns the test it was decided with, so
@@ -2326,6 +2239,7 @@ class Ps1HandlerVerdicts:
             _RaiseVerdicts(faults, lambda: self.world, stamp),
         )
         self.skips = _SkipVerdicts(lambda: self.world, root, stamp)
+        self._past = _PastVerdicts(faults, lambda: self.world, stamp)
 
     @property
     def world(self) -> Ps1WorldReach:
@@ -2342,6 +2256,12 @@ class Ps1HandlerVerdicts:
         The raise verdicts read under `world` when *under_the_world*, and without one otherwise.
         """
         return self._raises[under_the_world]
+
+    def raises_past(self, statement: Node) -> bool:
+        """
+        Whether an error raised inside *statement* may be taken past it, under `world`.
+        """
+        return self._past.raises_past(statement)
 
 
 def _skipped_statement_is_observable(

@@ -851,6 +851,8 @@ class Ps1DeadCodeElimination(Transformer):
         finally_body = node.finally_block.body if node.finally_block is not None else []
         if handler_body and finally_body:
             return None
+        if any(cache.handlers.raises_past(stmt) for stmt in handler_body[:-1]):
+            return None
         return prefix + list(handler_body) + list(finally_body)
 
     @staticmethod

@@ -47,9 +47,12 @@ from refinery.lib.scripts.analysis.cfg import (
     ControlFlowModel,
     build_control_flow,
 )
+from refinery.lib.scripts.ps1.analysis.session import session_of
+from refinery.lib.scripts.ps1.analysis.values import is_fault_free
 from refinery.lib.scripts.ps1.ast import (
     STATEMENT_LIST_EXPRESSIONS,
     get_named_blocks,
+    point_operands,
     string_value,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -301,6 +304,21 @@ class Ps1TrapSet:
 
 
 @dataclass
+class _ReportFrame:
+    """
+    A statement being built where no `try` and no `trap` is in force, and the node standing for 5.1
+    reporting an error that leaves a `try` body, a `catch` body or a `trap` body inside it, and
+    carrying on after the statement: `CfgNode.carries_on_after` names the statement. The node joins
+    the graph once an error edge enters it, or once a `trap` set names it as its `outward`, which is
+    `named`: where the errors that set takes would go were none of it written is a position the
+    landing questions read, whether or not any error reaches it as written.
+    """
+    statement: Node
+    node: CfgNode | None = None
+    named: bool = False
+
+
+@dataclass
 class _TrapBody:
     """
     What building one `trap` body reported back: the nodes at which control resumes the block the
@@ -357,7 +375,81 @@ class _Builder(CfgBuilder):
         self._trap_body: _TrapBody | None = None
         self._descend = descend
         self._trap_sets = {} if trap_sets is None else trap_sets
+        session = session_of(owner)
+        self._throws_step_over = session.silenced or (
+            session.silenced_by_a_call and not isinstance(owner, Ps1Script))
         self._open_sets: list[Ps1TrapSet] = []
+        self._frames: list[_ReportFrame] = []
+
+    def escape(self) -> CfgNode:
+        """
+        Where nothing is in force, the report node of the statement being built: 5.1 reports an
+        error that leaves a `try`, `catch` or `trap` body there and carries on after the statement.
+        """
+        if self._handlers or not self._frames:
+            return self.unwinding()
+        frame = self._frames[-1]
+        if frame.node is None:
+            frame.node = CfgNode(self.cfg, None, carries_on_after=frame.statement)
+        return frame.node
+
+    def member(self, statement: Node, frontier: list[CfgNode]) -> list[CfgNode]:
+        """
+        A statement of a block, with its report frame open where nothing is in force. The report
+        node joins the graph where an error edge entered it or a `trap` set named it: it carries on
+        after the statement, and the error a `Stop` makes terminating ends the run from there.
+        """
+        if self._handlers:
+            return super().member(statement, frontier)
+        frame = _ReportFrame(statement)
+        self._frames.append(frame)
+        try:
+            exits = super().member(statement, frontier)
+        finally:
+            self._frames.pop()
+        report = frame.node
+        if report is not None and (report.predecessors or frame.named):
+            self.cfg.nodes.append(report)
+            self.exceptional_edge(report, self.cfg.exit)
+            exits = [*exits, report]
+        return exits
+
+    def offers(self, element: Node, target: CfgNode) -> bool:
+        """
+        A report node is not a handler: it stands for 5.1 reporting an error that was raised, and an
+        edge into it makes what follows the statement it carries on after reachable. So only a point
+        that may fail is joined to one: a point evaluating nothing, as a `break` does, or only what
+        `refinery.lib.scripts.ps1.analysis.values.is_fault_free` clears, is not.
+        """
+        if target.carries_on_after is None:
+            return True
+        operands = point_operands(element)
+        return operands is None or not all(is_fault_free(operand) for operand in operands)
+
+    def _throw_target(self) -> CfgNode | None:
+        """
+        Where the error a `throw` raises goes: to the `try` or `trap` in force, else where its body
+        may run silently to the report node or past the `throw`, which is `None`, and else to the
+        body exit, since 5.1 ends the run on a `throw` nothing takes.
+        """
+        handler = self._handlers[-1] if self._handlers else None
+        if handler is not None and handler.carries_on_after is None:
+            return handler
+        if self._throws_step_over:
+            return handler
+        return self.cfg.exit
+
+    def _outward(self) -> CfgNode:
+        """
+        What guards a `trap` set being closed, which `Ps1TrapSet.outward` names. Where that is a
+        report node, its frame is marked so the node joins the graph: a set that takes every error
+        draws no edge into it, and the landing questions still ask where it carries on.
+        """
+        outward = self.unwinding()
+        for frame in self._frames:
+            if frame.node is outward:
+                frame.named = True
+        return outward
 
     def block(self, statements: Sequence[Node], frontier: list[CfgNode]) -> list[CfgNode]:
         """
@@ -386,9 +478,9 @@ class _Builder(CfgBuilder):
         every trap body an exceptional edge back to a handler that already has a normal edge into
         it, which is a cycle through the trap that no run can take — and reads as a body that
         repeats. `refinery.lib.scripts.analysis.cfg.CfgBuilder.guarded` pops before building its
-        `catch` bodies for the same reason. Where nothing guards the block, the trap body unwinds to
-        the body exit: the error ends the body, which is the one place a `trap` turns a fault that
-        would have been reported and stepped over into one that stops everything after it.
+        `catch` bodies for the same reason. Where nothing guards the block, the trap body is built
+        under `escape`: 5.1 reports an error raised in it and carries on after the statement holding
+        the block, as it does for one leaving a `try` or `catch` body.
 
         **A trap body is built against an empty jump-target stack**, because 5.1 compiles one as a
         scope of its own: `break` in it ends the trap and rethrows, and `continue` in it resumes the
@@ -440,7 +532,7 @@ class _Builder(CfgBuilder):
         outer_labels = self._pending_labels
         self._targets = []
         self._pending_labels = frozenset()
-        self._handlers.append(self.unwinding())
+        self._handlers.append(self.escape())
         for trap in traps:
             self._trap_body = built = _TrapBody()
             body_from = len(self.cfg.nodes)
@@ -464,7 +556,7 @@ class _Builder(CfgBuilder):
         self._trap_body = enclosing
         self._targets = outer_targets
         self._pending_labels = outer_labels
-        trap_set.outward = self.unwinding()
+        trap_set.outward = self._outward()
         self.close_handler_set(list(chain), escapes=escapes)
         self._handlers.append(chain[0])
         if not resumes:
@@ -571,7 +663,13 @@ class _Builder(CfgBuilder):
         if isinstance(statement, Ps1ExitStatement):
             return self.terminate(statement, frontier, exceptional=False)
         if isinstance(statement, Ps1ThrowStatement):
-            return self.terminate(statement, frontier, exceptional=True)
+            node = self.node(statement)
+            self.link(frontier, node)
+            target = self._throw_target()
+            if target is None:
+                return [node]
+            self.exceptional_edge(node, target)
+            return []
         if isinstance(statement, Ps1ReturnStatement):
             return self.terminate(statement, frontier, exceptional=False)
         if isinstance(statement, Ps1BreakStatement):
@@ -699,6 +797,7 @@ class _Builder(CfgBuilder):
             (finalizer,) if finalizer is not None else (),
             frontier,
             escapes=not swallows_every_error(statement),
+            clauses_guarded=True,
         )
 
 

@@ -1429,49 +1429,6 @@ def _required_reflection_method_keys(
     return keys
 
 
-def _required_non_null_returns(
-    entries: set[tuple[str, str]],
-) -> dict[tuple[Ps1TypeName, str], Ps1TypeName]:
-    """
-    The non-null vouch table, floored on top of `_required_reflection_method_keys`: the type
-    must be sealed — a subtype could override the member to return `$null` — and the member's
-    instance overloads must agree on one return type, which is the return the table records for
-    the vouch, so that answering one is a lookup on the table rather than a re-derivation of the
-    agreement. An entry that fails a floor fails the load.
-    """
-    table: dict[tuple[Ps1TypeName, str], Ps1TypeName] = {}
-    for type_key, member in _required_reflection_method_keys(entries):
-        if not type_is_sealed(type_key):
-            raise ValueError(
-                F'the non-null return table names {type_key!r}, which the collected metadata does '
-                F'not mark sealed; a subtype could override {member} to return $null, so the data '
-                F'and the table are out of step.'
-            )
-        returns = {
-            resolve_type(overload['returns'])
-            for overload in instance_overloads(type_key, member)
-            if overload.get('returns')
-        }
-        if None in returns or len(returns) != 1:
-            raise ValueError(
-                F'the non-null return table names {type_key!r}.{member}, whose instance overloads '
-                F'do not agree on one return type; the value the vouch answers with would be a '
-                F'guess, so the data and the table are out of step.'
-            )
-        table[(type_key, member)] = next(iter(returns))
-    return table
-
-
-#: The instance methods whose call on a value of the type always returns a non-null value of the
-#: one return type its overloads agree on, measured on 5.1 — `StringBuilder.ToString` first: an
-#: emptied `StringBuilder` still answers a String. The table records the agreed return beside the
-#: key, so a vouch is one lookup. This is what lets an origin judgment follow a member call rather
-#: than stopping at a name it cannot type; see
-#: `refinery.lib.scripts.ps1.analysis.values.non_null_type`.
-NON_NULL_RETURNS: dict[tuple[Ps1TypeName, str], Ps1TypeName] = _required_non_null_returns({
-    ('text.stringbuilder', 'tostring'),
-})
-
 #: The generic methods on the collected static surface whose signatures are fully concrete, so
 #: no spelling-based guard can see their genericity: `Invoke` on the definition throws
 #: `InvalidOperationException` where the direct spelling throws a bare `MethodException` —
@@ -1787,3 +1744,160 @@ def command_output_types(name: str) -> frozenset[str] | None:
     if record is None or not record.get('output_type_declared'):
         return None
     return frozenset(_type.lower() for _type in record['output_types'])
+
+
+class CallKind(enum.Enum):
+    """
+    How a call names what it runs: a static method of a type, a method of the value it is made on,
+    or a command.
+    """
+    STATIC = 'static'
+    INSTANCE = 'instance'
+    COMMAND = 'command'
+
+
+class CallFact(typing.NamedTuple):
+    """
+    What Windows PowerShell 5.1 was measured to do with one call. `owner` is the type whose method
+    is called, `None` for a command, and `name` is the lowercased member or command name.
+
+    `arguments` names, one position at a time, the types of value the fact covers there; `None`
+    covers every argument list. A call whose arguments it covers hands back a value of `returns`,
+    never `$null`, or nothing where `returns` is `System.Void`; and where `fails` is `False`, it
+    cannot fail.
+    """
+    kind: CallKind
+    owner: Ps1TypeName | None
+    name: str
+    arguments: tuple[frozenset[Ps1TypeName], ...] | None
+    fails: bool
+    returns: Ps1TypeName
+
+
+def _method_fact(
+    kind: CallKind,
+    owner: str,
+    name: str,
+    arguments: tuple[frozenset[str], ...] | None,
+    fails: bool,
+) -> CallFact:
+    """
+    A fact about a method, floored against the collected metadata, with the return the metadata
+    names. The member has to be a reflection method on the side *kind* names. A method of a value
+    needs a sealed type, since a subtype could override it, and overloads that agree on one return.
+    A fact covering one argument list needs exactly one overload taking that many arguments, so that
+    5.1 cannot bind another one. A fact that covers every argument list cannot claim that the call
+    never fails, since some argument list binds no overload at all. An entry that fails a floor
+    fails the load.
+    """
+    ((type_key, member),) = _required_reflection_method_keys({(owner, name)})
+    if arguments is None and not fails:
+        raise ValueError(
+            F'the call fact table claims that {type_key}.{member} never fails for any arguments, '
+            F'which no method does; the table states something it cannot have measured.'
+        )
+    overloads = (static_overloads if kind is CallKind.STATIC else instance_overloads)(type_key, member)
+    if kind is CallKind.INSTANCE and not type_is_sealed(type_key):
+        raise ValueError(
+            F'the call fact table names {type_key}.{member}, whose type the collected metadata '
+            F'does not mark sealed; a subtype could override it, so the data and the table are out '
+            F'of step.'
+        )
+    if arguments is not None:
+        overloads = [
+            overload for overload in overloads
+            if len(overload.get('parameters') or ()) == len(arguments)
+        ]
+        if len(overloads) != 1:
+            raise ValueError(
+                F'the call fact table names {type_key}.{member} with {len(arguments)} arguments, '
+                F'for which the collected metadata has {len(overloads)} overloads rather than one; '
+                F'the data and the table are out of step.'
+            )
+    returns = {resolve_type(overload['returns']) for overload in overloads if overload.get('returns')}
+    returned = returns.pop() if len(returns) == 1 else None
+    if returned is None:
+        raise ValueError(
+            F'the call fact table names {type_key}.{member}, whose overloads do not agree on one '
+            F'return type; the data and the table are out of step.'
+        )
+    return CallFact(
+        kind,
+        type_key,
+        member,
+        None if arguments is None else tuple(required_type_keys(set(types)) for types in arguments),
+        fails,
+        returned,
+    )
+
+
+def _command_fact(
+    name: str,
+    arguments: tuple[frozenset[str], ...],
+    fails: bool,
+    returns: str,
+) -> CallFact:
+    """
+    A fact about a command, floored against the collected metadata: the command is collected, and
+    what it is said to hand back is among the output types it declares. An entry that fails a floor
+    fails the load.
+    """
+    declared = command_output_types(name)
+    returned = required_type_key(returns)
+    if declared is None or returned.definition.lower() not in declared:
+        raise ValueError(
+            F'the call fact table says that {name} hands back {returned}, which is not among the '
+            F'output types the collected metadata declares for it; the data and the table are out '
+            F'of step.'
+        )
+    return CallFact(
+        CallKind.COMMAND,
+        None,
+        name.lower(),
+        tuple(required_type_keys(set(types)) for types in arguments),
+        fails,
+        returned,
+    )
+
+
+def _call_fact_table(facts: typing.Iterable[CallFact]) -> dict[tuple[CallKind, Ps1TypeName | None, str], tuple[CallFact, ...]]:
+    table: dict[tuple[CallKind, Ps1TypeName | None, str], tuple[CallFact, ...]] = {}
+    for fact in facts:
+        key = (fact.kind, fact.owner, fact.name)
+        table[key] = (*table.get(key, ()), fact)
+    return table
+
+
+#: The numeric types, as a call fact names the arguments it covers.
+_NUMBERS = frozenset({
+    'byte',
+    'decimal',
+    'double',
+    'int',
+    'int16',
+    'long',
+    'sbyte',
+    'single',
+    'uint16',
+    'uint32',
+    'uint64',
+})
+
+#: What 5.1 was measured to do with the calls listed here, each through the rows of `corpus.CALLS`
+#: and `corpus.TYPES` in `test.lib.scripts.ps1` that the oracle tests name for it. A call these facts
+#: cover is one a removal may treat as unable to fail, and one whose value an origin judgment may
+#: follow; `refinery.lib.scripts.ps1.analysis.calls.Ps1CallReader` is the one reader.
+CALL_FACTS = _call_fact_table((
+    _method_fact(CallKind.STATIC, 'math', 'sqrt', (_NUMBERS,), fails=False),
+    _method_fact(CallKind.STATIC, 'array', 'reverse', (frozenset({'object[]'}),), fails=False),
+    _method_fact(CallKind.INSTANCE, 'int', 'gethashcode', (), fails=False),
+    _method_fact(CallKind.INSTANCE, 'text.stringbuilder', 'tostring', None, fails=True),
+    _command_fact('get-random', (), fails=False, returns='int'),
+))
+
+
+def call_facts(kind: CallKind, owner: Ps1TypeName | None, name: str) -> tuple[CallFact, ...]:
+    """
+    The facts `CALL_FACTS` holds about one call, keyed by the canonical type key of its owner.
+    """
+    return CALL_FACTS.get((kind, owner, name.lower()), ())

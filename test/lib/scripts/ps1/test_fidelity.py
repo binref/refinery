@@ -94,6 +94,8 @@ _ASSIGNMENT_AS_AN_ARGUMENT = 'an assignment handed to a call is written into its
 
 #: The same, for the paren-stripped tier.
 KNOWN_BRACKET_VIOLATIONS: dict[str, str] = {
+    "Write-Host ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SGVs!bG8=')))":
+        _TYPE_MEMBER_AS_A_WORD,
     '[Array]::Reverse(($x = 1, 2, 3)); Write-Output $x':
         _ASSIGNMENT_AS_AN_ARGUMENT,
     '[Array]::Reverse(($x = 1, 2))':

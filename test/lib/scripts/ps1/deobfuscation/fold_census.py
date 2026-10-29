@@ -13,12 +13,1761 @@ This says only which folds exist, so that a commit that means to change one has 
 from __future__ import annotations
 
 FOLDS: dict[str, str] = {
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\nthrow 'x'\nWrite-Host 'rest'\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "throw 'x'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "throw 'x'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "throw 'x'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "throw 'x'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "trap { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        '$p = @($Null, $True)\n'
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @($null, $true)\n'
+    "try { throw 'x' } catch { if ($p[1]) { throw 'x'; Write-Host 'rest' } }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\nthrow 'x'\nWrite-Host 'rest'\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "$null = $($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a')\n"
+        '$Null = $($Null = [int]$p[0]\n'
+        "Write-Host 'rest')\n"
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\n$null = [int]$p[0]; Write-Host 'rest'":
+        "$ErrorActionPreference = 'SilentlyContinue'\nWrite-Host 'rest'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "foreach ($i in 1, 2) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'foreach ($i in 1, 2) {\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch [System.IO.IOException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch [System.InvalidCastException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} finally {\n'
+        "  Write-Host 'fin'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "try { Write-Host 't' } finally { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'try {\n'
+        "  Write-Host 't'\n"
+        '} finally {\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "try { foreach ($i in 1, 2) { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  foreach ($i in 1, 2) {\n'
+        '    $Null = [int]$p[0]\n'
+        "    Write-Host 'rest'\n"
+        '  }\n'
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "try { throw 'x' } catch { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        "  throw 'x'\n"
+        '} catch {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "try { try { $null = [int]$p[0] } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\ntry {\n  Write-Host 'rest'\n} finally {}\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a')\n"
+    "try { try { throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  try {\n'
+        "    throw 'x'\n"
+        '  } finally {\n'
+        '    $Null = [int]$p[0]\n'
+        "    Write-Host 'rest'\n"
+        '  }\n'
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\nWrite-Host 'rest'\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "trap { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$p = @('a', $True)\n"
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    "$p = @('a', $true)\n"
+    "try { throw 'x' } catch { if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\nWrite-Host 'rest'\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @()\n$null = $(throw 'x'; Write-Host 'rest'); Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n$Null = $(throw 'x'\nWrite-Host 'rest')\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'foreach ($i in 1, 2) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @()\nthrow 'x'; Write-Host 'rest'":
+        "$ErrorActionPreference = 'SilentlyContinue'\nthrow 'x'\nWrite-Host 'rest'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "try { Write-Host 't' } finally { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'try {\n'
+        "  Write-Host 't'\n"
+        '} finally {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "try { foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'try {\n'
+        '  foreach ($i in 1, 2) {\n'
+        "    throw 'x'\n"
+        '  }\n'
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "try { throw 'x' } catch { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'try {\n'
+        "  throw 'x'\n"
+        '} catch {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'try {\n'
+        "  throw 'x'\n"
+        '} catch [System.IO.IOException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'try {\n'
+        "  throw 'x'\n"
+        '} catch [System.InvalidCastException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\nWrite-Host 'c'\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\nWrite-Host 'c'\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'try {\n'
+        "  throw 'x'\n"
+        '} finally {\n'
+        "  Write-Host 'fin'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "try { try { throw 'x' } finally { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'try {\n'
+        '  try {\n'
+        "    throw 'x'\n"
+        '  } finally {\n'
+        "    throw 'x'\n"
+        "    Write-Host 'rest'\n"
+        '  }\n'
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "try { try { throw 'x' } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'try {\n'
+        '  try {\n'
+        "    throw 'x'\n"
+        '  } finally {}\n'
+        "  Write-Host 'rest'\n"
+        '} finally {}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @($null, $null, 'a')\n"
+    "trap { throw 'x'; Write-Host 'trest'; continue }; $null = [int]$p[2]; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @($Null, $Null, 'a')\n"
+        'trap {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'trest'\n"
+        '  continue\n'
+        '}\n'
+        '$Null = [int]$p[2]\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n$p = @($Null, $True)\nthrow 'x'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "throw 'x'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "throw 'x'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "throw 'x'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n$p = @($Null, $True)\ntrap {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "trap { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @($Null, $True)\n'
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @($null, $true)\n'
+    "try { throw 'x' } catch { if ($p[1]) { throw 'x'; Write-Host 'rest' } }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n$p = @($Null, $True)\nthrow 'x'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\n$null = $($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        '$Null = $($Null = [int]$p[0]\n'
+        "Write-Host 'rest')\n"
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\n$null = [int]$p[0]; Write-Host 'rest'":
+        "$ErrorActionPreference = 'Stop'\n$p = @('a')\n$Null = [int]$p[0]\nWrite-Host 'rest'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a')\n"
+    "foreach ($i in 1, 2) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        'foreach ($i in 1, 2) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch [System.IO.IOException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch [System.InvalidCastException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} finally {\n'
+        "  Write-Host 'fin'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a')\n"
+    "try { Write-Host 't' } finally { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        "  Write-Host 't'\n"
+        '} finally {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a')\n"
+    "try { foreach ($i in 1, 2) { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  foreach ($i in 1, 2) {\n'
+        '    $Null = [int]$p[0]\n'
+        "    Write-Host 'rest'\n"
+        '  }\n'
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a')\n"
+    "try { throw 'x' } catch { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        "  throw 'x'\n"
+        '} catch {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a')\n"
+    "try { try { $null = [int]$p[0] } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  try {\n'
+        '    $Null = [int]$p[0]\n'
+        '  } finally {}\n'
+        "  Write-Host 'rest'\n"
+        '} finally {}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a')\n"
+    "try { try { throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a')\n"
+        'try {\n'
+        '  try {\n'
+        "    throw 'x'\n"
+        '  } finally {\n'
+        '    $Null = [int]$p[0]\n'
+        "    Write-Host 'rest'\n"
+        '  }\n'
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $null, 'a')\n"
+    "trap { $null = [int]$p[0]; Write-Host 'trest'; continue }; $null = [int]$p[2]; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $Null, 'a')\n"
+        'trap {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'trest'\n"
+        '  continue\n'
+        '}\n'
+        '$Null = [int]$p[2]\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n$p = @('a', $True)\n$Null = [int]'a'\nWrite-Host 'rest'\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "trap { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$p = @('a', $True)\n"
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    "$p = @('a', $true)\n"
+    "try { throw 'x' } catch { if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n$p = @('a', $True)\n$Null = [int]'a'\nWrite-Host 'rest'\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @()\n$null = $(throw 'x'; Write-Host 'rest'); Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n$p = @()\n$Null = $(throw 'x'\nWrite-Host 'rest')\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n$p = @()\nforeach ($i in 1, 2) {\n  throw 'x'\n}\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @()\nthrow 'x'; Write-Host 'rest'":
+        "$ErrorActionPreference = 'Stop'\n$p = @()\nthrow 'x'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @()\n'
+        'try {\n'
+        '  foreach ($i in 1, 2) {\n'
+        "    throw 'x'\n"
+        '  }\n'
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { throw 'x' } catch { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n$p = @()\nthrow 'x'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @()\n'
+        'try {\n'
+        "  throw 'x'\n"
+        '} catch [System.IO.IOException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @()\n'
+        'try {\n'
+        "  throw 'x'\n"
+        '} catch [System.InvalidCastException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n$p = @()\nWrite-Host 'c'\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n$p = @()\nWrite-Host 'c'\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        '$p = @()\n'
+        'try {\n'
+        "  throw 'x'\n"
+        '} finally {\n'
+        "  Write-Host 'fin'\n"
+        '}\n'
+        "Write-Host 'after'",
     "$ErrorActionPreference = 'Stop'; trap [System.IO.IOException] { continue }; trap [Exception] { continue }; [int]'a'; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\ntrap [Exception] {\n  continue\n}\n[int]'a'\nWrite-Host 'after'",
     "$ErrorActionPreference = 'Stop'; trap { }; $null = [int]'a'; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\ntrap {}\n$Null = [int]'a'\nWrite-Host 'after'",
     "$ErrorActionPreference = 'Stop'; trap { }; trap { continue }; [int]'a'; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\ntrap {}\n[int]'a'\nWrite-Host 'after'",
+    "$ExecutionContext.InvokeCommand.PreCommandLookupAction = { param($n, $e) if ($n -eq 'Get-Random') { $e.CommandScriptBlock = { throw 'hijack' } } }; try { throw 'x' } catch { Get-Random; Write-Host 'rest' }; Write-Host 'after'":
+        '$ExecutionContext.InvokeCommand.PreCommandLookupAction = {\n'
+        '  Param($n, $e)\n'
+        "  if ($n -Eq 'Get-Random') {\n"
+        '    $e.CommandScriptBlock = {\n'
+        "      throw 'hijack'\n"
+        '    }\n'
+        '  }\n'
+        '}\n'
+        'Get-Random\n'
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
     "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); trap { continue }; [int]'a'; Write-Output 'after'":
         "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop')\n"
         "[int]'a'\n"
@@ -37,6 +1786,8 @@ FOLDS: dict[str, str] = {
         "$OFS = '-'\nWrite-Output 'a-b'",
     '$OFS = \'-\'; Write-Output "$(1, 2)"':
         "$OFS = '-'\nWrite-Output '1-2'",
+    "$PSDefaultParameterValues = @{ 'Get-Random:Maximum' = 0 }; $t = Get-Random; Write-Output ($null -eq $t)":
+        "$PSDefaultParameterValues = @{\n  'Get-Random:Maximum' = 0\n}\n$t = Get-Random\nWrite-Output ($Null -Eq $t)",
     '$_ = 5; switch (1) { default { Write-Output $_ } }':
         '$_ = 5\nWrite-Output $_',
     '$a = $null; $b = 5; $t = $a * $b; Write-Output (,$t)':
@@ -132,6 +1883,8 @@ FOLDS: dict[str, str] = {
         '$i = 0\nif ($False -and ($i++)) {}\n$t = $i\nWrite-Output (,$t)\nWrite-Output $t',
     '$i = 0; if ($true -or ($i++)) { }; $t = $i; Write-Output (,$t); Write-Output $t':
         '$i = 0\nif ($True -or ($i++)) {}\n$t = $i\nWrite-Output (,$t)\nWrite-Output $t',
+    "$k = 'one'; try { $b = [Convert]::FromBase64String('!!'); $k = 'two' } catch { }; Write-Host $k":
+        "$k = 'one'\ntry {\n  $k = 'two'\n} catch {}\nWrite-Host $k",
     '$k = 1, 2, 3; $h = @{ k = $k }; if ((Get-Random -Maximum 1) -eq 0) { $buf = 0, 0 } else { $buf = 1, 1 }; $buf[0] = 7; Write-Output $k':
         'if ((Get-Random -Maximum 1) -Eq 0) {\n'
         '  $buf = 0, 0\n'
@@ -158,6 +1911,13 @@ FOLDS: dict[str, str] = {
         '$True',
     "$null = 'abc' -match '(b)'; $t = $Matches[1]; Write-Output (,$t); Write-Output $t":
         "$Null = 'abc' -Match '(b)'\n$t = $Matches[1]\nWrite-Output (,$t)\nWrite-Output $t",
+    '$null = Get-Random -SetSeed 7; Get-Random | Out-Null; Write-Host (Get-Random -Maximum 1000)':
+        '$Null = Get-Random -SetSeed 7\nGet-Random | Out-Null\nWrite-Host (Get-Random -Maximum 1000)',
+    "$null = Get-Random -SetSeed 7; try { throw 'x' } catch { (Get-Random).GetHashCode() | Out-Null; Write-Host 'rest' }; Write-Host (Get-Random -Maximum 1000)":
+        '$Null = Get-Random -SetSeed 7\n'
+        '(Get-Random).GetHashCode() | Out-Null\n'
+        "Write-Host 'rest'\n"
+        'Write-Host (Get-Random -Maximum 1000)',
     "$o = New-Object PSObject; $x = 1, 2, 3; $o | Add-Member -NotePropertyName k "
     "-NotePropertyValue $x; $c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
     'Write-Output $x':
@@ -184,6 +1944,639 @@ FOLDS: dict[str, str] = {
         '  $out[$i] = 7 -BXor $k[$i % $k.Length]\n'
         '}\n'
         "Write-Host \"out=$($out -Join ',')\"",
+    "$p = @($null, $null, 'a')\n"
+    "trap { throw 'x'; Write-Host 'trest'; continue }; $null = [int]$p[2]; Write-Host 'after'":
+        "$p = @($Null, $Null, 'a')\n"
+        'trap {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'trest'\n"
+        '  continue\n'
+        '}\n'
+        '$Null = [int]$p[2]\n'
+        "Write-Host 'after'",
+    "$p = @($null, $true)\nif ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "throw 'x'",
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @($null, $true)\nif ($p[1]) { trap { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "if ($True) {\n  trap {\n    Write-Host 't'\n  }\n  throw 'x'\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "if ($True) {\n  trap {\n    Write-Host 't'\n    break\n  }\n  throw 'x'\n}\nWrite-Host 'after'",
+    '$p = @($null, $true)\n'
+    "if ($p[1]) { trap { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        '$p = @($Null, $True)\n'
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @($Null, $True)\ntrap [System.IO.IOException] {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
+    '$p = @($null, $true)\n'
+    "trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        '$p = @($Null, $True)\n'
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        '$p = @($Null, $True)\n'
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @($Null, $True)\ntrap [System.InvalidCastException] {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
+    '$p = @($null, $true)\n'
+    "trap [System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        '$p = @($Null, $True)\n'
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        '$p = @($Null, $True)\n'
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        '$p = @($Null, $True)\n'
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "throw 'x'",
+    '$p = @($null, $true)\n'
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        '$p = @($Null, $True)\n'
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @($null, $true)\ntrap { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        '$p = @($Null, $True)\n'
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    '$p = @($null, $true)\n'
+    "trap { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @($Null, $True)\ntrap {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
+    '$p = @($null, $true)\n'
+    "trap { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        '$p = @($Null, $True)\n'
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @($null, $true)\ntry { throw 'x' } catch { if ($p[1]) { throw 'x'; Write-Host 'rest' } }; Write-Host 'after'":
+        "throw 'x'",
+    "$p = @('a')\n$null = $($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'":
+        "$p = @('a')\n$Null = $($Null = [int]$p[0]\nWrite-Host 'rest')\nWrite-Host 'after'",
+    "$p = @('a')\n$null = [int]$p[0]; Write-Host 'rest'":
+        "Write-Host 'rest'",
+    "$p = @('a')\nforeach ($i in 1, 2) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "foreach ($i in 1, 2) {\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'":
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch [System.IO.IOException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'":
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch [System.InvalidCastException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a')\n"
+    "try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'":
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'":
+        "$p = @('a')\n"
+        'try {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '} finally {\n'
+        "  Write-Host 'fin'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a')\ntry { Write-Host 't' } finally { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "try {\n  Write-Host 't'\n} finally {\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
+    "$p = @('a')\n"
+    "try { foreach ($i in 1, 2) { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$p = @('a')\n"
+        'try {\n'
+        '  foreach ($i in 1, 2) {\n'
+        '    $Null = [int]$p[0]\n'
+        "    Write-Host 'rest'\n"
+        '  }\n'
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a')\ntry { throw 'x' } catch { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a')\ntry {\n  throw 'x'\n} catch {\n  $Null = [int]$p[0]\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
+    "$p = @('a')\ntry { try { $null = [int]$p[0] } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'":
+        "try {\n  Write-Host 'rest'\n} finally {}\nWrite-Host 'after'",
+    "$p = @('a')\n"
+    "try { try { throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$p = @('a')\n"
+        'try {\n'
+        '  try {\n'
+        "    throw 'x'\n"
+        '  } finally {\n'
+        '    $Null = [int]$p[0]\n'
+        "    Write-Host 'rest'\n"
+        '  }\n'
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $null, 'a')\n"
+    "trap { $null = [int]$p[0]; Write-Host 'trest'; continue }; $null = [int]$p[2]; Write-Host 'after'":
+        "$p = @('a', $Null, 'a')\n"
+        'trap {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'trest'\n"
+        '  continue\n'
+        '}\n'
+        '$Null = [int]$p[2]\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\nif ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "Write-Host 'rest'\nWrite-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.InvalidCastException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap [System.Management.Automation.RuntimeException] {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '    break\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "if ($p[1]) { trap { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        'if ($True) {\n'
+        '  trap {\n'
+        "    Write-Host 't'\n"
+        '    continue\n'
+        '  }\n'
+        "  $Null = [int]'a'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap [System.IO.IOException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap [System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap [System.InvalidCastException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap [System.Management.Automation.RuntimeException] {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '  break\n'
+        '}\n'
+        "$Null = [int]'a'\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "trap { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
+        "$p = @('a', $True)\n"
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
+        '}\n'
+        'if ($p[1]) {\n'
+        '  $Null = [int]$p[0]\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @('a', $true)\n"
+    "try { throw 'x' } catch { if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'":
+        "Write-Host 'rest'\nWrite-Host 'after'",
+    "$p = @()\n$null = $(throw 'x'; Write-Host 'rest'); Write-Host 'after'":
+        "$Null = $(throw 'x'\nWrite-Host 'rest')\nWrite-Host 'after'",
+    "$p = @()\nforeach ($i in 1, 2) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "foreach ($i in 1, 2) {\n  throw 'x'\n}\nWrite-Host 'after'",
+    "$p = @()\nthrow 'x'; Write-Host 'rest'":
+        "throw 'x'",
+    "$p = @()\ntry { Write-Host 't' } finally { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "try {\n  Write-Host 't'\n} finally {\n  throw 'x'\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
+    '$p = @()\n'
+    "try { foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        "try {\n  foreach ($i in 1, 2) {\n    throw 'x'\n  }\n} catch {\n  Write-Host 'c'\n}\nWrite-Host 'after'",
+    "$p = @()\ntry { throw 'x' } catch { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "throw 'x'",
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'":
+        "try {\n  throw 'x'\n} catch [System.IO.IOException] {\n  Write-Host 'c'\n}\nWrite-Host 'after'",
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'":
+        "try {\n  throw 'x'\n} catch [System.InvalidCastException] {\n  Write-Host 'c'\n}\nWrite-Host 'after'",
+    '$p = @()\n'
+    "try { throw 'x'; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'":
+        "Write-Host 'c'\nWrite-Host 'after'",
+    "$p = @()\ntry { throw 'x'; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'":
+        "Write-Host 'c'\nWrite-Host 'after'",
+    "$p = @()\ntry { throw 'x'; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'":
+        "try {\n  throw 'x'\n} finally {\n  Write-Host 'fin'\n}\nWrite-Host 'after'",
+    '$p = @()\n'
+    "try { try { throw 'x' } finally { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        'try {\n'
+        '  try {\n'
+        "    throw 'x'\n"
+        '  } finally {\n'
+        "    throw 'x'\n"
+        "    Write-Host 'rest'\n"
+        '  }\n'
+        '} catch {\n'
+        "  Write-Host 'c'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "$p = @()\ntry { try { throw 'x' } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'":
+        "try {\n  try {\n    throw 'x'\n  } finally {}\n  Write-Host 'rest'\n} finally {}\nWrite-Host 'after'",
     '$p = @(@(1, 2), @(3, 4)); for ($i = 0; $i -lt 1; $i++) { [Array]::Reverse($p[$i]) }; Write-Output $p[0]':
         '$p = @(@(1, 2), @(3, 4))\nfor ($i = 0; $i -LT 1; $i++) {\n  [Array]::Reverse($p[$i])\n}\nWrite-Output $p[0]',
     "$private:x = 'a'; Write-Output $x":
@@ -1003,6 +3396,8 @@ FOLDS: dict[str, str] = {
         'Write-Output (,2)\nWrite-Output 2',
     '$t = [Convert]::ToInt64(5); Write-Output (,$t); Write-Output $t':
         'Write-Output (,5L)\nWrite-Output 5L',
+    '$t = [array]::Reverse((1, 2, 3, 4)); Write-Output ($null -eq $t)':
+        '$t = [array]::Reverse((1, 2, 3, 4))\nWrite-Output ($Null -Eq $t)',
     '$t = [bool]$null; Write-Output (,$t); Write-Output $t':
         'Write-Output (,$False)\nWrite-Output $False',
     "$t = [bool]' '; Write-Output (,$t); Write-Output $t":
@@ -1374,6 +3769,16 @@ FOLDS: dict[str, str] = {
         "if ($True) {\n  trap {\n    Write-Output $local:x\n    continue\n  }\n  throw 'e'\n}",
     "$x = 'hello'; $x":
         "'hello'",
+    "$x = 'one'; try { $x = 'two'; $null = [int]'a'; $x = 'three' } catch [System.IO.IOException] { }; Write-Host $x":
+        "$x = 'one'\n"
+        'try {\n'
+        "  $x = 'two'\n"
+        "  $Null = [int]'a'\n"
+        "  $x = 'three'\n"
+        '} catch [System.IO.IOException] {}\n'
+        'Write-Host $x',
+    "$x = 'one'; try { throw 'q' } catch { $x = 'two'; & { $null = [int]'a' }; $x = 'three' }; Write-Host $x":
+        "& {}\nWrite-Host 'three'",
     '$x = (1).5':
         '$x = $Null',
     '$x = 1, 2, 3; $a = $null; $a = $a + $x; $a[0] = 9; Write-Output $x[0]':
@@ -1643,8 +4048,6 @@ FOLDS: dict[str, str] = {
         "Copy-Item variable:y variable:x\nWrite-Output 'a'",
     "$y = 'b'; $x = 'a'; Remove-Variable x; Rename-Item variable:y x; Write-Output $x":
         "$x = 'a'\nRemove-Variable x\nRename-Item variable:y x\nWrite-Output $x",
-    "$y = 'w'; try { $y = 'x'; [int]'a'; $y = 'v' } catch {}; Write-Output $y":
-        "Write-Output 'w'",
     '$y = 1, 2; $n = 1; $z = $y * $n; Write-Output ([object]::ReferenceEquals($y, $z))':
         'Write-Output ([Object]::ReferenceEquals((1, 2), (1, 2)))',
     '$y = 1, 2; $z = $y * 1.4; Write-Output ([object]::ReferenceEquals($y, $z))':
@@ -1707,6 +4110,8 @@ FOLDS: dict[str, str] = {
         "Get-Item nope -Exclude Stop\nWrite-Host 'after'",
     "Get-Item nope -errora Stop; Write-Host 'after'":
         "Get-Item nope -ErrorAction Stop\nWrite-Host 'after'",
+    "Invoke-Expression '$ErrorActionPreference = 0'; if ($Host) { throw 'vm'; exit }; Write-Host 'payload'":
+        "$ErrorActionPreference = 0\nif ($Host) {\n  throw 'vm'\n  exit\n}\nWrite-Host 'payload'",
     "Set-Alias -N zzq -V Write-Output; zzq 'one-letter'":
         "Write-Output 'one-letter'",
     "Set-Alias -Na zzq -Val Write-Output; zzq 'abbreviated'":
@@ -1748,6 +4153,8 @@ FOLDS: dict[str, str] = {
         "  $m = 'in'\n"
         '}\n'
         'Write-Host "${m} ${w}"',
+    "Set-Variable -Name ('Error' + 'ActionPreference') -Value 0; throw 'boom'; Write-Host 'after'":
+        "$ErrorActionPreference = 0\nthrow 'boom'\nWrite-Host 'after'",
     "Set-Variable global:y 'b'; Write-Host $global:y":
         'Write-Host $global:y',
     'Set-Variable q 5; function fq { $q + 1 }; Write-Output (fq)':
@@ -1762,6 +4169,8 @@ FOLDS: dict[str, str] = {
         "Write-Host 'a'\nreturn",
     "Write-Host 'abc'.Length":
         'Write-Host 3',
+    "Write-Host ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SGVs!bG8=')))":
+        "Write-Host 'Hello'",
     'Write-Output "abc".Length':
         'Write-Output 3',
     "Write-Output $($r = ''; foreach ($e in 'a', 'b') { $r = $r + $e }; $r)":
@@ -1824,6 +4233,13 @@ FOLDS: dict[str, str] = {
         "Write-Output '5'",
     "[int]'42' + 1":
         '43',
+    "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string]); iex 'Write-Host ([System.Math].FullName)'":
+        "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string])\n"
+        'Write-Host ([System.Math].FullName)',
+    "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string]); iex 'try { throw ''x'' } catch { $k = [System.Math]::Sqrt(36); Write-Host ''rest'' }; Write-Host ''after'''":
+        "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string])\n"
+        "Write-Host 'rest'\n"
+        "Write-Host 'after'",
     "[string]$q = 'abc'; Write-Output $q.Substring(1, 1)":
         "Write-Output 'b'",
     "[string]$q = 5; $q += 'a'; Write-Output (,$q)":
@@ -1844,10 +4260,25 @@ FOLDS: dict[str, str] = {
         '$i = 2',
     'foreach ($i in $a) { 1 }':
         'foreach ($i in $a) {}',
+    "foreach ($i in 1, 2) { try { $null = [int]'a'; Write-Host \"rest $i\" } finally { }; Write-Host \"next $i\" }; Write-Host 'after'":
+        'foreach ($i in 1, 2) {\n'
+        '  try {\n'
+        "    $Null = [int]'a'\n"
+        '    Write-Host "rest ${i}"\n'
+        '  } finally {}\n'
+        '  Write-Host "next ${i}"\n'
+        '}\n'
+        "Write-Host 'after'",
     "foreach ($i in 1..2) { Write-Output $($c = $c + 'x'; $c) }":
         "foreach ($i in 1, 2) {\n  Write-Output $($c = $c + 'x'\n  $c)\n}",
     'foreach ($i in 1..2) { Write-Output $(if (0) { $m = \'A\' }; $o = "${m}"; $m = \'B\'; $o) }':
         'foreach ($i in 1, 2) {\n  Write-Output $(if (0) {\n    $m = \'A\'\n  }\n  $o = "${m}"\n  $m = \'B\'\n  $o)\n}',
+    "foreach ($l in @(@(), @(1), @($null), (,1), (1, 'a', $null, @(2, 3)))) { Write-Output $l.GetType().FullName; [array]::Reverse($l) }; Write-Output 'after'":
+        "foreach ($l in @(@(), @(1), @($Null), (,1), (1, 'a', $Null, @(2, 3)))) {\n"
+        '  Write-Output $l.GetType().FullName\n'
+        '  [array]::Reverse($l)\n'
+        '}\n'
+        "Write-Output 'after'",
     "function Get-Alias { 'from-function' }; Set-Alias zzq Write-Output; alias zzq":
         "'from-function'",
     "function Get-Get-Zqfrob { Write-Output 'hit' }; Get-Zqfrob":
@@ -1902,6 +4333,8 @@ FOLDS: dict[str, str] = {
         'Write-Output 1\nWrite-Output (,1)',
     "function f { $s = 'abc'; $s++; $s }; $t = f; Write-Output (,$t); Write-Output $t":
         'Write-Output (,(0, 1))\nWrite-Output (0, 1)',
+    "function f { $script:x = 'one'; $null = [int]'a'; $script:x = 'two' }; try { f } catch { }; Write-Host $script:x":
+        "function f {\n  $script:x = 'one'\n  $script:x = 'two'\n}\ntry {\n  f\n} catch {}\nWrite-Host $script:x",
     "function f { $x }; & { $x = 'a'; f }":
         "& {\n  $x = 'a'\n}",
     'function f { ,$args }; $t = f 1 2; Write-Output (,$t); Write-Output $t.Count':
@@ -1910,12 +4343,30 @@ FOLDS: dict[str, str] = {
         'function f {\n  Write-Host $script:x\n}\nf\nf',
     "function f { Write-Host $x }; $x = 'a'; f; $x = 'b'; f":
         'function f {\n  Write-Host $x\n}\nf\nf',
+    "function f { [CmdletBinding()] param(); $null = [int]'a'; Write-Host 'f-rest' }; f -ErrorAction Stop; Write-Host 'after'":
+        'function f {\n'
+        '  [CmdletBinding()]\n'
+        '  Param()\n'
+        "  Write-Host 'f-rest'\n"
+        '}\n'
+        'f -ErrorAction Stop\n'
+        "Write-Host 'after'",
     'function f { [object[]]$a = 1, 2; [Array]::Reverse(@($a)); Write-Output $a }; f':
         'function f {\n  [Object[]]$a = 1, 2\n  [Array]::Reverse(@($a))\n  Write-Output $a\n}\nf',
     'function f { [void]$input; $input | ForEach-Object { Write-Host "seen:$_" } }; 1, 2 | f':
         'function f {\n  [void]$Input\n  $Input | ForEach-Object {\n    Write-Host "seen:${_}"\n  }\n}\n1, 2 | f',
     "function f { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" }; try { f } catch { }; Write-Host 'after'":
         "function f {\n  $v = [int]'a'\n  Write-Host \"rest ${v}\"\n}\ntry {\n  f\n} catch {}\nWrite-Host 'after'",
+    "function f { try { $null = [int]'a'; Write-Host 'f-rest' } finally { }; Write-Host 'f-after' }; f; Write-Host 'after'":
+        'function f {\n'
+        '  try {\n'
+        "    $Null = [int]'a'\n"
+        "    Write-Host 'f-rest'\n"
+        '  } finally {}\n'
+        "  Write-Host 'f-after'\n"
+        '}\n'
+        'f\n'
+        "Write-Host 'after'",
     "function f { try { 'tail' } catch {} }; Write-Host (f)":
         "Write-Host 'tail'",
     'function g { ,(1, 2) }; $t = @(g); Write-Output $t.Count; Write-Output (,$t[0])':
@@ -1928,6 +4379,15 @@ FOLDS: dict[str, str] = {
         "'boom'",
     'iex \'$u = "U"\'; Write-Output $($u + \'x\')':
         "Write-Output 'Ux'",
+    "if ($Host) { try { $null = [int]'a'; Write-Host 'rest' } finally { }; Write-Host 'if-rest' }; Write-Host 'after'":
+        'if ($Host) {\n'
+        '  try {\n'
+        "    $Null = [int]'a'\n"
+        "    Write-Host 'rest'\n"
+        '  } finally {}\n'
+        "  Write-Host 'if-rest'\n"
+        '}\n'
+        "Write-Host 'after'",
     'if ($a) { 1 }':
         '',
     'if ($a) { 1 } elseif ($b) { 2 } else { 3 }':
@@ -1988,6 +4448,10 @@ FOLDS: dict[str, str] = {
         "foreach ($q in (Get-Date).Year) {}\nWrite-Host 'after'",
     "trap { continue }; iex 'throw 1'; Write-Host 'after'":
         'throw 1',
+    "trap { continue }; if ($Host) { $x = 'one'; $null = [int]'a'; $x = 'two' }; Write-Host $x":
+        "trap {\n  continue\n}\nif ($Host) {\n  $x = 'one'\n  $Null = [int]'a'\n  $x = 'two'\n}\nWrite-Host $x",
+    "trap { continue }; if ($Host) { trap [System.IO.IOException] { continue }; $null = [int]'a'; Write-Host 'rest' }; Write-Host 'after'":
+        "trap {\n  continue\n}\nif ($Host) {\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
     "trap { continue }; if ($true) { [int]'a'; Write-Host 'tail' }; Write-Host 'after'":
         "trap {\n  continue\n}\nif ($True) {\n  [int]'a'\n  Write-Host 'tail'\n}\nWrite-Host 'after'",
     "trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'":
@@ -2061,7 +4525,14 @@ FOLDS: dict[str, str] = {
         '}\n'
         "Write-Host 'after'",
     "trap { continue }; if ((Get-Date).Year -gt 2000) { $v = [int]'a'; Write-Host 't' }; Write-Host 'after'":
-        "trap {\n  continue\n}\nif ((Get-Date).Year -GT 2000) {\n  Write-Host 't'\n}\nWrite-Host 'after'",
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'if ((Get-Date).Year -GT 2000) {\n'
+        "  $v = [int]'a'\n"
+        "  Write-Host 't'\n"
+        '}\n'
+        "Write-Host 'after'",
     "trap { continue }; if ((Get-Date).Year -gt 2000) { foreach ($q in 1, 2) { [int]'a'; Write-Host \"t $q\" }; trap { break } }; Write-Host 'after'":
         'trap {\n'
         '  continue\n'
@@ -2090,7 +4561,9 @@ FOLDS: dict[str, str] = {
     "trap { }; [int]'a'; Write-Host 'after'":
         "[int]'a'\nWrite-Host 'after'",
     "try { $null = [int]'a'; Write-Host 'rest' } finally { }; Write-Host 'after'":
-        "try {\n  Write-Host 'rest'\n} finally {}\nWrite-Host 'after'",
+        "try {\n  $Null = [int]'a'\n  Write-Host 'rest'\n} finally {}\nWrite-Host 'after'",
+    "try { $x = 'one'; $null = [int]'a'; $x = 'two' } finally { }; Write-Host $x":
+        "try {\n  $x = 'one'\n  $Null = [int]'a'\n  $x = 'two'\n} finally {}\nWrite-Host $x",
     'try { 1 } catch { 2 } finally { 3 }':
         'try {\n  1\n} catch {\n  2\n} finally {}',
     "try { [int]'a'; Write-Host 'tail' } catch { }; Write-Host 'after'":
@@ -2100,13 +4573,36 @@ FOLDS: dict[str, str] = {
     "try { item =5 } catch {}; Write-Host 'after'":
         "try {\n  Get-Item =5\n} catch {}\nWrite-Host 'after'",
     "try { throw 'x' } catch { $null = [int]'a'; Write-Host 'c-rest' }; Write-Host 'after'":
-        "Write-Host 'c-rest'\nWrite-Host 'after'",
+        "try {\n  throw 'x'\n} catch {\n  $Null = [int]'a'\n  Write-Host 'c-rest'\n}\nWrite-Host 'after'",
+    "try { throw 'x' } catch { $x = 'two'; $null = [int]'a'; $x = 'three' }; Write-Host $x":
+        "try {\n  throw 'x'\n} catch {\n  $x = 'two'\n  $Null = [int]'a'\n  $x = 'three'\n}\nWrite-Host $x",
     "try { throw 'x' } catch { 'caught' }":
         "'caught'",
-    "try { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" } finally { }; Write-Host 'after'":
-        "try {\n  $v = [int]'a'\n  Write-Host \"rest ${v}\"\n} finally {}\nWrite-Host 'after'",
+    "try { throw 'x' } catch { if ($Host) { $null = [int]'a'; Write-Host 'rest' } }; Write-Host 'after'":
+        "if ($Host) {\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
+    "try { throw 'x' } catch { if ($false) { } elseif ([int]'a') { }; Write-Host 'rest' }; Write-Host 'after'":
+        "try {\n  throw 'x'\n} catch {\n  if ([int]'a') {}\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
+    "try { throw 'x'; trap { Write-Host 'T'; break } } catch { }; Write-Host 'after'":
+        "Write-Host 'after'",
     "try { trap { continue }; [int]'a'; try { throw 'x' } catch { Write-Host 'caught' } } catch { }; Write-Host 'after'":
         "try {\n  trap {\n    continue\n  }\n  [int]'a'\n  Write-Host 'caught'\n} catch {}\nWrite-Host 'after'",
+    "try { try { $null = [int]'a' } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'":
+        "try {\n  Write-Host 'rest'\n} finally {}\nWrite-Host 'after'",
+    "try { try { $null = [int]'a'; Write-Host 'inner-rest' } finally { Write-Host 'f1' }; Write-Host 'outer-rest' } finally { Write-Host 'f2' }; Write-Host 'after'":
+        'try {\n'
+        '  try {\n'
+        "    $Null = [int]'a'\n"
+        "    Write-Host 'inner-rest'\n"
+        '  } finally {\n'
+        "    Write-Host 'f1'\n"
+        '  }\n'
+        "  Write-Host 'outer-rest'\n"
+        '} finally {\n'
+        "  Write-Host 'f2'\n"
+        '}\n'
+        "Write-Host 'after'",
+    "try { try { throw 'x' } finally { $null = [int]'a' } } finally { }; Write-Host 'after'":
+        "try {\n  try {\n    throw 'x'\n  } finally {}\n} finally {}\nWrite-Host 'after'",
     "try { zzq0000=5 } catch {}; 'next'":
         "'next'",
     "try { zzq0000=5; 'tail' } catch {}; 'next'":

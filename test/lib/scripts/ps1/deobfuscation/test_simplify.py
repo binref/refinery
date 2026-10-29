@@ -51,6 +51,16 @@ class TestPs1NameNormalization(TestPs1):
 
 class TestPs1SubExpressionSimplification(TestPs1):
 
+    def test_a_subexpression_around_a_cast_that_may_fail_stays(self):
+        # Measured on 5.1: with `$s` the text `a`, `$y = $([int]$s)` leaves `$y` empty, where
+        # `$y = [int]$s` leaves it holding what it held.
+        result = self._deobfuscate("foreach ($s in '5', 'a') { $y = $([int]$s); Write-Host $y }")
+        self.assertIn('$([int]$s)', result)
+
+    def test_a_subexpression_around_a_cast_that_cannot_fail_goes(self):
+        result = self._deobfuscate('$y = $([char]65); Write-Host $y')
+        self.assertNotIn('$(', result)
+
     def test_subexpression_scalar_simplified(self):
         result = self._deobfuscate("$('hello')")
         self.assertEqual(result.strip(), "'hello'")

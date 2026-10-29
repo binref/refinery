@@ -94,6 +94,17 @@ class TestPs1WorldOpeners(Ps1TypeWorldTest):
             with self.subTest(source):
                 self.assertFalse(self._closed(source))
 
+    def test_a_command_lookup_hook_opens_the_world(self):
+        for source in (
+            '$ExecutionContext.InvokeCommand.PreCommandLookupAction = { 1 }',
+            '$ExecutionContext.InvokeCommand.PostCommandLookupAction = { 1 }',
+            '$ExecutionContext.InvokeCommand.CommandNotFoundAction = { 1 }',
+            '$ExecutionContext.InvokeCommand.set_PreCommandLookupAction({ 1 })',
+            '$ic = $ExecutionContext.InvokeCommand; $ic.CommandNotFoundAction = { 1 }',
+        ):
+            with self.subTest(source):
+                self.assertFalse(self._closed(source))
+
     def test_scriptblock_execution_opens_the_world(self):
         for source in (
             '[scriptblock]::Create($s)',

@@ -3401,7 +3401,6 @@ class TestPs1AStoreACaughtErrorCutsShortIsTheOneObserved(_Ps1Ledger):
     failure for one the store below overwrites, removes it, and the read is folded to `w`.
     """
 
-    @unittest.expectedFailure
     def test_the_store_above_the_failure_is_observed_after_the_catch(self):
         tree = self._deobfuscated_tree(
             "$y = 'w'; try { $y = 'x'; [int]'a'; $y = 'v' } catch {}; Write-Output $y")
@@ -3570,3 +3569,60 @@ class TestPs1ACopyIsToldApartFromTheArrayByItsIdentity(_Ps1Ledger):
             '$x = 1, 2, 3; $b = $null; $b += $x; Write-Output ([object]::ReferenceEquals($x, $b))',
             'x',
         )
+
+
+class TestPs1TextRunAfterTheAcceleratorTableChangesStaysText(_Ps1Ledger):
+    """
+    5.1 resolves a type name when the code spelling it is compiled. Text handed to `iex` is compiled
+    when it runs, so a name in it sees every write to the accelerator table made before; a name
+    written in the script was resolved before any of them. Measured on 5.1 in `corpus.BEHAVIOURS`:
+    once the table maps `System.Math` to `String`, the text prints `System.String`, and a
+    `[System.Math]::Sqrt(36)` in it fails and skips the rest of its `catch` body.
+
+    The script finds the table by name (`[psobject].Assembly.GetType(...)`), which is read as no
+    write to it, and the text is written into the script, where the name resolves before the write.
+    """
+
+    def _assertStaysText(self, source: str) -> None:
+        tree = self._deobfuscated_tree(source)
+        self.assertTrue(
+            any(
+                isinstance(node, Ps1CommandInvocation)
+                and isinstance(node.name, Ps1StringLiteral)
+                and node.name.value.lower() in ('iex', 'invoke-expression')
+                for node in tree.walk()
+            ),
+            'the text was written into the script',
+        )
+
+    @unittest.expectedFailure
+    def test_a_type_name_in_the_text_is_resolved_after_the_write(self):
+        self._assertStaysText(
+            "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string]); "
+            "iex 'Write-Host ([System.Math].FullName)'")
+
+    @unittest.expectedFailure
+    def test_a_call_in_the_text_fails_on_the_type_the_write_names(self):
+        self._assertStaysText(
+            "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string]); "
+            "iex 'try { throw ''x'' } catch { $k = [System.Math]::Sqrt(36); Write-Host ''rest'' }; Write-Host ''after'''")
+
+
+class TestPs1ABase64TextDotNetRejectsIsNotDecoded(_Ps1Ledger):
+    """
+    Measured on 5.1 in `corpus.BEHAVIOURS`: `[Convert]::FromBase64String` rejects a text holding a
+    character outside the base64 alphabet with a `FormatException`. The emulated decoder skips the
+    character and decodes the rest, so the call is folded to bytes 5.1 never produces and the
+    failure it raises is gone.
+    """
+
+    @unittest.expectedFailure
+    def test_the_call_on_a_text_holding_a_foreign_character_is_not_folded(self):
+        tree = self._deobfuscated_tree(
+            "Write-Host ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SGVs!bG8=')))")
+        self.assertNotIn('Hello', _printed_values(tree))
+
+    @unittest.expectedFailure
+    def test_a_call_that_fails_on_its_text_is_kept_before_the_store_it_skips(self):
+        self.assertIn('FromBase64String', self._deobfuscate_iterative(
+            "$k = 'one'; try { $b = [Convert]::FromBase64String('!!'); $k = 'two' } catch { }; Write-Host $k"))

@@ -63,7 +63,6 @@ from refinery.lib.scripts.ps1.ast import (
     unwrap_parens,
 )
 from refinery.lib.scripts.ps1.data import (
-    NON_NULL_RETURNS,
     OBJ_COMMANDS,
     TYPE_ARG_COMMANDS,
     VARIABLE_TYPES,
@@ -95,6 +94,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpandableHereString,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
+    Ps1HashLiteral,
     Ps1HereString,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
@@ -102,6 +102,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
+    Ps1RangeExpression,
     Ps1RealLiteral,
     Ps1ScopeModifier,
     Ps1ScriptBlock,
@@ -350,13 +351,14 @@ def non_null_type(
     expr: Expression,
     type_of_variable: Ps1VariableTyping | None,
     join: Ps1VariableTyping | None,
+    calls: Ps1Calls | None,
 ) -> Ps1TypeName | None:
     """
     The type this expression's value carries where the value is established not to be `$null`, or
     `None` where that is not established. Three origins establish one: a literal, read through
-    `read` — which answers `$null` for the `$null` literal and refuses here; an instance call of
-    a member the curated `non_null` table vouches for, answering the return type its overloads
-    agree on; and a variable, which is the *join*'s to answer,
+    `read` — which answers `$null` for the `$null` literal and refuses here; an instance call a
+    measured call fact covers, answering the type the fact says it hands back, which only *calls*
+    can say; and a variable, which is the *join*'s to answer,
     `refinery.lib.scripts.ps1.analysis.variable_types.non_null_type_at` being the one
     implementation. Everything else refuses, which is a fold declined and never a guess.
     """
@@ -371,36 +373,42 @@ def non_null_type(
     if isinstance(unwrapped, Ps1Variable):
         return None if join is None else join(unwrapped)
     if isinstance(unwrapped, Ps1InvokeMember):
-        return _vouched_return(unwrapped, type_of_variable)
+        return None if calls is None else _vouched_return(unwrapped, type_of_variable, calls)
     return None
-
-
-#: The member names the non-null vouch table names, derived from it so the cheap half of a vouch —
-#: whether any vouch covers the member at all — answers before a receiver is typed.
-_VOUCHED_MEMBERS = frozenset(member for _, member in NON_NULL_RETURNS)
 
 
 def _vouched_return(
     call: Ps1InvokeMember,
     type_of_variable: Ps1VariableTyping | None,
+    calls: Ps1Calls,
 ) -> Ps1TypeName | None:
     """
-    The return a curated non-null vouch answers an instance call with, or `None` where the call is
-    not one it covers. The receiver is typed rather than origin-traced, because a receiver that is
-    `$null` at runtime makes the call throw before the caller's question is reached, and the
-    sealedness floor on every vouch is what keeps the answer from naming a subtype member. The
-    member name is asked of the table before the receiver is typed, so a call of a member no vouch
-    names does not pay the typing.
+    The return a measured call fact vouches for on an instance call, or `None` where none does. The
+    receiver is typed rather than origin-traced, because a receiver that is `$null` at runtime makes
+    the call throw before the caller's question is reached, and the sealedness floor on every such
+    fact is what keeps the answer from naming a subtype member. Whether the fact covers the call is
+    the reader's to say, which is the one place a call is matched against a fact.
     """
     if call.object is None or call.access is not Ps1AccessKind.INSTANCE:
-        return None
-    member = get_member_name(call.member)
-    if member is None or member.lower() not in _VOUCHED_MEMBERS:
         return None
     receiver = resolve_expression_type(call.object, type_of_variable)
     if receiver is None:
         return None
-    return NON_NULL_RETURNS.get((receiver.generic_definition, member.lower()))
+    return calls.vouch(call, receiver)
+
+
+class Ps1Calls(typing.Protocol):
+    """
+    What a call answers where a measured fact covers it, which `evaluate` asks of every call it
+    meets when a caller hands one in. `refinery.lib.scripts.ps1.analysis.calls.Ps1CallReader` is
+    the one implementation; it reads the script around a call, which this module does not.
+    """
+
+    def outcome(self, call: Ps1InvokeMember | Ps1CommandInvocation) -> Ps1Outcome:
+        ...
+
+    def vouch(self, call: Ps1InvokeMember, receiver: Ps1TypeName) -> Ps1TypeName | None:
+        ...
 
 
 #: Commands whose declared `[OutputType]` is a trustworthy *superset* of what they emit at runtime,
@@ -789,7 +797,7 @@ class Ps1Outcome(typing.NamedTuple):
 NOTHING = Ps1Outcome(MAYBE, UNKNOWN)
 
 
-def _throw_join(*axes: Ps1Throws) -> Ps1Throws:
+def throw_join(*axes: Ps1Throws) -> Ps1Throws:
     """
     The throw axis of a sequence of sub-expressions 5.1 evaluates left to right, each up to the
     first throw. It is `ALWAYS` if any one of them is — either a prior one throws, or none does and
@@ -1254,7 +1262,7 @@ def _collected(outcomes: typing.Iterable[Ps1Outcome]) -> Ps1Outcome:
     if not all(_is_value(outcome.value) for outcome in gathered):
         return NOTHING
     return Ps1Outcome(
-        _throw_join(*(outcome.throws for outcome in gathered)),
+        throw_join(*(outcome.throws for outcome in gathered)),
         Ps1Constant(_OBJECT_ARRAY, tuple(outcome.value for outcome in gathered)),
     )
 
@@ -1957,9 +1965,176 @@ def convert(fact: Ps1Fact, target: Ps1TypeName) -> Ps1Outcome:
     return outcome
 
 
+#: The widest and narrowest values PowerShell's range operator accepts. Both bounds go through
+#: `Int32`, so an endpoint outside this window raises the same conversion error a bad cast does.
+_INT32_MIN = -0x80000000
+_INT32_MAX = +0x7FFFFFFF
+
+#: How many elements a range may span before *building* it is the fault rather than converting its
+#: endpoints. PowerShell materializes the whole array eagerly, so `0..2147483647` is two perfectly
+#: good `Int32` bounds and an `OutOfMemoryException` an enclosing handler may well be catching.
+_MAX_FAULT_FREE_RANGE = 0x10000
+
+
+def _is_numeric_constant(node) -> bool:
+    """
+    Whether `node` is a constant that PowerShell reads as a number without running a conversion that
+    can fail: a numeric literal or one of the built-in constants, through parentheses and a further
+    unary sign.
+
+    A string literal is deliberately not one, which is the whole of why this is separate from
+    `is_fault_free`. `is_fault_free('abc')` is `True` because *evaluating* a string cannot raise,
+    while `-'abc'` raises the `Int32` conversion error the caller is trying to rule out.
+    """
+    if isinstance(node, (Ps1IntegerLiteral, Ps1RealLiteral)):
+        return True
+    if is_builtin_variable(node):
+        return True
+    if isinstance(node, Ps1ParenExpression):
+        return _is_numeric_constant(node.expression)
+    if isinstance(node, Ps1UnaryExpression) and node.operator in ('+', '-'):
+        return _is_numeric_constant(node.operand)
+    return False
+
+
+def _signed_integer_value(node) -> int | None:
+    """
+    The integer an expression names, read through any number of unary signs, or `None` when it
+    names something else.
+
+    The value is asked of the domain and not of the node, because a node reports the digits it was
+    written with rather than the number they denote: `0xFFFFFFFF` is the Int32 -1 and reading it as
+    4294967295 rejected a two-element range as one that might exhaust memory.
+
+    A sign is *applied* rather than walked past, for the spelling that still has one of its own —
+    the parser puts a sign written against a numeral inside the numeral, so what reaches here is
+    `- 5` with a space, and discarding that sign weighs a value the source never names.
+    """
+    if isinstance(node, Ps1UnaryExpression) and node.operator in ('+', '-'):
+        value = _signed_integer_value(node.operand)
+        if value is None:
+            return None
+        return -value if node.operator == '-' else value
+    return integer_of(read(node))
+
+
+def _range_is_fault_free(node: Ps1RangeExpression) -> bool:
+    """
+    Whether the range operator provably neither converts nor allocates its way into a fault.
+
+    Two separate faults, and weighing only the first would delete a range that already stops the
+    script. Both endpoints go through `Int32`, so `4242424242..4242424245` is two
+    perfectly good integer literals that still raise — the reason this is narrower than
+    `_is_numeric_constant`, which merely reads a number, and why a real literal is not an endpoint
+    at all since it rounds rather than converting cleanly. Then the operator materializes the whole
+    array eagerly, so `0..2147483647` converts cleanly and raises `OutOfMemoryException` instead;
+    only a span under `_MAX_FAULT_FREE_RANGE` provably survives both.
+    """
+    start = _signed_integer_value(node.start)
+    end = _signed_integer_value(node.end)
+    if start is None or end is None:
+        return False
+    if not _INT32_MIN <= start <= _INT32_MAX or not _INT32_MIN <= end <= _INT32_MAX:
+        return False
+    return abs(end - start) < _MAX_FAULT_FREE_RANGE
+
+
+def is_fault_free(node) -> bool:
+    """
+    Whether evaluating an expression provably cannot raise. Two readings grant that, and neither
+    subsumes the other: the value domain answers it for anything it can actually compute, and a
+    syntactic allow-list answers it for the constructions the domain does not model. Everything
+    else answers `False`, including expressions that are obviously fine, because the safe answer to
+    an expression neither reading claims is that it might raise.
+
+    **The value domain is asked first, because it is the one that knows.**
+    `refinery.lib.scripts.ps1.analysis.values.Ps1Outcome.may_throw` is `False` only where that
+    module claims an operation cannot throw, and not knowing is a throw there as it is here, so the
+    two axes already agree about which direction is safe. It reaches what no list of shapes can:
+    `6 * 7`, `[Int]'42'` and `'ab' + 'cd'` cannot raise and are not literals, and a gate that called
+    them unsafe refused to delete the padding an obfuscator writes by the hundred. It declines every
+    call and every expression naming a variable, which is why the sweep behind this grant is a grid
+    of constants — 9210 expressions it calls throw-free, every one of them confirmed against a
+    Windows PowerShell 5.1 host.
+
+    **The allow-list is what the domain does not model**, not a weaker copy of it: a range and a
+    hash literal are constructions rather than operations, and the domain names no value for either.
+    The container arm recurses into the elements rather than granting the form, so `@{ a = 1 }`
+    cannot fail while `@{ a = [Int]'x' }` still can and is rejected by the element it holds. A hash
+    literal with a duplicate key is the one construction PowerShell refuses outright, so the keys
+    are compared rather than trusted; see `_hash_literal_is_fault_free`.
+
+    Purity is a different question and neither implies the other. `is_side_effect_free` accepts
+    `[Int]$x`, `$a / $b` and `$a[$i]`, all of which raise on the wrong operand, so it cannot answer
+    this: a `try` body cannot be hoisted out of its own construct on a purity argument, because an
+    empty `catch` would swallow what the hoisted statement raises into the caller.
+
+    **A unary sign and a range coerce, and coercion is the fault this predicate exists to see.**
+    Both read their operands through `Int32`, so `-'abc'` and `'a'..'z'` raise exactly what
+    `[Int]'abc'` raises; neither may inherit the string-literal grant, and both go through
+    `_is_numeric_constant` and `_range_is_fault_free` instead.
+
+    **A removal site asks `expression_cannot_fault` and not this**, because one fault is decided by
+    the script rather than by the operands. What still reads this directly asks a narrower question
+    on purpose: `may_be_dropped` and the range fold weigh work a rewrite would stop doing, where
+    the operand's own faults are the whole question, and
+    `refinery.lib.scripts.ps1.deobfuscation.deadcode._try_body_survivors` needs a second property
+    beside fault-freedom — that what it accepts is a constant it can carry out of the construct.
+    """
+    if not evaluate(node).may_throw:
+        return True
+    if isinstance(node, (Ps1IntegerLiteral, Ps1RealLiteral, Ps1StringLiteral)):
+        return True
+    if is_builtin_variable(node):
+        return True
+    if isinstance(node, Ps1ParenExpression):
+        return is_fault_free(node.expression)
+    if isinstance(node, Ps1UnaryExpression) and node.operator in ('+', '-'):
+        return _is_numeric_constant(node.operand)
+    if isinstance(node, Ps1ArrayLiteral):
+        return all(is_fault_free(element) for element in node.elements)
+    if isinstance(node, Ps1RangeExpression):
+        return _range_is_fault_free(node)
+    if isinstance(node, Ps1HashLiteral):
+        return _hash_literal_is_fault_free(node)
+    if isinstance(node, Ps1ArrayExpression):
+        if len(node.body) == 1:
+            stmt = node.body[0]
+            return isinstance(stmt, Ps1ExpressionStatement) and is_fault_free(stmt.expression)
+        return len(node.body) == 0
+    return False
+
+
+def _hash_literal_is_fault_free(node: Ps1HashLiteral) -> bool:
+    """
+    Whether building a hash literal is guaranteed to succeed. Every key and value has to be
+    fault-free in its own right, and the keys additionally have to be distinct — PowerShell rejects
+    `@{ a = 1; a = 2 }` outright, so a script carrying one never runs at all, and deleting it would
+    make the rest of the script run. That is exactly the change this predicate exists to prevent,
+    and it is why the keys are compared here rather than assumed apart.
+
+    Only a string or integer key is compared, folded to a lowercased string, so the case-insensitive
+    collision and the `@{ 1 = 'a'; '1' = 'b' }` cross-type one both count. Anything else — a real
+    literal, a computed key — is rejected without comparison, since a key this cannot read is a
+    duplicate it cannot rule out.
+    """
+    keys: set[str] = set()
+    for key, value in node.pairs:
+        if not isinstance(key, (Ps1IntegerLiteral, Ps1StringLiteral)):
+            return False
+        if not is_fault_free(value):
+            return False
+        written = str(key.value).lower()
+        if written in keys:
+            return False
+        keys.add(written)
+    return True
+
+
 def evaluate(
     node: Node | None,
     type_of_variable: Ps1VariableTyping | None = None,
+    calls: Ps1Calls | None = None,
 ) -> Ps1Outcome:
     """
     What this expression produces. It is the module's one recursion and the only entry a caller
@@ -1990,6 +2165,9 @@ def evaluate(
     `resolve_expression_type` takes it. Nothing here invents a variable's value, so a variable the
     caller cannot type names nothing.
 
+    `calls` is what the caller can say about a call: a call it covers answers what its measured fact
+    records, wherever the call stands, and every other call is answered as without it.
+
     **The answer for a node is remembered until some tree changes**, because being the one entry a
     caller with a tree needs is only affordable if it is. What asks this is a visitor descending the
     tree, and a visitor asks about a node's operand at the operand, then again at its parent, then
@@ -2000,7 +2178,8 @@ def evaluate(
     — so an entry can only ever be read back over the same tree that produced it, and this stays a
     function of its arguments.
 
-    **Only the query that types no variable is remembered**, which is the one that descent makes. A
+    **Only a query that types no variable is remembered**, which is the one that descent makes, and
+    one asked with *calls* is remembered apart, for as long as that reader lives. A
     caller-supplied typing is state this module does not own: two callers that type an occurrence
     differently may not share an answer, so an entry would have to be keyed on the callable, which
     is comparable only by identity — and a bound method fails that against itself, so the table
@@ -2011,18 +2190,20 @@ def evaluate(
     if node is None:
         return NOTHING
     if type_of_variable is not None:
-        return _evaluated(node, type_of_variable)
+        return _evaluated(node, type_of_variable, calls)
     global _EVALUATED_AT
     epoch = mutation_epoch()
     if epoch != _EVALUATED_AT:
         _EVALUATIONS.clear()
+        _CALL_EVALUATIONS.clear()
         _EVALUATED_AT = epoch
-    remembered = _EVALUATIONS.get(node)
+    table = _EVALUATIONS if calls is None else _CALL_EVALUATIONS.setdefault(calls, WeakKeyDictionary())
+    remembered = table.get(node)
     if remembered is not None:
         return remembered
-    outcome = _evaluated(node, None)
+    outcome = _evaluated(node, None, calls)
     if mutation_epoch() == epoch:
-        _EVALUATIONS[node] = outcome
+        table[node] = outcome
     return outcome
 
 
@@ -2031,6 +2212,7 @@ def evaluate(
 #: every entry at once, and the table is emptied rather than left to be stepped over. Keys are weak
 #: so that a tree nothing else holds is still collected; nothing here refers back to one.
 _EVALUATIONS: WeakKeyDictionary[Node, Ps1Outcome] = WeakKeyDictionary()
+_CALL_EVALUATIONS: WeakKeyDictionary[Ps1Calls, WeakKeyDictionary[Node, Ps1Outcome]] = WeakKeyDictionary()
 _EVALUATED_AT = -1
 
 
@@ -2078,6 +2260,7 @@ def statement_certainly_throws(stmt: Node) -> bool:
 def _evaluated(
     node: Node,
     type_of_variable: Ps1VariableTyping | None,
+    calls: Ps1Calls | None,
 ) -> Ps1Outcome:
     """
     `evaluate` itself, with the remembering stripped off. Every recursive step goes back through
@@ -2088,19 +2271,23 @@ def _evaluated(
     if literal is not UNKNOWN:
         return Ps1Outcome(NEVER, literal)
     if isinstance(node, Ps1ParenExpression):
-        return evaluate(node.expression, type_of_variable)
+        return evaluate(node.expression, type_of_variable, calls)
     if isinstance(node, (Ps1ArrayLiteral, Ps1ArrayExpression)):
-        return _array(node, lambda element: evaluate(element, type_of_variable))
+        return _array(node, lambda element: evaluate(element, type_of_variable, calls))
     if isinstance(node, Ps1SubExpression):
-        return _subexpression(node, lambda element: evaluate(element, type_of_variable))
+        return _subexpression(node, lambda element: evaluate(element, type_of_variable, calls))
     if isinstance(node, Ps1CastExpression):
-        return _evaluated_cast(node, type_of_variable)
+        return _evaluated_cast(node, type_of_variable, calls)
     if isinstance(node, Ps1BinaryExpression):
-        return _evaluated_binary(node, type_of_variable)
+        return _evaluated_binary(node, type_of_variable, calls)
     if isinstance(node, Ps1UnaryExpression):
-        return _evaluated_unary(node, type_of_variable)
+        return _evaluated_unary(node, type_of_variable, calls)
     if isinstance(node, Ps1TypeExpression) or not isinstance(node, Expression):
         return NOTHING
+    if calls is not None and isinstance(node, (Ps1InvokeMember, Ps1CommandInvocation)):
+        called = calls.outcome(node)
+        if called is not NOTHING:
+            return called
     named = resolve_expression_type(node, type_of_variable)
     return NOTHING if named is None else Ps1Outcome(MAYBE, Ps1Typed(named))
 
@@ -2108,6 +2295,7 @@ def _evaluated(
 def _evaluated_cast(
     node: Ps1CastExpression,
     type_of_variable: Ps1VariableTyping | None,
+    calls: Ps1Calls | None,
 ) -> Ps1Outcome:
     """
     A cast, which is `convert` over whatever its operand evaluates to.
@@ -2125,21 +2313,22 @@ def _evaluated_cast(
     target = resolve_type(node.type_name)
     if target is None:
         return NOTHING
-    operand = evaluate(node.operand, type_of_variable)
+    operand = evaluate(node.operand, type_of_variable, calls)
     if operand.value is not UNKNOWN:
         converted = convert(operand.value, target)
-        return Ps1Outcome(_throw_join(operand.throws, converted.throws), converted.value)
+        return Ps1Outcome(throw_join(operand.throws, converted.throws), converted.value)
     named = _cast_names(target)
-    return NOTHING if named is None else Ps1Outcome(_throw_join(operand.throws, MAYBE), named)
+    return NOTHING if named is None else Ps1Outcome(throw_join(operand.throws, MAYBE), named)
 
 
 def _evaluated_unary(
     node: Ps1UnaryExpression,
     type_of_variable: Ps1VariableTyping | None,
+    calls: Ps1Calls | None,
 ) -> Ps1Outcome:
-    operand = _operand(node.operand, type_of_variable)
+    operand = _operand(node.operand, type_of_variable, calls)
     applied = apply_unary(node.operator, operand.value)
-    return Ps1Outcome(_throw_join(operand.throws, applied.throws), applied.value)
+    return Ps1Outcome(throw_join(operand.throws, applied.throws), applied.value)
 
 
 #: The operators that may not evaluate their right operand at all, so a certain throw standing there
@@ -2151,6 +2340,7 @@ _SHORT_CIRCUIT = frozenset({'-and', '-or'})
 def _evaluated_binary(
     node: Ps1BinaryExpression,
     type_of_variable: Ps1VariableTyping | None,
+    calls: Ps1Calls | None,
 ) -> Ps1Outcome:
     """
     An operator, which is `apply` over both of its operands.
@@ -2165,19 +2355,20 @@ def _evaluated_binary(
     result is a fold this does not take. Every other operator evaluates both operands eagerly, so an
     operand's certain throw is the whole expression's.
     """
-    left = _operand(node.left, type_of_variable)
-    right = _operand(node.right, type_of_variable)
+    left = _operand(node.left, type_of_variable, calls)
+    right = _operand(node.right, type_of_variable, calls)
     applied = apply(node.operator, left.value, right.value)
     right_throws = right.throws
     if node.operator.lower() in _SHORT_CIRCUIT:
         right_throws = _demoted_throw(right_throws)
     return Ps1Outcome(
-        _throw_join(left.throws, right_throws, applied.throws), applied.value)
+        throw_join(left.throws, right_throws, applied.throws), applied.value)
 
 
 def _operand(
     node: Node | None,
     type_of_variable: Ps1VariableTyping | None,
+    calls: Ps1Calls | None,
 ) -> Ps1Outcome:
     """
     What an operand of an operator produces, which is `evaluate` over it except where `read_operand`
@@ -2186,7 +2377,7 @@ def _operand(
     numeral = _folded_numeral(node)
     if numeral is not None:
         return Ps1Outcome(NEVER, numeral)
-    return evaluate(node, type_of_variable)
+    return evaluate(node, type_of_variable, calls)
 
 
 @functools.cache

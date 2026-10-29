@@ -361,10 +361,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; [int]'a'; "
     "Write-Output 'after'":
         'The same, with the preference set through the variable `Get-Variable` hands out.',
-    "$y = 'w'; try { $y = 'x'; [int]'a'; $y = 'v' } catch {}; Write-Output $y":
-        'The read is folded to `w` where the snippet writes `x`. The failure leaves for the '
-        '`catch` before the last store runs, and the dead-store sweep reads the `try` body as '
-        'running to its end.',
     "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; & { iex $c }; Write-Output $x[1]":
         'The read is folded to `2` where the snippet writes `9`: the payload runs in a child '
         'block and stores through the `$x` a bare name there reads from the caller.',
@@ -401,20 +397,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The handler is removed. The first failed cast resumes past the whole loop, so `$y` is '
         'never set and the snippet writes `y=`; the output steps over the failure, the second run '
         'sets `$y`, and it writes `y=5`. The later runs of the raiser are not counted as skipped.',
-    "trap { continue }; if ((Get-Date).Year -gt 2000) { $v = [int]'a'; Write-Host 't' }; Write-Host 'after'":
-        'The cast is removed and its `trap` stays. The `trap` resumes past the `if`, so the snippet '
-        'writes `after`; the output writes `t` and `after`.',
-    "try { $null = [int]'a'; Write-Host 'rest' } finally { }; Write-Host 'after'":
-        'The cast is removed. An error nothing takes inside a `try` body leaves the whole `try`, so '
-        'the snippet writes the error and `after`; the output writes `rest` and `after`.',
-    "try { throw 'x' } catch { $null = [int]'a'; Write-Host 'c-rest' }; Write-Host 'after'":
-        'The cast is removed and the `catch` body is run in place of the `try`. An error nothing '
-        'takes inside a `catch` body leaves the whole `try`, so the snippet writes the error and '
-        '`after`; the output writes `c-rest` and `after`.',
-    "try { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" } finally { }; Write-Host 'after'":
-        'The handler is removed. It resumes inside the `try` body, so the snippet writes `rest ` '
-        'and `after`; without it the error leaves the whole `try`, and the output writes the error '
-        'and `after`.',
     "Set-StrictMode -Version 1; $w = 'a'; $m = 'out'; trap { continue }; "
     "if ($Host) { $w = $undefined; $m = 'in' }; Write-Host \"$m $w\"":
         'The handler is removed. Under strict mode the read of the unset variable fails and the '
@@ -425,6 +407,66 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The handler is removed. It resumes inside the function, so the snippet writes `rest ` and '
         '`after`; without it the error leaves the function for the `try` around the call, and the '
         'output writes only `after`.',
+    "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string]); "
+    "iex 'Write-Host ([System.Math].FullName)'":
+        'The text is run in the script. 5.1 resolves a type name when the code spelling it is '
+        'compiled, and text is compiled when it runs, after the table maps `System.Math` to '
+        '`String`: the snippet writes `System.String`. Written into the script, the name is '
+        'resolved before the table changes, and the output writes `System.Math`. The table is '
+        'looked up by name, which is read as no write to it at all.',
+    "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string]); "
+    "iex 'try { throw ''x'' } catch { $k = [System.Math]::Sqrt(36); Write-Host ''rest'' }; Write-Host ''after'''":
+        'The text is run in the script and the call is removed as one that cannot fail. Run from '
+        'text, `[System.Math]` is `String`, which has no `Sqrt`: the call fails and skips the rest '
+        'of the `catch` body, so the snippet writes the error and `after`; the output writes `rest` '
+        'and `after`.',
+    "function f { [CmdletBinding()] param(); $null = [int]'a'; Write-Host 'f-rest' }; f -ErrorAction Stop; Write-Host 'after'":
+        'The rest of the function runs. `-ErrorAction Stop` sets the preference of the advanced '
+        'function it is handed to, so the failing cast ends the call and the snippet writes the '
+        'error and `after`; the output writes `f-rest` and `after`. Which bodies a call runs '
+        'under a preference is plan (4) of the error roadmap.',
+    "$x = 'one'; try { throw 'q' } catch { $x = 'two'; & { $null = [int]'a' }; $x = 'three' }; Write-Host $x":
+        'The failing cast is removed from the block. An error in a block a `catch` body runs '
+        'leaves the block and skips the rest of the body, so the snippet writes the error and '
+        '`two`; the output writes `three`. Which bodies run under a handler is plan (4) of the '
+        'error roadmap.',
+    "function f { $script:x = 'one'; $null = [int]'a'; $script:x = 'two' }; try { f } catch { }; Write-Host $script:x":
+        'The failing cast is removed from the function. An error in a function a `try` body calls '
+        'leaves the function and ends the call, so the snippet writes `one`; the output writes '
+        '`two`. Which bodies run under a handler is plan (4) of the error roadmap.',
+    "Write-Host ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SGVs!bG8=')))":
+        'The decode is folded to `Hello`. `[Convert]::FromBase64String` rejects a text holding a '
+        'character outside the base64 alphabet, so the snippet writes the error alone; the '
+        'emulated decoder skips the character.',
+    "$k = 'one'; try { $b = [Convert]::FromBase64String('!!'); $k = 'two' } catch { }; Write-Host $k":
+        'The call is folded away and the store after it is reached. `[Convert]::FromBase64String` '
+        'rejects `!!`, so the `catch` is taken and the snippet writes `one`; the output writes '
+        '`two`.',
+    "try { try { $null = [int]'a' } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'":
+        'The failing cast is removed. An error leaving the last line of a `try` body that has a '
+        '`finally` leaves the whole outer `try`, so the snippet writes the error and `after`; the '
+        "output writes `rest` and `after`. The graph reads the line's normal edge into the "
+        '`finally` as an error edge; the dispatch evaluator of the error roadmap answers it.',
+    "trap { continue }; if ($Host) { trap [System.IO.IOException] { continue }; $null = [int]'a'; Write-Host 'rest' }; Write-Host 'after'":
+        'The failing cast is removed. The typed `trap` declines the error and hands it to the '
+        'outer `trap`, which carries on after the `if`, so the snippet writes `after`; the output '
+        'writes `rest` and `after`. The check asks only the innermost `trap`; the dispatch '
+        'evaluator of the error roadmap answers it.',
+    "try { try { throw 'x' } finally { $null = [int]'a' } } finally { }; Write-Host 'after'":
+        'The failing cast is removed from the `finally` body. An error raised there takes the '
+        'place of the `throw` in flight, which 5.1 then reports and steps over, so the snippet '
+        'writes the error and `after`; the output ends on the `throw`. The dispatch evaluator of '
+        'the error roadmap answers it.',
+    "try { throw 'x' } catch { if ($Host) { $null = [int]'a'; Write-Host 'rest' } }; Write-Host 'after'":
+        'The `catch` body is lifted out of the `try` that always throws. The failing cast then '
+        'steps over inside the `if` instead of leaving the whole `catch` body, so the snippet '
+        'writes the error and `after`; the output writes `rest` and `after`. The dispatch '
+        'evaluator of the error roadmap answers it.',
+    "try { throw 'x'; trap { Write-Host 'T'; break } } catch { }; Write-Host 'after'":
+        'The `catch` body is lifted out of the `try` that always throws, and the `trap` with it. '
+        'The `trap` takes the `throw` before the `catch` does, so the snippet writes `T` and '
+        '`after`; the output writes `after`. The dispatch evaluator of the error roadmap answers '
+        'it.',
 }
 
 
@@ -3973,6 +4015,133 @@ TYPE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
 }
 
 
+#: What 5.1 wrote for each row of `corpus.CALLS`.
+CALL_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
+    '$t = [Math]::Sqrt(36); Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Double\t6',
+            'OUT\tSystem.Double\t6',
+        ),
+    'foreach ($a in 0, 1, -1, 2147483647, -2147483648, 9223372036854775807, -9223372036854775808, 0.25, -0.25, 1e308, -1e308, 4.9e-324, 79228162514264337593543950335d, -79228162514264337593543950335d, 0.0000000000000000000000000001d, [double]::NaN, [double]::PositiveInfinity, [double]::NegativeInfinity, [byte]255, [sbyte]-128, [int16]-32768, [uint16]65535, [uint32]4294967295, [uint64]18446744073709551615, [single]3.4e38, [single]-1) { Write-Output $a.GetType().FullName; Write-Output (,[Math]::Sqrt($a)) }':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Double\t0',
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Double\t1',
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Double\tNaN',
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Double\t46340.950001052',
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Double\tNaN',
+            'OUT\tSystem.String\tSystem.Int64',
+            'OUT\tSystem.Double\t3037000499.97605',
+            'OUT\tSystem.String\tSystem.Int64',
+            'OUT\tSystem.Double\tNaN',
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\t0.5',
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\tNaN',
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\t1E+154',
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\tNaN',
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\t2.22275874948508E-162',
+            'OUT\tSystem.String\tSystem.Decimal',
+            'OUT\tSystem.Double\t281474976710656',
+            'OUT\tSystem.String\tSystem.Decimal',
+            'OUT\tSystem.Double\tNaN',
+            'OUT\tSystem.String\tSystem.Decimal',
+            'OUT\tSystem.Double\t1E-14',
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\tNaN',
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\tInfinity',
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\tNaN',
+            'OUT\tSystem.String\tSystem.Byte',
+            'OUT\tSystem.Double\t15.9687194226713',
+            'OUT\tSystem.String\tSystem.SByte',
+            'OUT\tSystem.Double\tNaN',
+            'OUT\tSystem.String\tSystem.Int16',
+            'OUT\tSystem.Double\tNaN',
+            'OUT\tSystem.String\tSystem.UInt16',
+            'OUT\tSystem.Double\t255.998046867549',
+            'OUT\tSystem.String\tSystem.UInt32',
+            'OUT\tSystem.Double\t65535.9999923706',
+            'OUT\tSystem.String\tSystem.UInt64',
+            'OUT\tSystem.Double\t4294967296',
+            'OUT\tSystem.String\tSystem.Single',
+            'OUT\tSystem.Double\t1.8439088784819E+19',
+            'OUT\tSystem.String\tSystem.Single',
+            'OUT\tSystem.Double\tNaN',
+        ),
+    '$t = [array]::Reverse((1, 2, 3, 4)); Write-Output ($null -eq $t)':
+        (
+            'OUT\tSystem.Boolean\tTrue',
+        ),
+    "foreach ($l in @(@(), @(1), @($null), (,1), (1, 'a', $null, @(2, 3)))) { Write-Output $l.GetType().FullName; [array]::Reverse($l) }; Write-Output 'after'":
+        (
+            'OUT\tSystem.String\tSystem.Object[]',
+            'OUT\tSystem.String\tSystem.Object[]',
+            'OUT\tSystem.String\tSystem.Object[]',
+            'OUT\tSystem.String\tSystem.Object[]',
+            'OUT\tSystem.String\tSystem.Object[]',
+            'OUT\tSystem.String\tafter',
+        ),
+    'foreach ($a in 0, -1, 2147483647, -2147483648) { Write-Output $a.GetType().FullName; Write-Output (,$a.GetHashCode()) }':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t0',
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t-1',
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t2147483647',
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t-2147483648',
+        ),
+    '$types = foreach ($i in 1..2000) { (Get-Random).GetType().FullName }; Write-Output ($types | Sort-Object -Unique)':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+        ),
+    '$t = (Get-Random).GetHashCode(); Write-Output $t.GetType().FullName':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+        ),
+    "$PSDefaultParameterValues = @{ 'Get-Random:Maximum' = 0 }; $t = Get-Random; Write-Output ($null -eq $t)":
+        (
+            'ERROR\tMinGreaterThanOrEqualMax,Microsoft.PowerShell.Commands.GetRandomCommand\tSystem.ArgumentException',
+            'OUT\tSystem.Boolean\tTrue',
+        ),
+}
+
+#: The rows of `corpus.CALLS` and `corpus.TYPES` each fact of
+#: `refinery.lib.scripts.ps1.data.CALL_FACTS` was measured on, keyed by the type that owns the
+#: call, empty for a command, and the call's lowercased name.
+CALL_FACT_WITNESSES: dict[tuple[str, str], tuple[str, ...]] = {
+    ('System.Math', 'sqrt'): (
+        '$t = [Math]::Sqrt(36); Write-Output (,$t); Write-Output $t',
+        'foreach ($a in 0, 1, -1, 2147483647, -2147483648, 9223372036854775807, -9223372036854775808, 0.25, -0.25, 1e308, -1e308, 4.9e-324, 79228162514264337593543950335d, -79228162514264337593543950335d, 0.0000000000000000000000000001d, [double]::NaN, [double]::PositiveInfinity, [double]::NegativeInfinity, [byte]255, [sbyte]-128, [int16]-32768, [uint16]65535, [uint32]4294967295, [uint64]18446744073709551615, [single]3.4e38, [single]-1) { Write-Output $a.GetType().FullName; Write-Output (,[Math]::Sqrt($a)) }',
+    ),
+    ('System.Array', 'reverse'): (
+        '$t = [array]::Reverse((1, 2, 3, 4)); Write-Output ($null -eq $t)',
+        "foreach ($l in @(@(), @(1), @($null), (,1), (1, 'a', $null, @(2, 3)))) { Write-Output $l.GetType().FullName; [array]::Reverse($l) }; Write-Output 'after'",
+    ),
+    ('System.Int32', 'gethashcode'): (
+        'foreach ($a in 0, -1, 2147483647, -2147483648) { Write-Output $a.GetType().FullName; Write-Output (,$a.GetHashCode()) }',
+        '$t = (Get-Random).GetHashCode(); Write-Output $t.GetType().FullName',
+    ),
+    ('System.Text.StringBuilder', 'tostring'): (
+        "$t = [Text.StringBuilder]::new('ab').ToString(); Write-Output (,$t); Write-Output $t",
+    ),
+    ('', 'get-random'): (
+        '$types = foreach ($i in 1..2000) { (Get-Random).GetType().FullName }; Write-Output ($types | Sort-Object -Unique)',
+        '$t = (Get-Random).GetHashCode(); Write-Output $t.GetType().FullName',
+    ),
+}
+
+
 #: Rows of `corpus.TYPES` whose deobfuscation does not behave like the row. Held apart from
 #: `BEHAVIOUR_DEFECTS` rather than merged into it, because that table carries one entry per defect
 #: with a host-free twin for each, and these share a handful of root causes: the cast whose target
@@ -4658,6 +4827,84 @@ class TestPs1CuratedMethodTablesRestOnMeasuredBeliefs(Ps1OracleTest):
         self.assertEqual(found, named)
 
 
+@unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
+class TestPs1CallFactsRestOnMeasuredBeliefs(Ps1OracleTest):
+    """
+    The rows the call facts rest on, asked of the host rather than trusted, and their deobfuscation
+    held against what each row does.
+    """
+
+    def test_each_row_does_what_is_recorded_and_its_output_does_the_same(self):
+        rows = corpus.CALLS
+        measured = dict(zip(rows, behaviours(rows)))
+        with self.subTest(law='every belief about a call is what powershell does'):
+            self.assertEqual(measured, CALL_TRANSCRIPTS)
+        rewrite = rewritten_by(self.ldu('dps1', strict=True), rows)
+        changed = sorted(
+            row for row, after in zip(rows, behaviours(rows, rewrite))
+            if after != measured[row]
+        )
+        with self.subTest(law='the output behaves like the row'):
+            self.assertEqual(changed, [])
+
+
+class TestPs1EveryCallFactRestsOnMeasuredRows(TestBase):
+    """
+    A call fact is a claim about 5.1, and the transcripts hold what 5.1 was measured to do on the
+    rows it names. Each fact names rows, each row is one the oracle tests run, and the rows of a fact
+    that says the call cannot fail recorded no error and the type the fact says it hands back.
+    """
+
+    @staticmethod
+    def _key(fact: data.CallFact) -> tuple[str, str]:
+        return ('' if fact.owner is None else str(fact.owner), fact.name)
+
+    def test_every_fact_names_its_rows(self):
+        facts = {self._key(fact) for facts in data.CALL_FACTS.values() for fact in facts}
+        self.assertEqual(sorted(facts), sorted(CALL_FACT_WITNESSES))
+
+    def test_every_row_a_fact_names_is_run(self):
+        for rows in CALL_FACT_WITNESSES.values():
+            for row in rows:
+                with self.subTest(row):
+                    self.assertIn(row, (*corpus.CALLS, *corpus.TYPES))
+                    self.assertIn(row, {**CALL_TRANSCRIPTS, **TYPE_TRANSCRIPTS})
+
+    def test_the_rows_of_a_call_that_cannot_fail_record_no_error_and_its_return(self):
+        for facts in data.CALL_FACTS.values():
+            for fact in facts:
+                if fact.fails:
+                    continue
+                for row in CALL_FACT_WITNESSES[self._key(fact)]:
+                    with self.subTest(row):
+                        transcript = {**CALL_TRANSCRIPTS, **TYPE_TRANSCRIPTS}[row]
+                        self.assertEqual([line for line in transcript if not line.startswith('OUT')], [])
+                        if str(fact.returns) != 'System.Void':
+                            self.assertTrue(any(str(fact.returns) in line for line in transcript))
+
+    def test_every_type_a_call_that_cannot_fail_is_handed_was_measured(self):
+        """
+        A row that hands a call a value of each type writes the type's name before the call, so
+        every type a fact covers, and the type of the value a method fact is called on, is one some
+        row of the fact handed it.
+        """
+        for facts in data.CALL_FACTS.values():
+            for fact in facts:
+                if fact.fails:
+                    continue
+                handed = {str(type_name) for covered in fact.arguments or () for type_name in covered}
+                if fact.kind is data.CallKind.INSTANCE and fact.owner is not None:
+                    handed.add(str(fact.owner))
+                written = {
+                    line.split('\t')[-1]
+                    for row in CALL_FACT_WITNESSES[self._key(fact)]
+                    for line in {**CALL_TRANSCRIPTS, **TYPE_TRANSCRIPTS}[row]
+                    if line.startswith('OUT\tSystem.String\t')
+                }
+                with self.subTest(fact.name):
+                    self.assertEqual(sorted(handed - written), [])
+
+
 class TestPs1NoCorpusTableListsTheSameScriptTwice(TestBase):
     """
     A duplicated row costs a host process and fails nothing: every transcript above is compared as
@@ -4684,7 +4931,9 @@ class TestPs1NoCorpusTableListsTheSameScriptTwice(TestBase):
         self.assertEqual(sorted(self._tables()), [
             'BEHAVIOURS',
             'BOUNDARIES',
+            'CALLS',
             'CLAIMS',
+            'DISPATCH',
             'NAMES',
             'PROBES',
             'SPELLINGS',

@@ -107,7 +107,7 @@ from refinery.lib.scripts.ps1.analysis.aliasdef import (
     extract_alias_definition,
 )
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockModel, Ps1BlockReach
-from refinery.lib.scripts.ps1.analysis.faults import a_stop_may_be_in_force
+from refinery.lib.scripts.ps1.analysis.session import a_stop_may_be_in_force
 from refinery.lib.scripts.ps1.analysis.model import is_write_occurrence
 from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
 from refinery.lib.scripts.ps1.analysis.world import (
@@ -1163,8 +1163,9 @@ class Ps1CommandModel:
         a completion.
 
         That reading holds only while nothing has armed `Stop`, which turns every reported error
-        into one a handler takes — so `a_stop_may_be_in_force` is asked of the whole script, in its
-        strict spelling rather than the fault model's lax one.
+        into one a handler takes — so
+        `refinery.lib.scripts.ps1.analysis.session.a_stop_may_be_in_force` is asked of the whole
+        script, in its strict spelling rather than the fault model's lax one.
 
         `New-Alias` is the exception among the defining commands: it raises rather than rebinding
         where the name already has a binding, and that error is terminating.

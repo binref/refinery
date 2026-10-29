@@ -44,95 +44,31 @@ from refinery.lib.scripts.ps1.analysis.cfg import (
     build_control_flow_model,
     names_every_error,
 )
-from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
-from refinery.lib.scripts.ps1.analysis.values import ordinal_of, read
+from refinery.lib.scripts.ps1.analysis.session import (
+    stops_on_error,
+    writes_stop_to_the_default_table,
+    writes_stop_to_the_preference,
+)
 from refinery.lib.scripts.ps1.ast import (
     STATEMENT_LIST_EXPRESSIONS,
-    argument_text,
-    assignment_target_variables,
-    binding_key,
-    binds_parameter,
     bound_argument_value,
     fault_operand,
-    free_positional_values,
-    get_member_name,
     is_soft_error_source,
     raises_a_caught_terminating_error,
     resolve_command_name,
     string_value,
 )
-from refinery.lib.scripts.ps1.data import COMMON_PARAMETERS
 from refinery.lib.scripts.ps1.model import (
-    Ps1AssignmentExpression,
     Ps1BreakStatement,
     Ps1CatchClause,
-    Ps1CommandArgument,
-    Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ContinueStatement,
-    Ps1IndexExpression,
     Ps1IntegerLiteral,
-    Ps1InvokeMember,
-    Ps1MemberAccess,
-    Ps1RealLiteral,
     Ps1Script,
     Ps1ScriptBlock,
     Ps1ThrowStatement,
     Ps1TrapStatement,
-    Ps1Variable,
 )
-
-#: The names the `-ErrorAction` parameter answers to, lowercased and without the dash: the parameter
-#: itself and every alias the collected command data records for it. The alias is subscripted rather
-#: than defaulted, so that a collected surface which stops carrying this parameter fails the load
-#: rather than silently dropping the spelling, as `refinery.lib.scripts.ps1.data` does for its own
-#: derived sets.
-_ERROR_ACTION_NAME = 'erroraction'
-_ERROR_ACTION = frozenset((_ERROR_ACTION_NAME, *COMMON_PARAMETERS[_ERROR_ACTION_NAME]))
-
-#: Every name a *common* parameter answers to, so that an abbreviation of one can be told from an
-#: abbreviation that reaches several. A command carrying `-ErrorAction` carries the whole set of
-#: them — that is what makes a command advanced — so a prefix reaching another member of this set
-#: reaches it on the very commands the question is about.
-_COMMON_SURFACES = frozenset(
-    surface
-    for parameter, aliases in COMMON_PARAMETERS.items()
-    for surface in (parameter, *aliases)
-)
-
-#: The `ActionPreference` member that makes an error terminating, and the number that member is.
-#: `Stop` and `1` are the two spellings the corpus measures directly.
-#:
-#: Neither is read literally. The ordinal is read as a *number* rather than as a numeral, because
-#: what selects the member is its value and `0x1`, `01` and `1` all denote it. The name is read by
-#: prefix, because 5.1 resolves `-ErrorAction St` to `Stop`.
-#:
-#: An **ambiguous** member prefix is a third thing, and the reading costs recall rather than
-#: correctness. `-ErrorAction S` reaches `SilentlyContinue`, `Stop` and `Suspend`, and 5.1 answers
-#: it with a `ParameterBindingException` — `CannotConvertArgumentNoMessage`, measured — so the
-#: command never runs at all and the error it reports instead is statement-terminating: the script
-#: carries on. Reading the prefix as `Stop` keeps a handler over that, which is the safe direction
-#: and is what `TestPs1AnAmbiguousActionPrefixKeepsTheTrapOverIt` records.
-_STOP = 'stop'
-_STOP_ORDINAL = 1
-
-#: The automatic variable that decides what a command does with an error it reports. Set to `Stop`
-#: it makes every one of them terminating — a failing cast included, which is otherwise reported
-#: and stepped over.
-_ERROR_ACTION_PREFERENCE = 'erroractionpreference'
-
-#: The automatic variable that binds a default argument into every command that takes the parameter.
-#: A `Stop` written under a key that names `-ErrorAction` — `*:ErrorAction` for every command, or
-#: `Get-Item:ErrorAction` for one — makes that command's reported error terminating, but a failing
-#: cast is not a command and is left stepped over. That is why an arming written here reaches the
-#: per-command terminating path rather than the whole-script `_stops_on_every_error` gate.
-_DEFAULT_PARAMETER_VALUES = 'psdefaultparametervalues'
-
-#: The members that mutate a hashtable in place, so that a `Stop` written through one of them arms
-#: the default table as an index-assignment does. Spelled as `resolve` sees a member — lowercased
-#: — and read as a set so `.Add` and its accessor alias `.set_Item` are one question.
-_HASHTABLE_MUTATORS = frozenset({'add', 'set_item'})
-
 
 class Ps1FaultRouting(NamedTuple):
     """
@@ -155,233 +91,6 @@ class Ps1FaultRouting(NamedTuple):
 #: What the graphs place nothing for, and therefore claim nothing about. Every query answers `None`
 #: for a node it cannot place, and every caller reads that as *the error may go anywhere*.
 UNPLACED = None
-
-
-def _binds_the_error_action(written: str) -> bool:
-    """
-    Whether the parameter name *written* at a call site binds `-ErrorAction` and nothing else.
-
-    5.1 binds a parameter by any prefix of its name that no other parameter of the command answers
-    to, which `refinery.lib.scripts.ps1.ast.binds_parameter` reads. What it cannot read on its own
-    is the *ambiguity*, and here that is decidable: every command carrying `-ErrorAction` carries
-    every common parameter, so a prefix reaching a second common name reaches it on exactly the
-    commands this asks about. `-e`, `-er` and `-erro` all reach `-ErrorVariable` as well and are
-    measured not to stop; `-errora` reaches this one alone and is measured to stop.
-
-    Refusing an ambiguous prefix is also what keeps a native command out: `powershell.exe -e <b64>`
-    hands `-e` to a program rather than to a parameter binder, and reading it as an error action
-    pins every handler in the script around the commonest shape in this project's corpus.
-    """
-    reached = {surface for surface in _COMMON_SURFACES if binds_parameter(written, surface)}
-    return bool(reached) and reached <= _ERROR_ACTION
-
-
-def _selects_stop(value: Node | None) -> bool:
-    """
-    Whether *value* selects `Stop`, as the argument of `-ErrorAction` or as what a write to
-    `$ErrorActionPreference` stores. A value this cannot read is read as selecting it: the question
-    decides whether a handler is load bearing, and a value computed at run time may be anything.
-
-    A numeral is read for the number it denotes rather than for the text it is written as, because
-    what selects the member is the ordinal and `0x1`, `01` and `1` all denote it.
-    `refinery.lib.scripts.ps1.ast.argument_text` deliberately answers a numeral's spelling, which
-    is the right reading where a bare word names something and the wrong one here. A name is
-    matched by prefix, for the same reason a parameter name is.
-
-    A value the domain reads as an enum member — the spelling an inlined preference variable
-    arrives in — selects `Stop` by its ordinal whatever enum it is a member of, because 5.1
-    converts one enum to another by ordinal: `-ErrorAction ([ConfirmImpact]::Low)` is `Stop`.
-    """
-    if isinstance(value, (Ps1IntegerLiteral, Ps1RealLiteral)):
-        return value.value == _STOP_ORDINAL
-    ordinal = ordinal_of(read(value))
-    if ordinal is not None:
-        return ordinal == _STOP_ORDINAL
-    text = argument_text(value)
-    if text is None:
-        return True
-    text = text.strip().lower()
-    return bool(text) and (text == str(_STOP_ORDINAL) or _STOP.startswith(text))
-
-
-def _stops_on_error(command: Ps1CommandInvocation) -> bool:
-    """
-    Whether *command* carries `-ErrorAction Stop`, which turns every error it reports into one that
-    ends the script wherever nothing handles it.
-
-    The parameter and its argument are two arguments rather than one: 5.1 binds a bare `-Name value`
-    pair by position and only the `-Name:value` spelling arrives as a single named argument, so both
-    shapes are read here. A parameter written last with nothing after it binds no value at all,
-    which 5.1 rejects, and is read as `Stop` for the same reason an unreadable value is.
-
-    Every occurrence is read rather than the first, so that a name bound by a prefix 5.1 would in
-    fact reject cannot hide the parameter written after it — reading such a name as this one is
-    then the over-approximation the name set claims it is, rather than a verdict on the command. A
-    command carrying a splat is read as carrying the parameter for the same reason: the names it
-    binds are in a table this cannot see into.
-    """
-    arguments = [
-        argument for argument in command.arguments
-        if isinstance(argument, Ps1CommandArgument)
-    ]
-    for index, argument in enumerate(arguments):
-        value = argument.value
-        if isinstance(value, Ps1Variable) and value.splatted:
-            return True
-        if not _binds_the_error_action(argument.name):
-            continue
-        if argument.kind is not Ps1CommandArgumentKind.NAMED:
-            following = arguments[index + 1] if index + 1 < len(arguments) else None
-            value = None
-            if following is not None and following.kind is Ps1CommandArgumentKind.POSITIONAL:
-                value = following.value
-        if _selects_stop(value):
-            return True
-    return False
-
-
-def _writes_stop_to_the_preference(node: Node) -> bool:
-    """
-    Whether *node* writes `$ErrorActionPreference` a value that may be `Stop`, which makes every
-    error terminating — the failing cast included, which is otherwise reported and stepped over.
-
-    Two shapes write the variable and both are read. An assignment names it through
-    `refinery.lib.scripts.ps1.ast.assignment_target_variables`, so that a type-constrained,
-    parenthesized or multi-assignment target is the same write as a bare one, and is keyed through
-    `refinery.lib.scripts.ps1.ast.binding_key`, so that the unrelated process-global
-    `$env:ErrorActionPreference` is not read as this variable. A cmdlet writes it by name —
-    `New-Variable`/`Set-Variable ErrorActionPreference Stop`, or the provider form
-    `Set-Item Variable:ErrorActionPreference Stop` — which `_cmdlet_writes_stop_to_the_preference`
-    reads through the same name authority the model builds bindings from.
-    """
-    if isinstance(node, Ps1AssignmentExpression):
-        return any(
-            binding_key(variable) == _ERROR_ACTION_PREFERENCE
-            for variable in assignment_target_variables(node.target)
-        ) and _selects_stop(node.value)
-    if isinstance(node, Ps1CommandInvocation):
-        return _cmdlet_writes_stop_to_the_preference(node)
-    return False
-
-
-def _cmdlet_writes_stop_to_the_preference(cmd: Ps1CommandInvocation) -> bool:
-    """
-    Whether *cmd* writes `Stop` to `$ErrorActionPreference` by naming the variable as a string —
-    `Set-Variable ErrorActionPreference Stop`, `New-Variable ErrorActionPreference Stop -Force`, or
-    `Set-Item Variable:ErrorActionPreference Stop`.
-
-    Whether the command writes the variable at all is
-    `refinery.lib.scripts.ps1.analysis.naming.named_references`' answer, the one authority for what
-    a command does to a name it addresses as a string; it reports the write for every alias, casing
-    and scope-qualified spelling of these commands. What it does not report is the *value* written,
-    which is read here so the negative controls are decidable: `_written_variable_value` reads the
-    named `-Value`, else the positional value the command binds after the name — the `-Name` written
-    explicitly moves the value to the first free positional, exactly as it moves the name off it.
-
-    A write that binds no value at all stores `$null` and arms nothing: `Clear-Variable` and a
-    `-OutVariable` that happens to name the preference both reach here as writes with no value node,
-    and are read as not arming. A value present but not statically readable is read as `Stop`, the
-    `_selects_stop(None)` over-approximation that keeps a handler rather than dropping one.
-    """
-    if not any(
-        reference.role is Ps1NameRole.WRITES
-        and reference.key == _ERROR_ACTION_PREFERENCE
-        for reference in named_references(cmd)
-    ):
-        return False
-    value = _written_variable_value(cmd)
-    return value is not None and _selects_stop(value)
-
-
-def _written_variable_value(cmd: Ps1CommandInvocation) -> Node | None:
-    """
-    The value a variable- or item-writing command stores, or `None` when it binds no value.
-
-    Read as the named `-Value` where one is written, else the positional value the command binds
-    after its subject: the name or path takes the first free positional unless an explicit `-Name`
-    or `-Path` moves it off, so the value is the free positional at index one when the subject is
-    positional and at index zero when it is not — the same reading
-    `refinery.lib.scripts.ps1.analysis.naming` makes for the name, one place along.
-    """
-    value = bound_argument_value(cmd, 'value')
-    if value is not None:
-        return value
-    command = resolve_command_name(cmd)
-    if command is None:
-        return None
-    subject_is_positional = (
-        bound_argument_value(cmd, 'name') is None
-        and bound_argument_value(cmd, 'path') is None
-    )
-    index = 1 if subject_is_positional else 0
-    positional = free_positional_values(cmd, command)
-    return positional[index] if len(positional) > index else None
-
-
-def _names_the_default_table(node: Node | None) -> bool:
-    """
-    Whether *node* is the `$PSDefaultParameterValues` variable itself, keyed the way every other
-    occurrence of it is so an aliased copy under another name is not read as it — that copy is the
-    completeness hole tracked as an xfail, not a write this sees.
-    """
-    return isinstance(node, Ps1Variable) and binding_key(node) == _DEFAULT_PARAMETER_VALUES
-
-
-def _names_the_error_action(key: str | None) -> bool:
-    """
-    Whether a `$PSDefaultParameterValues` key *key* binds `-ErrorAction`: its parameter half — what
-    stands after the `command:` scope — being the action's own name or its `ea` alias. 5.1 matches
-    that half against the parameter's name and aliases exactly rather than by prefix, so `ea` and
-    `erroraction` bind it where an abbreviation like `errora` does not — the `_ERROR_ACTION` set
-    the call-site reader already answers from. A key this cannot read as a literal is read as
-    binding it, the direction that keeps a handler.
-    """
-    if key is None:
-        return True
-    _scope, separator, parameter = key.strip().lower().rpartition(':')
-    return bool(separator) and parameter in _ERROR_ACTION
-
-
-def _writes_stop_to_the_default_table(node: Node) -> bool:
-    """
-    Whether *node* writes `Stop` under an `-ErrorAction` key of `$PSDefaultParameterValues`, which
-    makes every command that binds the key report a terminating error.
-
-    Three spellings write the table statically and all are read: the index-assignment
-    `$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'`, the member-assignment
-    `$PSDefaultParameterValues.'*:ErrorAction' = 'Stop'` that sets the same key through the
-    hashtable adapter, and the in-place mutation `$PSDefaultParameterValues.Add('*:ErrorAction',
-    'Stop')` or its `.set_Item` accessor. The key is read through `_names_the_error_action`, and the
-    value through the same `_selects_stop` a preference write reads, so `Continue` written here arms
-    nothing. A whole-table replacement `$PSDefaultParameterValues = @{ ... }`, a splat, and an
-    aliased copy are the completeness holes tracked as xfails: their target is not this index or the
-    member.
-    """
-    if isinstance(node, Ps1AssignmentExpression):
-        target = node.target
-        if isinstance(target, Ps1IndexExpression):
-            return (
-                _names_the_default_table(target.object)
-                and _names_the_error_action(argument_text(target.index))
-                and _selects_stop(node.value)
-            )
-        if isinstance(target, Ps1MemberAccess):
-            return (
-                _names_the_default_table(target.object)
-                and _names_the_error_action(get_member_name(target.member))
-                and _selects_stop(node.value)
-            )
-        return False
-    if isinstance(node, Ps1InvokeMember):
-        member = node.member.lower() if isinstance(node.member, str) else ''
-        return (
-            _names_the_default_table(node.object)
-            and member in _HASHTABLE_MUTATORS
-            and len(node.arguments) >= 2
-            and _names_the_error_action(argument_text(node.arguments[0]))
-            and _selects_stop(node.arguments[1])
-        )
-    return False
 
 
 #: The commands that arm strict mode, in the spelling `resolve_command_name` answers with. Two
@@ -407,7 +116,7 @@ def _arms_strict_mode(node: Node) -> bool:
 
     A string value need only *contain* a name, which is the asymmetry
     `refinery.lib.scripts.ps1.analysis.worldflow._names_own_path` makes and that
-    `a_stop_may_be_in_force` makes beside it. `Invoke-Expression 'Set-StrictMode -Version 1'`
+    `refinery.lib.scripts.ps1.analysis.session.a_stop_may_be_in_force` makes beside it. `Invoke-Expression 'Set-StrictMode -Version 1'`
     arms it as surely as writing the command does, and a script that spells either name anywhere is
     read as arming it — the direction that refuses a removal rather than granting one.
     """
@@ -453,57 +162,6 @@ def _arms_strict_mode_v2(node: Node) -> bool:
         # invocation above; reading the version-less name here would refuse every `-Version 1`.
         return False
     return True
-
-
-#: The automatic variables through which a `Stop` can be armed for commands that did not ask for
-#: one: the preference itself, and the table that binds `-ErrorAction` into every command that takes
-#: it. Spelled as names rather than as assignment shapes because `a_stop_may_be_in_force` asks
-#: whether either is *touched* at all, however it is spelled.
-_STOP_BEARING_NAMES = frozenset({
-    _ERROR_ACTION_PREFERENCE,
-    _DEFAULT_PARAMETER_VALUES,
-})
-
-
-def a_stop_may_be_in_force(root: Node) -> bool:
-    """
-    Whether anything in *root* may make an error a command reports into a terminating one — the
-    strict counterpart of the whole-script question `Ps1FaultReach` asks itself, and a different
-    question from it.
-
-    That one reads a `Stop` written to `$ErrorActionPreference` — by assignment or by a cmdlet that
-    names the variable — and a `Stop` written under an `-ErrorAction` key of
-    `$PSDefaultParameterValues` by index-assignment or `.Add`, and reads them *laxly* on purpose: it
-    decides whether a handler may be removed, where a missed arming keeps a handler that could have
-    gone and costs recall on junk. The spellings it still misses arm the table through a shape whose
-    target is not that index — a whole-table replacement `$PSDefaultParameterValues = @{ ... }`, a
-    splatted `Set-Variable`, and an aliased copy of the table under another name — each tracked as
-    an expected failure.
-
-    A caller asking whether a *statement completed* cannot inherit those. Reading a script as arming
-    nothing where it does says a command that in fact raised ran to its end, and a value it was going
-    to establish is then resolved through at every use below it — which rewrites calls a run never
-    makes. So this asks the wider question: does the script touch either name at all, in any way,
-    including naming one in a string that a command could set it through. What that costs is the
-    recall of every script that so much as mentions the preference, which is a shape worth refusing.
-
-    A variable occurrence must carry the name exactly; a string value need only *contain* one,
-    which is the same asymmetry `refinery.lib.scripts.ps1.analysis.worldflow._names_own_path`
-    makes, and for the same reason. A provider path spells the name inside a larger word, and
-    `Set-Item Variable:ErrorActionPreference Stop` arms it as surely as the assignment does — as
-    does a payload handed to `Invoke-Expression`. Matching the whole literal instead reads a script
-    that really arms `Stop` as arming nothing, which is the one direction that rewrites a call the
-    run does not make.
-    """
-    for node in root.walk():
-        if isinstance(node, Ps1Variable) and binding_key(node) in _STOP_BEARING_NAMES:
-            return True
-        written = string_value(node)
-        if written is not None and any(
-            name in written.lower() for name in _STOP_BEARING_NAMES
-        ):
-            return True
-    return False
 
 
 def ends_the_script(
@@ -552,7 +210,7 @@ def ends_the_script(
             return True
         if isinstance(node, Ps1TrapStatement) and converts(node):
             return True
-        if isinstance(node, Ps1CommandInvocation) and (stop_default or _stops_on_error(node)):
+        if isinstance(node, Ps1CommandInvocation) and (stop_default or stops_on_error(node)):
             return True
     return False
 
@@ -582,11 +240,14 @@ def handler_acts(handler: Ps1CatchClause | Ps1TrapStatement) -> bool:
 
 class _EmptyCatch(NamedTuple):
     """
-    An empty `catch` clause an error may reach, and the nodes control reaches from the slot it
-    resumes at.
+    A place an error may reach that takes it and carries on after a statement: an empty `catch`
+    clause, which carries on after its `try`, or a report node, which carries on after the statement
+    `refinery.lib.scripts.analysis.cfg.CfgNode.carries_on_after` names. Kept with the nodes control
+    reaches from there, and that statement.
     """
     clause: CfgNode
     resumes: frozenset[CfgNode]
+    statement: Node | None
 
 
 class _Route(NamedTuple):
@@ -606,12 +267,19 @@ class _Route(NamedTuple):
     two clauses resuming at distinct slots settle that for every position, so no more than two are
     kept. A clause is kept beside its slot because a reader measuring the run up to that slot needs
     the `try` the clause belongs to.
+
+    `taken_at` is how far out the route may carry control, which a capped list cannot say: the
+    depth in the tree of the outermost statement it carries on after, or whose handler that acts
+    takes the error, and infinite where there is none. Every such statement holds the point the
+    error was raised at, so they stand on one chain of ancestors and the shallowest is the
+    outermost; `TestPs1EveryLandingHoldsItsRaise` checks that over the corpus.
     """
     acts: bool
     passes_a_trap: bool
     offers_a_handler: bool
     leaves_the_body: bool
     empty_catches: tuple[_EmptyCatch, ...]
+    taken_at: float = float('inf')
 
     def joined(self, other: _Route) -> _Route:
         """
@@ -630,6 +298,7 @@ class _Route(NamedTuple):
             self.offers_a_handler or other.offers_a_handler,
             self.leaves_the_body or other.leaves_the_body,
             catches,
+            min(self.taken_at, other.taken_at),
         )
 
 
@@ -637,10 +306,23 @@ class _Route(NamedTuple):
 _NOWHERE = _Route(False, False, False, False, ())
 
 
+def _tree_depth(node: Node, depths: dict[int, int]) -> int:
+    """
+    How many ancestors *node* has in its tree, remembered in *depths*, which is valid for as long as
+    the tree its owner was built over.
+    """
+    found = depths.get(id(node))
+    if found is None:
+        parent = node.parent
+        found = depths[id(node)] = 0 if parent is None else _tree_depth(parent, depths) + 1
+    return found
+
+
 def _arrival(
     graph: ControlFlowGraph,
     node: CfgNode,
-    reraises: Callable[[CfgNode], bool] = lambda node: False,
+    reraises: Callable[[CfgNode], bool],
+    depth: Callable[[Node], int],
 ) -> _Route:
     """
     What an error arriving at *node* contributes to a route through it: the handler it is offered
@@ -649,12 +331,20 @@ def _arrival(
     may be in force — and the error is read as leaving the body there.
     """
     element = node.element
+    reported = node.carries_on_after
+    if reported is not None:
+        catch = _EmptyCatch(node, _normal_successors(node), reported)
+        return _Route(False, False, False, False, (catch,), depth(reported))
     if isinstance(element, Ps1CatchClause):
         empty = element.body is None or not element.body.body
-        catches = (_EmptyCatch(node, _normal_successors(node)),) if empty else ()
-        return _Route(handler_acts(element), False, True, False, catches)
+        catches = (_EmptyCatch(node, _normal_successors(node), element.parent),) if empty else ()
+        acts = handler_acts(element)
+        taken = depth(element.parent) if (acts or empty) and element.parent is not None else float('inf')
+        return _Route(acts, False, True, False, catches, taken)
     if isinstance(element, Ps1TrapStatement):
-        return _Route(handler_acts(element), True, True, reraises(node), ())
+        acts = handler_acts(element)
+        taken = depth(element.parent) if acts and element.parent is not None else float('inf')
+        return _Route(acts, True, True, reraises(node), (), taken)
     if node is graph.exit:
         return _Route(False, False, False, True, ())
     return _NOWHERE
@@ -940,6 +630,8 @@ class Ps1ErrorPaths:
     ):
         self.graph = graph
         self._reraises = reraises
+        self._depths: dict[int, int] = {}
+        depth = self.depth_of
         self._trap_sets = tuple(trap_sets)
         self._landings: _Landings | None = None
         self._holders: dict[int, tuple[Node, Ps1TrapSet]] | None = None
@@ -954,7 +646,7 @@ class Ps1ErrorPaths:
         def own(number: int) -> _Route:
             route = _NOWHERE
             for member in components[number]:
-                route = route.joined(_arrival(graph, member, reraises))
+                route = route.joined(_arrival(graph, member, reraises, depth))
             return route
 
         self._routes = self._condensation.accumulate(own, _Route.joined, downstream=True)
@@ -977,7 +669,7 @@ class Ps1ErrorPaths:
             if condensation.looped(number):
                 for member in condensation.components[number]:
                     if member is not start:
-                        route = route.joined(_arrival(self.graph, member, self._reraises))
+                        route = route.joined(_arrival(self.graph, member, self._reraises, self.depth_of))
             for other in condensation.downstream(number):
                 route = route.joined(self._routes[other])
             self._from[start] = route
@@ -1043,10 +735,16 @@ class Ps1ErrorPaths:
         if region is None:
             steps = self._table().steps_by_slot.get(slot, [])
             region = self._regions[slot] = Ps1StepOverRegion(
-                steps, _normal_successors(slot), self._within([self._holder_of(slot)]))
+                steps, _normal_successors(slot), self._within([self.holder_of(slot)]))
         return region
 
-    def _holder_of(self, slot: CfgNode) -> Node:
+    def depth_of(self, node: Node) -> int:
+        """
+        How many ancestors *node* has in the tree this graph was built over.
+        """
+        return _tree_depth(node, self._depths)
+
+    def holder_of(self, slot: CfgNode) -> Node:
         """
         The statement of a resuming block that *slot* resumes past.
         """
@@ -1092,7 +790,7 @@ class Ps1ErrorPaths:
         The route of an error offered to *node*: what *node* itself does with it, joined with
         everything it may hand the error on to.
         """
-        return _arrival(self.graph, node, self._reraises).joined(self.route_from(node))
+        return _arrival(self.graph, node, self._reraises, self.depth_of).joined(self.route_from(node))
 
     def landings(self, trap_set: Ps1TrapSet) -> list[Ps1LandingSite] | None:
         """
@@ -1113,8 +811,7 @@ class Ps1ErrorPaths:
             return None
         landings: list[Ps1LandingSite] = []
         for catch in route.empty_catches:
-            element = catch.clause.element
-            statement = element.parent if element is not None else None
+            statement = catch.statement
             if statement is None or self.graph.builder_of([statement]) is None:
                 return None
             landings.append(Ps1LandingSite(catch.resumes, statement))
@@ -1416,6 +1113,7 @@ class Ps1FaultReach:
         self._stop_default: bool | None = None
         self._strict: bool | None = None
         self._strict_v2: bool | None = None
+        self._depths: dict[int, int] = {}
 
     @property
     def _control_flow(self) -> Ps1ControlFlowModel:
@@ -1599,24 +1297,26 @@ class Ps1FaultReach:
         located = self._control_flow.locate(node)
         return located is None or self._route(*located).leaves_the_body
 
-    def an_empty_catch_skips_a_live_tail(self, node: Node) -> bool:
+    def lands_past_a_live_tail(self, node: Node) -> bool:
         """
-        Whether a fault raised at *node* is taken by an **empty** `catch` that resumes past a live
-        statement still standing after *node* in its own block — the position fact behind the
-        body-tail keep.
+        Whether a fault raised at *node* lands past a live statement still standing after *node* in
+        its own block — the position fact behind the body-tail keep. Three places land it so: an
+        **empty** `catch`, which carries on after its `try`; a report node, where 5.1 reports an
+        error nothing takes inside a `try`, `catch` or `trap` body and carries on after the
+        statement; and a resuming `trap` set whose resumption diverges from where the fault would
+        otherwise step over (`Ps1ErrorPaths.divergence`).
 
         A position question and nothing more: it says where a fault at *node* would go and what the
         fault path skips, never whether *node* can raise. The caller pairs it with the raise
         predicate, the way every removal site pairs a position with a fault of its own.
 
-        An empty `catch` is the only handler that matters here. One that *acts* already makes the
-        fault observable through `observed_at`, so pairing this with it would only re-derive that
-        keep. Emptiness is read from the body directly rather than through `handler_acts`, so the
-        answer is a property of where the handler sits and not of a predicate a caller may be
-        mutating. The tail is live exactly when *node*'s fall-through successor is not the slot the
-        empty `catch` resumes to: equal successors mean the fault steps over to where the code went
-        anyway (the raiser is last in the block, or stands at script scope with no catch at all), and
-        deleting it changes nothing.
+        A handler that *acts* is not among them: it already makes the fault observable through
+        `observed_at`, so pairing this with it would only re-derive that keep. Emptiness is read from
+        the body directly rather than through `handler_acts`, so the answer is a property of where
+        the handler sits and not of a predicate a caller may be mutating. The tail is live exactly
+        when *node*'s fall-through successor is not the slot the landing carries on at: equal
+        successors mean the fault steps over to where the code went anyway, and deleting it changes
+        nothing.
         """
         located = self._control_flow.locate(node)
         if located is None:
@@ -1625,9 +1325,59 @@ class Ps1FaultReach:
         normal = _normal_successors(start)
         if not normal:
             return False
+        if self.paths_of(graph).divergence(start) is not None:
+            return True
         return any(normal != catch.resumes for catch in self._route(graph, start).empty_catches)
 
-    def fault_the_try_catches(self, operand: Node) -> bool:
+    def _landing_depth(self, element: Node) -> float:
+        located = self._control_flow.locate(element)
+        if located is None or located[1].element is not element:
+            return float('inf')
+        graph, start = located
+        paths = self.paths_of(graph)
+        lowest = float('inf')
+        divergence = paths.divergence(start)
+        if divergence is not None:
+            lowest = paths.depth_of(paths.holder_of(divergence.slot))
+        route = paths.route_from(start)
+        return min(lowest, route.taken_at)
+
+
+    def raises_past(
+        self,
+        statement: Node,
+        raises: Callable[[Node], bool],
+        memo: dict[int, float],
+    ) -> bool:
+        """
+        Whether an error raised at a point inside *statement* may be taken past it: carried on after
+        a statement holding it, or taken by a handler that acts and is written around it. *raises*
+        says which points raise, and *memo* is the table its first question fills for the whole tree
+        from the leaves up, so that a nest of depth d costs d; the caller owns both, so a table is
+        never read under a test other than the one it was filled with.
+        """
+        table = memo
+        if not table:
+            root = self._script
+            if root is not None:
+                order = list(root.walk())
+                for node in reversed(order):
+                    lowest = float('inf')
+                    if self._control_flow.node_of(node) is not None and raises(node):
+                        lowest = self._landing_depth(node)
+                    for child in node.children():
+                        lowest = min(lowest, table.get(id(child), float('inf')))
+                    table[id(node)] = lowest
+        lowest = table.get(id(statement))
+        if lowest is None:
+            return True
+        return lowest < _tree_depth(statement, self._depths)
+
+    def fault_the_try_catches(
+        self,
+        operand: Node,
+        cleared: Callable[[Node], bool] | None = None,
+    ) -> bool:
         """
         Whether evaluating *operand* may raise a terminating error a `try` catches. A cast, a
         fallible operator and a method call raise one whatever the error preferences say; a command
@@ -1637,11 +1387,13 @@ class Ps1FaultReach:
 
         It is the fault model's rather than the effect layer's because its command arm reads the
         script's error preferences, a judgment `error_is_terminating` already owns here; the
-        expression arm is the pure `raises_a_caught_terminating_error` shape from `ast`.
+        expression arm is the pure `raises_a_caught_terminating_error` shape from `ast`. A part of
+        *operand* that *cleared* answers for cannot raise: that judgment reads values, which this
+        module holds none of, so the caller hands it in.
         """
-        if raises_a_caught_terminating_error(operand):
+        if raises_a_caught_terminating_error(operand, cleared):
             return True
-        return is_soft_error_source(operand) and self.error_is_terminating(operand)
+        return is_soft_error_source(operand, cleared) and self.error_is_terminating(operand)
 
     def _fires_a_trap(self, raiser: Node) -> bool:
         """
@@ -1699,16 +1451,17 @@ class Ps1FaultReach:
     def deleting_the_raise_resurrects_a_continuation(self, node: Node) -> bool:
         """
         Whether a live continuation runs only because a raise at *node* pre-empts it, so deleting the
-        raise starts that continuation. The one position predicate the removal veto pairs with the
-        raise half `fault_the_try_catches`. Two mechanisms resurrect a continuation and both are the
-        same observable: an empty `catch` resumes past the tail of a `try` body
-        (`an_empty_catch_skips_a_live_tail`), and a firing `trap` body raise ends the scope the tail
-        would otherwise have kept running in (`escapes_a_firing_trap_body`). A future mechanism — a
+        raise starts that continuation. The one position predicate the removal veto pairs with its
+        raise half, `refinery.lib.scripts.ps1.analysis.effects.point_may_raise_a_caught_error`. Two
+        mechanisms resurrect a continuation and both are the same observable: the fault lands past
+        the live tail of its block (`lands_past_a_live_tail`: an empty `catch`, a report node, or a
+        resuming `trap` that diverges), and a firing `trap` body raise ends the scope the tail would
+        otherwise have kept running in (`escapes_a_firing_trap_body`). A future mechanism — a
         `finally` that abandons — is a third disjunct here, not a fourth copy of the conjunction the
         veto pairs it into.
         """
         return (
-            self.an_empty_catch_skips_a_live_tail(node)
+            self.lands_past_a_live_tail(node)
             or self.escapes_a_firing_trap_body(node)
         )
 
@@ -2059,8 +1812,8 @@ class Ps1FaultReach:
         Whether this script writes `Stop` to `$ErrorActionPreference` anywhere at all, which makes
         every error terminating — a failing cast, a division by zero and a member access on `$null`
         among them, not only what a command reports. The write is read through
-        `_writes_stop_to_the_preference`, which counts an assignment and a cmdlet that writes the
-        variable by name alike.
+        `refinery.lib.scripts.ps1.analysis.session.writes_stop_to_the_preference`, which counts an
+        assignment and a cmdlet that writes the variable by name alike.
 
         This is the wider of the two whole-script arming gates. `$PSDefaultParameterValues` binds an
         action into commands and reaches no cast, so it is read on the per-command path
@@ -2080,7 +1833,7 @@ class Ps1FaultReach:
         if self._stopping is None:
             root = self._script
             self._stopping = root is not None and any(
-                _writes_stop_to_the_preference(node) for node in root.walk()
+                writes_stop_to_the_preference(node) for node in root.walk()
             )
         return self._stopping
 
@@ -2100,7 +1853,7 @@ class Ps1FaultReach:
         if self._stop_default is None:
             root = self._script
             self._stop_default = root is not None and any(
-                _writes_stop_to_the_default_table(node) for node in root.walk()
+                writes_stop_to_the_default_table(node) for node in root.walk()
             )
         return self._stop_default
 

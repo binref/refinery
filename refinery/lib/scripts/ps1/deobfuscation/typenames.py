@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer, set_value
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
+from refinery.lib.scripts.ps1.analysis.calls import Ps1CallReader, call_reader
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.values import (
     Ps1VariableTyping,
@@ -186,6 +187,7 @@ class VariableTypeAwareTransformer(Transformer):
     def __init__(self):
         super().__init__()
         self._flow: Ps1VariableFlow | None = None
+        self._calls: Ps1CallReader | None = None
         self._typed: dict[int, tuple[Ps1Variable, Ps1TypeName | None]] = {}
         self._origins: dict[int, tuple[Ps1Variable, Ps1TypeName | None]] = {}
         self._entry = False
@@ -195,11 +197,14 @@ class VariableTypeAwareTransformer(Transformer):
             return super().visit(node)
         self._entry = True
         try:
-            self._flow = model_cache(self, node).variable_flow
+            cache = model_cache(self, node)
+            self._flow = cache.variable_flow
+            self._calls = call_reader(cache.world_reach)
             return super().visit(node)
         finally:
             self._entry = False
             self._flow = None
+            self._calls = None
             self._typed.clear()
             self._origins.clear()
 
@@ -216,7 +221,7 @@ class VariableTypeAwareTransformer(Transformer):
             return None
         found = self._origins.get(id(var))
         if found is None or found[0] is not var:
-            found = self._origins[id(var)] = (var, non_null_type_at(var, self._flow))
+            found = self._origins[id(var)] = (var, non_null_type_at(var, self._flow, self._calls))
         return found[1]
 
 

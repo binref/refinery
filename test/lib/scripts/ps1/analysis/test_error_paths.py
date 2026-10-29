@@ -15,7 +15,6 @@ from refinery.lib.scripts.analysis.cfg import (
     CfgNode,
     ControlFlowGraph,
     Projection,
-    plain_successors,
 )
 from refinery.lib.scripts.ps1 import ast
 from refinery.lib.scripts.ps1.analysis import effects, faults, worldflow
@@ -135,26 +134,6 @@ class TestPs1ErrorPathsAgreeWithAWalkOverTheErrorEdges(TestBase):
                     self.assertEqual(route.offers_a_handler, bool(handlers))
                     self.assertEqual(route.leaves_the_body, any(node is graph.exit for node in reached))
                     self.assertEqual(list(paths.handlers_from(start)), handlers)
-
-    def test_an_empty_catch_skips_a_live_tail_where_the_walk_meets_one_resuming_elsewhere(self):
-        for source in self._SCRIPTS:
-            tree = Ps1Parser(source).parse()
-            control_flow = build_control_flow_model(tree, descend=True)
-            reach = build_fault_reach(control_flow)
-            for index, element in enumerate(tree.walk()):
-                located = control_flow.locate(element)
-                expected = False
-                if located is not None:
-                    graph, start = located
-                    normal = {id(node) for node in plain_successors(start)}
-                    expected = bool(normal) and any(
-                        normal != {id(resumed) for resumed in plain_successors(node)}
-                        for node in _closure(graph, start, forward=True)
-                        if isinstance(node.element, Ps1CatchClause)
-                        and (node.element.body is None or not node.element.body.body)
-                    )
-                with self.subTest(source=source, element=index):
-                    self.assertEqual(reach.an_empty_catch_skips_a_live_tail(element), expected)
 
     def test_what_lies_behind_every_node_is_what_reaches_it_over_error_edges(self):
         for source, paths in self._graphs():
@@ -603,7 +582,7 @@ class TestPs1WeighingEveryTrapCostsLinearWork(TestBase):
             def ask():
                 reach = build_fault_reach(control_flow)
                 reach.observed_at(statement)
-                reach.an_empty_catch_skips_a_live_tail(statement)
+                reach.lands_past_a_live_tail(statement)
 
             return lines_executed(ask, faults, components)
 
@@ -620,7 +599,7 @@ class TestPs1WeighingEveryTrapCostsLinearWork(TestBase):
                 reach = build_fault_reach(build_control_flow_model(script))
                 for statement in statements:
                     reach.observed_at(statement)
-                    reach.an_empty_catch_skips_a_live_tail(statement)
+                    reach.lands_past_a_live_tail(statement)
 
             return lines_executed(ask, faults, components)
 
@@ -699,3 +678,33 @@ class TestPs1NoModelOutlivesADeobfuscation(TestPs1):
                 f
                 Write-Host $a
             """))
+
+
+class TestPs1EveryLandingHoldsItsRaise(TestBase):
+    """
+    How far out a route carries control is kept as the depth of the outermost statement it lands
+    after, which says how far out only if every statement an error lands after holds the point it
+    was raised at. Asked of every point of every script the corpus writes.
+    """
+
+    def test_every_statement_an_error_lands_after_holds_the_point_it_was_raised_at(self):
+        from test.lib.scripts.ps1 import corpus
+        checked = 0
+        for source in corpus.oracle_corpus():
+            tree = Ps1Parser(source).parse()
+            reach = Ps1ModelCache(tree).faults
+            for node in tree.walk():
+                located = reach._control_flow.locate(node)
+                if located is None or located[1].element is not node:
+                    continue
+                graph, start = located
+                for catch in reach.paths_of(graph).route_from(start).empty_catches:
+                    holder = catch.statement
+                    assert holder is not None
+                    checked += 1
+                    cursor = node
+                    while cursor is not None and cursor is not holder:
+                        cursor = cursor.parent
+                    with self.subTest(source=source):
+                        self.assertIs(cursor, holder)
+        self.assertGreater(checked, 200)

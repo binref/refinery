@@ -1608,7 +1608,7 @@ class TestPs1AStopPreferenceACmdletArmsMakesEveryErrorTerminating(_Ps1FaultEscal
     `New-Variable ErrorActionPreference Stop -Force` writes the preference exactly as the assignment
     does, so it escalates every error and not only what a command reports: the bare cast below is
     stepped over with the handler and ends the script without it, so the `trap` is the whole reason
-    the statement after it runs. `_writes_stop_to_the_preference` reads the write through the name
+    the statement after it runs. `refinery.lib.scripts.ps1.analysis.session.writes_stop_to_the_preference` reads the write through the name
     authority `refinery.lib.scripts.ps1.analysis.naming.named_references`, which is why the
     preference is armed here and not only when it is assigned to.
 
@@ -1643,7 +1643,7 @@ class TestPs1AStopBoundThroughDefaultParameterValuesMakesCommandsTerminating(_Ps
     `$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'` binds the action into every command that
     takes one, so the command below ends the script although no action is written beside it and no
     preference is assigned — measured: `after` is written with the handler and nothing without it.
-    `_writes_stop_to_the_default_table` reads the index-assignment and the `.Add` mutation, keyed on
+    `refinery.lib.scripts.ps1.analysis.session.writes_stop_to_the_default_table` reads the index-assignment and the `.Add` mutation, keyed on
     a `:ErrorAction` suffix so a command-scoped entry arms it as the wildcard does.
 
     The arming reaches commands only — a failing cast takes no parameter and stays stepped over —

@@ -282,7 +282,7 @@ class TestPs1JunkStatementRemoval(TestPs1):
         self.assertNotIn('Pow', result)
         self.assertIn('done', result)
 
-    def test_a_pure_statement_that_writes_to_the_output_stream_is_kept(self):
+    def test_a_pure_statement_that_writes_to_the_output_stream_is_kept_with_stdout(self):
         # Purity is not silence. Each of these was deleted for being side-effect free, and each one
         # prints on PowerShell 5.1 — `6`, a number in 1..100, `2026`, the formatted date.
         for source, marker in (
@@ -292,9 +292,12 @@ class TestPs1JunkStatementRemoval(TestPs1):
             ('Get-Date | Out-String; Write-Host done'          , 'Get-Date'),    # noqa
         ):
             with self.subTest(source):
-                result = self._deobfuscate(source)
+                result = self._deobfuscate(source, preserve_bare_output=True)
                 self.assertIn(marker, result)
                 self.assertIn('done', result)
+
+    def test_a_pure_statement_that_cannot_fail_and_only_prints_goes_without_stdout(self):
+        self.assertEqual(self._deobfuscate('[Math]::Sqrt(36); Write-Host done'), 'Write-Host done')
 
     def test_side_effect_command_preserved(self):
         result = self._deobfuscate('Start-Sleep -s 1; Write-Host done')
@@ -309,7 +312,7 @@ class TestPs1JunkStatementRemoval(TestPs1):
 
     def test_called_function_preserved(self):
         result = self._deobfuscate(
-            'function Helper { Get-Random }; Helper; Write-Host done')
+            'function Helper { Get-Item $args[0] }; Helper; Write-Host done')
         self.assertIn('Helper', result)
 
     def test_an_expandable_string_is_kept_however_much_it_looks_like_noise(self):
@@ -454,9 +457,14 @@ class TestPs1InertFunctionRemoval(TestPs1):
             "function j { $Null = 915 }\nj\nj\nj\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
         self.assertEqual(result, "Write-Host 'keep'")
 
-    def test_emitting_function_kept(self):
+    def test_a_function_that_only_prints_a_value_that_cannot_fail_goes(self):
         result = self._apply(
             "function f { Get-Random }\nf\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_emitting_function_kept_with_stdout(self):
+        result = self._deobfuscate(
+            "function f { Get-Random }\nf\nWrite-Host 'keep'", preserve_bare_output=True)
         self.assertEqual(result, "function f {\n  Get-Random\n}\nf\nWrite-Host 'keep'")
 
     def test_effectful_function_kept(self):
@@ -1232,8 +1240,8 @@ class TestPs1PayloadRetention(TestPs1):
         # nothing may be concluded from the name alone — least of all a deletion.
         result = self._deobfuscate(
             "function Write-Host { Start-Process calc }\n"
-            "function f { Write-Host 'x'; Get-Random }\nf")
-        self.assertIn('Get-Random', result)
+            "function f { Write-Host 'x'; Get-Item $args[0] }\nf")
+        self.assertIn('Get-Item', result)
         self.assertIn('Start-Process calc', result)
 
 
@@ -2162,7 +2170,7 @@ class TestPs1AHandlerElsewhereDoesNotGuardABodyTheStatementItselfRuns(TestPs1):
     def test_a_discarded_pipeline_is_removed_beside_an_unrelated_handler(self):
         self.assertEqual(
             self._deobfuscate(cleandoc("""
-                $zzq = 1, 2 | ForEach-Object { Get-Random }
+                $zzq = 1, 2 | ForEach-Object { [int]"x$_" }
                 try {
                   Write-Host A
                 } catch {
@@ -2181,7 +2189,7 @@ class TestPs1AHandlerElsewhereDoesNotGuardABodyTheStatementItselfRuns(TestPs1):
         guarded = cleandoc("""
             try {
               $zzq = 1, 2 | ForEach-Object {
-                Get-Random
+                [int]"x${_}"
               }
               Write-Host A
             } catch {

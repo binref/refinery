@@ -338,7 +338,8 @@ def _runs_unreadable_code(node, role: WorldRole) -> bool:
     `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions.trust_eval` excuses.
 
     `WorldRole.MUTATION` is never one: it is a change the script performs in plain sight, and
-    excusing it would mean disbelieving a statement the walk can read. Neither is a command that
+    excusing it would mean disbelieving a statement the walk can read. Neither is a hook of the
+    command lookup, whose block stands in the tree. Nor is a command that
     writes the command table with the whole binding spelled out beside it — `New-Alias Get-Date
     Stop-Process`, `Set-Item alias:Out-Null Write-Host`, `Set-Item function:Get-Date { ... }`. That
     is the same plain-sight change to command identity, and it is the one opener nothing else
@@ -355,6 +356,8 @@ def _runs_unreadable_code(node, role: WorldRole) -> bool:
     binds, which is a reading no walk here performs.
     """
     if role is WorldRole.MUTATION or role is WorldRole.NONE:
+        return False
+    if _installs_a_command_lookup_hook(node):
         return False
     if role is not WorldRole.IDENTITY or not isinstance(node, Ps1CommandInvocation):
         return True
@@ -960,12 +963,45 @@ def _opens_world(node, redefined: tuple[_IdentityRedefinition, ...]) -> WorldRol
             return WorldRole.LEAK
         if _is_type_accelerator_mutation(node) or _is_psobject_member_mutation(node):
             return WorldRole.MUTATION
+        if _installs_a_command_lookup_hook(node):
+            return WorldRole.IDENTITY
         return WorldRole.NONE
     if isinstance(node, Ps1AssignmentExpression):
+        if _installs_a_command_lookup_hook(node):
+            return WorldRole.IDENTITY
         if any(record.body is not _IdentityBody.VISIBLE_BLOCK for record in redefined):
             return WorldRole.IDENTITY
         return WorldRole.NONE
     return WorldRole.NONE
+
+
+#: The hooks of the engine's command lookup, lowercased. A block stored in one runs whenever a name
+#: is looked up, before the table is read or after it misses, and may hand back any command for any
+#: name: measured on 5.1, a `PreCommandLookupAction` that answers `Get-Random` with a block that
+#: throws makes every later `Get-Random` throw.
+_COMMAND_LOOKUP_HOOKS = frozenset({
+    'commandnotfoundaction',
+    'postcommandlookupaction',
+    'precommandlookupaction',
+})
+
+
+def _installs_a_command_lookup_hook(node: Node) -> bool:
+    """
+    Whether *node* stores a block in a hook of the command lookup, by assignment or through the
+    setter, on whatever object it is reached through: after that no command name is sure to run what
+    the metadata says, and the block that decides it is in plain sight.
+    """
+    if isinstance(node, Ps1AssignmentExpression):
+        target = node.target
+        if not isinstance(target, Ps1MemberAccess):
+            return False
+        member = get_member_name(target.member)
+        return member is not None and member.lower() in _COMMAND_LOOKUP_HOOKS
+    if isinstance(node, Ps1InvokeMember) and isinstance(node.member, str):
+        member = node.member.lower()
+        return member.startswith('set_') and member[4:] in _COMMAND_LOOKUP_HOOKS
+    return False
 
 
 def _command_opens_world(cmd: Ps1CommandInvocation) -> WorldRole:

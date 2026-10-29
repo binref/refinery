@@ -6,6 +6,10 @@ from inspect import cleandoc
 
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
+from refinery.lib.scripts.ps1.ast import get_command_name
+from refinery.lib.scripts.ps1.model import Ps1CommandInvocation
+from refinery.lib.scripts.ps1.parser import Ps1Parser
+
 #: An acting statement that is never a removal candidate, so its survival says only that the pass
 #: did not empty the script wholesale.
 _ANCHOR = "Write-Host 'ANCHOR_SURVIVES'"
@@ -820,20 +824,18 @@ class TestPs1AnErrorNothingTakesInsideATryOrCatchBodySkipsTheRestOfTheTry(TestPs
     the `try` runs where 5.1 skips it, or is skipped where 5.1 runs it.
     """
 
-    @unittest.expectedFailure
     def test_a_cast_that_fails_in_a_try_body_without_a_catch_is_kept(self):
         """
         5.1 writes the cast's error and `after`; the output writes `rest` and `after`.
         """
         self._assertKept("""
             try {
-              $null = [int]'a'
+              $Null = [int]'a'
               Write-Host 'rest'
             } finally {}
             Write-Host 'after'
         """)
 
-    @unittest.expectedFailure
     def test_a_cast_that_fails_in_a_catch_body_is_kept(self):
         """
         5.1 writes the cast's error and `after`; the output writes `c-rest` and `after`.
@@ -842,13 +844,12 @@ class TestPs1AnErrorNothingTakesInsideATryOrCatchBodySkipsTheRestOfTheTry(TestPs
             try {
               throw 'x'
             } catch {
-              $null = [int]'a'
+              $Null = [int]'a'
               Write-Host 'c-rest'
             }
             Write-Host 'after'
         """)
 
-    @unittest.expectedFailure
     def test_a_trap_that_resumes_inside_a_try_body_without_a_catch_is_kept(self):
         """
         5.1 writes `rest ` and `after`; without the `trap` it writes the cast's error and `after`.
@@ -867,7 +868,6 @@ class TestPs1AnErrorNothingTakesInsideATryOrCatchBodySkipsTheRestOfTheTry(TestPs
 
 class TestPs1ARaiseAResumingTrapSkipsPastIsKept(TestPs1):
 
-    @unittest.expectedFailure
     def test_a_cast_whose_trap_resumes_past_the_rest_of_its_block_is_kept(self):
         """
         5.1 writes `after`: the `trap` resumes past the `if`. The output deletes the cast and writes
@@ -884,6 +884,380 @@ class TestPs1ARaiseAResumingTrapSkipsPastIsKept(TestPs1):
             Write-Host 'after'
         """))
         self.assertIn("[int]'a'", output)
+
+
+class TestPs1ACallMeasuredNeverToFailSkipsNothing(TestPs1):
+    """
+    Measured on 5.1: `[Math]::Sqrt` of a number, `[array]::Reverse` of a list written out and
+    `Get-Random` handed nothing never fail, and neither does `GetHashCode` on the number it hands
+    back. A call that cannot fail skips nothing, so in a `catch` body it is junk like anywhere else;
+    the same call handed anything else may fail and skip the rest of the body, and stays.
+    """
+
+    def test_calls_that_cannot_fail_go_from_a_catch_body(self):
+        self._assertDeobfuscatesTo("""
+            $w = New-Object Net.WebClient
+            while ($True) {
+              try {
+                $d = $w.DownloadString($u)
+              } catch {
+                $k = [Math]::Sqrt(36)
+                (Get-Random).GetHashCode() | Out-Null
+                $r = [array]::Reverse((1, 2, 3, 4))
+                Start-Sleep -Seconds 5
+                continue
+              }
+              Write-Host $d
+            }
+        """, """
+            $w = New-Object Net.WebClient
+            while ($True) {
+              try {
+                $d = $w.DownloadString($u)
+              } catch {
+                Start-Sleep -Seconds 5
+                continue
+              }
+              Write-Host $d
+            }
+        """)
+
+    def test_a_call_handed_a_value_no_fact_covers_stays_in_a_catch_body(self):
+        self._assertKept("""
+            $w = New-Object Net.WebClient
+            while ($True) {
+              try {
+                $d = $w.DownloadString($u)
+              } catch {
+                $Null = [Math]::Sqrt($s)
+                Start-Sleep -Seconds 5
+                continue
+              }
+              Write-Host $d
+            }
+        """)
+
+    def test_a_random_number_stays_where_the_script_binds_default_parameter_values(self):
+        """
+        5.1 fails a bare `Get-Random` once `Get-Random:Maximum` is bound to 0.
+        """
+        self._assertKept("""
+            $PSDefaultParameterValues['Get-Random:Maximum'] = 0
+            $w = New-Object Net.WebClient
+            while ($True) {
+              try {
+                $d = $w.DownloadString($u)
+              } catch {
+                (Get-Random).GetHashCode() | Out-Null
+                Start-Sleep -Seconds 5
+                continue
+              }
+              Write-Host $d
+            }
+        """)
+
+    def test_a_store_above_a_call_that_cannot_fail_is_overwritten_below_it(self):
+        self._assertDeobfuscatesTo("""
+            try {
+              throw 'x'
+            } catch {
+              $x = 'two'
+              $k = [Math]::Sqrt(36)
+              $x = 'three'
+            }
+            Write-Host $x
+        """, """
+            Write-Host 'three'
+        """)
+
+    def test_a_trap_over_a_catch_body_that_cannot_fail_goes(self):
+        self._assertDeobfuscatesTo("""
+            try {
+              throw 'x'
+            } catch {
+              trap { continue }
+              $b = Get-Random
+              Write-Host 'a'
+            }
+            Write-Host 'end'
+        """, """
+            Write-Host 'a'
+            Write-Host 'end'
+        """)
+
+
+class TestPs1AFailingTestOrCollectionSkipsTheRestOfTheBody(TestPs1):
+    """
+    Measured on 5.1: the test of an `if`, `elseif`, `while`, `do` or `for`, the collection a
+    `foreach` enumerates and the subject of a `switch` fail the way a statement does, and a failure
+    in a `try` or `catch` body skips the rest of that body. Each shape is kept whole.
+    """
+
+    def test_a_failing_test_keeps_a_catch_body_from_being_run_in_place_of_its_try(self):
+        self._assertKept("""
+            $x = 'one'
+            try {
+              throw 'q'
+            } catch {
+              $x = 'two'
+              if ([int]'a') {}
+              $x = 'three'
+            }
+            Write-Host $x
+        """)
+
+    def test_a_failing_test_collection_or_subject_skips_the_rest_of_the_catch_body(self):
+        for construct in (
+            "foreach ($i in [int]'a') {}",
+            "switch ([int]'a') {\n    1 {}\n  }",
+            "while ([int]'a') {}",
+            "for (; [int]'a'; ) {}",
+            "do {} while ([int]'a')",
+        ):
+            with self.subTest(construct):
+                self._assertKept(F"""
+                    try {{
+                      throw 'x'
+                    }} catch {{
+                      {construct}
+                      Write-Host 'rest'
+                    }}
+                    Write-Host 'after'
+                """)
+
+    def test_a_store_above_a_failing_test_is_the_one_read_after_the_try(self):
+        self._assertKept("""
+            try {
+              $x = 'one'
+              if ([int]'a') {}
+              $x = 'two'
+            } finally {}
+            Write-Host $x
+        """)
+
+
+class TestPs1AFailingLineInAnArrayExpressionSkipsTheRestOfTheBody(TestPs1):
+    """
+    Measured on 5.1: a line failing inside an `@( )` in a `try` or `catch` body skips the rest of
+    that body, so the statement holding the `@( )` is a failing line however unused its value is.
+    """
+
+    def test_the_statement_and_the_store_above_it_are_kept(self):
+        self._assertKept("""
+            $x = 'one'
+            try {
+              $x = 'two'
+              $y = @([int]'a')
+              $x = 'three'
+            } catch [System.IO.IOException] {}
+            Write-Host $x
+        """)
+
+    def test_the_rest_of_the_catch_body_is_kept_from_running(self):
+        self._assertKept("""
+            try {
+              throw 'x'
+            } catch {
+              $y = @([int]'a')
+              Write-Host 'rest'
+            }
+            Write-Host 'after'
+        """)
+
+
+class TestPs1AThrowCarriesOnWhereTheScriptMaySilenceErrors(TestPs1):
+    """
+    Measured on 5.1: once `$ErrorActionPreference` holds `SilentlyContinue`, however the script
+    wrote it, a `throw` nothing takes is stepped over, and `-ErrorAction SilentlyContinue` on an
+    advanced function reaches every body the function runs. The line after the `throw` stays.
+    """
+
+    def test_the_line_after_the_throw_stays_however_the_preference_was_set(self):
+        for setting in (
+            "Invoke-Expression '$ErrorActionPreference = 0'",
+            "Set-Variable -Name ('Error' + 'ActionPreference') -Value 0",
+            "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'SilentlyContinue')",
+            "$t = @{ Name = 'ErrorActionPreference'; Value = 0 }; Set-Variable @t",
+            'Set-Item -LiteralPath Variable:ErrorActionPreference 0',
+        ):
+            with self.subTest(setting):
+                self.assertIn('after', self._deobfuscate(F"{setting}; throw 'boom'; Write-Host 'after'"))
+
+    def test_the_line_after_the_throw_stays_where_the_preference_is_bound_as_a_variable(self):
+        for source in (
+            "foreach ($ErrorActionPreference in 'SilentlyContinue') { throw 'boom'; Write-Host 'in' }",
+            "& { param($ErrorActionPreference) throw 'boom'; Write-Host 'in' } SilentlyContinue",
+        ):
+            with self.subTest(source):
+                self.assertIn("Write-Host 'in'", self._deobfuscate(source))
+
+    def test_the_line_after_the_throw_stays_in_every_body_an_advanced_function_runs(self):
+        for source in (
+            "function g { throw 'x'; Write-Host 'g-after' }; "
+            "function f { [CmdletBinding()] param() g }; f -ErrorAction SilentlyContinue",
+            "function f { [CmdletBinding()] param() & { throw 'x'; Write-Host 'g-after' } }; "
+            "f -ErrorAction SilentlyContinue",
+        ):
+            with self.subTest(source):
+                self.assertIn('g-after', self._deobfuscate(source))
+
+
+class TestPs1ACallOfASeededGeneratorIsKept(TestPs1):
+    """
+    Measured on 5.1: after `Get-Random -SetSeed 7`, `Get-Random -Maximum 1000` is 819, and 832 once
+    another call of `Get-Random` stands between them. So a call of `Get-Random` is an effect
+    wherever the script may seed the generator.
+    """
+
+    def test_a_discarded_call_stays(self):
+        result = self._deobfuscate(
+            '$null = Get-Random -SetSeed 7; Get-Random | Out-Null; Write-Host (Get-Random -Maximum 1000)')
+        self.assertIn('Get-Random | Out-Null', result)
+
+    def test_a_call_that_cannot_fail_stays_in_a_catch_body(self):
+        result = self._deobfuscate(
+            "$null = Get-Random -SetSeed 7; try { throw 'x' } catch { (Get-Random).GetHashCode() | Out-Null }; "
+            "Write-Host (Get-Random -Maximum 1000)")
+        self.assertIn('GetHashCode', result)
+
+
+class TestPs1AnErrorInAScriptBlockIsRaisedWhereTheBlockRuns(TestPs1):
+    """
+    A function body runs where the function is called, not where it is defined, so deleting the
+    definition of a function nothing calls skips nothing. A block run where it is written raises
+    there, and what its error skips past the statement stays.
+    """
+
+    def test_a_function_nothing_calls_goes_though_an_error_in_it_skips_a_line(self):
+        self._assertDeobfuscatesTo("""
+            function f {
+              try {
+                $r = [int]'x'
+                Write-Host 'a'
+              } catch {}
+            }
+            Write-Host 'end'
+        """, """
+            Write-Host 'end'
+        """)
+
+    def test_a_block_run_in_place_keeps_the_error_that_skips_the_line_after_it(self):
+        self._assertKept("""
+            try {
+              $Null = & {
+                [int]'x'
+              }
+              Write-Host 'b'
+            } catch {}
+            Write-Host 'end'
+        """)
+
+
+class TestPs1ACommandLookupHookTakesEveryCommandOver(TestPs1):
+    """
+    Measured on 5.1: a `PreCommandLookupAction` that answers `Get-Random` with a block that throws
+    makes the next `Get-Random` throw, so no command fact holds after one is installed.
+    """
+
+    def test_a_call_a_fact_covers_stays_after_the_hook(self):
+        result = self._deobfuscate(
+            "$ExecutionContext.InvokeCommand.PreCommandLookupAction = { param($n, $e) "
+            "if ($n -eq 'Get-Random') { $e.CommandScriptBlock = { throw 'hijack' } } }; "
+            "try { throw 'x' } catch { Get-Random; Write-Host 'rest' }; Write-Host 'after'")
+        self.assertTrue(any(
+            isinstance(node, Ps1CommandInvocation) and get_command_name(node) == 'Get-Random'
+            for node in Ps1Parser(result).parse().walk()
+        ))
+
+
+class TestPs1AnErrorInABodyACatchOrTryBodyRunsLeavesThatBody(TestPs1):
+    """
+    Measured on 5.1: an error raised in a script block or a function that a `try` or `catch` body
+    runs is not reported inside it: it leaves the block and skips the rest of the body that ran it,
+    exactly as an error raised in that body does. The removal passes read it as stepping over. Plan
+    (4) of the error roadmap reads which bodies run under a handler.
+    """
+
+    @unittest.expectedFailure
+    def test_a_failing_line_in_a_block_a_catch_body_runs_is_kept(self):
+        """
+        5.1 writes the error and `two`; the output writes `three`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "$x = 'one'; try { throw 'q' } catch { $x = 'two'; & { $null = [int]'a' }; $x = 'three' }; Write-Host $x"))
+
+    @unittest.expectedFailure
+    def test_a_failing_line_in_a_function_a_try_body_calls_is_kept(self):
+        """
+        5.1 writes `one`; the output writes `two`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "function f { $script:x = 'one'; $null = [int]'a'; $script:x = 'two' }; "
+            "try { f } catch { }; Write-Host $script:x"))
+
+
+class TestPs1TheLineAfterARethrowNothingTakesIsDead(TestPs1):
+    """
+    Measured on 5.1: `catch { throw $_ }` with nothing around it ends the run, so the line after the
+    `try` never runs when the `try` body always throws. The `throw` hands on `$_`, a read that fails
+    only under strict mode, and the graph cannot ask whether strict mode may be armed; plan (3) of
+    the error roadmap gives it that answer.
+    """
+
+    @unittest.expectedFailure
+    def test_the_line_after_the_try_goes(self):
+        self.assertNotIn('after', self._deobfuscate("try { throw 'x' } catch { throw $_ }; Write-Host 'after'"))
+
+
+class TestPs1WhereAnErrorLandsIsAskedOfEveryWayIntoIt(TestPs1):
+    """
+    Measured on 5.1, each line that fails below is one the output deletes, and the output then runs
+    what 5.1 skips or skips what 5.1 runs. Each is a place where one reader works out where an error
+    lands from the shape of the graph alone; the single dispatch evaluator of the error roadmap
+    answers all of them.
+    """
+
+    @unittest.expectedFailure
+    def test_a_failing_line_before_a_finally_is_kept(self):
+        """
+        5.1 writes the cast's error and `after`; the output writes `rest` and `after`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "try { try { $null = [int]'a' } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'"))
+
+    @unittest.expectedFailure
+    def test_a_failing_line_a_typed_trap_declines_to_an_outer_trap_is_kept(self):
+        """
+        5.1 writes `after`; the output writes `rest` and `after`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "trap { continue }; if ($Host) { trap [System.IO.IOException] { continue }; $null = [int]'a'; "
+            "Write-Host 'rest' }; Write-Host 'after'"))
+
+    @unittest.expectedFailure
+    def test_a_failing_line_in_a_finally_an_error_runs_is_kept(self):
+        """
+        5.1 writes the cast's error and `after`, the cast's error taking the place of the `throw`;
+        the output ends on the `throw`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "try { try { throw 'x' } finally { $null = [int]'a' } } finally { }; Write-Host 'after'"))
+
+    @unittest.expectedFailure
+    def test_a_failing_line_nested_in_a_catch_body_is_kept(self):
+        """
+        5.1 writes the cast's error and `after`; the output writes `rest` and `after`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "try { throw 'x' } catch { if ($Host) { $null = [int]'a'; Write-Host 'rest' } }; Write-Host 'after'"))
+
+    @unittest.expectedFailure
+    def test_a_trap_in_a_try_body_that_always_throws_is_kept(self):
+        """
+        5.1 writes `T` and `after`; the output writes `after`.
+        """
+        self.assertIn("'T'", self._deobfuscate(
+            "try { throw 'x'; trap { Write-Host 'T'; break } } catch { }; Write-Host 'after'"))
 
 
 class TestPs1AnErrorThatLeavesAFunctionCalledUnderAHandlerEndsTheFunction(TestPs1):

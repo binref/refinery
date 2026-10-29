@@ -486,20 +486,37 @@ class TestPs1MemberOriginQueries(unittest.TestCase):
     def test_an_uncollected_type_is_not_a_value_type(self):
         self.assertFalse(data.type_is_value_type('Zzqnope'))
 
-    def test_the_non_null_table_floors_a_member_that_is_not_a_method(self):
-        # `StringBuilder.Length` is a property, and a vouch keyed on it has no overloads to read.
+    def test_the_call_fact_table_floors_a_member_that_is_not_a_method(self):
+        # `StringBuilder.Length` is a property, and a fact keyed on it has no overloads to read.
         with self.assertRaises(ValueError):
-            data._required_non_null_returns({('text.stringbuilder', 'length')})
+            data._method_fact(data.CallKind.INSTANCE, 'text.stringbuilder', 'length', None, fails=True)
 
-    def test_the_non_null_table_floors_an_unsealed_receiver(self):
+    def test_the_call_fact_table_floors_an_unsealed_receiver(self):
         # A subtype of `Exception` could override the member to return `$null`.
         with self.assertRaises(ValueError):
-            data._required_non_null_returns({('system.exception', 'gettype')})
+            data._method_fact(data.CallKind.INSTANCE, 'system.exception', 'gettype', None, fails=True)
 
-    def test_the_non_null_table_floors_overloads_that_do_not_agree(self):
+    def test_the_call_fact_table_floors_overloads_that_do_not_agree(self):
         # `Marshal.PtrToStructure` is static, so its instance side names no return at all.
         with self.assertRaises(ValueError):
-            data._required_non_null_returns({('runtime.interopservices.marshal', 'ptrtostructure')})
+            data._method_fact(
+                data.CallKind.INSTANCE, 'runtime.interopservices.marshal', 'ptrtostructure', None, fails=True)
+
+    def test_the_call_fact_table_floors_a_method_said_never_to_fail_whatever_it_is_handed(self):
+        # `[Math]::Sqrt()` binds no overload and fails, so no fact covering every argument list can
+        # say that the call never fails.
+        with self.assertRaises(ValueError):
+            data._method_fact(data.CallKind.STATIC, 'math', 'sqrt', None, fails=False)
+
+    def test_the_call_fact_table_floors_an_argument_count_more_than_one_overload_takes(self):
+        # `Math.Abs` has an overload per numeric type, so which one 5.1 binds is not settled by the
+        # number of arguments, and `[Math]::Abs([int]::MinValue)` fails where the others do not.
+        with self.assertRaises(ValueError):
+            data._method_fact(data.CallKind.STATIC, 'math', 'abs', (frozenset({'int'}),), fails=False)
+
+    def test_the_call_fact_table_floors_a_command_return_the_command_does_not_declare(self):
+        with self.assertRaises(ValueError):
+            data._command_fact('get-random', (), fails=False, returns='string')
 
     def test_the_generic_method_table_floors_a_member_that_is_not_a_method(self):
         with self.assertRaises(ValueError):
