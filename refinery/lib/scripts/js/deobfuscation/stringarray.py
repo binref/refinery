@@ -77,6 +77,7 @@ class AccessorFunction(NamedTuple):
     node: JsFunctionDeclaration
     name: str
     base_offset: int
+    encoding: Encoding
 
 
 class RotationIIFE(NamedTuple):
@@ -84,12 +85,6 @@ class RotationIIFE(NamedTuple):
     target: int
     body: Sequence[Node]
     target_param: str | None
-
-
-class ChecksumInfo(NamedTuple):
-    node: Node
-    local_accessors: frozenset[str]
-    alias_map: dict[str, str]
 
 
 def _answers_a_wrapper(node: Node | None) -> bool:
@@ -157,6 +152,7 @@ def _find_array_function(body: Sequence[Node]) -> ArrayFunction | None:
 
 
 def _find_all_accessor_functions(
+    model: SemanticModel,
     body: Sequence[Node],
     array_fn_name: str,
 ) -> list[AccessorFunction]:
@@ -216,9 +212,9 @@ def _find_all_accessor_functions(
             continue
         base_offset = _index_shift(statements, first_param.name)
         if base_offset is None:
-            base_offset = _extract_self_overwriting_offset(statements, fn_name, first_param.name)
+            base_offset = _extract_self_overwriting_offset(model, statements, fn_name, first_param)
         if base_offset is not None:
-            results.append(AccessorFunction(stmt, fn_name, base_offset))
+            results.append(AccessorFunction(stmt, fn_name, base_offset, _detect_encoding(stmt)))
     return results
 
 
@@ -246,21 +242,23 @@ def _index_shift(statements: Sequence[Node], param_name: str) -> int | None:
     ):
         return None
     try:
-        return _as_position(_eval_arithmetic(assign.right.right))
+        return exact_integer(_eval_arithmetic(assign.right.right))
     except _EvalError:
         return None
 
 
 def _extract_self_overwriting_offset(
+    model: SemanticModel,
     body: Sequence[Node],
     fn_name: str,
-    param_name: str,
+    param: JsIdentifier,
 ) -> int | None:
     """
     Detect the self-overwriting accessor variant where the function reassigns itself to an inner
     function expression containing the offset subtraction. Returns the base offset or None. The
-    outer function hands its index on untouched: it names it only as the first argument of the
-    call to its replacement that it returns.
+    outer function hands its index on untouched: the only reference to its index parameter is the
+    first argument of the call to its replacement that it returns. The replacement may declare a
+    parameter of the same name, as a minifier spells it, and that is another binding.
     """
     if not body:
         return None
@@ -272,12 +270,15 @@ def _extract_self_overwriting_offset(
         and call.callee.name == fn_name
         and call.arguments
         and isinstance(index := call.arguments[0], JsIdentifier)
-        and index.name == param_name
+        and (binding := model.binding_of(param)) is not None
     ):
         return None
-    if any(
-        isinstance(node, JsIdentifier) and node.name == param_name and node is not index
-        for s in body for node in s.walk()
+    references = model.references(binding)
+    if (
+        len(references) != 1
+        or references[0] is not index
+        or model.dynamic_references(binding)
+        or model.binding_maybe_reassigned_dynamically(binding)
     ):
         return None
     for s in body[:-1]:
@@ -415,12 +416,11 @@ def _as_position(value: float) -> int:
 
 def _extract_checksum_expression(
     iife_body: Sequence[Node],
-    accessor_names: set[str],
     target_param: str | None = None,
-) -> ChecksumInfo | None:
+) -> Node | None:
     """
-    Extract the checksum expression AST node and the local accessor aliases from the rotation IIFE
-    body. Handles two structural variants:
+    Extract the checksum expression AST node from the rotation IIFE body. Handles two structural
+    variants:
 
     1. Variable declaration: `var x = CHECKSUM; if (x === target) break;`
     2. Inline if-condition: `if (CHECKSUM === target) break;`
@@ -428,19 +428,6 @@ def _extract_checksum_expression(
     Variant 2 occurs when earlier passes eliminate the intermediate variable or constant-fold the
     checksum expression to a value equal to the rotation target.
     """
-    alias_map: dict[str, str] = {}
-    local_accessors: set[str] = set(accessor_names)
-    for s in iife_body:
-        if isinstance(s, JsVariableDeclaration):
-            for decl in s.declarations:
-                if (
-                    isinstance(decl, JsVariableDeclarator)
-                    and isinstance(decl.id, JsIdentifier)
-                    and isinstance(decl.init, JsIdentifier)
-                    and decl.init.name in accessor_names
-                ):
-                    local_accessors.add(decl.id.name)
-                    alias_map[decl.id.name] = decl.init.name
     checksum_node: Node | None = None
     for s in iife_body:
         if not isinstance(s, JsWhileStatement) or s.body is None:
@@ -469,13 +456,7 @@ def _extract_checksum_expression(
                     if checksum_node is not None:
                         break
         break
-    if checksum_node is None:
-        return None
-    return ChecksumInfo(
-        checksum_node,
-        frozenset(local_accessors),
-        alias_map,
-    )
+    return checksum_node
 
 
 def _decode_string(raw: str, encoding: Encoding, key: str | None = None) -> str:
@@ -527,24 +508,21 @@ def _eval_arithmetic(node: Node) -> float:
 
 def _eval_checksum(
     node: Node,
-    local_accessors: frozenset[str],
     strings: list[str],
-    base_offset: int,
-    encoding_map: dict[str, Encoding],
+    decoder_calls: dict[int, AccessorFunction],
 ) -> float:
     """
     Evaluate a checksum expression against the current array state. Handles the arithmetic
     operators (`+`, `-`, `*`, `/`), unary negation, parentheses, `parseInt` calls on accessor
-    lookups, and numeric literals.
+    lookups, and numeric literals. The accessor lookups are the calls in *decoder_calls*, which
+    maps the `id` of each to the accessor it reaches.
 
     Raises `_EvalError` on any unrecognized pattern.
     """
     recurse = functools.partial(
         _eval_checksum,
-        local_accessors=local_accessors,
         strings=strings,
-        base_offset=base_offset,
-        encoding_map=encoding_map,
+        decoder_calls=decoder_calls,
     )
     if isinstance(node, JsNumericLiteral):
         return float(node.value)
@@ -574,19 +552,12 @@ def _eval_checksum(
                 if result is None:
                     raise _EvalError
                 return result
-            if (
-                isinstance(inner, JsCallExpression)
-                and isinstance(inner.callee, JsIdentifier)
-                and inner.callee.name in local_accessors
-            ):
-                idx, key = _read_decoder_call(inner)
-                if 0 <= (i := idx - base_offset) < len(strings):
-                    raw = strings[i]
-                    encoding = encoding_map.get(inner.callee.name, Encoding.NONE)
-                    decoded = _decode_string(raw, encoding, key)
-                    if (result := js_parse_int(decoded, radix)) is None:
-                        raise _EvalError
-                    return result
+            if (accessor := decoder_calls.get(id(inner))) is not None:
+                assert isinstance(inner, JsCallExpression)
+                decoded = _decode_call(inner, accessor, strings)
+                if (result := js_parse_int(decoded, radix)) is None:
+                    raise _EvalError
+                return result
             raise _EvalError
     raise _EvalError
 
@@ -640,13 +611,25 @@ def _read_decoder_call(call: JsCallExpression) -> tuple[int, str | None]:
     return index, key
 
 
+def _decode_call(call: JsCallExpression, accessor: AccessorFunction, strings: Sequence[str]) -> str:
+    """
+    The string *call*, a call to *accessor*, answers when the accessor reads *strings*: the element
+    at the position the call asks for less the accessor's own offset, decoded the way the accessor
+    decodes it. Raises `_EvalError` when the call asks for no position this module can read, the
+    position names no element, or the element does not decode.
+    """
+    index, key = _read_decoder_call(call)
+    position = index - accessor.base_offset
+    if not 0 <= position < len(strings):
+        raise _EvalError
+    return _decode_string(strings[position], accessor.encoding, key)
+
+
 def _simulate_rotation(
     strings: list[str],
-    base_offset: int,
     checksum_node: Node,
-    local_accessors: frozenset[str],
+    decoder_calls: dict[int, AccessorFunction],
     target: int,
-    encoding_map: dict[str, Encoding],
 ) -> list[str] | None:
     """
     Simulate the array rotation loop. For each rotation position, evaluate the checksum
@@ -657,9 +640,7 @@ def _simulate_rotation(
     n = len(array)
     for _ in range(n):
         try:
-            if _as_position(_eval_checksum(
-                checksum_node, local_accessors, array, base_offset, encoding_map,
-            )) == target:
+            if _as_position(_eval_checksum(checksum_node, array, decoder_calls)) == target:
                 return array
         except _EvalError:
             pass
@@ -669,20 +650,39 @@ def _simulate_rotation(
 
 class _Decoders(NamedTuple):
     """
-    The bindings a call names the decoder through, each mapped to the encoding the decoder it
-    denotes applies, and the declarators that make the aliases among them.
+    The bindings a call names an accessor through, each mapped to the accessor it denotes, and the
+    declarators that make the aliases among them.
     """
-    encodings: dict[Binding, Encoding]
+    accessors: dict[Binding, AccessorFunction]
     alias_declarators: list[JsVariableDeclarator]
 
+    def called_by(self, model: SemanticModel, node: Node) -> AccessorFunction | None:
+        """
+        The accessor *node* calls, where it is a call whose callee resolves to one of these
+        bindings, or `None`.
+        """
+        if not isinstance(node, JsCallExpression) or not isinstance(node.callee, JsIdentifier):
+            return None
+        if (binding := model.resolve(node.callee)) is None:
+            return None
+        return self.accessors.get(binding)
 
-def _is_written_only_by_itself(model: SemanticModel, binding: Binding, function: Node) -> bool:
+
+def _is_written_only_by_itself(
+    model: SemanticModel,
+    binding: Binding,
+    function: JsFunctionDeclaration,
+) -> bool:
     """
     Whether every store into *binding* happens inside *function*, the one it declares. The
     self-overwriting decoder replaces itself with the function that does the work, and a store
-    anywhere else means a call may reach some other function under the same name.
+    anywhere else means a call may reach some other function under the same name. A second
+    declaration of the name is such a store: a later function declaration of it is the one the
+    name holds, and a `var` of it with a value replaces the decoder where it runs.
     """
     if binding.exported or binding.reachable_through_a_handed_object:
+        return False
+    if len(binding.declarations) != 1 or binding.declarations[0] is not function.id:
         return False
     writes = [
         *binding.writes,
@@ -696,7 +696,6 @@ def _find_decoders(
     model: SemanticModel,
     scope: Node,
     accessors: Sequence[AccessorFunction],
-    encodings: dict[str, Encoding],
 ) -> _Decoders:
     """
     Every binding through which a call reaches one of the *accessors*: the binding each declares,
@@ -705,37 +704,33 @@ def _find_decoders(
     to the decoder when its callee resolves to one of these bindings, never by spelling alone: a
     parameter or a local of the same name inside some function is another binding.
     """
-    found: dict[Binding, Encoding] = {}
+    found: dict[Binding, AccessorFunction] = {}
     for accessor in accessors:
         assert accessor.node.id is not None
         binding = model.binding_of(accessor.node.id)
         if binding is not None and _is_written_only_by_itself(model, binding, accessor.node):
-            found[binding] = encodings[accessor.name]
-    declarators = [
-        node for node in scope.walk()
-        if isinstance(node, JsVariableDeclarator)
-        and isinstance(node.id, JsIdentifier)
-        and isinstance(node.init, JsIdentifier)
-    ]
+            found[binding] = accessor
+    copies: dict[Binding, list[tuple[Binding, JsVariableDeclarator]]] = {}
+    for node in scope.walk():
+        if (
+            isinstance(node, JsVariableDeclarator)
+            and isinstance(node.id, JsIdentifier)
+            and isinstance(node.init, JsIdentifier)
+            and (alias := model.binding_of(node.id)) is not None
+            and (source := model.resolve(node.init)) is not None
+        ):
+            copies.setdefault(source, []).append((alias, node))
     aliases: list[JsVariableDeclarator] = []
-    while True:
-        grown = False
-        for declarator in declarators:
-            assert isinstance(declarator.id, JsIdentifier)
-            assert isinstance(declarator.init, JsIdentifier)
-            alias = model.binding_of(declarator.id)
-            if alias is None or alias in found:
-                continue
-            source = model.resolve(declarator.init)
-            if source is None or source not in found:
-                continue
-            if model.singular_value(alias) is not declarator.init:
+    pending = list(found)
+    while pending:
+        source = pending.pop()
+        for alias, declarator in copies.get(source, ()):
+            if alias in found or model.singular_value(alias) is not declarator.init:
                 continue
             found[alias] = found[source]
             aliases.append(declarator)
-            grown = True
-        if not grown:
-            return _Decoders(found, aliases)
+            pending.append(alias)
+    return _Decoders(found, aliases)
 
 
 _B64_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/='
@@ -832,32 +827,29 @@ def _replace_accessor_calls(
     root: Node,
     model: SemanticModel,
     decoders: _Decoders,
-    raw_lookup: dict[int, str],
+    strings: Sequence[str],
+    infrastructure: Sequence[Node],
 ) -> int:
     """
-    Replace every call to a decoder below *root* whose position `_read_decoder_call` reads with the
-    string it decodes. A call is one to a decoder when its callee resolves to a binding of
-    *decoders*. Returns the number of replaced calls.
+    Replace every call to a decoder below *root* with the string `_decode_call` reads for it from
+    *strings*, the table in the order the accessors read it. A call is one to a decoder when its
+    callee resolves to a binding of *decoders*. A call inside the *infrastructure* stays: the
+    rotation reads the array it is still turning, and answering those reads with the strings the
+    turning ends on stops the loop before it turns, so a call the pass leaves standing would read
+    the array unturned. Returns the number of replaced calls.
     """
-    calls: list[tuple[JsCallExpression, Encoding]] = []
+    machinery = {id(node) for part in infrastructure for node in part.walk()}
+    calls: list[tuple[JsCallExpression, AccessorFunction]] = []
     for node in root.walk():
-        if not isinstance(node, JsCallExpression) or not isinstance(node.callee, JsIdentifier):
+        if id(node) in machinery:
             continue
-        binding = model.resolve(node.callee)
-        if binding is None or (encoding := decoders.encodings.get(binding)) is None:
-            continue
-        calls.append((node, encoding))
+        if (accessor := decoders.called_by(model, node)) is not None:
+            assert isinstance(node, JsCallExpression)
+            calls.append((node, accessor))
     count = 0
-    for call, encoding in calls:
+    for call, accessor in calls:
         try:
-            idx, key = _read_decoder_call(call)
-        except _EvalError:
-            continue
-        raw = raw_lookup.get(idx)
-        if raw is None:
-            continue
-        try:
-            value = _decode_string(raw, encoding, key)
+            value = _decode_call(call, accessor, strings)
         except _EvalError:
             continue
         _replace_in_parent(call, make_string_literal(value))
@@ -904,11 +896,19 @@ class _CachedResolution(NamedTuple):
     """
     Cached result of a successful array rotation simulation, stored on the scope root node to
     survive across pipeline iterations. This prevents re-simulation failures when the simplifier
-    modifies the checksum expression in the rotation IIFE between string array passes.
+    modifies the checksum expression in the rotation IIFE between string array passes. The result
+    holds for the accessors `_accessor_signature` describes.
     """
     resolved: list[str]
-    base_offset: int
-    encoding_map: dict[str, Encoding]
+    accessors: list[tuple[str, int, Encoding]]
+
+
+def _accessor_signature(accessors: Sequence[AccessorFunction]) -> list[tuple[str, int, Encoding]]:
+    """
+    The name, offset and encoding of each of the *accessors*, which is what a cached rotation was
+    simulated with.
+    """
+    return [(accessor.name, accessor.base_offset, accessor.encoding) for accessor in accessors]
 
 
 _CACHE_ATTR = '_stringarray_cache'
@@ -927,75 +927,58 @@ class JsStringArrayResolver(ScopeProcessingTransformer):
     def _strings_in_read_order(
         self,
         scope: Node,
+        model: SemanticModel,
         array: ArrayFunction,
         accessors: Sequence[AccessorFunction],
-        encoding_map: dict[str, Encoding],
+        decoders: _Decoders,
         rotation: RotationIIFE | None,
     ) -> list[str] | None:
         """
         The string table in the order the accessors read it, or `None` when that order cannot be
         established. A rotation reorders the table until a checksum matches, so a found one is
         simulated and its result cached on the scope — a later pass may simplify the checksum
-        expression into something this resolver can no longer read. Where no rotation is found,
+        expression into something this resolver can no longer read. The checksum reads the table
+        through the calls in it that *decoders* says reach an accessor. Where no rotation is found,
         the literal already spells the order the accessors read, unless the model can name a hand
         that reaches the array besides them.
         """
-        primary = accessors[0]
         if rotation is None:
-            assert self._root is not None
-            if not _array_order_is_literal(model_cache(self, self._root).model, array, accessors):
+            if not _array_order_is_literal(model, array, accessors):
                 return None
             return array.strings
+        signature = _accessor_signature(accessors)
         cache: _CachedResolution | None = getattr(scope, _CACHE_ATTR, None)
-        if (
-            cache is not None
-            and cache.base_offset == primary.base_offset
-            and cache.encoding_map == encoding_map
-        ):
+        if cache is not None and cache.accessors == signature:
             return cache.resolved
-        checksum = _extract_checksum_expression(
-            rotation.body, set(encoding_map), rotation.target_param,
-        )
+        checksum = _extract_checksum_expression(rotation.body, rotation.target_param)
         if checksum is None:
             return None
-        checksum_encoding_map = {
-            name: encoding_map.get(checksum.alias_map.get(name, name), Encoding.NONE)
-            for name in checksum.local_accessors
+        decoder_calls = {
+            id(node): accessor for node in checksum.walk()
+            if (accessor := decoders.called_by(model, node)) is not None
         }
-        resolved = _simulate_rotation(
-            array.strings,
-            primary.base_offset,
-            checksum.node,
-            checksum.local_accessors,
-            rotation.target,
-            checksum_encoding_map,
-        )
+        resolved = _simulate_rotation(array.strings, checksum, decoder_calls, rotation.target)
         if resolved is None:
             return None
-        setattr(scope, _CACHE_ATTR, _CachedResolution(resolved, primary.base_offset, encoding_map))
+        setattr(scope, _CACHE_ATTR, _CachedResolution(resolved, signature))
         return resolved
 
     def _process_scope_body(self, scope: Node, body: list[Statement]) -> None:
         array = _find_array_function(body)
         if array is None:
             return
-        accessors = _find_all_accessor_functions(body, array.name)
-        if not accessors:
-            return
-        primary = accessors[0]
-        encoding_map: dict[str, Encoding] = {}
-        for acc in accessors:
-            encoding_map[acc.name] = _detect_encoding(acc.node)
-        rotation = _find_rotation_iife(body, array.name)
-        resolved = self._strings_in_read_order(scope, array, accessors, encoding_map, rotation)
-        if resolved is None:
-            return
         assert self._root is not None
         model = model_cache(self, self._root).model
-        decoders = _find_decoders(model, scope, accessors, encoding_map)
-        raw_lookup = {i + primary.base_offset: s for i, s in enumerate(resolved)}
-        replaced = _replace_accessor_calls(scope, model, decoders, raw_lookup)
+        accessors = _find_all_accessor_functions(model, body, array.name)
+        if not accessors:
+            return
+        decoders = _find_decoders(model, scope, accessors)
+        rotation = _find_rotation_iife(body, array.name)
+        resolved = self._strings_in_read_order(scope, model, array, accessors, decoders, rotation)
+        if resolved is None:
+            return
         infrastructure = _infrastructure_nodes(array, accessors, rotation, decoders)
+        replaced = _replace_accessor_calls(scope, model, decoders, resolved, infrastructure)
         if nothing_still_names(model_cache(self, self._root).model, infrastructure):
             _remove_infrastructure(infrastructure)
             self.mark_changed()

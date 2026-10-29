@@ -81,9 +81,6 @@ from test.lib.scripts.js.deobfuscation.test_selfchecks import (
     guarded,
 )
 from test.lib.scripts.js.deobfuscation import test_the_file_kind as the_file_kind
-from test.lib.scripts.js.deobfuscation.test_stringarray import (
-    A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER,
-)
 from test.lib.scripts.js.ledger import (
     Program,
     Reading,
@@ -2660,36 +2657,6 @@ class TestAMechanismWrittenThroughASpellingIsStillWritten(TestBase):
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
-        )
-
-
-class TestTheStringArrayMachineryGoesOnceNothingReadsIt(TestBase):
-    """
-    `refinery.lib.scripts.js.deobfuscation.stringarray` keeps the array function, the accessor and
-    the rotation IIFE while any of their names is still referenced, which is what
-    `test.lib.scripts.js.deobfuscation.test_infrastructure_removal` states. The rows it keeps them
-    for reach the end of a run with nothing referencing them after all: the reference stood in a
-    function that was itself unreachable, and dead-code elimination took the function, and then the
-    accessor, away. What is left is an array holder and a loop that rotates its contents, reachable
-    from nothing and printed out in full.
-
-    The pass cannot pick the work up again, because it recognizes the pattern by its accessor and
-    there is no longer one. Closing it means the cleanup deciding from the array function and the
-    rotation alone, and that in turn means proving the rotation loop terminates without the
-    accessor calls its checksum is written in terms of — the simulation is what proves it today,
-    and deleting a loop nothing proved terminates is the trade this pass just stopped making.
-    """
-
-    @unittest.expectedFailure
-    def test_the_preset_folds_to_the_one_statement_it_computes(self):
-        """
-        Every string the program reads is resolved and the function reading the rest is
-        unreachable, so nothing the machinery holds is read and the program is one call to
-        `console.log`.
-        """
-        self.assertEqual(
-            "console.log('test string');",
-            deobfuscate_source(A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER),
         )
 
 

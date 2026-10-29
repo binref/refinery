@@ -2971,7 +2971,8 @@ def nothing_still_names(model: SemanticModel, removed: Sequence[Node]) -> bool:
     A name inside a `with` body is asked for separately, because it resolves to no binding at all:
     the object supplies it or the binding does, and which one is a runtime question. It is counted as
     a reference here, since a removal made on the strength of it denoting the object is a removal that
-    strands it whenever the object does not carry the property.
+    strands it whenever the object does not carry the property. An exported binding is named by the
+    export itself, which an importer reads and which a removal would leave declaring nothing.
     """
     inside = {id(node) for root in removed for node in root.walk()}
     asked: set[Binding] = set()
@@ -2985,7 +2986,7 @@ def nothing_still_names(model: SemanticModel, removed: Sequence[Node]) -> bool:
             asked.add(binding)
             if any(id(site) not in inside for site in binding.declarations):
                 continue
-            if binding_has_references(model, binding, exclude_ids=inside):
+            if binding.exported or binding_has_references(model, binding, exclude_ids=inside):
                 return False
             if any(id(ref) not in inside for ref in model.dynamic_references(binding)):
                 return False

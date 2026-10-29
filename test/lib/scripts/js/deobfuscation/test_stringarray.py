@@ -3,8 +3,17 @@ from __future__ import annotations
 import inspect
 import re
 
+from test import TestBase
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import (
+    a_program,
+    before_and_after,
+    each_program_still_prints,
+    wontfix,
+)
 
+from refinery.lib.scripts.js.analysis.model import build_semantic_model
+from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.stringarray import (
     Encoding,
     JsStringArrayResolver,
@@ -13,6 +22,7 @@ from refinery.lib.scripts.js.deobfuscation.stringarray import (
     _find_all_accessor_functions,
     _find_array_function,
 )
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
@@ -142,6 +152,71 @@ class TestStringArray(TestJsDeobfuscator):
             "console.log('test string');",
         })
 
+    def test_string_array_decoder_with_a_fractional_offset_is_not_read(self):
+        """
+        The decoder reads positions `0.5` and `-0.5`, which name no element, so both calls answer
+        `undefined`. Truncating the offset to zero reads the two strings instead.
+        """
+        source = _UNROTATED_SOURCE.replace('_0x3a2c1f-0x0;', '_0x3a2c1f-0.5;')
+        self.assertNotEqual(_UNROTATED_SOURCE, source)
+        self.assertEqual('console[_0x1b07(0x0)](msg);', self._deobfuscate(source).splitlines()[-1])
+
+    def test_string_array_self_overwriting_decoder_reusing_its_parameter_names(self):
+        source = (
+            "function V(){var a=['str0','str1','str2'];V=function(){return a;};return V();}"
+            'function N(t,n){const Y=V();N=function(t,n){t=t-0x10;let R=Y[t];return R;};return N(t,n);}'
+            'console.log(N(0x11));'
+        )
+        self.assertEqual("console.log('str1');", self._deobfuscate(source))
+
+    def test_string_array_self_overwriting_decoder_that_changes_its_index_before_forwarding(self):
+        """
+        The outer function adds one to the index before it hands it on, so `N(0x10)` reads `'str1'`.
+        Reading the call as if the index went on untouched reads `'str0'`.
+        """
+        source = (
+            "function V(){var a=['str0','str1','str2'];V=function(){return a;};return V();}"
+            'function N(t,n){const Y=V();t=t+0x1;N=function(Z,o){Z=Z-0x10;let R=Y[Z];return R;};'
+            'return N(t,n);}'
+            'console.log(N(0x10));'
+        )
+        self.assertIn(self._deobfuscate(source).splitlines()[-1], {
+            'console.log(N(0x10));',
+            "console.log('str1');",
+        })
+
+    def test_string_array_decoder_declared_again_later_keeps_its_calls(self):
+        """
+        The later declaration is the function the name holds, so every call answers `'evil'`.
+        """
+        source = _UNROTATED_SOURCE + "function _0x1b07(a,b){return 'evil';}"
+        self.assertEqual("console.evil('evil');", self._deobfuscate(source))
+
+    def test_string_array_decoder_replaced_by_a_var_of_its_name_keeps_its_calls(self):
+        """
+        The `var` replaces the decoder before any call runs, so every call answers `'evil'`.
+        """
+        source = "var _0x1b07=function(a,b){return 'evil';};" + _UNROTATED_SOURCE
+        self.assertEqual("console.evil('evil');", self._deobfuscate(source))
+
+    def test_string_array_alias_a_module_exports_keeps_its_export(self):
+        ast = JsParser(_UNROTATED_SOURCE + 'export const dec = _0x1b07;').parse()
+        deobfuscate(ast, execution=ExecutionModel.module)
+        result = JsSynthesizer().convert(ast).splitlines()
+        self.assertIn("console.log('test string');", result)
+        self.assertIn('export const dec = _0x1b07;', result)
+
+    def test_string_array_rotation_that_stays_keeps_reading_the_array(self):
+        """
+        A call the pass cannot answer keeps the rotation, and the rotation has to keep turning the
+        array that call reads. Answering the checksum's reads with the strings the turning ends on
+        makes the loop stop before it turns.
+        """
+        source = self._default_preset() + 'function g(x){return _0xe6abe5(x);}unknown(g);'
+        result = self._deobfuscate(source)
+        self.assertIn('parseInt(_0x2bca43(0xa7))', result)
+        self.assertIn("console.log('test string');", result.splitlines())
+
     def test_string_array_without_rotation_and_an_offset(self):
         source = _FOLDED_CHECKSUM_SOURCE.partition('}(_0x2fc0,0x827c2));')[2]
         self.assertTrue(source)
@@ -163,12 +238,11 @@ class TestStringArray(TestJsDeobfuscator):
         """
         The same three values as the argument of an accessor call, which is the other place a
         resolved constant is read as an index into the string array. No folding turns one into a
-        position, so those calls stand and the accessor stands with them; what is pinned here is
-        that the one call the pass can answer is answered all the same. What the machinery left
-        standing costs is `test.lib.scripts.js.test_unfixed_defects`.
+        position, so those calls stand and the machinery stands with them while the function holding
+        them does. Nothing calls that function, and once it is gone, nothing reads the machinery.
         """
         result = self._deobfuscate(A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER)
-        self.assertEqual("console.log('test string');", result.splitlines()[-1])
+        self.assertEqual("console.log('test string');", result)
 
     def test_string_array_rotation_iife_with_parenthesised_callee(self):
         preset = self._default_preset()
@@ -372,23 +446,24 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual("console.log('test string');", result)
 
     def test_string_array_multi_accessor(self):
-        source = (
-            r"var _0xe6abe5=_0x1b07;(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();whi"
-            r"le(!![]){try{var _0x293699=-parseInt(_0x2bca43(0xa7))/0x1+-parseInt(_0x2bca43(0xa1))/0x2*(-parseInt("
-            r"_0x2bca43(0xab))/0x3)+parseInt(_0x2bca43(0xa3))/0x4*(-parseInt(_0x2bca43(0xa9))/0x5)+parseInt(_0x2bc"
-            r"a43(0xa6))/0x6+parseInt(_0x2bca43(0xaa))/0x7*(parseInt(_0x2bca43(0xa2))/0x8)+-parseInt(_0x2bca43(0xa"
-            r"4))/0x9*(-parseInt(_0x2bca43(0xa5))/0xa)+-parseInt(_0x2bca43(0xa0))/0xb;if(_0x293699===_0x20b5f6)bre"
-            r"ak;else _0x36965a['push'](_0x36965a['shift']());}catch(_0x35acf4){_0x36965a['push'](_0x36965a['shift"
-            r"']());}}}(_0x2fc0,0x827c2));function _0x1b07(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-0xa0;var _0x2f"
-            r"c00e=_0x2fc0();var _0x1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}function _0x2nd(_0x3a2c1f,_0x271"
-            r"b5b){_0x3a2c1f=_0x3a2c1f-0xa0;var _0x2fc00e=_0x2fc0();var _0x1b0775=_0x2fc00e[_0x3a2c1f];return _0x1"
-            r"b0775;}var msg=_0xe6abe5(0xac);function _0x2fc0(){var _0x581e61=['2435007zbgngY','test\x20string','1"
-            r"2767458FlCTYp','2BveYOA','96VHQLDe','160CSMRCB','486kcIkKD','183450npXmbZ','4067550xFhrYl','462884ST"
-            r"mCds','log','50725EqKMLb','48769HzjsUR'];_0x2fc0=function(){return _0x581e61;};return _0x2fc0();}con"
-            r"sole[_0x2nd(0xa8)](msg);"
-        )
-        result = self._deobfuscate(source)
+        result = self._deobfuscate(_TWO_ACCESSOR_SOURCE)
         self.assertEqual("console.log('test string');", result)
+
+    def test_string_array_accessors_with_different_offsets(self):
+        """
+        The second accessor subtracts one more than the first, and its call asks for one more, so
+        both read the same strings as before. Reading the second call with the first accessor's
+        offset reads the string after `'log'`.
+        """
+        second = 'function _0x2nd(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-'
+        source = _TWO_ACCESSOR_SOURCE.replace(
+            F'{second}0xa0;', F'{second}0xa1;'
+        ).replace(
+            '_0x2nd(0xa8)', '_0x2nd(0xa9)'
+        )
+        self.assertIn(F'{second}0xa1;', source)
+        self.assertIn('_0x2nd(0xa9)', source)
+        self.assertEqual("console.log('test string');", self._deobfuscate(source))
 
     def test_string_array_transitive_aliases(self):
         source = (
@@ -419,7 +494,7 @@ class TestStringArray(TestJsDeobfuscator):
         ast = JsParser(source).parse()
         arr = _find_array_function(ast.body)
         self.assertIsNotNone(arr)
-        accs = _find_all_accessor_functions(ast.body, arr.name)
+        accs = _find_all_accessor_functions(build_semantic_model(ast), ast.body, arr.name)
         self.assertEqual(len(accs), 1)
         self.assertEqual(accs[0].name, 'N')
         self.assertEqual(accs[0].base_offset, 0xb2e - 0x126 - 0x8eb)
@@ -436,7 +511,7 @@ class TestStringArray(TestJsDeobfuscator):
         ast = JsParser(source).parse()
         arr = _find_array_function(ast.body)
         self.assertIsNotNone(arr)
-        accs = _find_all_accessor_functions(ast.body, arr.name)
+        accs = _find_all_accessor_functions(build_semantic_model(ast), ast.body, arr.name)
         self.assertEqual(len(accs), 1)
         self.assertEqual(accs[0].name, 'N')
         self.assertEqual(accs[0].base_offset, 0x14c)
@@ -489,8 +564,8 @@ class TestStringArray(TestJsDeobfuscator):
 
 
 #: The default preset beside a function whose accessor calls read a non-finite index. No constant
-#: folding turns one into a position in the string array, so the pass can answer neither call and
-#: the accessor keeps the name each of them stands on.
+#: folding turns one into a position in the string array, so the pass can answer none of the calls
+#: and the accessor keeps the name each of them stands on.
 A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER = TestStringArray._default_preset() + (
     'function unused() {'
     ' return _0xe6abe5(1e400 + 0) + _0xe6abe5(1e400 * 0) + _0xe6abe5(1e308 * 10); }'
@@ -502,6 +577,23 @@ _UNROTATED_SOURCE = (
     r"1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}var msg=_0x1b07(0x1);function _0x2fc0(){var _0x581e"
     r"61=['log','test\x20string'];_0x2fc0=function(){return _0x581e61;};return _0x2fc0();}console[_0x"
     r"1b07(0x0)](msg);"
+)
+
+#: The default preset with a second accessor beside the first, reading the same array.
+_TWO_ACCESSOR_SOURCE = (
+    r"var _0xe6abe5=_0x1b07;(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();whi"
+    r"le(!![]){try{var _0x293699=-parseInt(_0x2bca43(0xa7))/0x1+-parseInt(_0x2bca43(0xa1))/0x2*(-parseInt("
+    r"_0x2bca43(0xab))/0x3)+parseInt(_0x2bca43(0xa3))/0x4*(-parseInt(_0x2bca43(0xa9))/0x5)+parseInt(_0x2bc"
+    r"a43(0xa6))/0x6+parseInt(_0x2bca43(0xaa))/0x7*(parseInt(_0x2bca43(0xa2))/0x8)+-parseInt(_0x2bca43(0xa"
+    r"4))/0x9*(-parseInt(_0x2bca43(0xa5))/0xa)+-parseInt(_0x2bca43(0xa0))/0xb;if(_0x293699===_0x20b5f6)bre"
+    r"ak;else _0x36965a['push'](_0x36965a['shift']());}catch(_0x35acf4){_0x36965a['push'](_0x36965a['shift"
+    r"']());}}}(_0x2fc0,0x827c2));function _0x1b07(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-0xa0;var _0x2f"
+    r"c00e=_0x2fc0();var _0x1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}function _0x2nd(_0x3a2c1f,_0x271"
+    r"b5b){_0x3a2c1f=_0x3a2c1f-0xa0;var _0x2fc00e=_0x2fc0();var _0x1b0775=_0x2fc00e[_0x3a2c1f];return _0x1"
+    r"b0775;}var msg=_0xe6abe5(0xac);function _0x2fc0(){var _0x581e61=['2435007zbgngY','test\x20string','1"
+    r"2767458FlCTYp','2BveYOA','96VHQLDe','160CSMRCB','486kcIkKD','183450npXmbZ','4067550xFhrYl','462884ST"
+    r"mCds','log','50725EqKMLb','48769HzjsUR'];_0x2fc0=function(){return _0x581e61;};return _0x2fc0();}con"
+    r"sole[_0x2nd(0xa8)](msg);"
 )
 
 #: The default preset with the rotation loop left holding nothing but a constant-folded checksum,
@@ -516,3 +608,68 @@ _FOLDED_CHECKSUM_SOURCE = (
     r"ngY','test\x20string'];_0x2fc0=function(){return _0x581e61;};return _0x2fc0();}console[_0xe6abe5(0xa"
     r"8)](msg);"
 )
+
+#: A string array written out by hand: a holder that replaces itself on its first call and an
+#: accessor that reads it by index, with no rotation, so the strings stand in the order written.
+_A_HAND_WRITTEN_STRING_ARRAY = (
+    "function A() { var s = ['hello', 'world']; A = function () { return s; }; return A(); }\n"
+    'function ACC(i, k) { i = i - 0; var a = A(); var r = a[i]; return r; }\n'
+)
+
+
+class TestStringArrayShapesNoObfuscationEmits(TestBase):
+    """
+    Programs on which the resolver answers a decoder call that the program does not make, where
+    only a shape made up for the defect reaches it.
+    """
+
+    @wontfix('the obfuscation declares each alias of the decoder first in the scope that calls it')
+    def test_an_alias_called_before_its_declaration_runs(self):
+        rows = {
+            _A_HAND_WRITTEN_STRING_ARRAY + a_program(
+                """
+                function f() { return D(1); }
+                try { console.log(f()); } catch (e) { console.log(e.constructor.name); }
+                var D = ACC;
+                """
+            ): 'TypeError\n',
+        }
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    @wontfix('the obfuscation passes a decoder only literals: the index and, for RC4, the key')
+    def test_a_decoder_call_passing_an_argument_with_an_effect(self):
+        rows = {
+            _A_HAND_WRITTEN_STRING_ARRAY + a_program(
+                """
+                var n = 0;
+                console.log(ACC(1, n++), n);
+                """
+            ): 'world 1\n',
+        }
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    @wontfix('the decoder is named by the obfuscation, so no evaluated string assigns to its name')
+    def test_a_decoder_rebound_by_an_unreadable_eval(self):
+        rows = {
+            a_program(
+                """
+                function main() {
+                  function A() { var s = ['hello', 'world']; A = function () { return s; }; return A(); }
+                  function ACC(i, k) { i = i - 0; var a = A(); var r = a[i]; return r; }
+                  eval(Math.random() < 2 ? 'ACC = function () { return "evil"; };' : '');
+                  console.log(ACC(1));
+                }
+                main();
+                """
+            ): 'evil\n',
+        }
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
