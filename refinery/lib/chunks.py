@@ -7,37 +7,37 @@ from __future__ import annotations
 import array
 import sys
 
-from typing import Iterable
+from refinery.lib.types import buf, Iterable
 
 _BIG_ENDIAN = sys.byteorder == 'big'
 _TYPE_CODES = {array.array(t).itemsize: t for t in 'BHILQ'}
 
 
-def unpack(data: bytes, blocksize: int, bigendian: bool = False, step: int = 0, pad: bool = False) -> Iterable[int]:
+def unpack(data: buf, blocksize: int, bigendian: bool = False, step: int = 0, pad: bool = False) -> Iterable[int]:
     """
     Returns an iterable of integers which have been unpacked from the given `data`
     buffer as chunks of `blocksize` many bytes. If `pad` is set, an incomplete final
     chunk is padded with zero bytes at its end before it is unpacked.
     """
-    view = memoryview(data)
+    data = memoryview(data)
     if not step:
         step = blocksize
     if blocksize == 1:
         if step == blocksize:
             return data
-        return view[::step]
+        return data[::step]
     bo = 'big' if bigendian else 'little'
-    ub = len(view)
+    ub = len(data)
     if not pad:
         ub = ub + 1 - blocksize
 
     def padded(overlap: int):
-        return int.from_bytes(bytes(view[-overlap:]) + bytes(blocksize - overlap), bo)
+        return int.from_bytes(bytes(data[-overlap:]) + bytes(blocksize - overlap), bo)
 
     if step == blocksize and blocksize in _TYPE_CODES:
         overlap = len(data) % blocksize
         if overlap:
-            data = view[:-overlap]
+            data = data[:-overlap]
         unpacked = array.array(_TYPE_CODES[blocksize])
         unpacked.frombytes(data)
         if _BIG_ENDIAN != bigendian:
@@ -45,14 +45,14 @@ def unpack(data: bytes, blocksize: int, bigendian: bool = False, step: int = 0, 
         if pad and overlap:
             unpacked.append(padded(overlap))
         return unpacked
-    elif bigendian and pad and (overlap := len(view) % blocksize):
+    elif bigendian and pad and (overlap := len(data) % blocksize):
         def chunks():
             for k in range(0, ub - overlap, step):
-                yield int.from_bytes(view[k:k + blocksize], bo)
+                yield int.from_bytes(data[k:k + blocksize], bo)
             yield padded(overlap)
         return chunks()
     else:
-        return (int.from_bytes(view[k:k + blocksize], bo) for k in range(0, ub, step))
+        return (int.from_bytes(data[k:k + blocksize], bo) for k in range(0, ub, step))
 
 
 def pack(data: Iterable[int], blocksize: int, bigendian: bool = False) -> bytearray:
