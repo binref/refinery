@@ -135,6 +135,17 @@ class TestReaching(TestBase):
     def test_reaches_across_bare_var_declaration(self):
         self.assertTrue(self._free_variable_reaches('var r = x; var x; r;'))
 
+    def test_does_not_reach_past_a_var_declaration_that_stores_a_value_it_does_not_spell(self):
+        for source in (
+            'function f(a, o) { var x = a; var r = x; var {k: x} = o; return r; }',
+            'function f(a, o) { var x = a; var r = x; var [x] = o; return r; }',
+            'function f(a, o) { var x = a; var r = x; for (var x of o) {} return r; }',
+            'function f(a, o) { var x = a; var r = x; for (var x in o) {} return r; }',
+            'function f(a, o) { var x = a; var r = x; for (var [x] of o) {} return r; }',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._free_variable_reaches(source))
+
     def test_does_not_reach_past_a_mutating_call_the_graphs_do_not_place(self):
         """
         A parameter default of a function *expression* is evaluated when that function is invoked,
@@ -314,6 +325,19 @@ class TestReaching(TestBase):
         self.assertTrue(self._free_variable_reaches(
             'async function f() { var x = 1; var r = x; await 0; return r; }'
         ))
+
+    def test_does_not_reach_past_a_point_where_the_body_suspends_and_another_run_of_it_writes_the_binding(self):
+        """
+        Every call of `f` shares `x`, and another call may write it while this one waits: after
+        `f(1); f(2);` the first call resumes with `x` holding `2`.
+        """
+        for source in (
+            'var x; async function f(v) { x = v; var r = x; await 0; return r; }',
+            'var x; function* f(v) { x = v; var r = x; yield 0; return r; }',
+            'var x; async function f(c) { if (c) { var r = x; await 0; return r; } x = 2; }',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._free_variable_reaches(source))
 
     def test_reaches_past_a_suspension_inside_a_nested_function(self):
         self.assertTrue(self._free_variable_reaches(

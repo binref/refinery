@@ -417,6 +417,30 @@ class Binding:
         """
         return any(_is_global_alias_access(ref) for ref in (*self.reads, *self.writes))
 
+    @property
+    def store_sites(self) -> list[ReferenceNode]:
+        """
+        Every node whose execution stores into the binding, whatever it stores: each recorded write,
+        and each declaration that stores where it runs (`_where_it_stores`). A `let`, `const` or
+        `class` declaration is one even without a value, since it ends the binding's temporal dead
+        zone. A `var` has none, so a bare `var x;` stores nothing; its declarator stores where it
+        carries a value, a destructuring pattern included, or stands in the head of a `for-in` or
+        `for-of` loop, which stores on every iteration. A function declaration Annex B copies into
+        the `var` stores where it runs, and is listed itself rather than its name, which lies inside
+        the function it names. A store made before any statement of the binding's scope runs has no
+        node and is not listed: a parameter's, or the function a declaration hoists. Ordering the
+        sites against a point is the caller's.
+        """
+        sites: list[ReferenceNode] = list(self.writes)
+        for declaration in self.declarations:
+            if _where_it_stores(self, declaration) is not _DeclarationStore.WHERE_IT_RUNS:
+                continue
+            if isinstance(function := declaration.parent, JsFunctionDeclaration):
+                sites.append(function)
+            else:
+                sites.append(declaration)
+        return sites
+
 
 @dataclass(eq=False)
 class AnnexBCopy:
@@ -1432,6 +1456,38 @@ def _copy_received_by(binding: Binding, declaration: Node | None) -> AnnexBCopy 
     The copy Annex B makes into the `var` *binding* where *declaration* runs, if any.
     """
     return next((copy for copy in binding.copies_received if copy.declaration is declaration), None)
+
+
+class _DeclarationStore(enum.Enum):
+    """
+    Where a declaration stores into the binding it declares.
+    """
+    #: Where the declaration runs.
+    WHERE_IT_RUNS = enum.auto()
+    #: Nowhere: a `var` declarator with no value outside the head of a loop.
+    NOWHERE = enum.auto()
+    #: Before any statement of the binding's scope runs: a parameter, a catch parameter, an import,
+    #: the own name of a function expression, and a function declaration no copy is made of.
+    ON_ENTRY = enum.auto()
+
+
+def _where_it_stores(binding: Binding, declaration: JsIdentifier) -> _DeclarationStore:
+    """
+    Where *declaration*, one of *binding*'s declarations, stores into it.
+    """
+    if binding.is_lexical:
+        return _DeclarationStore.WHERE_IT_RUNS
+    parent = declaration.parent
+    if isinstance(parent, JsFunctionDeclaration) and parent.id is declaration:
+        if _copy_received_by(binding, parent) is None:
+            return _DeclarationStore.ON_ENTRY
+        return _DeclarationStore.WHERE_IT_RUNS
+    governor, operand = _governing_target(declaration)
+    if isinstance(governor, JsVariableDeclarator) and governor.id is operand:
+        if governor.init is not None or _loop_head_assigns(governor):
+            return _DeclarationStore.WHERE_IT_RUNS
+        return _DeclarationStore.NOWHERE
+    return _DeclarationStore.ON_ENTRY
 
 
 def _loop_head_assigns(declarator: JsVariableDeclarator) -> bool:
@@ -3116,9 +3172,8 @@ class SemanticModel:
         consumer whose rewrite needs the binding to hold nothing else requires completeness first, and
         must also require a value, since a complete empty list answers every universal question
         vacuously. `refinery.lib.scripts.js.analysis.intrinsics._binding_value_roots` is the
-        may-side sibling that over-approximates where this list refuses, and
-        `refinery.lib.scripts.js.analysis.reaching.ReachingModel._value_definitions` the flow-aware
-        one that enumerates kill sites rather than values.
+        may-side sibling that over-approximates where this list refuses, and `Binding.store_sites`
+        the one that lists where a value is stored rather than which.
         """
         channels, complete = self._binding_value_channels(
             binding, ignore_dynamic_rebinds=ignore_dynamic_rebinds)
@@ -3456,18 +3511,15 @@ class SemanticModel:
                 channels.append((write, stored))
         return channels, complete
 
-    def binding_value_sites(self, binding: Binding | None) -> list[Node] | None:
+    def binding_value_sites(self, binding: Binding | None) -> list[ReferenceNode] | None:
         """
-        Every node whose execution stores into *binding*, whatever it stores, or `None` where a
+        Every node whose execution stores into *binding* (`Binding.store_sites`), or `None` where a
         value may arrive at no such node: the call writes the name before any statement runs
         (`Binding.written_at_entry`, a parameter, a catch or import binding, a function expression's
         own name), some access writes it without saying where (`Binding.has_indefinite_write`, a
         dynamic rebinding), the host supplies it, or a function it declares is in place before any
-        statement of its scope runs. The sites are a declarator with a value or in the head of a
-        `for-in` or `for-of` loop, which stores on every iteration, a class declaration, the
-        declaration of a function Annex B copies in where the declaration runs, and every recorded
-        write: a plain, compound or destructuring assignment, an update. Ordering them against a
-        point is the caller's, since that needs the dominance model this layer must not depend on.
+        statement of its scope runs. Ordering the sites against a point is the caller's, since that
+        needs the dominance model this layer must not depend on.
         """
         if (
             binding is None
@@ -3476,24 +3528,13 @@ class SemanticModel:
             or binding.has_indefinite_write
             or binding.supplied_by_host
             or self.binding_maybe_reassigned_dynamically(binding)
+            or any(
+                _where_it_stores(binding, declaration) is _DeclarationStore.ON_ENTRY
+                for declaration in binding.declarations
+            )
         ):
             return None
-        sites: list[Node] = []
-        for declaration in binding.declarations:
-            parent = declaration.parent
-            if isinstance(parent, JsFunctionDeclaration) and parent.id is declaration:
-                if _copy_received_by(binding, parent) is None:
-                    return None
-                sites.append(parent)
-            elif isinstance(parent, JsClassDeclaration) and parent.id is declaration:
-                sites.append(parent)
-            elif isinstance(parent, JsVariableDeclarator) and parent.id is declaration:
-                if parent.init is not None or _loop_head_assigns(parent):
-                    sites.append(parent)
-            else:
-                return None
-        sites.extend(binding.writes)
-        return sites
+        return binding.store_sites
 
     def singular_value(self, binding: Binding | None) -> Node | None:
         """

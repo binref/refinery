@@ -26,11 +26,12 @@ use's own graph — make the answer conservatively negative, and so does a defin
 share a single control-flow node, whose parts the graph does not order: the operands of an
 expression share one, while each declarator of a declaration but the last is a node of its own. A
 point where the body suspends, an `await` or a `yield`, is a kill of a binding code outside the
-body writes, since that code may run before the body resumes.
+body writes, and of one every run of the body shares and the body writes, since that code, or
+another run of the body, may run before the body resumes.
 """
 from __future__ import annotations
 
-from typing import Iterator, NamedTuple
+from typing import NamedTuple
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import Projection
@@ -44,9 +45,9 @@ from refinery.lib.scripts.js.model import (
     JsAwaitExpression,
     JsCallExpression,
     JsForOfStatement,
-    JsFunctionDeclaration,
     JsIdentifier,
     JsMemberExpression,
+    JsScript,
     JsVariableDeclarator,
     JsYieldExpression,
     strip_parens,
@@ -66,6 +67,23 @@ class _Kills(NamedTuple):
     opaque: tuple[tuple[JsMemberExpression, CfgNode], ...]
 
 
+class _BodyEvents(NamedTuple):
+    """
+    The points of one graph's body at which code other than the body's statements may run, each
+    with the control-flow node that evaluates it, or with `None` where the graphs place it nowhere.
+    One inside a nested function locates into that function's own graph and is left out.
+
+    The *calls* are its call expressions. A call the graphs do not place at all is kept: it is
+    evaluated when the body around it is invoked, which is a point no node of this graph stands for
+    — a parameter default of a function *expression* is one — so it can neither be ordered here
+    nor dismissed, and the caller has to refuse rather than drop the kill. The *suspensions* are
+    the points at which its run may stop and resume later, with other code run in between: an
+    `await`, a `yield`, and the head of a `for await` loop, which awaits each value.
+    """
+    calls: list[tuple[JsCallExpression, CfgNode | None]]
+    suspensions: list[CfgNode | None]
+
+
 class ReachingModel:
     """
     Reaching-value verdicts for one script, built over a
@@ -79,8 +97,7 @@ class ReachingModel:
         self.effects = effects
         self.model = effects.model
         self._kill_cache: dict[tuple[int, int, int], _Kills | None] = {}
-        self._call_cache: dict[int, list[tuple[JsCallExpression, CfgNode]]] = {}
-        self._suspension_cache: dict[int, list[CfgNode | None]] = {}
+        self._event_cache: dict[int, _BodyEvents] = {}
         self._cycle_cache: dict[int, bool] = {}
         self._between = ReachabilityQuery(dominance, Projection.MAY)
 
@@ -141,6 +158,11 @@ class ReachingModel:
         The nodes of *graph* at which *binding*'s definition stops holding, or `None` where they
         cannot be listed and the caller must treat the value as reaching nowhere.
 
+        Every node that stores into the binding
+        (`refinery.lib.scripts.js.analysis.model.Binding.store_sites`) is a kill but the write the
+        definition is tracked from, whatever it stores: `var {k: x} = o`, the head of
+        `for (var x of xs)` and a `let x;` alike.
+
         A call this file binds the name of but whose function the model will not state kills the
         binding, wherever some function of this file writes it. Not knowing which function runs is
         not knowing that it does not write, and the one that runs may be exactly the one that does:
@@ -158,9 +180,16 @@ class ReachingModel:
         volatile: a surface running in another function's graph runs at that function's invocation,
         a point no node here stands for.
 
-        A point where the body stops and other code runs before it resumes — an `await`, a
-        `yield`, the head of a `for await` loop (`_graph_suspensions`) — is a kill of a binding
-        some definition outside this graph writes: that code may be the code that writes it.
+        A point where the body stops and other code runs before it resumes — an `await`, a `yield`,
+        the head of a `for await` loop (`_BodyEvents.suspensions`) — is a kill of a binding some
+        store outside this graph writes: that code may be the code that writes it. It is a kill as
+        well of a binding a store in this graph writes, the tracked one included, where every run of
+        the body shares the binding (`_shared_by_every_run`): another run of the same body may write
+        it while this one waits. The calls `f(1)` and `f(2)` of
+
+            var x; async function f(v) { x = v; var r = x; await 0; return r; }
+
+        leave `x` holding `2` when the first one resumes.
         """
         if (
             binding.has_indefinite_write
@@ -175,24 +204,27 @@ class ReachingModel:
         if located is None:
             return None
         kills, opaque = located
-        written_elsewhere = False
-        for definition in self._value_definitions(binding):
-            if definition is def_write:
+        written_here = written_elsewhere = False
+        for site in binding.store_sites:
+            if site is def_write:
+                written_here = True
                 continue
-            located_def = self.dominance.locate(definition)
-            if located_def is None:
+            located_site = self.dominance.locate(site)
+            if located_site is None:
                 return None
-            def_graph, def_node = located_def
-            if def_graph is graph:
-                kills.add(id(def_node))
+            site_graph, site_node = located_site
+            if site_graph is graph:
+                kills.add(id(site_node))
+                written_here = True
             else:
                 written_elsewhere = True
-        if written_elsewhere:
-            for suspension in self._graph_suspensions(graph):
+        events = self._body_events(graph)
+        if written_elsewhere or (written_here and self._shared_by_every_run(binding, graph)):
+            for suspension in events.suspensions:
                 if suspension is None:
                     return None
                 kills.add(id(suspension))
-        for call, node in self._graph_calls(graph):
+        for call, node in events.calls:
             target = self.effects.static_callee(call)
             if target is None:
                 if not self.effects.a_name_this_file_binds_holds_the_callee(call):
@@ -252,90 +284,41 @@ class ReachingModel:
             self._cycle_cache[id(node)] = cached
         return cached
 
-    def _graph_calls(
-        self, graph: ControlFlowGraph,
-    ) -> list[tuple[JsCallExpression, CfgNode | None]]:
+    def _body_events(self, graph: ControlFlowGraph) -> _BodyEvents:
         """
-        The call expressions of *graph*'s body that are not inside a nested function, each paired
-        with the control-flow node that evaluates it, or with `None` when the graphs place it
-        nowhere. Memoized per graph.
-
-        A call inside a nested function locates into that function's own graph and is left out. A
-        call the graphs do not place at all is a different answer and is kept: it is evaluated when
-        the body around it is invoked, which is a point no node of this graph stands for — a
-        parameter default of a function *expression* is one — so it can neither be ordered here nor
-        dismissed, and the caller has to refuse rather than drop the kill.
+        The calls and suspensions of *graph*'s body, found in one walk of it and memoized per graph.
         """
-        cached = self._call_cache.get(id(graph))
+        cached = self._event_cache.get(id(graph))
         if cached is None:
-            cached = []
+            cached = _BodyEvents([], [])
             for node in graph.owner.walk():
-                if not isinstance(node, JsCallExpression):
-                    continue
-                located = self.dominance.locate(node)
-                if located is None:
-                    cached.append((node, None))
-                elif located[0] is graph:
-                    cached.append((node, located[1]))
-            self._call_cache[id(graph)] = cached
-        return cached
-
-    def _graph_suspensions(self, graph: ControlFlowGraph) -> list[CfgNode | None]:
-        """
-        The control-flow nodes of *graph*'s body at which its run may stop and resume later, with
-        other code run in between: an `await`, a `yield`, and the head of a `for await` loop, which
-        awaits each value. `None` stands for one the graphs place nowhere. One inside a nested
-        function suspends that function and is left out. Memoized per graph.
-        """
-        cached = self._suspension_cache.get(id(graph))
-        if cached is None:
-            cached = []
-            for node in graph.owner.walk():
-                if not (
+                if isinstance(node, JsCallExpression):
+                    located = self.dominance.locate(node)
+                    if located is None:
+                        cached.calls.append((node, None))
+                    elif located[0] is graph:
+                        cached.calls.append((node, located[1]))
+                elif (
                     isinstance(node, (JsAwaitExpression, JsYieldExpression))
                     or (isinstance(node, JsForOfStatement) and node.is_await)
                 ):
-                    continue
-                located = self.dominance.locate(node)
-                if located is None:
-                    cached.append(None)
-                elif located[0] is graph:
-                    cached.append(located[1])
-            self._suspension_cache[id(graph)] = cached
+                    located = self.dominance.locate(node)
+                    if located is None:
+                        cached.suspensions.append(None)
+                    elif located[0] is graph:
+                        cached.suspensions.append(located[1])
+            self._event_cache[id(graph)] = cached
         return cached
 
-    @staticmethod
-    def _value_definitions(binding: Binding) -> Iterator[Node]:
+    def _shared_by_every_run(self, binding: Binding, graph: ControlFlowGraph) -> bool:
         """
-        Every site that establishes *binding*'s value: a write in `writes`, and a declaration that
-        ends the binding's temporal dead zone. A `let`, `const`, or `class` declaration ends that
-        zone even without an initializer, so a read cannot move across it and it is a kill; a `var`
-        has no dead zone, so a bare `var x;` establishes nothing and only an initialized declarator
-        counts. A later definition kills an earlier one, so the query counts them all bar the
-        one it tracks from.
-
-        A function declaration Annex B copies into the scope around its block is one too, and for
-        the same reason a lexical declaration is: the value arrives where the declaration runs, so a
-        read of the name before it answers something else and may not move across it. A function
-        declared in the scope it names is not, its value being there before any statement runs.
-
-        The flow-aware sibling of `SemanticModel.binding_values`: that query lists the values a
-        binding's readable channels store and whether the list is complete, while this one enumerates
-        the sites whose execution changes which value a read observes — every write, whatever it
-        stores, is a kill here even where it is no readable channel there.
+        Whether every run of the body *graph* stands for shares *binding*: the body is a function's,
+        and the binding belongs to no one call of it
+        (`refinery.lib.scripts.js.analysis.model.Scope.closure_home`). The script runs once.
         """
-        yield from binding.writes
-        lexical = binding.is_lexical
-        copied = {id(copy.declaration) for copy in binding.copies_received}
-        for declaration in binding.declarations:
-            if lexical:
-                yield declaration
-                continue
-            parent = declaration.parent
-            if isinstance(parent, JsVariableDeclarator) and parent.init is not None:
-                yield declaration
-            elif isinstance(parent, JsFunctionDeclaration) and id(parent) in copied:
-                yield declaration
+        if isinstance(graph.owner, JsScript):
+            return False
+        return binding.scope.closure_home is not self.model.function_scope(graph.owner)
 
     @staticmethod
     def _definition_write(definition: Node) -> Node | None:

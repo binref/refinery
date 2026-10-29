@@ -33,7 +33,8 @@ def deobfuscated_by_the_unit(source: str) -> str:
 #: Programs storing `undefined` into a `var`, mapped to what Node prints for each run as a CommonJS
 #: file: the store before or after other values reach the `var` through a store, a closure, a call,
 #: a loop, a `with` body, `eval`, a function declaration Annex B copies in, `arguments`, a parameter
-#: of the same name, a `for-in` or `for-of` head, a class field, and the store spelled `void 0`.
+#: of the same name, a `for-in` or `for-of` head, a destructuring declarator, a class field, and the
+#: store spelled `void 0`.
 STORES_OF_UNDEFINED: dict[str, Program] = {
     'the shape of the corpus': Program(
         a_program("""
@@ -511,6 +512,20 @@ STORES_OF_UNDEFINED: dict[str, Program] = {
             console.log(f(new Set([['q']])), f(['ab']));
             """),
         prints('[ undefined, 5 ] [ undefined, 5 ]'),
+        Reading.COMMONJS,
+    ),
+    'a destructuring declarator after the store': Program(
+        a_program("""
+            function f(o) {
+              var x;
+              x = undefined;
+              var r = x;
+              var { k: x } = o;
+              return [r, x];
+            }
+            console.log(f({ k: 5 }));
+            """),
+        prints('[ undefined, 5 ]'),
         Reading.COMMONJS,
     ),
     'commonjs require var': Program(
