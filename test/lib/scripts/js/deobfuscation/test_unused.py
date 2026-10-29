@@ -2077,6 +2077,15 @@ A_GLOBAL_PROPERTY_WRITE_NOTHING_READS: dict[str, str] = {
 }
 
 
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAFunctionATaggedTemplateCalls(TestJsDeobfuscator):
+
+    def test_the_write_of_a_tag_a_call_runs_is_kept(self):
+        source = 'var x = 0; function t(s) { x = 1; } function g() { t`a`; } g(); console.log(x);'
+        self.assertEqual(behavior(source), ('1\n', None))
+        self.assertEqual(behavior(self._deobfuscate(source)), behavior(source))
+
+
 class TestAPropertyWriteThroughAShadowedGlobalAliasSurvives(TestJsDeobfuscator):
 
     def test_the_write_is_kept_where_a_declaration_binds_the_alias_name(self):

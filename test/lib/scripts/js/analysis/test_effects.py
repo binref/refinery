@@ -143,6 +143,22 @@ class TestEffectModel(TestBase):
     def test_return_literal_is_pure(self):
         self.assertTrue(self._summary('function f(){ return 42; }', 'f').is_pure)
 
+    def test_a_function_only_called_by_its_name_does_not_escape(self):
+        ast, effects = self._effects('function f() {} f();')
+        self.assertFalse(effects.function_escapes(self._func(ast, 'f')))
+
+    def test_an_exported_function_escapes_to_its_importers(self):
+        ast, effects = self._effects('export function f() {} f();')
+        self.assertTrue(effects.function_escapes(self._func(ast, 'f')))
+
+    def test_a_tagged_template_runs_its_tag(self):
+        ast, effects = self._effects(
+            'var x = 0; function t(s) { x = 1; } function g() { t`a`; } g(); console.log(x);'
+        )
+        g = self._func(ast, 'g')
+        self.assertTrue(effects.function_can_mutate(g, self._binding(ast, effects.model, 'x')))
+        self.assertFalse(effects.summary_of(g).is_pure)
+
     def test_arithmetic_on_parameters_is_pure(self):
         self.assertTrue(self._summary('function f(a, b){ return a * b + 1; }', 'f').is_pure)
 

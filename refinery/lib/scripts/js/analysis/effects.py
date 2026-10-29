@@ -1075,18 +1075,24 @@ class EffectModel:
         """
         Whether *func* may be invoked at a point the surrounding scope cannot enumerate as a resolvable
         `name(...)` call site: an anonymous function (an IIFE, a callback, stored and called later), or a
-        named function whose binding is reassigned, redeclared, or referenced anywhere other than as the
-        callee of a direct call (aliased, passed as an argument, `f.call(...)`). A reference inside a
-        dynamic scope — a name a `with` body resolves at runtime — counts too: the model cannot order or
-        resolve it, so the function may be invoked or aliased there with no static call site. A call to
-        such a function can land at a point no call site pins down; a function only ever called directly
-        by name has all its invocations enumerated by those call sites.
+        named function whose binding is exported, which hands it to every importer, reassigned,
+        redeclared, or referenced anywhere other than as the callee of a direct call (aliased, passed
+        as an argument, `f.call(...)`). A reference inside a dynamic scope — a name a `with` body
+        resolves at runtime — counts too: the model cannot order or resolve it, so the function may be
+        invoked or aliased there with no static call site. A call to such a function can land at a
+        point no call site pins down; a function only ever called directly by name has all its
+        invocations enumerated by those call sites.
         """
         names = self.model.function_names(func)
         if names is None:
             return True
         for binding in names.bindings:
-            if binding.writes or binding.dynamic_refs or len(binding.declarations) != 1:
+            if (
+                binding.exported
+                or binding.writes
+                or binding.dynamic_refs
+                or len(binding.declarations) != 1
+            ):
                 return True
             if not self.model.binding_pinned_to(binding, func):
                 return True
@@ -1717,7 +1723,7 @@ class EffectModel:
                         summary.mutates_returned_local = True
                 elif base is not None and not self._getter_free_read(node):
                     summary.calls_unknown = True
-            elif isinstance(node, (JsCallExpression, JsNewExpression)):
+            elif isinstance(node, (JsCallExpression, JsNewExpression, JsTaggedTemplateExpression)):
                 self._account_call(summary, node, record_call)
             elif isinstance(node, JsImportExpression):
                 summary.calls_unknown = True
@@ -2129,9 +2135,13 @@ class EffectModel:
     def _account_call(
         self,
         summary: EffectSummary,
-        call: JsCallExpression | JsNewExpression,
+        call: JsCallExpression | JsNewExpression | JsTaggedTemplateExpression,
         record_call: Callable[[Node], None] | None = None,
     ):
+        """
+        Absorb into *summary* what *call* runs: a call, a construction, or a tagged template, which
+        calls its tag with the template's parts.
+        """
         callee = self._resolve_callee(call)
         if callee is _PURE:
             return
@@ -2142,8 +2152,11 @@ class EffectModel:
         else:
             summary.calls_unknown = True
 
-    def _resolve_callee(self, call: JsCallExpression | JsNewExpression) -> Node | _PureCall | None:
-        callee = call.callee
+    def _resolve_callee(
+        self,
+        call: JsCallExpression | JsNewExpression | JsTaggedTemplateExpression,
+    ) -> Node | _PureCall | None:
+        callee = call.tag if isinstance(call, JsTaggedTemplateExpression) else call.callee
         if isinstance(call, JsNewExpression) and self._pure_construct(call):
             return _PURE
         if isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):

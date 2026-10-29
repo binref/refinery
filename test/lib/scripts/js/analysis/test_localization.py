@@ -109,6 +109,9 @@ class TestLocalization(TestBase):
             with self.subTest(source=source):
                 self.assertStays(source)
 
+    def test_a_var_read_after_a_call_an_importer_of_the_function_may_make_stays(self):
+        self.assertStays('var x; export function f(n, o) { x = n; if (n) o.m(n - 1); return x; }')
+
     def test_a_var_the_parameter_list_reads_or_writes_stays(self):
         for source in (
             'var x; function f(v = x) { x = v; return v; }',
