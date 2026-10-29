@@ -6416,3 +6416,84 @@ class TestAMaskedFunctionCalledAsAMethodIsUnmasked(TestBase):
             console.log(L.twice(21));
             """)
         self.assertNotIn('...a', deobfuscate_source(source, execution=ExecutionModel.commonjs))
+
+
+#: Programs with a file-level `var` one function writes before it reads it, which another run of
+#: that function writes in between, run as a CommonJS file, mapped to what Node prints for each:
+#: the run waits at an `await` or a `yield`, calls itself, or calls code that calls it.
+A_VAR_ANOTHER_RUN_OF_ITS_FUNCTION_WRITES = {
+    'an await': Program(
+        a_program("""
+            var x;
+            async function f(v) {
+              x = v;
+              await null;
+              console.log(x);
+            }
+            f(1);
+            f(2);
+            """),
+        prints('2', '2'),
+        Reading.COMMONJS,
+    ),
+    'a yield': Program(
+        a_program("""
+            var x;
+            function* f(v) {
+              x = v;
+              yield;
+              console.log(x);
+            }
+            var a = f(1);
+            var b = f(2);
+            a.next();
+            b.next();
+            a.next();
+            b.next();
+            """),
+        prints('2', '2'),
+        Reading.COMMONJS,
+    ),
+    'a call of itself': Program(
+        a_program("""
+            var x;
+            function f(n) {
+              x = n;
+              if (n) f(n - 1);
+              console.log(x);
+            }
+            f(2);
+            """),
+        prints('0', '0', '0'),
+        Reading.COMMONJS,
+    ),
+    'a call of code that calls it': Program(
+        a_program("""
+            var x;
+            function f(n, g) {
+              x = n;
+              g();
+              console.log(x);
+            }
+            f(1, function () { f(2, function () {}); });
+            """),
+        prints('2', '2'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_VAR_ANOTHER_RUN_OF_ITS_FUNCTION_WRITES)
+class TestAVarAnotherRunOfItsFunctionWritesStaysShared(TestBase):
+    """
+    A file-level `var` whose every reference lies in one function, and which that function writes
+    before it reads it, is moved into the function
+    (`refinery.lib.scripts.js.analysis.liveness.LivenessModel.localization_target`), so each run
+    gets one of its own. A run that waits at an `await` or a `yield` lets another run start, and
+    so does a call of the function from inside it; the program reads what the last run stored,
+    the deobfuscation what its own run stored. The rule has to find the `var` dead at every point
+    of the function where another run may write it: the suspensions and the calls the reaching
+    model already counts as kills of it
+    (`refinery.lib.scripts.js.analysis.reaching.ReachingModel`).
+    """
