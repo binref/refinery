@@ -422,11 +422,13 @@ def empty_functions_called(model: SemanticModel, function: Node, options: object
     itself on its first call.
     """
     empty: set[int] = set()
+    asked: set[int] = set()
     for node in function.walk():
         if not isinstance(node, JsCallExpression) or not isinstance(node.callee, JsIdentifier):
             continue
-        if (binding := model.resolve(node.callee)) is None or id(binding) in empty:
+        if (binding := model.resolve(node.callee)) is None or id(binding) in asked:
             continue
+        asked.add(id(binding))
         value = model.singular_value(binding)
         if (
             (isinstance(value, FUNCTION_NODES) and not value.params and statement_list_of(value) == [])

@@ -1253,8 +1253,8 @@ def folded_literal(result: object) -> Expression | None:
     written: no literal denotes it faithfully (`value_to_node`), or it is a list longer than
     `MAX_RESULT_ARRAY_LEN`. Every fold that writes a computed value into the text asks here, so the
     guard on what the text may receive is present at each of them. A value refused here may still
-    answer a read (`refinery.lib.scripts.js.deobfuscation.admission.CallAdmission.binding_constant`):
-    the guard is about the text.
+    answer a read, the guard being about the text:
+    `refinery.lib.scripts.js.deobfuscation.admission.CallAdmission.binding_constant` reads it.
     """
     if isinstance(result, list) and len(result) > MAX_RESULT_ARRAY_LEN:
         return None

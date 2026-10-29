@@ -268,6 +268,7 @@ class CallAdmission:
         self.script = script
         self.effects: EffectModel = cache.effects
         self._constants: dict[Binding, tuple[bool, Value]] = {}
+        self._chains: dict[int, tuple[JsCallExpression, Value]] = {}
         self._pure: set[int] = set()
         self.functions = self._collect_named_functions(script)
         changed = True
@@ -381,11 +382,11 @@ class CallAdmission:
         """
         The constant *binding* holds once established, as
         `refinery.lib.scripts.js.deobfuscation.helpers.binding_constant` answers it for a value the
-        text spells; where its one value is a method chain, the value the fold of that chain computes
-        where it stands (`method_chain_value`), which the text need not be able to hold: a table of
-        more strings than a fold may write, split from one string, is read without being written
-        out. Asked once per binding for the admission's lifetime; a binding whose chain reads it
-        back is no constant.
+        text spells; where its one value is a method chain, the value the fold of that chain
+        computes where it stands (`method_chain_value`), which the text need not be able to hold:
+        a table of more strings than a fold may write, split from one string, is read without being
+        written out. Asked once per binding for the admission's lifetime; a binding whose chain
+        reads it back is no constant.
         """
         cached = self._constants.get(binding)
         if cached is None:
@@ -406,16 +407,22 @@ class CallAdmission:
         `(False, None)`: the shared gate admits it with the trust at *call*
         (`refinery.lib.scripts.js.analysis.effects.EffectModel.call_is_foldable`) and the
         interpreter every fold runs in (`interpreter_at`) computes it. A JavaScript exception the
-        call raises is the program's business and no value.
+        call raises is the program's business and no value. A value computed is kept for the
+        admission's lifetime: the chain a binding is given is asked for again where the fold of
+        every call reaches it.
         """
         if not self.holds(call) or not isinstance(strip_parens(call.callee), JsMemberExpression):
             return False, None
+        if (kept := self._chains.get(id(call))) is not None and kept[0] is call:
+            return True, kept[1]
         if not self.effects.call_is_foldable(call, trust=self.trust_at(call)):
             return False, None
         try:
-            return True, self.interpreter_at(call).eval_expression(call)
+            value = self.interpreter_at(call).eval_expression(call)
         except (InterpreterError, IrreducibleExpression, _ThrowSignal):
             return False, None
+        self._chains[id(call)] = call, value
+        return True, value
 
     def constant_at(self, binding: Binding | None, call: JsCallExpression) -> tuple[bool, Value]:
         """

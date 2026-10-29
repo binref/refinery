@@ -1520,26 +1520,25 @@ def _find_generator_call_site(
     scaffolding_end = pos
     ends_a_function = (owner := body[gen_idx].parent) is not None and _is_a_function_body(owner)
     guard_reads = None
-    read_off_the_guard = False
-    if (
-        flag is None
-        and result_var is not None
-        and scaffolding_end + 1 < len(body)
-        and isinstance(guard := body[scaffolding_end + 1], JsIfStatement)
-        and isinstance(spelled := _flag_spelled(guard.test), _FlagVariable)
-    ):
-        flag = spelled
-        read_off_the_guard = True
-    if flag is not None and result_var is not None and scaffolding_end + 1 < len(body):
-        guard_reads = _is_result_guard(
-            body[scaffolding_end + 1],
-            flag,
-            result_var,
-            ends_a_function and scaffolding_end + 2 == len(body),
-        )
+    if result_var is not None and scaffolding_end + 1 < len(body):
+        guard = body[scaffolding_end + 1]
+        named = flag
+        if (
+            named is None
+            and isinstance(guard, JsIfStatement)
+            and isinstance(spelled := _flag_spelled(guard.test), _FlagVariable)
+        ):
+            named = spelled
+        if named is not None:
+            guard_reads = _is_result_guard(
+                guard,
+                named,
+                result_var,
+                ends_a_function and scaffolding_end + 2 == len(body),
+            )
+            if guard_reads is not None:
+                flag = named
     guarded = guard_reads is not None
-    if read_off_the_guard and not guarded:
-        flag = None
     if guard_reads is not None:
         undefined_reads.extend(guard_reads)
         scaffolding_end += 1
