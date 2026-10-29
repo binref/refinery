@@ -2,23 +2,25 @@ from __future__ import annotations
 
 from refinery.lib.argformats import PythonExpression
 from refinery.lib.meta import metavars
-from refinery.lib.types import INF, Param
+from refinery.lib.types import INF, InfiniteIterable, Param
 from refinery.units.blockwise import Arg, ArithmeticUnit, FastBlockError
 
 
 class IndexCounter:
-    mask: int
-    index: int
+    __slots__ = '_m', '_i'
+
+    _m: int
+    _i: int
 
     def init(self, mask):
-        self.mask = mask
-        self.index = -1
+        self._m = mask
+        self._i = -1
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        self.index = index = self.index + 1 & self.mask
+        self._i = index = (self._i + 1) & self._m
         return index
 
 
@@ -100,7 +102,7 @@ class alu(ArithmeticUnit):
         self._index = IndexCounter()
 
         super().__init__(
-            self._index,
+            InfiniteIterable(self._index),
             *argument,
             bigendian=bigendian,
             blocksize=blocksize,

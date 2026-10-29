@@ -20,8 +20,7 @@ class xor(BinaryOperationWithAutoBlockAdjustment):
     def _fastblock_fallback(self, data):
         from Cryptodome.Util import strxor
         size = len(data)
-        it, masked = self._argument_parse_hook(self.args.argument[0])
-        arg0 = self._infinitize_argument(len(data), it, masked)
+        arg0 = self._prepare_argument(len(data), *self._argument_parse_hook(self.args.argument[0]))
         take = len(data) // self.blocksize + 1
         argb = self.unchunk(islice(arg0, take))
         del argb[size:]

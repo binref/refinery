@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from refinery.lib import chunks
 from refinery.lib.inline import iterspread
 from refinery.lib.tools import infinitize
-from refinery.lib.types import INF, InfiniteIterable, Param, asbuffer, buf, isq
+from refinery.lib.types import INF, InfiniteIterable, Param, buf, isq
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
@@ -169,24 +169,43 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     def _argument_parse_hook(self, it: _I) -> tuple[_I, bool]:
         return it, False
 
-    def _infinitize_argument(self, min_size: int, it: _I, masked=False) -> Iterator[int]:
-        def _mask(it: Iterable[int]) -> Iterable[int]:
-            def reduced(it: Iterable[int]):
-                mask = self.fmask
-                warnings = 3
-                for block in it:
-                    out = block & mask
-                    if warnings and out != block:
-                        warnings -= 1
-                        self.log_warn(F'reduced argument to 0x{out:0{self.fbits // 4}X}; original value was 0x{block:X}')
-                        if not warnings:
-                            self.log_warn('additional warnings are suppressed')
-                    yield out
+    def _log_argument_reduction(self, original: int, reduced: int):
+        self.log_warn(F'reduced argument to 0x{reduced:0{self.fbits // 4}X}; original value was 0x{original:X}')
 
-            if isinstance(it, InfiniteIterable):
-                return InfiniteIterable(reduced(it))
-            return reduced(it)
+    def _mask_argument(self, it: _I) -> _I:
+        """
+        Reduces the given argument to the unit's block precision, warning about the first few
+        reductions. Byte buffers pass through unchanged because their elements always fit the frame
+        mask; integers are reduced directly. An `refinery.lib.types.InfiniteIterable` input is
+        wrapped so that the result is still recognized as infinite.
+        """
+        if isinstance(it, int):
+            return it & self.fmask
+        if isinstance(it, (bytes, bytearray)):
+            return it
 
+        def reduced(it: Iterable[int]):
+            mask = self.fmask
+            warnings = 3
+            for block in it:
+                out = block & mask
+                if warnings and out != block:
+                    warnings -= 1
+                    self._log_argument_reduction(block, out)
+                    if not warnings:
+                        self.log_warn('additional warnings are suppressed')
+                yield out
+
+        if isinstance(it, InfiniteIterable):
+            return InfiniteIterable(reduced(it))
+        return reduced(it)
+
+    def _infinitize_argument(self, min_size: int, it: Iterable[int] | int) -> Iterator[int]:
+        """
+        Converts the given argument into an iterator over its blocks. Finite arguments repeat
+        cyclically; byte sequences larger than 1 KiB are materialized at the required size instead,
+        and integers repeat forever.
+        """
         if isinstance(it, (bytes, bytearray)) and (n := len(it)) > 0x400:
             quotient, remainder = divmod(min_size, n)
             if remainder > 0:
@@ -196,9 +215,25 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             return iter(it)
         if isinstance(it, int):
             it = (it,)
-        if not masked:
-            it = _mask(it)
-        return iter(infinitize(it))
+        return iter(infinitize(it)) # type:ignore
+
+    def _prepare_argument(
+        self,
+        min_size: int,
+        it: _I,
+        masked: bool = False,
+        vector: bool = False,
+    ) -> Iterator[int]:
+        """
+        Prepares an argument returned by `_argument_parse_hook`: unless the hook has already reduced
+        it to the unit's block precision, the argument is masked and then infinitized. When `vector`
+        is set, infinite arguments are not reduced here because the caller applies the reduction
+        with vectorized operations; this is used only by the numpy code path in `_fastblock`, which
+        reduces them in `_argument_array`.
+        """
+        if not masked and not (vector and isinstance(it, InfiniteIterable)):
+            it = self._mask_argument(it)
+        return self._infinitize_argument(min_size, it)
 
     @abc.abstractmethod
     def operate(self, block: _T, *args) -> _T:
@@ -215,6 +250,52 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         import numpy
         return numpy
 
+    def _argument_array(self, na: Iterator[int], dtype, num_blocks: int) -> ndarray:
+        """
+        Converts an infinite argument that has not been reduced yet into a numpy array of the given
+        dtype, reducing all values to the unit's block precision. The argument is pulled and
+        converted in chunks so that the temporary memory usage does not grow with the input size.
+        Every chunk is staged in a list before it is converted: values too large for the wide
+        integer type are reduced in Python, so that the pull can never fail halfway through an
+        argument, which shared one-shot arguments would not survive.
+        """
+        numpy = self._numpy
+        wide = numpy.dtype(F'{self._byte_order_symbol}u8')
+        result = numpy.empty(num_blocks, dtype)
+        warnings = 3
+
+        def warn(original: int, reduced: int):
+            nonlocal warnings
+            if not warnings:
+                return
+            warnings -= 1
+            self._log_argument_reduction(original, reduced)
+            if not warnings:
+                self.log_warn('additional warnings are suppressed')
+
+        pos = 0
+        while pos < num_blocks:
+            take = min(num_blocks - pos, 0x10000)
+            chunk = list(itertools.islice(na, take))
+            if len(chunk) < take:
+                raise FastBlockError
+            try:
+                block = numpy.fromiter(chunk, wide, take)
+            except OverflowError:
+                reduced = [v & self.fmask for v in chunk]
+                for original, masked in zip(chunk, reduced):
+                    if original != masked:
+                        warn(original, masked)
+                block = numpy.fromiter(reduced, wide, take)
+            else:
+                excess = numpy.flatnonzero(block > self.fmask)
+                for k in excess[:3].tolist():
+                    warn(chunk[k], int(block[k]) & self.fmask)
+                block &= self.fmask
+            result[pos:pos + take] = block
+            pos += take
+        return result
+
     def _fastblock(self, data) -> bytearray:
         """
         Attempts to perform the operation more quickly by using numpy arrays.
@@ -229,7 +310,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         def _execute_hooks():
             for a in self.args.argument:
                 it, masked = self._argument_parse_hook(a)
-                na = self._infinitize_argument(len(data), it, masked)
+                na = self._prepare_argument(len(data), it, masked, vector=True)
                 yield it, masked, na
 
         _hooks_executed = list(_execute_hooks())
@@ -257,8 +338,8 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                 npa = int(it)
             elif self.precision is INF:
                 npa = numpy.array(list(itertools.islice(na, num_blocks)), dtype=dtype)
-            elif nb := asbuffer(na):
-                npa = numpy.frombuffer(nb, dtype, num_blocks)
+            elif isinstance(it, InfiniteIterable):
+                npa = self._argument_array(na, dtype, num_blocks)
             else:
                 npa = numpy.fromiter(na, dtype, num_blocks)
             np_args.append(npa)
@@ -268,7 +349,13 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         else:
             rest = data[-_t:]
             if _truncate < 1:
-                last_ops = [next(a) for a in br_args]
+                last_ops = []
+                for a in br_args:
+                    block = next(a)
+                    reduced = block & self.fmask
+                    if reduced != block:
+                        self._log_argument_reduction(block, reduced)
+                    last_ops.append(reduced)
                 last_int = int.from_bytes(rest, self._byte_order_adjective)
                 dst_tail = self.operate(last_int, *last_ops) & self.fmask
                 dst_tail = dst_tail.to_bytes(self.blocksize, self._byte_order_adjective)
@@ -330,7 +417,10 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             self.log_debug('fast block method successful')
             return result
         size = len(data)
-        arguments = [self._infinitize_argument(size, *self._argument_parse_hook(a)) for a in self.args.argument]
+        arguments = [
+            self._prepare_argument(size, *self._argument_parse_hook(a))
+            for a in self.args.argument
+        ]
         try:
             spread = iterspread(self.operate, self.chunk(data), *arguments, mask=self.fmask)
             out = self.unchunk(spread(self))

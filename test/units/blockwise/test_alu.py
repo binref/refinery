@@ -29,6 +29,22 @@ class TestALU(TestUnitBase):
         unit = self.load("B+K")
         self.assertEqual(bytes(bytes(5) | unit), bytes(range(5)))
 
+    def test_index_counter_does_not_buffer(self):
+        import tracemalloc
+
+        data = bytes(0x10000)
+        unit = self.load('B+K')
+        unit(data)
+        tracemalloc.start()
+        try:
+            unit(data)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        # wrapping the counter in a cycle retains one pointer per input block, which adds
+        # roughly eight times the input size to the peak; the unbuffered path stays below six
+        self.assertLess(peak, 6 * len(data))
+
     def test_real_world_01(self):
         data = bytes.fromhex('7C737376545F0808244368244668652724684643275F2424054B')
         goal = b'https'b'://45.41.204'b'.150:443\0'
