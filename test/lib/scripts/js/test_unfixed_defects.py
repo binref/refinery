@@ -2096,9 +2096,9 @@ class TestAnAccessorInstalledOnABuiltInRunsWhereItIsRead(TestBase):
 
 #: Programs replacing a method of a built-in through a route that does not spell the name of the
 #: built-in, then calling it, mapped to what Node prints for them: a prototype reached from a value
-#: (`Object.getPrototypeOf(new Date())`, `__proto__` of an instance, the prototype of a string), a
-#: global read under a key only the run computes, and the `vm` module running the write in the same
-#: context.
+#: (`Object.getPrototypeOf(new Date())`, `__proto__` of an instance, the prototype of a string, the
+#: constructor of a string taken apart by a pattern), a global read under a key only the run
+#: computes, and the `vm` module running the write in the same context.
 A_BUILT_IN_REPLACED_WITHOUT_SPELLING_ITS_NAME = {
     inspect.cleandoc("""
         Object.getPrototypeOf(new Date()).getTime = function () { return 5000000000000; };
@@ -2127,6 +2127,11 @@ A_BUILT_IN_REPLACED_WITHOUT_SPELLING_ITS_NAME = {
     inspect.cleandoc("""
         var s = 'x';
         Object.getPrototypeOf(s).toUpperCase = function () { return 'replaced'; };
+        console.log('a'.toUpperCase());
+    """): 'replaced\n',
+    inspect.cleandoc("""
+        var {constructor: S} = '';
+        S.prototype.toUpperCase = function () { return 'replaced'; };
         console.log('a'.toUpperCase());
     """): 'replaced\n',
     inspect.cleandoc("""
@@ -3626,6 +3631,44 @@ class TestARestElementOffTheGlobalObjectIsNotAReflectionSurface(TestBase):
             """
         )
         self.assertEqual(source, deobfuscate_source(source))
+
+
+#: A program running code it builds at runtime through `Function` reached as the constructor of a
+#: constructor, then converting an array, mapped to what Node prints for it. The code replaces
+#: `Array.prototype.join`, which converting `[5]` to a number runs.
+CODE_RUN_THROUGH_A_CONSTRUCTOR_READ_IN_PLACE = {
+    inspect.cleandoc("""
+        var code = process.argv.length > 99 ? '' : 'Array.prototype.join = function () { return "J"; };';
+        [].constructor.constructor(code)();
+        console.log(-[5]);
+    """): 'NaN\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestCodeRunThroughAConstructorReadInPlaceIsAReflectionSurface(TestBase):
+    """
+    `[].constructor.constructor` is `Function`, so the function it builds runs code the strict model
+    cannot read. The reflection-surface test counts a `constructor` read only where its value is
+    written through or flows onward
+    (`refinery.lib.scripts.js.analysis.model._prototype_surface_escapes`), and one invoked in place
+    is left uncounted: the program is read as free of reflection and `-[5]` is folded to `-5`,
+    while `Function(code)()` with the same string is a surface and refuses the fold. Counting the
+    read in place closes it, at the price of refusing the folds of every file that builds a
+    function in place the same way, which defense code does on values the detector cannot type.
+    """
+
+    @unittest.expectedFailure
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        """
+        Node prints `NaN` for the program of `CODE_RUN_THROUGH_A_CONSTRUCTOR_READ_IN_PLACE`; its
+        deobfuscation prints `-5`.
+        """
+        rows = CODE_RUN_THROUGH_A_CONSTRUCTOR_READ_IN_PLACE
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
 
 
 class TestASetterSwappedOntoObjectPrototypeIsNotSeen(TestBase):
