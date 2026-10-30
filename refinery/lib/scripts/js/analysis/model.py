@@ -111,6 +111,7 @@ from refinery.lib.scripts.js.model import (
     JsWithStatement,
     file_ended_inside,
     names_a_property,
+    static_concatenation,
     static_property_key,
     static_string,
     strip_parens,
@@ -1776,9 +1777,9 @@ def _lets_a_constructor_escape(node: Node) -> bool:
 def _concatenation_spells(concatenations: list[JsBinaryExpression], text: str) -> bool:
     """
     Whether one of the `+` concatenations, each listed before those it holds, or a part of one,
-    spells *text* from constant strings, as `static_string` reads it. They are read from the inside
-    out, each once, and a string longer than *text* is kept only as long as it takes to stay longer,
-    so a chain of concatenations costs its length rather than its square.
+    spells *text* from constants, as `static_string` reads it (`static_concatenation`). They are
+    read from the inside out, each once, and a string longer than *text* is kept only as long as it
+    takes to stay longer, so a chain of concatenations costs its length rather than its square.
     """
     limit = len(text) + 1
     spelled: dict[Node, str | None] = {}
@@ -1790,12 +1791,11 @@ def _concatenation_spells(concatenations: list[JsBinaryExpression], text: str) -
         return static_string(node)
 
     for concatenation in reversed(concatenations):
-        left = part(concatenation.left)
-        right = part(concatenation.right) if left is not None else None
-        if left is None or right is None:
+        value = static_concatenation(concatenation, part(concatenation.left), part(concatenation.right))
+        if value is None:
             spelled[concatenation] = None
             continue
-        value = spelled[concatenation] = (left + right)[:limit]
+        value = spelled[concatenation] = value[:limit]
         if value == text:
             return True
     return False

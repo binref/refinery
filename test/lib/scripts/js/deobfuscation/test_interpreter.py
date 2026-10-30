@@ -172,6 +172,11 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         self.assertEqual('var x = 1024;', self._fold("'2' ** '10'"))
         self.assertEqual('var x = 1024;', self._fold('Math.pow(2, 10)'))
 
+    def test_pow_of_two_under_a_negative_exponent_is_folded(self):
+        self.assertEqual('var x = 0.5;', self._fold('2 ** -1'))
+        self.assertEqual('var x = 0.00390625;', self._fold('Math.pow(2, -8)'))
+        self.assertEqual('var x = 2;', self._fold('0.5 ** -1'))
+
     def test_undefined_plus_number_is_nan(self):
         # undefined coerces to NaN, null coerces to 0 — the two must stay distinct.
         self.assertEqual('var x = 0 / 0;', self._fold('undefined + 1'))
@@ -366,6 +371,41 @@ class TestABufferConvertsToTheTextItsBytesDecodeTo(TestJsDeobfuscator):
             "Buffer.from('b') > 'a,'",
             "Buffer.from('ab') == 'ab'",
             "Buffer.from([0xff, 0x41]).toString('utf8')",
+        ]
+        folded = [self._fold(expression) for expression in expressions]
+        self.assertEqual([], [text for text in folded if not text.startswith('var x = ')])
+        self.assertEqual(
+            code_units(expressions),
+            code_units([text.removeprefix('var x = ').removesuffix(';') for text in folded]),
+        )
+
+
+class TestABufferDecodesOnlyTheBytesFromItsStartToItsEnd(TestJsDeobfuscator):
+    """
+    `buf.toString(encoding, start, end)` decodes the bytes from `start` up to `end` and reads an
+    `undefined` encoding as UTF-8. The first test states the examples of the Node documentation for
+    `buf.toString`.
+    """
+
+    def test_the_examples_of_the_node_documentation(self):
+        alphabet = "Buffer.from('abcdefghijklmnopqrstuvwxyz')"
+        self.assertEqual("var x = 'abcde';", self._fold(F"{alphabet}.toString('utf8', 0, 5)"))
+        accented = "Buffer.from('tést')"
+        self.assertEqual("var x = 'té';", self._fold(F"{accented}.toString('utf8', 0, 3)"))
+        self.assertEqual("var x = 'té';", self._fold(F"{accented}.toString(undefined, 0, 3)"))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_each_window_folds_to_the_value_node_computes(self):
+        expressions = [
+            "Buffer.from('hello').toString('hex', 1, 3)",
+            "Buffer.from('hello').toString('base64', 2)",
+            "Buffer.from('hello').toString('utf8', 3, 1)",
+            "Buffer.from('hello').toString('utf8', -2, 9)",
+            "Buffer.from('hello').toString('utf8', 1.9, '4')",
+            "Buffer.from('hello').toString('utf8', 0 / 0)",
+            "Buffer.from('hello').toString('utf8', 1, 0 / 0)",
+            "Buffer.from('hello').toString('latin1', null, 2)",
+            "Buffer.from([0xe2, 0x82, 0xac]).toString('utf8', 1)",
         ]
         folded = [self._fold(expression) for expression in expressions]
         self.assertEqual([], [text for text in folded if not text.startswith('var x = ')])

@@ -503,8 +503,9 @@ class JsSimplifications(Transformer):
         (`refinery.lib.scripts.js.deobfuscation.helpers.folded_literal`), or `None` where it may
         write none: no literal denotes the value, or the literal spells *node* again. `0 / 0` and
         `void 0` are how `NaN` and `undefined` are written, and writing either in place of itself
-        would rewrite the node for as long as the pass is allowed to run. Every fold of this pass
-        that writes a computed value asks here.
+        would rewrite the node for as long as the pass is allowed to run. The fold of a unary
+        operator, of a binary operator over two primitives, and of a member read write here, being
+        the folds whose value may be any value.
         """
         literal = folded_literal(value)
         if literal is None or _respells(literal, node):
@@ -1089,10 +1090,9 @@ class JsSimplifications(Transformer):
         may be dropped. A third, `typeof` of a pristine guaranteed global, is a value the operator hides
         rather than one the operand denotes, so it is decided by name (`_typeof_of_global_read`).
 
-        A value whose spelling still needs a unary operator is left alone. `-Infinity` and `void 0` are
-        how those two values are written, so folding one of them produces the expression it replaces:
-        no operator is removed, and the pass would rewrite the same node for as long as it is allowed
-        to run. Declining says the operand was already written in the shortest form it has.
+        A node that already spells its value the way a fold writes it is left alone (`_written`):
+        `void 0` is how `undefined` is written, so folding it produces the expression it replaces,
+        and the pass would rewrite the same node for as long as it is allowed to run.
         """
         self.generic_visit(node)
         operand = node.operand

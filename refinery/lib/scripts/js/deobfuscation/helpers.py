@@ -1,8 +1,8 @@
 """
-Shared utilities for JavaScript deobfuscation transforms: the two bridges between the syntax tree and
-the value domain of `refinery.lib.scripts.js.values` (`extract_literal_value`, `value_to_node`), the
-own-property read on values (`read_data_property`), and the questions about a value that only the
-program can answer, such as whether converting it runs code the file installed
+Shared utilities for JavaScript deobfuscation transforms: the two bridges between the syntax tree
+and the value domain of `refinery.lib.scripts.js.values` (`extract_literal_value`, `value_to_node`),
+the own-property read on values (`read_data_property`), and the questions about a value that only
+the program can answer, such as whether converting it runs code the file installed
 (`coerces_uninterceptably`).
 """
 from __future__ import annotations

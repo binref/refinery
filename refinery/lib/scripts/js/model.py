@@ -982,8 +982,7 @@ def static_string(node: Node | None) -> str | None:
     """
     The string *node* certainly evaluates to, or `None`. It reads a string literal, a
     substitution-free template, and a concatenation of those with each other or with a number, a
-    boolean or `null` — the forms a constant fold collapses to a literal without asking what a
-    name denotes.
+    boolean or `null` literal (`static_concatenation`).
 
     This exists so that an analysis answer cannot change as folds fire: a property key the
     simplifier will turn into `'defineProperty'` must already be read as that name, or a consumer
@@ -1002,18 +1001,25 @@ def static_string(node: Node | None) -> str | None:
             return None
         return ''.join(quasi.value or '' for quasi in node.quasis)
     if isinstance(node, JsBinaryExpression) and node.operator == '+':
-        left = static_string(node.left)
-        right = static_string(node.right)
-        if left is None and right is None:
-            return None
-        if left is None:
-            left = _primitive_literal_text(node.left)
-        if right is None:
-            right = _primitive_literal_text(node.right)
-        if left is None or right is None:
-            return None
-        return left + right
+        return static_concatenation(node, static_string(node.left), static_string(node.right))
     return None
+
+
+def static_concatenation(node: JsBinaryExpression, left: str | None, right: str | None) -> str | None:
+    """
+    The string the `+` concatenation *node* certainly evaluates to, given the strings *left* and
+    *right* its two operands were read as (`static_string`), or `None`. One operand has to be a
+    string, and the other a string or a number, boolean or `null` literal.
+    """
+    if left is None and right is None:
+        return None
+    if left is None:
+        left = _primitive_literal_text(node.left)
+    if right is None:
+        right = _primitive_literal_text(node.right)
+    if left is None or right is None:
+        return None
+    return left + right
 
 
 def _primitive_literal_text(node: Node | None) -> str | None:

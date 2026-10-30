@@ -124,6 +124,7 @@ from refinery.lib.scripts.js.values import (
     to_boolean,
     to_number,
     to_string,
+    utf8_text,
 )
 
 MAX_ITERATIONS = 100_000
@@ -1136,18 +1137,43 @@ def _buffer_from(args: list[Value]) -> Value:
     raise InterpreterError
 
 
+def _buffer_bound(bound: Value, length: int, default: int) -> int:
+    """
+    The offset `Buffer.prototype.toString` reads from the *bound* it is passed for a Buffer of
+    *length* bytes: *default* for `undefined`, and otherwise the number the primitive converts to,
+    clamped to the Buffer and truncated towards zero, with `NaN` read as zero. An end before the
+    start decodes no bytes, and a slice from the clamped start to the clamped end is empty there.
+    """
+    if bound is None:
+        return default
+    if not converts_uninterceptably(bound):
+        raise InterpreterError
+    number = to_number(bound)
+    if number != number:
+        return 0
+    return int(min(max(number, 0), length))
+
+
 @_register((JsBuffer, 'toString'))
 def _list_to_string(buf: list, args: list[Value]) -> Value:
-    encoding = args[0] if args else 'utf8'
+    """
+    `Buffer.prototype.toString(encoding, start, end)`, which decodes the bytes from *start* up to
+    *end* and reads an `undefined` encoding as UTF-8.
+    """
+    encoding = args[0] if args else None
+    if encoding is None:
+        encoding = 'utf8'
     if not isinstance(encoding, str):
         raise InterpreterError
+    start = _buffer_bound(args[1] if len(args) > 1 else None, len(buf), 0)
+    end = _buffer_bound(args[2] if len(args) > 2 else None, len(buf), len(buf))
     try:
-        raw = bytes(_to_int(v) & 0xFF for v in buf)
+        raw = bytes(_to_int(v) & 0xFF for v in buf[start:end])
     except (TypeError, ValueError, OverflowError):
         raise InterpreterError
     try:
         if encoding in ('utf8', 'utf-8'):
-            return to_string(JsBuffer(raw))
+            return utf8_text(raw)
         if encoding in ('latin1', 'binary'):
             return raw.decode('latin-1')
         if encoding == 'base64':

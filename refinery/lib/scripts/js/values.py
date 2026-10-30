@@ -231,12 +231,20 @@ def to_string(value: Value) -> str:
     if isinstance(value, (int, float)):
         return js_number_to_string(value)
     if isinstance(value, JsBuffer):
-        return to_code_units(bytes(_to_int(v) & 0xFF for v in value).decode('utf-8', 'replace'))
+        return utf8_text(bytes(_to_int(v) & 0xFF for v in value))
     if isinstance(value, list):
         return ','.join(_array_element_string(v) for v in value)
     if isinstance(value, FUNCTION_NODES):
         return function_source(value)
     return '[object Object]'
+
+
+def utf8_text(data: bytes) -> str:
+    """
+    The string a Buffer holding *data* decodes to as UTF-8, as Node decodes it: U+FFFD for each
+    sequence that is not UTF-8, and every character spelled in UTF-16 code units.
+    """
+    return to_code_units(data.decode('utf-8', 'replace'))
 
 
 def _array_element_string(value: Value) -> str:
@@ -326,8 +334,8 @@ def _js_pow(base: int | float, exp: int | float) -> float:
     other pair it asks for a value the implementation approximates, and engines differ in the last
     digit: V8 answers `9 ** 17` with `16677181699666570`, where the nearest double to the power is
     `16677181699666568`. A result is therefore given only where every engine agrees on it: a base
-    raised to a positive integer exponent whose power is a double, or so large that it is an
-    infinity. Any other pair raises `HostApproximated`.
+    raised to an integer exponent whose power is a double, or so large that it is an infinity. Any
+    other pair raises `HostApproximated`.
 
     Both operands are coerced here and not only at `BINARY_OPS`, because this is the one operator
     that answers an unbounded amount of work when handed Python integers, and `Math.pow` reaches it
@@ -351,7 +359,7 @@ def _js_pow(base: int | float, exp: int | float) -> float:
         return -magnitude if odd and math.copysign(1.0, base) < 0 else magnitude
     if base < 0 and exp != int(exp):
         return float('nan')
-    if exp > 0 and exp == int(exp):
+    if exp == int(exp):
         power = _exact_power(base, int(exp))
         if power is not None:
             return power
@@ -360,21 +368,24 @@ def _js_pow(base: int | float, exp: int | float) -> float:
 
 def _exact_power(base: float, exp: int) -> float | None:
     """
-    The finite nonzero *base* raised to the positive *exp* where every engine computes the same
+    The finite nonzero *base* raised to the nonzero *exp* where every engine computes the same
     double, or `None`: the power itself where it is a double, and an infinity of its sign where it
     is at least `2 ** 1024`, which is past the largest double by more than any engine errs.
 
     The base is an odd integer times a power of two, and its power is a double exactly where the
-    power of the odd integer has at most 53 bits and the power of two lies in the range of a double.
-    The odd integer is raised only where that bound can hold, and an infinity is otherwise read from
-    the logarithm only where it is clear of `2 ** 1024`, so the work stays bounded.
+    power of the odd integer is an integer of at most 53 bits and the power of two lies in the range
+    of a double. Below a negative exponent only the odd integer `1` stays an integer, so `2 ** -1`
+    is the double `0.5` and `10 ** -2` is no double at all. The odd integer is raised only where the
+    bound can hold, and an infinity is otherwise read from the logarithm only where it is clear of
+    `2 ** 1024`, so the work stays bounded.
     """
     numerator, denominator = abs(base).as_integer_ratio()
     twos = (numerator & -numerator).bit_length() - 1
     odd = numerator >> twos
     scale = (twos - denominator.bit_length() + 1) * exp
     sign = -1.0 if base < 0 and exp % 2 else 1.0
-    if exp * (odd.bit_length() - 1) < 53 and (power := odd ** exp) >> 53 == 0:
+    power = _odd_power(odd, exp)
+    if power is not None:
         if power.bit_length() + scale > 1024:
             return math.copysign(float('inf'), sign)
         if scale < -1074:
@@ -383,6 +394,18 @@ def _exact_power(base: float, exp: int) -> float | None:
     if exp * math.log2(abs(base)) >= 1025:
         return math.copysign(float('inf'), sign)
     return None
+
+
+def _odd_power(odd: int, exp: int) -> int | None:
+    """
+    The odd integer *odd* raised to *exp* where that is an integer of at most 53 bits, or `None`.
+    """
+    if odd == 1:
+        return 1
+    if exp < 0 or exp * (odd.bit_length() - 1) >= 53:
+        return None
+    power = odd ** exp
+    return power if power >> 53 == 0 else None
 
 
 UNARY_OPS: dict[str, Callable[[Value], Value]] = {

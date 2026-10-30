@@ -111,6 +111,7 @@ from test.lib.scripts.js.test_parser_recovery import (
 
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
+from refinery.lib.scripts.js.model import static_string
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
@@ -1471,6 +1472,51 @@ class TestAnOperatorCoercingAnArrayConsultsTheChainThatConvertsIt(TestBase):
 
     Off the release gate for the reason given there.
     """
+
+
+#: Concatenations of a string with a unary operator over a literal, mapped to the string the
+#: constant fold collapses each to: `String(-1)` is `'-1'`, `String(-0)` is `'0'`, `!0` is `true`
+#: and `void 0` is `undefined`.
+A_CONCATENATION_WITH_A_UNARY_OPERATOR_OVER_A_LITERAL = {
+    "'x' + -1": 'x-1',
+    "'a' + -0": 'a0',
+    "'' + !0": 'true',
+    "'' + void 0": 'undefined',
+}
+
+
+class TestTheStaticStringReadsEveryConcatenationTheFoldCollapses(TestBase):
+    """
+    `refinery.lib.scripts.js.model.static_string` exists so that an analysis answer cannot change
+    as folds fire: a key the simplifier will turn into a name must already be read as that name.
+    It reads a concatenation with a number, boolean or `null` literal, but not one with a unary
+    operator over a literal, which the fold reads through
+    `refinery.lib.scripts.js.deobfuscation.helpers.denoted_value` and collapses. A key spelled
+    that way is read as no string before the fold and as its text after it.
+
+    The two readers sit in two layers, and the syntax model cannot evaluate a unary operator
+    without the value domain, which imports it. The fix is one reading of the primitive an
+    expression spells without a name, at the language level, that both build on.
+
+    Off the release gate: it needs a key an analysis asks about, such as `constructor` or
+    `defineProperty`, spelled as a concatenation with a unary operator, which a program has to be
+    written for.
+    """
+
+    def test_the_fold_collapses_each_concatenation_to_its_string(self):
+        rows = A_CONCATENATION_WITH_A_UNARY_OPERATOR_OVER_A_LITERAL
+        self.assertEqual(
+            {source: folded(F'SINK({source});') for source in rows},
+            {source: F"SINK('{text}');" for source, text in rows.items()},
+        )
+
+    @unittest.expectedFailure
+    def test_the_static_string_reads_each_concatenation_as_its_string(self):
+        rows = A_CONCATENATION_WITH_A_UNARY_OPERATOR_OVER_A_LITERAL
+        self.assertEqual(
+            {source: static_string(JsParser(F'({source});').parse().body[0].expression) for source in rows},
+            rows,
+        )
 
 
 #: A function given a `toString` of its own and then converted by a built-in that turns its

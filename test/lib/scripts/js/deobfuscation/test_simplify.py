@@ -2081,9 +2081,25 @@ class TestAPowerTheEngineApproximatesIsNotFolded(TestJsDeobfuscator):
         self.assertEqual('f(1024);', self._simplify("f('2' ** '10');"))
         self.assertEqual('f(1024);', self._simplify('f(Math.pow(2, 10));'))
 
+    def test_a_power_of_two_under_a_negative_exponent_is_folded(self):
+        self.assertEqual('f(0.5);', self._simplify('f(2 ** -1);'))
+        self.assertEqual('f(0.00390625);', self._simplify('f(Math.pow(2, -8));'))
+        self.assertEqual('f(2);', self._simplify('f(0.5 ** -1);'))
+
+    def test_any_other_base_under_a_negative_exponent_stays(self):
+        self.assertEqual('f(10 ** -2);', self._simplify('f(10 ** -2);'))
+        self.assertEqual('f(3 ** -1);', self._simplify('f(3 ** -1);'))
+
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_node_computes_the_last_digit_the_docstring_states(self):
         self.assertEqual(['16677181699666570', '1024'], code_units(['9 ** 17', '2 ** 10']))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_computes_each_power_of_two_under_a_negative_exponent_as_folded(self):
+        self.assertEqual(
+            ['0.5', '0.00390625', '2'],
+            code_units(['2 ** -1', 'Math.pow(2, -8)', '0.5 ** -1']),
+        )
 
 
 class TestTypeofAGuaranteedGlobalIsFolded(TestJsDeobfuscator):
