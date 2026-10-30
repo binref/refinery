@@ -58,7 +58,7 @@ from refinery.lib.scripts.js.model import (
     wraps_return,
 )
 from refinery.lib.scripts.js.numbers import exact_integer, js_parse_int, js_string_to_number
-from refinery.lib.scripts.js.values import BINARY_OPS
+from refinery.lib.scripts.js.values import BINARY_OPS, HostApproximated
 
 
 class Encoding(enum.Enum):
@@ -480,6 +480,23 @@ def _decode_string(raw: str, encoding: Encoding, key: str | None = None) -> str:
     raise _EvalError
 
 
+def _arithmetic(operator: str, left: float, right: float) -> float:
+    """
+    The number *operator* computes from two numbers, refusing an operator whose result is no number,
+    a power the engine approximates, and a division by zero.
+    """
+    apply = BINARY_OPS.get(operator)
+    if apply is None or operator == '/' and right == 0:
+        raise _EvalError
+    try:
+        result = apply(left, right)
+    except HostApproximated:
+        raise _EvalError
+    if not isinstance(result, float):
+        raise _EvalError
+    return result
+
+
 def _eval_arithmetic(node: Node) -> float:
     """
     Evaluate a pure arithmetic expression AST to a float. Handles numeric literals, unary `+`/`-`,
@@ -498,11 +515,7 @@ def _eval_arithmetic(node: Node) -> float:
     if isinstance(node, JsBinaryExpression) and node.left and node.right:
         left = _eval_arithmetic(node.left)
         right = _eval_arithmetic(node.right)
-        fn = BINARY_OPS.get(node.operator)
-        if fn is not None:
-            if node.operator == '/' and right == 0:
-                raise _EvalError
-            return fn(left, right)
+        return _arithmetic(node.operator, left, right)
     raise _EvalError
 
 
@@ -536,11 +549,7 @@ def _eval_checksum(
     if isinstance(node, JsBinaryExpression) and node.left and node.right:
         lhs = recurse(node.left)
         rhs = recurse(node.right)
-        fn = BINARY_OPS.get(node.operator)
-        if fn is not None:
-            if node.operator == '/' and rhs == 0:
-                raise _EvalError
-            return fn(lhs, rhs)
+        return _arithmetic(node.operator, lhs, rhs)
     if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
         if node.callee.name == 'parseInt' and len(node.arguments) >= 1:
             radix = _checksum_radix(node.arguments[1:], recurse)

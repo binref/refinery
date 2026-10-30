@@ -3,6 +3,8 @@ JavaScript syntax normalization transforms.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from refinery.lib.scripts import Expression, Node, Transformer, set_child, set_child_list, set_value
 from refinery.lib.scripts.js.analysis.assignment import DefiniteAssignmentModel
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
@@ -34,14 +36,12 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     allocated_object_type,
     denoted_value,
     escape_js_string,
-    extract_literal_value,
     folded_literal,
     is_literal,
     is_nullish,
     is_simple_expression,
     is_truthy,
     is_valid_property_key,
-    make_numeric_literal,
     make_string_literal,
     numeric_value,
     read_data_property,
@@ -68,7 +68,6 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsLogicalExpression,
     JsMemberExpression,
-    JsNullLiteral,
     JsNumericLiteral,
     JsObjectExpression,
     JsParenthesizedExpression,
@@ -86,13 +85,17 @@ from refinery.lib.scripts.js.numbers import exact_integer
 from refinery.lib.scripts.js.options import clock_window
 from refinery.lib.scripts.js.precedence import parens_required
 from refinery.lib.scripts.js.strict import joins_directive_prologue, spelling_states
+from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.lib.scripts.js.values import (
-    RELATIONAL_OPS,
+    BINARY_OPS,
     UNARY_OPS,
+    HostApproximated,
     converts_uninterceptably,
-    eval_binary_op,
     to_string,
 )
+
+if TYPE_CHECKING:
+    from refinery.lib.scripts.js.values import Value
 
 _OBJECT_PROTO_PROPERTIES = OBJECT_PROTOTYPE_MEMBERS
 
@@ -109,24 +112,14 @@ _MIRRORED_COMPARISONS = {
 }
 
 
-def concat_string(node: Expression | None) -> str | None:
+def _respells(literal: Expression, node: Node) -> bool:
     """
-    The string *node* contributes to a `+` concatenation, or `None` when appending it to a string cannot
-    be decided statically.
-
-    This is deliberately narrower than `_node_to_value`: only a primitive literal qualifies. Every
-    primitive converts by an internal specification operation that no program can intercept — patching
-    `Number.prototype.toString`, `valueOf`, or even `Symbol.toPrimitive` leaves `'a' + 1` as `'a1'` — so
-    the result is a property of the syntax alone and needs no fold-admission gate. An array or object
-    literal is excluded precisely because its conversion is interceptable, through `Array.prototype.join`
-    and `Object.prototype.toString`.
+    Whether writing *literal* in place of *node* would write the same node again.
     """
-    if isinstance(node, JsStringLiteral):
-        return node.value
-    ok, value = extract_literal_value(node)
-    if not ok or isinstance(value, list):
-        return None
-    return to_string(value)
+    if type(literal) is not type(node):
+        return False
+    synthesizer = JsSynthesizer()
+    return synthesizer.convert(literal) == synthesizer.convert(node)
 
 
 def _is_the_object_of_an_in(node: Node) -> bool:
@@ -469,45 +462,68 @@ class JsSimplifications(Transformer):
         if node.left is None or node.right is None:
             return None
         op = node.operator
-        left_str = string_value(node.left)
-        right_str = string_value(node.right)
-        if op == '+' and left_str is not None and right_str is not None:
-            return make_string_literal(left_str + right_str)
+        if (folded := self._fold_known_operands(node)) is not None:
+            return folded
         if op == '+' and (merged := self._merge_concat_tail(node)) is not None:
             return merged
-        left_num = numeric_value(node.left)
-        right_num = numeric_value(node.right)
-        if left_num is not None and right_num is not None:
-            result = eval_binary_op(op, left_num, right_num)
-            if result is None:
-                pass
-            elif isinstance(result, bool):
-                return JsBooleanLiteral(value=result)
-            elif isinstance(result, (int, float)):
-                return make_numeric_literal(result)
         if (decided := self._clock_comparison(node)) is not None:
             return JsBooleanLiteral(value=decided)
-        if op in ('===', '!==', '==', '!='):
-            equal: bool | None = None
-            if left_str is not None and right_str is not None:
-                equal = left_str == right_str
-            elif (
-                isinstance(node.left, JsBooleanLiteral)
-                and isinstance(node.right, JsBooleanLiteral)
-            ):
-                equal = node.left.value == node.right.value
-            elif isinstance(node.left, JsNullLiteral) and isinstance(node.right, JsNullLiteral):
-                equal = True
-            if equal is not None:
-                return JsBooleanLiteral(value=equal if op in ('===', '==') else not equal)
-        if op in RELATIONAL_OPS:
-            if left_str is not None and right_str is not None:
-                return JsBooleanLiteral(value=RELATIONAL_OPS[op](left_str, right_str))
         if op == 'in' and isinstance(node.left, JsStringLiteral) and node.left.value is not None:
             result = self._resolve_in(node, node.left.value)
             if result is not None:
                 return JsBooleanLiteral(value=result)
         return None
+
+    def _fold_known_operands(self, node: JsBinaryExpression) -> Expression | None:
+        """
+        The literal for what *node* computes where both operands denote a primitive, answered by
+        `refinery.lib.scripts.js.values.BINARY_OPS`, so that a fold performed here and the same
+        operator applied by the interpreter cannot disagree. A primitive converts by an operation no
+        program can replace, so the values alone decide the result. A power whose value the language
+        leaves to the engine is not written.
+        """
+        apply = BINARY_OPS.get(node.operator)
+        if apply is None:
+            return None
+        known, left = self._denoted_primitive(node.left)
+        if not known:
+            return None
+        known, right = self._denoted_primitive(node.right)
+        if not known:
+            return None
+        try:
+            value = apply(left, right)
+        except HostApproximated:
+            return None
+        return self._written(node, value)
+
+    def _written(self, node: Node, value: Value) -> Expression | None:
+        """
+        The literal a fold writes in place of *node* for the *value* it computed
+        (`refinery.lib.scripts.js.deobfuscation.helpers.folded_literal`), or `None` where it may
+        write none: no literal denotes the value, or the literal spells *node* again. `0 / 0` and
+        `void 0` are how `NaN` and `undefined` are written, and writing either in place of itself
+        would rewrite the node for as long as the pass is allowed to run. Every fold of this pass
+        that writes a computed value asks here.
+        """
+        literal = folded_literal(value)
+        if literal is None or _respells(literal, node):
+            return None
+        return literal
+
+    def _denoted_primitive(self, node: Node | None) -> tuple[bool, Value]:
+        """
+        The value *node* denotes (`refinery.lib.scripts.js.deobfuscation.helpers.denoted_value`)
+        where it is a primitive, as `(True, value)`, or `(False, None)`. Every primitive converts by
+        an internal specification operation that no program can intercept, so an operator applied
+        to it answers the same whatever the file did to the prototypes
+        (`refinery.lib.scripts.js.values.converts_uninterceptably`); an array literal is excluded
+        because its conversion runs `Array.prototype.join`.
+        """
+        known, value = denoted_value(node, self.model)
+        if not known or not converts_uninterceptably(value):
+            return False, None
+        return True, value
 
     def _clock_comparison(self, node: JsBinaryExpression) -> bool | None:
         """
@@ -555,12 +571,13 @@ class JsSimplifications(Transformer):
             return None
         if inner.left is None or (head := string_value(inner.right)) is None:
             return None
-        if (tail := concat_string(node.right)) is None:
+        known, tail = self._denoted_primitive(node.right)
+        if not known:
             return None
         return JsBinaryExpression(
             operator='+',
             left=inner.left,
-            right=make_string_literal(head + tail),
+            right=make_string_literal(head + to_string(tail)),
         )
 
     def visit_JsCallExpression(self, node: JsCallExpression):
@@ -924,7 +941,7 @@ class JsSimplifications(Transformer):
             return None
         if isinstance(value, str) and self._stands_in_a_directive_prologue(node):
             return None
-        return value_to_node(value)
+        return self._written(node, value)
 
     def _stands_in_a_directive_prologue(self, node: Node) -> bool:
         """
@@ -1101,10 +1118,7 @@ class JsSimplifications(Transformer):
         known, value = denoted_value(operand, self.model)
         if not known:
             return None
-        folded = value_to_node(apply(value))
-        if isinstance(folded, JsUnaryExpression):
-            return None
-        return folded
+        return self._written(node, apply(value))
 
     def visit_JsStringLiteral(self, node: JsStringLiteral):
         """

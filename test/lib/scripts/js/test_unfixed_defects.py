@@ -1436,6 +1436,43 @@ class TestABuiltinCoercingAnArgumentConsultsTheChainThatConvertsIt(TestBase):
     """
 
 
+#: A unary `+` converts its operand to a number the way `Number` does, running the same prototype
+#: methods for an array. Each row replaces one of them, so every program here prints what the
+#: replacement decides: `9` where `join` answers `'9'`, and `5` where `valueOf` answers `5`.
+AN_ARRAY_AN_OPERATOR_COERCES_THROUGH_A_REPLACED_CHAIN = {
+    'a replaced join': Program(
+        "Array.prototype.join = function () { return '9'; };\nconsole.log(+[5]);",
+        prints('9'),
+        Reading.SCRIPT,
+    ),
+    'a replaced value_of': Program(
+        'Array.prototype.valueOf = function () { return 5; };\nconsole.log(+[]);',
+        prints('5'),
+        Reading.SCRIPT,
+    ),
+    'a sum over a replaced value_of': Program(
+        'Array.prototype.valueOf = function () { return 5; };\nconsole.log(+[] + 1);',
+        prints('6'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(AN_ARRAY_AN_OPERATOR_COERCES_THROUGH_A_REPLACED_CHAIN)
+class TestAnOperatorCoercingAnArrayConsultsTheChainThatConvertsIt(TestBase):
+    """
+    The fold of a unary operator reads an array literal as the number its specification conversion
+    gives, `0` for `+[]` and `5` for `+[5]`, without asking whether the program replaced a method
+    that conversion runs, and an operator over the folded operand computes on with that number.
+    It is the defect `TestABuiltinCoercingAnArgumentConsultsTheChainThatConvertsIt` describes,
+    reached through an operator rather than a built-in, and the fix is the same: one place every
+    conversion of a value asks whether a program can intercept it.
+
+    Off the release gate for the reason given there.
+    """
+
+
 #: A function given a `toString` of its own and then converted by a built-in that turns its
 #: receiver's elements, its argument or a computed key into a string, mapped to what Node prints.
 #: Each conversion runs the `toString` the program installed.
@@ -4656,6 +4693,30 @@ class TestAValueNameWrittenThroughTheThisOfAFunctionStopsTheFold(TestBase):
             (output.count('void 0'), output.count('typeof undefined')),
             (0, 1),
         )
+
+
+class TestAValueNameWrittenThroughAnAliasOfTheGlobalObjectStopsTheFold(TestBase):
+    """
+    The write `TestAValueNameWrittenThroughTheThisOfAFunctionStopsTheFold` describes, made through
+    a name holding the global object, through the result of a call that returns it, or inside a
+    `with` statement over it. JScript lets each of these rewrite `undefined` for the whole script,
+    and a sum reading the name is still written as `0 / 0`. Nothing here runs a JScript engine, so
+    the entry asserts that the name stays standing.
+    """
+
+    @wontfix(
+        'no obfuscated file writes undefined (see the entry for a write through the this of a '
+        'function), and a program writing it through an alias of the global object is made up for '
+        'the defect'
+    )
+    def test_the_name_stays(self):
+        for source in [
+            'var g = this;\ng.undefined = 7;\nWScript.Echo(undefined + 1);',
+            'function self() { return this; }\nself().undefined = 7;\nWScript.Echo(undefined + 1);',
+            'with (this) { undefined = 7; }\nWScript.Echo(undefined + 1);',
+        ]:
+            with self.subTest(source=source):
+                self.assertIn('undefined + 1', deobfuscate_source(source))
 
 
 #: A module in an import cycle whose exported function reads a global the module creates only after

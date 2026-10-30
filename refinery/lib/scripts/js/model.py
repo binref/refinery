@@ -16,7 +16,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from refinery.lib.scripts import Expression, Node, Statement
-from refinery.lib.scripts.js.numbers import integer_of_numeral, to_js_number
+from refinery.lib.scripts.js.numbers import integer_of_numeral, js_number_to_string, to_js_number
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.strict import StrictViolation
@@ -981,8 +981,9 @@ and `Object.setPrototypeOf`.
 def static_string(node: Node | None) -> str | None:
     """
     The string *node* certainly evaluates to, or `None`. It reads a string literal, a
-    substitution-free template, and concatenations of those — the forms a constant fold collapses
-    to a literal.
+    substitution-free template, and a concatenation of those with each other or with a number, a
+    boolean or `null` — the forms a constant fold collapses to a literal without asking what a
+    name denotes.
 
     This exists so that an analysis answer cannot change as folds fire: a property key the
     simplifier will turn into `'defineProperty'` must already be read as that name, or a consumer
@@ -1002,12 +1003,30 @@ def static_string(node: Node | None) -> str | None:
         return ''.join(quasi.value or '' for quasi in node.quasis)
     if isinstance(node, JsBinaryExpression) and node.operator == '+':
         left = static_string(node.left)
-        if left is None:
-            return None
         right = static_string(node.right)
+        if left is None and right is None:
+            return None
+        if left is None:
+            left = _primitive_literal_text(node.left)
         if right is None:
+            right = _primitive_literal_text(node.right)
+        if left is None or right is None:
             return None
         return left + right
+    return None
+
+
+def _primitive_literal_text(node: Node | None) -> str | None:
+    """
+    The string a number, boolean or `null` literal converts to, or `None` for any other node.
+    """
+    node = strip_parens(node)
+    if isinstance(node, JsNumericLiteral):
+        return js_number_to_string(node.value)
+    if isinstance(node, JsBooleanLiteral):
+        return 'true' if node.value else 'false'
+    if isinstance(node, JsNullLiteral):
+        return 'null'
     return None
 
 

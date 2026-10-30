@@ -4,15 +4,16 @@ ECMA-262 conversions between values (`to_number`, `to_string`, `to_boolean`, `to
 `js_typeof`), and the operators over them (`UNARY_OPS`, `BINARY_OPS`).
 
 This module sits beside `refinery.lib.scripts.js.numbers` because what an operator computes from two
-values is a property of the language rather than of any one pass over a program. Every layer that
-asks it, the analysis included, can import it from here.
+values is a property of the language rather than of any one pass over a program. The analysis that
+decides whether an operator may run code (`COERCING_BINARY_OPERATORS`), the static fold, and the
+interpreter all read it here, so none of them states a second answer.
 """
 from __future__ import annotations
 
 import math
 import operator
 
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
@@ -21,6 +22,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
 )
 from refinery.lib.scripts.js.numbers import js_number_to_string, js_string_to_number, to_js_number
+from refinery.lib.scripts.js.utf16 import to_code_units
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -30,6 +32,13 @@ if TYPE_CHECKING:
     Value: TypeAlias = (
         str | float | bool | list | dict | JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None
     )
+
+
+class HostApproximated(ArithmeticError):
+    """
+    Raised for a value the language leaves to the engine to approximate, so that engines differ in
+    it. A caller that would write the value into the program, or compute on with it, refuses.
+    """
 
 
 class _JsNull:
@@ -206,6 +215,11 @@ def function_source(func: JsFunctionNode) -> str:
 
 
 def to_string(value: Value) -> str:
+    """
+    Apply the ECMA-262 ToString abstract operation. A Buffer converts through its own `toString`,
+    which decodes its bytes as UTF-8 and writes U+FFFD for each sequence that is not, as Node does;
+    any other array joins its elements.
+    """
     if isinstance(value, str):
         return value
     if value is None:
@@ -216,6 +230,8 @@ def to_string(value: Value) -> str:
         return 'true' if value else 'false'
     if isinstance(value, (int, float)):
         return js_number_to_string(value)
+    if isinstance(value, JsBuffer):
+        return to_code_units(bytes(_to_int(v) & 0xFF for v in value).decode('utf-8', 'replace'))
     if isinstance(value, list):
         return ','.join(_array_element_string(v) for v in value)
     if isinstance(value, FUNCTION_NODES):
@@ -306,9 +322,16 @@ def _js_pow(base: int | float, exp: int | float) -> float:
     `Infinity` is `Infinity` and raising `-0.5` to it is `0`, where reading an infinite exponent as
     a non-integer one would call both `NaN`.
 
-    Both operands are coerced here and not only at `eval_binary_op`, because this is the one
-    operator that answers an unbounded amount of work when handed Python integers, and it is
-    reachable through `BINARY_OPS` without passing that function.
+    The specification fixes the result only in those cases and for a zero or infinite base. For any
+    other pair it asks for a value the implementation approximates, and engines differ in the last
+    digit: V8 answers `9 ** 17` with `16677181699666570`, where the nearest double to the power is
+    `16677181699666568`. A result is therefore given only where every engine agrees on it: a base
+    raised to a positive integer exponent whose power is a double, or so large that it is an
+    infinity. Any other pair raises `HostApproximated`.
+
+    Both operands are coerced here and not only at `BINARY_OPS`, because this is the one operator
+    that answers an unbounded amount of work when handed Python integers, and `Math.pow` reaches it
+    without passing that table.
     """
     base = to_js_number(base)
     exp = to_js_number(exp)
@@ -322,44 +345,45 @@ def _js_pow(base: int | float, exp: int | float) -> float:
         if magnitude == 1:
             return float('nan')
         return inf if (magnitude > 1) == (exp == inf) else 0.0
-    is_int_exp = exp == int(exp)
-    if base == 0 and exp < 0:
-        if is_int_exp and int(exp) % 2 != 0 and math.copysign(1.0, base) < 0:
-            return -inf
-        return inf
-    if base < 0 and base != -inf and not is_int_exp:
+    odd = exp == int(exp) and int(exp) % 2 != 0
+    if base == 0 or base in (inf, -inf):
+        magnitude = inf if (base != 0) == (exp > 0) else 0.0
+        return -magnitude if odd and math.copysign(1.0, base) < 0 else magnitude
+    if base < 0 and exp != int(exp):
         return float('nan')
-    try:
-        result = base ** exp
-    except OverflowError:
-        return -inf if (base < 0 and is_int_exp and int(exp) % 2 != 0) else inf
-    except (ValueError, ZeroDivisionError):
-        return float('nan')
-    return result
+    if exp > 0 and exp == int(exp):
+        power = _exact_power(base, int(exp))
+        if power is not None:
+            return power
+    raise HostApproximated
 
 
-BINARY_OPS: dict[str, Callable] = {
-    '+'  : operator.add,
-    '-'  : operator.sub,
-    '*'  : _js_mul,
-    '/'  : _js_div,
-    '%'  : _js_mod,
-    '**' : _js_pow,
-    '|'  : lambda a, b: float(_to_int32(a) | _to_int32(b)),
-    '&'  : lambda a, b: float(_to_int32(a) & _to_int32(b)),
-    '^'  : lambda a, b: float(_to_int32(a) ^ _to_int32(b)),
-    '<<' : lambda a, b: float(_to_int32(_to_int32(a) << (_to_int32(b) & 0x1F))),
-    '>>' : lambda a, b: float(_to_int32(a) >> (_to_int32(b) & 0x1F)),
-}
-"""
-JavaScript's binary operators over two *numbers*. Every entry assumes both operands have already
-been coerced, which is why `+` is `operator.add` here: on numbers that is what `+` means, but on a
-value that may be a string or an object `+` is a different operator entirely — it applies
-ToPrimitive to both sides and concatenates when either is a string. A caller holding uncoerced
-values must not reach this table for `+`; the interpreter routes every operator through
-`refinery.lib.scripts.js.deobfuscation.interpreter.JsInterpreter._apply_binary`, which resolves the
-string cases before delegating here.
-"""
+def _exact_power(base: float, exp: int) -> float | None:
+    """
+    The finite nonzero *base* raised to the positive *exp* where every engine computes the same
+    double, or `None`: the power itself where it is a double, and an infinity of its sign where it
+    is at least `2 ** 1024`, which is past the largest double by more than any engine errs.
+
+    The base is an odd integer times a power of two, and its power is a double exactly where the
+    power of the odd integer has at most 53 bits and the power of two lies in the range of a double.
+    The odd integer is raised only where that bound can hold, and an infinity is otherwise read from
+    the logarithm only where it is clear of `2 ** 1024`, so the work stays bounded.
+    """
+    numerator, denominator = abs(base).as_integer_ratio()
+    twos = (numerator & -numerator).bit_length() - 1
+    odd = numerator >> twos
+    scale = (twos - denominator.bit_length() + 1) * exp
+    sign = -1.0 if base < 0 and exp % 2 else 1.0
+    if exp * (odd.bit_length() - 1) < 53 and (power := odd ** exp) >> 53 == 0:
+        if power.bit_length() + scale > 1024:
+            return math.copysign(float('inf'), sign)
+        if scale < -1074:
+            return None
+        return math.copysign(math.ldexp(power, scale), sign)
+    if exp * math.log2(abs(base)) >= 1025:
+        return math.copysign(float('inf'), sign)
+    return None
+
 
 UNARY_OPS: dict[str, Callable[[Value], Value]] = {
     '-'     : lambda v: -to_number(v),
@@ -383,49 +407,6 @@ so the absence is what keeps this table from being asked it.
 it. The caller remains responsible for evaluating the operand: `void f()` is `undefined` and calls `f`,
 and this table only supplies the first half.
 """
-
-RELATIONAL_OPS: dict[str, Callable] = {
-    '<' : operator.lt,
-    '>' : operator.gt,
-    '<=': operator.le,
-    '>=': operator.ge,
-}
-
-
-def eval_binary_op(op: str, left: float, right: float) -> float | bool | None:
-    """
-    Evaluate a JavaScript binary operator on two numeric operands. Returns the result value, or
-    `None` when the operator is unknown or the computation overflows/divides by zero. Handles
-    arithmetic, bitwise, relational, equality, and the unsigned right shift `>>>`.
-
-    Both operands are coerced here so that every operator below sees the Number the caller meant and
-    not whichever Python type happened to carry it. That is a normalization and not the bound on the
-    work: `refinery.lib.scripts.js.deobfuscation.stringarray` reaches `BINARY_OPS` without passing
-    through this function, so the operator that can be asked for unbounded work — `**`, where Python
-    integers build a number of half a billion digits for what a double answers in one operation —
-    coerces for itself as well.
-    """
-    left = to_js_number(left)
-    right = to_js_number(right)
-    if op in ('===', '=='):
-        return left == right
-    if op in ('!==', '!='):
-        return left != right
-    rel = RELATIONAL_OPS.get(op)
-    if rel is not None:
-        return rel(left, right)
-    if op == '>>>':
-        a = _to_uint32(left)
-        b = _to_uint32(right) & 0x1F
-        return float((a >> b) & 0xFFFFFFFF)
-    fn = BINARY_OPS.get(op)
-    if fn is None:
-        return None
-    try:
-        return fn(left, right)
-    except (ZeroDivisionError, OverflowError, ValueError):
-        return None
-
 
 #: The value-domain types that model a JavaScript object: an array, a plain object, and a function.
 #: They share the two behaviours the primitives do not: a ToPrimitive that runs a conversion, and an
@@ -513,3 +494,68 @@ def js_add(a: Value, b: Value) -> Value:
     if isinstance(a, str) or isinstance(b, str):
         return to_string(a) + to_string(b)
     return to_number(a) + to_number(b)
+
+
+def _on_numbers(apply: Callable[[float, float], float]) -> Callable[[Value, Value], Value]:
+    """
+    The operator that applies *apply* to the numbers its two operands convert to.
+    """
+    return lambda a, b: apply(to_number(a), to_number(b))
+
+
+def _comparing(compare: Callable[[Any, Any], bool]) -> Callable[[Value, Value], Value]:
+    """
+    The relational operator that answers *compare*: two strings compare by their code units, and
+    any other pair of primitives by the numbers they convert to, where `NaN` answers `false`.
+    """
+    def apply(a: Value, b: Value) -> Value:
+        a = to_primitive(a)
+        b = to_primitive(b)
+        if isinstance(a, str) and isinstance(b, str):
+            return compare(a, b)
+        return compare(to_number(a), to_number(b))
+    return apply
+
+
+BINARY_OPS: dict[str, Callable[[Value, Value], Value]] = {
+    '+'   : js_add,
+    '-'   : _on_numbers(operator.sub),
+    '*'   : _on_numbers(_js_mul),
+    '/'   : _on_numbers(_js_div),
+    '%'   : _on_numbers(_js_mod),
+    '**'  : _on_numbers(_js_pow),
+    '|'   : _on_numbers(lambda a, b: float(_to_int32(a) | _to_int32(b))),
+    '&'   : _on_numbers(lambda a, b: float(_to_int32(a) & _to_int32(b))),
+    '^'   : _on_numbers(lambda a, b: float(_to_int32(a) ^ _to_int32(b))),
+    '<<'  : _on_numbers(lambda a, b: float(_to_int32(_to_int32(a) << (_to_int32(b) & 0x1F)))),
+    '>>'  : _on_numbers(lambda a, b: float(_to_int32(a) >> (_to_int32(b) & 0x1F))),
+    '>>>' : _on_numbers(lambda a, b: float(_to_uint32(a) >> (_to_uint32(b) & 0x1F))),
+    '<'   : _comparing(operator.lt),
+    '>'   : _comparing(operator.gt),
+    '<='  : _comparing(operator.le),
+    '>='  : _comparing(operator.ge),
+    '=='  : js_loose_equal,
+    '!='  : lambda a, b: not js_loose_equal(a, b),
+    '===' : js_strict_equal,
+    '!==' : lambda a, b: not js_strict_equal(a, b),
+}
+"""
+JavaScript's binary operators that are functions of their two operands' *values*, the counterpart of
+`UNARY_OPS`. Each entry applies the conversions its operator performs, so each is total over the
+value domain: a caller holding two values needs no per-operator guard, and a caller holding a syntax
+tree needs only to obtain the values. Whether converting an object runs code the program installed
+is not a question about the value, and the caller asks it before applying an entry
+(`refinery.lib.scripts.js.deobfuscation.helpers.coerces_uninterceptably`).
+
+`**` raises `HostApproximated` where the language leaves its result to the engine (`_js_pow`).
+
+`in` and `instanceof` are absent for the reason `delete` is absent from `UNARY_OPS`: each asks the
+object its right operand names, for a property or for its prototype, which the value does not say.
+"""
+
+COERCING_BINARY_OPERATORS = frozenset(BINARY_OPS) - {'===', '!=='}
+"""
+The binary operators that convert an operand: every one in `BINARY_OPS` but strict equality, which
+compares the values as they are. Converting an object runs its `valueOf`, `toString` or
+`Symbol.toPrimitive`, so an operand of one of these runs code wherever it may be an object.
+"""

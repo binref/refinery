@@ -137,7 +137,13 @@ from refinery.lib.scripts.js.strict import (
     keeping_directives,
     strict_mode_at,
 )
-from refinery.lib.scripts.js.values import eval_binary_op
+from refinery.lib.scripts.js.values import (
+    BINARY_OPS,
+    UNARY_OPS,
+    HostApproximated,
+    js_strict_equal,
+    to_boolean,
+)
 
 
 class _Undefined(enum.Enum):
@@ -376,43 +382,48 @@ class _Env:
         )
 
 
-def _to_number(value: _Value) -> float | None:
+def _as_value(value: float | bool | str | _Undefined) -> Value:
     """
-    The number JavaScript converts *value* to, or `None` for a string or an array, whose conversion
-    this does not model.
+    The value of `refinery.lib.scripts.js.values` that the primitive *value* is. That domain spells
+    `undefined` as `None`, which this module keeps for a value it does not know.
     """
-    if isinstance(value, _Undefined):
-        return math.nan
-    if isinstance(value, (str, tuple)):
-        return None
-    return float(value)
+    return None if isinstance(value, _Undefined) else value
 
 
 def _is_truthy(value: _Value) -> bool:
-    if isinstance(value, _Undefined):
-        return False
-    if isinstance(value, bool):
-        return value
     if isinstance(value, tuple):
         return True
-    if isinstance(value, str):
-        return bool(value)
-    return not (value == 0 or math.isnan(value))
+    return to_boolean(_as_value(value))
 
 
 def _strictly_equal(a: _Value, b: _Value) -> bool | None:
     """
-    JavaScript's `===` on the values a case test can make: a boolean is never a number, and an array
-    is never a primitive. Two arrays are equal only where they are one object, which the values do
-    not say: `None`.
+    JavaScript's `===` on the values a case test can make. An array is never a primitive, and two
+    arrays are equal only where they are one object, which the values do not say: `None`.
     """
-    if isinstance(a, tuple) and isinstance(b, tuple):
+    if isinstance(a, tuple) or isinstance(b, tuple):
+        return None if isinstance(a, tuple) and isinstance(b, tuple) else False
+    return js_strict_equal(_as_value(a), _as_value(b))
+
+
+def _operated(operator: str, left: _Value, right: _Value) -> _Value | None:
+    """
+    What the binary *operator* computes from *left* and *right*
+    (`refinery.lib.scripts.js.values.BINARY_OPS`), or `None` where it is no operator of that table,
+    where an array would be converted, and where the engine approximates the result.
+    """
+    if isinstance(left, tuple) or isinstance(right, tuple):
+        if operator not in ('===', '!==') or (equal := _strictly_equal(left, right)) is None:
+            return None
+        return equal == (operator == '===')
+    apply = BINARY_OPS.get(operator)
+    if apply is None:
         return None
-    if isinstance(a, (bool, _Undefined, tuple)) or isinstance(b, (bool, _Undefined, tuple)):
-        return a is b
-    if isinstance(a, str) or isinstance(b, str):
-        return type(a) is type(b) and a == b
-    return a == b
+    try:
+        result = apply(_as_value(left), _as_value(right))
+    except HostApproximated:
+        return None
+    return result if isinstance(result, (float, bool, str)) else None
 
 
 def _value_key(value: _Value) -> tuple[object, ...]:
@@ -451,18 +462,6 @@ def _finite_number(value: _Value | None) -> float | None:
     if not math.isfinite(value):
         return None
     return value
-
-
-def _loosely_equal(a: _Value, b: _Value) -> bool | None:
-    """
-    JavaScript's `==` on the values a case test can make: `undefined` equals only itself here, and a
-    boolean compares as the number it converts to.
-    """
-    if isinstance(a, _Undefined) or isinstance(b, _Undefined):
-        return a is b
-    if (x := _to_number(a)) is None or (y := _to_number(b)) is None:
-        return None
-    return x == y
 
 
 def _element(array: tuple[float, ...], key: _Value | None) -> _Value | None:
@@ -538,9 +537,10 @@ def _eval_expr(node: Node | None, env: _Env) -> _Value | None:
                 return None
             if node.operator == '!':
                 return not _is_truthy(operand)
-            if (number := _to_number(operand)) is None:
+            if isinstance(operand, tuple):
                 return None
-            return -number if node.operator == '-' else number
+            number = UNARY_OPS[node.operator](_as_value(operand))
+            return number if isinstance(number, float) else None
     if isinstance(node, JsLogicalExpression) and node.left is not None and node.right is not None:
         if node.operator in ('&&', '||'):
             lhs = _eval_expr(node.left, env)
@@ -554,17 +554,7 @@ def _eval_expr(node: Node | None, env: _Env) -> _Value | None:
         rhs = _eval_expr(node.right, env)
         if lhs is None or rhs is None:
             return None
-        if node.operator in ('===', '!=='):
-            if (equal := _strictly_equal(lhs, rhs)) is None:
-                return None
-            return equal == (node.operator == '===')
-        if node.operator in ('==', '!='):
-            if (equal := _loosely_equal(lhs, rhs)) is None:
-                return None
-            return equal == (node.operator == '==')
-        if (x := _to_number(lhs)) is None or (y := _to_number(rhs)) is None:
-            return None
-        return eval_binary_op(node.operator, x, y)
+        return _operated(node.operator, lhs, rhs)
     return None
 
 
@@ -2385,9 +2375,7 @@ def _apply_raw_transition(assignments: list[_SMRawAssignment], current: _Env) ->
             old = held
         value = _eval_expr(assign.rhs, env)
         if value is not None and assign.operator == '+=':
-            if (addend := _to_number(value)) is None:
-                return None
-            value = eval_binary_op('+', old, addend)
+            value = _operated('+', old, value)
         if (number := _finite_number(value)) is None:
             return None
         if index is None:

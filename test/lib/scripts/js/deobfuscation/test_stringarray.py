@@ -388,6 +388,23 @@ class TestStringArray(TestJsDeobfuscator):
         result = self._deobfuscate(source)
         self.assertEqual("console.log('test string');", result)
 
+    def test_string_array_with_wrappers_shifting_by_an_index_spelled_as_a_string(self):
+        """
+        Each wrapper shifts what it is passed by `0x5`, spelled as a number or a string, and each
+        call passes the position the default preset reads shifted the other way: `'0xb1' - '0x5'`
+        and `0xa7 - -'0x5'` are both `0xac`, where `msg` is read from.
+        """
+        preset = self._default_preset('_0xw')
+        for wrapper, read_msg, read_log in [
+            ("function _0xw(_0xa){return _0x1b07(_0xa-'0x5');}", "_0xw('0xb1')", "_0xw('0xad')"),
+            ('function _0xw(_0xa){return _0x1b07(_0xa-0x5);}', "_0xw('0xb1')", "_0xw('0xad')"),
+            ("function _0xw(_0xa){return _0x1b07(_0xa- -'0x5');}", '_0xw(0xa7)', '_0xw(0xa3)'),
+        ]:
+            source = wrapper + preset.replace('_0xw(0xac)', read_msg).replace('_0xw(0xa8)', read_log)
+            with self.subTest(wrapper=wrapper):
+                self.assertEqual((1, 1), (source.count(read_msg), source.count(read_log)))
+                self.assertEqual("console.log('test string');", self._deobfuscate(source))
+
     def test_string_array_resolution_populates_cache(self):
         """
         A successful resolution stores the simulated array on the scope node so a later pipeline pass

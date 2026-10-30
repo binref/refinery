@@ -1579,7 +1579,7 @@ PUT_BACK: dict[str, str] = {
     'literal members in positions where the operator binds differently': inspect.cleandoc(
         """
             function W() {
-              return [2.25, (-1.5).toFixed(1), 2 / (0 / 0), void 0 === undefined, 2];
+              return [2.25, (-1.5).toFixed(1), 0 / 0, true, 2];
             }
             console.log(JSON.stringify(W()));
         """

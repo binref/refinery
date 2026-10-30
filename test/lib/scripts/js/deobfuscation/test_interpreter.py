@@ -6,7 +6,12 @@ import unittest
 
 from typing import NamedTuple
 
-from test.lib.scripts.js.analysis.differential import behavior, completion_values, node_executable
+from test.lib.scripts.js.analysis.differential import (
+    behavior,
+    code_units,
+    completion_values,
+    node_executable,
+)
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
@@ -150,6 +155,22 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
 
     def test_math_pow_one_to_infinity_is_nan(self):
         self.assertEqual('var x = 0 / 0;', self._fold('Math.pow(1, Infinity)'))
+
+    def test_pow_the_engine_approximates_is_not_folded(self):
+        """
+        Node computes `16677181699666570` for `9 ** 17`, where the nearest double to the power is
+        `16677181699666568`: the language leaves the last digit to the engine, so no value is
+        written for it, nor for the square root of two.
+        """
+        for expression in ['9 ** 17', "'9' ** '17'", 'Math.pow(9, 17)', '2 ** 0.5']:
+            with self.subTest(expression=expression):
+                source = F'function f() {{\n  return {expression};\n}}\nvar x = f();'
+                self.assertEqual(source, self._evaluate(source))
+
+    def test_pow_of_integers_that_is_a_double_is_folded(self):
+        self.assertEqual('var x = 1024;', self._fold('2 ** 10'))
+        self.assertEqual('var x = 1024;', self._fold("'2' ** '10'"))
+        self.assertEqual('var x = 1024;', self._fold('Math.pow(2, 10)'))
 
     def test_undefined_plus_number_is_nan(self):
         # undefined coerces to NaN, null coerces to 0 — the two must stay distinct.
@@ -318,6 +339,40 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
 
     def test_math_log_of_no_argument_is_nan(self):
         self.assertEqual('var x = 0 / 0;', self._fold('Math.log()'))
+
+
+class TestABufferConvertsToTheTextItsBytesDecodeTo(TestJsDeobfuscator):
+    """
+    A Buffer that an operator converts to a string decodes its bytes as UTF-8, as its own `toString`
+    does, with U+FFFD for each sequence that is no UTF-8; it is never joined like an array of byte
+    values. Node prints `hello` for `Buffer.from('aGVsbG8=', 'base64') + ''`, where joining the
+    bytes would give `104,101,108,108,111`.
+    """
+
+    def test_a_buffer_concatenated_with_a_string_is_its_text(self):
+        self.assertEqual("var x = 'hello';", self._fold("Buffer.from('aGVsbG8=', 'base64') + ''"))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_each_conversion_folds_to_the_value_node_computes(self):
+        expressions = [
+            "Buffer.from('aGVsbG8=', 'base64') + ''",
+            "Buffer.from([0xe2, 0x82, 0xac, 0xff, 0x41, 0xe2, 0x82]) + ''",
+            "Buffer.from([0xc0, 0xaf, 0xed, 0xa0, 0x80, 0xf4, 0x90, 0x80, 0x80]) + ''",
+            "Buffer.from([0xef, 0xbb, 0xbf, 0x41]) + ''",
+            "String(Buffer.from('ab'))",
+            '`${Buffer.from([0xf0, 0x9f, 0x98, 0x80])}`',
+            "[Buffer.from('ab'), Buffer.from('c')].join()",
+            "Buffer.from('5') - 0",
+            "Buffer.from('b') > 'a,'",
+            "Buffer.from('ab') == 'ab'",
+            "Buffer.from([0xff, 0x41]).toString('utf8')",
+        ]
+        folded = [self._fold(expression) for expression in expressions]
+        self.assertEqual([], [text for text in folded if not text.startswith('var x = ')])
+        self.assertEqual(
+            code_units(expressions),
+            code_units([text.removeprefix('var x = ').removesuffix(';') for text in folded]),
+        )
 
 
 class TestInterpreterMethodValueSemantics(TestJsDeobfuscator):

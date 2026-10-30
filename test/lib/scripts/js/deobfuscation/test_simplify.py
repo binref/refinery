@@ -4,14 +4,15 @@ import inspect
 import unittest
 
 from test import TestBase
-from test.lib.scripts.js.analysis.differential import behavior, node_executable
+from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import a_program, before_and_after, each_program_still_prints
 
-from refinery.lib.scripts import tree_version
+from refinery.lib.scripts import Expression, tree_version
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
-from refinery.lib.scripts.js.deobfuscation.helpers import MAX_RESULT_ARRAY_LEN
+from refinery.lib.scripts.js.deobfuscation.helpers import MAX_RESULT_ARRAY_LEN, is_literal
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
+from refinery.lib.scripts.js.model import JsCallExpression, JsExpressionStatement
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
@@ -1934,8 +1935,8 @@ class TestGlobalValueNameOperands(TestJsDeobfuscator):
     """
     `undefined`, `NaN` and `Infinity` name values that the tool already reads through a call, and it
     already spells them back as `void 0`, `0 / 0` and `1e999`. An operand written with one of the
-    names is therefore as constant as one written with those expressions, but an arithmetic or a
-    concatenation reading it is left standing. Node says what each expression here denotes.
+    names is therefore as constant as one written with those expressions, and an arithmetic or a
+    concatenation reading it is folded the same way. Node says what each expression here denotes.
     """
 
     def test_the_same_operands_spelled_without_a_name_are_folded(self):
@@ -1944,7 +1945,6 @@ class TestGlobalValueNameOperands(TestJsDeobfuscator):
         self.assertEqual("f(x + 'aundefined');", self._simplify("f(x + 'a' + void 0);"))
         self.assertEqual("f(x + 'aNaN');", self._simplify("f(x + 'a' + (0 / 0));"))
 
-    @unittest.expectedFailure
     def test_arithmetic_reading_a_global_value_name_is_folded(self):
         """
         Node: `Infinity` and `0`.
@@ -1952,7 +1952,6 @@ class TestGlobalValueNameOperands(TestJsDeobfuscator):
         self.assertEqual('1e999;', self._simplify('Infinity + 1;'))
         self.assertEqual('0;', self._simplify('1 / Infinity;'))
 
-    @unittest.expectedFailure
     def test_a_global_value_name_concatenated_onto_a_string_is_merged(self):
         """
         Node: `aundefined`, `aNaN` and `aInfinity`.
@@ -1960,6 +1959,131 @@ class TestGlobalValueNameOperands(TestJsDeobfuscator):
         self.assertEqual("f(x + 'aundefined');", self._simplify("f(x + 'a' + undefined);"))
         self.assertEqual("f(x + 'aNaN');", self._simplify("f(x + 'a' + NaN);"))
         self.assertEqual("f(x + 'aInfinity');", self._simplify("f(x + 'a' + Infinity);"))
+
+
+#: Operands that each spell a primitive the way a program writes it: numbers at the edges of the
+#: 32-bit conversions and past the largest double, strings that `ToNumber` reads in one of its
+#: grammars or refuses, strings that compare by their code units, the literals `true`, `false` and
+#: `null`, the global value names and the expressions they are spelled back as, and unary operators
+#: over literals.
+_PRIMITIVE_OPERANDS = (
+    '0',
+    '-0',
+    '1',
+    '-2.5',
+    '0x10',
+    '2147483648',
+    '-2147483649',
+    '1e21',
+    '1e999',
+    '0 / 0',
+    '5e-324',
+    "''",
+    "' '",
+    "'0'",
+    "'0x10'",
+    "'-0x10'",
+    "' 12 '",
+    "'1e3'",
+    "'Infinity'",
+    "'1_0'",
+    "'abc'",
+    "'b'",
+    "'\\ud83d\\ude00'",
+    'true',
+    'false',
+    'null',
+    'void 0',
+    'undefined',
+    'NaN',
+    'Infinity',
+    "-'0x10'",
+    "+'1'",
+    '!0',
+    'typeof 1',
+)
+
+_BINARY_OPERATORS = (
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '**',
+    '|',
+    '&',
+    '^',
+    '<<',
+    '>>',
+    '>>>',
+    '<',
+    '>',
+    '<=',
+    '>=',
+    '==',
+    '!=',
+    '===',
+    '!==',
+)
+
+
+def _sunk(printed: str) -> list[Expression]:
+    """
+    The argument of each `SINK` call that makes up the program *printed*.
+    """
+    arguments = []
+    for statement in JsParser(printed).parse().body:
+        assert isinstance(statement, JsExpressionStatement)
+        call = statement.expression
+        assert isinstance(call, JsCallExpression)
+        arguments.append(call.arguments[0])
+    return arguments
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABinaryOperatorOverTwoPrimitivesIsFoldedToTheValueNodeComputes(TestJsDeobfuscator):
+    """
+    A primitive converts by an operation no program can replace, so the value of a binary operator
+    over two operands that each spell one is decided by the operands alone. For every operator and
+    every pair of `_PRIMITIVE_OPERANDS` the fold writes a literal, and Node reads that literal as
+    the value it computes for the expression. A power the language leaves to the engine stays.
+    """
+
+    def test_each_operator_folds_to_the_value_node_computes(self):
+        for operator in _BINARY_OPERATORS:
+            expressions = [F'({a}) {operator} ({b})' for a in _PRIMITIVE_OPERANDS for b in _PRIMITIVE_OPERANDS]
+            results = _sunk(self._simplify(''.join(F'SINK({e});\n' for e in expressions)))
+            standing = [e for e, result in zip(expressions, results) if not is_literal(result)]
+            with self.subTest(operator=operator):
+                self.assertEqual(
+                    code_units(expressions),
+                    code_units([JsSynthesizer().convert(result) for result in results]),
+                )
+                if operator != '**':
+                    self.assertEqual([], standing)
+
+
+class TestAPowerTheEngineApproximatesIsNotFolded(TestJsDeobfuscator):
+    """
+    The language fixes the value of a power only in a few cases and otherwise leaves it to the
+    engine, and engines differ in the last digit: Node computes `16677181699666570` for `9 ** 17`,
+    where the nearest double to the power is `16677181699666568`. Such a power stays, and one whose
+    value is a double exactly is folded.
+    """
+
+    def test_a_power_the_engine_approximates_stays(self):
+        for source in ['f(9 ** 17);', "f('9' ** '17');", 'f(Math.pow(9, 17));', 'f(2 ** 0.5);']:
+            with self.subTest(source=source):
+                self.assertEqual(source, self._simplify(source))
+
+    def test_a_power_that_is_a_double_is_folded(self):
+        self.assertEqual('f(1024);', self._simplify('f(2 ** 10);'))
+        self.assertEqual('f(1024);', self._simplify("f('2' ** '10');"))
+        self.assertEqual('f(1024);', self._simplify('f(Math.pow(2, 10));'))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_computes_the_last_digit_the_docstring_states(self):
+        self.assertEqual(['16677181699666570', '1024'], code_units(['9 ** 17', '2 ** 10']))
 
 
 class TestTypeofAGuaranteedGlobalIsFolded(TestJsDeobfuscator):

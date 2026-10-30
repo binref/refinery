@@ -105,11 +105,13 @@ from refinery.lib.scripts.js.numbers import (
 from refinery.lib.scripts.js.token import ASCII_WHITESPACE
 from refinery.lib.scripts.js.utf16 import to_code_units
 from refinery.lib.scripts.js.values import (
+    BINARY_OPS,
+    COERCING_BINARY_OPERATORS,
     GLOBAL_VALUE_NAMES,
     JS_HOLE,
     JS_NULL,
-    RELATIONAL_OPS,
     UNARY_OPS,
+    HostApproximated,
     JsBuffer,
     _array_element_string,
     _js_pow,
@@ -117,14 +119,10 @@ from refinery.lib.scripts.js.values import (
     _to_int32,
     _to_uint32,
     converts_uninterceptably,
-    eval_binary_op,
-    js_add,
-    js_loose_equal,
     js_strict_equal,
     js_typeof,
     to_boolean,
     to_number,
-    to_primitive,
     to_string,
 )
 
@@ -802,7 +800,10 @@ def _math_abs(args: list[Value]) -> Value:
 def _math_pow(args: list[Value]) -> Value:
     if len(args) < 2:
         return float('nan')
-    return _js_pow(to_number(args[0]), to_number(args[1]))
+    try:
+        return _js_pow(to_number(args[0]), to_number(args[1]))
+    except HostApproximated:
+        raise InterpreterError
 
 
 @_register(('Math', 'sqrt'))
@@ -1146,7 +1147,7 @@ def _list_to_string(buf: list, args: list[Value]) -> Value:
         raise InterpreterError
     try:
         if encoding in ('utf8', 'utf-8'):
-            return raw.decode('utf-8')
+            return to_string(JsBuffer(raw))
         if encoding in ('latin1', 'binary'):
             return raw.decode('latin-1')
         if encoding == 'base64':
@@ -1941,9 +1942,9 @@ class JsInterpreter:
         decides what an operator means. A binary expression and the arithmetic step of a compound
         assignment ask the same question, so they must ask it here.
 
-        `eval_binary_op` handles the numeric operators alone, which is why the string cases resolve first:
-        `+` needs ToPrimitive on both operands and may yield a concatenation, and a relational operator
-        compares two strings lexicographically rather than numerically. Everything after that is a number.
+        What each operator computes is `BINARY_OPS`, the table the static fold reads as well, so the
+        two cannot disagree about a value. What is left here is what a value does not answer: `in`,
+        which asks the object for a property, and `instanceof`, which this interpreter does not run.
 
         Every operator but strict equality coerces its operands — `+` and the relational operators to
         primitives, the numeric ones to numbers, `==` to whichever the other side demands, and `in` its
@@ -1951,34 +1952,20 @@ class JsInterpreter:
         its key alone: an object whose conversion a program installed decides what all of these answer,
         and strict equality is the one operator that runs nothing.
         """
-        if op not in ('===', '!=='):
-            self._require_uninterceptable(left)
-            if op != 'in':
-                self._require_uninterceptable(right)
-        if op == '===':
-            return js_strict_equal(left, right)
-        if op == '!==':
-            return not js_strict_equal(left, right)
-        if op == '==':
-            return js_loose_equal(left, right)
-        if op == '!=':
-            return not js_loose_equal(left, right)
-        if op == '+':
-            result = js_add(left, right)
-            if isinstance(result, str) and len(result) > self.max_string_len:
-                raise InterpreterError
-            return result
         if op == 'in':
+            self._require_uninterceptable(left)
             return self._eval_in(left, right)
-        if op == 'instanceof':
+        apply = BINARY_OPS.get(op)
+        if apply is None:
             raise InterpreterError
-        if op in RELATIONAL_OPS:
-            primitive_left = to_primitive(left)
-            primitive_right = to_primitive(right)
-            if isinstance(primitive_left, str) and isinstance(primitive_right, str):
-                return RELATIONAL_OPS[op](primitive_left, primitive_right)
-        result = eval_binary_op(op, to_number(left), to_number(right))
-        if result is None:
+        if op in COERCING_BINARY_OPERATORS:
+            self._require_uninterceptable(left)
+            self._require_uninterceptable(right)
+        try:
+            result = apply(left, right)
+        except HostApproximated:
+            raise InterpreterError
+        if isinstance(result, str) and len(result) > self.max_string_len:
             raise InterpreterError
         return result
 

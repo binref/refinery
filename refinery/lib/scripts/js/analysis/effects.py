@@ -52,6 +52,7 @@ from refinery.lib.scripts.js.analysis.conversions import (
     ConversionSettlement,
 )
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
+from refinery.lib.scripts.js.analysis.environment import typeof_of_global
 from refinery.lib.scripts.js.analysis.intrinsics import (
     GLOBAL_OBJECT,
     INHERITED_CHAIN_ROOTS,
@@ -66,7 +67,6 @@ from refinery.lib.scripts.js.analysis.intrinsics import (
     unambiguous_callee,
     unambiguous_function,
 )
-from refinery.lib.scripts.js.analysis.environment import typeof_of_global
 from refinery.lib.scripts.js.analysis.model import (
     _TESTED_FORMS,
     FUNCTION_NODES,
@@ -131,6 +131,7 @@ from refinery.lib.scripts.js.model import (
     value_is_discarded,
     wraps_return,
 )
+from refinery.lib.scripts.js.values import COERCING_BINARY_OPERATORS
 
 _FRESH_ARRAY_RESULT_METHODS = frozenset({
     'slice',
@@ -619,36 +620,6 @@ drops the evaluation (`coercions_may_write`). `!` and `typeof` are not here: the
 to a truth value or a type name without asking it anything.
 """
 
-_COERCING_BINARY_OPERATORS = frozenset({
-    '+',
-    '-',
-    '*',
-    '/',
-    '%',
-    '**',
-    '&',
-    '|',
-    '^',
-    '<<',
-    '>>',
-    '>>>',
-    '==',
-    '!=',
-    '<',
-    '>',
-    '<=',
-    '>=',
-})
-"""
-The binary operators that apply `ToPrimitive` — or `ToNumber`, which begins with it — to an
-operand. The same reasoning as `_NUMBER_TAKING_UNARY_OPERATORS` applies: the coercion is an effect
-of the operator itself, of no sub-expression, so an operand whose value may be an object keeps the
-whole expression where the caller drops the evaluation. Strict equality is not here because it
-compares values as they are; `in` and `instanceof` are held to the stronger
-`_OBJECT_TESTING_BINARY_OPERATORS` rule instead. The loose equality operators are held to the same
-rule except beside `null`, which the language answers without asking either operand anything.
-"""
-
 _OBJECT_TESTING_BINARY_OPERATORS = frozenset({'in', 'instanceof'})
 """
 The binary operators the language decides from the *kind* of the right operand rather than from
@@ -781,7 +752,7 @@ class _SideEffectScan:
                 if node.operator in _OBJECT_TESTING_BINARY_OPERATORS:
                     return False
                 if (
-                    node.operator in _COERCING_BINARY_OPERATORS
+                    node.operator in COERCING_BINARY_OPERATORS
                     and not _comparison_with_null(node)
                     and not (
                         _value_cannot_be_an_object(node.left)
