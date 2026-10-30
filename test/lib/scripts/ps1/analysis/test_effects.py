@@ -5,6 +5,7 @@ from inspect import cleandoc
 from test import TestBase
 
 from refinery.lib.scripts import Statement, _remove_from_parent
+from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.effects import (
     OutputSink,
@@ -1581,8 +1582,9 @@ class TestPs1WhetherAnExpressionCanFaultIsDecidedByTheScriptToo(Ps1EffectsTest):
         control_flow = build_control_flow_model(tree)
         world = build_world_reach(measure_world(tree), lambda: control_flow)
         statement = tree.body[above.count(chr(10))]
+        calls = Ps1ModelCache(tree).call_graph
         return expression_cannot_fault(
-            statement.expression, statement, build_fault_reach(control_flow), world)
+            statement.expression, statement, build_fault_reach(control_flow, lambda: calls), world)
 
     def _verdicts(self, expressions: list[str], above: str = '') -> dict[str, bool]:
         return {
@@ -1639,7 +1641,8 @@ class TestPs1WhetherAnExpressionCanFaultIsDecidedByTheScriptToo(Ps1EffectsTest):
     def test_a_caller_with_no_world_gets_the_context_free_answer_alone(self):
         tree = Ps1Parser('$x').parse()
         statement = tree.body[0]
-        faults = build_fault_reach(build_control_flow_model(tree))
+        calls = Ps1ModelCache(tree).call_graph
+        faults = build_fault_reach(build_control_flow_model(tree), lambda: calls)
         self.assertFalse(expression_cannot_fault(statement.expression, statement, faults, None))
 
 

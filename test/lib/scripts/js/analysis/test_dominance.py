@@ -999,6 +999,10 @@ class TestADefinitionInsideAFunctionCalledWhereItIsWritten(TestBase):
         source = 'var T; c && (function () { T = ["a"]; })(); function f() { return T[0]; } f();'
         self.assertEqual(self._answers(source), (False, False, False, False))
 
+    def test_a_definition_on_one_branch_inside_a_try_with_an_empty_finally_orders_nothing(self):
+        source = 'var T; (function (c) { try { if (c) { } else { T = ["a"]; } } finally { } })(c); function f() { return T[0]; } f();'
+        self.assertEqual(self._answers(source), (False, False, False, False))
+
     def test_a_read_the_call_makes_before_the_definition_is_not_ordered(self):
         source = 'var T; function f() { return T[0]; } (function () { f(); T = ["a"]; })(); f();'
         self.assertEqual(self._answers(source), (False, False, False, False))

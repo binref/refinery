@@ -1,25 +1,27 @@
 """
 Where a terminating error raised at a point in a PowerShell script goes.
 
-The routing itself is already in the control-flow graph:
-`refinery.lib.scripts.ps1.analysis.cfg` joins every statement of a guarded region to the handler
-that may be offered its errors, chains `catch` clauses and `trap` sets in the order the engine
-consults them, and edges to the body exit where the error gets past all of them. What is here is
-the reading of that graph — which handlers a point reaches, whether the error may leave the body,
-and the transpose, which points a handler is reachable from.
+Where an error raised at a point ends up — which handlers take it, where the run carries on, and
+whether it ends the run or is handed to a caller — is answered by
+`refinery.lib.scripts.ps1.analysis.dispatch`, and every question about a point here reads it there.
+The control-flow graph of `refinery.lib.scripts.ps1.analysis.cfg` draws the same routes without the
+state an error carries along them; what is read off it here is the transpose, which points a
+handler is reachable from, and the step-over and landing regions the `trap` removal weighs.
 
-This module answers three questions. *Does an error
-raised here reach a handler that acts* is a property of a **position**, and it is what a pass asks
-before it empties a guarded body. *Would deleting this statement change which handler runs* is a
+This module answers three questions. *Does an error raised here change which code runs* is a
+property of a **position**. *Would deleting this statement change which handler runs* is a
 property of a **statement**, and it additionally needs to know whether the statement can raise at
 all — `refinery.lib.scripts.ps1.analysis.effects.fault_is_observed` asks that one, because the
 predicate that answers it lives there. *Is this handler still reachable from anything that raises*
 is the **transpose**, and it is what a pass asks before deleting a `trap`, where the statement being
-removed cannot itself raise and every error it re-routes belongs to something else.
+removed cannot itself raise and every error it re-routes belongs to something else. The transpose
+still reads its routes off the graph rather than off the evaluator, and so reads the escalation
+state the graph does not carry by rules of its own (`_SetFacts`, `_reraises`), each of which reads
+what a handler means from `refinery.lib.scripts.ps1.analysis.handlers` as the evaluator does.
 
-A body boundary is where this stops. The graphs are per body, so an error that leaves a function
-reaches whatever guards the *call*, and no graph here holds both. `leaves_the_body` reports that
-rather than guessing, and a caller reads it as *unknown* wherever a caller might be guarding.
+A body boundary is where the position question stops. An error that leaves a function reaches
+whatever guards the *call*, and no reading here holds both: `Ps1Fate.to_caller` reports that rather
+than guessing, and a caller reads it as *unknown* wherever a caller might be guarding.
 """
 from __future__ import annotations
 
@@ -37,15 +39,29 @@ from refinery.lib.scripts.analysis.cfg import (
     plain_successors,
 )
 from refinery.lib.scripts.analysis.components import Condensation
+from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
 from refinery.lib.scripts.ps1.analysis.cfg import (
     Ps1ControlFlowModel,
     Ps1ReportNode,
-    Ps1TrapDisposition,
     Ps1TrapSet,
     build_control_flow_model,
+)
+from refinery.lib.scripts.ps1.analysis.dispatch import (
+    ERROR_KINDS,
+    HANDED_BACK,
+    Ps1Dispatch,
+    Ps1ErrorKind,
+    Ps1Fate,
+    preferences_of,
+)
+from refinery.lib.scripts.ps1.analysis.handlers import (
+    Ps1TrapDisposition,
+    handler_acts,
     names_every_error,
+    settled,
 )
 from refinery.lib.scripts.ps1.analysis.session import (
+    session_of,
     stops_on_error,
     writes_stop_to_the_default_table,
     writes_stop_to_the_preference,
@@ -60,39 +76,16 @@ from refinery.lib.scripts.ps1.ast import (
     string_value,
 )
 from refinery.lib.scripts.ps1.model import (
-    Ps1BreakStatement,
     Ps1CatchClause,
+    Ps1CommandArgument,
     Ps1CommandInvocation,
-    Ps1ContinueStatement,
     Ps1IntegerLiteral,
+    Ps1InvokeMember,
     Ps1Script,
     Ps1ScriptBlock,
     Ps1ThrowStatement,
     Ps1TrapStatement,
 )
-
-class Ps1FaultRouting(NamedTuple):
-    """
-    Where a terminating error raised at one point may go: the handlers it may be offered to, in no
-    particular order, and whether it may get past all of them and leave the body.
-
-    `handlers` holds `Ps1CatchClause` and `Ps1TrapStatement` nodes and is a *may* set — a type
-    filter is matched by inheritance at run time, so a clause that cannot be shown to miss is
-    reported alongside the one after it.
-
-    The two fields answer different questions and a caller reads both. A handler that acts makes the
-    error observable however the rest of the routing looks; `leaves_the_body` beside a `trap` is the
-    escalation that ends the body, and beside nothing at all it is the ordinary unhandled error that
-    5.1 reports and steps over.
-    """
-    handlers: tuple[Ps1CatchClause | Ps1TrapStatement, ...]
-    leaves_the_body: bool
-
-
-#: What the graphs place nothing for, and therefore claim nothing about. Every query answers `None`
-#: for a node it cannot place, and every caller reads that as *the error may go anywhere*.
-UNPLACED = None
-
 
 #: The commands that arm strict mode, in the spelling `resolve_command_name` answers with. Two
 #: rather than one, because two commands write the same engine slot: `Set-StrictMode -Version`
@@ -217,28 +210,6 @@ def ends_the_script(
     return False
 
 
-def handler_acts(handler: Ps1CatchClause | Ps1TrapStatement) -> bool:
-    """
-    Whether running *handler* changes what the script does.
-
-    An empty `catch { }` swallows the error and lets execution resume after the construct, so a
-    script that never raises reaches the same next statement — which is why an obfuscator writes one
-    and why removing what it guards costs nothing. A `trap` is the same rule with one more spelling:
-    a body holding only an unlabelled `break` or `continue` decides how the error is disposed of and
-    emits nothing, while a body holding anything else — a call, an assignment, or a bare value the
-    engine writes to the output stream — is a handler whose running is observable.
-    """
-    body = handler.body.body if handler.body is not None else ()
-    if isinstance(handler, Ps1CatchClause):
-        return bool(body)
-    for statement in body:
-        if isinstance(statement, (Ps1BreakStatement, Ps1ContinueStatement)):
-            if statement.label is not None:
-                return True
-            continue
-        return True
-    return False
-
 
 class _EmptyCatch(NamedTuple):
     """
@@ -269,19 +240,12 @@ class _Route(NamedTuple):
     two clauses resuming at distinct slots settle that for every position, so no more than two are
     kept. A clause is kept beside its slot because a reader measuring the run up to that slot needs
     the `try` the clause belongs to.
-
-    `taken_at` is how far out the route may carry control, which a capped list cannot say: the
-    depth in the tree of the outermost statement it carries on after, or whose handler that acts
-    takes the error, and infinite where there is none. Every such statement holds the point the
-    error was raised at, so they stand on one chain of ancestors and the shallowest is the
-    outermost; `TestPs1EveryLandingHoldsItsRaise` checks that over the corpus.
     """
     acts: bool
     passes_a_trap: bool
     offers_a_handler: bool
     leaves_the_body: bool
     empty_catches: tuple[_EmptyCatch, ...]
-    taken_at: float = float('inf')
 
     def joined(self, other: _Route) -> _Route:
         """
@@ -300,7 +264,6 @@ class _Route(NamedTuple):
             self.offers_a_handler or other.offers_a_handler,
             self.leaves_the_body or other.leaves_the_body,
             catches,
-            min(self.taken_at, other.taken_at),
         )
 
 
@@ -308,23 +271,10 @@ class _Route(NamedTuple):
 _NOWHERE = _Route(False, False, False, False, ())
 
 
-def _tree_depth(node: Node, depths: dict[int, int]) -> int:
-    """
-    How many ancestors *node* has in its tree, remembered in *depths*, which is valid for as long as
-    the tree its owner was built over.
-    """
-    found = depths.get(id(node))
-    if found is None:
-        parent = node.parent
-        found = depths[id(node)] = 0 if parent is None else _tree_depth(parent, depths) + 1
-    return found
-
-
 def _arrival(
     graph: ControlFlowGraph,
     node: CfgNode,
     reraises: Callable[[CfgNode], bool],
-    depth: Callable[[Node], int],
 ) -> _Route:
     """
     What an error arriving at *node* contributes to a route through it: the handler it is offered
@@ -334,32 +284,17 @@ def _arrival(
     """
     element = node.element
     if isinstance(node, Ps1ReportNode):
-        reported = node.carries_on_after
-        catch = _EmptyCatch(node, _normal_successors(node), reported)
-        return _Route(False, False, False, False, (catch,), depth(reported))
+        catch = _EmptyCatch(node, _normal_successors(node), node.carries_on_after)
+        return _Route(False, False, False, False, (catch,))
     if isinstance(element, Ps1CatchClause):
         empty = element.body is None or not element.body.body
         catches = (_EmptyCatch(node, _normal_successors(node), element.parent),) if empty else ()
-        taken = float('inf') if element.parent is None else depth(element.parent)
-        return _Route(handler_acts(element), False, True, False, catches, taken)
+        return _Route(handler_acts(element), False, True, False, catches)
     if isinstance(element, Ps1TrapStatement):
-        acts = handler_acts(element)
-        takes = acts or not _breaks_at_once(element)
-        taken = depth(element.parent) if takes and element.parent is not None else float('inf')
-        return _Route(acts, True, True, reraises(node), (), taken)
+        return _Route(handler_acts(element), True, True, reraises(node), ())
     if node is graph.exit:
         return _Route(False, False, False, True, ())
     return _NOWHERE
-
-
-def _breaks_at_once(trap: Ps1TrapStatement) -> bool:
-    """
-    Whether the body of *trap* begins with a `break`, which hands the error it took back up before
-    anything else runs. Every other `trap` either acts or carries on after the statement that
-    raised, the way an empty body and a `continue` do.
-    """
-    body = trap.body.body if trap.body is not None else ()
-    return bool(body) and isinstance(body[0], Ps1BreakStatement)
 
 
 def _handled_in_the_body(route: _Route) -> bool:
@@ -391,7 +326,7 @@ def _normal_successors(node: CfgNode) -> frozenset[CfgNode]:
     return frozenset(plain_successors(node))
 
 
-def _enclosing_trap_body(node: Node) -> Ps1TrapStatement | None:
+def _enclosing_trap_body(node: Node, memo: dict[int, Ps1TrapStatement | None]) -> Ps1TrapStatement | None:
     """
     The `trap` whose body *node* stands in, or `None` where *node* is in no trap body. Assumes
     *node* is a body statement — a `trap`'s own type filter is not one, and the veto that reaches
@@ -403,15 +338,29 @@ def _enclosing_trap_body(node: Node) -> Ps1TrapStatement | None:
     raise. The bodies of `if`/`while`/`for`/`switch`/`try` and of a named block (`begin`/`process`/
     `end`) are a `Block` rather than a `Ps1ScriptBlock`, so a raise nested in one still finds the
     `trap` it shares a scope with.
+
+    *memo* holds the answer for every node a walk has climbed through, so that asking of every
+    node of a nest costs its size rather than its size times its depth; the caller keeps it no
+    longer than the tree stays as it is.
     """
+    climbed: list[Node] = []
+    found: Ps1TrapStatement | None = None
     cursor = node.parent
     while cursor is not None:
+        if id(cursor) in memo:
+            found = memo[id(cursor)]
+            break
         if isinstance(cursor, Ps1TrapStatement):
-            return cursor
+            found = cursor
+            break
         if isinstance(cursor, Ps1ScriptBlock):
-            return None
+            break
+        climbed.append(cursor)
         cursor = cursor.parent
-    return None
+    for step in climbed:
+        memo[id(step)] = found
+    return found
+
 
 
 def _resumption_slot(graph: ControlFlowGraph, node: CfgNode) -> CfgNode | None:
@@ -642,8 +591,6 @@ class Ps1ErrorPaths:
     ):
         self.graph = graph
         self._reraises = reraises
-        self._depths: dict[int, int] = {}
-        depth = self.depth_of
         self._trap_sets = tuple(trap_sets)
         self._landings: _Landings | None = None
         self._holders: dict[int, tuple[Node, Ps1TrapSet]] | None = None
@@ -658,7 +605,7 @@ class Ps1ErrorPaths:
         def own(number: int) -> _Route:
             route = _NOWHERE
             for member in components[number]:
-                route = route.joined(_arrival(graph, member, reraises, depth))
+                route = route.joined(_arrival(graph, member, reraises))
             return route
 
         self._routes = self._condensation.accumulate(own, _Route.joined, downstream=True)
@@ -681,7 +628,7 @@ class Ps1ErrorPaths:
             if condensation.looped(number):
                 for member in condensation.components[number]:
                     if member is not start:
-                        route = route.joined(_arrival(self.graph, member, self._reraises, self.depth_of))
+                        route = route.joined(_arrival(self.graph, member, self._reraises))
             for other in condensation.downstream(number):
                 route = route.joined(self._routes[other])
             self._from[start] = route
@@ -750,12 +697,6 @@ class Ps1ErrorPaths:
                 steps, _normal_successors(slot), self._within([self.holder_of(slot)]))
         return region
 
-    def depth_of(self, node: Node) -> int:
-        """
-        How many ancestors *node* has in the tree this graph was built over.
-        """
-        return _tree_depth(node, self._depths)
-
     def holder_of(self, slot: CfgNode) -> Node:
         """
         The statement of a resuming block that *slot* resumes past.
@@ -802,7 +743,7 @@ class Ps1ErrorPaths:
         The route of an error offered to *node*: what *node* itself does with it, joined with
         everything it may hand the error on to.
         """
-        return _arrival(self.graph, node, self._reraises, self.depth_of).joined(self.route_from(node))
+        return _arrival(self.graph, node, self._reraises).joined(self.route_from(node))
 
     def landings(self, trap_set: Ps1TrapSet) -> list[Ps1LandingSite] | None:
         """
@@ -993,7 +934,7 @@ class _SetFacts:
 
     Where no typed member goes, an error a typed member matches goes to the same member either way,
     and every other error goes to the members that take an error no narrower member names
-    (`refinery.lib.scripts.ps1.analysis.cfg.Ps1TrapSet.catching`) or past the set, so the two sets
+    (`refinery.lib.scripts.ps1.analysis.handlers.Ps1TrapSelection.catching`) or past the set, so the two sets
     agree when those agree. Where a typed member goes, the errors it took may go to any member the
     smaller set may select: a typed member the whole set may select as well, or a member taking
     every error, which may be the first untyped member left; and past the set where it keeps no
@@ -1045,13 +986,7 @@ class _SetFacts:
         """
         if handler_acts(trap):
             return _Fate.ACTS, id(trap)
-        disposition = self._trap_set.disposition(trap)
-        if Ps1TrapDisposition.FALLS_THROUGH in disposition:
-            disposition &= ~Ps1TrapDisposition.FALLS_THROUGH
-            disposition |= Ps1TrapDisposition.RESUMES
-            if self._stop:
-                disposition |= Ps1TrapDisposition.RETHROWS
-        return _Fate.JUMPS, disposition.value
+        return _Fate.JUMPS, settled(self._trap_set.disposition(trap), self._stop).value
 
     def _catching_without(self, removed: AbstractSet[int]) -> set[tuple[_Fate, int]]:
         """
@@ -1111,8 +1046,9 @@ class Ps1FaultReach:
     can hand it a graph too coarse to see the step-over and remove a load-bearing trap.
     """
 
-    def __init__(self, control_flow: Ps1ControlFlowModel):
+    def __init__(self, control_flow: Ps1ControlFlowModel, calls: Callable[[], Ps1CallGraph]):
         self._given = control_flow
+        self._calls = calls
         self._model: Ps1ControlFlowModel | None = None
         self._paths: dict[ControlFlowGraph, Ps1ErrorPaths] = {}
         self._fires: dict[ControlFlowGraph, dict[int, bool]] = {}
@@ -1125,7 +1061,71 @@ class Ps1FaultReach:
         self._stop_default: bool | None = None
         self._strict: bool | None = None
         self._strict_v2: bool | None = None
-        self._depths: dict[int, int] = {}
+        self._dispatch: Ps1Dispatch | None = None
+        self._trap_bodies: dict[int, Ps1TrapStatement | None] = {}
+
+    @property
+    def dispatch(self) -> Ps1Dispatch:
+        """
+        Where 5.1 sends an error raised at a point of this script, under the error preferences the
+        script's session may hold.
+        """
+        dispatch = self._dispatch
+        if dispatch is None:
+            root = self._script
+            session = session_of(root) if root is not None else None
+            stops = self._stops_on_every_error()
+            silenced = session is not None and session.silenced
+            called = session is not None and (session.silenced or session.silenced_by_a_call)
+            dispatch = self._dispatch = Ps1Dispatch(
+                preferences_of(stops, silenced),
+                preferences_of(stops, called),
+            )
+        return dispatch
+
+    def fate_of(self, node: Node, kinds: Ps1ErrorKind) -> tuple[ControlFlowGraph, CfgNode, Ps1Fate] | None:
+        """
+        The graph and node of the point *node* stands at, and where an error of *kinds* raised there
+        may end up; `None` where the graphs or the dispatch place it nowhere.
+        """
+        located = self._control_flow.locate(node)
+        if located is None:
+            return None
+        graph, start = located
+        point = start.element
+        if point is None:
+            return None
+        fate = self.dispatch.fate(point, kinds)
+        if fate is None:
+            return None
+        return graph, start, fate
+
+    def _replaces_what_is_in_flight(self, graph: ControlFlowGraph, fate: Ps1Fate) -> bool:
+        """
+        Whether an error routed like *fate* leaves the `finally` body of a `try` that something
+        other than the completed `try` may enter, where the error takes the place of what was in
+        flight and the two may end up apart: a jump, which goes wherever it was going and never
+        where an error does (`refinery.lib.scripts.ps1.analysis.dispatch.Ps1Dispatch.jumps_through`),
+        or an error, where the `try` statement disposes of errors of one kind otherwise than of
+        another, so that whichever kind the error in flight is, the one taking its place may be
+        another.
+        """
+        dispatch = self.dispatch
+        for statement in fate.replaces:
+            if dispatch.jumps_through(statement):
+                return True
+            final = statement.finally_block
+            entry = None if final is None else graph.node_of(final)
+            if entry is None:
+                return True
+            if not any(graph.is_exceptional(source, entry) for source in entry.predecessors):
+                continue
+            level = dispatch.level_of(statement)
+            if level is None:
+                return True
+            if len({dispatch.disposed(level, statement, kind) for kind in ERROR_KINDS}) > 1:
+                return True
+        return False
 
     @property
     def _control_flow(self) -> Ps1ControlFlowModel:
@@ -1149,18 +1149,6 @@ class Ps1FaultReach:
                 self._model = build_control_flow_model(root, descend=True)
         return self._model
 
-    def routing_at(self, node: Node) -> Ps1FaultRouting | None:
-        """
-        Where an error raised at *node* may go, or `None` when the graphs place *node* nowhere —
-        a body they do not descend into, or an expression evaluated at no point they model.
-        """
-        located = self._control_flow.locate(node)
-        if located is None:
-            return UNPLACED
-        graph, start = located
-        paths = self.paths_of(graph)
-        return Ps1FaultRouting(paths.handlers_from(start), paths.route_from(start).leaves_the_body)
-
     def points_in(self, node: Node) -> Iterator[Node]:
         """
         The points inside *node* at which the graphs say something is evaluated, *node* itself
@@ -1180,64 +1168,84 @@ class Ps1FaultReach:
             if self._control_flow.node_of(inner) is not None:
                 yield inner
 
-    def escapes_the_body(self, node: Node) -> bool:
+    def places(self, node: Node) -> bool:
         """
-        Whether an error raised at *node* gets past every handler written in the body *node* stands
-        in, so that where it goes next is decided by whatever ran that body and not by anything the
-        body itself says.
+        Whether the graphs evaluate something at *node*, which makes it a point of its own.
+        """
+        return self._control_flow.node_of(node) is not None
+
+    def escapes_the_body(self, node: Node, kinds: Ps1ErrorKind) -> bool:
+        """
+        Whether an error of *kinds* raised at *node* gets past every handler written in the body
+        *node* stands in, so that where it goes next is decided by whatever ran that body and not by
+        anything the body itself says.
 
         A position the graphs place nowhere settles nothing and escapes nothing; `False` is the
         answer that leaves such a node to the position question, which reads an unplaced node as
         observed.
         """
-        located = self._control_flow.locate(node)
-        if located is None:
+        found = self.fate_of(node, kinds)
+        if found is None:
             return False
-        route = self._route(*located)
-        return not _handled_in_the_body(route) and _escapes(route)
+        _, _, fate = found
+        if fate.acts or fate.leaves and fate.offered_to_traps:
+            return False
+        return not (fate.caught or fate.offered_to_traps) or bool(fate.leaves)
 
-    def observed_at(self, node: Node) -> bool:
+    def kinds_a_point_may_raise(self, node: Node) -> Ps1ErrorKind:
         """
-        Whether an error raised at *node* changes which code runs: some handler it reaches acts, a
-        `trap` set may decline it and end the body, or the graphs place *node* nowhere.
+        The kinds of error the position question reads a point *node* as raising, whatever stands
+        there: a statement-terminating one, and where `_terminates` names a raise at *node* fatal,
+        the error of a `throw` and one no list reports as well. The removal veto's own reading of
+        what a point raises is `refinery.lib.scripts.ps1.analysis.effects.point_raise_kinds`, which
+        reads the operands and grants what they clear; the two meet in the one answer to whether a
+        line can fail.
+        """
+        kinds = Ps1ErrorKind.STATEMENT
+        if self._ends_the_script(node):
+            kinds |= Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED
+        return kinds
+
+    def observed_at(self, node: Node, kinds: Ps1ErrorKind) -> bool:
+        """
+        Whether an error of *kinds* raised at *node* changes which code runs: some handler it
+        reaches acts, it may end the run, a `trap` set may decline it and end the body, or the
+        graphs place *node* nowhere.
 
         This is the question about the **position** and not about the statement standing there —
         it answers the same for a statement that cannot raise at all, which is what a caller
         weighing whether a guarded body may be emptied wants to know.
 
-        What the body itself decides is `_handled_in_the_body`; what is left over once the error
-        gets past it is this.
+        **An error that ends the run is observed**: deleting its raise would start the tail that
+        never ran. That is a `throw` or an error a `Stop` marked that nothing takes, and an error
+        raised in the body of a `trap` written in the script's own lists, which leaves the script
+        whatever its kind.
 
-        **An error that gets past a function's own handlers is the caller's**, and no graph here
+        **An error that gets past a function's own handlers is the caller's**, and nothing here
         holds both ends of a call. Measured: the same function whose error is reported and stepped
         over when called at script scope abandons its remaining statements and runs the `catch` of a
         `try` written around the *call*, however many bodies deep the raise is. So a raise in a body
         something may call is refused wherever the script holds a handler that acts — and granted
         where it holds none, since a `catch` that is not written cannot be the one guarding the
-        call.
-
-        **A terminating error that escapes the script scope ends the run**, so deleting its raise
-        would start the tail that never ran. `_reading_is_observed` reads a raise escaping to the
-        script owner as unobserved — right for the statement-terminating errors 5.1 reports and steps
-        over, wrong for the terminating ones. So when the error gets past the body unhandled and
-        `_terminates` names the raise fatal, it is observed. This is the forward reading of the same
-        termination the transpose `_removing_the_set_matters` already weighs.
+        call. An error of a `throw` or one no list reports, handed to the caller, ends the caller's
+        run unless it takes it, and is observed either way.
         """
-        located = self._control_flow.locate(node)
-        if located is None:
+        found = self.fate_of(node, kinds)
+        if found is None:
             return True
-        graph, start = located
-        route = self._route(graph, start)
-        if self._reading_is_observed(graph, route):
+        graph, _, fate = found
+        if fate.acts or fate.ends_run:
             return True
-        return _escapes(route) and self._terminates(node)
+        if not fate.to_caller:
+            return False
+        if fate.offered_to_traps or fate.to_caller & (Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED):
+            return True
+        return self._handled_elsewhere(graph)
 
     def _reading_is_observed(self, graph: ControlFlowGraph, route: _Route) -> bool:
         """
-        Whether an error routed like *route* out of *graph* changes what runs. The one reading of
-        a routing there is, so that the position question, the set question asking where the errors
-        of a deleted `trap` set arrive, and anything later that reads a routing cannot answer it
-        three ways.
+        Whether an error routed like *route* out of *graph* changes what runs: the reading of a
+        routing the set question asks where the errors of a deleted `trap` set arrive.
         """
         if _handled_in_the_body(route):
             return True
@@ -1300,65 +1308,49 @@ class Ps1FaultReach:
                 return True
         return False
 
-    def leaves_the_body(self, node: Node) -> bool:
+    def lands_past_a_live_tail(self, node: Node, kinds: Ps1ErrorKind) -> bool:
         """
-        Whether an error raised at *node* may get past every handler of the body it is in, so that
-        where it goes next is a question about the caller. `True` for a node the graphs cannot
-        place, which is the same answer for the same reason.
-        """
-        located = self._control_flow.locate(node)
-        return located is None or self._route(*located).leaves_the_body
+        Whether an error of *kinds* raised at *node* may carry the run on somewhere a run on which
+        *node* completed does not go next — the position fact behind the body-tail keep. The run
+        carries on after a statement where an error is reported, silenced or taken by a `trap` that
+        carries on, and after a `try` whose empty `catch` takes it; either is where *node*'s own run
+        goes next only where nothing else runs on the way there
+        (`refinery.lib.scripts.ps1.analysis.dispatch.Ps1Dispatch.tail_of`). An error that takes the
+        place of an error or a jump in flight, leaving a `finally` body, lands there too where the
+        two may end up apart.
 
-    def lands_past_a_live_tail(self, node: Node) -> bool:
+        A position question and nothing more: it says where a fault at *node* would go, never
+        whether *node* can raise. The caller pairs it with the raise predicate, the way every
+        removal site pairs a position with a fault of its own. A handler that *acts* is not among
+        them: it makes the fault observable through `observed_at`. Emptiness of a `catch` is read
+        from its body, so the answer is a property of where the handler sits and not of a
+        predicate a caller may be mutating.
         """
-        Whether a fault raised at *node* lands past a live statement still standing after *node* in
-        its own block — the position fact behind the body-tail keep. Three places land it so: an
-        **empty** `catch`, which carries on after its `try`; a report node, where 5.1 reports an
-        error nothing takes inside a `try`, `catch` or `trap` body and carries on after the
-        statement; and a resuming `trap` set whose resumption diverges from where the fault would
-        otherwise step over (`Ps1ErrorPaths.divergence`).
-
-        A position question and nothing more: it says where a fault at *node* would go and what the
-        fault path skips, never whether *node* can raise. The caller pairs it with the raise
-        predicate, the way every removal site pairs a position with a fault of its own.
-
-        A handler that *acts* is not among them: it already makes the fault observable through
-        `observed_at`, so pairing this with it would only re-derive that keep. Emptiness is read
-        from the body directly rather than through `handler_acts`, so the answer is a property of
-        where the handler sits and not of a predicate a caller may be mutating. The tail is live
-        exactly when *node*'s fall-through successor is not the slot the landing carries on at:
-        equal successors mean the fault steps over to where the code went anyway, and deleting it
-        changes nothing.
-        """
-        located = self._control_flow.locate(node)
-        if located is None:
+        found = self.fate_of(node, kinds)
+        if found is None:
             return False
-        graph, start = located
-        normal = _normal_successors(start)
-        if not normal:
+        graph, start, fate = found
+        point = start.element
+        if point is None or not _normal_successors(start):
             return False
-        if self.paths_of(graph).divergence(start) is not None:
+        tail = self.dispatch.tail_of(point)
+        if not fate.carried <= tail or not fate.swallowed <= tail:
             return True
-        return any(normal != catch.resumes for catch in self._route(graph, start).empty_catches)
+        return self._replaces_what_is_in_flight(graph, fate)
 
-    def _landing_depth(self, element: Node) -> float:
+    def _landing_depth(self, element: Node, kinds: Ps1ErrorKind) -> float:
         located = self._control_flow.locate(element)
         if located is None or located[1].element is not element:
             return float('inf')
-        graph, start = located
-        paths = self.paths_of(graph)
-        lowest = float('inf')
-        divergence = paths.divergence(start)
-        if divergence is not None:
-            lowest = paths.depth_of(paths.holder_of(divergence.slot))
-        route = paths.route_from(start)
-        return min(lowest, route.taken_at)
-
+        fate = self.dispatch.fate(element, kinds)
+        if fate is None:
+            return float('-inf')
+        return fate.outermost
 
     def raises_past(
         self,
         statement: Node,
-        raises: Callable[[Node], bool],
+        raises: Callable[[Node], Ps1ErrorKind],
         memo: dict[int, float],
     ) -> bool:
         """
@@ -1375,15 +1367,15 @@ class Ps1FaultReach:
                 order = list(root.walk())
                 for node in reversed(order):
                     lowest = float('inf')
-                    if self._control_flow.node_of(node) is not None and raises(node):
-                        lowest = self._landing_depth(node)
+                    if self._control_flow.node_of(node) is not None and (kinds := raises(node)):
+                        lowest = self._landing_depth(node, kinds)
                     for child in node.children():
                         lowest = min(lowest, table.get(id(child), float('inf')))
                     table[id(node)] = lowest
         lowest = table.get(id(statement))
         if lowest is None:
             return True
-        return lowest < _tree_depth(statement, self._depths)
+        return lowest < self.dispatch.depth_of(statement)
 
     def fault_the_try_catches(
         self,
@@ -1403,54 +1395,98 @@ class Ps1FaultReach:
         *operand* that *cleared* answers for cannot raise: that judgment reads values, which this
         module holds none of, so the caller hands it in.
         """
+        return bool(self.kinds_the_try_catches(operand, cleared))
+
+    def kinds_the_try_catches(
+        self,
+        operand: Node,
+        cleared: Callable[[Node], bool] | None = None,
+    ) -> Ps1ErrorKind:
+        """
+        The kinds of error `fault_the_try_catches` reads evaluating *operand* as raising: a
+        statement-terminating one for a cast, a fallible operator and a method call, one no list
+        reports for a command whose error the script makes terminating, and for a call that may run
+        a body of the script, whatever that body hands back (`hands_back_a_body_error`).
+        """
+        kinds = Ps1ErrorKind.NONE
         if raises_a_caught_terminating_error(operand, cleared):
-            return True
-        return is_soft_error_source(operand, cleared) and self.error_is_terminating(operand)
+            kinds |= Ps1ErrorKind.STATEMENT
+        if is_soft_error_source(operand, cleared) and self.error_is_terminating(operand):
+            kinds |= Ps1ErrorKind.MARKED
+        if self.hands_back_a_body_error(operand):
+            kinds |= HANDED_BACK
+        return kinds
+
+    def hands_back_a_body_error(self, node: Node) -> bool:
+        """
+        Whether evaluating *node* may run a body of the script, or code the script does not spell,
+        whose error then arrives where *node* stands: a command or a call there may run one
+        (`refinery.lib.scripts.ps1.analysis.callgraph.Ps1CallGraph.may_run_a_body`), or a command
+        there is handed a script block it may run. A script block written as a value runs only where
+        something runs it, so what it holds is not read here.
+        """
+        calls = self._calls()
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, (Ps1CommandInvocation, Ps1InvokeMember)) and calls.may_run_a_body(current):
+                return True
+            for child in current.children():
+                if isinstance(child, Ps1ScriptBlock):
+                    if isinstance(current, (Ps1CommandInvocation, Ps1CommandArgument)):
+                        return True
+                    continue
+                stack.append(child)
+        return False
 
     def _fires_a_trap(self, raiser: Node) -> bool:
         """
-        Whether *raiser* provably fires the `trap` its block is guarded by — a statement-terminating
+        Whether *raiser* may fire the `trap` its block is guarded by — with a statement-terminating
         or terminating error, the only errors a `trap` runs on. A cast, a fallible operator, a method
         call or a command a `Stop` makes terminating is read through `fault_the_try_catches` over the
         raiser's `fault_operand`; a bare `throw` or a global `Stop` is read through
-        `error_is_terminating`.
+        `error_is_terminating`. A raiser that may run a body of the script — a function it defines, a
+        script block, code it does not spell — may fire it too: a list that declares a `trap` passes
+        errors outward through every body it runs, so the called body's error leaves it and arrives
+        at the `trap`, as the one of a statement written there would (`hands_back_a_body_error`).
 
-        This under-approximates on purpose. It is the dual of the transpose's over-approximation: the
-        transpose keeps a `trap` when *anything* its block holds may raise, so a plain command counts
-        there; this decides whether to *delete* a body raise the `trap` would let end the scope, and a
-        plain command whose default error is non-terminating does not fire the `trap`, so counting it
-        would keep the junk body raise the deletion pass is written to drop. Excluding the plain
-        command is therefore the price of that removal.
+        A plain command is not counted. Its default error is non-terminating and does not fire the
+        `trap`, so counting it would keep the junk a `trap` body holds that no run reaches, which the
+        deletion pass is written to drop. A command whose error is terminating although no `Stop`
+        is in force is a gap this shares with every other reading of whether a line can fail.
         """
         operand = fault_operand(raiser)
         if operand is not None and self.fault_the_try_catches(operand):
             return True
-        return self.error_is_terminating(raiser)
+        return self.error_is_terminating(raiser) or self.hands_back_a_body_error(raiser)
 
-    def escapes_a_firing_trap_body(self, node: Node) -> bool:
+    def never_runs(self, node: Node) -> bool:
         """
-        Whether *node* is a raise in the body of a `trap` that fires, whose error therefore leaves
-        the body and ends the scope the `trap` belongs to. A `trap` does not guard its own body, so a
-        raise among its statements is not offered back to it: it ends the script at script scope, or
-        the function where the `trap` is written inside one. Deleting such a raise runs the remainder
-        of the body — and the scope past it — that the original abandoned, which is why it is the
-        position half of a keep.
-
-        Three things have to hold. The raise stands in a `trap` body (`_enclosing_trap_body`, which
-        stops at a function/scriptblock boundary). Its error actually leaves that body rather than
-        being taken by a handler nested inside it (`escapes_the_body`). And the `trap` fires: some
-        statement its block guards raises a firing error (`_fires_a_trap` over the trap node's
-        raisers). A `trap` the graph places nowhere fires for nothing and is refused.
+        Whether *node* stands in the body of a `trap` nothing its block holds may fire
+        (`_fires_a_trap` over the statements behind the set), so that no run reaches it and deleting
+        it changes nothing. A `trap` the graph places nowhere is read as one that may fire.
         """
-        trap = _enclosing_trap_body(node)
-        if trap is None or not self.escapes_the_body(node):
+        trap = _enclosing_trap_body(node, self._trap_bodies)
+        if trap is None:
             return False
         located = self._control_flow.locate(trap)
         if located is None:
             return False
         graph, start = located
         memo = self._fires.setdefault(graph, {})
-        return self.paths_of(graph).behind(start, self._fires_a_trap_at, memo)
+        return not self.paths_of(graph).behind(start, self._fires_a_trap_at, memo)
+
+    def escapes_a_trap_body(self, node: Node, kinds: Ps1ErrorKind) -> bool:
+        """
+        Whether *node* is a raise of *kinds* in the body of a `trap` whose error leaves that body and
+        ends the scope the `trap` belongs to. A `trap` does not guard its own body, so a raise among
+        its statements is not offered back to it: it ends the script at script scope, or the
+        function where the `trap` is written inside one. Deleting such a raise runs the remainder of
+        the body — and the scope past it — that the original abandoned, which is why it is the
+        position half of a keep. Whether the `trap` fires at all is `never_runs`, which the caller
+        asks first.
+        """
+        return _enclosing_trap_body(node, self._trap_bodies) is not None and self.escapes_the_body(node, kinds)
 
     def _fires_a_trap_at(self, node: CfgNode) -> bool:
         """
@@ -1460,21 +1496,18 @@ class Ps1FaultReach:
         raiser = raiser_of(node)
         return raiser is not None and self._fires_a_trap(raiser)
 
-    def deleting_the_raise_resurrects_a_continuation(self, node: Node) -> bool:
+    def deleting_the_raise_resurrects_a_continuation(self, node: Node, kinds: Ps1ErrorKind) -> bool:
         """
-        Whether a live continuation runs only because a raise at *node* pre-empts it, so deleting the
-        raise starts that continuation. The one position predicate the removal veto pairs with its
-        raise half, `refinery.lib.scripts.ps1.analysis.effects.point_may_raise_a_caught_error`. Two
-        mechanisms resurrect a continuation and both are the same observable: the fault lands past
-        the live tail of its block (`lands_past_a_live_tail`: an empty `catch`, a report node, or a
-        resuming `trap` that diverges), and a firing `trap` body raise ends the scope the tail would
-        otherwise have kept running in (`escapes_a_firing_trap_body`). A future mechanism — a
-        `finally` that abandons — is a third disjunct here, not a fourth copy of the conjunction the
-        veto pairs it into.
+        Whether a live continuation runs only because a raise of *kinds* at *node* pre-empts it, so
+        deleting the raise starts that continuation. The one position predicate the removal veto
+        pairs with its raise half, `refinery.lib.scripts.ps1.analysis.effects.point_raise_kinds`.
+        Two mechanisms resurrect a continuation and both are the same observable: the run carries
+        on somewhere else (`lands_past_a_live_tail`), and a `trap` body raise ends the scope the
+        tail would otherwise have kept running in (`escapes_a_trap_body`).
         """
         return (
-            self.lands_past_a_live_tail(node)
-            or self.escapes_a_firing_trap_body(node)
+            self.lands_past_a_live_tail(node, kinds)
+            or self.escapes_a_trap_body(node, kinds)
         )
 
     def error_is_terminating(self, node: Node) -> bool:
@@ -1540,7 +1573,7 @@ class Ps1FaultReach:
         A `trap` cannot itself raise, so the forward question answers nothing about removing one:
         what changes is where the errors of *other* statements go. The set is the unit of the
         answer, because 5.1 hands an error to one member by the error's type and not by where the
-        member is written (`refinery.lib.scripts.ps1.analysis.cfg.Ps1TrapSet`), so a member
+        member is written (`refinery.lib.scripts.ps1.analysis.handlers.Ps1TrapSelection`), so a member
         alone says nothing about what its block does.
 
         **Something that may actually raise has to still reach the set.** Walking the error edges
@@ -1751,17 +1784,16 @@ class Ps1FaultReach:
         """
         Whether a `trap` entry hands the errors it takes back up although the graph draws no edge
         for it: a member 5.1 may select whose body runs off its end, where a `Stop` preference may
-        be in force.
+        be in force, which `refinery.lib.scripts.ps1.analysis.handlers.settled` reads as a re-raise.
         """
         trap = node.element
         if not isinstance(trap, Ps1TrapStatement) or not self._stops_on_every_error():
             return False
         trap_set = self._trap_set_of(trap)
-        return (
-            trap_set is not None
-            and trap_set.is_selectable(trap)
-            and Ps1TrapDisposition.FALLS_THROUGH in trap_set.disposition(trap)
-        )
+        if trap_set is None or not trap_set.is_selectable(trap):
+            return False
+        ran_off = trap_set.disposition(trap) & Ps1TrapDisposition.FALLS_THROUGH
+        return Ps1TrapDisposition.RETHROWS in settled(ran_off, True)
 
     def _converts(self, trap: Ps1TrapStatement) -> bool:
         """
@@ -1939,11 +1971,12 @@ class Ps1FaultReach:
         return self._strict_v2
 
 
-def build_fault_reach(control_flow: Ps1ControlFlowModel) -> Ps1FaultReach:
+def build_fault_reach(control_flow: Ps1ControlFlowModel, calls: Callable[[], Ps1CallGraph]) -> Ps1FaultReach:
     """
     The `Ps1FaultReach` over one script. The reader reads its own root off *control_flow* and draws
     the sub-statement graph it answers from there, so the coarse model is passed only to locate the
     root — and reused unchanged for a script that writes no `$( )` or `@( )`, whose graph is the same
-    under `descend`.
+    under `descend`. *calls* is the call graph of the same root, asked only whether a call may run
+    a body.
     """
-    return Ps1FaultReach(control_flow)
+    return Ps1FaultReach(control_flow, calls)

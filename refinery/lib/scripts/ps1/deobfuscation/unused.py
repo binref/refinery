@@ -705,6 +705,16 @@ class Ps1DeadStoreElimination(Transformer):
     come from the shared `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel`, so a store read
     only through a nested scriptblock is correctly seen as live rather than skipped.
 
+    An overwrite is a kill only where it writes: a store whose value may raise, with the run going on
+    afterwards, leaves the variable as it was, so the store before it stays live beside it
+    (`refinery.lib.scripts.ps1.analysis.effects.Ps1HandlerVerdicts.fails_and_carries_on`). In
+
+        $port = 80
+        $port = [int]$args[0]
+        Write-Host "port $port"
+
+    5.1 reports the failed cast and writes `port 80`.
+
     A name the script may read where no occurrence of it stands can be read between a store and
     the overwrite this pass treats as a kill — see
     `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache.names_may_be_read_unseen` — so no store
@@ -752,8 +762,8 @@ class Ps1DeadStoreElimination(Transformer):
             if pending and handlers.raises_past(stmt):
                 pending.clear()
             reads, kills, writes = self._classify_statement(stmt, scope, model)
-            for var in kills:
-                if var in pending:
+            for var, point in kills.items():
+                if var in pending and not handlers.fails_and_carries_on(point):
                     dead.extend(pending.pop(var))
                 has_read.add(var)
             for var in reads:
@@ -761,6 +771,9 @@ class Ps1DeadStoreElimination(Transformer):
                 has_read.add(var)
             for var, store in writes:
                 if var in unseen:
+                    continue
+                if var in pending and handlers.fails_and_carries_on(store):
+                    pending[var].append(store)
                     continue
                 if var in pending:
                     dead.extend(pending[var])
@@ -782,11 +795,12 @@ class Ps1DeadStoreElimination(Transformer):
 
     def _classify_statement(
         self, stmt, scope: Scope, model: Ps1SemanticModel,
-    ) -> tuple[set[str], set[str], list[tuple[str, Ps1ExpressionStatement]]]:
+    ) -> tuple[set[str], dict[str, Node], list[tuple[str, Ps1ExpressionStatement]]]:
         """
         Return `(reads, kills, writes)` for a top-level statement:
         - `reads`: variable keys read by the statement (flush: pending writes are needed).
-        - `kills`: variable keys whose previous pending writes are dead (overwritten before read).
+        - `kills`: variable keys whose previous pending writes are dead (overwritten before read),
+          each with the point that overwrites it.
         - `writes`: list of `(key, statement)` pairs for pure assignments to register as pending.
 
         A for-loop's initializer kills previous stores without itself becoming a pending write
@@ -794,7 +808,7 @@ class Ps1DeadStoreElimination(Transformer):
         contribute all internal variable references as reads and produce no kills/writes.
         """
         reads: set[str] = set()
-        kills: set[str] = set()
+        kills: dict[str, Node] = {}
         writes: list[tuple[str, Ps1ExpressionStatement]] = []
         if isinstance(stmt, Ps1ExpressionStatement) and isinstance(
             stmt.expression, Ps1AssignmentExpression
@@ -826,6 +840,6 @@ class Ps1DeadStoreElimination(Transformer):
                     if key in init_rhs_reads:
                         reads.update(init_rhs_reads)
                     else:
-                        kills.add(key)
+                        kills[key] = stmt.initializer
         reads |= model.variables_in_scope(stmt, scope)
         return reads, kills, writes

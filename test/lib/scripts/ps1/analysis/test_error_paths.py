@@ -17,22 +17,24 @@ from refinery.lib.scripts.analysis.cfg import (
     Projection,
 )
 from refinery.lib.scripts.ps1 import ast
-from refinery.lib.scripts.ps1.analysis import effects, faults, worldflow
+from refinery.lib.scripts.ps1.analysis import dispatch, effects, faults, worldflow
 from refinery.lib.scripts.ps1.analysis import cfg as ps1_cfg
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
-from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts
+from refinery.lib.scripts.ps1.analysis.dispatch import Ps1ErrorKind
+from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts, deletion_is_observable
 from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1ErrorPaths,
     Ps1FaultReach,
     build_fault_reach,
-    handler_acts,
 )
+from refinery.lib.scripts.ps1.analysis.handlers import handler_acts
 from refinery.lib.scripts.ps1.analysis.world import measure_world
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach, build_world_reach
 from refinery.lib.scripts.ps1.model import (
     Ps1CatchClause,
     Ps1CommandInvocation,
+    Ps1ExpressionStatement,
     Ps1FunctionDefinition,
     Ps1Script,
     Ps1TrapStatement,
@@ -282,7 +284,8 @@ class TestPs1HandlerVerdictsAnswerOnlyForTheTreeTheyWereBuiltOver(TestBase):
             f
         """)).parse()
         control_flow = build_control_flow_model(tree)
-        reach = build_fault_reach(control_flow)
+        calls = Ps1ModelCache(tree).call_graph
+        reach = build_fault_reach(control_flow, lambda: calls)
         world = build_world_reach(measure_world(tree), lambda: control_flow)
         trap, = _traps(tree)
         for over in (tree, tree.body[2]):
@@ -293,7 +296,8 @@ class TestPs1HandlerVerdictsAnswerOnlyForTheTreeTheyWereBuiltOver(TestBase):
     def test_a_held_verdict_keeps_the_trap_once_the_tree_has_moved(self):
         tree = Ps1Parser("trap { Write-Host 'h'; continue }; $a; 5").parse()
         control_flow = build_control_flow_model(tree)
-        reach = build_fault_reach(control_flow)
+        calls = Ps1ModelCache(tree).call_graph
+        reach = build_fault_reach(control_flow, lambda: calls)
         world = build_world_reach(measure_world(tree), lambda: control_flow)
         verdicts = Ps1HandlerVerdicts(reach, lambda: world, tree)
         trap, = _traps(tree)
@@ -578,13 +582,14 @@ class TestPs1WeighingEveryTrapCostsLinearWork(TestBase):
             statement = next(node for node in script.walk() if isinstance(node, Ps1CommandInvocation)).parent
             assert statement is not None
             control_flow = build_control_flow_model(script)
+            calls = Ps1ModelCache(script).call_graph
 
             def ask():
-                reach = build_fault_reach(control_flow)
-                reach.observed_at(statement)
-                reach.lands_past_a_live_tail(statement)
+                reach = build_fault_reach(control_flow, lambda: calls)
+                reach.observed_at(statement, reach.kinds_a_point_may_raise(statement))
+                reach.lands_past_a_live_tail(statement, Ps1ErrorKind.STATEMENT)
 
-            return lines_executed(ask, faults, components)
+            return lines_executed(ask, faults, dispatch, components)
 
         self.assertWorkGrowsLinearly(work, 20)
 
@@ -595,15 +600,66 @@ class TestPs1WeighingEveryTrapCostsLinearWork(TestBase):
             )).parse()
             statements = list(script.walk())
 
-            def ask():
-                reach = build_fault_reach(build_control_flow_model(script))
-                for statement in statements:
-                    reach.observed_at(statement)
-                    reach.lands_past_a_live_tail(statement)
+            calls = Ps1ModelCache(script).call_graph
 
-            return lines_executed(ask, faults, components)
+            def ask():
+                reach = build_fault_reach(build_control_flow_model(script), lambda: calls)
+                for statement in statements:
+                    reach.observed_at(statement, reach.kinds_a_point_may_raise(statement))
+                    reach.lands_past_a_live_tail(statement, Ps1ErrorKind.STATEMENT)
+
+            return lines_executed(ask, faults, dispatch, components)
 
         self.assertWorkGrowsLinearly(work, 100)
+
+    def test_asking_whether_a_long_catch_body_may_stand_in_place_of_its_try(self):
+        def work(size: int) -> int:
+            blocks = '; '.join(
+                F'if ($x) {{ if ($y) {{ $null = [int]$s{index}; $v{index} = 1 }} }}' for index in range(size))
+            script = Ps1Parser(F'try {{ throw "x" }} catch {{ {blocks} }}').parse()
+            cache = Ps1ModelCache(script)
+            clause = next(node for node in script.walk() if isinstance(node, Ps1CatchClause))
+            cache.world_reach
+
+            def ask():
+                cache.handlers.lifts_unchanged(clause)
+
+            return lines_executed(ask, faults, dispatch, effects, components)
+
+        self.assertWorkGrowsLinearly(work, 50)
+
+    def test_asking_whether_every_catch_body_of_a_nest_may_stand_in_place_of_its_try(self):
+        def work(size: int) -> int:
+            nest = ''.join(F'try {{ throw "x{index}" }} catch {{ Write-Host "h{index}"; ' for index in range(size))
+            script = Ps1Parser(nest + '$null = [int]$s' + ' }' * size).parse()
+            cache = Ps1ModelCache(script)
+            clauses = [node for node in script.walk() if isinstance(node, Ps1CatchClause)]
+            cache.world_reach
+
+            def ask():
+                for clause in clauses:
+                    cache.handlers.lifts_unchanged(clause)
+
+            return lines_executed(ask, faults, dispatch, effects, components)
+
+        self.assertWorkGrowsLinearly(work, 20)
+
+    def test_asking_of_every_statement_of_a_nest_whether_a_jump_passes_through_a_finally(self):
+        def work(size: int) -> int:
+            nest = ''.join(F'try {{ if ($c{index}) {{ return }}; ' for index in range(size))
+            script = Ps1Parser(nest + '$v = 1' + ' } finally { $null = [int]$s }' * size).parse()
+            cache = Ps1ModelCache(script)
+            statements = [node for node in script.walk() if isinstance(node, Ps1ExpressionStatement)]
+            cache.world_reach
+            cache.error_state
+
+            def ask():
+                for statement in statements:
+                    deletion_is_observable(statement, cache.faults, cache.world_reach, cache.error_state)
+
+            return lines_executed(ask, faults, dispatch, effects, components)
+
+        self.assertWorkGrowsLinearly(work, 20)
 
 
 class TestPs1TheWorldIsBuiltOnlyForAVerdictThatReadsIt(TestBase):
@@ -656,13 +712,14 @@ class TestPs1AHeldFaultModelAnswersAlikeWhateverWasAskedBeforeAnEdit(TestBase):
                 Get-Item nope
                 'tail'
             """)).parse()
-            reach = build_fault_reach(build_control_flow_model(tree))
+            calls = Ps1ModelCache(tree).call_graph
+            reach = build_fault_reach(build_control_flow_model(tree), lambda: calls)
             if asked_first:
-                reach.observed_at(tree.body[1])
+                reach.observed_at(tree.body[1], reach.kinds_a_point_may_raise(tree.body[1]))
             trap = tree.body[0]
             assert isinstance(trap, Ps1TrapStatement) and trap.body is not None
             set_body(trap.body, [])
-            answers.append(reach.observed_at(tree.body[2]))
+            answers.append(reach.observed_at(tree.body[2], reach.kinds_a_point_may_raise(tree.body[2])))
         self.assertEqual(answers[0], answers[1])
 
 

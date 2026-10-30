@@ -424,16 +424,11 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The rest of the function runs. `-ErrorAction Stop` sets the preference of the advanced '
         'function it is handed to, so the failing cast ends the call and the snippet writes the '
         'error and `after`; the output writes `f-rest` and `after`. Which bodies a call runs '
-        'under a preference is plan (4) of the error roadmap.',
-    "$x = 'one'; try { throw 'q' } catch { $x = 'two'; & { $null = [int]'a' }; $x = 'three' }; Write-Host $x":
-        'The failing cast is removed from the block. An error in a block a `catch` body runs '
-        'leaves the block and skips the rest of the body, so the snippet writes the error and '
-        '`two`; the output writes `three`. Which bodies run under a handler is plan (4) of the '
-        'error roadmap.',
+        'under a preference is the interprocedural milestone (cluster 1f).',
     "function f { $script:x = 'one'; $null = [int]'a'; $script:x = 'two' }; try { f } catch { }; Write-Host $script:x":
         'The failing cast is removed from the function. An error in a function a `try` body calls '
         'leaves the function and ends the call, so the snippet writes `one`; the output writes '
-        '`two`. Which bodies run under a handler is plan (4) of the error roadmap.',
+        '`two`. Which bodies run under a handler is the interprocedural milestone (cluster 1f).',
     "Write-Host ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SGVs!bG8=')))":
         'The decode is folded to `Hello`. `[Convert]::FromBase64String` rejects a text holding a '
         'character outside the base64 alphabet, so the snippet writes the error alone; the '
@@ -442,31 +437,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The call is folded away and the store after it is reached. `[Convert]::FromBase64String` '
         'rejects `!!`, so the `catch` is taken and the snippet writes `one`; the output writes '
         '`two`.',
-    "try { try { $null = [int]'a' } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'":
-        'The failing cast is removed. An error leaving the last line of a `try` body that has a '
-        '`finally` leaves the whole outer `try`, so the snippet writes the error and `after`; the '
-        "output writes `rest` and `after`. The graph reads the line's normal edge into the "
-        '`finally` as an error edge; the dispatch evaluator of the error roadmap answers it.',
-    "trap { continue }; if ($Host) { trap [System.IO.IOException] { continue }; $null = [int]'a'; Write-Host 'rest' }; Write-Host 'after'":
-        'The failing cast is removed. The typed `trap` declines the error and hands it to the '
-        'outer `trap`, which carries on after the `if`, so the snippet writes `after`; the output '
-        'writes `rest` and `after`. The check asks only the innermost `trap`; the dispatch '
-        'evaluator of the error roadmap answers it.',
-    "try { try { throw 'x' } finally { $null = [int]'a' } } finally { }; Write-Host 'after'":
-        'The failing cast is removed from the `finally` body. An error raised there takes the '
-        'place of the `throw` in flight, which 5.1 then reports and steps over, so the snippet '
-        'writes the error and `after`; the output ends on the `throw`. The dispatch evaluator of '
-        'the error roadmap answers it.',
-    "try { throw 'x' } catch { if ($Host) { $null = [int]'a'; Write-Host 'rest' } }; Write-Host 'after'":
-        'The `catch` body is lifted out of the `try` that always throws. The failing cast then '
-        'steps over inside the `if` instead of leaving the whole `catch` body, so the snippet '
-        'writes the error and `after`; the output writes `rest` and `after`. The dispatch '
-        'evaluator of the error roadmap answers it.',
-    "try { throw 'x'; trap { Write-Host 'T'; break } } catch { }; Write-Host 'after'":
-        'The `catch` body is lifted out of the `try` that always throws, and the `trap` with it. '
-        'The `trap` takes the `throw` before the `catch` does, so the snippet writes `T` and '
-        '`after`; the output writes `after`. The dispatch evaluator of the error roadmap answers '
-        'it.',
     "try { throw 'x' } catch { New-Object Foo.Bar; Write-Host 'rest' }; Write-Host 'after'":
         'The `catch` body is lifted out of the `try` that always throws. `New-Object` ends its '
         'statement with an error for a type that does not exist, which leaves the `catch` body, so '
@@ -482,6 +452,11 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         '`$i` is dropped as a dead store. `foreach` stores `a` through the constraint, which fails '
         'and leaves the `catch` body, so the snippet writes the error and `after`; the output writes '
         '`rest` and `after`. No obfuscator enumerates into a variable whose type it constrained.',
+    "trap { continue }; try { if ($Host) { return } } finally { $null = [int]'a' }; Write-Host 'after'":
+        "The `trap` and the failing cast are removed. The cast's error takes the place of the "
+        '`return` and the `trap` resumes after the `try`, so the snippet writes `after`; the '
+        'output returns and writes nothing. The `trap` removal reads where errors land off the '
+        'graph; phase E2 of the error roadmap moves it onto the dispatch evaluator.',
 }
 
 

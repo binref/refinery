@@ -79,8 +79,14 @@ class CfgEdge(enum.Flag):
     not, and is plain — its source is the handler body running to its end, which is a statement
     that completed, and a store it makes did happen. Reading the way in as raise-taken says no read
     below a `trap` can ever observe a store the handler made.
+
+    A pair of nodes carries the kinds of every edge drawn between it, `NORMAL` among them, so a
+    pair joined both ways answers for both. The last statement of a `try` body falls through into
+    the `finally` that guards it and carries its error there too; with no bit of its own, the plain
+    edge would read as error-carrying, and every walk over plain control flow would lose the path.
+    A pair joined by plain edges alone is stored as nothing at all, which reads as `NORMAL`.
     """
-    NORMAL = 0
+    NORMAL = enum.auto()
     ERROR_CARRYING = enum.auto()
     RESUMPTION_HUB = enum.auto()
     RESUMPTION_FORWARD = enum.auto()
@@ -95,6 +101,7 @@ RAISE_TAKEN = CfgEdge.ERROR_CARRYING | CfgEdge.RESUMPTION_HUB | CfgEdge.RESUMPTI
 #: every call — its `_get_value`/`__call__`/`__new__` cost dominates a graph flood, which asks these
 #: of millions of edges — so the predicates read the stored member's `.value` and mask it as a plain
 #: integer. The result is identical; only the construction of a throwaway member is skipped.
+_NORMAL_MASK = CfgEdge.NORMAL.value
 _ERROR_CARRYING_MASK = CfgEdge.ERROR_CARRYING.value
 _RAISE_TAKEN_MASK = RAISE_TAKEN.value
 
@@ -198,9 +205,8 @@ class CfgNode:
     resuming handler — see `CfgEdge`. A walk that wants only the paths going forward declines to
     enter one, and declines to leave one, which makes it a *projection* of the graph rather than a
     filter on its edges. It is a fact about the node and not about the edges into it, because an
-    edge kind is keyed by the pair of nodes it joins and `CfgBuilder.add_edge` builds a multigraph:
-    two edges between the same pair collapse to one entry, so a plain edge drawn beside a hub edge
-    would make the pair read as pure hub and a walk keyed on the kind would decline the plain path
+    edge kind is keyed by the pair of nodes it joins: a plain edge drawn beside a hub edge makes the
+    pair carry both, and a walk declining pairs that carry the hub kind would decline the plain path
     too. No pair of edges can disagree about what the node is.
 
     `is_hub_bound` marks a node the precise, forward-only projection does not reach: it sits inside a
@@ -385,7 +391,7 @@ def plain_successors(node: CfgNode) -> list[CfgNode]:
     here, so that no two of them can disagree about which edge is plain.
     """
     graph = node.graph
-    return [target for target in node.successors if graph.edge_kind(node, target) is CfgEdge.NORMAL]
+    return distinct(target for target in node.successors if graph.completes_into(node, target))
 
 
 def plain_predecessors(node: CfgNode) -> list[CfgNode]:
@@ -394,7 +400,7 @@ def plain_predecessors(node: CfgNode) -> list[CfgNode]:
     `plain_successors`.
     """
     graph = node.graph
-    return [source for source in node.predecessors if graph.edge_kind(source, node) is CfgEdge.NORMAL]
+    return distinct(source for source in node.predecessors if graph.completes_into(source, node))
 
 
 class LabelledReach(Generic[_Label]):
@@ -572,11 +578,19 @@ class ControlFlowGraph:
 
     def edge_kind(self, source: CfgNode, target: CfgNode) -> CfgEdge:
         """
-        What the edge from *source* to *target* says about the run that takes it — see `CfgEdge`.
-        An edge the builder recorded nothing for is `CfgEdge.NORMAL`, which is what an unrelated
-        pair of nodes reads as too.
+        What the edges from *source* to *target* say about the runs that take them — see `CfgEdge`.
+        A pair joined more than once carries the kind of every edge between it, and an unrelated
+        pair of nodes reads as `CfgEdge.NORMAL`.
         """
         return self._edge_kinds.get((id(source), id(target)), CfgEdge.NORMAL)
+
+    def completes_into(self, source: CfgNode, target: CfgNode) -> bool:
+        """
+        Whether control passes from *source* to *target* on a run where *source* completed: a plain
+        edge joins them, whatever other edge joins them as well.
+        """
+        kind = self._edge_kinds.get((id(source), id(target)))
+        return kind is None or bool(kind.value & _NORMAL_MASK)
 
     def is_exceptional(self, source: CfgNode, target: CfgNode) -> bool:
         """
@@ -589,9 +603,12 @@ class ControlFlowGraph:
 
     def raise_taken(self, source: CfgNode, target: CfgNode) -> bool:
         """
-        Whether the edge from *source* to *target* is taken only when *source* throws rather than
+        Whether an edge from *source* to *target* is taken only when *source* throws rather than
         completing normally. A definition *source* makes is not guaranteed to have happened along
-        such an edge, so a flow-sensitive analysis must not treat it as a kill there.
+        such an edge, so a flow-sensitive analysis must not treat it as a kill there. A pair joined
+        by such an edge and by a plain one as well answers for the first, and `completes_into` for
+        the second; a consumer reading only this one reads the pair as the run that did not finish,
+        which keeps every fact a kill would drop.
 
         This is the question about *completion*, and it is the one nearly every consumer means. A
         resumption edge answers it although no error travels along it: the statement that resumed
@@ -630,8 +647,9 @@ class ControlFlowGraph:
     def _reached_after_uncached(self, source: CfgNode, *, raising: bool) -> frozenset[int]:
         seen: set[int] = set()
         stack: list[CfgNode] = []
+        leaves = self.raise_taken if raising else self.completes_into
         for successor in source.successors:
-            if self.raise_taken(source, successor) != raising:
+            if not leaves(source, successor):
                 continue
             if id(successor) not in seen:
                 seen.add(id(successor))
@@ -835,6 +853,42 @@ class Resumption:
     slot: CfgNode | None = None
 
 
+def _draw(source: CfgNode, target: CfgNode, kind: CfgEdge) -> None:
+    """
+    An edge carrying *kind*, in the graph *source* belongs to. Every edge is drawn here, so that the
+    adjacency lists and the kind map are never written apart.
+
+    A pair joined by plain edges alone has no entry in the kind map, which is what lets most of a
+    graph cost nothing there. A pair drawn with another kind first is stored as that kind, beside
+    `CfgEdge.NORMAL` where a plain edge joined it already, and a pair drawn again with a kind it
+    already carries is left as it is. `enum.Flag.__or__` builds a member through the class
+    constructor and costs an order of magnitude more than the dict write around it, and every edge
+    of a script wrapped in resuming traps passes here.
+    """
+    kinds = source.graph._edge_kinds
+    if kinds or kind is not CfgEdge.NORMAL:
+        key = (id(source), id(target))
+        carried = kinds.get(key)
+        if carried is None:
+            if kind is not CfgEdge.NORMAL:
+                kinds[key] = CfgEdge.NORMAL | kind if _joined(source, target) else kind
+        elif carried.value & kind.value != kind.value:
+            kinds[key] = carried | kind
+    source.successors.append(target)
+    target.predecessors.append(source)
+
+
+def _joined(source: CfgNode, target: CfgNode) -> bool:
+    """
+    Whether an edge joins *source* to *target* already, read off the shorter of the two adjacency
+    lists that would hold it: a resumption hub reaches every node its block owns and the exit is
+    reached from every node that may leave the body, and neither list is walked for one edge.
+    """
+    if len(source.successors) <= len(target.predecessors):
+        return any(node is target for node in source.successors)
+    return any(node is source for node in target.predecessors)
+
+
 def distinct(nodes: Iterable[CfgNode]) -> list[CfgNode]:
     """
     *nodes* with every repetition dropped, compared by identity and in first-seen order.
@@ -963,23 +1017,16 @@ class CfgBuilder:
 
     @staticmethod
     def add_edge(source: CfgNode, target: CfgNode) -> None:
-        source.successors.append(target)
-        target.predecessors.append(source)
+        """
+        A plain edge: `kind_edge` with `CfgEdge.NORMAL`.
+        """
+        _draw(source, target, CfgEdge.NORMAL)
 
     def kind_edge(self, source: CfgNode, target: CfgNode, kind: CfgEdge) -> None:
         """
-        An edge carrying *kind*, which every edge but a plain one is drawn through so that the
-        adjacency lists and the kind map are never written apart.
-
-        A pair drawn for the first time is stored rather than merged. `enum.Flag.__or__` builds a
-        member through the class constructor and costs an order of magnitude more than the dict
-        write around it, and every kinded edge in a script wrapped in resuming traps passes here.
+        An edge carrying *kind*.
         """
-        self.add_edge(source, target)
-        kinds = self.cfg._edge_kinds
-        key = (id(source), id(target))
-        carried = kinds.get(key)
-        kinds[key] = kind if carried is None else carried | kind
+        _draw(source, target, kind)
 
     def exceptional_edge(self, source: CfgNode, target: CfgNode) -> None:
         self.kind_edge(source, target, CfgEdge.ERROR_CARRYING)

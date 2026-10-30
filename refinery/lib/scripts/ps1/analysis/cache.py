@@ -209,7 +209,7 @@ class Ps1ModelCache(ModelCacheBase):
 
         Purely syntactic like the graphs it reads, so it joins nothing else and orders nothing else.
         """
-        return self._lazy('_faults', lambda: build_fault_reach(self.control_flow))
+        return self._lazy('_faults', lambda: build_fault_reach(self.control_flow, lambda: self.call_graph))
 
     @property
     def dominance(self) -> DominatorModel:

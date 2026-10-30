@@ -26,10 +26,10 @@ from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.ps1.analysis.cfg import (
     Ps1ReportNode,
-    Ps1TrapDisposition,
     build_control_flow_model,
     build_ps1_control_flow,
 )
+from refinery.lib.scripts.ps1.analysis.handlers import Ps1TrapDisposition
 from refinery.lib.scripts.ps1.analysis.model import build_semantic_model
 from refinery.lib.scripts.ps1.ast import get_body
 from refinery.lib.scripts.ps1.model import (
@@ -1532,14 +1532,11 @@ class TestPs1AnErrorNothingTakesIsReportedPastItsStatement(_Ps1ControlFlowGraphs
         self.assertIs(report.carries_on_after, construct)
         self.assertIn(self._required_node(graph, rest), report.successors)
 
-    @unittest.expectedFailure
     def test_the_report_node_of_the_last_statement_carries_on_to_the_exit(self):
         """
         The report node carries on after its statement and, under a `Stop`, ends the run, so it has
         a plain edge and an error edge out. Where the statement is the last of its body both go to
-        the exit, and the graph keeps one kind for each pair of nodes, so the plain edge reads as an
-        error edge. The last line of a `try` body enters its `finally` both ways and loses its plain
-        edge the same way; the single dispatch evaluator of the error roadmap answers both.
+        the exit, and the pair of nodes carries both kinds.
         """
         graph = self._script_graph("try { throw 'x' } catch { Write-Host 'a'; $null = [int]$s }")
         report, = self._reports(graph)

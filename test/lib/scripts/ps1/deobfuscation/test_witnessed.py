@@ -33,8 +33,10 @@ from refinery.lib.scripts.ps1.analysis import (
     blocks,
     callgraph,
     commands,
+    dispatch,
     effects,
     faults,
+    handlers,
     mutation,
     worldflow,
 )
@@ -310,31 +312,28 @@ def _fault_observed_wherever_an_error_would_go(
     judged = False
     for site in reach.points_in(stmt):
         judged = True
-        if reach.observed_at(site):
+        if reach.observed_at(site, reach.kinds_a_point_may_raise(site)):
             return True
     return not judged
 
 
-def _observed_at_reading_only_what_acts(self: faults.Ps1FaultReach, node: Node) -> bool:
+def _observed_at_reading_only_what_acts(self: faults.Ps1FaultReach, node: Node, kinds) -> bool:
     """
     The position question with the escalation taken out of it and every other step left standing: a
-    handler that acts still makes the error observable, and a `trap` set that may decline it no
-    longer does, although declining is what ends the body rather than reporting the error and
-    stepping over it. Kept a token away from the original so that a reading which grows a step reads
-    as stale here rather than quietly modelling a different bug.
+    handler that acts still makes the error observable, and an error that ends the run — which a
+    `trap` set that may decline it does — no longer does, although declining is what ends the body
+    rather than reporting the error and stepping over it. Kept a token away from the original so that
+    a reading which grows a step reads as stale here rather than quietly modelling a different bug.
     """
-    located = self._control_flow.locate(node)
-    if located is None:
+    found = self.fate_of(node, kinds)
+    if found is None:
         return True
-    graph, _ = located
-    routing = self.routing_at(node)
-    if routing is None:
+    graph, _, fate = found
+    if fate.acts:
         return True
-    if any(faults.handler_acts(handler) for handler in routing.handlers):
-        return True
-    if routing.handlers and not routing.leaves_the_body:
+    if not fate.to_caller:
         return False
-    return not isinstance(graph.owner, Ps1Script) and self._handled_elsewhere(graph)
+    return self._handled_elsewhere(graph)
 
 
 def _strict_mode_read_without_the_memo(self: faults.Ps1FaultReach) -> bool:
@@ -385,7 +384,7 @@ def _removing_a_handler_asked_at_the_handler(
     transpose takes are accepted and ignored, so the mutation is noticed as a wrong answer rather than
     a broken call.
     """
-    return any(self.observed_at(trap) for trap in traps)
+    return any(self.observed_at(trap, self.kinds_a_point_may_raise(trap)) for trap in traps)
 
 
 def _value_after_refusing_an_unsettled_slot(original: Callable) -> Callable:
@@ -812,13 +811,16 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
             notices='test_a_discarded_index_read_is_kept')
 
     def test_asking_whether_a_handler_acts_at_all_is_witnessed(self):
-        # Patched in the module that owns it, where both readings of the routing consult it. The
-        # empty `catch` an obfuscator writes is inert either way, so the class built on one stays
-        # green while the class built on a handler with a body goes red — which is the distinction
-        # the mutation erases, spelled as two outcomes rather than one.
+        # Patched in the module that owns it and in every module that binds it, so that no reader
+        # keeps the real answer. The empty `catch` an obfuscator writes is inert either way, so the
+        # class built on one stays green while the class built on a handler with a body goes red —
+        # which is the distinction the mutation erases, spelled as two outcomes rather than one.
         self._assertWitnessed(
             [_DIRECT_GUARD, _EMPTY_CATCH],
-            patch.object(faults, 'handler_acts', lambda handler: False),
+            *(
+                patch.object(module, 'handler_acts', lambda handler: False)
+                for module in (handlers, dispatch, faults, effects)
+            ),
             notices='test_a_raising_cast_directly_in_the_try_block_is_kept')
 
     def test_reading_the_escalation_off_the_routing_is_witnessed(self):

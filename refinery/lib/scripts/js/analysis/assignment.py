@@ -345,11 +345,11 @@ class DefiniteAssignmentModel:
 
         A predecessor is dropped from the meet only where no normal completion reaches the exit from
         it, which is a statement that never completes at all rather than an edge kind. An edge kind
-        is recorded per *pair* of nodes and two edges between one pair collapse to a single entry
-        (`refinery.lib.scripts.analysis.cfg.CfgBuilder.kind_edge`), so an empty `finally` — whose
-        entry both falls through to whatever follows the statement and carries the unwinding edge
-        outward — reads as raise-taken while the normal path runs through it. Dropping it took the
-        meet over the other predecessors alone and claimed a write the normal path never performed.
+        is recorded per *pair* of nodes, so an empty `finally` — whose entry both falls through to
+        whatever follows the statement and carries the unwinding edge outward — answers
+        `refinery.lib.scripts.analysis.cfg.ControlFlowGraph.raise_taken` while the normal path runs
+        through it. Dropping it took the meet over the other predecessors alone and claimed a write
+        the normal path never performed.
         """
         met: frozenset[Binding] | None = None
         for pred in graph.exit.predecessors:

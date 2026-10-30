@@ -10,13 +10,13 @@ from refinery.lib.scripts import Node, Statement, set_body
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import Ps1ControlFlowModel, build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts
+from refinery.lib.scripts.ps1.analysis.dispatch import Ps1ErrorKind
 from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1FaultReach,
-    Ps1FaultRouting,
     build_fault_reach,
     ends_the_script,
-    handler_acts,
 )
+from refinery.lib.scripts.ps1.analysis.handlers import handler_acts
 from refinery.lib.scripts.ps1.analysis.world import measure_world
 from refinery.lib.scripts.ps1.analysis.worldflow import build_world_reach
 from refinery.lib.scripts.ps1.ast import get_body, resolve_command_name
@@ -39,7 +39,49 @@ def _parse(source: str) -> Ps1Script:
 
 def _model(source: str) -> tuple[Ps1Script, Ps1FaultReach]:
     tree = _parse(source)
-    return tree, build_fault_reach(build_control_flow_model(tree))
+    return tree, _reach(tree)
+
+
+def _reach(tree: Ps1Script) -> Ps1FaultReach:
+    cache = Ps1ModelCache(tree)
+    return build_fault_reach(build_control_flow_model(tree), lambda: cache.call_graph)
+
+
+def _offered(reach: Ps1FaultReach, node: Node) -> tuple[Node, ...] | None:
+    """
+    The handlers the error paths offer an error raised at *node*, or `None` where the graphs place
+    it nowhere.
+    """
+    found = reach.fate_of(node, Ps1ErrorKind.STATEMENT)
+    if found is None:
+        return None
+    graph, start, _ = found
+    return reach.paths_of(graph).handlers_from(start)
+
+
+def _offered_where_placed(reach: Ps1FaultReach, node: Node) -> tuple[Node, ...]:
+    """
+    `_offered` for a node the graphs place.
+    """
+    offered = _offered(reach, node)
+    if offered is None:
+        raise AssertionError(F'the graphs place nothing for {node}')
+    return offered
+
+
+def _leaves(reach: Ps1FaultReach, node: Node) -> bool:
+    """
+    Whether the error paths let an error raised at *node* past every handler of its body.
+    """
+    found = reach.fate_of(node, Ps1ErrorKind.STATEMENT)
+    if found is None:
+        return True
+    graph, start, _ = found
+    return reach.paths_of(graph).route_from(start).leaves_the_body
+
+
+def _observed(reach: Ps1FaultReach, node: Node) -> bool:
+    return reach.observed_at(node, reach.kinds_a_point_may_raise(node))
 
 
 class _Answering:
@@ -71,6 +113,7 @@ def _no_trap_is_asked_about(trap: Ps1TrapStatement) -> bool:
 def _handler_verdicts(tree: Ps1Script, reach: Ps1FaultReach) -> Ps1HandlerVerdicts:
     control_flow = build_control_flow_model(tree)
     world = build_world_reach(measure_world(tree), lambda: control_flow)
+    calls = Ps1ModelCache(tree).call_graph
     return Ps1HandlerVerdicts(reach, lambda: world, tree)
 
 
@@ -105,20 +148,20 @@ class TestPs1FaultRoutingOffersTheRaiseToTheHandlersThatGuardIt(TestBase):
         tree, reach = _model("try { 'a' } catch { 'b' }")
         construct = tree.body[0]
         clause, = construct.catch_clauses
-        self.assertEqual(reach.routing_at(construct.try_block.body[0]).handlers, (clause,))
+        self.assertEqual(_offered(reach, construct.try_block.body[0]), (clause,))
 
     def test_a_raise_after_the_construct_is_offered_to_no_catch_clause(self):
         tree, reach = _model("""
             try { 'a' } catch { 'b' }
             'c'
         """)
-        self.assertEqual(reach.routing_at(tree.body[1]).handlers, ())
+        self.assertEqual(_offered(reach, tree.body[1]), ())
 
     def test_every_catch_clause_of_the_construct_is_offered_the_raise(self):
         tree, reach = _model("try { 'a' } catch [System.IO.IOException] { 'x' } catch { 'y' }")
         construct = tree.body[0]
         self.assertEqual(
-            set(reach.routing_at(construct.try_block.body[0]).handlers),
+            set(_offered_where_placed(reach, construct.try_block.body[0])),
             set(construct.catch_clauses),
         )
 
@@ -127,7 +170,7 @@ class TestPs1FaultRoutingOffersTheRaiseToTheHandlersThatGuardIt(TestBase):
             'a'
             trap { 'h' }
         """)
-        self.assertEqual(reach.routing_at(tree.body[0]).handlers, (tree.body[1],))
+        self.assertEqual(_offered(reach, tree.body[0]), (tree.body[1],))
 
     def test_a_trap_is_offered_a_raise_from_a_block_nested_in_the_one_it_guards(self):
         tree, reach = _model("""
@@ -135,7 +178,7 @@ class TestPs1FaultRoutingOffersTheRaiseToTheHandlersThatGuardIt(TestBase):
             if ($c) { 'a' }
         """)
         nested = tree.body[1].clauses[0][1].body[0]
-        self.assertEqual(reach.routing_at(nested).handlers, (tree.body[0],))
+        self.assertEqual(_offered(reach, nested), (tree.body[0],))
 
     def test_a_trap_is_not_offered_a_raise_written_outside_the_block_it_belongs_to(self):
         tree, reach = _model("""
@@ -145,7 +188,7 @@ class TestPs1FaultRoutingOffersTheRaiseToTheHandlersThatGuardIt(TestBase):
             }
             'b'
         """)
-        self.assertEqual(reach.routing_at(tree.body[1]).handlers, ())
+        self.assertEqual(_offered(reach, tree.body[1]), ())
 
     def test_only_the_innermost_untyped_trap_is_offered_the_raise(self):
         tree, reach = _model("""
@@ -156,7 +199,7 @@ class TestPs1FaultRoutingOffersTheRaiseToTheHandlersThatGuardIt(TestBase):
             }
         """)
         guarded = tree.body[1].clauses[0][1]
-        self.assertEqual(reach.routing_at(guarded.body[1]).handlers, (guarded.body[0],))
+        self.assertEqual(_offered(reach, guarded.body[1]), (guarded.body[0],))
 
     def test_a_typed_innermost_trap_passes_the_raise_on_to_the_trap_around_it(self):
         tree, reach = _model("""
@@ -168,7 +211,7 @@ class TestPs1FaultRoutingOffersTheRaiseToTheHandlersThatGuardIt(TestBase):
         """)
         guarded = tree.body[1].clauses[0][1]
         self.assertEqual(
-            set(reach.routing_at(guarded.body[1]).handlers),
+            set(_offered_where_placed(reach, guarded.body[1])),
             {guarded.body[0], tree.body[0]},
         )
 
@@ -180,7 +223,7 @@ class TestPs1FaultRoutingOffersTheRaiseToTheHandlersThatGuardIt(TestBase):
         """)
         inner = tree.body[0].try_block.body[0]
         self.assertEqual(
-            reach.routing_at(inner.try_block.body[0]).handlers,
+            _offered(reach, inner.try_block.body[0]),
             (inner.catch_clauses[0],),
         )
 
@@ -193,7 +236,7 @@ class TestPs1FaultRoutingOffersTheRaiseToTheHandlersThatGuardIt(TestBase):
         outer = tree.body[0]
         inner = outer.try_block.body[0]
         self.assertEqual(
-            set(reach.routing_at(inner.try_block.body[0]).handlers),
+            set(_offered_where_placed(reach, inner.try_block.body[0])),
             {inner.catch_clauses[0], outer.catch_clauses[0]},
         )
 
@@ -202,15 +245,15 @@ class TestPs1FaultLeavesTheBody(TestBase):
 
     def test_a_raise_that_nothing_guards_stays_in_the_body(self):
         tree, reach = _model("'a'")
-        self.assertFalse(reach.leaves_the_body(tree.body[0]))
+        self.assertFalse(_leaves(reach, tree.body[0]))
 
     def test_a_catch_clause_lets_the_raise_past_exactly_when_its_filter_is_narrower_than_exception(
         self,
     ):
         broad, broad_reach = _model("try { 'a' } catch [System.Exception] { 'b' }")
         narrow, narrow_reach = _model("try { 'a' } catch [System.IO.IOException] { 'b' }")
-        self.assertFalse(broad_reach.leaves_the_body(broad.body[0].try_block.body[0]))
-        self.assertTrue(narrow_reach.leaves_the_body(narrow.body[0].try_block.body[0]))
+        self.assertFalse(_leaves(broad_reach, broad.body[0].try_block.body[0]))
+        self.assertTrue(_leaves(narrow_reach, narrow.body[0].try_block.body[0]))
 
     def test_a_trap_lets_the_raise_past_exactly_when_it_carries_a_type_filter(self):
         untyped, untyped_reach = _model("""
@@ -221,8 +264,8 @@ class TestPs1FaultLeavesTheBody(TestBase):
             trap [System.IO.IOException] { 'h' }
             'a'
         """)
-        self.assertFalse(untyped_reach.leaves_the_body(untyped.body[1]))
-        self.assertTrue(typed_reach.leaves_the_body(typed.body[1]))
+        self.assertFalse(_leaves(untyped_reach, untyped.body[1]))
+        self.assertTrue(_leaves(typed_reach, typed.body[1]))
 
     def test_a_trap_lets_the_raise_past_when_it_breaks_but_not_when_it_continues(self):
         rethrowing, rethrowing_reach = _model("""
@@ -233,14 +276,14 @@ class TestPs1FaultLeavesTheBody(TestBase):
             trap { continue }
             'a'
         """)
-        self.assertTrue(rethrowing_reach.leaves_the_body(rethrowing.body[1]))
-        self.assertFalse(resuming_reach.leaves_the_body(resuming.body[1]))
+        self.assertTrue(_leaves(rethrowing_reach, rethrowing.body[1]))
+        self.assertFalse(_leaves(resuming_reach, resuming.body[1]))
 
     def test_a_point_the_graphs_cannot_place_is_answered_as_leaving_the_body(self):
         _, reach = _model("'a'")
         elsewhere = _parse("'z'").body[0]
-        self.assertIsNone(reach.routing_at(elsewhere))
-        self.assertTrue(reach.leaves_the_body(elsewhere))
+        self.assertIsNone(_offered(reach, elsewhere))
+        self.assertTrue(_leaves(reach, elsewhere))
 
 
 class TestPs1ATrapDisposesOfTheErrorWhateverConstructEnclosesItsBlock(TestBase):
@@ -277,18 +320,18 @@ class TestPs1ATrapDisposesOfTheErrorWhateverConstructEnclosesItsBlock(TestBase):
             source = spelling % 'break'
             with self.subTest(source):
                 reach, trap, raised = self._trap_and_the_raise_it_guards(source)
-                self.assertEqual(reach.routing_at(raised).handlers, (trap,))
-                self.assertTrue(reach.leaves_the_body(raised))
-                self.assertTrue(reach.observed_at(raised))
+                self.assertEqual(_offered(reach, raised), (trap,))
+                self.assertTrue(_leaves(reach, raised))
+                self.assertTrue(_observed(reach, raised))
 
     def test_a_trap_that_continues_keeps_the_raise_wherever_its_block_is_written(self):
         for spelling in self._SPELLINGS:
             source = spelling % 'continue'
             with self.subTest(source):
                 reach, trap, raised = self._trap_and_the_raise_it_guards(source)
-                self.assertEqual(reach.routing_at(raised).handlers, (trap,))
-                self.assertFalse(reach.leaves_the_body(raised))
-                self.assertFalse(reach.observed_at(raised))
+                self.assertEqual(_offered(reach, raised), (trap,))
+                self.assertFalse(_leaves(reach, raised))
+                self.assertFalse(_observed(reach, raised))
 
 
 class TestPs1HandlerActs(TestBase):
@@ -315,20 +358,20 @@ class TestPs1FaultIsObservedWhereAHandlerActsOrATrapMayDecline(TestBase):
 
     def test_a_raise_that_nothing_guards_is_not_observed(self):
         tree, reach = _model("'a'")
-        self.assertFalse(reach.observed_at(tree.body[0]))
+        self.assertFalse(_observed(reach, tree.body[0]))
 
     def test_a_raise_is_observed_by_a_catch_clause_with_a_body_but_not_by_an_empty_one(self):
         acting, acting_reach = _model("try { 'a' } catch { 'b' }")
         swallowing, swallowing_reach = _model("try { 'a' } catch { }")
-        self.assertTrue(acting_reach.observed_at(acting.body[0].try_block.body[0]))
-        self.assertFalse(swallowing_reach.observed_at(swallowing.body[0].try_block.body[0]))
+        self.assertTrue(_observed(acting_reach, acting.body[0].try_block.body[0]))
+        self.assertFalse(_observed(swallowing_reach, swallowing.body[0].try_block.body[0]))
 
     def test_a_raise_guarded_by_a_trap_that_only_continues_is_not_observed(self):
         tree, reach = _model("""
             trap { continue }
             'a'
         """)
-        self.assertFalse(reach.observed_at(tree.body[1]))
+        self.assertFalse(_observed(reach, tree.body[1]))
 
     def test_a_raise_guarded_by_a_trap_that_only_breaks_is_observed_although_it_does_not_act(self):
         tree, reach = _model("""
@@ -336,7 +379,7 @@ class TestPs1FaultIsObservedWhereAHandlerActsOrATrapMayDecline(TestBase):
             'a'
         """)
         self.assertFalse(handler_acts(tree.body[0]))
-        self.assertTrue(reach.observed_at(tree.body[1]))
+        self.assertTrue(_observed(reach, tree.body[1]))
 
     def test_a_raise_guarded_by_a_typed_trap_is_observed_because_the_set_may_decline_it(self):
         tree, reach = _model("""
@@ -344,20 +387,20 @@ class TestPs1FaultIsObservedWhereAHandlerActsOrATrapMayDecline(TestBase):
             'a'
         """)
         self.assertFalse(handler_acts(tree.body[0]))
-        self.assertTrue(reach.observed_at(tree.body[1]))
+        self.assertTrue(_observed(reach, tree.body[1]))
 
     def test_a_raise_guarded_by_a_trap_whose_body_is_a_bare_value_is_observed(self):
         tree, reach = _model("""
             trap { 5 }
             'a'
         """)
-        self.assertTrue(reach.observed_at(tree.body[1]))
+        self.assertTrue(_observed(reach, tree.body[1]))
 
     def test_a_point_the_graphs_cannot_place_is_answered_as_observed(self):
         _, reach = _model("'a'")
         elsewhere = _parse("'z'").body[0]
-        self.assertIsNone(reach.routing_at(elsewhere))
-        self.assertTrue(reach.observed_at(elsewhere))
+        self.assertIsNone(_offered(reach, elsewhere))
+        self.assertTrue(_observed(reach, elsewhere))
 
 
 class TestPs1FaultPointsIn(TestBase):
@@ -379,7 +422,7 @@ class TestPs1FaultPointsIn(TestBase):
     def test_a_counted_loop_holds_its_three_parts_and_its_body_rather_than_itself(self):
         tree, reach = _model("for ($i = 0; $i -lt 3; $i++) { 'a' }")
         loop = tree.body[0]
-        self.assertIsNone(reach.routing_at(loop))
+        self.assertIsNone(_offered(reach, loop))
         self.assertEqual(set(reach.points_in(loop)), {
             loop.initializer,
             loop.condition,
@@ -403,7 +446,7 @@ class TestPs1FaultPointsIn(TestBase):
         tree, reach = _model("try { 'a' } catch { 'b' } finally { 'c' }")
         construct = tree.body[0]
         clause, = construct.catch_clauses
-        self.assertIsNone(reach.routing_at(construct))
+        self.assertIsNone(_offered(reach, construct))
         self.assertEqual(set(reach.points_in(construct)), {
             construct.try_block.body[0],
             clause,
@@ -469,7 +512,7 @@ class TestPs1RemovingATrapIsJudgedByWhereItsErrorsWouldGoInstead(TestBase):
             trap { 'h' }
             'a'
         """)
-        self.assertTrue(reach.observed_at(tree.body[1]))
+        self.assertTrue(_observed(reach, tree.body[1]))
         self.assertFalse(_handler_removal_is_observed(tree, reach, tree.body[0]))
 
     def test_a_resuming_trap_in_a_try_block_may_go_only_where_the_catch_clause_swallows(self):
@@ -1395,18 +1438,18 @@ class TestPs1ATrapWrittenInASubexpressionGuardsThatSubexpression(TestBase):
 
     def test_a_raise_in_a_subexpression_is_offered_to_the_trap_written_beside_it(self):
         trap, raise_site, reach = self._bracket(_TRAP_IN_A_SUBEXPRESSION)
-        self.assertEqual(reach.routing_at(raise_site), Ps1FaultRouting((trap,), False))
+        self.assertEqual((_offered(reach, raise_site), _leaves(reach, raise_site)), ((trap,), False))
 
     def test_a_raise_in_an_array_expression_is_offered_to_the_trap_written_beside_it(self):
         trap, raise_site, reach = self._bracket(_TRAP_IN_AN_ARRAY_EXPRESSION)
-        self.assertEqual(reach.routing_at(raise_site), Ps1FaultRouting((trap,), False))
+        self.assertEqual((_offered(reach, raise_site), _leaves(reach, raise_site)), ((trap,), False))
 
     def test_a_raise_outside_the_bracket_is_offered_to_no_trap_written_inside_one(self):
         tree, reach = _model("""
             $x = $(trap { 'h' })
             'a'
         """)
-        self.assertEqual(reach.routing_at(tree.body[1]), Ps1FaultRouting((), False))
+        self.assertEqual((_offered(reach, tree.body[1]), _leaves(reach, tree.body[1])), ((), False))
 
 
 class TestPs1TheBracketFixturesHoldTheShapeTheirPinsAssume(TestBase):
@@ -1438,7 +1481,7 @@ class TestPs1TheReaderPlacesBracketInternalStatementsWithoutATrapToKeep(TestBase
     """
     The reader offers a bracket-written raise to a `trap` beside it because it reads one sub-statement
     graph, not because a `trap` makes it descend. A `$( )` holding no handler at all has its inner
-    statements placed just the same: `routing_at` returns a routing that guards them for nothing, and
+    statements placed just the same: the error paths offer them to no handler and let them past none, and
     `points_in` over the statement the bracket sits in reaches them.
     """
 
@@ -1452,7 +1495,7 @@ class TestPs1TheReaderPlacesBracketInternalStatementsWithoutATrapToKeep(TestBase
 
     def test_a_bracket_internal_statement_with_no_handler_is_placed_and_guarded_by_nothing(self):
         _, bracket, reach = self._bracket_of("$x = $('a'; 'b')")
-        self.assertEqual(reach.routing_at(bracket.body[1]), Ps1FaultRouting((), False))
+        self.assertEqual((_offered(reach, bracket.body[1]), _leaves(reach, bracket.body[1])), ((), False))
 
     def test_points_in_the_statement_holding_the_bracket_reach_the_bracket_internals(self):
         tree, bracket, reach = self._bracket_of("$x = $('a'; 'b')")
@@ -1794,7 +1837,8 @@ class TestPs1AStrictModeArmingIsReadOverTheWholeScript(TestBase):
         removal, so an empty model has to refuse it: a script nothing was read of is not a script
         that was read and found to arm nothing.
         """
-        self.assertTrue(Ps1FaultReach(Ps1ControlFlowModel({}, {})).strict_mode_may_be_in_force())
+        calls = Ps1ModelCache(_parse("'a'")).call_graph
+        self.assertTrue(Ps1FaultReach(Ps1ControlFlowModel({}, {}), lambda: calls).strict_mode_may_be_in_force())
 
 
 class TestPs1WhetherAnErrorLeavesTheBodyItWasRaisedIn(TestBase):
@@ -1811,7 +1855,7 @@ class TestPs1WhetherAnErrorLeavesTheBodyItWasRaisedIn(TestBase):
             if isinstance(node, Ps1CommandInvocation)
             and resolve_command_name(node) == 'get-random'
         )
-        return faults.escapes_the_body(point)
+        return faults.escapes_the_body(point, Ps1ErrorKind.STATEMENT)
 
     def test_a_body_with_no_handler_settles_nothing(self):
         self.assertTrue(self._escapes("1, 2 | ForEach-Object { Get-Random }"))
@@ -1833,21 +1877,21 @@ class TestPs1WhetherAnErrorLeavesTheBodyItWasRaisedIn(TestBase):
 
     def test_a_position_the_graphs_place_nowhere_escapes_nothing(self):
         tree = _parse("function f ($p = $(Get-Random)) { }")
-        faults = build_fault_reach(build_control_flow_model(tree))
+        faults = _reach(tree)
         point = next(
             node for node in tree.walk()
             if isinstance(node, Ps1CommandInvocation)
             and resolve_command_name(node) == 'get-random'
         )
-        self.assertFalse(faults.escapes_the_body(point))
-        self.assertTrue(faults.observed_at(point))
+        self.assertFalse(faults.escapes_the_body(point, Ps1ErrorKind.STATEMENT))
+        self.assertTrue(_observed(faults, point))
 
 
-class TestPs1ARaiseEscapesAFiringTrapBodyOnlyWhereItsBlockProvablyFiresTheTrap(TestBase):
+class TestPs1ARaiseEscapesATrapBodyThatRunsOnlyWhereItsBlockMayFireTheTrap(TestBase):
     """
     A `trap` does not guard its own body, so a raise among its statements leaves the body and ends
     the scope the `trap` belongs to — but only where the `trap` actually runs, which is where a
-    statement of the block it guards raises an error that fires it. The predicate reads that off the
+    statement of the block it guards raises an error that fires it. Whether it runs is read off the
     raisers of the `trap`'s own node, so it turns on which statement stands in the block and not on
     where the raise itself is written.
 
@@ -1871,18 +1915,20 @@ class TestPs1ARaiseEscapesAFiringTrapBodyOnlyWhereItsBlockProvablyFiresTheTrap(T
             trap { $null = [int]'a' }
             $null = [int]'b'
         """)
-        self.assertTrue(faults.escapes_a_firing_trap_body(body_raise))
+        self.assertTrue(faults.escapes_a_trap_body(body_raise, Ps1ErrorKind.STATEMENT))
+        self.assertFalse(faults.never_runs(body_raise))
 
     def test_the_same_body_raise_does_not_escape_where_only_a_command_may_fire_the_trap(self):
         faults, body_raise = self._first_trap_body_statement("""
             trap { $null = [int]'a' }
             Write-Host 'x'
         """)
-        self.assertFalse(faults.escapes_a_firing_trap_body(body_raise))
+        self.assertTrue(faults.never_runs(body_raise))
 
     def test_a_raise_in_no_trap_body_escapes_no_firing_trap(self):
         tree, faults = _model("$null = [int]'a'")
-        self.assertFalse(faults.escapes_a_firing_trap_body(tree.body[0]))
+        self.assertFalse(faults.escapes_a_trap_body(tree.body[0], Ps1ErrorKind.STATEMENT))
+        self.assertFalse(faults.never_runs(tree.body[0]))
 
     def test_a_body_raise_behind_a_scriptblock_boundary_escapes_no_firing_trap(self):
         tree, faults = _model("""
@@ -1894,7 +1940,7 @@ class TestPs1ARaiseEscapesAFiringTrapBodyOnlyWhereItsBlockProvablyFiresTheTrap(T
             if isinstance(node, Ps1ExpressionStatement)
             and isinstance(node.expression, Ps1CastExpression)
         )
-        self.assertFalse(faults.escapes_a_firing_trap_body(inner))
+        self.assertFalse(faults.escapes_a_trap_body(inner, Ps1ErrorKind.STATEMENT))
 
     def test_a_body_raise_a_handler_nested_in_the_trap_body_takes_escapes_no_firing_trap(self):
         """
@@ -1915,7 +1961,7 @@ class TestPs1ARaiseEscapesAFiringTrapBodyOnlyWhereItsBlockProvablyFiresTheTrap(T
             if isinstance(node, Ps1ExpressionStatement)
             and isinstance(node.expression, Ps1CastExpression)
         )
-        self.assertFalse(faults.escapes_a_firing_trap_body(inner))
+        self.assertFalse(faults.escapes_a_trap_body(inner, Ps1ErrorKind.STATEMENT))
 
 
 class TestPs1AnErrorIsTakenPastAStatementARunCarriesOnAfter(TestBase):

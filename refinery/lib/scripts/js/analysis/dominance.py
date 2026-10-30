@@ -211,8 +211,9 @@ class DominanceModel(DominatorModel):
     def _completes_before_exit(self, activation: Node, definition: Node) -> bool:
         """
         Whether the statement evaluating *definition* has completed on every run of *activation*
-        that ends without a throw: every edge that enters the exit of its graph without a throw
-        leaves that statement, or one it `completes_before_node`.
+        that ends without a throw: every predecessor a completed run enters the exit of its graph
+        from is that statement, or one it `completes_before_node`. A predecessor joined to the exit
+        both plainly and by an error edge, as an empty `finally` is, is one such run.
         """
         graph = self._flow.graph_of(activation)
         located = self.locate(definition)
@@ -222,7 +223,7 @@ class DominanceModel(DominatorModel):
         return all(
             source is node or self.completes_before_node(graph, node, source)
             for source in graph.exit.predecessors
-            if not graph.raise_taken(source, graph.exit)
+            if graph.completes_into(source, graph.exit)
         )
 
     def completes_before_node(self, graph: ControlFlowGraph, a: CfgNode, b: CfgNode) -> bool:

@@ -24,20 +24,26 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.ps1.analysis.world import (
     Ps1TypeWorld,
     command_definition_keyword_binding,
+    runs_code_it_cannot_read,
 )
 from refinery.lib.scripts.ps1.ast import (
     assignment_target_variables,
     get_command_name,
     get_param_block,
     implicit_get_retry,
+    is_execution_context_invoke,
     is_opaque_dispatch,
+    is_scriptblock_create,
+    is_scriptblock_invoke,
     normalize_command_name,
     resolve_command_name,
 )
+from refinery.lib.scripts.ps1.data import KNOWN_CMDLETS
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1CommandInvocation,
     Ps1FunctionDefinition,
+    Ps1InvokeMember,
     Ps1MethodMember,
     Ps1ScopeModifier,
     Ps1Script,
@@ -211,6 +217,36 @@ class Ps1CallGraph:
         deletes the definition deletes a reachable entry point.
         """
         return self._exports
+
+    def may_run_a_body(self, node: Node) -> bool:
+        """
+        Whether evaluating *node* itself may run a body of this script, or code the script does not
+        spell, which an error handler around it then guards: a script block, which runs wherever
+        something runs it; a call that runs or makes one; or a command that dispatches to a target
+        the source does not spell, runs code nobody can read, or names a function or keyword body
+        this script defines. Where this graph is not the whole story, a name no cmdlet answers to
+        may name a body code nobody can read defined; a name a cmdlet answers to is read as that
+        cmdlet, the risk every pass here takes in exchange for reading through an `iex` at all.
+        """
+        if isinstance(node, Ps1ScriptBlock):
+            return True
+        if isinstance(node, Ps1InvokeMember):
+            return (
+                is_scriptblock_invoke(node)
+                or is_scriptblock_create(node)
+                or is_execution_context_invoke(node)
+            )
+        if not isinstance(node, Ps1CommandInvocation):
+            return False
+        if is_opaque_dispatch(node) or runs_code_it_cannot_read(node):
+            return True
+        name = get_command_name(node)
+        if name is None or self.definitions(name) or self.keyword_definitions(name):
+            return True
+        if self._readable:
+            return False
+        resolved = resolve_command_name(node)
+        return resolved is None or resolved not in KNOWN_CMDLETS
 
     def definitions(self, name: str) -> Sequence[Ps1FunctionDefinition]:
         """

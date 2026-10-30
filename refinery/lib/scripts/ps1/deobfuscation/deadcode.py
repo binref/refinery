@@ -13,7 +13,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
-from refinery.lib.scripts.ps1.analysis.cfg import certain_catch_all, swallows_every_error
+from refinery.lib.scripts.ps1.analysis.handlers import swallows_every_error
 from refinery.lib.scripts.ps1.analysis.effects import (
     OutputSink,
     is_fault_free,
@@ -802,10 +802,13 @@ class Ps1DeadCodeElimination(Transformer):
         value domain computes a throw 5.1 also takes, so a body the analysis cannot decide
         is left whole for the discard remover to keep (`deletion_is_observable`). The statements
         before the throw must be provably fault-free, so control is certain to reach it. The landing
-        handler must be certain — `certain_catch_all` declines a narrow `catch` that might take the
-        error first — and the fault model must actually route the throw to it: a `trap` written in
-        the body is hoisted over the whole block and may take the error before the `catch`, or resume
-        past the throw so the `catch` never runs, which `routing_at` sees and this refuses.
+        handler must be certain: every error the throw may raise lands in that one `catch` with
+        nothing on the way, which a narrow `catch` written first and a `trap` written in the body,
+        hoisted over the whole block, both deny. And the body must mean the same lifted: every error
+        a point of it may raise has to end up where it does inside the `catch`, which a failing line
+        anywhere but at the end of the body denies, and so does one in a block of the body that 5.1
+        would report and carry on in once the `catch` no longer passes errors outward. Both are read
+        off `refinery.lib.scripts.ps1.analysis.dispatch`.
 
         A `throw` that is dropped rather than lifted must lose nothing but the raise. A value-domain
         certain throw is computed over constants and evaluates nothing observable, but a `throw`
@@ -820,9 +823,6 @@ class Ps1DeadCodeElimination(Transformer):
         `catch` body beside a non-empty `finally` is left alone, because a handler that does not
         complete normally runs its `finally` before it leaves, which the flat sequence would not.
         """
-        handler = certain_catch_all(node)
-        if handler is None:
-            return None
         body = node.try_block.body if node.try_block is not None else []
         prefix: list[Statement] = []
         raiser: Statement | None = None
@@ -840,8 +840,8 @@ class Ps1DeadCodeElimination(Transformer):
         if isinstance(raiser, Ps1ThrowStatement) and raiser.pipeline is not None:
             if not is_side_effect_free(raiser.pipeline, cache.world_reach):
                 return None
-        routing = cache.faults.routing_at(raiser)
-        if routing is None or handler not in routing.handlers:
+        handler = cache.handlers.certain_handler(raiser)
+        if handler is None or handler.parent is not node:
             return None
         if cache.commands.reads_the_error_record():
             return None
@@ -851,7 +851,7 @@ class Ps1DeadCodeElimination(Transformer):
         finally_body = node.finally_block.body if node.finally_block is not None else []
         if handler_body and finally_body:
             return None
-        if any(cache.handlers.raises_past(stmt) for stmt in handler_body[:-1]):
+        if not cache.handlers.lifts_unchanged(handler):
             return None
         return prefix + list(handler_body) + list(finally_body)
 

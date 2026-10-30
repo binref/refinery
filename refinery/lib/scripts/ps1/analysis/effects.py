@@ -42,15 +42,16 @@ from refinery.lib.scripts.ps1.analysis.arguments import Ps1WrittenSlots, written
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
 from refinery.lib.scripts.ps1.analysis.calls import call_reader
 from refinery.lib.scripts.ps1.analysis.cfg import Ps1TrapSet
+from refinery.lib.scripts.ps1.analysis.dispatch import Ps1ErrorKind
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1ErrorPaths,
     Ps1FaultReach,
     Ps1SkipQuery,
     Ps1StepOverRegion,
-    handler_acts,
     raiser_of,
 )
+from refinery.lib.scripts.ps1.analysis.handlers import handler_acts
 from refinery.lib.scripts.ps1.analysis.identity import object_sources
 from refinery.lib.scripts.ps1.analysis.model import occurrence_role, scope_local_nodes
 from refinery.lib.scripts.ps1.analysis.session import session_of
@@ -1758,24 +1759,28 @@ def cleared_at(
     return lambda operand: expression_cannot_fault(operand, position, faults, world)
 
 
-def point_may_raise_a_caught_error(
+def point_raise_kinds(
     point: Node,
     position: Node,
     faults: Ps1FaultReach,
     world: Ps1WorldReach | None,
-) -> bool:
+) -> Ps1ErrorKind:
     """
-    Whether what the graphs evaluate at *point* may raise an error a `try` catches, judged at
-    *position*: an expression it evaluates that
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.fault_the_try_catches` reads as raising
-    one, with every part `expression_cannot_fault` clears read as raising nothing. A point whose
-    operands `refinery.lib.scripts.ps1.ast.point_operands` cannot name may raise one.
+    The kinds of error a `try` catches that what the graphs evaluate at *point* may raise, judged
+    at *position*: the error of a `throw` where *point* is one, and those
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.kinds_the_try_catches` reads an
+    expression it evaluates as raising, with every part `expression_cannot_fault` clears read as
+    raising nothing. A point whose operands `refinery.lib.scripts.ps1.ast.point_operands`
+    cannot name may raise every kind but the error of a `throw`.
     """
+    kinds = Ps1ErrorKind.THROWN if isinstance(point, Ps1ThrowStatement) else Ps1ErrorKind.NONE
     operands = point_operands(point)
     if operands is None:
-        return True
+        return kinds | Ps1ErrorKind.STATEMENT | Ps1ErrorKind.MARKED
     cleared = cleared_at(position, faults, world)
-    return any(faults.fault_the_try_catches(operand, cleared) for operand in operands)
+    for operand in operands:
+        kinds |= faults.kinds_the_try_catches(operand, cleared)
+    return kinds
 
 
 def _lies_in_a_block_within(site: Node, stmt: Node) -> bool:
@@ -1784,6 +1789,8 @@ def _lies_in_a_block_within(site: Node, stmt: Node) -> bool:
     is the boundary asked about because it is what the graph builder gives a body of its own; a
     `catch` or `trap` body written in *stmt* stays in the same graph and is judged there.
     """
+    if site is stmt:
+        return False
     cursor = site.parent
     crossed = False
     while cursor is not None and cursor is not stmt:
@@ -1812,7 +1819,7 @@ def _leaves_a_block_of(site: Node, stmt: Node, faults: Ps1FaultReach) -> bool:
     return (
         site is not stmt
         and _lies_in_a_block_within(site, stmt)
-        and faults.escapes_the_body(site)
+        and faults.escapes_the_body(site, faults.kinds_a_point_may_raise(site))
     )
 
 
@@ -1854,12 +1861,14 @@ def fault_is_observed(
     judged = False
     for site in faults.points_in(stmt):
         judged = True
+        if faults.never_runs(site):
+            continue
         operand = fault_operand(site)
         if operand is not None and expression_cannot_fault(operand, stmt, faults, world):
             continue
         if _leaves_a_block_of(site, stmt, faults):
             continue
-        if faults.observed_at(site):
+        if faults.observed_at(site, faults.kinds_a_point_may_raise(site)):
             return True
     return not judged
 
@@ -1883,7 +1892,7 @@ def deletion_is_observable(
     scope that would otherwise run on past it, and an error nothing takes inside a `try` or `catch`
     body is reported past the whole statement.
     `Ps1FaultReach.deleting_the_raise_resurrects_a_continuation` is the position half and
-    `point_may_raise_a_caught_error` the raise half, paired at every point the graphs place inside
+    `point_raise_kinds` the raise half, paired at every point the graphs place inside
     *stmt*, because a construct is deleted whole and each of its parts raises where it stands: the
     test of an `if` and a statement inside an `@( )` are points of their own. A point inside a
     script block written in *stmt* is not one of them, for the reason `_leaves_a_block_of` gives:
@@ -1910,11 +1919,13 @@ def deletion_is_observable(
     """
     for point in faults.points_in(stmt):
         if (
-            not isinstance(point, Ps1ThrowStatement)
-            and not _lies_in_a_block_within(point, stmt)
-            and point_may_raise_a_caught_error(point, stmt, faults, world)
-            and faults.deleting_the_raise_resurrects_a_continuation(point)
+            isinstance(point, Ps1ThrowStatement)
+            or _lies_in_a_block_within(point, stmt)
+            or faults.never_runs(point)
         ):
+            continue
+        kinds = point_raise_kinds(point, stmt, faults, world)
+        if kinds and faults.deleting_the_raise_resurrects_a_continuation(point, kinds):
             return True
     if (
         error_state is not None
@@ -2106,27 +2117,131 @@ class _RaiseVerdicts:
 
 class _PastVerdicts:
     """
-    Whether an error raised inside a statement may be taken past it, with the raises read by
-    `Ps1FaultReach.fault_the_try_catches` under one world, which clears what
-    `expression_cannot_fault` clears. One table per tree, refused once the tree moves, as "taken
-    past".
+    The questions about a point that read where its error goes with the raise read by
+    `point_raise_kinds` under one world, which clears what `expression_cannot_fault` clears: whether
+    an error raised inside a statement may be taken past it, whether a store may fail and leave the
+    value it overwrites in place, and the two questions the `catch` lift asks. Each point is
+    classified once, and every table is one per tree, refused once the tree moves in the direction
+    that keeps code.
     """
 
-    def __init__(self, faults: Ps1FaultReach, world: Callable[[], Ps1WorldReach], stamp: _TreeStamp):
+    def __init__(
+        self,
+        faults: Ps1FaultReach,
+        world: Callable[[], Ps1WorldReach],
+        stamp: _TreeStamp,
+    ):
         self._faults = faults
         self._world = world
         self._stamp = stamp
         self._memo: dict[int, float] = {}
+        self._kinds: dict[int, Ps1ErrorKind] = {}
+        self._within: dict[int, Ps1ErrorKind] = {}
 
-    def _raises(self, element: Node) -> bool:
-        if isinstance(element, Ps1ThrowStatement):
-            return True
-        return point_may_raise_a_caught_error(element, element, self._faults, self._world())
+    def _raises(self, element: Node) -> Ps1ErrorKind:
+        kinds = self._kinds.get(id(element))
+        if kinds is None:
+            kinds = self._kinds[id(element)] = point_raise_kinds(element, element, self._faults, self._world())
+        return kinds
 
     def raises_past(self, statement: Node) -> bool:
         if self._stamp.moved():
             return True
         return self._faults.raises_past(statement, self._raises, self._memo)
+
+    def certain_handler(self, raiser: Node) -> Ps1CatchClause | None:
+        """
+        The `catch` clause every error *raiser* may raise lands in, with nothing else on the way: no
+        `trap` runs on it first, and it carries on nowhere else.
+        """
+        if self._stamp.moved():
+            return None
+        kinds = self._raises(raiser)
+        if not kinds:
+            return None
+        fate = self._faults.dispatch.fate(raiser, kinds)
+        if fate is None or len(fate.caught) != 1:
+            return None
+        if fate.trapped or fate.offered_to_traps or fate.carried or fate.leaves or fate.replaces:
+            return None
+        clause, = fate.caught
+        return clause
+
+    def lifts_unchanged(self, clause: Ps1CatchClause) -> bool:
+        """
+        Whether every error a point of the body of *clause* may raise ends up where it would were
+        the statements of that body standing in place of the `try` the clause belongs to
+        (`refinery.lib.scripts.ps1.analysis.dispatch.Ps1Lift`).
+
+        A statement of the body that may run another body hands that body the flag the `catch` body
+        runs under, which passes every error outward, so the called body abandons its remaining
+        statements on an error it would report and step over at script scope. That error is the
+        kind `refinery.lib.scripts.ps1.analysis.dispatch.Ps1ErrorKind.CALLED`, which a point that may
+        run a body raises, and which reaches the list a point stands in only where that list passes
+        errors outward: where the list around the `try` does not, it ends up nowhere lifted and the
+        two readings differ.
+        """
+        if self._stamp.moved():
+            return False
+        body = clause.body
+        if body is None:
+            return True
+        faults = self._faults
+        lift = faults.dispatch.lifted(clause)
+        if lift is None:
+            return not body.body
+        for member in body.body:
+            if lift.keeps_the_flag:
+                kinds = self._raised_within(member)
+                if kinds and not lift.member_alike(member, kinds | Ps1ErrorKind.MARKED):
+                    return False
+            else:
+                for point in faults.points_in(member):
+                    kinds = self._raises(point)
+                    if kinds and not lift.point_alike(point, kinds):
+                        return False
+        return True
+
+    def fails_and_carries_on(self, store: Node) -> bool:
+        """
+        Whether the point *store* writes a variable at may raise instead, with the run going on
+        somewhere — after a statement, in a handler, or in whatever called the body — rather than
+        ending: the variable then keeps the value it held, and a later read sees it.
+        """
+        if self._stamp.moved():
+            return True
+        kinds = self._raises(store)
+        if not kinds:
+            return False
+        fate = self._faults.dispatch.fate(store, kinds)
+        if fate is None:
+            return True
+        goes_on = fate.carried or fate.caught or fate.swallowed or fate.trapped or fate.to_caller
+        return bool(goes_on) or not fate.ends_run
+
+    def _raised_within(self, node: Node) -> Ps1ErrorKind:
+        """
+        Every kind of error a point the graphs place inside *node* may raise, a script block written
+        there left out: what it raises arrives where the point that runs it stands, as what that
+        point hands back. Kept for every node asked about, so that a nest of bodies costs its size.
+        """
+        within = self._within
+        faults = self._faults
+        stack: list[tuple[Node, bool]] = [(node, False)]
+        while stack:
+            current, expanded = stack.pop()
+            if id(current) in within:
+                continue
+            children = [child for child in current.children() if not isinstance(child, Ps1ScriptBlock)]
+            if not expanded:
+                stack.append((current, True))
+                stack.extend((child, False) for child in children if id(child) not in within)
+                continue
+            kinds = self._raises(current) if faults.places(current) else Ps1ErrorKind.NONE
+            for child in children:
+                kinds |= within[id(child)]
+            within[id(current)] = kinds
+        return within[id(node)]
 
 
 class _SkipVerdicts:
@@ -2219,10 +2334,11 @@ class Ps1HandlerVerdicts:
     The semantic half of where an error goes, for one version of one tree: whether deleting `trap`
     statements changes what runs — whether what a set guards may raise, read without a world or
     under the world, and whether what a resuming set skips, or runs before its errors would land, is
-    observable under the world — and whether an error raised inside a statement may be taken past
-    it, which the `catch` lift and the store sweep ask. Held in a
-    `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot, so it is rebuilt with the fault
-    model it reads, and handed to
+    observable under the world — whether an error raised inside a statement may be taken past it,
+    which the store sweep asks, and the two questions the `catch` lift asks: the one clause a
+    certain throw lands in, and whether its body means the same standing in place of its `try`.
+    Held in a `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot, so it is rebuilt with
+    the fault model it reads, and handed to
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed` through the
     removal plan. Each answer is kept by the object that owns the test it was decided with, so no
     caller can hand in a test and a memo that do not belong together. The world is taken from
@@ -2264,6 +2380,27 @@ class Ps1HandlerVerdicts:
         Whether an error raised inside *statement* may be taken past it, under `world`.
         """
         return self._past.raises_past(statement)
+
+    def certain_handler(self, raiser: Node) -> Ps1CatchClause | None:
+        """
+        The `catch` clause every error *raiser* may raise lands in with nothing else on the way,
+        under `world`.
+        """
+        return self._past.certain_handler(raiser)
+
+    def lifts_unchanged(self, clause: Ps1CatchClause) -> bool:
+        """
+        Whether the body of *clause* may stand in place of its `try` with every error a point of it
+        may raise ending up where it does now, under `world`.
+        """
+        return self._past.lifts_unchanged(clause)
+
+    def fails_and_carries_on(self, store: Node) -> bool:
+        """
+        Whether the point *store* writes a variable at may raise instead with the run going on, so
+        that the value it overwrites may still be read, under `world`.
+        """
+        return self._past.fails_and_carries_on(store)
 
 
 def _skipped_statement_is_observable(

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Callable, Hashable, TypeVar
 
-from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph
+from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, distinct
 
 _T = TypeVar('_T', bound=Hashable)
 
@@ -52,8 +52,11 @@ def solve_liveness(
         use[id(node)], kill[id(node)] = node_sets(graph, node)
         completed: list[CfgNode] = []
         raising: list[CfgNode] = []
-        for successor in node.successors:
-            (raising if graph.raise_taken(node, successor) else completed).append(successor)
+        for successor in distinct(node.successors):
+            if graph.completes_into(node, successor):
+                completed.append(successor)
+            if graph.raise_taken(node, successor):
+                raising.append(successor)
         normal_successors[id(node)] = completed
         exceptional_successors[id(node)] = raising
     live_in: dict[int, set[_T]] = {id(node): set() for node in graph.nodes}

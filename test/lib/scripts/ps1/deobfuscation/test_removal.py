@@ -45,7 +45,9 @@ def _faults(node):
     before its own edit lands, so a model built at that point answers about the tree the verdict is
     about.
     """
-    return build_fault_reach(build_control_flow_model(tree_root(node)))
+    root = tree_root(node)
+    calls = Ps1ModelCache(root).call_graph
+    return build_fault_reach(build_control_flow_model(root), lambda: calls)
 
 
 class TestPs1RemovalPlan(TestPs1):

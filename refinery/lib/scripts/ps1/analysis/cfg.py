@@ -32,11 +32,9 @@ alone is not what an advanced function runs.
 """
 from __future__ import annotations
 
-import enum
-
 from dataclasses import dataclass, field
 from functools import partial
-from typing import AbstractSet, Sequence
+from typing import Sequence
 
 from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.analysis.cfg import (
@@ -46,6 +44,12 @@ from refinery.lib.scripts.analysis.cfg import (
     ControlFlowGraph,
     ControlFlowModel,
     build_control_flow,
+)
+from refinery.lib.scripts.ps1.analysis.handlers import (
+    Ps1TrapDisposition,
+    Ps1TrapSelection,
+    declared_traps,
+    swallows_every_error,
 )
 from refinery.lib.scripts.ps1.analysis.session import session_of
 from refinery.lib.scripts.ps1.analysis.values import is_fault_free
@@ -57,7 +61,6 @@ from refinery.lib.scripts.ps1.ast import (
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1BreakStatement,
-    Ps1CatchClause,
     Ps1Code,
     Ps1ContinueStatement,
     Ps1DoLoop,
@@ -103,85 +106,6 @@ _LOOP_NODES = (
 )
 
 
-#: The type names a `catch` clause may carry that take every terminating error Windows PowerShell
-#: 5.1 raises, in the spellings 5.1 resolves. `System.Exception` is the root of the .NET hierarchy
-#: and matches by definition; `RuntimeException` is what the engine wraps a terminating error in,
-#: measured to match a failed cast, a division by zero, `throw` of a string, `throw` of a .NET
-#: exception, a method that threw, a member access on `$null`, and a cmdlet stopped by
-#: `-ErrorAction Stop`.
-#:
-#: The spellings are the measurement too, and they are not symmetric: a bare name is resolved
-#: against `System` alone, so `[Exception]` names `System.Exception` while `[RuntimeException]`
-#: names nothing at all and the clause it filters matches no error whatsoever. Listing the short
-#: form of the second would grant a clause that in fact declines everything, which is the one
-#: direction that deletes code.
-_CATCHES_EVERY_ERROR = frozenset({
-    'exception',
-    'system.exception',
-    'management.automation.runtimeexception',
-    'system.management.automation.runtimeexception',
-})
-
-
-def names_every_error(name: str) -> bool:
-    """
-    Whether *name* is a type filter every terminating error matches. An empty name is a `trap`
-    carrying no type filter, which takes every error the way a bare `catch` does. A `catch` clause
-    reaches this only with the names it could read: whether it carried a filter at all is
-    `Ps1CatchClause.filtered`, so an unreadable one is never spelled here as the empty name.
-    """
-    return not name.strip() or name.strip().lower() in _CATCHES_EVERY_ERROR
-
-
-def _catch_takes_every_error(clause: Ps1CatchClause) -> bool:
-    """
-    Whether *clause* is certain to be the one that takes a throw the guarded block makes: it carries
-    no type filter at all, or one of the filters it carries names a type every terminating error is.
-
-    A clause carrying several types matches when *any* of them does, so one universal name among
-    them settles it however narrow the others are. A clause whose filter was written but could not
-    be read carries an empty `types` for a different reason than an unfiltered clause does, and
-    `filtered` is what tells the two apart: erring towards *takes everything* would close the
-    exceptional edge an enclosing handler still needs, so the unread filter takes nothing certain.
-    """
-    if not clause.filtered:
-        return True
-    return any(names_every_error(name) for name in clause.types)
-
-
-def swallows_every_error(statement: Ps1TryCatchFinally) -> bool:
-    """
-    Whether every terminating error the `try` body of *statement* raises is certain to land in one
-    of that statement's own `catch` clauses.
-
-    The quantifier is the whole question, and it is an `any`: one clause that takes everything
-    settles it however narrow the others are, and a construct carrying no `catch` at all swallows
-    nothing, which an `all` reads as vacuously true. Answering it wrong in that direction hands a
-    caller a raise it believes confined.
-
-    What this licenses is confinement and not invisibility. A caught error is still recorded, and
-    whether the script reads that record back is a different question with a different owner.
-    """
-    return any(_catch_takes_every_error(clause) for clause in statement.catch_clauses)
-
-
-def certain_catch_all(statement: Ps1TryCatchFinally) -> Ps1CatchClause | None:
-    """
-    The one `catch` clause certain to take every terminating error the `try` body of *statement*
-    raises, or `None` when no clause is certain to. It is the first clause, and only when that
-    clause takes every error: a clause is tried in order, so a narrower one written first might
-    take a specific error before the catch-all is offered it, and which handler runs then depends
-    on the error's type rather than on the text. That is the reading `swallows_every_error` does not
-    make — it asks only whether *some* clause is a catch-all — and it is the one a caller that lifts
-    a handler body out needs, since it names *which* body runs.
-    """
-    clauses = statement.catch_clauses
-    if not clauses:
-        return None
-    first = clauses[0]
-    return first if _catch_takes_every_error(first) else None
-
-
 def _jump_label(statement: Ps1Jump) -> str | None:
     """
     The label a `break` or `continue` names, or `None` when it names none or names one this cannot
@@ -203,50 +127,12 @@ def _construct_label(label: str | None) -> str | None:
     return label[1:] if label is not None and label.startswith(':') else label
 
 
-def _declared_traps(statements: Sequence[Node]) -> list[Ps1TrapStatement]:
+class Ps1TrapSet(Ps1TrapSelection):
     """
-    The `trap` statements *statements* declares, in source order.
-
-    A `trap` belongs to the statement block it is written in and to no other: it catches for that
-    block entire, including the statements written above it, and an error raised outside the block
-    is never offered to it. Collecting the traps of a nested block for the block around it hands
-    those errors to a handler no run reaches, and — where the nested one is typed — reports a filter
-    that may miss as guarding statements it does not guard at all.
-    """
-    return [statement for statement in statements if isinstance(statement, Ps1TrapStatement)]
-
-
-class Ps1TrapDisposition(enum.Flag):
-    """
-    What running a `trap` body may do with the error it took, read by the builder off the body it
-    builds. A body that branches may do several.
-    """
-    NONE = 0
-    #: An unlabelled `continue` resumes the block at the statement after the one that raised.
-    RESUMES = enum.auto()
-    #: The body runs off its end, which writes the error record and hands the decision to
-    #: `$ErrorActionPreference`: the block resumes, unless the preference is `Stop`.
-    FALLS_THROUGH = enum.auto()
-    #: A `break` that leaves the body re-raises the error to whatever guards the block.
-    RETHROWS = enum.auto()
-
-
-class Ps1TrapSet:
-    """
-    The `trap` statements one block declares, as the builder wired them: each member's entry and
-    disposition, the members 5.1 may select in the order it tries them, and — where the set
-    resumes the block — the slot it resumes at after each statement of the block. `outward` is where
-    an error goes that the set does not take, and where the errors it takes would go if none of it
-    were written.
-
-    5.1 picks the member by the error's type and not by where it is written: a member naming the
-    error's own type, then one naming a type the error derives from, and only then the first member
-    carrying no type at all. So every typed member may take an error, in source order, and after
-    them the first untyped member takes whatever no typed member matched; an untyped member after
-    that one takes nothing. A typed member naming a type every terminating error is takes everything
-    before the untyped members are tried at all. `selectable` holds the members 5.1 may select, in
-    the order it tries them, and `catching` says which of them take an error no narrower member
-    names.
+    The `trap` statements one block declares, as the builder wired them: the selection 5.1 makes
+    among them, each member's entry and disposition, and — where the set resumes the block — the
+    slot it resumes at after each statement of the block. `outward` is where an error goes that the
+    set does not take, and where the errors it takes would go if none of it were written.
     """
 
     def __init__(
@@ -256,16 +142,10 @@ class Ps1TrapSet:
         entries: dict[int, CfgNode],
         traps: Sequence[Ps1TrapStatement],
     ):
+        super().__init__(traps)
         self.graph = graph
         self.statements = tuple(statements)
-        self.members = tuple(traps)
         self.entries = entries
-        typed = tuple(trap for trap in traps if trap.type_name.strip())
-        self._universal = tuple(trap for trap in typed if names_every_error(trap.type_name))
-        self._untyped = tuple(trap for trap in traps if not trap.type_name.strip())
-        self.selectable = (*typed, *(trap for trap in self.catching() if not trap.type_name.strip()))
-        self._chosen = {id(trap) for trap in self.selectable}
-        self.never_selected = tuple(trap for trap in traps if id(trap) not in self._chosen)
         self.chain = tuple(entries[id(trap)] for trap in self.selectable)
         self.dispositions: dict[int, Ps1TrapDisposition] = {}
         self.slots: dict[int, CfgNode] = {}
@@ -276,25 +156,6 @@ class Ps1TrapSet:
 
     def disposition(self, trap: Ps1TrapStatement) -> Ps1TrapDisposition:
         return self.dispositions[id(trap)]
-
-    def catching(self, removed: AbstractSet[int] = frozenset()) -> tuple[Ps1TrapStatement, ...]:
-        """
-        The members that take an error no narrower member names, once the members whose identities
-        *removed* holds are gone: every typed member left naming a type every error is, which of
-        them depending on the error's type, or where none is left, the first untyped member left.
-        Empty where what is left lets such an error past. Costs the members naming every error and
-        the untyped members removed ahead of the first one left, not the whole set.
-        """
-        universal = tuple(trap for trap in self._universal if id(trap) not in removed)
-        if universal:
-            return universal
-        return next(((trap,) for trap in self._untyped if id(trap) not in removed), ())
-
-    def is_selectable(self, trap: Ps1TrapStatement) -> bool:
-        """
-        Whether 5.1 may hand *trap* an error.
-        """
-        return id(trap) in self._chosen
 
     def may_rethrow(self, trap: Ps1TrapStatement) -> bool:
         """
@@ -380,11 +241,13 @@ class _Builder(CfgBuilder):
         owner: Node,
         descend: bool = False,
         trap_sets: dict[int, Ps1TrapSet] | None = None,
+        dispositions: dict[int, Ps1TrapDisposition] | None = None,
     ):
         super().__init__(owner)
         self._trap_body: _TrapBody | None = None
         self._descend = descend
         self._trap_sets = {} if trap_sets is None else trap_sets
+        self._dispositions = {} if dispositions is None else dispositions
         session = session_of(owner)
         self._throws_step_over = (
             session.silenced
@@ -392,6 +255,22 @@ class _Builder(CfgBuilder):
         )
         self._open_sets: list[Ps1TrapSet] = []
         self._frames: list[_ReportFrame] = []
+
+    def disposition_of(self, trap: Ps1TrapStatement) -> Ps1TrapDisposition:
+        """
+        Build the body of *trap* as the whole of this graph, under a handler as the block's own set
+        stands over it, and read how it ends; see `trap_disposition`.
+        """
+        self._handlers.append(self.cfg.exit)
+        self._trap_body = built = _TrapBody()
+        disposition = Ps1TrapDisposition.NONE
+        if self._body(trap.body, [self.cfg.entry]):
+            disposition |= Ps1TrapDisposition.FALLS_THROUGH
+        if built.resumes:
+            disposition |= Ps1TrapDisposition.RESUMES
+        if built.rethrows:
+            disposition |= Ps1TrapDisposition.RETHROWS
+        return disposition
 
     def escape(self) -> CfgNode:
         """
@@ -534,7 +413,7 @@ class _Builder(CfgBuilder):
         takes it and resumes past the whole nested block, which is the one path a typed inner trap
         makes observable.
         """
-        traps = _declared_traps(statements)
+        traps = declared_traps(statements)
         if not traps:
             return self.sequence(statements, frontier)
         entries = {id(trap): self.detached_node(trap) for trap in traps}
@@ -557,18 +436,11 @@ class _Builder(CfgBuilder):
             body_from = len(self.cfg.nodes)
             falls_through = self._body(trap.body, [trap_set.entry(trap)])
             handling += self.cfg.nodes[body_from:]
-            disposition = Ps1TrapDisposition.NONE
-            if built.resumes:
-                disposition |= Ps1TrapDisposition.RESUMES
-            if falls_through:
-                disposition |= Ps1TrapDisposition.FALLS_THROUGH
-            if built.rethrows:
-                disposition |= Ps1TrapDisposition.RETHROWS
-            trap_set.dispositions[id(trap)] = disposition
+            trap_set.dispositions[id(trap)] = trap_disposition(trap, self._dispositions)
             if trap_set.is_selectable(trap):
                 resumes += falls_through + built.resumes
         escapes = (
-            not any(names_every_error(trap.type_name) for trap in traps)
+            not trap_set.takes_every_error()
             or any(trap_set.may_rethrow(trap) for trap in trap_set.selectable)
         )
         self._handlers.pop()
@@ -802,7 +674,7 @@ class _Builder(CfgBuilder):
         A clause certain to take every error leaves nothing to pass outward — which is what makes
         an empty `catch` shield the `catch` or `trap` around it where a typed one hands the error
         straight on to it. Carrying no type is one way to be certain and naming `System.Exception`
-        is another; see `_catch_takes_every_error`.
+        is another; see `refinery.lib.scripts.ps1.analysis.handlers.catch_takes_every_error`.
 
         The `finally` body travels as its block for the same reason a `switch` arm does: it is a
         statement block, and a `trap` written in one guards it alone.
@@ -837,8 +709,29 @@ def _build(
     descend: bool,
     trap_sets: dict[int, Ps1TrapSet],
 ) -> dict[int, ControlFlowGraph]:
-    builder = partial(_Builder, descend=descend, trap_sets=trap_sets)
+    builder = partial(_Builder, descend=descend, trap_sets=trap_sets, dispositions={})
     return build_control_flow(root, builder, FUNCTION_NODES)
+
+
+def trap_disposition(trap: Ps1TrapStatement, memo: dict[int, Ps1TrapDisposition]) -> Ps1TrapDisposition:
+    """
+    What running the body of *trap* may do with the error it took: resume the block with an
+    unlabelled `continue`, re-raise with a `break` that leaves the body, or run off its end. *memo*
+    holds the answers given so far for the tree *trap* stands in, by the identity of each `trap`,
+    and the caller keeps it no longer than that tree stays as it is.
+
+    5.1 compiles a `trap` body as a scope of its own, in which no jump names a construct outside
+    it, so how the body ends is a fact of the body alone: it is read off the body built on its own,
+    every statement-list construct in it descended into, with a handler standing over it as the
+    block's own set stands over it where the builder wires it — an error raised in a `trap` body
+    leaves it rather than stepping over, whatever the preference says. The builder wiring the body
+    into the block it guards reads its disposition from here as well, so that the graph and the
+    dispatch evaluator read one answer.
+    """
+    found = memo.get(id(trap))
+    if found is None:
+        found = memo[id(trap)] = _Builder(trap, descend=True, dispositions=memo).disposition_of(trap)
+    return found
 
 
 class Ps1ControlFlowModel(ControlFlowModel):

@@ -1243,11 +1243,12 @@ class TestPs1AnErrorInABodyACatchOrTryBodyRunsLeavesThatBody(TestPs1):
     """
     Measured on 5.1: an error raised in a script block or a function that a `try` or `catch` body
     runs is not reported inside it: it leaves the block and skips the rest of the body that ran it,
-    exactly as an error raised in that body does. The removal passes read it as stepping over. Plan
-    (4) of the error roadmap reads which bodies run under a handler.
+    exactly as an error raised in that body does. Where the body that ran it is written, a call that
+    may run another body is read as raising what that body hands back. Inside the called body the
+    removal passes still read the error as stepping over wherever no handler that acts is written
+    elsewhere, which only the call sites of the body can settle.
     """
 
-    @unittest.expectedFailure
     def test_a_failing_line_in_a_block_a_catch_body_runs_is_kept(self):
         """
         5.1 writes the error and `two`; the output writes `three`.
@@ -1280,13 +1281,10 @@ class TestPs1TheLineAfterARethrowNothingTakesIsDead(TestPs1):
 
 class TestPs1WhereAnErrorLandsIsAskedOfEveryWayIntoIt(TestPs1):
     """
-    Measured on 5.1, each line that fails below is one the output deletes, and the output then runs
-    what 5.1 skips or skips what 5.1 runs. Each is a place where one reader works out where an error
-    lands from the shape of the graph alone; the single dispatch evaluator of the error roadmap
-    answers all of them.
+    Measured on 5.1, each line that fails below decides what runs after it: deleting it runs what
+    5.1 skips or skips what 5.1 runs.
     """
 
-    @unittest.expectedFailure
     def test_a_failing_line_before_a_finally_is_kept(self):
         """
         5.1 writes the cast's error and `after`; the output writes `rest` and `after`.
@@ -1294,7 +1292,6 @@ class TestPs1WhereAnErrorLandsIsAskedOfEveryWayIntoIt(TestPs1):
         self.assertIn("[int]'a'", self._deobfuscate(
             "try { try { $null = [int]'a' } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'"))
 
-    @unittest.expectedFailure
     def test_a_failing_line_a_typed_trap_declines_to_an_outer_trap_is_kept(self):
         """
         5.1 writes `after`; the output writes `rest` and `after`.
@@ -1303,7 +1300,6 @@ class TestPs1WhereAnErrorLandsIsAskedOfEveryWayIntoIt(TestPs1):
             "trap { continue }; if ($Host) { trap [System.IO.IOException] { continue }; $null = [int]'a'; "
             "Write-Host 'rest' }; Write-Host 'after'"))
 
-    @unittest.expectedFailure
     def test_a_failing_line_in_a_finally_an_error_runs_is_kept(self):
         """
         5.1 writes the cast's error and `after`, the cast's error taking the place of the `throw`;
@@ -1312,7 +1308,6 @@ class TestPs1WhereAnErrorLandsIsAskedOfEveryWayIntoIt(TestPs1):
         self.assertIn("[int]'a'", self._deobfuscate(
             "try { try { throw 'x' } finally { $null = [int]'a' } } finally { }; Write-Host 'after'"))
 
-    @unittest.expectedFailure
     def test_a_failing_line_nested_in_a_catch_body_is_kept(self):
         """
         5.1 writes the cast's error and `after`; the output writes `rest` and `after`.
@@ -1320,7 +1315,39 @@ class TestPs1WhereAnErrorLandsIsAskedOfEveryWayIntoIt(TestPs1):
         self.assertIn("[int]'a'", self._deobfuscate(
             "try { throw 'x' } catch { if ($Host) { $null = [int]'a'; Write-Host 'rest' } }; Write-Host 'after'"))
 
-    @unittest.expectedFailure
+    def test_a_failing_line_in_a_finally_an_error_runs_inside_a_catch_body_is_kept(self):
+        """
+        5.1 writes the cast's error and `after`, the cast's error taking the place of the `throw`
+        and leaving the `catch` body; the output ends on the `throw`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "try { throw 'y' } catch { try { throw 'x' } finally { $null = [int]'a' } }; Write-Host 'after'"))
+
+    def test_a_failing_line_whose_failure_a_finally_reads_is_kept(self):
+        """
+        5.1 writes `False`: the cast set the success variable before the `finally` ran.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate("try { $null = [int]'a' } finally { Write-Host $? }"))
+
+    def test_a_failed_cast_goes_to_a_later_clause_naming_a_type_it_derives_from(self):
+        """
+        5.1 matches the cast's own exception before the error wrapping it, so the second clause
+        takes it: `I` for an `InvalidCastException`, `E` for an `Exception`.
+        """
+        for clause, mark in (('System.InvalidCastException', 'I'), ('System.Exception', 'E')):
+            with self.subTest(clause):
+                self.assertIn(F"'{mark}'", self._deobfuscate(
+                    F"try {{ $null = [int]'a' }} catch [System.Management.Automation.RuntimeException] "
+                    F"{{ Write-Host 'R' }} catch [{clause}] {{ Write-Host '{mark}' }}; Write-Host 'after'"))
+
+    def test_a_failing_line_at_the_end_of_a_loop_body_is_kept_where_its_error_leaves_the_loop(self):
+        """
+        5.1 writes `m` and `after`: the error leaves the loop. Without the cast the loop runs on and
+        writes `m` twice.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "try { foreach ($i in 1, 2) { Write-Host 'm'; $null = [int]'a' } } catch { }; Write-Host 'after'"))
+
     def test_a_trap_in_a_try_body_that_always_throws_is_kept(self):
         """
         5.1 writes `T` and `after`; the output writes `after`.
@@ -1386,3 +1413,157 @@ class TestPs1AReadStrictModeFailsIsSkippedPastByTheTrapAroundIt(TestPs1):
             }
             Write-Host "$m $w"
         """)
+
+
+class TestPs1AStoreAFailingOverwriteLeavesInPlaceIsKept(TestPs1):
+    """
+    Measured on 5.1: a store whose value fails is not made, so the variable keeps the value it held,
+    and the run goes on to read it wherever the error is reported, silenced or taken by a `trap`
+    that carries on.
+    """
+
+    def test_a_store_a_failing_cast_overwrites_is_kept(self):
+        """
+        5.1 writes the cast's error and `port 80`; the output wrote `port `.
+        """
+        self.assertIn('$port = 80', self._deobfuscate("$port = 80; $port = [int]'x'; Write-Host \"port $port\""))
+
+    def test_a_store_a_failing_cast_overwrites_under_a_resuming_trap_is_kept(self):
+        """
+        5.1 writes `1`; the output wrote an empty line.
+        """
+        self.assertIn('$x = 1', self._deobfuscate("trap { continue }; $x = 1; $x = [int]'a'; throw 'y'; Write-Host $x"))
+
+
+class TestPs1AFailingLineInAFinallyAJumpPassesThroughIsKept(TestPs1):
+    """
+    Measured on 5.1: a `finally` body runs when a `return`, `exit`, `break` or `continue` leaves its
+    `try`, and an error leaving that body takes the place of the jump, which is then never made.
+    """
+
+    def test_a_failing_line_in_a_finally_a_return_passes_through_is_kept(self):
+        """
+        5.1 writes `after`; the output returned and wrote nothing.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "try { try { return } finally { $null = [int]'a' } } catch { }; Write-Host 'after'"))
+
+    def test_a_failing_line_in_a_finally_a_continue_passes_through_is_kept(self):
+        """
+        5.1 writes `m1`, `m2` and `after`; the output wrote `after`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "foreach ($i in 1, 2) { try { try { continue } finally { $null = [int]'a' } } catch { }; "
+            "Write-Host \"m$i\" }; Write-Host 'after'"))
+
+    def test_a_failing_line_in_a_finally_an_exit_passes_through_is_kept(self):
+        """
+        5.1 writes `after`; the output exited and wrote nothing.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "try { try { if ($Host) { exit } } finally { $null = [int]'a' } } catch { }; Write-Host 'after'"))
+
+    def test_a_failing_line_in_a_finally_a_return_from_a_function_passes_through_is_kept(self):
+        """
+        5.1 writes `r tail`; the output wrote `r`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "function f { try { try { return 'r' } finally { $null = [int]'a' } } catch { }; 'tail' }; "
+            "Write-Host (f)"))
+
+
+class TestPs1ACatchBodyThatRunsAnotherBodyStaysWhereItIs(TestPs1):
+    """
+    Measured on 5.1: a function or script block a `catch` body runs inherits the flag that passes its
+    errors outward, so a line failing in it abandons the rest of it and the `catch` body, and the
+    error is reported after the `try`. Run where the `try` stands, it would report the error and
+    carry on inside the called body.
+    """
+
+    def test_a_catch_body_that_calls_a_function_is_not_lifted(self):
+        """
+        5.1 writes the cast's error and `after`; the lifted output wrote `in` and `after`.
+        """
+        self.assertIn('catch', self._deobfuscate(
+            "function g { $null = [int]'a'; Write-Host 'in' }; try { throw 'x' } catch { g }; Write-Host 'after'"))
+
+    def test_a_catch_body_that_runs_a_script_block_is_not_lifted(self):
+        """
+        5.1 writes the cast's error and `after`; the lifted output wrote `in` and `after`.
+        """
+        self.assertIn('catch', self._deobfuscate(
+            "try { throw 'x' } catch { & { $null = [int]'a'; Write-Host 'in' } }; Write-Host 'after'"))
+
+    def test_a_catch_body_that_hands_a_block_to_a_command_is_not_lifted(self):
+        """
+        5.1 writes the error and `after`; the lifted output wrote the error, `in` and `after`.
+        """
+        self.assertIn('catch', self._deobfuscate(
+            "try { throw 'x' } catch { 1 | ForEach-Object { $null = [int]'a'; Write-Host 'in' } }; Write-Host 'after'"))
+
+
+class TestPs1AFailingLineInATrapBodyACallFiresIsKept(TestPs1):
+    """
+    Measured on 5.1: a list that declares a `trap` passes errors outward through every body it runs,
+    so the error of a line failing in a called function fires the `trap`, and a line failing in the
+    `trap` body then ends the run.
+    """
+
+    def test_a_failing_line_in_a_trap_body_a_function_fires_is_kept(self):
+        """
+        5.1 writes `T` and ends on the trap body's error; the output wrote `T` and `after`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "function f { $null = [int]'b' }; trap { Write-Host 'T'; $null = [int]'a'; continue }; f; Write-Host 'after'"))
+
+    def test_a_failing_line_in_a_trap_body_a_script_block_fires_is_kept(self):
+        """
+        5.1 writes `T` and ends on the trap body's error; the output wrote `T` and `after`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "trap { Write-Host 'T'; $null = [int]'a'; continue }; & { $null = [int]'b' }; Write-Host 'after'"))
+
+
+class TestPs1AnAdvancedFunctionToldToStopRunsUnderStop(TestPs1):
+    """
+    Measured on 5.1: `-ErrorAction Stop` on a function declaring `[CmdletBinding()]` writes `Stop` to
+    the preference inside it, so a line failing there abandons the function; the error is then
+    reported as the function's and the script carries on. What a call hands a body as its preference
+    is read only for silence today; the common parameters of an advanced function belong to the
+    interprocedural milestone (cluster 1f).
+    """
+
+    @unittest.expectedFailure
+    def test_a_failing_line_in_an_advanced_function_told_to_stop_is_kept(self):
+        """
+        5.1 writes the error and `end`; the output wrote `in-f` and `end`.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "function f { [CmdletBinding()] param() $null = [int]'a'; Write-Host 'in-f' }; f -ErrorAction Stop; "
+            "Write-Host 'end'"))
+
+
+class TestPs1RemovingATrapReadsWhereItsErrorsLand(TestPs1):
+    """
+    Measured on 5.1, each `trap` below decides what runs: without it an error lands elsewhere. The
+    `trap` removal still reads where errors land off the graph rather than off the dispatch
+    evaluator, which phase E2 of the error roadmap moves it onto.
+    """
+
+    @unittest.expectedFailure
+    def test_a_trap_whose_resumption_ends_a_loop_is_kept(self):
+        """
+        5.1 writes `after`: the error leaves the loop and the `trap` resumes after it. The output
+        dropped the `trap` and the cast, and loops forever.
+        """
+        self.assertIn('trap', self._deobfuscate(
+            "$s = 'a'; trap { continue }; while ($Host) { $null = [int]$s }; Write-Host 'after'"))
+
+    @unittest.expectedFailure
+    def test_a_trap_that_takes_an_error_replacing_a_return_is_kept(self):
+        """
+        5.1 writes `after`: the cast's error takes the place of the `return` and the `trap` resumes
+        after the `try`. The output dropped the `trap` and the cast, and returns.
+        """
+        self.assertIn('trap', self._deobfuscate(
+            "trap { continue }; try { if ($Host) { return } } finally { $null = [int]'a' }; Write-Host 'after'"))
