@@ -18,7 +18,11 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import SemanticModel, is_use_position
+from refinery.lib.scripts.js.analysis.model import (
+    SemanticModel,
+    is_direct_eval_call,
+    is_use_position,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     arguments_substitutable,
@@ -68,7 +72,9 @@ def _detect_wrapper(node: JsFunctionDeclaration) -> _WrapperInfo | None:
 
     Neither is recognized where a call to the function answers a wrapper around the return
     expression rather than the expression itself, which
-    `refinery.lib.scripts.js.deobfuscation.helpers.expression_a_call_answers` decides.
+    `refinery.lib.scripts.js.deobfuscation.helpers.expression_a_call_answers` decides, nor where
+    the return expression is a direct `eval`, which reads the scope it is written in and would
+    read the scope of each call site instead.
     """
     if node.id is None:
         return None
@@ -76,6 +82,8 @@ def _detect_wrapper(node: JsFunctionDeclaration) -> _WrapperInfo | None:
     if answered is None:
         return None
     expr, param_names = answered
+    if is_direct_eval_call(expr):
+        return None
     if param_names:
         if not isinstance(expr, JsCallExpression):
             return None

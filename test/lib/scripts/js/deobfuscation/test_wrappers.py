@@ -205,6 +205,33 @@ class TestAnArgumentBoundToEvalStaysAnIndirectCall(TestJsDeobfuscator):
         )
 
 
+class TestAWrapperAroundADirectEvalStays(TestJsDeobfuscator):
+
+    def test_a_direct_eval_reads_the_scope_of_the_wrapper_and_not_that_of_the_caller(self):
+        source = (
+            'function w(code) { return eval(code); }'
+            ' var x = 1;'
+            " function f() { var x = 2; return w('x'); }"
+            ' console.log(f());'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function w(code) {
+                  return eval(code);
+                }
+                var x = 1;
+                function f() {
+                  var x = 2;
+                  return w('x');
+                }
+                console.log(f());
+                """
+            ),
+            self._run_transformer(source, JsCallWrapperInliner),
+        )
+
+
 class TestAWrapperArgumentIsNotDuplicated(TestJsDeobfuscator):
 
     def test_a_fresh_value_read_twice_by_the_body_is_not_inlined(self):
