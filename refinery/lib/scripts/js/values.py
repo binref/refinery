@@ -431,6 +431,14 @@ it. The caller remains responsible for evaluating the operand: `void f()` is `un
 and this table only supplies the first half.
 """
 
+COERCING_UNARY_OPERATORS = frozenset({'+', '-', '~'})
+"""
+The unary operators that convert their operand, each to a number. Converting an object runs its
+`valueOf`, `toString` or `Symbol.toPrimitive`, so an operand of one of these runs code wherever it
+may be an object. `!`, `typeof` and `void` take the operand to a truth value, a type name or
+nothing without asking it anything.
+"""
+
 #: The value-domain types that model a JavaScript object: an array, a plain object, and a function.
 #: They share the two behaviours the primitives do not: a ToPrimitive that runs a conversion, and an
 #: equality by reference rather than by value.

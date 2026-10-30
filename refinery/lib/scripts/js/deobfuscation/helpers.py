@@ -134,6 +134,7 @@ from refinery.lib.scripts.js.strict import (
 from refinery.lib.scripts.js.token import FUTURE_RESERVED, KEYWORDS
 from refinery.lib.scripts.js.utf16 import SURROGATE_PAIR, code_units, from_code_units
 from refinery.lib.scripts.js.values import (
+    COERCING_UNARY_OPERATORS,
     GLOBAL_VALUE_NAMES,
     JS_HOLE,
     JS_NULL,
@@ -1121,11 +1122,19 @@ def names_global_value(node: JsIdentifier, model: SemanticModel) -> bool:
     return node.name in GLOBAL_VALUE_NAMES and name_is_unbound(node, model)
 
 
-def denoted_value(node: Node | None, model: SemanticModel) -> tuple[bool, Value]:
+def denoted_value(
+    node: Node | None,
+    model: SemanticModel,
+    effects: EffectModel | None,
+) -> tuple[bool, Value]:
     """
     The value *node* denotes, as `(True, value)`, or `(False, None)` when nothing decides it. This is
     `extract_literal_value` widened by the two things a literal cannot express: a name that still
     denotes one of the global values, and an operator standing in front of either.
+
+    An operator that converts its operand converts an array by running a method the program can
+    replace, so `+[]` denotes `0` only where *effects* vouches that nothing replaced it
+    (`coerces_uninterceptably`); without an effect model it denotes nothing.
     """
     node = strip_parens(node)
     if node is None:
@@ -1138,8 +1147,12 @@ def denoted_value(node: Node | None, model: SemanticModel) -> tuple[bool, Value]
         apply = UNARY_OPS.get(node.operator)
         if apply is None:
             return False, None
-        known, value = denoted_value(node.operand, model)
-        return (True, apply(value)) if known else (False, None)
+        known, value = denoted_value(node.operand, model, effects)
+        if not known:
+            return False, None
+        if node.operator in COERCING_UNARY_OPERATORS and not coerces_uninterceptably(effects, value):
+            return False, None
+        return True, apply(value)
     return extract_literal_value(node)
 
 
@@ -1191,7 +1204,7 @@ def is_truthy(node: Node, cache: ModelCache) -> bool | None:
     """
     operand, negated = _strip_negation(node)
     model = cache.model
-    known, value = denoted_value(operand, model)
+    known, value = denoted_value(operand, model, cache.effects)
     if known:
         answer = to_boolean(value)
     elif allocated_object_type(operand) is not None:
@@ -1240,14 +1253,14 @@ def _established_allocation_of(binding: Binding, node: Node, cache: ModelCache) 
     return value
 
 
-def is_nullish(node: Node, model: SemanticModel) -> bool | None:
+def is_nullish(node: Node, model: SemanticModel, effects: EffectModel | None) -> bool | None:
     """
     Whether *node* denotes `null` or `undefined` — the two values `??` treats as absent — or `None`
     when the value it denotes is not decided. A caller has to tell that third answer from `False`:
     `a ?? b` keeps `a` when `a` is known not to be nullish, and must be left alone when nothing is
     known about it at all.
     """
-    known, value = denoted_value(node, model)
+    known, value = denoted_value(node, model, effects)
     if not known:
         return None
     return value is None or value is JS_NULL
@@ -2491,7 +2504,7 @@ def binding_constant(effects: EffectModel, binding: Binding) -> tuple[bool, Valu
     Whether the value is in place when a given read runs is an ordering question this does not ask.
     """
     model = effects.model
-    known, value = denoted_value(model.singular_value(binding), model)
+    known, value = denoted_value(model.singular_value(binding), model, effects)
     if not known:
         return False, None
     return held_constant(effects, binding, value)

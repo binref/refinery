@@ -9,10 +9,10 @@ it cannot run that code, and the one honest answer is to refuse the fold and lea
 engine: every row below stands, and the running program prints what Node prints.
 
 The guard is one question asked at every route that holds the effect model — the operators, the
-template hole, the computed member key, the `in` key, the `String` and `Number` globals — because
-the conversion a program installs decides what each of them answers, and an operator the guard
-omits is a surface the same program defeats. Strict equality is the one operator that coerces
-nothing and is exempt.
+template hole, the computed member key, the `in` key, every argument a built-in is handed, and the
+operand of a unary operator the constant fold reads — because the conversion a program installs
+decides what each of them answers, and a route the guard omits is a surface the same program
+defeats. Strict equality is the one operator that coerces nothing and is exempt.
 
 The price of the refusal is paid only where it is owed: an object with no conversion of its own
 and an unwritten chain still folds to the string and number the language says, and so does a list
@@ -21,11 +21,13 @@ folds — the pair is what keeps the refusal from widening on its own.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from typing import NamedTuple
 
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
+from test.lib.scripts.js.ledger import Program, Reading, before_and_after, folded, prints
 
 from refinery.units.scripting.djs import djs
 
@@ -197,3 +199,87 @@ class TestAPrimitiveFirstObjectSecond(unittest.TestCase):
 
     def test_each_row_behaves_and_writes_as_recorded(self):
         _assert_both_ways(self, _A_PRIMITIVE_FIRST_OBJECT_SECOND)
+
+
+_JOIN_ANSWERS_9 = "Array.prototype.join = function () { return '9'; };\n"
+
+_VALUE_OF_ANSWERS_5 = 'Array.prototype.valueOf = function () { return 5; };\n'
+
+#: A program replacing a method that converting an array runs and then converting an array, mapped
+#: to what Node prints: a built-in handed the array and a unary operator over it each run the
+#: replacement. The rows at the top level are the constant fold's, and the rows inside a function
+#: are the interpreter's, one for a global function, a static method and a string method each.
+AN_ARRAY_CONVERTED_THROUGH_A_REPLACED_CHAIN = {
+    'by Number': Program(F'{_JOIN_ANSWERS_9}console.log(Number([5]));', prints('9'), Reading.SCRIPT),
+    'by parseInt': Program(F'{_JOIN_ANSWERS_9}console.log(parseInt([5]));', prints('9'), Reading.SCRIPT),
+    'by String': Program(F'{_JOIN_ANSWERS_9}console.log(String([5]));', prints('9'), Reading.SCRIPT),
+    'by a unary plus': Program(F'{_JOIN_ANSWERS_9}console.log(+[5]);', prints('9'), Reading.SCRIPT),
+    'by a unary plus asking valueOf': Program(
+        F'{_VALUE_OF_ANSWERS_5}console.log(+[]);',
+        prints('5'),
+        Reading.SCRIPT,
+    ),
+    'by a sum over a unary plus': Program(
+        F'{_VALUE_OF_ANSWERS_5}console.log(+[] + 1);',
+        prints('6'),
+        Reading.SCRIPT,
+    ),
+    'by parseInt in a function': Program(
+        F'{_JOIN_ANSWERS_9}function f() {{ return parseInt([5]); }}\nconsole.log(f());',
+        prints('9'),
+        Reading.SCRIPT,
+    ),
+    'by Math.max in a function': Program(
+        F'{_JOIN_ANSWERS_9}function f() {{ return Math.max([5], 1); }}\nconsole.log(f());',
+        prints('9'),
+        Reading.SCRIPT,
+    ),
+    'by a string method in a function': Program(
+        F"{_JOIN_ANSWERS_9}function f() {{ return 'a9b'.indexOf([5]); }}\nconsole.log(f());",
+        prints('1'),
+        Reading.SCRIPT,
+    ),
+    'a function with its own conversion searched for by a string method': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            W.toString = function () { return "x"; };
+            function f() { return 'axb'.indexOf(W); }
+            console.log(f());
+        '''),
+        prints('1'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAConversionThroughAReplacedChainIsNotFolded(unittest.TestCase):
+
+    def test_each_program_still_prints_what_node_prints(self):
+        rows = AN_ARRAY_CONVERTED_THROUGH_A_REPLACED_CHAIN
+        self.assertEqual(
+            {label: row.read() for label, row in rows.items()},
+            {label: row.required() for label, row in rows.items()},
+        )
+
+
+class TestTheSameConversionsFoldWhereNothingWasReplaced(unittest.TestCase):
+
+    _TOP_LEVEL = 'console.log(Number([5]), parseInt([5]), String([5]), +[5], +[], +[] + 1);'
+
+    _IN_A_FUNCTION = inspect.cleandoc('''
+        function f() { return parseInt([5]) + Math.max([5], 1) + 'a5b'.indexOf([5]); }
+        console.log(f());
+    ''')
+
+    def test_the_constant_fold_writes_each_value(self):
+        self.assertEqual("console.log(5, 5, '5', 5, 0, 1);", folded(self._TOP_LEVEL))
+
+    def test_the_interpreter_writes_each_value(self):
+        self.assertEqual('console.log(11);', folded(self._IN_A_FUNCTION))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_the_values_written(self):
+        self.assertEqual(
+            (before_and_after(self._TOP_LEVEL), before_and_after(self._IN_A_FUNCTION)),
+            ((('5 5 5 5 0 1\n', None),) * 2, (('11\n', None),) * 2),
+        )

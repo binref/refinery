@@ -131,7 +131,7 @@ from refinery.lib.scripts.js.model import (
     value_is_discarded,
     wraps_return,
 )
-from refinery.lib.scripts.js.values import COERCING_BINARY_OPERATORS
+from refinery.lib.scripts.js.values import COERCING_BINARY_OPERATORS, COERCING_UNARY_OPERATORS
 
 _FRESH_ARRAY_RESULT_METHODS = frozenset({
     'slice',
@@ -611,15 +611,6 @@ def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
 _CallPredicate = Callable[[JsCallExpression | JsNewExpression], bool]
 
 
-_NUMBER_TAKING_UNARY_OPERATORS = frozenset({'+', '-', '~'})
-"""
-The unary operators that take their operand to a number. `ToNumber` enters the object protocol —
-`valueOf` or `Symbol.toPrimitive` answers for an object, and either is code the operand carries —
-so the operand of one of these is held to a value that cannot be an object at all where the caller
-drops the evaluation (`coercions_may_write`). `!` and `typeof` are not here: they take the operand
-to a truth value or a type name without asking it anything.
-"""
-
 _OBJECT_TESTING_BINARY_OPERATORS = frozenset({'in', 'instanceof'})
 """
 The binary operators the language decides from the *kind* of the right operand rather than from
@@ -730,7 +721,7 @@ class _SideEffectScan:
                 return False
             if (
                 self.coercions_may_write
-                and node.operator in _NUMBER_TAKING_UNARY_OPERATORS
+                and node.operator in COERCING_UNARY_OPERATORS
                 and not _value_cannot_be_an_object(node.operand)
             ):
                 return False

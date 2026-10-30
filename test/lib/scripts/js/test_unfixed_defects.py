@@ -1391,89 +1391,6 @@ class TestAReadAWrittenChainDoesNotReachIsStillAnswered(TestBase):
         )
 
 
-#: A built-in that converts an argument — `Number`, `parseInt`, `String` — runs the same prototype
-#: method a bare conversion of that argument would. Each row replaces `Array.prototype.join` with one
-#: that returns `'9'`, so converting `[5]` yields `'9'` and every program here prints `9`. The rows
-#: are the built-ins whose fold hands the array straight to a specification conversion.
-AN_ARRAY_A_BUILTIN_COERCES_THROUGH_A_REPLACED_CHAIN = {
-    'number': Program(
-        "Array.prototype.join = function () { return '9'; };\nconsole.log(Number([5]));",
-        prints('9'),
-        Reading.SCRIPT,
-    ),
-    'parse_int': Program(
-        "Array.prototype.join = function () { return '9'; };\nconsole.log(parseInt([5]));",
-        prints('9'),
-        Reading.SCRIPT,
-    ),
-    'string': Program(
-        "Array.prototype.join = function () { return '9'; };\nconsole.log(String([5]));",
-        prints('9'),
-        Reading.SCRIPT,
-    ),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(AN_ARRAY_A_BUILTIN_COERCES_THROUGH_A_REPLACED_CHAIN)
-class TestABuiltinCoercingAnArgumentConsultsTheChainThatConvertsIt(TestBase):
-    """
-    Converting an argument to a primitive runs a prototype method, so a file that replaced
-    `Array.prototype.join` decides what `Number([5])`, `parseInt([5])` and `String([5])` compute —
-    each `9` here, where the replacement returns `'9'`. The fold hands the array to a specification
-    conversion that consults no chain and answers `5` for all three, rewriting a program Node runs
-    as `9` into one that prints `5`.
-
-    The interpreter guards this for `String` and `Number` alone, keyed on the callee name, and the
-    constant fold that rewrites a top-level call reaches no such guard: the two evaluators split the
-    coercion-safety question. The fix is one place both consult — the answer
-    `refinery.lib.scripts.js.deobfuscation.helpers.coerces_uninterceptably` already gives, asked
-    where an argument is converted rather than at an enumerated callee, so every coercing built-in is
-    covered at once.
-
-    Off the release gate: the shape needs an array handed to a coercing built-in together with a
-    replaced `Array.prototype` conversion method, which real obfuscation has so far had to be
-    constructed to reach. The wrong value it yields is silent, so the entry carries it here.
-    """
-
-
-#: A unary `+` converts its operand to a number the way `Number` does, running the same prototype
-#: methods for an array. Each row replaces one of them, so every program here prints what the
-#: replacement decides: `9` where `join` answers `'9'`, and `5` where `valueOf` answers `5`.
-AN_ARRAY_AN_OPERATOR_COERCES_THROUGH_A_REPLACED_CHAIN = {
-    'a replaced join': Program(
-        "Array.prototype.join = function () { return '9'; };\nconsole.log(+[5]);",
-        prints('9'),
-        Reading.SCRIPT,
-    ),
-    'a replaced value_of': Program(
-        'Array.prototype.valueOf = function () { return 5; };\nconsole.log(+[]);',
-        prints('5'),
-        Reading.SCRIPT,
-    ),
-    'a sum over a replaced value_of': Program(
-        'Array.prototype.valueOf = function () { return 5; };\nconsole.log(+[] + 1);',
-        prints('6'),
-        Reading.SCRIPT,
-    ),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(AN_ARRAY_AN_OPERATOR_COERCES_THROUGH_A_REPLACED_CHAIN)
-class TestAnOperatorCoercingAnArrayConsultsTheChainThatConvertsIt(TestBase):
-    """
-    The fold of a unary operator reads an array literal as the number its specification conversion
-    gives, `0` for `+[]` and `5` for `+[5]`, without asking whether the program replaced a method
-    that conversion runs, and an operator over the folded operand computes on with that number.
-    It is the defect `TestABuiltinCoercingAnArgumentConsultsTheChainThatConvertsIt` describes,
-    reached through an operator rather than a built-in, and the fix is the same: one place every
-    conversion of a value asks whether a program can intercept it.
-
-    Off the release gate for the reason given there.
-    """
-
-
 #: Concatenations of a string with a unary operator over a literal, mapped to the string the
 #: constant fold collapses each to: `String(-1)` is `'-1'`, `String(-0)` is `'0'`, `!0` is `true`
 #: and `void 0` is `undefined`.
@@ -1519,9 +1436,43 @@ class TestTheStaticStringReadsEveryConcatenationTheFoldCollapses(TestBase):
         )
 
 
+#: An array method converting an element of its receiver runs the conversion the element's chain
+#: supplies. Each row replaces `Object.prototype.toString` with one that returns `'x'`, so joining a
+#: plain object yields `x`.
+AN_ELEMENT_AN_ARRAY_METHOD_CONVERTS_THROUGH_A_REPLACED_CHAIN = {
+    'an object joined': Program(
+        inspect.cleandoc('''
+            Object.prototype.toString = function () { return 'x'; };
+            function f() { return [{}].join(''); }
+            console.log(f());
+        '''),
+        prints('x'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(AN_ELEMENT_AN_ARRAY_METHOD_CONVERTS_THROUGH_A_REPLACED_CHAIN)
+class TestAnArrayMethodConvertingAnElementConsultsTheChainThatConvertsIt(TestBase):
+    """
+    The interpreter asks every argument a built-in is handed whether converting it runs code the
+    program installed, but not the elements of the receiver a method such as `join` converts. They
+    convert through the specification's conversion, so `[{}].join('')` answers `[object Object]`
+    where the program replaced `Object.prototype.toString`. Asking every element on every method
+    call costs a scan of the array per call, which a rotation loop pays once per element; the fix
+    asks where an element is converted. `TestABuiltinConvertingAFunctionRunsItsOwnToString` is the
+    same defect for a function element.
+
+    Off the release gate: the shape needs an object inside an array an array method converts,
+    together with a replaced `Object.prototype` conversion method, which a program has to be written
+    for.
+    """
+
+
 #: A function given a `toString` of its own and then converted by a built-in that turns its
-#: receiver's elements, its argument or a computed key into a string, mapped to what Node prints.
-#: Each conversion runs the `toString` the program installed.
+#: receiver's elements into a string, or by a computed key, mapped to what Node prints. Each
+#: conversion runs the `toString` the program installed.
 A_FUNCTION_A_BUILTIN_CONVERTS_THROUGH_ITS_OWN_TOSTRING = {
     'an array joining it': Program(
         inspect.cleandoc('''
@@ -1531,15 +1482,6 @@ A_FUNCTION_A_BUILTIN_CONVERTS_THROUGH_ITS_OWN_TOSTRING = {
             console.log(f());
         '''),
         prints('x'),
-    ),
-    'a string searched for it': Program(
-        inspect.cleandoc('''
-            function W(a) { return a + 1; }
-            W.toString = function () { return "x"; };
-            function f() { return 'axb'.indexOf(W); }
-            console.log(f());
-        '''),
-        prints('1'),
     ),
     'a computed key': Program(
         inspect.cleandoc('''
@@ -1558,12 +1500,11 @@ A_FUNCTION_A_BUILTIN_CONVERTS_THROUGH_ITS_OWN_TOSTRING = {
 class TestABuiltinConvertingAFunctionRunsItsOwnToString(TestBase):
     """
     `refinery.lib.scripts.js.deobfuscation.helpers.coerces_uninterceptably` refuses to convert a
-    function the program may have given a `toString` of its own, but only where an operator, a
-    template hole, `String` or `Number` converts it. The array methods, the string methods and the
-    computed key of an object literal convert through `to_string` without asking, so they answer the
-    text the function was written with. The fix is the chokepoint
-    `TestABuiltinCoercingAnArgumentConsultsTheChainThatConvertsIt` names: the one question asked
-    wherever a value is converted.
+    function the program may have given a `toString` of its own where an operator, a template hole
+    or an argument of a built-in converts it. An array method converting an element of its receiver
+    and the computed key of an object literal convert through `to_string` without asking, so they
+    answer the text the function was written with. The fix is the same question asked where those
+    two convert.
     """
 
 

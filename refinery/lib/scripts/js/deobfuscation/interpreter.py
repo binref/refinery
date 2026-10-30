@@ -107,6 +107,7 @@ from refinery.lib.scripts.js.utf16 import to_code_units
 from refinery.lib.scripts.js.values import (
     BINARY_OPS,
     COERCING_BINARY_OPERATORS,
+    COERCING_UNARY_OPERATORS,
     GLOBAL_VALUE_NAMES,
     JS_HOLE,
     JS_NULL,
@@ -1189,15 +1190,6 @@ def _list_to_string(buf: list, args: list[Value]) -> Value:
 
 STATIC_OBJECTS = frozenset({'Math', 'String', 'Object', 'Array', 'Number', 'JSON', 'Buffer'})
 
-_COERCING_GLOBALS = frozenset({'String', 'Number'})
-"""
-The global functions whose value *is* the coercion of their argument: `String(x)` is ToString and
-`Number(x)` is ToNumber as callable spellings. They are the one pair the interpreter guards at its
-dispatch, because their argument is exactly the value a program-installed conversion replaces;
-the registry arms that coerce an argument in the course of a larger operation keep the behavior
-they have, which the fold-admission gate outside the interpreter is what stands behind.
-"""
-
 
 def is_runtime_name(name: str) -> bool:
     """
@@ -2071,7 +2063,7 @@ class JsInterpreter:
         if apply is None:
             raise InterpreterError
         value = self._eval(operand)
-        if op in ('+', '-', '~'):
+        if op in COERCING_UNARY_OPERATORS:
             self._require_uninterceptable(value)
         return apply(value)
 
@@ -2219,10 +2211,7 @@ class JsInterpreter:
             return self._call_function(func, args)
         builtin = BUILTIN_REGISTRY.get((None, name))
         if builtin is not None and self._names_a_runtime_builtin(callee):
-            if name in _COERCING_GLOBALS and not all(
-                self._coerces_uninterceptably(arg) for arg in args
-            ):
-                raise InterpreterError
+            self._require_convertible_arguments(args)
             return builtin(args)
         raise InterpreterError
 
@@ -2243,6 +2232,7 @@ class JsInterpreter:
                     raise InterpreterError
                 if not self._callee_is_intact(node):
                     raise InterpreterError
+                self._require_convertible_arguments(args)
                 return builtin(args)
             raise InterpreterError
         obj = self._eval(member.object)
@@ -2263,6 +2253,7 @@ class JsInterpreter:
         if builtin is not None:
             if not self._prototype_is_intact(obj_type):
                 raise InterpreterError
+            self._require_convertible_arguments(args)
             result = builtin(obj, args)
             if isinstance(obj, JsBuffer) and isinstance(result, list) and not isinstance(result, JsBuffer):
                 result = JsBuffer(result)
@@ -2327,6 +2318,16 @@ class JsInterpreter:
         """
         if not self._coerces_uninterceptably(value):
             raise InterpreterError
+
+    def _require_convertible_arguments(self, args: list[Value]) -> None:
+        """
+        Refuse where a built-in of `BUILTIN_REGISTRY` would be handed an argument whose conversion
+        could run code the program installed. A built-in may convert any argument it is handed, as
+        `Number([5])` runs `Array.prototype.join`, so each one is asked what an operand is asked
+        (`_require_uninterceptable`).
+        """
+        for arg in args:
+            self._require_uninterceptable(arg)
 
     def _coerces_uninterceptably(self, value: Value) -> bool:
         """

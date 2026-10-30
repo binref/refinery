@@ -564,10 +564,10 @@ def _table_value(effects: EffectModel, table: Binding | JsStringLiteral) -> tupl
     """
     model = effects.model
     if isinstance(table, JsStringLiteral):
-        return denoted_value(table, model)
+        return denoted_value(table, model, effects)
     if model.reflection_can_reach_from_its_scope(table):
         return False, None
-    return denoted_value(model.singular_value(table), model)
+    return denoted_value(model.singular_value(table), model, effects)
 
 
 def _string_array(effects: EffectModel, table: Binding | JsStringLiteral) -> _StringArray | None:
@@ -872,7 +872,7 @@ def _index_call(
     if not effects.prototype_name_unwritten(JsFunctionExpression):
         return None
     receiver, argument = call.arguments
-    known, value = denoted_value(receiver, model)
+    known, value = denoted_value(receiver, model, effects)
     if not known or value is not None:
         return None
     argument = strip_parens(argument)

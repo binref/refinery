@@ -5289,7 +5289,7 @@ def _scaffolding_is_private(
             return False
     if not all(_reached_only_from(model, binding, inside) for binding in anchors.values()):
         return False
-    return all(denoted_value(read, model) == (True, None) for read in match.undefined_reads)
+    return all(denoted_value(read, model, None) == (True, None) for read in match.undefined_reads)
 
 
 def _property_flag_is_private(

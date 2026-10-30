@@ -34,6 +34,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     MemberRead,
     access_key,
     allocated_object_type,
+    coerces_uninterceptably,
     denoted_value,
     escape_js_string,
     folded_literal,
@@ -88,7 +89,6 @@ from refinery.lib.scripts.js.strict import joins_directive_prologue, spelling_st
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.lib.scripts.js.values import (
     BINARY_OPS,
-    UNARY_OPS,
     HostApproximated,
     converts_uninterceptably,
     to_string,
@@ -521,7 +521,7 @@ class JsSimplifications(Transformer):
         (`refinery.lib.scripts.js.values.converts_uninterceptably`); an array literal is excluded
         because its conversion runs `Array.prototype.join`.
         """
-        known, value = denoted_value(node, self.model)
+        known, value = denoted_value(node, self.model, self.effects)
         if not known or not converts_uninterceptably(value):
             return False, None
         return True, value
@@ -614,8 +614,8 @@ class JsSimplifications(Transformer):
             return None
         if not self.effects.call_is_foldable(node):
             return None
-        args = [self._node_to_value(a) for a in node.arguments]
-        if any(a is _UNCONVERTIBLE for a in args):
+        args = self._builtin_arguments(node)
+        if args is None:
             return None
         try:
             result = builtin(args)
@@ -632,8 +632,8 @@ class JsSimplifications(Transformer):
             return None
         if not self.effects.call_is_foldable(node):
             return None
-        args = [self._node_to_value(a) for a in node.arguments]
-        if any(a is _UNCONVERTIBLE for a in args):
+        args = self._builtin_arguments(node)
+        if args is None:
             return None
         try:
             result = builtin(args)
@@ -663,8 +663,8 @@ class JsSimplifications(Transformer):
             return None
         if not self.effects.call_is_foldable(node, receiver_type=type(receiver)):
             return None
-        args = [self._node_to_value(a) for a in node.arguments]
-        if any(a is _UNCONVERTIBLE for a in args):
+        args = self._builtin_arguments(node)
+        if args is None:
             return None
         try:
             result = builtin(receiver, args)
@@ -906,7 +906,7 @@ class JsSimplifications(Transformer):
         """
         if not node.computed:
             return node.property.name if isinstance(node.property, JsIdentifier) else None
-        known, key = denoted_value(node.property, self.model)
+        known, key = denoted_value(node.property, self.model, self.effects)
         if not known or not converts_uninterceptably(key):
             return None
         return to_string(key)
@@ -934,7 +934,7 @@ class JsSimplifications(Transformer):
         key = self._member_key(node)
         if key is None:
             return None
-        known, obj = denoted_value(node.object, self.model)
+        known, obj = denoted_value(node.object, self.model, self.effects)
         if not known or not isinstance(obj, str):
             return None
         outcome, value = read_data_property(obj, key)
@@ -998,12 +998,27 @@ class JsSimplifications(Transformer):
             return None
         return value_to_node(len(array.elements))
 
+    def _builtin_arguments(self, node: JsCallExpression) -> list[Value] | None:
+        """
+        The values of the arguments of *node* for `BUILTIN_REGISTRY` dispatch, or `None` where one
+        of them denotes nothing or may convert through a method the program replaced. A built-in may
+        convert any argument it is handed, as `Number([5])` runs `Array.prototype.join`, so each is
+        asked `refinery.lib.scripts.js.deobfuscation.helpers.coerces_uninterceptably`.
+        """
+        args: list[Value] = []
+        for argument in node.arguments:
+            known, value = denoted_value(argument, self.model, self.effects)
+            if not known or not coerces_uninterceptably(self.effects, value):
+                return None
+            args.append(value)
+        return args
+
     def _node_to_value(self, node: Node | None) -> object:
         """
         The Python equivalent of *node* for `BUILTIN_REGISTRY` dispatch, or the module-level sentinel
         `_UNCONVERTIBLE` when nothing decides what the node denotes.
         """
-        known, value = denoted_value(node, self.model)
+        known, value = denoted_value(node, self.model, self.effects)
         return value if known else _UNCONVERTIBLE
 
     def _deletion_answer(self, node: JsUnaryExpression) -> bool | None:
@@ -1084,11 +1099,14 @@ class JsSimplifications(Transformer):
     def visit_JsUnaryExpression(self, node: JsUnaryExpression):
         """
         Fold a unary operator against its operand. Everything that is a function of the operand's value
-        is answered by the shared `UNARY_OPS` kernel, so that a fold performed here and the same
-        operator applied by the interpreter cannot disagree; what is left is the two questions a value
-        cannot answer — the type of an object whose identity no literal spells, and whether a `delete`
-        may be dropped. A third, `typeof` of a pristine guaranteed global, is a value the operator hides
-        rather than one the operand denotes, so it is decided by name (`_typeof_of_global_read`).
+        is the value the whole expression denotes
+        (`refinery.lib.scripts.js.deobfuscation.helpers.denoted_value`), which applies the shared
+        `UNARY_OPS` kernel, so that a fold performed here and the same operator applied by the
+        interpreter cannot disagree, and which refuses to convert an array whose conversion the
+        program may have replaced. What is left is the two questions a value cannot answer — the type
+        of an object whose identity no literal spells, and whether a `delete` may be dropped. A third,
+        `typeof` of a pristine guaranteed global, is a value the operator hides rather than one the
+        operand denotes, so it is decided by name (`_typeof_of_global_read`).
 
         A node that already spells its value the way a fold writes it is left alone (`_written`):
         `void 0` is how `undefined` is written, so folding it produces the expression it replaces,
@@ -1112,13 +1130,10 @@ class JsSimplifications(Transformer):
             typed = self._typeof_of_global_read(operand)
             if typed is not None:
                 return make_string_literal(typed)
-        apply = UNARY_OPS.get(op)
-        if apply is None:
-            return None
-        known, value = denoted_value(operand, self.model)
+        known, value = denoted_value(node, self.model, self.effects)
         if not known:
             return None
-        return self._written(node, apply(value))
+        return self._written(node, value)
 
     def visit_JsStringLiteral(self, node: JsStringLiteral):
         """
@@ -1151,7 +1166,7 @@ class JsSimplifications(Transformer):
             return node.left
         op = node.operator
         if op == '??':
-            nullish = is_nullish(node.left, self.model)
+            nullish = is_nullish(node.left, self.model, self.effects)
             if nullish is None:
                 return None
             return self._discarding(node, node.left, node.right) if nullish else node.left

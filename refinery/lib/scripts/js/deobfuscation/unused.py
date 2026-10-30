@@ -543,7 +543,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     or not isinstance(target := store.left, JsIdentifier)
                 ):
                     continue
-                known, value = denoted_value(store.right, model)
+                known, value = denoted_value(store.right, model, self._cache.effects)
                 if not known or value is not None:
                     continue
                 binding = model.resolve(target)
