@@ -27,7 +27,6 @@ from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     GLOBAL_VALUE_NAMES,
     BatchedScopeTransformer,
-    a_host_reaches_the_binding,
     collect_identifier_names,
     is_literal,
     names_global_value,
@@ -505,7 +504,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             if (
                 binding.has_global_member_write
                 or model.binding_dynamic_rebind_sites(binding) is None
-                or a_host_reaches_the_binding(model, binding, self.options)
+                or model.reached_from_outside(binding)
             ):
                 _reject(cand_name)
 

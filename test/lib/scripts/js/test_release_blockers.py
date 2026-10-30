@@ -40,6 +40,8 @@ from test.lib.scripts.js.ledger import (
     prints,
 )
 
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
+
 
 #: Programs reading or writing a variable in the initializer of an instance field, and changing or
 #: reading the variable between the class statement and the construction, mapped to the behavior an
@@ -103,4 +105,82 @@ class TestAFieldReadsAVariableWhenAnInstanceIsConstructed(TestBase):
     class it returns keeps the value of the run that made it rather than the last one stored. And a
     write in a field is not seen at `new C()`, so a value read before the construction is taken to
     hold after it.
+    """
+
+
+#: Classic scripts storing into a name a browser window defines as an attribute of the global
+#: object, mapped to the behavior a window gives them: a load handler the window calls once the
+#: script has run, and a `DOMString` attribute, which keeps what is stored into it as a string.
+A_STORE_TO_A_NAME_A_WINDOW_INTERCEPTS = {
+    'a load handler stored at the top': Program(
+        a_program("""
+            onload = function () { console.log('loaded'); };
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a load handler stored at the top, read for a browser': Program(
+        a_program("""
+            onload = function () { console.log('loaded'); };
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+        HostEnvironment.browser,
+    ),
+    'a load handler stored by a function the script calls': Program(
+        a_program("""
+            function install() { onload = function () { console.log('loaded'); }; }
+            install();
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a load handler stored into a var by a function the script calls': Program(
+        a_program("""
+            var onload;
+            function install() { onload = function () { console.log('loaded'); }; }
+            install();
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a number stored into the var name and read back': Program(
+        a_program("""
+            var name;
+            function f(n) {
+              name = n;
+              return name + 1;
+            }
+            console.log(f(5));
+            """),
+        prints('51', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a number stored into the var status and compared': Program(
+        a_program("""
+            var status;
+            function f(n) {
+              status = n;
+              return status === n;
+            }
+            console.log(f(404));
+            """),
+        prints('false', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_STORE_TO_A_NAME_A_WINDOW_INTERCEPTS)
+class TestAStoreToANameAWindowInterceptsIsKept(TestBase):
+    """
+    A browser window defines some names on the global object before a script runs: `onload` holds
+    the handler the window calls once the script has run, and `name` and `status` keep what is
+    stored into them as a string. A store into such a name, or into a file-level `var` of it, which
+    is that same property, is read by the window or converted on the way in. The deobfuscation
+    reads it as a store into a variable of the script: a handler nothing in the script calls is
+    deleted, also where the host is a browser, and a `var` of such a name is moved into the
+    function using it, where it is a plain local that keeps a number. Scripts installing a load
+    handler are common among the ones run in a browser.
     """

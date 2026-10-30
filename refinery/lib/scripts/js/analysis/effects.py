@@ -24,15 +24,14 @@ trusted intrinsic-named property off the global object (for example `globalThis.
 likewise, under a parallel *pristine-global precondition*: no reflective surface and no accessor installed
 on the global object, so the read cannot run a user getter.
 
-Symmetrically, an assignment is not counted as a write when nothing can observe it: the assigned binding
-is read nowhere, or every reference to it is confined to the assigning function so it never escapes. Both
-rest on the same pristine-global precondition, since a reflective surface or an installed setter could
-otherwise observe the assignment. This is what lets a function whose only effect is an obfuscator's
-write-only scratch global be judged pure. A scratch name the function also *reads* is a separate
-question, answered by `SemanticModel.read_may_throw` rather than here: where the name's only
-binding is an implicit global, the read may run before the assignment that creates it, which this
-flow-insensitive summary cannot rule out, so the function throws even though the write itself is
-unobservable.
+Symmetrically, an assignment is not counted as a write when nothing can observe it: no reference
+reads the value of the assigned binding. This rests on the same pristine-global precondition, since
+a reflective surface or an installed setter could otherwise observe the assignment, and it is what
+lets a function whose only effect is an obfuscator's write-only scratch global be judged pure. A
+binding the function reads as well is observed, even where every reference of it lies in that
+function: a later run reads what an earlier one stored. Such a binding behaves as a local of the
+function only where `refinery.lib.scripts.js.analysis.localization` proves that every run reads
+what it stored itself, and that pass then moves its declaration into the function.
 
 The public surface — `EffectSummary`, `EffectModel.summary_of`, `EffectModel.is_pure_call`,
 `build_effects` — is representation-agnostic and keyed to AST node identity, matching the model's
@@ -78,12 +77,11 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     SemanticModel,
     _property_key_name,
-    arguments_name_their_function,
     arguments_reads_only_elements,
     container_reference_role,
     element_positions,
-    enclosing_function,
     enclosing_operator,
+    is_delete_operand,
     is_invocation_target,
     is_member_write_target,
     is_plain_store_target,
@@ -356,9 +354,10 @@ class EffectSummary:
     """
     The observable effects one call of a function may have, each field a conservative over-estimate.
     `writes_global` covers assignment to a global or to a property of an object reached through one;
-    `writes_captured` covers assignment to a binding owned by an enclosing function (a closure mutation
-    visible after the call returns); `throws` covers a `throw`, an operation that may throw on a
-    value the analysis cannot prove safe, or a read of a name that is not certain to denote a binding
+    `captured_writes` names each binding owned by an enclosing function that a call may assign, a
+    closure mutation visible after the call returns, and `writes_captured` says whether there is
+    one; `throws` covers a `throw`, an operation that may throw on a value the analysis cannot prove
+    safe, or a read of a name that is not certain to denote a binding
     (`SemanticModel.read_may_throw`); `calls_unknown` covers invoking a callee that cannot be
     resolved and summarized. A summary with none of these set is `is_pure`. `mutates_returned_local` is
     held apart from those four: it records a write to a fresh local the function owns whose sole route to
@@ -370,12 +369,16 @@ class EffectSummary:
     an `async` function, an iterator from a generator) rather than the value of its return expression,
     so the call cannot be replaced by that expression. `written_bindings` names, by identity, the outer
     bindings — captured locals and globals — a call may write where the write resolves to one, so a
-    caller can ask which binding a call mutates rather than only whether it mutates some. It is decided
-    independently of purity: a write the purity analysis deems unobservable because the binding never
-    escapes the function is still recorded here, since a consumer reasoning about a read *inside* that
-    function must still see the mutation. A binding written but never read anywhere adds nothing, as no
-    read can observe the change; likewise a coarse write with no resolvable binding (a dynamic-scope or
-    `globalThis.x =` member write) sets `writes_global` but adds nothing here.
+    caller can ask which binding a call mutates rather than only whether it mutates some. A binding
+    written but never read anywhere adds nothing, as no read can observe the change; likewise a
+    coarse write with no resolvable binding (a dynamic-scope or `globalThis.x =` member write) sets
+    `writes_global` but adds nothing here.
+
+    A write the summarized function makes to a binding it owns itself is in neither
+    `captured_writes` nor `written_bindings`. A write a callee makes to such a binding is left out
+    of both as well where every function written inside the summarized one runs only within the
+    run that made it (`EffectModel._keeps_its_closures`): it is then part of the run under way, and
+    no caller sees it once the call returns.
 
     `dead_zone_reads` mirrors `written_bindings` for a read that throws only at some call sites: it
     names, by identity, the outer `let`/`const`/`class` bindings a call to this function may read
@@ -404,13 +407,20 @@ class EffectSummary:
       a lifted expression yields no fresh object.
     """
     writes_global: bool = False
-    writes_captured: bool = False
     throws: bool = False
     calls_unknown: bool = False
     mutates_returned_local: bool = False
     wraps_return: bool = False
+    captured_writes: set[Binding] = field(default_factory=set)
     written_bindings: set[Binding] = field(default_factory=set)
     dead_zone_reads: set[Binding] = field(default_factory=set)
+
+    @property
+    def writes_captured(self) -> bool:
+        """
+        Whether a call may assign a binding an enclosing function owns, which outlives the call.
+        """
+        return bool(self.captured_writes)
 
     @property
     def is_pure(self) -> bool:
@@ -504,7 +514,7 @@ class EffectSummary:
         Union *other*'s effects into this summary, used to fold a callee's effects into its caller.
         """
         self.writes_global = self.writes_global or other.writes_global
-        self.writes_captured = self.writes_captured or other.writes_captured
+        self.captured_writes |= other.captured_writes
         self.throws = self.throws or other.throws
         self.calls_unknown = self.calls_unknown or other.calls_unknown
         self.mutates_returned_local = self.mutates_returned_local or other.mutates_returned_local
@@ -1037,11 +1047,12 @@ class EffectModel:
         self.intrinsic_writes = intrinsic_writes
         self._globals_written = intrinsic_writes.names
         self._summaries: dict[int, EffectSummary] = {}
-        self._confine_cache: dict[int, Node | None] = {}
         self._immutable_cache: dict[tuple[int, frozenset[str] | None, bool], bool] = {}
         self._member_write_cache: dict[int, _WriteClass] = {}
         self._uses_arguments_cache: dict[int, bool] = {}
         self._mutators_escape_cache: dict[int, bool] = {}
+        self._escape_cache: dict[int, bool] = {}
+        self._keeps_closures_cache: dict[int, bool] = {}
         self._some_mutator_cache: dict[int, bool] = {}
         self._settlement = settlement
         self._function_use_cache: dict[tuple[Node, frozenset[Node]], FunctionUse] = {}
@@ -1073,18 +1084,42 @@ class EffectModel:
 
     def function_escapes(self, func: Node) -> bool:
         """
-        Whether *func* may be invoked at a point the surrounding scope cannot enumerate as a
-        resolvable `name(...)` call site: an anonymous function (an IIFE, a callback, stored and
-        called later), or a named function whose binding is exported, which hands it to every
-        importer, reassigned, redeclared, or referenced anywhere other than as the callee of a
-        direct call (aliased, passed as an argument, `f.call(...)`). A reference inside a dynamic
-        scope — a name a `with` body resolves at runtime — counts too: the model cannot order or
-        resolve it, so the function may be invoked or aliased there with no static call site. A call
-        to such a function can land at a point no call site pins down; a function only ever called
-        directly by name has all its invocations enumerated by those call sites.
+        Whether the body of *func* may run at a point the surrounding scope cannot enumerate as a
+        call `name(...)` whose callee `static_callee` resolves: an anonymous function (an IIFE, a
+        callback, stored and called later), or a named function whose binding is exported, which
+        hands it to every importer, reassigned, redeclared, or referenced anywhere other than as
+        the identifier callee of a direct call (aliased, passed as an argument, `f.call(...)`, or
+        called through the global object as `globalThis.f()`). A reference inside a dynamic scope —
+        a name a `with` body resolves at runtime — counts too: the model cannot order or resolve
+        it, so the function may be invoked or aliased there with no static call site.
+
+        A body also runs where no reference of its name shows. A generator's body runs at each step
+        of the object a call returns, wherever that object is stepped. The function may be called
+        or handed out without its name, through the `caller` of another function, its own
+        `arguments` or `new.target`
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_its_name`). And code
+        outside the file may call it while the file runs
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.callable_from_outside`): a host calls
+        a declared entry point whenever the script hands it control.
+
+        A call to such a function can land at a point no call site pins down; a function only ever
+        called directly by name has all its invocations enumerated by those call sites. Memoized
+        per function.
         """
+        cached = self._escape_cache.get(id(func))
+        if cached is None:
+            cached = self._escape_cache[id(func)] = self._compute_function_escapes(func)
+        return cached
+
+    def _compute_function_escapes(self, func: Node) -> bool:
         names = self.model.function_names(func)
         if names is None:
+            return True
+        if (
+            isinstance(func, FUNCTION_NODES) and is_generator_function(func)
+            or self.model.reached_without_its_name(func)
+            or self.model.callable_from_outside(func)
+        ):
             return True
         for binding in names.bindings:
             if (
@@ -1098,7 +1133,11 @@ class EffectModel:
                 return True
             for ref in names.references_of(binding):
                 parent = ref.parent
-                if isinstance(parent, JsCallExpression) and parent.callee is ref:
+                if (
+                    isinstance(ref, JsIdentifier)
+                    and isinstance(parent, JsCallExpression)
+                    and parent.callee is ref
+                ):
                     continue
                 return True
         return False
@@ -1741,7 +1780,54 @@ class EffectModel:
             }
         else:
             summary.dead_zone_reads = set()
+        if isinstance(func, FUNCTION_NODES) and self._keeps_its_closures(func):
+            summary.captured_writes = {
+                binding
+                for binding in summary.captured_writes
+                if not self._owns_binding(binding, func)
+            }
+            summary.written_bindings = {
+                binding
+                for binding in summary.written_bindings
+                if not self._owns_binding(binding, func)
+            }
         return summary
+
+    def _keeps_its_closures(self, func: Node) -> bool:
+        """
+        Whether no function written inside *func* can run once the run of *func* that made it has
+        returned: each is called where it stands and is no generator, or runs only where its name
+        is called (`function_escapes`), which no code outside that run can reach. A write such a
+        function makes to a local of *func* is then one to the local of the run under way, which
+        no caller of *func* sees, and the summary of *func* leaves it out. A function stored where
+        a later run can call it writes the local of the run that made it:
+
+            var saved; function f(n) { var t = 0; if (n) saved = function () { t++; }; ... }
+
+        Memoized per function.
+        """
+        cached = self._keeps_closures_cache.get(id(func))
+        if cached is None:
+            cached = self._keeps_closures_cache[id(func)] = all(
+                self._runs_where_it_stands(nested) or not self.function_escapes(nested)
+                for nested in func.walk()
+                if nested is not func and isinstance(nested, FUNCTION_NODES)
+            )
+        return cached
+
+    @staticmethod
+    def _runs_where_it_stands(func: Node) -> bool:
+        """
+        Whether *func* is the callee of a call, written where it is called, and no generator,
+        whose body would run at the steps of its object instead.
+        """
+        call = enclosing_operator(func)
+        return (
+            isinstance(call, JsCallExpression)
+            and strip_parens(call.callee) is func
+            and isinstance(func, FUNCTION_NODES)
+            and not is_generator_function(func)
+        )
 
     def _binding_reads_past_dead_zone(self, binding: Binding) -> bool:
         """
@@ -1761,14 +1847,22 @@ class EffectModel:
         cached = self._dead_zone_safe_cache.get(id(binding))
         if cached is not None:
             return cached
-        if self._dominance is None:
-            self._dominance = build_dominance(self.model, intrinsic_writes=self.intrinsic_writes)
+        dominance = self._dominance_model()
         cached = all(
-            self._dominance.past_dead_zone(binding, read)
+            dominance.past_dead_zone(binding, read)
             for read in binding.reads
         )
         self._dead_zone_safe_cache[id(binding)] = cached
         return cached
+
+    def _dominance_model(self) -> DominanceModel:
+        """
+        The dominance model this one was built with, or one built over the same semantic model
+        where none was given.
+        """
+        if self._dominance is None:
+            self._dominance = build_dominance(self.model, intrinsic_writes=self.intrinsic_writes)
+        return self._dominance
 
     def _account_write(self, summary: EffectSummary, target: JsIdentifier, func: Node):
         binding = self.model.resolve(target)
@@ -1779,44 +1873,38 @@ class EffectModel:
             return
         if binding.is_read:
             summary.written_bindings.add(binding)
-        if self._write_unobservable(binding, func):
+        if self._write_unobservable(binding):
             return
         if binding.kind is BindingKind.IMPLICIT_GLOBAL or binding.scope is self.model.root_scope:
             summary.writes_global = True
         else:
-            summary.writes_captured = True
+            summary.captured_writes.add(binding)
 
-    def _write_unobservable(self, binding: Binding, func: Node) -> bool:
+    def _write_unobservable(self, binding: Binding) -> bool:
         """
-        Whether assigning *binding* within *func* has no observable consumer, so the assignment
-        is not counted as a write. The program must be `global_pristine`: it exposes no reflection
-        surface through which the name could be read and installs no accessor that an assignment to
-        a global property could trigger as a setter. An exported binding is always observed, since
-        an importer reads it across the module boundary. Otherwise the write is unobservable when
-        either the value is read nowhere (`Binding.is_read` is false), or every reference to it is
-        `_confined_to` *func* so no outside code can see it. This ports the evaluator's sound
-        permissiveness for an obfuscator's scratch binding — whether a write-only global or an
-        accumulator local to a single function.
+        Whether assigning *binding* has no observable consumer, so the assignment is not counted as
+        a write: nothing reads the value of the binding, a `delete` of the name reading none
+        (`refinery.lib.scripts.js.analysis.model.is_delete_operand`), the binding is not
+        exported, which an importer reads across the module boundary, and the program is
+        `global_pristine`: it exposes no reflection surface through which the name could be read
+        and installs no accessor that an assignment to a global property could trigger as a setter.
+        This ports the evaluator's sound permissiveness for an obfuscator's write-only scratch
+        binding.
 
-        Not counting the write is not the same as answering that the function is pure. A confined
-        accumulator whose name is an implicit global is also *read*, and
-        `SemanticModel.read_may_throw` answers that such a read may throw, since nothing here orders
-        the creating assignment in front of it; the summary then carries `throws` with
-        `writes_global` clear.
+        A binding every reference of which lies in one function is observed all the same: a later
+        run of the function reads what an earlier one stored, and a run that calls the function
+        again reads what the inner run stored. In
+
+            var done = false; function init() { if (done) return 1; done = true; return 2; }
+
+        the second call of `init` returns `1` because the first one stored `true`. Whether every
+        run reads only what it stored itself is the question
+        `refinery.lib.scripts.js.analysis.localization` answers, and once it holds, that pass moves
+        the declaration into the function, whose own binding a write to is not counted at all.
         """
         if not self.global_pristine or binding.exported:
             return False
-        return not binding.is_read or self._confined_to(binding, func)
-
-    def _confined_to(self, binding: Binding, func: Node) -> bool:
-        """
-        Whether every reference to *binding* lies within *func*, which must be a function rather than the
-        script, so the binding does not escape: no code outside *func* can read it, and a write to it is
-        unobservable past the single call.
-        """
-        if not isinstance(func, FUNCTION_NODES):
-            return False
-        return self._confining_function(binding) is func
+        return all(is_delete_operand(read) for read in binding.reads)
 
     def _member_write_class(self, member: JsMemberExpression, func: Node) -> _WriteClass:
         """
@@ -2108,29 +2196,6 @@ class EffectModel:
             ):
                 return False
         return True
-
-    def _confining_function(self, binding: Binding) -> Node | None:
-        """
-        The single function that lexically encloses every reference to *binding*, or `None` when the
-        references do not share one — they span sibling functions or reach the top level. Cached per
-        binding, since the binding's reference set is fixed for the lifetime of the model.
-        """
-        key = id(binding)
-        if key not in self._confine_cache:
-            self._confine_cache[key] = self._scan_confining_function(binding)
-        return self._confine_cache[key]
-
-    def _scan_confining_function(self, binding: Binding) -> Node | None:
-        refs = self.model.references(binding)
-        if not refs:
-            return None
-        enclosing = enclosing_function(refs[0])
-        if enclosing is None:
-            return None
-        for ref in refs[1:]:
-            if enclosing_function(ref) is not enclosing:
-                return None
-        return enclosing
 
     def _account_call(
         self,
@@ -2525,7 +2590,7 @@ class EffectModel:
 
     def _compute_function_use(self, function: Node, spared: frozenset[Node]) -> FunctionUse:
         use = FunctionUse.IN_PLACE
-        if self.model.spells_caller() or arguments_name_their_function(function):
+        if self.model.reached_without_its_name(function):
             use = FunctionUse.TOUCHED
         if isinstance(function, JsFunctionExpression) and isinstance(function.id, JsIdentifier):
             own = self.model.binding_of(function.id)
@@ -2779,10 +2844,7 @@ class EffectModel:
         - Every function-valued argument writes nothing outside itself. `is_effect_free_when_discarded` is
           the right predicate rather than `is_pure`: a callback that mutates a fresh local and returns it —
           the `reduce` accumulator idiom — is not pure, but that mutation is the value being computed and an
-          evaluator that runs the call reproduces it. Purity is not sufficient on its own either, since a
-          callback writing a script-scope `var` reports `writes_captured=False` — that binding is not
-          captured from its perspective — so the write would be dropped while the value folds.
-          `written_bindings` records it by identity and catches it.
+          evaluator that runs the call reproduces it.
         - Nothing in the argument list is itself a call this gate does not also clear, so admitting an outer
           call cannot smuggle in an inner one. A nested built-in (`Math.floor(Math.abs(-1.7))`) is fine
           precisely because the same questions are asked of it.
@@ -2898,7 +2960,7 @@ class EffectModel:
         node = strip_parens(arg)
         if isinstance(node, FUNCTION_NODES):
             summary = self.summary_of(node)
-            return summary.is_effect_free_when_discarded and not summary.written_bindings
+            return summary.is_effect_free_when_discarded
         if isinstance(node, JsCallExpression):
             return self.call_is_foldable(node, trust=trust)
         return self._stores_nothing(node)

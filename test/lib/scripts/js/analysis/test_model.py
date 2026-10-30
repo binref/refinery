@@ -2042,9 +2042,9 @@ class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
     """
 
     @staticmethod
-    def _received(source: str) -> tuple[list[str], bool]:
+    def _received(source: str, declared: tuple[str, ...] = ()) -> tuple[list[str], bool]:
         ast = JsParser(source).parse()
-        model = build_semantic_model(ast)
+        model = build_semantic_model(ast, host_entrypoint=lambda name: name in declared)
         parameter = next(
             node for node in ast.walk_in_order()
             if isinstance(node, JsIdentifier) and node.name == 'p' and model.binding_of(node) is not None
@@ -2116,6 +2116,11 @@ class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
                 values, complete = self._received(source)
                 self.assertFalse(complete)
                 self.assertIn('1', values)
+
+    def test_a_function_a_host_calls_by_name_leaves_the_list_incomplete(self):
+        values, complete = self._received('function install(p) { return p; } install(1);', ('install',))
+        self.assertFalse(complete)
+        self.assertIn('1', values)
 
 
 class TestAFunctionDeclaredInABlockHasTwoNames(TestBase):
@@ -2311,3 +2316,113 @@ class TestAFunctionDeclaredInABlockHasTwoNames(TestBase):
                     self.assertEqual(binding.declarations, [declaration.id])
                     self.assertEqual(binding.copies_made + binding.copies_received, [])
                     self.assertFalse(binding.may_be_absent)
+
+
+def _function_named_f(ast: Node) -> JsFunctionDeclaration:
+    return next(
+        node for node in ast.walk_in_order()
+        if isinstance(node, JsFunctionDeclaration) and node.id is not None and node.id.name == 'f'
+    )
+
+
+class TestWhatReachesAFunctionWithoutItsName(TestBase):
+    """
+    `SemanticModel.reached_without_its_name` for the function `f`: a run of `f`, or `f` itself,
+    obtained where no reference of its name stands, through the `caller` of a function `f` calls,
+    through the `callee` of its own `arguments`, or through `new.target`.
+    """
+
+    @staticmethod
+    def _reached(source: str) -> bool:
+        ast = JsParser(source).parse()
+        return build_semantic_model(ast).reached_without_its_name(_function_named_f(ast))
+
+    def test_each_channel_reaches_the_function(self):
+        for label, source in {
+            'caller'                     : 'function g() { return g.caller; } function f() { g(); }',
+            'caller under a string key'  : 'function g() { return g["caller"]; } function f() { g(); }',
+            'arguments.callee'           : 'function f(n) { if (n) arguments.callee(0); }',
+            'a name holding arguments'   : 'function f(n) { var a = arguments; if (n) a.callee(0); }',
+            'arguments handed on'        : 'function f() { g(arguments); }',
+            'new.target'                 : 'function f() { if (new.target) new new.target(); }',
+        }.items():
+            with self.subTest(label):
+                self.assertTrue(self._reached(source))
+
+    def test_a_function_reached_by_its_name_alone_is_not(self):
+        for label, source in {
+            'a call by name'                    : 'function f(n) { if (n) f(0); } f(1);',
+            'an element of arguments'           : 'function f() { return arguments[0]; }',
+            'the length of arguments'           : 'function f() { return arguments.length; }',
+            'a parameter named caller'          : 'function f(caller) { return caller; }',
+            'a strict body handing on arguments': 'function f() { "use strict"; g(arguments); }',
+            'a strict body reading callee'      : 'function f() { "use strict"; return arguments.callee; }',
+        }.items():
+            with self.subTest(label):
+                self.assertFalse(self._reached(source))
+
+
+class TestWhatCodeOutsideTheFileReaches(TestBase):
+    """
+    Three questions about code outside the file, asked of the function `f` and its name: whether a
+    host reaches the name (`SemanticModel.named_by_the_host`), whether code outside reaches it at
+    some point (`SemanticModel.reached_from_outside`), and whether such code can call `f` while the
+    file still runs (`SemanticModel.callable_from_outside`). A host reaches a name the analyst
+    declared where the binding is a property of the global object, and calls it whenever the script
+    hands it control. Code loading a library, a file of nothing but function declarations, calls
+    them once the file has run. An importer in an import cycle can call an export before the
+    module has finished.
+    """
+
+    @staticmethod
+    def _answers(source: str, kind: FileKind, declared: tuple[str, ...]) -> tuple[bool, bool, bool]:
+        ast = JsParser(source).parse()
+        model = build_semantic_model(ast, file_kind=kind, host_entrypoint=lambda name: name in declared)
+        function = _function_named_f(ast)
+        assert function.id is not None
+        binding = model.binding_of(function.id)
+        assert binding is not None
+        return (
+            model.named_by_the_host(binding),
+            model.reached_from_outside(binding),
+            model.callable_from_outside(function),
+        )
+
+    def test_who_reaches_the_function_of_each_file(self):
+        script = FileKind.script
+        commonjs = FileKind.commonjs
+        module = FileKind.es_module
+        for label, (source, kind, declared, expected) in {
+            'a script declaring the name': (
+                'function f() {} f();', script, ('f',), (True, True, True)
+            ),
+            'a CommonJS file declaring the name': (
+                'function f() {} f();', commonjs, ('f',), (False, False, False)
+            ),
+            'a script not declaring the name': (
+                'function f() {} f();', script, (), (False, False, False)
+            ),
+            'a library': (
+                'function f() {} function g() {}', script, (), (False, True, False)
+            ),
+            'a library declaring the name': (
+                'function f() {} function g() {}', script, ('f',), (True, True, True)
+            ),
+            'a library read as CommonJS': (
+                'function f() {} function g() {}', commonjs, (), (False, False, False)
+            ),
+            'a block declaring the name Annex B copies': (
+                '{ function f() {} } f();', script, ('f',), (True, True, True)
+            ),
+            'a nested function of the name': (
+                'function o() { function f() {} f(); } o();', script, ('f',), (False, False, False)
+            ),
+            'an export of a module in an import cycle': (
+                'import "./b.mjs"; export function f() {}', module, (), (False, False, True)
+            ),
+            'an export of a module that imports nothing': (
+                'export function f() {}', module, (), (False, False, False)
+            ),
+        }.items():
+            with self.subTest(label):
+                self.assertEqual(self._answers(source, kind, declared), expected)

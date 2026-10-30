@@ -40,7 +40,7 @@ statement is enough, and the dominance queries `dominates`, `strictly_dominates`
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, Iterator, Sequence
+from typing import Iterable, Iterator, Sequence
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import Projection
@@ -142,9 +142,9 @@ class DominanceModel(DominatorModel):
     execute before another with `dominates`. Build through `build_dominance`.
 
     The ordering across calls reads three facts about what lies outside the text: *intrinsic_writes*
-    says whether the program writes the prototype chain a plain object reads through, the semantic
-    model what the file is, and *host_entrypoint* names the top-level bindings the analyst declared
-    a host reaches by name: a function it invokes, or an object whose methods it calls.
+    says whether the program writes the prototype chain a plain object reads through, and the
+    semantic model what the file is and which of its bindings code outside it may reach
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.callable_from_outside`).
     """
 
     def __init__(
@@ -153,7 +153,6 @@ class DominanceModel(DominatorModel):
         control_flow: ControlFlowModel | None = None,
         *,
         intrinsic_writes: IntrinsicWrites | None = None,
-        host_entrypoint: Callable[[str], bool] | None = None,
     ):
         flow = control_flow if control_flow is not None else build_control_flow_model(model.root)
         super().__init__(flow)
@@ -161,7 +160,6 @@ class DominanceModel(DominatorModel):
         if intrinsic_writes is None:
             intrinsic_writes = build_intrinsic_writes(model)
         self.intrinsic_writes = intrinsic_writes
-        self._host_entrypoint = host_entrypoint
         self._reference_points_cache: dict[Node, list[Node | _HandOver] | None] = {}
         self._invocation_orders: dict[Node, dict[Node | _HandOver, bool]] = {}
         self._entered_from: dict[Node, dict[Node, bool]] = {}
@@ -568,10 +566,11 @@ class DominanceModel(DominatorModel):
         A function is ordered by its creation alone, the one point no invocation can precede, when
         it is bound to no name and matches neither pattern, and when the value of the assignment
         installing it flows on (`_installed_value_escapes`). A function code outside the file can
-        call while the file runs (`_callable_before_the_end`) has no enumeration at all. One an
-        importer outside every import cycle can call has the end of the script as one more point,
-        the script root standing for it (`_statement_completes_before`), since such an importer
-        calls in only once the module has finished.
+        call while the file runs
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.callable_from_outside`) has no
+        enumeration at all. One an importer outside every import cycle can call has the end of the
+        script as one more point, the script root standing for it (`_statement_completes_before`),
+        since such an importer calls in only once the module has finished.
 
         Memoized by identity: the enumeration is a pure function of *activation* and the model,
         both fixed for the model's lifetime — the whole DominanceModel is rebuilt when the tree
@@ -587,8 +586,7 @@ class DominanceModel(DominatorModel):
 
     def _compute_reference_points(self, function: Node) -> list[Node | _HandOver] | None:
         names = self.model.function_names(function)
-        bindings: tuple[Binding | None, ...] = (None,) if names is None else names.bindings
-        if any(self._callable_before_the_end(function, name) for name in bindings):
+        if self.model.callable_from_outside(function):
             return None
         if self._installed_value_escapes(function):
             return [function]
@@ -616,48 +614,6 @@ class DominanceModel(DominatorModel):
             if name.exported:
                 points.append(self.model.root)
         return points
-
-    def _callable_before_the_end(self, function: Node, binding: Binding | None) -> bool:
-        """
-        Whether code outside the file can call *function* while the file's own text still runs, at
-        a point that text does not order. A host calls a declared entry point whenever the script
-        hands it control (`_host_may_reach`). An importer in an import cycle calls an export — one
-        exported by name, or an anonymous `export default function` — before the module's body has
-        finished, exactly where
-        `refinery.lib.scripts.js.analysis.model.SemanticModel.module_may_be_reentered` holds
-        (`_importer_may_run_first`). An importer outside every cycle calls in only after the module
-        has finished, which `_compute_reference_points` orders as the end of the script instead.
-        """
-        if binding is not None and (
-            self._importer_may_run_first(binding)
-            or self._host_may_reach(binding)
-        ):
-            return True
-        return (
-            isinstance(function.parent, JsExportDefaultDeclaration)
-            and self.model.module_may_be_reentered()
-        )
-
-    def _importer_may_run_first(self, binding: Binding) -> bool:
-        """
-        Whether *binding* is exported from a module an importer can run in before its body has
-        finished, so the importer can read it at a point the file's text does not order.
-        """
-        return binding.exported and self.model.module_may_be_reentered()
-
-    def _host_may_reach(self, binding: Binding) -> bool:
-        """
-        Whether a host may reach *binding* by name: the analyst declared it an entry point
-        (*host_entrypoint*), and it is a property of the global object under the run's execution
-        model (`refinery.lib.scripts.js.analysis.model.SemanticModel.reaches_global_object`). A
-        declared object is reached as much as a declared function, and the host may call a method
-        installed on it whenever the script hands it control.
-        """
-        return (
-            self._host_entrypoint is not None
-            and self._host_entrypoint(binding.name)
-            and self.model.reaches_global_object(binding)
-        )
 
     @staticmethod
     def _installed_value_escapes(function: Node) -> bool:
@@ -722,8 +678,10 @@ class DominanceModel(DominatorModel):
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.singular_value`), one of its reads is
         not the object of a member access, a `with` could rename it (a
         `refinery.lib.scripts.js.analysis.model.Binding.dynamic_refs` entry), an importer can reach
-        it before the module has finished (`_importer_may_run_first`), or a host can reach it by
-        name (`_host_may_reach`).
+        it before the module has finished
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.importer_may_run_first`), or a host
+        can reach it by name
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.named_by_the_host`).
 
         An access hands the object to code when it is a method call in any form, whose callee
         receives the object as `this`, and when it reads or writes the object's prototype
@@ -759,8 +717,8 @@ class DominanceModel(DominatorModel):
             return None
         if (
             binding.dynamic_refs
-            or self._importer_may_run_first(binding)
-            or self._host_may_reach(binding)
+            or self.model.importer_may_run_first(binding)
+            or self.model.named_by_the_host(binding)
         ):
             return None
         accesses: list[JsMemberExpression] = []
@@ -869,17 +827,10 @@ def build_dominance(
     control_flow: ControlFlowModel | None = None,
     *,
     intrinsic_writes: IntrinsicWrites | None = None,
-    host_entrypoint: Callable[[str], bool] | None = None,
 ) -> DominanceModel:
     """
     Build the `DominanceModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`,
     reusing *control_flow* and *intrinsic_writes* when the caller has them to share, or building
-    fresh ones when they are `None`. *host_entrypoint* names the run's declared host entry points;
-    the default describes a file no host calls into.
+    fresh ones when they are `None`.
     """
-    return DominanceModel(
-        model,
-        control_flow,
-        intrinsic_writes=intrinsic_writes,
-        host_entrypoint=host_entrypoint,
-    )
+    return DominanceModel(model, control_flow, intrinsic_writes=intrinsic_writes)

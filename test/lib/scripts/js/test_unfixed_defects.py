@@ -111,9 +111,7 @@ from test.lib.scripts.js.test_parser_recovery import (
 
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
-from refinery.lib.scripts.js.analysis.localization import localization_target
-from refinery.lib.scripts.js.model import JsAssignmentExpression, JsIdentifier, JsReturnStatement
-from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -589,13 +587,15 @@ class TestAnUnpackedStackDeclaresTheLocalsItMints(TestBase):
 #: A region that runs strict, holding an assignment to a name no declaration binds, mapped to the
 #: behavior Node gives it. Assigning to an unresolvable reference is a `ReferenceError` in strict
 #: code where sloppy code creates a property of the global object, so the statement's one effect is
-#: the throw and nothing written behind it runs. The mode is arrived at three ways, none of which
-#: the statement itself states.
+#: the throw and nothing written behind it runs, a call of a function holding it included. The
+#: mode is arrived at three ways, none of which the statement itself states.
 A_STRICT_REGION_ASSIGNING_TO_NO_BINDING = {
     "function f(b) { 'use strict'; var q = b + 1; undeclared_a = 1; return q; }"
     ' console.log(f(2));': ('', 'ReferenceError'),
     "'use strict'; undeclared_b = 1; console.log(3);": ('', 'ReferenceError'),
     'var out = 3; class C { static { undeclared_c = 1; } } console.log(out);':
+        ('', 'ReferenceError'),
+    "'use strict'; function f() { undeclared_d = 1; } f(); console.log(4);":
         ('', 'ReferenceError'),
 }
 
@@ -4731,64 +4731,6 @@ class TestAConstantDefinedBeforeTheHostGetsControlIsFoldedIntoAnEntryPoint(TestB
         )
 
 
-#: A program whose function writes a variable that only it reads, and reads it again on its next
-#: call, mapped to the behavior an engine gives it: a guard that lets the function run once, and a
-#: counter.
-A_WRITE_THE_NEXT_CALL_READS = {
-    'a guard running the function once': Program(
-        a_program("""
-            var done;
-            function once() { if (done) { return 'skip'; } done = true; return 'run'; }
-            once();
-            console.log(once());
-            """),
-        prints('skip'),
-    ),
-    'a counter': Program(
-        a_program("""
-            var n = 0;
-            function next() { n = n + 1; return n; }
-            next();
-            console.log(next());
-            """),
-        prints('2'),
-    ),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_WRITE_THE_NEXT_CALL_READS)
-class TestAWriteTheNextCallReadsIsKept(TestBase):
-    """
-    A write every reference of which stands inside the function performing it is taken as one no
-    outside code observes, so a call whose value is discarded counts as free and is dropped. The
-    function's own next call reads that write, so dropping the first call changes what the second
-    one answers. Deciding it needs to know whether each call writes the variable before it reads
-    it, which the effect model does not ask.
-    """
-
-
-#: A script whose function writes a variable a host reads by name once the script has run.
-A_WRITE_A_HOST_READS = a_program("""
-    var a;
-    var f = function () { a = 2; return a; };
-    console.log(f());
-    """)
-
-
-class TestAWriteAHostReadsIsKept(TestBase):
-    """
-    A variable declared as a host entry point is read from outside the file, as an exported one is
-    read by an importer, so a function writing it cannot be replaced by the value it returns. The
-    effect model counts the export as an observer of the write but is never told the entry points.
-    """
-
-    @unittest.expectedFailure
-    def test_the_write_stays(self):
-        output = deobfuscate_source(A_WRITE_A_HOST_READS, entrypoints=('a',))
-        self.assertIn('a = 2', output)
-
-
 #: A program declaring a `var` inside a `with` body whose object holds a property of the same name,
 #: mapped to the behavior an engine gives it. The initializer writes the property, so the `var`
 #: keeps `undefined`.
@@ -6034,8 +5976,8 @@ class TestAnUnpackedRestParameterKeepsTheLengthOfTheFunction(TestBase):
     `refinery.lib.scripts.js.deobfuscation.cff.statemachine` give a function `(...s)` the parameters
     it reads out of `s` as plain names, which turns its `length` of 0 into their count. A correct
     pass writes `(...[a, b])`, which keeps the length 0, wherever the `length` of the function is
-    read (`refinery.lib.scripts.js.deobfuscation.parameters.every_call_shown` refuses), and the
-    plain names elsewhere.
+    read (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_only_by_shown_calls`
+    refuses), and the plain names elsewhere.
     """
 
 
@@ -6375,249 +6317,144 @@ class TestAMaskedFunctionCalledAsAMethodIsUnmasked(TestBase):
         self.assertNotIn('...a', deobfuscate_source(source, execution=ExecutionModel.commonjs))
 
 
-#: Programs in which a function's body runs where no call of its name shows, mapped to what Node
-#: prints for each: called through the global object, through its own `arguments`, through the
-#: `caller` of a function it calls, and a generator's body run by a step of its object. In the first
-#: five a file-level `var` the function writes before it reads it is moved into it; in the last two
-#: a value is read past the run.
-A_FUNCTION_RUN_WHERE_NO_CALL_OF_ITS_NAME_SHOWS = {
-    'a call of itself through the global object': Program(
-        a_program("""
-            var x;
-            function f(n) {
-              x = n;
-              if (n) globalThis.f(n - 1);
-              console.log(x);
-            }
-            f(2);
-            """),
-        prints('0', '0', '0'),
-        Reading.SCRIPT,
-    ),
-    'a call of itself through its arguments': Program(
-        a_program("""
-            var x;
-            function f(n) {
-              x = n;
-              if (n) arguments.callee(n - 1);
-              console.log(x);
-            }
-            f(2);
-            """),
-        prints('0', '0', '0'),
-        Reading.COMMONJS,
-    ),
-    'a call of it through the caller of a function it calls': Program(
-        a_program("""
-            var x;
-            function g() {
-              g.caller(0);
-            }
-            function f(n) {
-              x = n;
-              if (n) g();
-              console.log(x);
-            }
-            f(1);
-            """),
-        prints('0', '0'),
-        Reading.COMMONJS,
-    ),
-    'a step of a generator that calls it': Program(
-        a_program("""
-            var x;
-            function* gen() {
-              f(0);
-              yield 1;
-            }
-            var it = gen();
-            function f(n) {
-              x = n;
-              if (n) it.next();
-              console.log(x);
-            }
-            f(1);
-            """),
-        prints('0', '0'),
-        Reading.COMMONJS,
-    ),
-    'a step of another generator object of itself': Program(
-        a_program("""
-            var x;
-            var other;
-            function* f(n) {
-              x = n;
-              if (n) other.next();
-              console.log(x);
-              yield;
-            }
-            other = f(0);
-            f(1).next();
-            """),
-        prints('0', '0'),
-        Reading.COMMONJS,
-    ),
-    'a value read past a call of its writer through the global object': Program(
-        a_program("""
-            var x = 1;
-            function f() {
-              x = 2;
-            }
-            globalThis.f();
-            console.log(x);
-            """),
-        prints('2'),
-        Reading.SCRIPT,
-    ),
-    'a value read past a step of a generator that writes it': Program(
-        a_program("""
-            function g() {
-              function* gen() {
-                y = 2;
-                yield;
-              }
-              var it = gen();
-              var y = 1;
-              it.next();
-              console.log(y);
-            }
-            g();
-            """),
-        prints('2'),
-        Reading.COMMONJS,
-    ),
-}
+#: A function storing into a name no declaration binds before it reads it, whose call a fold
+#: answers with the string it returns.
+A_DECODER_WRITING_A_NAME_NO_DECLARATION_BINDS = a_program("""
+    const decode = function (s) {
+      rr = '';
+      for (var i = 0; i < s.length; i++) {
+        rr += String.fromCharCode(s.charCodeAt(i) ^ 1);
+      }
+      return rr;
+    };
+    var x = decode('Idmmn');
+    """)
 
 
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_FUNCTION_RUN_WHERE_NO_CALL_OF_ITS_NAME_SHOWS)
-class TestAFunctionRunWhereNoCallOfItsNameShowsIsSeenToRun(TestBase):
+class TestADecoderWritingANameNoDeclarationBindsIsFolded(TestBase):
     """
-    The effect model takes a function whose name is used only as the callee of calls to run only at
-    those calls (`refinery.lib.scripts.js.analysis.effects.EffectModel.function_escapes`), and the
-    reaching model lists the points where a binding may change from there. A body also runs where
-    the program calls the function through the global object, reads it off `arguments.callee` or
-    another function's `caller`, or steps the object a generator call returned; the tampering model
-    reads two of these channels for its own question and the effect model reads none. A value is
-    then taken to survive a run that writes it, and a file-level `var` is moved into a function
-    another run of which writes it.
-    """
-
-
-class TestAFunctionRunWhereNoCallOfItsNameShowsIsSeenByTheModels(TestBase):
-    """
-    The defect of `TestAFunctionRunWhereNoCallOfItsNameShowsIsSeenToRun`, asked of the reaching
-    model and of the localization rule directly, which needs no engine.
+    A call folds only where it has no effect but its value. An assignment to a name no declaration
+    binds creates a property of the global object that outlives the call, so the call has an
+    effect, and `decode('Idmmn')` stays a call where it could be `'Hello'`. Dropping the creation of
+    that property is sound only where no host intercepts the name: a browser runs a setter for
+    `onload`, `name` or `status`. The host model has to say which global names a host intercepts
+    before a fold may drop such a store.
     """
 
     @unittest.expectedFailure
-    def test_the_value_does_not_reach_past_a_call_of_the_function_through_its_arguments(self):
-        source = 'var x; function f(n) { x = n; if (n) arguments.callee(n - 1); return x; } f(2);'
-        cache = ModelCache(JsParser(source).parse())
-        store = next(node for node in cache.root.walk() if isinstance(node, JsAssignmentExpression))
-        returned = next(node for node in cache.root.walk() if isinstance(node, JsReturnStatement))
-        read = returned.argument
-        assert isinstance(store.left, JsIdentifier) and store.right is not None and read is not None
-        binding = cache.model.resolve(store.left)
-        assert binding is not None
-        self.assertFalse(cache.reaching.value_preserved(binding, store.right, read))
+    def test_the_call_folds_to_the_string_it_returns(self):
+        self.assertIn("'Hello'", deobfuscate_source(A_DECODER_WRITING_A_NAME_NO_DECLARATION_BINDS))
+
+
+class TestAFunctionCalledInParenthesesWhereItIsWrittenIsSummarizedAsItsBody(TestBase):
+    """
+    The effect model reads a call of a function written where it is called as a run of that
+    function's body, so `void function () { n = n + 1; }()` inside `f` writes only a local of `f`,
+    and `f` is pure. The common spelling puts the function in parentheses, `(function () {...})()`,
+    and the model resolves no callee through them: the call is one of unknown code, and `f` is
+    taken to have effects it does not have, so a call of it whose value nothing reads stays.
+    """
 
     @unittest.expectedFailure
-    def test_a_var_of_a_function_the_host_may_run_again_while_it_runs_stays_at_the_top(self):
-        source = 'var x; function onClick(n) { x = n; if (n) dispatch(); log(x); }'
-        cache = ModelCache(JsParser(source).parse(), DeobfuscationOptions(entrypoints=('onClick',)))
-        binding = cache.model.root_scope.bindings['x']
-        self.assertIsNone(localization_target(cache.liveness, cache.reaching, binding))
+    def test_the_function_holding_the_call_is_pure(self):
+        cache = ModelCache(JsParser('function f() { var n = 0; (function () { n = n + 1; })(); return n; }').parse())
+        self.assertTrue(cache.effects.summary_of(cache.root.body[0]).is_pure)
 
 
-#: Programs with a binding every reference of which lies in one function, which a helper nested in
-#: that function writes by calling the function again, mapped to what Node prints for each: the run
-#: that called the helper reads what the inner run stored.
-A_WRITE_CONFINED_TO_A_FUNCTION_THE_RUN_THAT_CALLED_IT_AGAIN_READS = {
-    'a file-level var': Program(
-        a_program("""
-            var x;
-            function f(n) {
-              x = n;
-              function h() { if (n) f(0); }
-              h();
-              return x;
-            }
-            console.log(f(1));
-            """),
-        prints('0'),
-        Reading.COMMONJS,
-    ),
-    'a var of an enclosing function': Program(
-        a_program("""
-            function outer() {
-              var x;
-              function f(n) {
-                x = n;
-                function h() { if (n) f(0); }
-                h();
-                return x;
-              }
-              return f(1);
-            }
-            console.log(outer());
-            """),
-        prints('0'),
-        Reading.COMMONJS,
-    ),
-}
+#: A function holding a `var` only a function nested in it references, which the nested function
+#: writes before it reads it on each run.
+A_VAR_OF_AN_ENCLOSING_FUNCTION_ONLY_A_NESTED_ONE_USES = a_program("""
+    function o() {
+      var t;
+      function f(n) { t = n * 2; return t; }
+      f(1);
+      return f(2);
+    }
+    console.log(o());
+    """)
+
+
+class TestAVarOfAnEnclosingFunctionOnlyANestedOneUsesMovesIntoIt(TestBase):
+    """
+    A file-level `var` every run of the one function using it writes before it reads it moves into
+    that function (`refinery.lib.scripts.js.analysis.localization`), and a call of the function
+    whose value is discarded then does nothing and goes. A `var` of an enclosing function is not
+    asked the same question: `t` stays a variable of `o`, which a later run of `f` could read, so
+    `f(1)` stays.
+    """
+
+    @unittest.expectedFailure
+    def test_the_call_whose_value_is_discarded_goes(self):
+        output = deobfuscate_source(
+            A_VAR_OF_AN_ENCLOSING_FUNCTION_ONLY_A_NESTED_ONE_USES,
+            execution=ExecutionModel.commonjs,
+        )
+        self.assertNotIn('f(1)', output)
+
+
+#: A function called again through the `caller` of a function it calls, read under a key the
+#: program builds at run time, mapped to what Node prints.
+A_CALLER_READ_UNDER_A_KEY_BUILT_AT_RUN_TIME = Program(
+    a_program("""
+        var x;
+        function g(s) {
+          g[s.slice(1)](0);
+        }
+        function f(n) {
+          x = n;
+          if (n) g('xcaller');
+          console.log(x);
+        }
+        f(1);
+        """),
+    prints('0', '0'),
+    Reading.COMMONJS,
+)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_WRITE_CONFINED_TO_A_FUNCTION_THE_RUN_THAT_CALLED_IT_AGAIN_READS)
-class TestAWriteConfinedToAFunctionIsSeenByTheRunThatCalledItAgain(TestBase):
+class TestACallerReadUnderAKeyBuiltAtRunTimeIsSeenToRunTheFunctionAgain(TestBase):
     """
-    The effect model does not count a write to a binding every reference of which lies in one
-    function (`refinery.lib.scripts.js.analysis.effects.EffectModel._confined_to`): no code outside
-    the function sees it once the call returns. That holds only while no two runs of the function
-    overlap. Here a helper nested in the function calls it again, the inner run stores into the
-    binding, and the outer run reads that value after the helper returns. The helper's call is
-    taken to do nothing and removed, so the outer run reads its own store.
+    The `caller` of a function is whichever function called it, so a program that may read it may
+    run any function again where no call of its name shows
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`). A program is taken to
+    read it where it spells the name, as a property or as a string; a key built at run time from a
+    string spelling something else is not seen, and the file-level `var` moves into `f`.
     """
 
+    @wontfix('no program reads the caller of a function under a key it builds at run time')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        row = A_CALLER_READ_UNDER_A_KEY_BUILT_AT_RUN_TIME
+        self.assertEqual(row.deobfuscated(), row.prints)
 
-#: Programs leaving the body of a `for await` loop by a `break`, which waits for the iterator to
-#: close, while another run of the function may store into a file-level `var` the function reads
-#: after the loop, mapped to what Node prints for each.
-A_FOR_AWAIT_LOOP_LEFT_EARLY = {
-    'a break out of the loop': Program(
-        a_program("""
-            var x;
-            async function f(v) {
-              out: {
-                for await (var e of [0]) {
-                  x = v;
-                  break out;
-                }
-                x = 0;
-              }
-              console.log(x);
-            }
-            f(1);
-            f(2);
-            """),
-        prints('2', '2'),
-        Reading.COMMONJS,
-    ),
-}
+
+#: A function expression assigning to its own name, mapped to what Node prints: the name holds the
+#: function inside it, and sloppy code ignores the assignment.
+A_FUNCTION_EXPRESSION_ASSIGNING_TO_ITS_OWN_NAME = Program(
+    a_program("""
+        var g = function acc(n) {
+          acc = n;
+          return acc;
+        };
+        console.log(typeof g(5));
+        """),
+    prints('function'),
+    Reading.COMMONJS,
+)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_FOR_AWAIT_LOOP_LEFT_EARLY)
-class TestAForAwaitLoopLeftEarlyWaitsForItsIteratorToClose(TestBase):
+class TestAFunctionExpressionAssigningToItsOwnNameKeepsItself(TestBase):
     """
-    A `for await` loop left by a `break`, a `continue` to an outer label, a `return` or a throw
-    waits for its iterator to close, and other code, another run of the same function among it,
-    runs while it waits. The reaching model takes only the head of the loop for a point where the
-    body waits (`refinery.lib.scripts.js.analysis.reaching.ReachingModel.foreign_kills`), so a
-    file-level `var` read after the loop is moved into the function. Listing the exits needs the
-    control-flow graph to say which edges leave the loop.
+    The name of a function expression is bound inside it to the function, and the binding is
+    immutable: sloppy code ignores an assignment to it, strict code throws. The deobfuscation reads
+    the assignment as a store and answers the read after it with the value stored.
     """
+
+    @wontfix('no program assigns to the name of a function expression inside its body')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        row = A_FUNCTION_EXPRESSION_ASSIGNING_TO_ITS_OWN_NAME
+        self.assertEqual(row.deobfuscated(), row.prints)
 
 
 #: Programs that call a function again from the initializer of an instance field of a class the

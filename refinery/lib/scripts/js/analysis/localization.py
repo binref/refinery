@@ -8,11 +8,16 @@ stored: the function writes it before any read
 (`refinery.lib.scripts.js.analysis.liveness.LivenessModel.is_dead_on_entry`), so no value carried
 over from load or from an earlier run is read, and it is dead wherever another run of the function
 may write it while this one is still under way. Another run starts or resumes only at a point where
-the body hands control to other code: a call that may run the function again, and an `await` or a
-`yield`, at which the body waits while other code runs. These are the points at which code other
-than the body's own statements may change the binding
+the body hands control to other code: a call that may run the function again, and an `await`, a
+`yield`, or a point leaving the body of a `for await` loop, which waits for the iterator to close,
+at which the body waits while other code runs. These are the points at which code other than the
+body's own statements may change the binding
 (`refinery.lib.scripts.js.analysis.reaching.ReachingModel.foreign_kills`), and the `var` must not
-be live at any of them (`refinery.lib.scripts.js.analysis.liveness.LivenessModel.live_around`). In
+be live at any of them (`refinery.lib.scripts.js.analysis.liveness.LivenessModel.live_around`). A
+function a run of which may start where no call of its name shows, through the global object, its
+own `arguments`, the `caller` of a function it calls, `new.target`, a step of a generator object,
+or code outside the file, has no such list of points
+(`refinery.lib.scripts.js.analysis.effects.EffectModel.function_escapes`), and its `var` stays. In
 
     var x; function f(n) { x = n; if (n) f(n - 1); console.log(x); }
 

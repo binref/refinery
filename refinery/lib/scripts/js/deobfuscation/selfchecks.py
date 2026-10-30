@@ -251,10 +251,9 @@ class _HelperRecognizer:
     Recognizes the hash helpers of one script, each function once.
     """
 
-    def __init__(self, model: SemanticModel, effects: EffectModel, options: object):
+    def __init__(self, model: SemanticModel, effects: EffectModel):
         self.model = model
         self.effects = effects
-        self.options = options
         self.memo: dict[tuple[str, int, bool], bool] = {}
         self.inserted: dict[int, list[Node]] = {}
 
@@ -298,7 +297,7 @@ class _HelperRecognizer:
         if len(function.params) != len(template_form(template).params):
             return False
         inserted = self.inserted_statements(function)
-        return matches(self.model, function, (template,), placeholders, self.options, left_out=inserted)
+        return matches(self.model, function, (template,), placeholders, left_out=inserted)
 
     def _outer_calls(self, function: Node) -> Iterator[tuple[JsCallExpression, Binding]]:
         for node in function.walk():
@@ -522,7 +521,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
             if isinstance(function, FUNCTION_NODES):
                 calls = self._line_break_checks(model, effects, dominance, function)
                 folds.extend((call, False) for call in calls)
-        recognizer = _HelperRecognizer(model, effects, self.options)
+        recognizer = _HelperRecognizer(model, effects)
         decided: list[tuple[JsVariableDeclarator, _Hashed]] = []
         lone: list[tuple[JsExpressionStatement, _Hashed, JsFunctionNode]] = []
         for statement in node.walk():

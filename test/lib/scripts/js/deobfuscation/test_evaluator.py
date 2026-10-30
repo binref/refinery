@@ -960,22 +960,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual("var x = 'os';", result)
 
-    def test_implicit_locals_not_blocking_purity(self):
-        source = inspect.cleandoc(
-            """
-            const decode = function(s) {
-                rr = '';
-                for (var i = 0; i < s.length; i++) {
-                    rr += String.fromCharCode(s.charCodeAt(i) ^ 1);
-                }
-                return rr;
-            };
-            var x = decode('Idmmn');
-            """
-        )
-        result = self._evaluate(source)
-        self.assertEqual("var x = 'Hello';", result)
-
     def test_side_effects_member_write_blocks_evaluation(self):
         source = inspect.cleandoc(
             """

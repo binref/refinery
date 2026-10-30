@@ -277,6 +277,43 @@ def deobfuscated_host_behavior(
     return host_behavior(folded(source, environment=environment))
 
 
+#: The attributes of a browser window the entries observe, installed on the global object before a
+#: script runs as the HTML standard declares them: `name` and `status` are `DOMString` attributes,
+#: whose setter stores the value converted to a string, and `onload` is an event handler attribute,
+#: which holds a function stored into it and `null` in place of anything else.
+WINDOW_ATTRIBUTES = a_program("""
+    (function () {
+      var name = '';
+      var status = '';
+      var onload = null;
+      Object.defineProperty(globalThis, 'name', {
+        get: function () { return name; },
+        set: function (v) { name = String(v); },
+        configurable: true
+      });
+      Object.defineProperty(globalThis, 'status', {
+        get: function () { return status; },
+        set: function (v) { status = String(v); },
+        configurable: true
+      });
+      Object.defineProperty(globalThis, 'onload', {
+        get: function () { return onload; },
+        set: function (v) { onload = typeof v === 'function' ? v : null; },
+        configurable: true
+      });
+    })();
+    """)
+
+
+def window_behavior(source: str) -> Behavior:
+    """
+    What a browser window makes of *source* run as a classic script: the attributes of
+    `WINDOW_ATTRIBUTES` are in place on the global object when the script starts, and the window
+    calls the load handler the script installed once the script has run.
+    """
+    return host_behavior(source, calls=('onload',), prelude=WINDOW_ATTRIBUTES)
+
+
 def each_program_still_prints(
     programs: dict[str, str],
 ) -> dict[str, tuple[tuple[str, str | None], tuple[str, str | None]]]:
@@ -308,12 +345,14 @@ class Reading(Enum):
     `ES_MODULE` is strict code with no directive saying so, and the only reading an `import` or
     `export` declaration may appear in. `MODULE` runs the program as a CommonJS file but has it
     deobfuscated for a module of either kind, a text that must hold for the strict reading too;
-    `COMMONJS` runs it as a CommonJS file and tells the deobfuscation so.
+    `COMMONJS` runs it as a CommonJS file and tells the deobfuscation so. `WINDOW` is `SCRIPT` run
+    in a browser window (`window_behavior`).
     """
     MODULE = auto()
     COMMONJS = auto()
     ES_MODULE = auto()
     SCRIPT = auto()
+    WINDOW = auto()
 
     def read(
         self,
@@ -337,6 +376,8 @@ class Reading(Enum):
         """
         if self is Reading.SCRIPT:
             return host_behavior(source)
+        if self is Reading.WINDOW:
+            return window_behavior(source)
         return behavior(source, module=self is Reading.ES_MODULE)
 
     def deobfuscated(
@@ -351,6 +392,8 @@ class Reading(Enum):
         """
         if self is Reading.SCRIPT:
             return deobfuscated_host_behavior(source, environment)
+        if self is Reading.WINDOW:
+            return window_behavior(folded(source, environment=environment))
         if self is Reading.COMMONJS:
             return deobfuscated_behavior(source, execution=ExecutionModel.commonjs, environment=environment)
         return deobfuscated_behavior(source, module=self is Reading.ES_MODULE, environment=environment)

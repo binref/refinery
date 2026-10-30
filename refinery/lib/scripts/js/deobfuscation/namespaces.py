@@ -25,7 +25,6 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BatchedScopeTransformer,
-    a_host_reaches_the_binding,
     access_key,
     function_binds_name,
     insert_after_prologue,
@@ -149,9 +148,10 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
     the edits run once the traversal ends. The decisions read four kinds of model fact, and the
     batch's own edits leave each of them valid on the tree it writes:
 
-    - `a_host_reaches_the_binding` over the namespace's binding. The batch neither adds a reference
-      to a namespace variable nor hands one to a host — its rewrites remove the last references
-      there are — so a binding unreachable at entry stays unreachable.
+    - `refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside` over the
+      namespace's binding. The batch neither adds a reference to a namespace variable nor hands one
+      to a host — its rewrites remove the last references there are — so a binding unreachable at
+      entry stays unreachable.
     - `is_shadowed` answers for conflicting names, including the object-position uses the conflict
       check counts, and for the bare identifier each rewrite writes where an access stood. A
       rewrite does create bare identifiers, but only for names the emission registry already
@@ -209,7 +209,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
             if (
                 binding is not None
                 and (
-                    a_host_reaches_the_binding(model, binding, self.options)
+                    model.reached_from_outside(binding)
                     or model.local_reachable_by_direct_eval(binding)
                 )
             ):

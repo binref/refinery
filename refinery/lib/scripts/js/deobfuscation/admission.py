@@ -175,12 +175,12 @@ def _unresolved_names(
 ) -> set[str]:
     """
     Return the set of external names referenced by *func* that are not locally declared, not in
-    *known*, and not well-known globals or runtime names. Names that are plain-assigned (`=`)
-    within the function body AND also read within the same body are treated as implicit locals
-    (obfuscator temporaries like `rr = expr; ... use(rr)`) and excluded. Names that are only
-    plain-assigned but never read are also excluded (write-only temps). Compound-assigned names
-    (`+=`, `|=`, etc.) that were NOT also plain-initialized are always retained — they perform a
-    read-modify-write of the external binding and are never a local temp.
+    *known*, and not well-known globals or runtime names. A name the body only assigns with `=`
+    and never reads is left out, a write-only temporary. A name it reads is kept, whether or not
+    it also assigns it first: another run of the function, or code outside it, may read what it
+    stores, which the effect summary decides
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel`), and a compound assignment (`+=`,
+    `|=`) reads the external binding it writes.
     """
     body = func.body
     if body is None:
@@ -191,8 +191,6 @@ def _unresolved_names(
         local_names.add(func.id.name)
     elif isinstance(func, JsFunctionExpression) and isinstance(func.id, JsIdentifier):
         local_names.add(func.id.name)
-    plain_assigned: set[str] = set()
-    compound_assigned: set[str] = set()
     read: set[str] = set()
     host_supplied: set[str] = set()
     claimed: set[str] = set()
@@ -203,10 +201,7 @@ def _unresolved_names(
         if name in local_names:
             continue
         if isinstance(node.parent, JsAssignmentExpression) and node.parent.left is node:
-            if node.parent.operator == '=':
-                plain_assigned.add(name)
-            else:
-                compound_assigned.add(name)
+            if node.parent.operator != '=':
                 read.add(name)
         else:
             read.add(name)
@@ -217,7 +212,7 @@ def _unresolved_names(
             elif name in GLOBAL_VALUE_NAMES or is_runtime_name(name):
                 claimed.add(name)
     external_names: set[str] = set()
-    for name in read - plain_assigned:
+    for name in read:
         if name in known:
             continue
         if name in host_supplied and name not in claimed:
@@ -391,13 +386,13 @@ class CallAdmission:
         cached = self._constants.get(binding)
         if cached is None:
             self._constants[binding] = (False, None)
-            cached = binding_constant(self.effects, binding, self.cache.options)
+            cached = binding_constant(self.effects, binding)
             if not cached[0]:
                 chain = strip_parens(self.effects.model.singular_value(binding))
                 if isinstance(chain, JsCallExpression):
                     known, value = self.method_chain_value(chain)
                     if known:
-                        cached = held_constant(self.effects, binding, value, self.cache.options)
+                        cached = held_constant(self.effects, binding, value)
             self._constants[binding] = cached
         return cached
 

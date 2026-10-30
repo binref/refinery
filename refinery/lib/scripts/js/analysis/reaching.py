@@ -53,6 +53,7 @@ from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsForOfStatement,
     JsIdentifier,
+    JsLabeledStatement,
     JsMemberExpression,
     JsReturnStatement,
     JsScript,
@@ -88,8 +89,10 @@ class _BodyEvents(NamedTuple):
     — a parameter default of a function *expression* is one — so it can neither be ordered here
     nor dismissed, and the caller has to refuse rather than drop the kill. The *suspensions* are
     the points at which its run may stop and resume later, with other code run in between: an
-    `await`, a `yield`, the head of a `for await` loop, which awaits each value, and the `return`
-    of a value in an async generator, which awaits that value before any `finally` around it runs.
+    `await`, a `yield`, the head of a `for await` loop, which awaits each value, every point at
+    which a run leaves the body of such a loop other than through its head, which waits for the
+    iterator to close (`_exits_that_close`), and the `return` of a value in an async generator,
+    which awaits that value before any `finally` around it runs.
     """
     calls: list[tuple[JsCallExpression, CfgNode | None]]
     suspensions: list[tuple[Node, CfgNode | None]]
@@ -391,6 +394,8 @@ class ReachingModel:
                         cached.suspensions.append((node, None))
                     elif located[0] is graph:
                         cached.suspensions.append((node, located[1]))
+                        if isinstance(node, JsForOfStatement):
+                            cached.suspensions.extend(_exits_that_close(graph, node))
             self._event_cache[id(graph)] = cached
         return cached
 
@@ -443,6 +448,44 @@ class ReachingModel:
 
 def build_reaching(dominance: DominanceModel, effects: EffectModel) -> ReachingModel:
     return ReachingModel(dominance, effects)
+
+
+def _exits_that_close(
+    graph: ControlFlowGraph,
+    loop: JsForOfStatement,
+) -> list[tuple[Node, CfgNode | None]]:
+    """
+    The nodes of *graph* at which a run leaves the body of the `for await` loop *loop* other than
+    through its head, each with the element it evaluates: a `break`, a `continue` of an outer loop,
+    a `return`, and a throw out of the body or out of the target receiving each value. Each of
+    these waits for the iterator to close before the run carries on, which a loop whose head finds
+    the iterator done does not. In
+
+        for await (var e of it) { x = v; break; } console.log(x);
+
+    another run may store into `x` while this one waits at the `break`. The nodes built for the
+    loop are the ones the graph says its build drew (`ControlFlowGraph.builder_of`), so a throw
+    edge into a handler around the loop leaves it. A node drawn for no element, and a loop the
+    graph cannot say that of, stand as the loop itself with no node, which the caller refuses.
+    """
+    member: Node = loop
+    while isinstance(member.parent, JsLabeledStatement):
+        member = member.parent
+    inside = graph.builder_of([member])
+    if inside is None:
+        return [(loop, None)]
+    head = graph.node_of(loop)
+    subject = graph.node_of(loop.right) if loop.right is not None else None
+    exits: list[tuple[Node, CfgNode | None]] = []
+    for node in graph.nodes:
+        if node is head or node is subject or not inside(node):
+            continue
+        if all(inside(successor) for successor in node.successors):
+            continue
+        if node.element is None:
+            return [(loop, None)]
+        exits.append((node.element, node))
+    return exits
 
 
 def _precedes_the_store(site: JsMemberExpression, use: Node) -> bool:

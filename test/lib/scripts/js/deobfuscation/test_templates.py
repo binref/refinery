@@ -21,7 +21,6 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     static_property_key,
 )
-from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.parser import JsParser
 
 INDEX_IN_ALPHABET = Template('function F(s) { return ALPHABET.indexOf(s); }', frozenset({'ALPHABET'}))
@@ -30,7 +29,7 @@ INDEX_IN_ALPHABET = Template('function F(s) { return ALPHABET.indexOf(s); }', fr
 def _matches(script: JsScript, template: Template, nodes: dict[int, str] | None = None) -> bool:
     function = script.body[0]
     assert isinstance(function, JsFunctionDeclaration)
-    return matches(build_semantic_model(script), function, [template], {}, DeobfuscationOptions(), nodes)
+    return matches(build_semantic_model(script), function, [template], {}, nodes)
 
 
 def _alphabet(script: JsScript) -> dict[int, str]:
@@ -99,7 +98,7 @@ class TestTemplates(TestBase):
                 function = script.body[1]
                 assert isinstance(function, JsFunctionDeclaration)
                 self.assertEqual(
-                    matches(build_semantic_model(script), function, [template], {}, DeobfuscationOptions()),
+                    matches(build_semantic_model(script), function, [template], {}),
                     matched,
                 )
 
@@ -140,7 +139,7 @@ def _fit(body: str, template: Template = SHUFFLED) -> tuple[int, ...] | None:
     script = JsParser(F'function g(t, w) {{ {body} }}').parse()
     function = script.body[0]
     assert isinstance(function, JsFunctionDeclaration)
-    found = match(build_semantic_model(script), function, [template], {}, DeobfuscationOptions())
+    found = match(build_semantic_model(script), function, [template], {})
     return None if found is None else found[1]
 
 

@@ -32,7 +32,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     Landing,
     PinnedTransformer,
     ScopeProcessingTransformer,
-    a_host_reaches_the_binding,
     access_key,
     expression_a_call_answers,
     is_literal,
@@ -494,7 +493,7 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
                 binding = model.binding_of(name)
             if binding is None or binding.writes or model.singular_value(binding) is not init:
                 continue
-            if a_host_reaches_the_binding(model, binding, self.options):
+            if model.reached_from_outside(binding):
                 continue
             if not cache.effects.is_side_effect_free(init, {name.name}):
                 continue

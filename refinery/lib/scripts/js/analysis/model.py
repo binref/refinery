@@ -1633,9 +1633,10 @@ def arguments_name_their_function(function: Node) -> bool:
     """
     Whether the body of *function* may reach the function through its own `arguments`, whose
     `callee` is the function in sloppy mode: any use of it other than an index, its `length`, a
-    spread, or the second argument of `apply`.
+    spread, or the second argument of `apply`. A strict body never does: its `arguments` has a
+    `callee` that throws when read.
     """
-    if isinstance(function, JsArrowFunctionExpression):
+    if isinstance(function, JsArrowFunctionExpression) or strict_mode_at(function):
         return False
     for node in walk_receiver_scope(function):
         if not isinstance(node, JsIdentifier) or node.name != 'arguments' or not is_use_position(node):
@@ -2123,7 +2124,7 @@ _BINDINGS_A_STORE_CANNOT_REFUSE = frozenset({
 })
 
 
-def _is_delete_operand(node: Node) -> bool:
+def is_delete_operand(node: Node) -> bool:
     """
     Whether *node* stands as the operand of a `delete`. `reference_role` answers `Role.READWRITE`
     for such a reference as it does for a compound assignment, because both keep the name live as a
@@ -2159,7 +2160,7 @@ def _displaces_arguments(
     The declarator distinction lives here because a declarator with an initializer is recorded as a
     declaration and not as a write, so asking for writes alone would let `var arguments = [7]` through.
     """
-    if any(not _is_delete_operand(write) for write in binding.writes):
+    if any(not is_delete_operand(write) for write in binding.writes):
         return True
     for site in binding.declarations:
         if not isinstance(fn, JsScript) and site is fn.id:
@@ -2558,12 +2559,14 @@ class SemanticModel:
         trust_eval: bool = False,
         file_kind: FileKind = FileKind.script,
         exports_read_outside: bool = True,
+        host_entrypoint: Callable[[str], bool] | None = None,
     ):
         self.root = root
         self.environment = environment
         self.trust_eval = trust_eval
         self.file_kind = file_kind
         self.exports_read_outside = exports_read_outside
+        self._host_entrypoint = host_entrypoint
         self._module_exports_unread: bool | None = None
         self._code_load_sites: list[Node] | None = None
         self._node_scope: dict[Node, Scope] = {}
@@ -2580,6 +2583,7 @@ class SemanticModel:
         self._dynamic_rebind_sites: dict[Binding, list[Node] | None] = {}
         self._built = False
         self._spells_caller: bool | None = None
+        self._reached_unnamed: dict[Node, bool] = {}
         self._constructors_escape: bool | None = None
         self._constructions_hidden: bool | None = None
         self._declares_only_functions: bool | None = None
@@ -3336,13 +3340,6 @@ class SemanticModel:
             for read in reads
         )
 
-    def names_reaching(self, function: JsFunctionNode) -> list[Binding]:
-        """
-        The names `reached_only_by_shown_calls` follows to *function*: those of the class it
-        constructs where it is a constructor, and its own otherwise.
-        """
-        return [binding for binding, _ in self._shown_names(function)]
-
     def _shown_names(self, function: JsFunctionNode) -> list[tuple[Binding, list[ReferenceNode]]]:
         """
         The names `_calls_shown` follows to *function* or to the class it constructs, each with its
@@ -3359,25 +3356,19 @@ class SemanticModel:
         constructor makes the `super` calls shown, or which has none, so that its own calls are
         shown in turn; the names of such a class are read the same way, since its prototype is the
         one it extends; each name holds the function, or the class it constructs, alone and is
-        neither exported nor reached through a handed object or by reflection; no class among them
-        can be constructed without its name (`_constructed_without_its_name`); the function reaches
-        itself neither through its own `arguments` beyond an index, its length, a spread or `apply`
-        (`arguments_name_their_function`) nor through `new.target` (`references_new_target`); the
-        program spells no `caller` (`spells_caller`); no class among them extends a constructor the
-        program does not declare (`_extends_beyond_the_program`), whose methods construct it; and
-        where a shown call constructs it, no construction is hidden
-        (`constructions_may_be_hidden`), through an escaping `constructor` property, a `new` of one,
-        or `new.target`. Memoized per function.
+        neither exported nor reached through a handed object, by reflection, or by code outside the
+        file (`reached_from_outside`); no class among them can be constructed without its name
+        (`_constructed_without_its_name`); nothing reaches the function without its name
+        (`reached_without_its_name`); no class among them extends a constructor the program does
+        not declare (`_extends_beyond_the_program`), whose methods construct it; and where a shown
+        call constructs it, no construction is hidden (`constructions_may_be_hidden`), through an
+        escaping `constructor` property, a `new` of one, or `new.target`. Memoized per function.
         """
         cached = self._shown_calls.get(function)
         if cached is not None:
             return cached
         calls: list[JsCallExpression | JsNewExpression] = []
-        complete = not (
-            self.spells_caller()
-            or arguments_name_their_function(function)
-            or references_new_target(function)
-        )
+        complete = not self.reached_without_its_name(function)
         root = constructed_class(function) or function
         pending: list[Node] = [root]
         seen = {root}
@@ -3404,6 +3395,7 @@ class SemanticModel:
                     or name.written_at_entry
                     or name.reachable_through_a_handed_object
                     or self.reflection_can_reach(name)
+                    or self.reached_from_outside(name)
                 ):
                     complete = False
                 if own not in name.declarations and strip_parens(self.singular_value(name)) is not held:
@@ -3717,6 +3709,25 @@ class SemanticModel:
         assert self._reflection_surface is not None
         return self._reflection_surface
 
+    def reached_without_its_name(self, function: Node) -> bool:
+        """
+        Whether *function* may be called, constructed or handed out where no reference of a name
+        holding it stands: the program may read the `caller` of a function (`spells_caller`), which
+        is whichever function called the one it is read on; the body may reach the function through
+        its own `arguments` (`arguments_name_their_function`); or the body reads `new.target`
+        (`references_new_target`), which is the function itself wherever `new` runs it. The one
+        answer every reader asking how a function may be invoked or obtained shares, memoized per
+        function.
+        """
+        cached = self._reached_unnamed.get(function)
+        if cached is None:
+            cached = self._reached_unnamed[function] = (
+                self.spells_caller()
+                or arguments_name_their_function(function)
+                or references_new_target(function)
+            )
+        return cached
+
     def spells_caller(self) -> bool:
         """
         Whether the program may read the `caller` of a function: it spells the name as a property
@@ -3746,6 +3757,71 @@ class SemanticModel:
         if names_a_property(node):
             return isinstance(parent, JsMemberExpression)
         return node not in self._binding_of and self.resolve(node) is None
+
+    def named_by_the_host(self, binding: Binding) -> bool:
+        """
+        Whether a host may reach *binding* by name: the analyst declared the name one it reaches
+        (*host_entrypoint*), and the binding is a property of the global object
+        (`reaches_global_object`), itself or through a `var` Annex B copies it into. The name alone
+        does not decide it: a nested binding, a `let`, or anything a module scopes to the file never
+        becomes a property of the global object. A declared object is reached as much as a declared
+        function, and the host may call a method installed on it whenever the script hands it
+        control.
+        """
+        if self._host_entrypoint is None or not self._host_entrypoint(binding.name):
+            return False
+        if any(self.reaches_global_object(copy.var) for copy in binding.copies_made):
+            return True
+        return self.reaches_global_object(binding)
+
+    def reached_from_outside(self, binding: Binding) -> bool:
+        """
+        Whether code outside the file may reach *binding* by name at some point: a host names it
+        (`named_by_the_host`), or the file is a library, holding nothing but function declarations
+        at its top (`declares_only_functions`), and *binding* names one of them as a property of the
+        global object, which code that loads the library calls once the file has run. A pass that
+        could delete such a declaration, fold a read of one into its value, or relocate one out of
+        the global scope asks here before doing so, so that the answer is one predicate's rather
+        than each pass's own.
+        """
+        if self.named_by_the_host(binding):
+            return True
+        return (
+            self.declares_only_functions()
+            and self.reaches_global_object(binding)
+            and any(
+                isinstance(function := declaration.parent, JsFunctionDeclaration)
+                and function.parent is self.root
+                for declaration in binding.declarations
+            )
+        )
+
+    def importer_may_run_first(self, binding: Binding) -> bool:
+        """
+        Whether *binding* is exported from a module an importer can run in before its body has
+        finished (`module_may_be_reentered`), so the importer can read it at a point the file's
+        text does not order.
+        """
+        return binding.exported and self.module_may_be_reentered()
+
+    def callable_from_outside(self, function: Node) -> bool:
+        """
+        Whether code outside the file can call *function* while the file's own text still runs, at
+        a point that text does not order: a host calls a function it names (`named_by_the_host`)
+        whenever the script hands it control, and an importer in an import cycle calls an export,
+        one exported by name or an anonymous `export default function`, before the module's body
+        has finished (`importer_may_run_first`). The functions of a library
+        (`reached_from_outside`) are not among them, and neither are the exports an importer
+        outside every cycle reaches: code that loads the file calls those once it has run.
+        """
+        names = self.function_names(function)
+        for binding in () if names is None else names.bindings:
+            if self.importer_may_run_first(binding) or self.named_by_the_host(binding):
+                return True
+        return (
+            isinstance(function.parent, JsExportDefaultDeclaration)
+            and self.module_may_be_reentered()
+        )
 
     def declares_only_functions(self) -> bool:
         """
@@ -5954,6 +6030,7 @@ def build_semantic_model(
     trust_eval: bool = False,
     file_kind: FileKind = FileKind.script,
     exports_read_outside: bool = True,
+    host_entrypoint: Callable[[str], bool] | None = None,
 ) -> SemanticModel:
     """
     Build the `SemanticModel` for a parsed script, resolving bare global reads against *environment*.
@@ -5964,6 +6041,15 @@ def build_semantic_model(
     `refinery.lib.scripts.js.options.file_kind` decides for a run; text that runs as global code,
     such as the payload of a `Function` construction, is a script. *exports_read_outside* says
     whether code that loads the file may read what it exports; see
-    `SemanticModel.module_exports_unread`.
+    `SemanticModel.module_exports_unread`. *host_entrypoint* says whether the analyst declared a
+    name one a host reaches; see `SemanticModel.named_by_the_host`. The default describes a file no
+    host calls into.
     """
-    return SemanticModel(root, environment, trust_eval, file_kind, exports_read_outside)
+    return SemanticModel(
+        root,
+        environment,
+        trust_eval,
+        file_kind,
+        exports_read_outside,
+        host_entrypoint,
+    )

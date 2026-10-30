@@ -27,7 +27,6 @@ from refinery.lib.scripts.js.analysis.model import (
     ReferenceNode,
     Role,
     _property_key_name,
-    arguments_name_their_function,
     constructed_class,
     element_positions,
     enclosing_operator,
@@ -35,7 +34,6 @@ from refinery.lib.scripts.js.analysis.model import (
     read_is_only_tested,
     receiver_owner,
     reference_role,
-    references_new_target,
 )
 from refinery.lib.scripts.js.model import (
     CONVERSION_INSTALL_METHODS,
@@ -701,9 +699,7 @@ class ConversionInstalls:
         """
         if owner.generator or owner.is_async:
             return False
-        if self._model.spells_caller() or arguments_name_their_function(owner):
-            return False
-        if references_new_target(owner):
+        if self._model.reached_without_its_name(owner):
             return False
         if isinstance(owner.parent, JsMethodDefinition):
             cls = constructed_class(owner)

@@ -6,6 +6,7 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.localization import localizable_bindings, localization_target
 from refinery.lib.scripts.js.model import JsFunctionDeclaration
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -98,6 +99,33 @@ class TestLocalization(TestBase):
         ):
             with self.subTest(source=source):
                 self.assertStays(source)
+
+    def test_a_var_read_after_the_body_of_a_for_await_loop_is_left_stays(self):
+        for source in (
+            'var x; async function f(v) { for await (var e of [0]) { x = v; break; } return x; }',
+            'var x; async function f(v) { a: for (var i = 0; i < 1; i++) { for await (var e of [0]) { x = v; continue a; } } log(x); }',
+            'var x; async function f(v) { try { for await (var e of [0]) { x = v; return; } } finally { log(x); } }',
+            'var x; async function f(v) { try { for await (var e of [0]) { x = v; throw 0; } } catch (r) { log(x); } }',
+        ):
+            with self.subTest(source=source):
+                self.assertStays(source)
+
+    def test_a_var_read_after_a_continue_to_the_head_of_a_for_await_loop_moves(self):
+        self.assertMovesIntoF(
+            'var x; async function f(v) { for await (var e of [0]) { x = v; log(x); continue; } }'
+        )
+
+    def test_a_var_of_a_function_the_host_may_run_again_while_it_runs_stays_at_the_top(self):
+        source = 'var x; function onClick(n) { x = n; if (n) dispatch(); log(x); }'
+        cache = ModelCache(JsParser(source).parse(), DeobfuscationOptions(entrypoints=('onClick',)))
+        self.assertIsNone(self._target(cache))
+
+    def test_a_var_of_a_function_a_host_names_moves_where_the_name_is_no_global(self):
+        source = 'var x; function onClick(n) { x = n; if (n) dispatch(); log(x); }'
+        options = DeobfuscationOptions(entrypoints=('onClick',), execution=ExecutionModel.commonjs)
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast, options)
+        self.assertIs(self._target(cache), self._func(ast, 'onClick'))
 
     def test_a_var_read_after_a_call_that_may_run_the_function_again_stays(self):
         for source in (

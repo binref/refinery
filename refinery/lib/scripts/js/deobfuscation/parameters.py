@@ -29,7 +29,6 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
-    a_host_reaches_the_binding,
     walk_scope,
 )
 from refinery.lib.scripts.js.model import (
@@ -237,26 +236,6 @@ def unpacking_moves_into_parameters(
     return True
 
 
-def every_call_shown(
-    model: SemanticModel,
-    function: JsFunctionNode,
-    options: object,
-) -> bool:
-    """
-    Whether every way to *function* is a call the text shows
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_only_by_shown_calls`), and no
-    name it is reached through, which is the name of its class for a constructor
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.names_reaching`), is one a host reaches.
-    No other code then calls it, passes it arguments, or reads its `length`.
-    """
-    if not model.reached_only_by_shown_calls(function):
-        return False
-    return not any(
-        a_host_reaches_the_binding(model, binding, options)
-        for binding in model.names_reaching(function)
-    )
-
-
 class JsRestPatternParameters(ScriptLevelTransformer):
     """
     Write `function f(...[a, b])` as `function f(a, b)` wherever nothing can read its `length`: the
@@ -279,7 +258,7 @@ class JsRestPatternParameters(ScriptLevelTransformer):
                     or not isinstance(inner := rest.argument, JsArrayPattern)
                 ):
                     continue
-                if not every_call_shown(model, function, self.options):
+                if not model.reached_only_by_shown_calls(function):
                     continue
                 leading = len(params) - 1
                 decided = parameter_list([*params[:leading], *inner.elements], function, None)

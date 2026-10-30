@@ -18,7 +18,6 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
-    a_host_reaches_the_binding,
     body_returns_undefined,
     inlined_declarations_safe,
     nothing_still_names,
@@ -105,7 +104,7 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         call, statement = invoked
         if not nothing_still_names(model, [declaration, statement]):
             return False
-        if a_host_reaches_the_binding(model, binding, self.options):
+        if model.reached_from_outside(binding):
             return False
         if model.reflection_surface_sites(binding):
             return False

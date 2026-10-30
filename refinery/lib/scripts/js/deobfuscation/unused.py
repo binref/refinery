@@ -64,7 +64,6 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
-    a_host_reaches_the_binding,
     access_key,
     collect_identifier_names,
     definitely_answers_the_completion,
@@ -976,7 +975,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         question reflection does — could code outside the recorded references reach this binding — for the
         case the model cannot see at all, a caller living outside the file.
         """
-        return a_host_reaches_the_binding(self.model, binding, self.options)
+        return self.model.reached_from_outside(binding)
 
     def _binds_names_global_code_sees(self, parent: Node) -> bool:
         """

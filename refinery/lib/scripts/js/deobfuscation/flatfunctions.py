@@ -32,9 +32,10 @@ the parameters the flat function unpacked:
     }
 
 The wrapper keeps its `length` of 0 where something may read it; where nothing can
-(`refinery.lib.scripts.js.deobfuscation.parameters.every_call_shown`), the parameters
-are written `(value)` right away. An async function keeps a function of its own, whose promise
-settles when it did, and the flat function moves into the wrapper without the object instead:
+(`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_only_by_shown_calls`), the
+parameters are written `(value)` right away. An async function keeps a function of its own, whose
+promise settles when it did, and the flat function moves into the wrapper without the object
+instead:
 
     async function delayed(...args) {
       async function flat([value]) { await null; return twice(value); }
@@ -70,13 +71,11 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
-    a_host_reaches_the_binding,
     references_receiver_this,
 )
 from refinery.lib.scripts.js.deobfuscation.nameproxy import NameProxy
 from refinery.lib.scripts.js.deobfuscation.parameters import (
     ParameterList,
-    every_call_shown,
     parameter_list,
     unpacking_moves_into_parameters,
 )
@@ -279,7 +278,6 @@ def _moving_function(
     wrapper: JsFunctionDeclaration | JsFunctionExpression,
     root: JsScript,
     model: SemanticModel,
-    options: object,
 ) -> JsFunctionDeclaration | None:
     """
     The function *binding* names, where its body may move into *wrapper* and *callee* is the only
@@ -308,7 +306,7 @@ def _moving_function(
         or binding.dynamic_refs
         or binding.exported
         or model.reflection_can_reach(binding)
-        or a_host_reaches_the_binding(model, binding, options)
+        or model.reached_from_outside(binding)
     ):
         return None
     if strict_mode_at(function.body) != strict_mode_at(wrapper.body):
@@ -369,7 +367,6 @@ def _read(
     wrapper: JsFunctionDeclaration | JsFunctionExpression,
     root: JsScript,
     model: SemanticModel,
-    options: object,
 ) -> _Flattened | None:
     """
     The wrapper *wrapper* read with its flat function, or `None` where it is not one. The wrapper
@@ -421,7 +418,7 @@ def _read(
         or object_binding.declarations != [object_name]
     ):
         return None
-    flat = _moving_function(model.resolve(callee), callee, wrapper, root, model, options)
+    flat = _moving_function(model.resolve(callee), callee, wrapper, root, model)
     if flat is None or flat.id is None or flat.body is None:
         return None
     flat_statements = list(flat.body.body)
@@ -529,7 +526,6 @@ def _plan(
     wrapper: JsFunctionDeclaration | JsFunctionExpression,
     root: JsScript,
     cache: ModelCache,
-    options: object,
 ) -> _Plan | None:
     """
     The edit that puts the flat function of *wrapper* back into it, or `None` where the body would
@@ -551,7 +547,7 @@ def _plan(
     parameter list keeps the `length` of 0 the wrapper has wherever something may read it.
     """
     model = cache.model
-    reading = _read(wrapper, root, model, options)
+    reading = _read(wrapper, root, model)
     if reading is None:
         return None
     flat = reading.flat
@@ -609,7 +605,7 @@ def _plan(
         and not unpacking_moves_into_parameters(model, reading.pattern, flat, [parameter])
     ):
         return None
-    length = None if every_call_shown(model, wrapper, options) else 0
+    length = None if model.reached_only_by_shown_calls(wrapper) else 0
     parameters = parameter_list(reading.pattern.elements, wrapper, length)
     if parameters is None:
         return None
@@ -620,7 +616,6 @@ def _forwarded(
     wrapper: JsFunctionDeclaration | JsFunctionExpression,
     root: JsScript,
     cache: ModelCache,
-    options: object,
 ) -> _Forwarded | None:
     """
     The edit that puts the parameters and the body of `G` back into the forwarder *wrapper*,
@@ -668,7 +663,7 @@ def _forwarded(
         return None
     if not cache.trust_at(call).chain(list):
         return None
-    target = _moving_function(model.resolve(callee), callee, wrapper, root, model, options)
+    target = _moving_function(model.resolve(callee), callee, wrapper, root, model)
     if target is None or target.body is None:
         return None
     if (
@@ -681,7 +676,7 @@ def _forwarded(
         return None
     if not _names_land(target, wrapper_scope, model, [own_arguments]):
         return None
-    if every_call_shown(model, wrapper, options):
+    if model.reached_only_by_shown_calls(wrapper):
         parameters: ParameterList | None = ParameterList(list(target.params), [])
     else:
         parameters = parameter_list(target.params, target, 0)
@@ -707,9 +702,9 @@ class JsFunctionUnflattening(ScriptLevelTransformer):
             for function in node.walk():
                 if not isinstance(function, (JsFunctionDeclaration, JsFunctionExpression)):
                     continue
-                plan = _plan(function, node, cache, self.options)
+                plan = _plan(function, node, cache)
                 if plan is None:
-                    plan = _forwarded(function, node, cache, self.options)
+                    plan = _forwarded(function, node, cache)
                 if plan is not None:
                     plans.append(plan)
         taken = _apart(plans)

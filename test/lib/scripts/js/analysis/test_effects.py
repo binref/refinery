@@ -17,6 +17,7 @@ from refinery.lib.scripts.js.analysis.effects import (
     container_literal_access_is_plain,
     object_member_access_runs_accessor,
 )
+from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.model import (
@@ -151,6 +152,52 @@ class TestEffectModel(TestBase):
         ast, effects = self._effects('export function f() {} f();')
         self.assertTrue(effects.function_escapes(self._func(ast, 'f')))
 
+    def test_a_function_whose_body_runs_where_no_call_of_its_name_shows_escapes(self):
+        for label, source in {
+            'a generator'                         : 'function* f() {} f().next();',
+            'an async generator'                  : 'async function* f() {} f().next();',
+            'a call through the global object'    : 'function f() {} globalThis.f();',
+            'a call through the caller of another': 'function g() { g.caller(); } function f() { g(); } f();',
+            'a call through its own arguments'    : 'function f(n) { if (n) arguments.callee(0); } f(1);',
+            'a construction through new.target'   : 'function f() { if (new.target) new new.target(); } new f();',
+        }.items():
+            with self.subTest(label):
+                ast, effects = self._effects(source)
+                self.assertTrue(effects.function_escapes(self._func(ast, 'f')))
+
+    def test_a_function_a_host_calls_by_name_escapes_where_the_name_is_a_global(self):
+        for kind, expected in ((FileKind.script, True), (FileKind.commonjs, False)):
+            with self.subTest(kind.name):
+                ast = JsParser('function f() {} f();').parse()
+                model = build_semantic_model(ast, file_kind=kind, host_entrypoint=lambda name: name == 'f')
+                self.assertEqual(build_effects(model).function_escapes(self._func(ast, 'f')), expected)
+
+    def test_a_write_a_callee_makes_to_a_local_of_its_caller_is_no_effect_of_the_caller(self):
+        source = 'function f() { var n = 0; function inc() { n = n + 1; } inc(); return n; } f();'
+        summary = self._summary(source, 'f')
+        self.assertEqual(
+            (summary.captured_writes, summary.written_bindings, summary.is_pure),
+            (set(), set(), True),
+        )
+
+    def test_a_write_a_function_called_where_it_stands_makes_to_a_local_of_its_caller_is_no_effect_of_the_caller(self):
+        source = 'function f() { var n = 0; void function () { n = n + 1; }(); return n; } f();'
+        summary = self._summary(source, 'f')
+        self.assertEqual(
+            (summary.captured_writes, summary.written_bindings, summary.is_pure),
+            (set(), set(), True),
+        )
+
+    def test_a_write_to_a_local_a_closure_outliving_the_run_reaches_is_an_effect_of_the_caller(self):
+        source = (
+            'var saved; function f() { var n = 0; function inc() { n = n + 1; }'
+            ' saved = function () { inc(); }; inc(); return n; } f();'
+        )
+        ast, effects = self._effects(source)
+        summary = effects.summary_of(self._func(ast, 'f'))
+        n = self._binding(ast, effects.model, 'n')
+        self.assertEqual((summary.captured_writes, summary.written_bindings), ({n}, {n}))
+
     def test_a_tagged_template_runs_its_tag(self):
         ast, effects = self._effects(
             'var x = 0; function t(s) { x = 1; } function g() { t`a`; } g(); console.log(x);'
@@ -271,13 +318,12 @@ class TestEffectModel(TestBase):
 
     def test_mutated_bindings_records_confined_but_read_write(self):
         """
-        Every reference to `x` is confined to `f`, so the write is unobservable outside it and `f` stays
-        pure; the write still changes `x` between the two reads inside `f`, so `x` is a mutated binding.
+        Every reference to `x` lies in `f`, and the write changes `x` between the two reads inside
+        `f`, so `x` is a mutated binding.
         """
         ast, effects = self._effects('var x = 1; function f(){ var a = x; x = 2; var b = x; }')
         f = self._func(ast, 'f')
         x = self._binding(ast, effects.model, 'x')
-        self.assertTrue(effects.summary_of(f).is_pure)
         self.assertEqual(effects.mutated_bindings(f), frozenset({x}))
 
     def test_call_to_redeclared_function_is_unknown(self):
@@ -303,15 +349,16 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.global_pristine)
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
-    def test_write_to_function_confined_global_is_not_a_global_write(self):
+    def test_write_to_a_global_only_one_function_names_is_a_global_write(self):
         """
-        Every reference to `acc` lies inside `f`, so no code outside can observe the assignment and
-        it is not counted as a global write. Purity is a separate question about the same name:
-        `acc` is an implicit global, which comes into existence only once an assignment to it has
-        run, and a flow-insensitive summary cannot put the write in front of the read.
+        Every reference to `acc` lies inside `f`, and the assignment creates a property of the
+        global object all the same, which outlives the call. Throwing is a separate question about
+        the same name: `acc` is an implicit global, which comes into existence only once an
+        assignment to it has run, and a flow-insensitive summary cannot put the write in front of
+        the read.
         """
         summary = self._summary('function f(n){ acc = 0; acc = acc + n; return acc; }', 'f')
-        self.assertFalse(summary.writes_global)
+        self.assertTrue(summary.writes_global)
         self.assertTrue(summary.throws)
 
     def test_confined_global_read_in_another_function_is_impure(self):
@@ -2050,8 +2097,8 @@ class TestCallIsFoldable(TestBase):
 
     def test_callback_writing_a_script_scope_var_is_refused(self):
         """
-        The write reports `writes_captured=False`, because the binding is not captured from the callback's
-        perspective, so purity alone admits it and the write would be lost. `written_bindings` catches it.
+        Every reference of `n` lies in the callback, and the write is a global write all the same:
+        each call of the callback reads what the one before it stored.
         """
         self.assertFalse(self._foldable(
             'var n = 0; var r = [1, 2].map(function (x) { n += x; return x; });', list))
@@ -2907,6 +2954,27 @@ class TestAFunctionHandedOnConvertsToItsTextUnlessAnInstallReachesIt(TestBase):
         )
         self.assertFalse(self._untouched_on_the_settled_tree(self.PREFIX, helper, self.SHOW))
 
+    def test_a_function_converts_to_its_text_beside_a_constructor_installing_on_the_object_it_builds(self):
+        hook = F'function P(t) {{ this.toString = {self.X}; }} new P(g[0]);'
+        self.assertTrue(self._untouched_on_the_settled_tree(self.PREFIX, hook, self.SHOW))
+
+    def test_a_function_handed_on_is_refused_where_a_constructor_installing_on_this_runs_on_it_unnamed(self):
+        x = self.X
+        for label, hook in {
+            'its own arguments': (
+                F'function P(t) {{ this.toString = {x}; if (t) arguments.callee.call(t, null); }} new P(g[0]);'
+            ),
+            'new.target': (
+                F'function P(t) {{ this.toString = {x}; if (t) new.target.call(t, null); }} new P(g[0]);'
+            ),
+            'the caller of a function it calls': (
+                'function h(t) { if (t) h.caller.call(t, null); }'
+                F' function P(t) {{ this.toString = {x}; h(t); }} new P(g[0]);'
+            ),
+        }.items():
+            with self.subTest(label):
+                self.assertFalse(self._untouched_on_the_settled_tree(self.PREFIX, hook, self.SHOW))
+
     def test_a_function_of_another_tree_converts_to_its_text_only_as_an_unnamed_expression_converted_in_place(self):
         ast = JsParser(F'{self.PREFIX} {self.SHOW}').parse()
         settlement = ConversionSettlement()
@@ -2991,13 +3059,15 @@ def _call_summary(source: str, name: str = '') -> EffectSummary:
     raise AssertionError(F'no function named {name} in {source}')
 
 
-def _without_binding_identity(summary: EffectSummary) -> EffectSummary:
+def _without_binding_identity(summary: EffectSummary) -> tuple[EffectSummary, dict[str, set[str]]]:
     """
-    *summary* with `EffectSummary.written_bindings` emptied. That set names `Binding` objects by
-    identity, so summaries taken from two parses of two programs can never compare equal through it,
-    however alike the effects they record are.
+    *summary* with every set of `Binding` objects emptied, and beside it the names of the bindings
+    each set held. Those sets name bindings by identity, so summaries taken from two parses of two
+    programs can never compare equal through them, however alike the effects they record are.
     """
-    return replace(summary, written_bindings=set())
+    sets = ('captured_writes', 'written_bindings', 'dead_zone_reads')
+    names = {name: {binding.name for binding in getattr(summary, name)} for name in sets}
+    return replace(summary, captured_writes=set(), written_bindings=set(), dead_zone_reads=set()), names
 
 
 class TestAClassBodysMemberNamesAreNotReads(TestBase):

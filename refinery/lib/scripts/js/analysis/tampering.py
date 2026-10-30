@@ -61,11 +61,9 @@ from refinery.lib.scripts.js.analysis.model import (
     is_member_write_target,
     is_unread_source,
     member_property_name,
-    own_arguments_binding,
 )
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
-    JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsCallExpression,
     JsExpressionStatement,
@@ -83,17 +81,11 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
     wraps_return,
 )
-from refinery.lib.scripts.js.strict import strict_mode_at
 
 #: How many name-to-value hops the recognizer follows in search of the `Function` intrinsic. A
 #: chain longer than any real spelling of it is a cycle, and the limit answers undecided
 #: before walking it.
 _CONSTRUCTOR_ALIAS_LIMIT = 8
-
-#: The re-entry spellings: a member read that may return the function it is read on, so a
-#: textual invocation count cannot bound how often the activation runs.
-_REENTRY_KEYS = frozenset({'callee', 'caller'})
-
 
 def _static_member_key(member: JsMemberExpression) -> str | None:
     """
@@ -105,36 +97,6 @@ def _static_member_key(member: JsMemberExpression) -> str | None:
     if member.computed:
         return prop.value if isinstance(prop, JsStringLiteral) and prop.terminated else None
     return prop.name if isinstance(prop, JsIdentifier) else None
-
-
-def _may_read_reentry_key(member: JsMemberExpression, model: SemanticModel) -> bool:
-    """
-    Whether *member* may read one of the re-entry keys — a property whose value is the function
-    the access is made on, so reading it hands out a way to run that function again that no
-    textual invocation count sees. A statically spelled key counts whether the access writes it
-    as a dot or inside brackets. An unknown key counts only where the base is the `arguments`
-    object the enclosing function was given, whose `callee` property is the function itself: on
-    any other base an unknown key designates a property of that object, so a list dispatched by
-    index stays clear. A strict function's `arguments` object has no `callee` property at all,
-    and a name the function displaced — bound to a value of its own — is not that object.
-    """
-    static_key = _static_member_key(member)
-    if static_key in _REENTRY_KEYS:
-        return True
-    if not member.computed or static_key is not None:
-        return False
-    base = strip_parens(member.object)
-    if not isinstance(base, JsIdentifier):
-        return False
-    binding = model.resolve(base)
-    if binding is None:
-        return False
-    fn = enclosing_function(member)
-    while isinstance(fn, JsArrowFunctionExpression):
-        fn = enclosing_function(fn)
-    if fn is None or strict_mode_at(fn):
-        return False
-    return binding is own_arguments_binding(model, fn)
 
 
 def denotes_function_intrinsic(
@@ -374,18 +336,14 @@ class TamperingModel:
         effects: EffectModel,
         dominance: DominanceModel,
         control_flow: ControlFlowModel,
-        *,
-        entrypoint: Callable[[str], bool] | None = None,
     ):
         self.model = model
         self.effects = effects
         self.dominance = dominance
         self._cycles = CycleModel(control_flow)
-        self._entrypoint = entrypoint
         self._site_list: list[Node] | None = None
         self._sites_unenumerable = False
         self._program_wide: bool | None = None
-        self._reentry_read: bool | None = None
         self._anchor_cache: dict[int, bool] = {}
         self._invocation_cache: dict[int, _Flow] = {}
         self._positioned_cache: dict[tuple[int, int], Node | None] = {}
@@ -520,12 +478,12 @@ class TamperingModel:
         Whether *anchor* executes at most once: its own control-flow node is off a cycle, and
         every activation up to the script root is invoked at most once — exactly one
         alias-resolved invocation site, off a cycle, not lexically inside the function it invokes.
-        A potential `callee`/`caller` read anywhere breaks it (self-reference no textual count
-        sees), and so does an activation the host may invoke freely or that reflective code in its
-        own scope could re-invoke by name.
+        An activation that may be called without its name, through the `caller` of another
+        function, its own `arguments` or `new.target`
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_its_name`), breaks
+        it: it runs again where no textual count sees it. So does an activation the host may invoke
+        freely or that reflective code in its own scope could re-invoke by name.
         """
-        if self._has_reentry_read():
-            return False
         located = self.dominance.locate(anchor)
         if located is None:
             return False
@@ -537,6 +495,8 @@ class TamperingModel:
             if id(function) in seen:
                 return False
             seen.add(id(function))
+            if self.model.reached_without_its_name(function):
+                return False
             flow = self._invocations_of(function)
             if flow.escapes or len(flow.invocations) != 1:
                 return False
@@ -562,15 +522,17 @@ class TamperingModel:
     def _invocation_enumeration_is_complete(self, function: Node) -> bool:
         """
         Whether nothing can run *function* through a channel the invocation enumeration never saw:
-        a host entrypoint pattern, a script-scope name under any opaque surface (executable text in
-        the global scope can re-invoke it by name), or a function-local name reflection can reach in
-        its own scope. A function whose enumeration is complete is one whose listed invocations are
-        every way its body runs.
+        code outside the file
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.callable_from_outside`), a
+        script-scope name under any opaque surface (executable text in the global scope can
+        re-invoke it by name), or a function-local name reflection can reach in its own scope. A
+        function whose enumeration is complete is one whose listed invocations are every way its
+        body runs.
         """
+        if self.model.callable_from_outside(function):
+            return False
         names = self.model.function_names(function)
         for binding in () if names is None else names.bindings:
-            if self._entrypoint is not None and self._entrypoint(binding.name):
-                return False
             owner = binding.scope.var_scope
             if owner is None or owner.kind is ScopeKind.SCRIPT:
                 if self.model.has_reflection_surface():
@@ -616,14 +578,6 @@ class TamperingModel:
             cached = self._flow(frontier, through_constructions=False)
             self._invocation_cache[id(function)] = cached
         return cached
-
-    def _has_reentry_read(self) -> bool:
-        if self._reentry_read is None:
-            self._reentry_read = any(
-                isinstance(node, JsMemberExpression) and _may_read_reentry_key(node, self.model)
-                for node in self.model.root.walk()
-            )
-        return self._reentry_read
 
     def _flow(self, frontier: list[Node], *, through_constructions: bool) -> _Flow:
         """
@@ -890,13 +844,10 @@ def build_tampering(
     effects: EffectModel,
     dominance: DominanceModel,
     control_flow: ControlFlowModel,
-    *,
-    entrypoint: Callable[[str], bool] | None = None,
 ) -> TamperingModel:
     """
     Build the `TamperingModel` for a script's analysis models, reusing *dominance* and
-    *control_flow* the caller already holds. *entrypoint* reports whether a name matches a host
-    entrypoint pattern, so the multiplicity guard can refuse an activation the host may invoke an
-    unbounded number of times.
+    *control_flow* the caller already holds. The host entry points the multiplicity guard refuses
+    are the ones *model* was built under.
     """
-    return TamperingModel(model, effects, dominance, control_flow, entrypoint=entrypoint)
+    return TamperingModel(model, effects, dominance, control_flow)

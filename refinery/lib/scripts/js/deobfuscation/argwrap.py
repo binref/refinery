@@ -52,7 +52,7 @@ class _Wrapper(NamedTuple):
     calls: list[JsCallExpression]
 
 
-def _admitted_wrappers(cache: ModelCache, root: JsScript, options: object) -> list[_Wrapper]:
+def _admitted_wrappers(cache: ModelCache, root: JsScript) -> list[_Wrapper]:
     """
     The self-disabling wrappers of *root* the pass may expand, each with the calls that reach it.
 
@@ -77,7 +77,7 @@ def _admitted_wrappers(cache: ModelCache, root: JsScript, options: object) -> li
         binding = model.binding_of(node.id)
         if binding is None:
             continue
-        calls = self_disabling_wrapper_calls(model, binding, options)
+        calls = self_disabling_wrapper_calls(model, binding)
         if not calls:
             continue
         wrappers.append(_Wrapper(node, calls))
@@ -134,7 +134,7 @@ class JsAssignmentsAsFunctionArgs(ScriptLevelTransformer):
         return False
 
     def _process_script(self, node: JsScript):
-        wrappers = _admitted_wrappers(model_cache(self, node), node, self.options)
+        wrappers = _admitted_wrappers(model_cache(self, node), node)
         if not wrappers:
             return
         reached = {id(call) for wrapper in wrappers for call in wrapper.calls}

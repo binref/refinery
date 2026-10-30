@@ -39,8 +39,6 @@ to a least fixpoint, so no fact ever rests on itself.
 """
 from __future__ import annotations
 
-from typing import Callable
-
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.js.analysis.cfg import (
     CfgNode,
@@ -116,22 +114,19 @@ class DefiniteAssignmentModel:
     `refinery.lib.scripts.analysis.cfg.ControlFlowModel`; query with `definitely_assigned_at`.
     A bare write establishes a global only in code that cannot run as strict code, and a member
     write through a top-level `this` only where the file is a script; the semantic model answers
-    both for the file it was built over.
-    *host_entrypoint* names the top-level functions the analyst declared a host invokes by name;
-    such a function has a call site outside the file, so the meet over its spelled call sites does
-    not bound its entry facts and it gets none.
+    both for the file it was built over. A function code outside the file reaches by name
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`) has a call site
+    outside the file, so the meet over its spelled call sites does not bound its entry facts and
+    it gets none.
     """
 
     def __init__(
         self,
         model: SemanticModel,
         control_flow: ControlFlowModel | None = None,
-        *,
-        host_entrypoint: Callable[[str], bool] | None = None,
     ):
         self.model = model
         self._flow = control_flow if control_flow is not None else build_control_flow_model(model.root)
-        self._host_entrypoint = host_entrypoint
         self._tracked: dict[int, Binding] = {}
         self._by_name: dict[str, Binding] = {}
         for binding in model.root_scope.bindings.values():
@@ -392,7 +387,7 @@ class DefiniteAssignmentModel:
         for binding in names.bindings:
             if binding.dynamic_refs or not self.model.binding_pinned_to(binding, owner):
                 return frozenset()
-            if self._host_entrypoint is not None and self._host_entrypoint(binding.name):
+            if self.model.reached_from_outside(binding):
                 return frozenset()
             for read in names.reads_of(binding):
                 if not is_invocation_target(read):
@@ -671,7 +666,5 @@ class DefiniteAssignmentModel:
 def build_definite_assignment(
     model: SemanticModel,
     control_flow: ControlFlowModel | None = None,
-    *,
-    host_entrypoint: Callable[[str], bool] | None = None,
 ) -> DefiniteAssignmentModel:
-    return DefiniteAssignmentModel(model, control_flow, host_entrypoint=host_entrypoint)
+    return DefiniteAssignmentModel(model, control_flow)

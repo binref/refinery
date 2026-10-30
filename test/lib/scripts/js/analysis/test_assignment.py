@@ -27,8 +27,8 @@ class TestDefiniteAssignment(TestBase):
         host_entrypoint: Callable[[str], bool] | None = None,
     ) -> bool:
         ast = JsParser(source).parse()
-        model = build_semantic_model(ast, file_kind=file_kind)
-        assignment = build_definite_assignment(model, host_entrypoint=host_entrypoint)
+        model = build_semantic_model(ast, file_kind=file_kind, host_entrypoint=host_entrypoint)
+        assignment = build_definite_assignment(model)
         for node in ast.walk():
             if (
                 isinstance(node, JsCallExpression)

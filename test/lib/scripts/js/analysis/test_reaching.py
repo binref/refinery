@@ -6,8 +6,11 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.model import Binding
 from refinery.lib.scripts.js.model import (
+    JsAssignmentExpression,
     JsAwaitExpression,
+    JsBreakStatement,
     JsCallExpression,
+    JsForOfStatement,
     JsFunctionDeclaration,
     JsIdentifier,
     JsReturnStatement,
@@ -405,3 +408,39 @@ class TestReaching(TestBase):
             'var x; function m() { x = 0; } g(m); function f() { x = 1; return x; }'
         )
         self.assertIsNone(sites)
+
+    def test_every_exit_of_a_for_await_body_is_a_foreign_kill(self):
+        ast, sites = self._foreign_kills(
+            'var x; async function f(v) {'
+            ' x = v; for await (var e of [0]) { if (v) break; if (e) return 1; } return x; }'
+        )
+        loop = next(node for node in ast.walk_in_order() if isinstance(node, JsForOfStatement))
+        exit_by_break = next(node for node in ast.walk_in_order() if isinstance(node, JsBreakStatement))
+        exit_by_return = next(node for node in ast.walk_in_order() if isinstance(node, JsReturnStatement))
+        assert sites is not None
+        self.assertCountEqual(sites, [loop, exit_by_break, exit_by_return])
+
+    def test_a_continue_to_the_head_of_a_for_await_loop_is_no_foreign_kill(self):
+        ast, sites = self._foreign_kills(
+            'var x; async function f(v) { x = v; for await (var e of [0]) { continue; } return x; }'
+        )
+        loop = next(node for node in ast.walk_in_order() if isinstance(node, JsForOfStatement))
+        self.assertEqual(sites, [loop])
+
+    def test_foreign_kills_cannot_be_listed_for_a_for_await_loop_the_graph_cannot_place(self):
+        _, sites = self._foreign_kills(
+            'var x; async function f(v) {'
+            ' x = v; if (v) for await (var e of [0]) { break; } return x; }'
+        )
+        self.assertIsNone(sites)
+
+    def test_the_value_does_not_reach_past_a_call_of_the_function_through_its_arguments(self):
+        source = 'var x; function f(n) { x = n; if (n) arguments.callee(n - 1); return x; } f(2);'
+        cache = ModelCache(JsParser(source).parse())
+        store = next(node for node in cache.root.walk() if isinstance(node, JsAssignmentExpression))
+        returned = next(node for node in cache.root.walk() if isinstance(node, JsReturnStatement))
+        read = returned.argument
+        assert isinstance(store.left, JsIdentifier) and store.right is not None and read is not None
+        binding = cache.model.resolve(store.left)
+        assert binding is not None
+        self.assertFalse(cache.reaching.value_preserved(binding, store.right, read))

@@ -346,7 +346,7 @@ def _declared_outside(model: SemanticModel, function: Node, callee: Node | None)
     return binding is None or not binding.declared_within(function)
 
 
-def _decoder(model: SemanticModel, held: _Held, options: object) -> _Decoder | None:
+def _decoder(model: SemanticModel, held: _Held) -> _Decoder | None:
     """
     The decoder *held* is, when it is the decoder template: its alphabet is the one string literal
     of its own that is a base91 alphabet, and the call it returns through calls a function it does
@@ -377,7 +377,7 @@ def _decoder(model: SemanticModel, held: _Held, options: object) -> _Decoder | N
         return None
     nodes = {id(node): 'ALPHABET' for node in alphabets}
     nodes[id(call.callee)] = 'BUFFER'
-    if not matches(model, function, _DECODER_TEMPLATES, {}, options, nodes):
+    if not matches(model, function, _DECODER_TEMPLATES, {}, nodes):
         return None
     return _Decoder(held, values.pop())
 
@@ -622,7 +622,6 @@ def _is_accessor(
     function: JsFunctionNode,
     kind: _Kind,
     parts: _Parts,
-    options: object,
 ) -> bool:
     """
     Whether *function* has the normal form of a template of *kind*, with the names and the literal
@@ -636,7 +635,7 @@ def _is_accessor(
         nodes[id(parts.table)] = 'TABLE'
     if parts.cache is not None:
         placeholders[id(parts.cache)] = 'CACHE'
-    return matches(model, function, kind.templates, placeholders, options, nodes)
+    return matches(model, function, kind.templates, placeholders, nodes)
 
 
 def _accessor(
@@ -644,7 +643,6 @@ def _accessor(
     held: _Held,
     decoders: dict[int, _Decoder],
     tables: dict[tuple[int, int], _Table | None],
-    options: object,
 ) -> _Accessor | None:
     """
     The accessor *held* is, when it is an accessor template over a decoder of *decoders* and a table
@@ -657,7 +655,7 @@ def _accessor(
     kind, parts = found
     if (decoder := decoders.get(id(parts.decoder))) is None:
         return None
-    if not _is_accessor(model, held.function, kind, parts, options):
+    if not _is_accessor(model, held.function, kind, parts):
         return None
     if not kind.called(model, held.names):
         return None
@@ -668,7 +666,7 @@ def _accessor(
     return _Accessor(held, decoder, parts.decoder, table, parts.cache)
 
 
-def _cache_confined(model: SemanticModel, cache: Binding, options: object) -> bool:
+def _cache_confined(model: SemanticModel, cache: Binding) -> bool:
     """
     Whether nothing but an accessor keeping *cache* reads or writes it: every reference, a `with`
     body's included, lies in its declarator, in a write establishing its value, or in a function
@@ -693,7 +691,7 @@ def _cache_confined(model: SemanticModel, cache: Binding, options: object) -> bo
             known = accessors[id(function)] = (
                 found is not None
                 and found[1].cache is cache
-                and _is_accessor(model, function, *found, options)
+                and _is_accessor(model, function, *found)
                 and found[0].called(model, model.function_names(function))
             )
         if not known:
@@ -812,7 +810,7 @@ class JsBase91StringDecoder(ScriptLevelTransformer):
         held = list(_held_functions(model, node))
         decoders: dict[int, _Decoder] = {}
         for item in held:
-            if (decoder := _decoder(model, item, self.options)) is not None:
+            if (decoder := _decoder(model, item)) is not None:
                 decoders.update((id(name), decoder) for name in item.names.bindings)
         if not decoders:
             return
@@ -823,12 +821,12 @@ class JsBase91StringDecoder(ScriptLevelTransformer):
         for item in held:
             if id(item.names.own) in decoders:
                 continue
-            if (accessor := _accessor(cache.effects, item, decoders, tables, self.options)) is None:
+            if (accessor := _accessor(cache.effects, item, decoders, tables)) is None:
                 continue
             accessors.append(accessor)
             if accessor.cache is not None:
                 if (known := confined.get(id(accessor.cache))) is None:
-                    known = confined[id(accessor.cache)] = _cache_confined(model, accessor.cache, self.options)
+                    known = confined[id(accessor.cache)] = _cache_confined(model, accessor.cache)
                 if not known:
                     continue
             replacements.extend(_decoded_calls(cache.dominance, accessor))
@@ -921,7 +919,7 @@ class _Decoys(NamedTuple):
     calls: list[tuple[JsCallExpression, JsIdentifier, JsNumericLiteral]]
 
 
-def _decoys(effects: EffectModel, function: JsFunctionNode, options: object) -> _Decoys | None:
+def _decoys(effects: EffectModel, function: JsFunctionNode) -> _Decoys | None:
     """
     The decoys of *function* and its calls written through `call` or `apply`, when it is the decoyed
     accessor and no decoy can run: the name holding it holds nothing but what a decoy stores, the
@@ -950,7 +948,7 @@ def _decoys(effects: EffectModel, function: JsFunctionNode, options: object) -> 
         id(parts.cache): 'CACHE',
         id(parts.table): 'TABLE',
     }
-    if (found := match(model, function, (_DECOYED_ACCESSOR,), placeholders, options)) is None:
+    if (found := match(model, function, (_DECOYED_ACCESSOR,), placeholders)) is None:
         return None
     _, fit = found
     if len(decoder.declarations) != 1:
@@ -1001,7 +999,7 @@ class JsBase91AccessorDecoys(ScriptLevelTransformer):
         effects = model_cache(self, node).effects
         found: list[_Decoys] = []
         for function in candidates:
-            if (decoys := _decoys(effects, function, self.options)) is not None:
+            if (decoys := _decoys(effects, function)) is not None:
                 found.append(decoys)
         if not found:
             return

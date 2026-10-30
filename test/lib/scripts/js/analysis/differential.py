@@ -156,10 +156,10 @@ def deobfuscate_within(source: str, seconds: float) -> str | None:
     return out.decode('utf-8')
 
 
-def _as_global_script(source: str, calls: tuple[str, ...]) -> str:
+def _as_global_script(source: str, calls: tuple[str, ...], prelude: str = '') -> str:
     """
     Wrap *source* so it runs under the *script* execution model and then invoke each name in *calls* as
-    a host would.
+    a host would. The host code *prelude* runs first, setting up the global object the script finds.
 
     `node file.js` runs a CommonJS module, where a top-level `var`/`function` is scoped to the module,
     so `behavior` alone cannot observe anything about the global object. Indirect `eval` runs its
@@ -172,10 +172,9 @@ def _as_global_script(source: str, calls: tuple[str, ...]) -> str:
     afterwards through `globalThis` is what turns the deletion into an observable difference, with Node
     rather than our own reading of the specification deciding what the difference is.
     """
-    lines = [
-        'const globalEval = eval;',
-        F'globalEval({json.dumps(source)});',
-    ]
+    lines = [prelude] if prelude else []
+    lines.append('const globalEval = eval;')
+    lines.append(F'globalEval({json.dumps(source)});')
     for name in calls:
         key = json.dumps(name)
         lines.append(
@@ -189,13 +188,15 @@ def host_behavior(
     source: str,
     *,
     calls: tuple[str, ...] = (),
+    prelude: str = '',
     timeout: float = NODE_TIMEOUT,
 ) -> tuple[str, str | None]:
     """
     The observable behavior of *source* run as a classic global script, including the results of the
-    host calling each name in *calls* once loading finishes. Same return shape as `behavior`.
+    host calling each name in *calls* once loading finishes. The host code *prelude* runs before the
+    script. Same return shape as `behavior`.
     """
-    return behavior(_as_global_script(source, calls), timeout=timeout)
+    return behavior(_as_global_script(source, calls, prelude), timeout=timeout)
 
 
 def behavior(

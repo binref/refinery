@@ -412,12 +412,11 @@ def template_form(template: Template) -> Shape:
     )
 
 
-def empty_functions_called(model: SemanticModel, function: Node, options: object) -> set[int]:
+def empty_functions_called(model: SemanticModel, function: Node) -> set[int]:
     """
     The names *function* calls whose calls do nothing but evaluate their arguments, the wrapper the
     obfuscator puts around a sequence of statements, by the identity of their binding: a name
-    holding one function with no parameters and an empty body, and a self-disabling wrapper of the
-    run *options* describe
+    holding one function with no parameters and an empty body, and a self-disabling wrapper
     (`refinery.lib.scripts.js.deobfuscation.helpers.self_disabling_wrapper_calls`), which empties
     itself on its first call.
     """
@@ -432,7 +431,7 @@ def empty_functions_called(model: SemanticModel, function: Node, options: object
         value = model.singular_value(binding)
         if (
             (isinstance(value, FUNCTION_NODES) and not value.params and statement_list_of(value) == [])
-            or self_disabling_wrapper_calls(model, binding, options) is not None
+            or self_disabling_wrapper_calls(model, binding) is not None
         ):
             empty.add(id(binding))
     return empty
@@ -443,7 +442,6 @@ def match(
     function: JsFunctionNode,
     templates: Iterable[Template],
     placeholders: dict[int, str],
-    options: object,
     nodes: dict[int, str] | None = None,
     left_out: Collection[Node] = (),
 ) -> tuple[Template, tuple[int, ...]] | None:
@@ -452,13 +450,12 @@ def match(
     the nodes *nodes* maps standing for the placeholders they are mapped to, and the statements of
     *left_out* left out; with it, which statement of the template each statement of the body of
     *function* is (`Shape.fit`). A function whose number of parameters no template has is refused
-    before its form is built, which costs a copy of the whole function. *options* describe the run,
-    which decides whether a host may reach a wrapper the function calls (`empty_functions_called`).
+    before its form is built, which costs a copy of the whole function.
     """
     templates = list(templates)
     if all(len(function.params) != len(template_form(template).params) for template in templates):
         return None
-    empty = empty_functions_called(model, function, options)
+    empty = empty_functions_called(model, function)
     form = NormalForm(model, placeholders, empty, nodes, left_out).of(function)
     if form is None:
         return None
@@ -473,11 +470,10 @@ def matches(
     function: JsFunctionNode,
     templates: Iterable[Template],
     placeholders: dict[int, str],
-    options: object,
     nodes: dict[int, str] | None = None,
     left_out: Collection[Node] = (),
 ) -> bool:
     """
     Whether *function* has the normal form of one of *templates* (`match`).
     """
-    return match(model, function, templates, placeholders, options, nodes, left_out) is not None
+    return match(model, function, templates, placeholders, nodes, left_out) is not None

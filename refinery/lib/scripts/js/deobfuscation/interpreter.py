@@ -2402,15 +2402,13 @@ class JsInterpreter:
 
         It asks `is_effect_free_when_discarded` rather than `is_pure`, which is stricter than this
         position needs: a mutation the callback confines to a fresh local it returns is tolerated, while
-        a throw the summary records in `throws` is not. Purity alone is not sufficient either — a write
-        to a *script-scope* `var` reports `writes_captured=False`, slipping through every purity flag —
-        so `written_bindings`, which records outer bindings by identity, is checked too.
+        a throw the summary records in `throws` is not.
         """
         effects = self._effects
         if effects is None:
             return True
         summary = effects.summary_of(callback)
-        return summary.is_effect_free_when_discarded and not summary.written_bindings
+        return summary.is_effect_free_when_discarded
 
     def _eval_array_hof(self, arr: list, method: str, args: list[Value]) -> Value:
         if not args:

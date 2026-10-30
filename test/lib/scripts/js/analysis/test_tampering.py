@@ -28,7 +28,7 @@ from refinery.lib.scripts.js.model import (
     JsUnaryExpression,
     strip_parens,
 )
-from refinery.lib.scripts.js.options import DeobfuscationOptions
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from test import TestBase, a_property_of_the_pin_itself
 
@@ -189,6 +189,27 @@ _A_SITE_BEFORE_THE_ANCHOR = {
         '  arguments.callee.call(null);\n'
         '})();'
     ),
+    'a caller read under a key a table holds': (
+        'var k, v;\n'
+        'var table = ["caller"];\n'
+        'function h() { h[table[0]](); }\n'
+        'function g() {\n'
+        '  String.fromCharCode(65);\n'
+        '  globalThis[k] = v;\n'
+        '  h();\n'
+        '}\n'
+        'g();'
+    ),
+    'a construction of the activation through new.target': (
+        'var k, v;\n'
+        'var again = true;\n'
+        'function F() {\n'
+        '  String.fromCharCode(65);\n'
+        '  globalThis[k] = v;\n'
+        '  if (again) { again = false; new new.target(); }\n'
+        '}\n'
+        'new F();'
+    ),
     'a parameter-base write through a handed-over global': (
         'var k, v;\nfunction t(x) { x[k] = v; }\nt(globalThis);\nString.fromCharCode(65);'
     ),
@@ -266,6 +287,27 @@ _A_SITE_THE_ANCHOR_ESCAPED = {
         'i = 0;\n'
         'g(names[i]);'
     ),
+    'a key a table holds that names no way back into the activation': (
+        'var k, v;\n'
+        'var table = ["other"];\n'
+        'function h() { h[table[0]](); }\n'
+        'function g() {\n'
+        '  String.fromCharCode(65);\n'
+        '  globalThis[k] = v;\n'
+        '  h();\n'
+        '}\n'
+        'g();'
+    ),
+    'the arguments.callee of another function': (
+        'var k, v;\n'
+        'function h() { return arguments.callee; }\n'
+        'function g() {\n'
+        '  String.fromCharCode(65);\n'
+        '  globalThis[k] = v;\n'
+        '  h();\n'
+        '}\n'
+        'g();'
+    ),
     'a runtime-keyed read off a strict arguments object': (
         'var k, v, i, out;\n'
         '(function () {\n'
@@ -337,7 +379,7 @@ class TestBuiltinsIntactAt(TestBase):
         """
         The host may invoke a named top-level function an unbounded number of times with no caller
         in the file, so its activation breaks multiplicity wherever a site exists — only under the
-        option that names it.
+        option that names it, and only where the name is a property of the global object.
         """
         source = (
             'var k, v;\n'
@@ -353,6 +395,8 @@ class TestBuiltinsIntactAt(TestBase):
         self.assertTrue(ModelCache(ast).builtins_intact_at(anchor))
         options = DeobfuscationOptions(entrypoints=('g',))
         self.assertFalse(ModelCache(ast, options).builtins_intact_at(anchor))
+        options = DeobfuscationOptions(entrypoints=('g',), execution=ExecutionModel.commonjs)
+        self.assertTrue(ModelCache(ast, options).builtins_intact_at(anchor))
 
 
 class TestTheTrustQuestionsAtAnAnchor(TestBase):

@@ -37,7 +37,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_literal,
     walk_scope,
 )
-from refinery.lib.scripts.js.deobfuscation.parameters import every_call_shown
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     JsArrayExpression,
@@ -224,15 +223,16 @@ def _names_declared_in_the_body(function: JsFunctionNode) -> set[str]:
     return declared
 
 
-def _locals(function: JsFunctionNode, cache: ModelCache, options: object) -> list[_Local] | None:
+def _locals(function: JsFunctionNode, cache: ModelCache) -> list[_Local] | None:
     """
     The parameters that end the list of *function* and become declarations of its body, last first,
     or `None` where none does. Every call of the function is one the text shows, the host's included
-    (`refinery.lib.scripts.js.deobfuscation.parameters.every_call_shown`), so nothing else passes
-    them or reads the `length`. The run is the obfuscation's only where one of them holds a
-    function stored under `if (!p)`, a shape no author writes; a run of plain or defaulted
-    parameters alone is the shape an optional argument has, and stays. A function whose body tests
-    none of its parameters that way is therefore passed over before the model is asked anything.
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_only_by_shown_calls`), so
+    nothing else passes them or reads the `length`. The run is the obfuscation's only where one of
+    them holds a function stored under `if (!p)`, a shape no author writes; a run of plain or
+    defaulted parameters alone is the shape an optional argument has, and stays. A function whose
+    body tests none of its parameters that way is therefore passed over before the model is asked
+    anything.
     """
     body = function.body
     if not isinstance(body, JsBlockStatement):
@@ -245,7 +245,7 @@ def _locals(function: JsFunctionNode, cache: ModelCache, options: object) -> lis
     ):
         return None
     model = cache.model
-    if not every_call_shown(model, function, options):
+    if not model.reached_only_by_shown_calls(function):
         return None
     declared = _names_declared_in_the_body(function)
     found: list[_Local] = []
@@ -300,7 +300,7 @@ class JsUnpassedParameters(ScriptLevelTransformer):
             for function in node.walk():
                 if not isinstance(function, FUNCTION_NODES) or not function.params:
                     continue
-                if (found := _locals(function, cache, self.options)) is not None:
+                if (found := _locals(function, cache)) is not None:
                     edits.append((function, found))
         for function, found in edits:
             body = function.body

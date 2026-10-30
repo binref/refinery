@@ -136,7 +136,6 @@ from refinery.lib.scripts.js.numbers import (
     js_string_to_number,
     to_js_number,
 )
-from refinery.lib.scripts.js.options import is_host_entrypoint
 from refinery.lib.scripts.js.strict import (
     directive_prologue,
     is_prologue_host,
@@ -2687,32 +2686,6 @@ def binding_has_references(
     return False
 
 
-def a_host_reaches_the_binding(model: SemanticModel, binding: Binding, options: object) -> bool:
-    """
-    Whether *binding* is one the analyst declared a host reaches by name — a function the host
-    invokes, or a global the host reads or may have rewritten — and one a host could actually reach:
-    a top-level declaration under the script execution model. A pattern alone does not decide it:
-    `refinery.lib.scripts.js.analysis.model.SemanticModel.reaches_global_object` is what keeps a
-    pattern from protecting a nested binding, a `let`, or anything at all under the module model,
-    where a top-level declaration never becomes a property of the global object. A file whose top
-    level holds nothing but function declarations
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.declares_only_functions`) is a library,
-    which code outside the file calls: each function it declares is reached as if the analyst had
-    named it.
-
-    A pass that could delete such a declaration, fold a read of one into its value, or relocate one
-    out of the global scope asks here before doing so, so that the answer is one predicate's rather
-    than each pass's own. A pass whose removals only ever fall on obfuscation machinery — a string
-    table, a control-flow state, an anti-debug guard, none of which an analyst names an entrypoint —
-    never reaches a binding this protects, and does not consult it.
-    """
-    if not is_host_entrypoint(options, binding.name) and not _declared_by_a_library(model, binding):
-        return False
-    if any(a_host_reaches_the_binding(model, copy.var, options) for copy in binding.copies_made):
-        return True
-    return model.reaches_global_object(binding)
-
-
 def _is_expression_wrapper(node: JsFunctionDeclaration) -> bool:
     """
     Test whether a function declaration matches the self-disabling wrapper pattern:
@@ -2871,18 +2844,18 @@ def declares_a_self_disabling_wrapper(node: JsFunctionDeclaration) -> bool:
 def self_disabling_wrapper_calls(
     model: SemanticModel,
     binding: Binding,
-    options: object,
 ) -> list[JsCallExpression] | None:
     """
     Every call through *binding* where it names a self-disabling wrapper
     (`declares_a_self_disabling_wrapper`) and each of these calls does nothing but evaluate its
-    arguments (`_the_calls_that_reach`), or `None`. A wrapper a host may reach by name
-    (`a_host_reaches_the_binding`) is none: the host may have replaced it before any of these calls
-    runs. The template matcher reads such a call as its arguments
+    arguments (`_the_calls_that_reach`), or `None`. A wrapper code outside the file may reach by
+    name (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`) is none: that
+    code may have replaced it before any of these calls runs. The template matcher reads such a
+    call as its arguments
     (`refinery.lib.scripts.js.deobfuscation.templates.empty_functions_called`), and the wrapper pass
     expands it into them (`refinery.lib.scripts.js.deobfuscation.argwrap`).
     """
-    if a_host_reaches_the_binding(model, binding, options):
+    if model.reached_from_outside(binding):
         return None
     for declared in binding.declarations:
         declaration = declared.parent
@@ -2895,19 +2868,7 @@ def self_disabling_wrapper_calls(
     return None
 
 
-def _declared_by_a_library(model: SemanticModel, binding: Binding) -> bool:
-    """
-    Whether *binding* names a function declared at the top of a file that holds nothing but
-    function declarations.
-    """
-    return model.declares_only_functions() and any(
-        isinstance(function := declaration.parent, JsFunctionDeclaration)
-        and function.parent is model.root
-        for declaration in binding.declarations
-    )
-
-
-def binding_constant(effects: EffectModel, binding: Binding, options: object) -> tuple[bool, Value]:
+def binding_constant(effects: EffectModel, binding: Binding) -> tuple[bool, Value]:
     """
     The value *binding* holds wherever it has been established, as `(True, value)`, or
     `(False, None)` where it holds no constant a read may be answered with. That is the one value
@@ -2915,13 +2876,15 @@ def binding_constant(effects: EffectModel, binding: Binding, options: object) ->
     that value denotes a primitive or an array of primitives. An array must also be a container
     nothing changes or hands out, which is
     `refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`,
-    and a binding a host may rewrite (`a_host_reaches_the_binding`) holds nothing the file decides.
-    Nor does one that code no reference records may reach under the run's execution model and trust
-    setting, `refinery.lib.scripts.js.analysis.model.SemanticModel.reflection_can_reach`: a table of
-    a script is a property of the global object that an indirect `eval` or a store under a runtime
-    key can rewrite, while a table of a module is out of reach of every such surface.
-    An array holding an array or an object is refused: an element read out of it is a container the
-    program shares between reads, where a folded read hands out a fresh copy of it.
+    and a binding code outside the file may rewrite
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`) holds nothing the
+    file decides. Nor does one that code no reference records may reach under the run's execution
+    model and trust setting,
+    `refinery.lib.scripts.js.analysis.model.SemanticModel.reflection_can_reach`: a table of a
+    script is a property of the global object that an indirect `eval` or a store under a runtime
+    key can rewrite, while a table of a module is out of reach of every such surface. An array
+    holding an array or an object is refused: an element read out of it is a container the program
+    shares between reads, where a folded read hands out a fresh copy of it.
 
     Whether the value is in place when a given read runs is an ordering question this does not ask.
     """
@@ -2929,10 +2892,10 @@ def binding_constant(effects: EffectModel, binding: Binding, options: object) ->
     known, value = denoted_value(model.singular_value(binding), model)
     if not known:
         return False, None
-    return held_constant(effects, binding, value, options)
+    return held_constant(effects, binding, value)
 
 
-def held_constant(effects: EffectModel, binding: Binding, value: Value, options: object) -> tuple[bool, Value]:
+def held_constant(effects: EffectModel, binding: Binding, value: Value) -> tuple[bool, Value]:
     """
     *value*, the one value *binding* is given, as `(True, value)` where a read of the binding may
     be answered with it, as `binding_constant` decides for the value the text spells, or
@@ -2946,7 +2909,7 @@ def held_constant(effects: EffectModel, binding: Binding, value: Value, options:
             return False, None
         if not effects.binding_is_immutable_container(binding):
             return False, None
-    if a_host_reaches_the_binding(model, binding, options):
+    if model.reached_from_outside(binding):
         return False, None
     if model.reflection_can_reach(binding):
         return False, None

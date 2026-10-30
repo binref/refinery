@@ -141,6 +141,7 @@ class ModelCache(ModelCacheBase):
             eval_is_trusted(self.options),
             self.file_kind,
             exports_are_read_outside(self.options),
+            lambda name: is_host_entrypoint(self.options, name),
         ))
 
     @property
@@ -167,15 +168,12 @@ class ModelCache(ModelCacheBase):
     @property
     def dominance(self) -> DominanceModel:
         """
-        The `refinery.lib.scripts.js.analysis.dominance.DominanceModel` for this root, built under
-        the host entrypoints the run's options select, since a function a host or an importer calls
-        has no call-site list the file can order.
+        The `refinery.lib.scripts.js.analysis.dominance.DominanceModel` for this root.
         """
         return self._lazy('_dominance', lambda: build_dominance(
             self.model,
             self.control_flow,
             intrinsic_writes=self.intrinsic_writes,
-            host_entrypoint=lambda name: is_host_entrypoint(self.options, name),
         ))
 
     @property
@@ -185,30 +183,27 @@ class ModelCache(ModelCacheBase):
     @property
     def assignment(self) -> DefiniteAssignmentModel:
         """
-        The `refinery.lib.scripts.js.analysis.assignment.DefiniteAssignmentModel` for this root,
-        built under the host entrypoints the run's options select. It is the one establishment
-        answer for implicit-global reads: every consumer in a run reads this slot,
-        so no tree is ever judged under two establishment answers at once.
+        The `refinery.lib.scripts.js.analysis.assignment.DefiniteAssignmentModel` for this root.
+        It is the one establishment answer for implicit-global reads: every consumer in a run reads
+        this slot, so no tree is ever judged under two establishment answers at once.
         """
         return self._lazy('_assignment', lambda: build_definite_assignment(
             self.model,
             self.control_flow,
-            host_entrypoint=lambda name: is_host_entrypoint(self.options, name),
         ))
 
     @property
     def tampering(self) -> TamperingModel:
         """
-        The `refinery.lib.scripts.js.analysis.tampering.TamperingModel` for this root, built under
-        the host entrypoints the run's options select — the model every anchored trust question in
-        a run shares, so no call is ever judged under two tampering verdicts at once.
+        The `refinery.lib.scripts.js.analysis.tampering.TamperingModel` for this root — the model
+        every anchored trust question in a run shares, so no call is ever judged under two
+        tampering verdicts at once.
         """
         return self._lazy('_tampering', lambda: build_tampering(
             self.model,
             self.effects,
             self.dominance,
             self.control_flow,
-            entrypoint=lambda name: is_host_entrypoint(self.options, name),
         ))
 
     def builtins_intact_at(self, anchor: Node) -> bool:

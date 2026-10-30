@@ -18,9 +18,9 @@ from refinery.lib.scripts.js.options import ExecutionModel
 
 #: Programs with a file-level `var` one function writes before it reads it, which another run of
 #: that function writes in between, mapped to what Node prints for each: the run waits at an
-#: `await`, a `yield`, the head of a `for await` loop or the `return` of an async generator, calls
-#: itself, calls code that calls it, or reads the `var` after such a call in the statement that
-#: makes it.
+#: `await`, a `yield`, the head of a `for await` loop, a point leaving the body of such a loop,
+#: which waits for its iterator to close, or the `return` of an async generator, calls itself,
+#: calls code that calls it, or reads the `var` after such a call in the statement that makes it.
 ANOTHER_RUN_WRITES: dict[str, Program] = {
     'an await': Program(
         a_program("""
@@ -61,6 +61,81 @@ ANOTHER_RUN_WRITES: dict[str, Program] = {
               x = v;
               for await (var e of [0]);
               console.log(x);
+            }
+            f(1);
+            f(2);
+            """),
+        prints('2', '2'),
+        Reading.COMMONJS,
+    ),
+    'a break out of a for await loop': Program(
+        a_program("""
+            var x;
+            async function f(v) {
+              out: {
+                for await (var e of [0]) {
+                  x = v;
+                  break out;
+                }
+                x = 0;
+              }
+              console.log(x);
+            }
+            f(1);
+            f(2);
+            """),
+        prints('2', '2'),
+        Reading.COMMONJS,
+    ),
+    'a continue of an outer loop out of a for await loop': Program(
+        a_program("""
+            var x;
+            async function f(v) {
+              outer: for (var i = 0; i < 1; i++) {
+                for await (var e of [0]) {
+                  x = v;
+                  continue outer;
+                }
+              }
+              console.log(x);
+            }
+            f(1);
+            f(2);
+            """),
+        prints('2', '2'),
+        Reading.COMMONJS,
+    ),
+    'a return out of a for await loop': Program(
+        a_program("""
+            var x;
+            async function f(v) {
+              try {
+                for await (var e of [0]) {
+                  x = v;
+                  return;
+                }
+              } finally {
+                console.log(x);
+              }
+            }
+            f(1);
+            f(2);
+            """),
+        prints('2', '2'),
+        Reading.COMMONJS,
+    ),
+    'a throw out of a for await loop caught outside it': Program(
+        a_program("""
+            var x;
+            async function f(v) {
+              try {
+                for await (var e of [0]) {
+                  x = v;
+                  throw 0;
+                }
+              } catch (error) {
+                console.log(x);
+              }
             }
             f(1);
             f(2);

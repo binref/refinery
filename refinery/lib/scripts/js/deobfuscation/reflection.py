@@ -43,7 +43,6 @@ from refinery.lib.scripts.js.analysis.tampering import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
-    a_host_reaches_the_binding,
     body_returns_undefined,
     extract_literal_value,
     get_body,
@@ -743,12 +742,14 @@ class JsReflectionInlining(ScriptLevelTransformer):
         Every question is asked of the model rebuilt after the pin, because the splices this pass
         committed are exactly what the pinned model cannot see: a spliced `eval` body or lowered timer
         that names the temporary, the handed-over global object a folded finder minted through which a
-        callee reads it as a property (both counted by `nothing_still_names`), and the name the analyst
-        declared a host reaches (`a_host_reaches_the_binding`). A reflective surface that survives the
-        pass — an `eval` this pass declined, a string timer it could not lower — can name the temporary
-        at runtime with no reference any model records, so any such site outside the candidates' own
-        constructions refuses the retirement; the constructions themselves are the one surface whose
-        code this pass parsed, which is what makes them transparent rather than opaque.
+        callee reads it as a property (both counted by `nothing_still_names`), and the name code
+        outside the file reaches
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`). A reflective
+        surface that survives the pass — an `eval` this pass declined, a string timer it could not
+        lower — can name the temporary at runtime with no reference any model records, so any such
+        site outside the candidates' own constructions refuses the retirement; the constructions
+        themselves are the one surface whose code this pass parsed, which is what makes them
+        transparent rather than opaque.
         """
         if not self._retire_candidates:
             return
@@ -772,7 +773,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         for binding, declarator, construction in candidates:
             if not nothing_still_names(model, [declarator]):
                 continue
-            if a_host_reaches_the_binding(model, binding, self.options):
+            if model.reached_from_outside(binding):
                 continue
             if any(
                 id(site) not in transparent
@@ -1336,7 +1337,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             declarator = declaration.parent
             if not isinstance(declarator, JsVariableDeclarator) or declarator.init is None:
                 return None
-            if a_host_reaches_the_binding(model, binding, self.options):
+            if model.reached_from_outside(binding):
                 return None
             declarators.append(declarator)
         region = [site, *declarators]

@@ -146,7 +146,7 @@ def _library_builds(cache: ModelCache) -> dict[int, Node]:
         if (
             isinstance(function, (JsFunctionExpression, JsArrowFunctionExpression))
             and id(function) not in builds
-            and matches(cache.model, function, _TEMPLATES, {}, cache.options)
+            and matches(cache.model, function, _TEMPLATES, {})
         ):
             builds[id(function)] = function
     return builds
@@ -160,7 +160,7 @@ def _is_the_library(cache: ModelCache, function: JsFunctionExpression | JsArrowF
     written = _WRITTEN.get(cache)
     if written is not None and written.get(id(function)) is function:
         return True
-    return matches(cache.model, function, _TEMPLATES, {}, cache.options)
+    return matches(cache.model, function, _TEMPLATES, {})
 
 
 def _library_call(cache: ModelCache, call: JsCallExpression) -> JsStringLiteral | None:

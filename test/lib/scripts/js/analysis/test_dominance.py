@@ -390,10 +390,11 @@ class TestDominance(TestBase):
         for kind, expected in ((FileKind.script, False), (FileKind.commonjs, True)):
             with self.subTest(kind.name):
                 ast = JsParser(source).parse()
-                dom = build_dominance(
-                    build_semantic_model(ast, file_kind=kind),
+                dom = build_dominance(build_semantic_model(
+                    ast,
+                    file_kind=kind,
                     host_entrypoint=lambda name: name == 'OnEvent',
-                )
+                ))
                 ordered = dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'OnEvent'))
                 self.assertEqual(ordered, expected)
 
@@ -524,10 +525,30 @@ class TestDominance(TestBase):
         for kind, expected in ((FileKind.script, False), (FileKind.commonjs, True)):
             with self.subTest(kind.name):
                 ast = JsParser(source).parse()
-                dom = build_dominance(
-                    build_semantic_model(ast, file_kind=kind),
+                dom = build_dominance(build_semantic_model(
+                    ast,
+                    file_kind=kind,
                     host_entrypoint=lambda name: name == 'handlers',
-                )
+                ))
+                method = self._method(ast, 'handlers', 'onload')
+                self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), method), expected)
+
+    def test_a_method_of_an_object_an_importer_in_an_import_cycle_reaches_is_ordered_by_its_creation(self):
+        """
+        A module in an import cycle can run code of the other module before its own body has
+        finished, as it may during `fire()`, and that code can call a method of an object the
+        module exports. A module that imports nothing is in no cycle, and an object it does not
+        export is reached by no importer.
+        """
+        cases = {
+            'import "./b.mjs"; export var handlers = {}; handlers.onload = function(){ return c; }; fire(); const c = 5;': False,
+            'export var handlers = {}; handlers.onload = function(){ return c; }; fire(); const c = 5;': True,
+            'import "./b.mjs"; var handlers = {}; handlers.onload = function(){ return c; }; fire(); const c = 5;': True,
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                ast = JsParser(source).parse()
+                dom = build_dominance(build_semantic_model(ast, file_kind=FileKind.es_module))
                 method = self._method(ast, 'handlers', 'onload')
                 self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), method), expected)
 
