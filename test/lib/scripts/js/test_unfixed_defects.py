@@ -1436,6 +1436,53 @@ class TestTheStaticStringReadsEveryConcatenationTheFoldCollapses(TestBase):
         )
 
 
+#: Programs handing an object to a built-in that never converts it, where the object converts
+#: through code the program installed, mapped to the text the deobfuscation should write: the value
+#: Node prints for each program, folded in place of the call.
+AN_OBJECT_A_BUILTIN_TAKES_WITHOUT_CONVERTING_IT = {
+    a_program("""
+        function f() { return Object.keys({toString: 1, a: 2}).length; }
+        console.log(f());
+        """): 'console.log(2);',
+    a_program("""
+        function f() { var a = []; return a.push({valueOf: 1}); }
+        console.log(f());
+        """): 'console.log(1);',
+    a_program("""
+        function f() { var o = {toString: function () { return 'x'; }}; return [o].indexOf(o); }
+        console.log(f());
+        """): 'console.log(0);',
+}
+
+
+class TestABuiltinThatConvertsNoArgumentFoldsOverAnyObject(TestBase):
+    """
+    The interpreter refuses a call of a built-in where an argument it is handed may convert through
+    code the program installed, and asks that of every argument because which arguments a built-in
+    converts is recorded nowhere. `Object.keys` reads the keys of its argument, `push` stores it and
+    `indexOf` compares it by identity, so none of them converts it, and refusing them costs the fold
+    and nothing else. The fix asks where a value is converted rather than where it is handed over,
+    which also closes `TestAnArrayMethodConvertingAnElementConsultsTheChainThatConvertsIt`.
+
+    Off the release gate: the object has to own a key named like a conversion method, or be handed
+    over after the program replaced a conversion on its prototype chain, which a program has to be
+    written for.
+    """
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_for_each_text_what_it_prints_for_the_program(self):
+        rows = AN_OBJECT_A_BUILTIN_TAKES_WITHOUT_CONVERTING_IT
+        self.assertEqual(
+            {source: behavior(source) for source in rows},
+            {source: behavior(text) for source, text in rows.items()},
+        )
+
+    @unittest.expectedFailure
+    def test_each_program_is_folded(self):
+        rows = AN_OBJECT_A_BUILTIN_TAKES_WITHOUT_CONVERTING_IT
+        self.assertEqual({source: folded(source) for source in rows}, rows)
+
+
 #: An array method converting an element of its receiver runs the conversion the element's chain
 #: supplies. Each row replaces `Object.prototype.toString` with one that returns `'x'`, so joining a
 #: plain object yields `x`.

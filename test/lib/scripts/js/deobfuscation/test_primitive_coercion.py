@@ -27,7 +27,15 @@ import unittest
 from typing import NamedTuple
 
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
-from test.lib.scripts.js.ledger import Program, Reading, before_and_after, folded, prints
+from test.lib.scripts.js.ledger import (
+    Program,
+    Reading,
+    before_and_after,
+    folded,
+    printed,
+    prints,
+    returned_from_a_body,
+)
 
 from refinery.units.scripting.djs import djs
 
@@ -201,7 +209,7 @@ class TestAPrimitiveFirstObjectSecond(unittest.TestCase):
         _assert_both_ways(self, _A_PRIMITIVE_FIRST_OBJECT_SECOND)
 
 
-_JOIN_ANSWERS_9 = "Array.prototype.join = function () { return '9'; };\n"
+_JOIN_ANSWERS_9 = 'Array.prototype.join = function () { return "9"; };\n'
 
 _VALUE_OF_ANSWERS_5 = 'Array.prototype.valueOf = function () { return 5; };\n'
 
@@ -235,7 +243,7 @@ AN_ARRAY_CONVERTED_THROUGH_A_REPLACED_CHAIN = {
         Reading.SCRIPT,
     ),
     'by a string method in a function': Program(
-        F"{_JOIN_ANSWERS_9}function f() {{ return 'a9b'.indexOf([5]); }}\nconsole.log(f());",
+        F'{_JOIN_ANSWERS_9}function f() {{ return "a9b".indexOf([5]); }}\nconsole.log(f());',
         prints('1'),
         Reading.SCRIPT,
     ),
@@ -272,7 +280,7 @@ class TestTheSameConversionsFoldWhereNothingWasReplaced(unittest.TestCase):
     ''')
 
     def test_the_constant_fold_writes_each_value(self):
-        self.assertEqual("console.log(5, 5, '5', 5, 0, 1);", folded(self._TOP_LEVEL))
+        self.assertEqual('console.log(5, 5, \'5\', 5, 0, 1);', folded(self._TOP_LEVEL))
 
     def test_the_interpreter_writes_each_value(self):
         self.assertEqual('console.log(11);', folded(self._IN_A_FUNCTION))
@@ -282,4 +290,84 @@ class TestTheSameConversionsFoldWhereNothingWasReplaced(unittest.TestCase):
         self.assertEqual(
             (before_and_after(self._TOP_LEVEL), before_and_after(self._IN_A_FUNCTION)),
             ((('5 5 5 5 0 1\n', None),) * 2, (('11\n', None),) * 2),
+        )
+
+
+#: A program handing an array that holds itself to a built-in or to an operator, mapped to what
+#: Node prints. Asking every element of such an array whether it converts would never end.
+AN_ARRAY_HOLDING_ITSELF = {
+    'searched for by an array method': Program(
+        returned_from_a_body('var a = []; a.push(a); return a.indexOf(a);'),
+        prints('0'),
+    ),
+    'concatenated by an operator': Program(
+        returned_from_a_body('var a = []; a.push(a); return a + "!";'),
+        prints('!'),
+    ),
+}
+
+
+class TestAnArrayHoldingItselfIsLeftStanding(unittest.TestCase):
+
+    def test_the_deobfuscation_writes_each_program_as_it_reads(self):
+        rows = AN_ARRAY_HOLDING_ITSELF
+        self.assertEqual(
+            {label: folded(row.text) for label, row in rows.items()},
+            {label: printed(row.text) for label, row in rows.items()},
+        )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_each_program_still_prints_what_node_prints(self):
+        rows = AN_ARRAY_HOLDING_ITSELF
+        self.assertEqual(
+            {label: row.read() for label, row in rows.items()},
+            {label: row.required() for label, row in rows.items()},
+        )
+
+_JOIN_PRINTS_RAN = 'Array.prototype.join = function () { console.log("ran"); return "9"; };\n'
+
+#: A program discarding a call of a built-in whose argument converts through a replaced method,
+#: mapped to what Node prints: the conversion runs the replacement, so the call cannot be removed
+#: although its value is never read.
+A_DISCARDED_CALL_CONVERTING_THROUGH_A_REPLACED_CHAIN = {
+    'parseInt': Program(
+        F'{_JOIN_PRINTS_RAN}parseInt([5]);\nconsole.log(1);',
+        prints('ran', '1'),
+        Reading.SCRIPT,
+    ),
+    'Math.max': Program(
+        F'{_JOIN_PRINTS_RAN}Math.max([5]);\nconsole.log(1);',
+        prints('ran', '1'),
+        Reading.SCRIPT,
+    ),
+    'isNaN': Program(
+        F'{_JOIN_PRINTS_RAN}isNaN([5]);\nconsole.log(1);',
+        prints('ran', '1'),
+        Reading.SCRIPT,
+    ),
+    'an unread variable in a function': Program(
+        F'{_JOIN_PRINTS_RAN}function f() {{ var x = parseInt([5]); return 1; }}\nconsole.log(f());',
+        prints('ran', '1'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestADiscardedConversionThroughAReplacedChainStays(unittest.TestCase):
+
+    def test_each_program_still_prints_what_node_prints(self):
+        rows = A_DISCARDED_CALL_CONVERTING_THROUGH_A_REPLACED_CHAIN
+        self.assertEqual(
+            {label: row.read() for label, row in rows.items()},
+            {label: row.required() for label, row in rows.items()},
+        )
+
+
+class TestADiscardedCallOverPrimitivesIsRemoved(unittest.TestCase):
+
+    def test_the_calls_are_removed(self):
+        self.assertEqual(
+            'console.log(1);',
+            folded('parseInt("5");\nMath.max(1, 2);\nisNaN(3);\nconsole.log(1);'),
         )

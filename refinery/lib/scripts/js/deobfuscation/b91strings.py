@@ -39,6 +39,7 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
+    coerces_uninterceptably,
     denoted_value,
     integer_literal,
     make_string_literal,
@@ -564,10 +565,18 @@ def _table_value(effects: EffectModel, table: Binding | JsStringLiteral) -> tupl
     """
     model = effects.model
     if isinstance(table, JsStringLiteral):
-        return denoted_value(table, model, effects)
+        return denoted_value(
+            table,
+            model,
+            lambda converted: coerces_uninterceptably(effects, converted),
+        )
     if model.reflection_can_reach_from_its_scope(table):
         return False, None
-    return denoted_value(model.singular_value(table), model, effects)
+    return denoted_value(
+        model.singular_value(table),
+        model,
+        lambda converted: coerces_uninterceptably(effects, converted),
+    )
 
 
 def _string_array(effects: EffectModel, table: Binding | JsStringLiteral) -> _StringArray | None:
@@ -872,7 +881,11 @@ def _index_call(
     if not effects.prototype_name_unwritten(JsFunctionExpression):
         return None
     receiver, argument = call.arguments
-    known, value = denoted_value(receiver, model, effects)
+    known, value = denoted_value(
+        receiver,
+        model,
+        lambda converted: coerces_uninterceptably(effects, converted),
+    )
     if not known or value is not None:
         return None
     argument = strip_parens(argument)

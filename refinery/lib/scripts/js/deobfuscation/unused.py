@@ -65,6 +65,7 @@ from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
     access_key,
+    coerces_uninterceptably,
     collect_identifier_names,
     definitely_answers_the_completion,
     denoted_value,
@@ -543,7 +544,11 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     or not isinstance(target := store.left, JsIdentifier)
                 ):
                     continue
-                known, value = denoted_value(store.right, model, self._cache.effects)
+                known, value = denoted_value(
+                    store.right,
+                    model,
+                    lambda converted: coerces_uninterceptably(self.effects, converted),
+                )
                 if not known or value is not None:
                     continue
                 binding = model.resolve(target)

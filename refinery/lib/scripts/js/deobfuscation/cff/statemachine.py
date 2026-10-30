@@ -141,6 +141,7 @@ from refinery.lib.scripts.js.values import (
     BINARY_OPS,
     UNARY_OPS,
     HostApproximated,
+    converts_uninterceptably,
     js_strict_equal,
     to_boolean,
 )
@@ -5289,7 +5290,10 @@ def _scaffolding_is_private(
             return False
     if not all(_reached_only_from(model, binding, inside) for binding in anchors.values()):
         return False
-    return all(denoted_value(read, model, None) == (True, None) for read in match.undefined_reads)
+    return all(
+        denoted_value(read, model, converts_uninterceptably) == (True, None)
+        for read in match.undefined_reads
+    )
 
 
 def _property_flag_is_private(

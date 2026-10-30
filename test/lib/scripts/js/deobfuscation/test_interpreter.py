@@ -257,6 +257,17 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
     def test_json_parse_null_is_object(self):
         self.assertEqual("var x = 'object';", self._fold("typeof JSON.parse('null')"))
 
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_json_parse_calls_its_reviver_function(self):
+        source = "function f() { return JSON.parse('[1]', function (k, v) { return 7; }); }\nconsole.log(f());"
+        self.assertEqual(before_and_after(source), (('7\n', None), ('7\n', None)))
+
+    def test_json_parse_with_a_reviver_that_is_no_function_is_folded(self):
+        """
+        A reviver that is not callable is ignored, so Node prints `[ 1 ]` for this program.
+        """
+        self.assertEqual('var x = [1];', self._fold("JSON.parse('[1]', 5)"))
+
     def test_number_to_string_hex(self):
         self.assertEqual("var x = 'ff';", self._fold('(255).toString(16)'))
 

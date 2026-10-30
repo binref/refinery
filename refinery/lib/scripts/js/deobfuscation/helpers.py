@@ -276,26 +276,18 @@ def coerces_uninterceptably(effects: EffectModel | None, value: Value) -> bool:
     `EffectModel.read_chain_intact` answers. A function is an object the program holds, and it may
     have given the function a conversion of its own, which
     `refinery.lib.scripts.js.analysis.effects.EffectModel.function_conversion_untouched` rules out.
-    An array converts element-wise, so each element has to answer this question too.
+    An array converts element-wise, so each element has to answer this question too, and an array
+    that holds itself is refused (`_converts_without_installed_code`).
 
     A caller with no effect model gets `False` for every object: the interpreter used on one
     expression in isolation cannot see the file the expression came from, and whether anything
     replaced a conversion is a question about that file.
     """
-    if converts_uninterceptably(value):
-        return True
-    if isinstance(value, dict):
-        if any(name in value for name in _TO_PRIMITIVE_METHODS):
-            return False
-    elif not isinstance(value, OBJECT_VALUE_TYPES):
-        return False
-    if effects is None or not effects.read_chain_intact(type(value)):
-        return False
-    if isinstance(value, FUNCTION_NODES) and not effects.function_conversion_untouched(value):
-        return False
-    if isinstance(value, list) and not all(coerces_uninterceptably(effects, item) for item in value):
-        return False
-    return True
+    return _converts_without_installed_code(
+        effects,
+        value,
+        lambda model, value_type: model.read_chain_intact(value_type),
+    )
 
 
 def coerces_uninterceptably_from_written_chain(effects: EffectModel | None, value: Value) -> bool:
@@ -306,22 +298,55 @@ def coerces_uninterceptably_from_written_chain(effects: EffectModel | None, valu
     the reflection term is what the oracle's clearance replaced. A caller that has not asked the
     oracle takes `coerces_uninterceptably` itself.
     """
-    if converts_uninterceptably(value):
-        return True
-    if isinstance(value, dict):
-        if any(name in value for name in _TO_PRIMITIVE_METHODS):
+    return _converts_without_installed_code(
+        effects,
+        value,
+        lambda model, value_type: model.chain_roots_unwritten(value_type),
+    )
+
+
+def _converts_without_installed_code(
+    effects: EffectModel | None,
+    value: Value,
+    chain_untouched: Callable[[EffectModel, type], bool],
+) -> bool:
+    """
+    The walk `coerces_uninterceptably` and `coerces_uninterceptably_from_written_chain` share, which
+    differ only in what *chain_untouched* asks of the prototype chain of each object's type. An
+    array converts element-wise, so its elements answer in turn. An array that holds itself at any
+    depth is refused: asking its elements would never end, and what converting it gives is the
+    engine's cycle handling rather than anything the language says. An array reached along two
+    paths is asked once.
+    """
+    cleared: set[int] = set()
+    entered: set[int] = set()
+
+    def answers(item: Value) -> bool:
+        if converts_uninterceptably(item):
+            return True
+        if isinstance(item, dict):
+            if any(name in item for name in _TO_PRIMITIVE_METHODS):
+                return False
+        elif not isinstance(item, OBJECT_VALUE_TYPES):
             return False
-    elif not isinstance(value, OBJECT_VALUE_TYPES):
-        return False
-    if effects is None or not effects.chain_roots_unwritten(type(value)):
-        return False
-    if isinstance(value, FUNCTION_NODES) and not effects.function_conversion_untouched(value):
-        return False
-    if isinstance(value, list) and not all(
-        coerces_uninterceptably_from_written_chain(effects, item) for item in value
-    ):
-        return False
-    return True
+        if effects is None or not chain_untouched(effects, type(item)):
+            return False
+        if isinstance(item, FUNCTION_NODES) and not effects.function_conversion_untouched(item):
+            return False
+        if not isinstance(item, list):
+            return True
+        key = id(item)
+        if key in cleared:
+            return True
+        if key in entered:
+            return False
+        entered.add(key)
+        if not all(answers(element) for element in item):
+            return False
+        cleared.add(key)
+        return True
+
+    return answers(value)
 
 
 class MemberRead(Enum):
@@ -1125,7 +1150,7 @@ def names_global_value(node: JsIdentifier, model: SemanticModel) -> bool:
 def denoted_value(
     node: Node | None,
     model: SemanticModel,
-    effects: EffectModel | None,
+    uninterceptable: Callable[[Value], bool],
 ) -> tuple[bool, Value]:
     """
     The value *node* denotes, as `(True, value)`, or `(False, None)` when nothing decides it. This is
@@ -1133,8 +1158,11 @@ def denoted_value(
     denotes one of the global values, and an operator standing in front of either.
 
     An operator that converts its operand converts an array by running a method the program can
-    replace, so `+[]` denotes `0` only where *effects* vouches that nothing replaced it
-    (`coerces_uninterceptably`); without an effect model it denotes nothing.
+    replace, so `+[]` denotes `0` only where *uninterceptable* vouches that converting the array
+    runs no code the program installed: `coerces_uninterceptably` against an effect model, or
+    `refinery.lib.scripts.js.values.converts_uninterceptably` for a caller without one, which
+    vouches for no object at all. It is asked only of a value an operator converts, so a caller
+    whose effect model is built on demand pays for it only there.
     """
     node = strip_parens(node)
     if node is None:
@@ -1147,10 +1175,10 @@ def denoted_value(
         apply = UNARY_OPS.get(node.operator)
         if apply is None:
             return False, None
-        known, value = denoted_value(node.operand, model, effects)
+        known, value = denoted_value(node.operand, model, uninterceptable)
         if not known:
             return False, None
-        if node.operator in COERCING_UNARY_OPERATORS and not coerces_uninterceptably(effects, value):
+        if node.operator in COERCING_UNARY_OPERATORS and not uninterceptable(value):
             return False, None
         return True, apply(value)
     return extract_literal_value(node)
@@ -1204,7 +1232,11 @@ def is_truthy(node: Node, cache: ModelCache) -> bool | None:
     """
     operand, negated = _strip_negation(node)
     model = cache.model
-    known, value = denoted_value(operand, model, cache.effects)
+    known, value = denoted_value(
+        operand,
+        model,
+        lambda converted: coerces_uninterceptably(cache.effects, converted),
+    )
     if known:
         answer = to_boolean(value)
     elif allocated_object_type(operand) is not None:
@@ -1253,14 +1285,14 @@ def _established_allocation_of(binding: Binding, node: Node, cache: ModelCache) 
     return value
 
 
-def is_nullish(node: Node, model: SemanticModel, effects: EffectModel | None) -> bool | None:
+def is_nullish(node: Node, model: SemanticModel, uninterceptable: Callable[[Value], bool]) -> bool | None:
     """
     Whether *node* denotes `null` or `undefined` — the two values `??` treats as absent — or `None`
     when the value it denotes is not decided. A caller has to tell that third answer from `False`:
     `a ?? b` keeps `a` when `a` is known not to be nullish, and must be left alone when nothing is
     known about it at all.
     """
-    known, value = denoted_value(node, model, effects)
+    known, value = denoted_value(node, model, uninterceptable)
     if not known:
         return None
     return value is None or value is JS_NULL
@@ -2504,7 +2536,11 @@ def binding_constant(effects: EffectModel, binding: Binding) -> tuple[bool, Valu
     Whether the value is in place when a given read runs is an ordering question this does not ask.
     """
     model = effects.model
-    known, value = denoted_value(model.singular_value(binding), model, effects)
+    known, value = denoted_value(
+        model.singular_value(binding),
+        model,
+        lambda converted: coerces_uninterceptably(effects, converted),
+    )
     if not known:
         return False, None
     return held_constant(effects, binding, value)

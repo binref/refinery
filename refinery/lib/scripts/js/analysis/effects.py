@@ -697,6 +697,7 @@ class _SideEffectScan:
         call_pure_discarded: _CallPredicate | None,
         coercions_may_write: bool = False,
         store_unobserved: Callable[[JsMemberExpression], bool] | None = None,
+        call_converts: _CallPredicate | None = None,
     ):
         self.defunct = defunct
         self.call_pure = call_pure
@@ -706,6 +707,7 @@ class _SideEffectScan:
         self.call_pure_discarded = call_pure_discarded
         self.coercions_may_write = coercions_may_write
         self.store_unobserved = store_unobserved
+        self.call_converts = call_converts
 
     def free(self, node: Node, discarded: bool = False) -> bool:
         if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
@@ -801,6 +803,13 @@ class _SideEffectScan:
             and self.call_established is not None
             and self.call_established(node)
         ):
+            if (
+                self.coercions_may_write
+                and self.call_converts is not None
+                and self.call_converts(node)
+                and not all(map(_value_cannot_be_an_object, node.arguments))
+            ):
+                return False
             return all(self.free(arg) for arg in node.arguments)
         return False
 
@@ -825,6 +834,7 @@ def side_effect_free(
     call_pure_discarded: _CallPredicate | None = None,
     coercions_may_write: bool = False,
     store_unobserved: Callable[[JsMemberExpression], bool] | None = None,
+    call_converts: _CallPredicate | None = None,
 ) -> bool:
     """
     Conservative check for whether evaluating an expression can be dropped or reordered with no
@@ -864,11 +874,13 @@ def side_effect_free(
     itself, of no sub-expression, so the composition alone cannot see it and the caller must say it is
     dropping the evaluation for it to matter. A caller that relocates the evaluation — the object fold
     moving a property value to its use — keeps the conversion where it runs and answers for it with its
-    own gates, which is why the flag is opt-in rather than the rule.
+    own gates, which is why the flag is opt-in rather than the rule. A call *call_converts* names
+    hands its arguments to a callee that converts them, so it is held to arguments that cannot be
+    objects in the same way.
     """
     return _SideEffectScan(
         defunct, call_pure, read_effect, member_safe, call_established, call_pure_discarded,
-        coercions_may_write, store_unobserved,
+        coercions_may_write, store_unobserved, call_converts,
     ).free(node, discarded)
 
 
@@ -1280,7 +1292,8 @@ class EffectModel:
         `valueOf` or `Symbol.toPrimitive`, which is code the operand carries, and the composition
         alone cannot see it. The same drop-versus-relocation divide as *reads_may_throw* applies:
         a pass that relocates the evaluation keeps the conversion where it runs and answers for it
-        with its own gates.
+        with its own gates. A call of a pure intrinsic converts its arguments
+        (`calls_a_pure_intrinsic`), so it is held to arguments that cannot be objects as well.
         """
         read_effect = self.model.read_has_dynamic_effect
         if reads_may_throw or read_established is not None:
@@ -1296,6 +1309,7 @@ class EffectModel:
             self.is_pure_call_discarded,
             coercions_may_write,
             self.store_unobserved,
+            self.calls_a_pure_intrinsic,
         )
 
     def throwing_read_effect(
@@ -2188,17 +2202,36 @@ class EffectModel:
             return _PURE
         if isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
             return callee
-        if isinstance(callee, JsMemberExpression) and not callee.computed:
-            base, prop = callee.object, callee.property
-            if isinstance(base, JsIdentifier) and isinstance(prop, JsIdentifier):
-                if F'{base.name}.{prop.name}' in PURE_INTRINSIC_METHODS and self._is_global_intrinsic(base):
-                    return _PURE
-            return None
+        if self.calls_a_pure_intrinsic(call):
+            return _PURE
         if isinstance(callee, JsIdentifier):
-            if callee.name in PURE_GLOBAL_FUNCTIONS and self._is_global_intrinsic(callee):
-                return _PURE
             return self.unambiguous_function(self.model.resolve(callee))
         return None
+
+    def calls_a_pure_intrinsic(
+        self,
+        call: JsCallExpression | JsNewExpression | JsTaggedTemplateExpression,
+    ) -> bool:
+        """
+        Whether *call* invokes one of the trusted pure intrinsic functions, `PURE_INTRINSIC_METHODS`
+        and `PURE_GLOBAL_FUNCTIONS`. Each of them converts the arguments it is handed, and converting
+        an object runs code the program may have installed, as `parseInt([5])` runs
+        `Array.prototype.join`; the purity of the call covers the intrinsic and not that conversion.
+        """
+        callee = call.tag if isinstance(call, JsTaggedTemplateExpression) else call.callee
+        if isinstance(callee, JsMemberExpression) and not callee.computed:
+            base, prop = callee.object, callee.property
+            return (
+                isinstance(base, JsIdentifier)
+                and isinstance(prop, JsIdentifier)
+                and F'{base.name}.{prop.name}' in PURE_INTRINSIC_METHODS
+                and self._is_global_intrinsic(base)
+            )
+        return (
+            isinstance(callee, JsIdentifier)
+            and callee.name in PURE_GLOBAL_FUNCTIONS
+            and self._is_global_intrinsic(callee)
+        )
 
     def _pure_construct(self, call: JsNewExpression) -> bool:
         """

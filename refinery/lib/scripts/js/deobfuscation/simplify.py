@@ -102,8 +102,6 @@ _OBJECT_PROTO_PROPERTIES = OBJECT_PROTOTYPE_MEMBERS
 _EMPTY_OBJECT_PROPERTIES = _OBJECT_PROTO_PROPERTIES
 
 
-_UNCONVERTIBLE = object()
-
 _MIRRORED_COMPARISONS = {
     '<'  : '>',
     '<=' : '>=',
@@ -521,7 +519,7 @@ class JsSimplifications(Transformer):
         (`refinery.lib.scripts.js.values.converts_uninterceptably`); an array literal is excluded
         because its conversion runs `Array.prototype.join`.
         """
-        known, value = denoted_value(node, self.model, self.effects)
+        known, value = denoted_value(node, self.model, self._uninterceptable)
         if not known or not converts_uninterceptably(value):
             return False, None
         return True, value
@@ -650,8 +648,8 @@ class JsSimplifications(Transformer):
             return None
         if callee.object is None:
             return None
-        receiver = self._node_to_value(callee.object)
-        if receiver is _UNCONVERTIBLE:
+        known, receiver = denoted_value(callee.object, self.model, self._uninterceptable)
+        if not known:
             return None
         if isinstance(receiver, str):
             builtin = BUILTIN_REGISTRY.get((str, method_name))
@@ -906,7 +904,7 @@ class JsSimplifications(Transformer):
         """
         if not node.computed:
             return node.property.name if isinstance(node.property, JsIdentifier) else None
-        known, key = denoted_value(node.property, self.model, self.effects)
+        known, key = denoted_value(node.property, self.model, self._uninterceptable)
         if not known or not converts_uninterceptably(key):
             return None
         return to_string(key)
@@ -934,7 +932,7 @@ class JsSimplifications(Transformer):
         key = self._member_key(node)
         if key is None:
             return None
-        known, obj = denoted_value(node.object, self.model, self.effects)
+        known, obj = denoted_value(node.object, self.model, self._uninterceptable)
         if not known or not isinstance(obj, str):
             return None
         outcome, value = read_data_property(obj, key)
@@ -998,6 +996,14 @@ class JsSimplifications(Transformer):
             return None
         return value_to_node(len(array.elements))
 
+    def _uninterceptable(self, value: Value) -> bool:
+        """
+        Whether converting *value* runs no code the program installed
+        (`refinery.lib.scripts.js.deobfuscation.helpers.coerces_uninterceptably`), asked of this
+        pass's effect model.
+        """
+        return coerces_uninterceptably(self.effects, value)
+
     def _builtin_arguments(self, node: JsCallExpression) -> list[Value] | None:
         """
         The values of the arguments of *node* for `BUILTIN_REGISTRY` dispatch, or `None` where one
@@ -1007,19 +1013,11 @@ class JsSimplifications(Transformer):
         """
         args: list[Value] = []
         for argument in node.arguments:
-            known, value = denoted_value(argument, self.model, self.effects)
-            if not known or not coerces_uninterceptably(self.effects, value):
+            known, value = denoted_value(argument, self.model, self._uninterceptable)
+            if not known or not self._uninterceptable(value):
                 return None
             args.append(value)
         return args
-
-    def _node_to_value(self, node: Node | None) -> object:
-        """
-        The Python equivalent of *node* for `BUILTIN_REGISTRY` dispatch, or the module-level sentinel
-        `_UNCONVERTIBLE` when nothing decides what the node denotes.
-        """
-        known, value = denoted_value(node, self.model, self.effects)
-        return value if known else _UNCONVERTIBLE
 
     def _deletion_answer(self, node: JsUnaryExpression) -> bool | None:
         """
@@ -1098,15 +1096,15 @@ class JsSimplifications(Transformer):
 
     def visit_JsUnaryExpression(self, node: JsUnaryExpression):
         """
-        Fold a unary operator against its operand. Everything that is a function of the operand's value
-        is the value the whole expression denotes
+        Fold a unary operator against its operand. Everything that is a function of the operand's
+        value is the value the whole expression denotes
         (`refinery.lib.scripts.js.deobfuscation.helpers.denoted_value`), which applies the shared
         `UNARY_OPS` kernel, so that a fold performed here and the same operator applied by the
         interpreter cannot disagree, and which refuses to convert an array whose conversion the
-        program may have replaced. What is left is the two questions a value cannot answer — the type
-        of an object whose identity no literal spells, and whether a `delete` may be dropped. A third,
-        `typeof` of a pristine guaranteed global, is a value the operator hides rather than one the
-        operand denotes, so it is decided by name (`_typeof_of_global_read`).
+        program may have replaced. What is left is the two questions a value cannot answer — the
+        type of an object whose identity no literal spells, and whether a `delete` may be dropped. A
+        third, `typeof` of a pristine guaranteed global, is a value the operator hides rather than
+        one the operand denotes, so it is decided by name (`_typeof_of_global_read`).
 
         A node that already spells its value the way a fold writes it is left alone (`_written`):
         `void 0` is how `undefined` is written, so folding it produces the expression it replaces,
@@ -1130,7 +1128,7 @@ class JsSimplifications(Transformer):
             typed = self._typeof_of_global_read(operand)
             if typed is not None:
                 return make_string_literal(typed)
-        known, value = denoted_value(node, self.model, self.effects)
+        known, value = denoted_value(node, self.model, self._uninterceptable)
         if not known:
             return None
         return self._written(node, value)
@@ -1166,7 +1164,7 @@ class JsSimplifications(Transformer):
             return node.left
         op = node.operator
         if op == '??':
-            nullish = is_nullish(node.left, self.model, self.effects)
+            nullish = is_nullish(node.left, self.model, self._uninterceptable)
             if nullish is None:
                 return None
             return self._discarding(node, node.left, node.right) if nullish else node.left

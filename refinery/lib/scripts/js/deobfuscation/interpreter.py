@@ -530,7 +530,13 @@ def _json_to_value(value):
 
 @_register(('JSON', 'parse'))
 def _json_parse(args: list[Value]) -> Value:
+    """
+    `JSON.parse(text, reviver)`, refusing a function as *reviver*: it is called for every value
+    parsed and decides what each one becomes, which this does not run.
+    """
     if not args:
+        raise InterpreterError
+    if len(args) > 1 and isinstance(args[1], FUNCTION_NODES):
         raise InterpreterError
 
     def _reject_constant(_: str) -> Value:
