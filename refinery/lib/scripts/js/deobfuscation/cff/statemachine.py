@@ -48,7 +48,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     access_key,
     declares_a_watched_name,
     denoted_value,
-    eval_binary_op,
     fresh_name,
     is_literal,
     is_reference,
@@ -138,6 +137,7 @@ from refinery.lib.scripts.js.strict import (
     keeping_directives,
     strict_mode_at,
 )
+from refinery.lib.scripts.js.values import eval_binary_op
 
 
 class _Undefined(enum.Enum):
@@ -154,7 +154,7 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.js.analysis.cache import ModelCache
     from refinery.lib.scripts.js.analysis.intrinsics import IntrinsicWrites
     from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel
-    from refinery.lib.scripts.js.deobfuscation.helpers import Value
+    from refinery.lib.scripts.js.values import Value
 
     _StateValue = float | tuple[float, ...]
     _StateEnv = dict[str, _StateValue]

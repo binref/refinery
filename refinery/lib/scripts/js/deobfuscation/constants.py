@@ -25,7 +25,6 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    GLOBAL_VALUE_NAMES,
     BatchedScopeTransformer,
     collect_identifier_names,
     is_literal,
@@ -66,6 +65,7 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
 )
 from refinery.lib.scripts.js.numbers import exact_integer
+from refinery.lib.scripts.js.values import GLOBAL_VALUE_NAMES
 
 
 def _pattern_identifiers(pattern: Node) -> set[str]:

@@ -14,7 +14,7 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints, folded
 
-from refinery.lib.scripts.js.deobfuscation.helpers import function_source
+from refinery.lib.scripts.js.values import function_source
 from refinery.lib.scripts.js.model import JsFunctionExpression, JsMethodDefinition
 from refinery.lib.scripts.js.parser import JsParser
 

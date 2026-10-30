@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from refinery.lib.scripts.js.deobfuscation.helpers import Value
+    from refinery.lib.scripts.js.values import Value
 
 from refinery.lib.scripts import Node, Transformer, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache

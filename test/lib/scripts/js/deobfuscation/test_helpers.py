@@ -11,8 +11,6 @@ from test.lib.scripts.js.ledger import printed
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.js.analysis.model import build_semantic_model, is_use_position
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    JS_NULL,
-    JsBuffer,
     Landing,
     binding_has_references,
     declares_a_watched_name,
@@ -45,6 +43,7 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
+from refinery.lib.scripts.js.values import JS_NULL, JsBuffer
 
 
 class TestDeobfuscationHelpers(TestJsDeobfuscator):

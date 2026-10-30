@@ -29,15 +29,11 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_MEMBERS,
     MAX_RESULT_ARRAY_LEN,
     OBJECT_PROTOTYPE_MEMBERS,
-    RELATIONAL_OPS,
-    UNARY_OPS,
     MemberRead,
     access_key,
     allocated_object_type,
-    converts_uninterceptably,
     denoted_value,
     escape_js_string,
-    eval_binary_op,
     extract_literal_value,
     folded_literal,
     is_literal,
@@ -55,11 +51,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     utf16_code_units,
     value_to_node,
 )
-from refinery.lib.scripts.js.deobfuscation.interpreter import (
-    BUILTIN_REGISTRY,
-    STATIC_OBJECTS,
-    to_string,
-)
+from refinery.lib.scripts.js.deobfuscation.interpreter import BUILTIN_REGISTRY, STATIC_OBJECTS
 from refinery.lib.scripts.js.model import (
     LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrayExpression,
@@ -94,6 +86,13 @@ from refinery.lib.scripts.js.numbers import exact_integer
 from refinery.lib.scripts.js.options import clock_window
 from refinery.lib.scripts.js.precedence import parens_required
 from refinery.lib.scripts.js.strict import joins_directive_prologue, spelling_states
+from refinery.lib.scripts.js.values import (
+    RELATIONAL_OPS,
+    UNARY_OPS,
+    converts_uninterceptably,
+    eval_binary_op,
+    to_string,
+)
 
 _OBJECT_PROTO_PROPERTIES = OBJECT_PROTOTYPE_MEMBERS
 

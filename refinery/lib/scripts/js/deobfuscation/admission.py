@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.analysis.cache import ModelCache
-    from refinery.lib.scripts.js.deobfuscation.helpers import Value
+    from refinery.lib.scripts.js.values import Value
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.effects import AnchoredTrust, EffectModel
@@ -20,7 +20,6 @@ from refinery.lib.scripts.js.analysis.model import (
     call_supplies_an_arguments_object,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    GLOBAL_VALUE_NAMES,
     binding_constant,
     held_constant,
     is_reference,
@@ -58,6 +57,7 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
     strip_parens,
 )
+from refinery.lib.scripts.js.values import GLOBAL_VALUE_NAMES
 
 
 def _is_value_closed(

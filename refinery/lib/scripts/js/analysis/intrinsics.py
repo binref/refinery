@@ -168,7 +168,7 @@ prototype is intact: `String.prototype.toUpperCase = f` is a write to `String`, 
 `'ab'.toUpperCase()` means even though the expression mentions no identifier at all.
 
 Every type in the interpreter's value domain is named here directly, including
-`refinery.lib.scripts.js.deobfuscation.helpers.JsBuffer`, whose methods come from `Buffer.prototype`
+`refinery.lib.scripts.js.values.JsBuffer`, whose methods come from `Buffer.prototype`
 rather than the `Array.prototype` its `list` base would suggest. A function value is represented as
 its own AST node, so the two function node names appear here as value types rather than as syntax;
 both inherit from `Function.prototype`. Lookup is exact rather than a walk up the Python MRO, which

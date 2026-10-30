@@ -8,7 +8,6 @@ from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
 from refinery.lib.scripts.js.deobfuscation.interpreter import IrreducibleExpression, JsInterpreter
 from refinery.lib.scripts.js.options import DeobfuscationOptions
-from refinery.lib.scripts.js.deobfuscation.helpers import JsBuffer
 from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
     JsIdentifier,
@@ -16,6 +15,7 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
+from refinery.lib.scripts.js.values import JsBuffer
 
 
 class TestFunctionEvaluator(TestJsDeobfuscator):

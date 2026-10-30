@@ -24,7 +24,6 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.model import Binding, Role, SemanticModel, reference_role
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    BINARY_OPS,
     ScopeProcessingTransformer,
     make_string_literal,
     nothing_still_names,
@@ -59,6 +58,7 @@ from refinery.lib.scripts.js.model import (
     wraps_return,
 )
 from refinery.lib.scripts.js.numbers import exact_integer, js_parse_int, js_string_to_number
+from refinery.lib.scripts.js.values import BINARY_OPS
 
 
 class Encoding(enum.Enum):

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     from refinery.lib.scripts.js.analysis.effects import AnchoredTrust, EffectModel
     from refinery.lib.scripts.js.analysis.tampering import TamperingModel
-    from refinery.lib.scripts.js.deobfuscation.helpers import Value
+    from refinery.lib.scripts.js.values import Value
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment, typeof_of_global
@@ -29,27 +29,13 @@ from refinery.lib.scripts.js.analysis.model import (
     statement_list_holding,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    GLOBAL_VALUE_NAMES,
-    JS_HOLE,
-    JS_NULL,
     PROTO_KEY,
-    RELATIONAL_OPS,
     SEQUENCE_DATA_PROPERTIES,
-    UNARY_OPS,
-    JsBuffer,
     MemberRead,
-    _array_element_string,
-    _js_pow,
-    _to_int,
-    _to_int32,
-    _to_uint32,
     canonical_array_index,
     code_points,
     coerces_uninterceptably,
     coerces_uninterceptably_from_written_chain,
-    converts_uninterceptably,
-    eval_binary_op,
-    js_typeof,
     name_is_unbound,
     names_global_value,
     own_property_keys,
@@ -59,9 +45,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     property_provably_absent,
     read_data_property,
     spell_astral_characters,
-    to_boolean,
-    to_number,
-    to_string,
     utf16_code_units,
     walk_scope,
 )
@@ -121,6 +104,29 @@ from refinery.lib.scripts.js.numbers import (
 )
 from refinery.lib.scripts.js.token import ASCII_WHITESPACE
 from refinery.lib.scripts.js.utf16 import to_code_units
+from refinery.lib.scripts.js.values import (
+    GLOBAL_VALUE_NAMES,
+    JS_HOLE,
+    JS_NULL,
+    RELATIONAL_OPS,
+    UNARY_OPS,
+    JsBuffer,
+    _array_element_string,
+    _js_pow,
+    _to_int,
+    _to_int32,
+    _to_uint32,
+    converts_uninterceptably,
+    eval_binary_op,
+    js_add,
+    js_loose_equal,
+    js_strict_equal,
+    js_typeof,
+    to_boolean,
+    to_number,
+    to_primitive,
+    to_string,
+)
 
 MAX_ITERATIONS = 100_000
 MAX_STRING_LEN = 1_000_000
@@ -215,44 +221,6 @@ def _to_array_length(value: Value) -> int:
     if length != number_len:
         _js_throw('RangeError', 'Invalid array length')
     return length
-
-
-#: The value-domain types that model a JavaScript object: an array, a plain object, and a function.
-#: They share the two behaviours the primitives do not — a ToPrimitive that runs a (here
-#: interceptable) conversion, and an equality by reference rather than by value. `_to_primitive` and
-#: `_loose_equal` name the set once here rather than each enumerating it and drifting apart.
-_OBJECT_VALUE_TYPES = (
-    list, dict, JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
-)
-
-
-def _to_primitive(value: Value) -> Value:
-    """
-    Replicate the ECMA-262 ToPrimitive abstract operation with the default hint, as used by `+`.
-    Arrays, plain objects and functions have no useful `valueOf`, so they coerce to their string
-    form; all other values are already primitive.
-    """
-    if isinstance(value, _OBJECT_VALUE_TYPES):
-        return to_string(value)
-    return value
-
-
-def js_strict_equal(a: Value, b: Value) -> bool:
-    """
-    Compare two interpreter values using JavaScript strict-equality (`===`) semantics. Unlike
-    Python equality this does not conflate booleans with the numbers `1` and `0`.
-    """
-    if isinstance(a, bool) or isinstance(b, bool):
-        return a is b
-    if a is None or b is None:
-        return a is None and b is None
-    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-        return a == b
-    if type(a) is not type(b):
-        return False
-    if isinstance(a, str):
-        return a == b
-    return a is b
 
 
 BUILTIN_REGISTRY: dict[tuple, Callable] = {}
@@ -1551,7 +1519,7 @@ class JsInterpreter:
         for index, case in enumerate(cases):
             if case.test is None:
                 continue
-            if self._strict_equal(discriminant, self._eval(case.test)):
+            if js_strict_equal(discriminant, self._eval(case.test)):
                 chosen = index
                 break
         if chosen is None:
@@ -1964,20 +1932,6 @@ class JsInterpreter:
             return GLOBAL_VALUE_NAMES[name]
         raise IrreducibleExpression(node)
 
-    def _js_add(self, left: Value, right: Value) -> Value:
-        """
-        Replicate the JavaScript `+` operator: apply ToPrimitive to both operands, then concatenate
-        as strings if either is a string, otherwise add numerically.
-        """
-        left = _to_primitive(left)
-        right = _to_primitive(right)
-        if isinstance(left, str) or isinstance(right, str):
-            result = to_string(left) + to_string(right)
-            if len(result) > self.max_string_len:
-                raise InterpreterError
-            return result
-        return to_number(left) + to_number(right)
-
     def _eval_binary(self, node: JsBinaryExpression) -> Value:
         return self._apply_binary(node.operator, self._eval(node.left), self._eval(node.right))
 
@@ -2002,22 +1956,25 @@ class JsInterpreter:
             if op != 'in':
                 self._require_uninterceptable(right)
         if op == '===':
-            return self._strict_equal(left, right)
+            return js_strict_equal(left, right)
         if op == '!==':
-            return not self._strict_equal(left, right)
+            return not js_strict_equal(left, right)
         if op == '==':
-            return self._loose_equal(left, right)
+            return js_loose_equal(left, right)
         if op == '!=':
-            return not self._loose_equal(left, right)
+            return not js_loose_equal(left, right)
         if op == '+':
-            return self._js_add(left, right)
+            result = js_add(left, right)
+            if isinstance(result, str) and len(result) > self.max_string_len:
+                raise InterpreterError
+            return result
         if op == 'in':
             return self._eval_in(left, right)
         if op == 'instanceof':
             raise InterpreterError
         if op in RELATIONAL_OPS:
-            primitive_left = _to_primitive(left)
-            primitive_right = _to_primitive(right)
+            primitive_left = to_primitive(left)
+            primitive_right = to_primitive(right)
             if isinstance(primitive_left, str) and isinstance(primitive_right, str):
                 return RELATIONAL_OPS[op](primitive_left, primitive_right)
         result = eval_binary_op(op, to_number(left), to_number(right))
@@ -2747,44 +2704,6 @@ class JsInterpreter:
                     obj[index] = value
                 return
         raise InterpreterError
-
-    @staticmethod
-    def _strict_equal(a: Value, b: Value) -> bool:
-        return js_strict_equal(a, b)
-
-    @staticmethod
-    def _loose_equal(a: Value, b: Value) -> bool:
-        """
-        Replicate the ECMA-262 abstract-equality (`==`) algorithm. `null` and `undefined` are equal to
-        each other and to nothing else; a boolean coerces to a number; two objects compare by
-        reference, while an object compared with a primitive coerces to a primitive first; a number
-        compared with a string compares by numeric value.
-        """
-        a_nullish = a is None or a is JS_NULL
-        b_nullish = b is None or b is JS_NULL
-        if a_nullish or b_nullish:
-            return a_nullish and b_nullish
-        if isinstance(a, bool):
-            a = 1 if a else 0
-        if isinstance(b, bool):
-            b = 1 if b else 0
-        a_object = isinstance(a, _OBJECT_VALUE_TYPES)
-        b_object = isinstance(b, _OBJECT_VALUE_TYPES)
-        if a_object and b_object:
-            return js_strict_equal(a, b)
-        if a_object:
-            a = _to_primitive(a)
-        elif b_object:
-            b = _to_primitive(b)
-        if isinstance(a, str) and isinstance(b, str):
-            return a == b
-        a_num = isinstance(a, (int, float))
-        b_num = isinstance(b, (int, float))
-        if a_num and b_num:
-            return a == b
-        if (a_num and isinstance(b, str)) or (isinstance(a, str) and b_num):
-            return to_number(a) == to_number(b)
-        return js_strict_equal(a, b)
 
     def eval_expression(self, expr) -> Value:
         return self._eval(expr)
