@@ -3517,6 +3517,35 @@ FOLDS: dict[str, str] = {
         'Write-Output (,(1, 2, 3))',
     "$q, $r = 'abc', 'd'; Write-Output $q.SUBSTRING(1, 1); Write-Output $r":
         "$q, $r = 'abc', 'd'\nWrite-Output $q.Substring(1, 1)\nWrite-Output $r",
+    "$s = $env:COMPUTERNAME; $t = $env:USERNAME; try { trap { $null = [int]$s; continue }; if ([int]$t) { Write-Host 'x' }; Write-Host 'rest' } catch { Write-Host 'caught' }":
+        '$s = $env:ComputerName\n'
+        '$t = $env:UserName\n'
+        'try {\n'
+        '  trap {\n'
+        '    $Null = [int]$s\n'
+        '    continue\n'
+        '  }\n'
+        '  if ([int]$t) {\n'
+        "    Write-Host 'x'\n"
+        '  }\n'
+        "  Write-Host 'rest'\n"
+        '} catch {\n'
+        "  Write-Host 'caught'\n"
+        '}',
+    "$s = $env:COMPUTERNAME; trap { $null = [int]$s; continue }; Invoke-Nonexistent; Write-Host 'rest'":
+        "$s = $env:ComputerName\ntrap {\n  $Null = [int]$s\n  continue\n}\nInvoke-Nonexistent\nWrite-Host 'rest'",
+    "$s = $env:COMPUTERNAME; try { trap { $null = [int]$s; continue }; Invoke-Nonexistent; Write-Host 'rest' } catch { Write-Host 'caught' }":
+        '$s = $env:ComputerName\n'
+        'try {\n'
+        '  trap {\n'
+        '    $Null = [int]$s\n'
+        '    continue\n'
+        '  }\n'
+        '  Invoke-Nonexistent\n'
+        "  Write-Host 'rest'\n"
+        '} catch {\n'
+        "  Write-Host 'caught'\n"
+        '}',
     "$s = 'a'; $s += 'b'; $s += 'c'; Write-Output $s":
         "Write-Output 'abc'",
     "$s = 'abc'; $s.Substring(1, 2)":
@@ -5401,6 +5430,8 @@ FOLDS: dict[str, str] = {
         '',
     "trap { Write-Host 'T'; $null = [int]'a'; continue }; & { $null = [int]'b' }; Write-Host 'after'":
         "trap {\n  Write-Host 'T'\n  $Null = [int]'a'\n  continue\n}\n& {\n  $Null = [int]'b'\n}\nWrite-Host 'after'",
+    "trap { Write-Host 'T'; $null = [int]'a'; continue }; Get-Item -BogusParam foo; Write-Host 'after'":
+        "trap {\n  Write-Host 'T'\n  $Null = [int]'a'\n  continue\n}\nGet-Item -BogusParam foo\nWrite-Host 'after'",
     "trap { Write-Host 'e'; continue }; [int]'a'; Set-Alias c Write-Output; c 'hi'":
         "trap {\n  Write-Host 'e'\n  continue\n}\n[int]'a'\nSet-Alias c Write-Output\nWrite-Output 'hi'",
     "trap { Write-Host 'outer'; continue }; if ($true) { trap [System.IO.IOException] { Write-Host 'inner'; continue }; throw 'e'; Write-Host 'tail' }; Write-Host 'next'":

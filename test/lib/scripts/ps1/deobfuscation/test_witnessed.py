@@ -281,6 +281,7 @@ def _fault_observed_where_the_clause_is_written(
     stmt: Node,
     reach: faults.Ps1FaultReach,
     world=None,
+    raises=None,
 ) -> bool:
     """
     The reading the routing walk superseded: a deletion is refused where the statement stands
@@ -302,6 +303,7 @@ def _fault_observed_wherever_an_error_would_go(
     stmt: Node,
     reach: faults.Ps1FaultReach,
     world=None,
+    raises=None,
 ) -> bool:
     """
     The guard with its first half dropped: every point inside *stmt* is asked where an error raised

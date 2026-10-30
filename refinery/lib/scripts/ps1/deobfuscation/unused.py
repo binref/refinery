@@ -149,7 +149,7 @@ class Ps1UnusedVariableRemoval(Transformer):
                 candidates[binding] = mutations
         if not candidates:
             return None
-        plans = Ps1RemovalPlans(cache.faults, world, cache.error_state)
+        plans = Ps1RemovalPlans(cache.faults, world, cache.error_state, cache.handlers)
         planned: dict[int, _MutationEdit] = {}
         installed: set[int] = set()
         claimed: set[int] = set()
@@ -439,7 +439,7 @@ class Ps1JunkStatementRemoval(Transformer):
         # function is not this pass's to reason about: pruning its body or deleting it with the
         # calls that never reach it erases the error the earlier call raised.
         unreached = cache.used_before_defined
-        plans = Ps1RemovalPlans(cache.faults, cache.world_reach, cache.error_state)
+        plans = Ps1RemovalPlans(cache.faults, cache.world_reach, cache.error_state, cache.handlers)
         for parent in node.walk():
             body = get_body(parent)
             if body is None:
@@ -581,7 +581,7 @@ class Ps1JunkStatementRemoval(Transformer):
             survivors = self._survivors(get_body(node), removable_definitions)
             if pruning_erases_body(node, survivors):
                 return
-        plans = Ps1RemovalPlans(cache.faults, world, cache.error_state)
+        plans = Ps1RemovalPlans(cache.faults, world, cache.error_state, cache.handlers)
         for group in groups.values():
             for statement in group:
                 plans.propose(statement)
@@ -736,7 +736,7 @@ class Ps1DeadStoreElimination(Transformer):
             return None
         model = cache.model
         world = cache.world_reach
-        plans = Ps1RemovalPlans(cache.faults, world, cache.error_state)
+        plans = Ps1RemovalPlans(cache.faults, world, cache.error_state, cache.handlers)
         for owner in list(node.walk()):
             self._propose_dead_stores(owner, model, world, unseen, plans, cache.handlers)
         if plans.commit():

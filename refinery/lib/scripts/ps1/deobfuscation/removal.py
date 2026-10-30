@@ -449,8 +449,9 @@ class Ps1RemovalPlan:
             return True
         if not self.removals_may_fault:
             return False
-        return deletion_is_observable(
-            proposal.statement, faults, self.world, self.error_state)
+        handlers = self.handlers
+        raises = None if handlers is None else handlers.raises(self.world is not None)
+        return deletion_is_observable(proposal.statement, faults, self.world, self.error_state, raises)
 
     def _allowed(self) -> list[_Proposal]:
         """

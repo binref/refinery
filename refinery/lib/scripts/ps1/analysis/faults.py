@@ -69,7 +69,6 @@ from refinery.lib.scripts.ps1.analysis.session import (
 from refinery.lib.scripts.ps1.ast import (
     STATEMENT_LIST_EXPRESSIONS,
     bound_argument_value,
-    fault_operand,
     is_soft_error_source,
     raises_a_caught_terminating_error,
     resolve_command_name,
@@ -208,7 +207,6 @@ def ends_the_script(
         if isinstance(node, Ps1CommandInvocation) and (stop_default or stops_on_error(node)):
             return True
     return False
-
 
 
 class _EmptyCatch(NamedTuple):
@@ -360,7 +358,6 @@ def _enclosing_trap_body(node: Node, memo: dict[int, Ps1TrapStatement | None]) -
     for step in climbed:
         memo[id(step)] = found
     return found
-
 
 
 def _resumption_slot(graph: ControlFlowGraph, node: CfgNode) -> CfgNode | None:
@@ -1051,7 +1048,6 @@ class Ps1FaultReach:
         self._calls = calls
         self._model: Ps1ControlFlowModel | None = None
         self._paths: dict[ControlFlowGraph, Ps1ErrorPaths] = {}
-        self._fires: dict[ControlFlowGraph, dict[int, bool]] = {}
         self._escalating: dict[ControlFlowGraph, dict[int, bool]] = {}
         self._version: int | None = None
         self._set_facts: dict[int, _SetFacts] = {}
@@ -1063,6 +1059,7 @@ class Ps1FaultReach:
         self._strict_v2: bool | None = None
         self._dispatch: Ps1Dispatch | None = None
         self._trap_bodies: dict[int, Ps1TrapStatement | None] = {}
+        self._hands_back: dict[int, bool] = {}
 
     @property
     def dispatch(self) -> Ps1Dispatch:
@@ -1377,36 +1374,25 @@ class Ps1FaultReach:
             return True
         return lowest < self.dispatch.depth_of(statement)
 
-    def fault_the_try_catches(
-        self,
-        operand: Node,
-        cleared: Callable[[Node], bool] | None = None,
-    ) -> bool:
-        """
-        Whether evaluating *operand* may raise a terminating error a `try` catches. A cast, a
-        fallible operator and a method call raise one whatever the error preferences say; a command
-        raises one only where the script makes its error terminating, which `error_is_terminating`
-        reads from `Stop`. The default command error is non-terminating — reported and stepped over —
-        so the `try` does not catch it and a statement after it still runs.
-
-        It is the fault model's rather than the effect layer's because its command arm reads the
-        script's error preferences, a judgment `error_is_terminating` already owns here; the
-        expression arm is the pure `raises_a_caught_terminating_error` shape from `ast`. A part of
-        *operand* that *cleared* answers for cannot raise: that judgment reads values, which this
-        module holds none of, so the caller hands it in.
-        """
-        return bool(self.kinds_the_try_catches(operand, cleared))
-
     def kinds_the_try_catches(
         self,
         operand: Node,
         cleared: Callable[[Node], bool] | None = None,
     ) -> Ps1ErrorKind:
         """
-        The kinds of error `fault_the_try_catches` reads evaluating *operand* as raising: a
-        statement-terminating one for a cast, a fallible operator and a method call, one no list
-        reports for a command whose error the script makes terminating, and for a call that may run
-        a body of the script, whatever that body hands back (`hands_back_a_body_error`).
+        The kinds of terminating error evaluating *operand* may raise that a `try` catches. A cast,
+        a fallible operator and a method call raise a statement-terminating one whatever the error
+        preferences say; a command raises one no list reports only where the script makes its error
+        terminating, which `error_is_terminating` reads from `Stop`; and a call that may run a body
+        of the script raises whatever that body hands back (`hands_back_a_body_error`). The default
+        command error is non-terminating — reported and stepped over — so the `try` does not catch
+        it and a statement after it still runs.
+
+        It is the fault model's rather than the effect layer's because its command arm reads the
+        script's error preferences, a judgment `error_is_terminating` already owns here; the
+        expression arm is the pure `raises_a_caught_terminating_error` shape from `ast`. A part of
+        *operand* that *cleared* answers for cannot raise: that judgment reads values, which this
+        module holds none of, so the caller hands it in.
         """
         kinds = Ps1ErrorKind.NONE
         if raises_a_caught_terminating_error(operand, cleared):
@@ -1424,77 +1410,66 @@ class Ps1FaultReach:
         (`refinery.lib.scripts.ps1.analysis.callgraph.Ps1CallGraph.may_run_a_body`), or a command
         there is handed a script block it may run. A script block written as a value runs only where
         something runs it, so what it holds is not read here.
+
+        Kept for every node the walk passes, because every point of a nest of `$( )` asks it of an
+        operand holding all the points below: asked afresh, the nest costs the square of its depth.
         """
+        memo = self._hands_back
+        found = memo.get(id(node))
+        if found is not None:
+            return found
         calls = self._calls()
-        stack = [node]
+        stack: list[tuple[Node, bool]] = [(node, False)]
         while stack:
-            current = stack.pop()
-            if isinstance(current, (Ps1CommandInvocation, Ps1InvokeMember)) and calls.may_run_a_body(current):
-                return True
-            for child in current.children():
-                if isinstance(child, Ps1ScriptBlock):
-                    if isinstance(current, (Ps1CommandInvocation, Ps1CommandArgument)):
-                        return True
-                    continue
-                stack.append(child)
-        return False
+            current, expanded = stack.pop()
+            if id(current) in memo:
+                continue
+            children = current.children()
+            if not expanded:
+                stack.append((current, True))
+                stack.extend(
+                    (child, False) for child in children
+                    if not isinstance(child, Ps1ScriptBlock) and id(child) not in memo
+                )
+                continue
+            runs = isinstance(current, (Ps1CommandInvocation, Ps1InvokeMember)) and calls.may_run_a_body(current)
+            handed = isinstance(current, (Ps1CommandInvocation, Ps1CommandArgument))
+            memo[id(current)] = runs or any(
+                handed if isinstance(child, Ps1ScriptBlock) else memo[id(child)] for child in children
+            )
+        return memo[id(node)]
 
-    def _fires_a_trap(self, raiser: Node) -> bool:
+    def never_runs(self, node: Node, raises: RaiseVerdicts) -> bool:
         """
-        Whether *raiser* may fire the `trap` its block is guarded by — with a statement-terminating
-        or terminating error, the only errors a `trap` runs on. A cast, a fallible operator, a method
-        call or a command a `Stop` makes terminating is read through `fault_the_try_catches` over the
-        raiser's `fault_operand`; a bare `throw` or a global `Stop` is read through
-        `error_is_terminating`. A raiser that may run a body of the script — a function it defines, a
-        script block, code it does not spell — may fire it too: a list that declares a `trap` passes
-        errors outward through every body it runs, so the called body's error leaves it and arrives
-        at the `trap`, as the one of a statement written there would (`hands_back_a_body_error`).
-
-        A plain command is not counted. Its default error is non-terminating and does not fire the
-        `trap`, so counting it would keep the junk a `trap` body holds that no run reaches, which the
-        deletion pass is written to drop. A command whose error is terminating although no `Stop`
-        is in force is a gap this shares with every other reading of whether a line can fail.
-        """
-        operand = fault_operand(raiser)
-        if operand is not None and self.fault_the_try_catches(operand):
-            return True
-        return self.error_is_terminating(raiser) or self.hands_back_a_body_error(raiser)
-
-    def never_runs(self, node: Node) -> bool:
-        """
-        Whether *node* stands in the body of a `trap` nothing its block holds may fire
-        (`_fires_a_trap` over the statements behind the set), so that no run reaches it and deleting
-        it changes nothing. A `trap` the graph places nowhere is read as one that may fire.
+        Whether *node* stands in the body of a `trap` nothing its block holds may fire, so that no
+        run reaches it and deleting it changes nothing. What may fire it is what *raises* reads as
+        raising behind the `trap`: the reading `removing_traps_is_observed` takes before the `trap`
+        itself is deleted, which counts every statement that is not cleared of a fault, a plain
+        command among them, so that no `trap` is kept for what may fire it while its body is read
+        as never running. A `trap` the graphs place nowhere is read as one that may fire.
         """
         trap = _enclosing_trap_body(node, self._trap_bodies)
         if trap is None:
             return False
-        located = self._control_flow.locate(trap)
+        located = self._handler_node(trap)
         if located is None:
             return False
         graph, start = located
-        memo = self._fires.setdefault(graph, {})
-        return not self.paths_of(graph).behind(start, self._fires_a_trap_at, memo)
+        return not raises.may_raise_behind(self.paths_of(graph), start)
 
     def escapes_a_trap_body(self, node: Node, kinds: Ps1ErrorKind) -> bool:
         """
         Whether *node* is a raise of *kinds* in the body of a `trap` whose error leaves that body and
-        ends the scope the `trap` belongs to. A `trap` does not guard its own body, so a raise among
-        its statements is not offered back to it: it ends the script at script scope, or the
-        function where the `trap` is written inside one. Deleting such a raise runs the remainder of
-        the body — and the scope past it — that the original abandoned, which is why it is the
-        position half of a keep. Whether the `trap` fires at all is `never_runs`, which the caller
-        asks first.
+        ends the scope the `trap` belongs to. A `trap` does not guard its own body, so an error raised
+        among its statements leaves the list that declares the `trap`: it ends the script at script
+        scope, or the function where the `trap` is written inside one, except where the `trap` ran
+        for a `try` statement of that list whose clauses took no error, which disposes of it as an
+        error of that statement (`refinery.lib.scripts.ps1.analysis.dispatch.Ps1Dispatch`). Deleting
+        such a raise runs the remainder of the body — and the scope past it — that the original
+        abandoned, which is why it is the position half of a keep. Whether the `trap` fires at all
+        is `never_runs`, which the caller asks first.
         """
         return _enclosing_trap_body(node, self._trap_bodies) is not None and self.escapes_the_body(node, kinds)
-
-    def _fires_a_trap_at(self, node: CfgNode) -> bool:
-        """
-        `_fires_a_trap` asked of the statement *node* stands for, where it stands for one that
-        raises at all rather than for a handler entry.
-        """
-        raiser = raiser_of(node)
-        return raiser is not None and self._fires_a_trap(raiser)
 
     def deleting_the_raise_resurrects_a_continuation(self, node: Node, kinds: Ps1ErrorKind) -> bool:
         """

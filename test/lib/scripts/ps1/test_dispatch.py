@@ -737,7 +737,7 @@ def disagreements(program: tuple[Statement, ...], preference: Preference, number
         if not _observable(read, statement, preference):
             continue
         if isinstance(statement, Fail):
-            if not deletion_is_observable(node, faults, cache.world_reach, cache.error_state):
+            if not deletion_is_observable(node, faults, cache.world_reach, cache.error_state, handlers.raises(True)):
                 found.add(Disagreement('deletion veto', number))
         elif isinstance(node, Ps1TrapStatement):
             if faults.removable_traps([node], handlers.raises(True), handlers.skips):
@@ -882,3 +882,24 @@ class TestPs1TheAnalysisAgreesWithTheDispatchModel(TestBase):
             with self.subTest(number=number):
                 self.assertEqual(
                     dispatch.render(_Reader().script(Ps1Parser(source).parse().body), preference), source)
+
+
+class TestPs1TheTailOfALineEndsWhereItsListHandsControlOn(TestBase):
+
+    @staticmethod
+    def _tail(source: str) -> tuple[Ps1IfStatement, frozenset[Node]]:
+        tree = Ps1Parser(source).parse()
+        statement, = (node for node in tree.walk() if isinstance(node, Ps1IfStatement))
+        line, = (
+            node for node in tree.walk()
+            if isinstance(node, Ps1ExpressionStatement) and isinstance(node.expression, Ps1AssignmentExpression)
+        )
+        return statement, Ps1ModelCache(tree).faults.dispatch.tail_of(line)
+
+    def test_the_last_line_of_an_if_body_goes_on_after_the_if(self):
+        statement, tail = self._tail("if ($c) { $null = [int]$s }; Write-Host 'after'")
+        self.assertIn(statement, tail)
+
+    def test_the_last_line_of_a_subexpression_tested_by_an_if_goes_on_to_the_test(self):
+        statement, tail = self._tail("if ($( 1; $null = [int]$s )) { Write-Host 'then' }; Write-Host 'after'")
+        self.assertNotIn(statement, tail)

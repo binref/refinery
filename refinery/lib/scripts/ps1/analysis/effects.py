@@ -49,6 +49,7 @@ from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1FaultReach,
     Ps1SkipQuery,
     Ps1StepOverRegion,
+    RaiseVerdicts,
     raiser_of,
 )
 from refinery.lib.scripts.ps1.analysis.handlers import handler_acts
@@ -1754,7 +1755,7 @@ def cleared_at(
     """
     `expression_cannot_fault` at *position*, as the judgment a walk over shapes asks of each part
     it would read as a raise; see
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.fault_the_try_catches`.
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.kinds_the_try_catches`.
     """
     return lambda operand: expression_cannot_fault(operand, position, faults, world)
 
@@ -1771,7 +1772,8 @@ def point_raise_kinds(
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.kinds_the_try_catches` reads an
     expression it evaluates as raising, with every part `expression_cannot_fault` clears read as
     raising nothing. A point whose operands `refinery.lib.scripts.ps1.ast.point_operands`
-    cannot name may raise every kind but the error of a `throw`.
+    cannot name may raise a statement-terminating error and one no list reports; a script block a
+    `switch` runs as a condition fails as the `switch` itself does.
     """
     kinds = Ps1ErrorKind.THROWN if isinstance(point, Ps1ThrowStatement) else Ps1ErrorKind.NONE
     operands = point_operands(point)
@@ -1827,6 +1829,7 @@ def fault_is_observed(
     stmt: Node,
     faults: Ps1FaultReach,
     world: Ps1WorldReach | None = None,
+    raises: RaiseVerdicts | None = None,
 ) -> bool:
     """
     Whether deleting *stmt* may change which handler runs.
@@ -1843,7 +1846,10 @@ def fault_is_observed(
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.observed_at`. Both are asked once per
     point the graphs evaluate inside *stmt*, because a construct is deleted whole and each of its
     parts raises where it stands; a construct the graphs place nothing for at all is refused, since
-    a subtree nothing models is one nothing can clear.
+    a subtree nothing models is one nothing can clear. A point in the body of a `trap` nothing may
+    fire runs on no path and is passed over
+    (`refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.never_runs`), where *raises* says
+    what may fire it; without *raises*, every `trap` body is one that may run.
 
     *stmt* is the position every point is weighed at, rather than the point itself: *stmt* is what
     the removal takes away, so what may have run before it is what decides whether the analysis can
@@ -1861,7 +1867,7 @@ def fault_is_observed(
     judged = False
     for site in faults.points_in(stmt):
         judged = True
-        if faults.never_runs(site):
+        if raises is not None and faults.never_runs(site, raises):
             continue
         operand = fault_operand(site)
         if operand is not None and expression_cannot_fault(operand, stmt, faults, world):
@@ -1878,6 +1884,7 @@ def deletion_is_observable(
     faults: Ps1FaultReach,
     world: Ps1WorldReach | None = None,
     error_state: Ps1ErrorStateReach | None = None,
+    raises: RaiseVerdicts | None = None,
 ) -> bool:
     """
     Whether deleting *stmt* may change what the script does — the removal veto. Three ways it can,
@@ -1898,7 +1905,8 @@ def deletion_is_observable(
     script block written in *stmt* is not one of them, for the reason `_leaves_a_block_of` gives:
     what its error skips inside the block is deleted with *stmt*, and an error that leaves the block
     arrives where one raised by *stmt*'s own point does, or nowhere where the block is not run
-    there.
+    there. Nor is a point in the body of a `trap` nothing may fire, as `fault_is_observed` reads
+    *raises*.
 
     The third is a read of the record the raise leaves behind. Windows PowerShell 5.1 files every
     terminating error in `$Error` whether or not a handler ran, so a later read of that record
@@ -1921,7 +1929,7 @@ def deletion_is_observable(
         if (
             isinstance(point, Ps1ThrowStatement)
             or _lies_in_a_block_within(point, stmt)
-            or faults.never_runs(point)
+            or (raises is not None and faults.never_runs(point, raises))
         ):
             continue
         kinds = point_raise_kinds(point, stmt, faults, world)
@@ -1933,7 +1941,7 @@ def deletion_is_observable(
         and error_state.persistent_read_observed_after(stmt)
     ):
         return True
-    return fault_is_observed(stmt, faults, world)
+    return fault_is_observed(stmt, faults, world, raises)
 
 
 #: Commands that read a variable named by data rather than spelled, so one on a trap's continuation

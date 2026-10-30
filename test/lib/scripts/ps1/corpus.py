@@ -945,6 +945,10 @@ BEHAVIOURS: tuple[str, ...] = (
     "try { throw 'x' } catch { New-Object Foo.Bar; Write-Host 'rest' }; Write-Host 'after'",
     "try { throw 'x' } catch { Get-Random -Bogus 1; Write-Host 'rest' }; Write-Host 'after'",
     "[int]$i = 0; try { throw 'x' } catch { foreach ($i in 'a') { }; Write-Host 'rest' }; Write-Host 'after'",
+    "$s = $env:COMPUTERNAME; try { trap { $null = [int]$s; continue }; Invoke-Nonexistent; Write-Host 'rest' } catch { Write-Host 'caught' }",
+    "$s = $env:COMPUTERNAME; trap { $null = [int]$s; continue }; Invoke-Nonexistent; Write-Host 'rest'",
+    "$s = $env:COMPUTERNAME; $t = $env:USERNAME; try { trap { $null = [int]$s; continue }; if ([int]$t) { Write-Host 'x' }; Write-Host 'rest' } catch { Write-Host 'caught' }",
+    "trap { Write-Host 'T'; $null = [int]'a'; continue }; Get-Item -BogusParam foo; Write-Host 'after'",
 )
 
 

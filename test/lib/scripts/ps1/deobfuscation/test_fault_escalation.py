@@ -52,18 +52,15 @@ _STOPPING_RAISE = 'Get-Item nope -ErrorAction Stop'
 _UNSPECIFIED_RAISE = 'Get-Item nope'
 
 #: A command 5.1 answers with a parameter-binding failure — a terminating error that fires a `trap`
-#: with no `-ErrorAction Stop` anywhere. The firing gate counts no plain command, so a `trap` body
-#: raise this fires is deleted although the host keeps it; the delete is tracked by an xfail below.
+#: with no `-ErrorAction Stop` anywhere.
 _BINDING_FAILURE_RAISE = 'Get-Item -BogusParam foo'
 
 #: A member access on `$Null`, which under `Set-StrictMode` raises a statement-terminating error
-#: that fires a `trap`. `is_soft_error_source` excludes member and index access by design, so the
-#: firing gate does not count this either — the second tracked unsound delete.
+#: that fires a `trap`.
 _STRICT_MEMBER_RAISE = '$Null.Nonexistent'
 
 #: A read of a never-set variable, which under `Set-StrictMode` raises a statement-terminating error
-#: that fires a `trap`. `is_soft_error_source` counts no bare variable read, so the firing gate
-#: misses it the way it misses the member access above — the third tracked unsound delete.
+#: that fires a `trap`.
 _STRICT_UNSET_VAR_RAISE = '$ThisVarWasNeverSet'
 
 
@@ -802,10 +799,9 @@ class TestPs1ARaiseInATrapBodyEndsThatBody(_Ps1FaultEscalation):
     to that guard, and an enclosing `catch` clause or a second, live `trap` runs its body over it.
     In each of these the raise inside the `trap` body decides what runs next, so it survives.
 
-    The keep fires only where the `trap` provably fires — a cast, a fallible operator, a method
-    call, a `throw`, or a command a `Stop` makes terminating in the block the `trap` guards — so a
-    `trap` nothing triggers still leaves its dead body raise removable
-    (`TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable`).
+    The keep holds wherever something in the block the `trap` guards may raise, so a `trap` whose
+    block holds nothing that may leaves its dead body raise removable
+    (`TestPs1AFiringTrapBodyRaiseDependsOnWhichBlockFiresTheTrap`).
     """
 
     def test_a_raising_cast_before_another_statement_of_the_same_trap_body_is_kept(self):
@@ -899,8 +895,14 @@ class TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable(_Ps1FaultEscala
     A `trap` body runs only when its block raises, so with nothing raising there the statements of
     the body never run and a raise among them ends nothing. It may go while the `trap` stands, and
     this is the shape a refusal keyed to a raise being written inside a `trap` body would break.
+
+    A `Write-Host` of a constant never fails on 5.1, but the analysis does not yet tell it from a
+    command that does, such as a name nothing defines, which fires the `trap`; so it reads the
+    `trap` as one that may run and keeps the raise. Knowing which commands cannot fail belongs to
+    the one answer to whether a line can fail, the step that closes this.
     """
 
+    @unittest.expectedFailure
     def test_a_raising_cast_in_the_body_of_a_trap_no_raise_triggers_is_removed(self):
         self._assertDeobfuscatesTo(F"""
             trap {{
@@ -972,18 +974,13 @@ class TestPs1AFiringTrapBodyRaiseDependsOnWhichBlockFiresTheTrap(_Ps1FaultEscala
         """)
 
 
-class TestPs1ABindingFailureFiringATrapBodyIsAKnownUnsoundDelete(_Ps1FaultEscalation):
+class TestPs1ATrapBodyRaiseABindingFailureFiresIsKept(_Ps1FaultEscalation):
     """
     A parameter-binding failure is a terminating error that fires a `trap` with no `-ErrorAction
     Stop` anywhere, so a raise in the fired `trap`'s body ends the scope and is live — on 5.1 the
-    script exits non-zero having run only the handler. The firing gate counts a cast, a fallible
-    operator, a method call, a `throw` or a `Stop`-terminated command, not a plain command that
-    terminates on its own, so it reads the `trap` as not firing and deletes the body raise. Counting
-    a plain command would regress `TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable`; the
-    fix needs an open-world command-firing notion.
+    script exits non-zero having run only the handler.
     """
 
-    @unittest.expectedFailure
     def test_a_trap_body_raise_a_binding_failure_fires_is_kept(self):
         self._assertKept(F"""
             trap {{
@@ -996,16 +993,13 @@ class TestPs1ABindingFailureFiringATrapBodyIsAKnownUnsoundDelete(_Ps1FaultEscala
         """)
 
 
-class TestPs1AStrictModeMemberFiringATrapBodyIsAKnownUnsoundDelete(_Ps1FaultEscalation):
+class TestPs1ATrapBodyRaiseAStrictModeMemberFiresIsKept(_Ps1FaultEscalation):
     """
     Under `Set-StrictMode` a member access on `$Null` raises a statement-terminating error that
     fires a `trap`, so a raise in the fired body is live — on 5.1 the script exits non-zero having
-    run only the handler. `is_soft_error_source` excludes member and index access by design, since
-    only strict mode makes them fault and the firing gate does not read that arming, so it reads the
-    `trap` as not firing and deletes the body raise.
+    run only the handler.
     """
 
-    @unittest.expectedFailure
     def test_a_trap_body_raise_a_strict_mode_member_fires_is_kept(self):
         self._assertKept(F"""
             Set-StrictMode -Version Latest
@@ -1019,18 +1013,13 @@ class TestPs1AStrictModeMemberFiringATrapBodyIsAKnownUnsoundDelete(_Ps1FaultEsca
         """)
 
 
-class TestPs1AStrictModeUnsetVariableFiringATrapBodyIsAKnownUnsoundDelete(_Ps1FaultEscalation):
+class TestPs1ATrapBodyRaiseAStrictModeUnsetReadFiresIsKept(_Ps1FaultEscalation):
     """
     Under `Set-StrictMode` a read of a never-set variable raises a statement-terminating error that
     fires a `trap`, so a raise in the fired body is live — on 5.1 the script exits non-zero having
-    run only the handler. `is_soft_error_source` counts no bare variable read, and the firing gate
-    does not read the strict-mode arming, so it reads the `trap` as not firing and deletes the body
-    raise. This is the same strict-mode family as
-    `TestPs1AStrictModeMemberFiringATrapBodyIsAKnownUnsoundDelete`; a never-set read is the spelling
-    that class's `member and index access` wording leaves out.
+    run only the handler.
     """
 
-    @unittest.expectedFailure
     def test_a_trap_body_raise_a_strict_mode_unset_variable_read_fires_is_kept(self):
         self._assertKept(F"""
             Set-StrictMode -Version Latest

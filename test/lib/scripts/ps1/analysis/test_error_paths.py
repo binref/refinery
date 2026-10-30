@@ -652,14 +652,32 @@ class TestPs1WeighingEveryTrapCostsLinearWork(TestBase):
             statements = [node for node in script.walk() if isinstance(node, Ps1ExpressionStatement)]
             cache.world_reach
             cache.error_state
+            raises = cache.handlers.raises(True)
 
             def ask():
                 for statement in statements:
-                    deletion_is_observable(statement, cache.faults, cache.world_reach, cache.error_state)
+                    deletion_is_observable(statement, cache.faults, cache.world_reach, cache.error_state, raises)
 
             return lines_executed(ask, faults, dispatch, effects, components)
 
         self.assertWorkGrowsLinearly(work, 20)
+
+    def test_asking_what_every_point_of_a_nest_of_subexpressions_raises(self):
+        def work(size: int) -> int:
+            script = Ps1Parser('$null = $( ' * size + 'f' + ' )' * size).parse()
+            statement = script.body[0]
+            control_flow = build_control_flow_model(script)
+            calls = Ps1ModelCache(script).call_graph
+            points = list(build_fault_reach(control_flow, lambda: calls).points_in(statement))
+
+            def ask():
+                reach = build_fault_reach(control_flow, lambda: calls)
+                for point in points:
+                    effects.point_raise_kinds(point, statement, reach, None)
+
+            return lines_executed(ask, faults)
+
+        self.assertWorkGrowsLinearly(work, 5)
 
 
 class TestPs1TheWorldIsBuiltOnlyForAVerdictThatReadsIt(TestBase):

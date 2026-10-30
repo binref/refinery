@@ -1524,6 +1524,25 @@ class TestPs1AFailingLineInATrapBodyACallFiresIsKept(TestPs1):
             "trap { Write-Host 'T'; $null = [int]'a'; continue }; & { $null = [int]'b' }; Write-Host 'after'"))
 
 
+class TestPs1AFailingLineInATrapBodyAnythingMayFireIsKept(TestPs1):
+    """
+    Measured on 5.1: a command name nothing defines raises a terminating error, as a failing cast in
+    an `if` test does, and either fires the `trap` its list declares; a line failing in the `trap`
+    body then leaves it for the `catch` around the list, which writes `caught` where the output
+    without that line wrote `rest`.
+    """
+
+    def test_a_failing_line_in_a_trap_body_an_unknown_command_fires_is_kept(self):
+        self.assertIn('[int]$s', self._deobfuscate(
+            "$s = $env:COMPUTERNAME; try { trap { $null = [int]$s; continue }; Invoke-Nonexistent; "
+            "Write-Host 'rest' } catch { Write-Host 'caught' }"))
+
+    def test_a_failing_line_in_a_trap_body_a_cast_in_an_if_test_fires_is_kept(self):
+        self.assertIn('[int]$s', self._deobfuscate(
+            "$s = $env:COMPUTERNAME; $t = $env:USERNAME; try { trap { $null = [int]$s; continue }; "
+            "if ([int]$t) { Write-Host 'x' }; Write-Host 'rest' } catch { Write-Host 'caught' }"))
+
+
 class TestPs1AnAdvancedFunctionToldToStopRunsUnderStop(TestPs1):
     """
     Measured on 5.1: `-ErrorAction Stop` on a function declaring `[CmdletBinding()]` writes `Stop` to

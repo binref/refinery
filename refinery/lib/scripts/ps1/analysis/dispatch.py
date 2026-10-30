@@ -107,9 +107,6 @@ class Ps1ErrorKind(enum.Flag):
 #: Every kind of error, one at a time.
 ERROR_KINDS = (Ps1ErrorKind.STATEMENT, Ps1ErrorKind.THROWN, Ps1ErrorKind.MARKED, Ps1ErrorKind.CALLED)
 
-#: Every kind of error at once.
-EVERY_KIND = Ps1ErrorKind.STATEMENT | Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED | Ps1ErrorKind.CALLED
-
 #: What a call that may run a body of the script may hand back: whatever that body may raise.
 HANDED_BACK = Ps1ErrorKind.CALLED | Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED
 
@@ -268,6 +265,7 @@ class _Jump(enum.Flag):
     LABELLED = enum.auto()
     #: Something that may run a body of the script or code it does not spell.
     RUNS_CODE = enum.auto()
+
 
 _LOOPS = (
     Ps1DoLoop,
@@ -790,7 +788,8 @@ class Ps1Dispatch:
         is the last of its list, the statement that list belongs to as well, and so on outward,
         through lists that end where the statement holding them ends — the body of an `if`, a
         `try`, a `catch` or a `finally`. A `finally` body entered with an error or a jump in flight
-        goes on with that instead, which is not a completion; see `jumps_through`.
+        goes on with that instead, which is not a completion; see `jumps_through`. A `$( )` written
+        as the test of an `if` ends where the test is made, not where the `if` ends.
         """
         found = self._tails.get(id(statement))
         if found is None:
@@ -802,7 +801,11 @@ class Ps1Dispatch:
                 and _last_statement(level.owner) is statement
                 and (
                     level.kind in (Ps1LevelKind.TRY, Ps1LevelKind.CATCH, Ps1LevelKind.FINALLY)
-                    or isinstance(level.holder, Ps1IfStatement) and level.owner.parent is level.holder
+                    or (
+                        isinstance(level.holder, Ps1IfStatement)
+                        and isinstance(level.owner, Block)
+                        and level.owner.parent is level.holder
+                    )
                 )
             ):
                 found = found | self.tail_of(level.holder)
