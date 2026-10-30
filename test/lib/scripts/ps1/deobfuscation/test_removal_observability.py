@@ -1533,14 +1533,18 @@ class TestPs1AFailingLineInATrapBodyAnythingMayFireIsKept(TestPs1):
     """
 
     def test_a_failing_line_in_a_trap_body_an_unknown_command_fires_is_kept(self):
-        self.assertIn('[int]$s', self._deobfuscate(
+        deobfuscated = self._deobfuscate(
             "$s = $env:COMPUTERNAME; try { trap { $null = [int]$s; continue }; Invoke-Nonexistent; "
-            "Write-Host 'rest' } catch { Write-Host 'caught' }"))
+            "Write-Host 'rest' } catch { Write-Host 'caught' }"
+        )
+        self.assertIn('[int]$s', deobfuscated)
 
     def test_a_failing_line_in_a_trap_body_a_cast_in_an_if_test_fires_is_kept(self):
-        self.assertIn('[int]$s', self._deobfuscate(
+        deobfuscated = self._deobfuscate(
             "$s = $env:COMPUTERNAME; $t = $env:USERNAME; try { trap { $null = [int]$s; continue }; "
-            "if ([int]$t) { Write-Host 'x' }; Write-Host 'rest' } catch { Write-Host 'caught' }"))
+            "if ([int]$t) { Write-Host 'x' }; Write-Host 'rest' } catch { Write-Host 'caught' }"
+        )
+        self.assertIn('[int]$s', deobfuscated)
 
 
 class TestPs1AnAdvancedFunctionToldToStopRunsUnderStop(TestPs1):

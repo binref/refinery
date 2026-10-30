@@ -920,6 +920,78 @@ class TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable(_Ps1FaultEscala
         """)
 
 
+class TestPs1ATrapBodyBesideLinesThatCannotFailLeavesTheRaiseInItRemovable(_Ps1FaultEscalation):
+    """
+    A store into a variable nothing constrains, a function definition and a `return` never fail on
+    5.1, so a `trap` whose block holds nothing else never runs and a raise in its body may go.
+    """
+
+    @unittest.expectedFailure
+    def test_a_raising_cast_in_the_body_of_a_trap_beside_a_store_is_removed(self):
+        """
+        The analysis reads every store, and every read of the environment, as a line that may fail,
+        so it reads the `trap` as one that may run and keeps the raise. Knowing which lines cannot
+        fail belongs to the one answer to whether a line can fail, the step that closes
+        `TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable` as well.
+        """
+        self._assertDeobfuscatesTo(F"""
+            $s = $env:COMPUTERNAME
+            trap {{
+              Write-Host $s
+              {_RAISE}
+              {_FOLLOWER}
+            }}
+        """, F"""
+            $s = $env:ComputerName
+            trap {{
+              Write-Host $s
+              {_FOLLOWER}
+            }}
+        """)
+
+    def test_a_raising_cast_in_the_body_of_a_trap_beside_a_function_definition_is_removed(self):
+        self._assertDeobfuscatesTo(F"""
+            function Invoke-Thing {{
+              {_HANDLER}
+            }}
+            trap {{
+              Invoke-Thing
+              {_RAISE}
+              {_FOLLOWER}
+            }}
+        """, F"""
+            function Invoke-Thing {{
+              {_HANDLER}
+            }}
+            trap {{
+              Invoke-Thing
+              {_FOLLOWER}
+            }}
+        """)
+
+    def test_a_raising_cast_in_the_body_of_a_trap_beside_a_return_is_removed(self):
+        self._assertDeobfuscatesTo(F"""
+            function Invoke-Thing {{
+              trap {{
+                {_HANDLER}
+                {_RAISE}
+                {_FOLLOWER}
+              }}
+              return
+            }}
+            Invoke-Thing
+        """, F"""
+            function Invoke-Thing {{
+              trap {{
+                {_HANDLER}
+                {_FOLLOWER}
+              }}
+              return
+            }}
+            Invoke-Thing
+        """)
+
+
 class TestPs1AFiringTrapBodyRaiseDependsOnWhichBlockFiresTheTrap(_Ps1FaultEscalation):
     """
     A `trap` in a named block is fired only by a raise in that same block. A raise in the body of a

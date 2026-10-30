@@ -1004,10 +1004,14 @@ class RaiseVerdicts(Protocol):
     The semantic half of the transpose's first two questions, which this module cannot answer
     because whether a statement can raise is a fact of the semantic model: whether something behind
     a handler may raise at all, and whether something behind it may raise an error that ends the
-    run.
+    run. Beside them, whether something behind a `trap` may fire it, which `Ps1FaultReach.never_runs`
+    asks.
     """
 
     def may_raise_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
+        ...
+
+    def may_fire_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
         ...
 
     def may_end_the_run_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
@@ -1060,6 +1064,7 @@ class Ps1FaultReach:
         self._dispatch: Ps1Dispatch | None = None
         self._trap_bodies: dict[int, Ps1TrapStatement | None] = {}
         self._hands_back: dict[int, bool] = {}
+        self._kept_for: int | None = None
 
     @property
     def dispatch(self) -> Ps1Dispatch:
@@ -1414,6 +1419,7 @@ class Ps1FaultReach:
         Kept for every node the walk passes, because every point of a nest of `$( )` asks it of an
         operand holding all the points below: asked afresh, the nest costs the square of its depth.
         """
+        self._forget_a_moved_tree()
         memo = self._hands_back
         found = memo.get(id(node))
         if found is not None:
@@ -1443,11 +1449,11 @@ class Ps1FaultReach:
         """
         Whether *node* stands in the body of a `trap` nothing its block holds may fire, so that no
         run reaches it and deleting it changes nothing. What may fire it is what *raises* reads as
-        raising behind the `trap`: the reading `removing_traps_is_observed` takes before the `trap`
-        itself is deleted, which counts every statement that is not cleared of a fault, a plain
-        command among them, so that no `trap` is kept for what may fire it while its body is read
-        as never running. A `trap` the graphs place nowhere is read as one that may fire.
+        raising at a point behind the `trap` (`RaiseVerdicts.may_fire_behind`): whatever a point
+        evaluates that is not cleared of a fault, a plain command among them. A `trap` the graphs
+        place nowhere is read as one that may fire.
         """
+        self._forget_a_moved_tree()
         trap = _enclosing_trap_body(node, self._trap_bodies)
         if trap is None:
             return False
@@ -1455,7 +1461,7 @@ class Ps1FaultReach:
         if located is None:
             return False
         graph, start = located
-        return not raises.may_raise_behind(self.paths_of(graph), start)
+        return not raises.may_fire_behind(self.paths_of(graph), start)
 
     def escapes_a_trap_body(self, node: Node, kinds: Ps1ErrorKind) -> bool:
         """
@@ -1467,8 +1473,9 @@ class Ps1FaultReach:
         error of that statement (`refinery.lib.scripts.ps1.analysis.dispatch.Ps1Dispatch`). Deleting
         such a raise runs the remainder of the body — and the scope past it — that the original
         abandoned, which is why it is the position half of a keep. Whether the `trap` fires at all
-        is `never_runs`, which the caller asks first.
+        is `never_runs`, which a caller holding what may fire it asks first.
         """
+        self._forget_a_moved_tree()
         return _enclosing_trap_body(node, self._trap_bodies) is not None and self.escapes_the_body(node, kinds)
 
     def deleting_the_raise_resurrects_a_continuation(self, node: Node, kinds: Ps1ErrorKind) -> bool:
@@ -1599,6 +1606,19 @@ class Ps1FaultReach:
 
     def _trap_set_of(self, trap: Ps1TrapStatement) -> Ps1TrapSet | None:
         return self._control_flow.trap_set_of(trap)
+
+    def _forget_a_moved_tree(self) -> None:
+        """
+        Drop the answers kept by node identity once the tree has moved since they were read: an
+        edited subtree answers differently, and a node made by the edit may take the identity of
+        one it freed. A pass may go on asking this reader after it edited the tree.
+        """
+        root = self._script
+        version = None if root is None else tree_version(tree_root(root))
+        if version != self._kept_for:
+            self._trap_bodies.clear()
+            self._hands_back.clear()
+            self._kept_for = version
 
     def _moved(self) -> bool:
         """

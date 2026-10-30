@@ -6,7 +6,7 @@ from inspect import cleandoc
 
 from test import TestBase, wontfix
 
-from refinery.lib.scripts import Node, Statement, set_body
+from refinery.lib.scripts import Node, Statement, set_body, set_child
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import Ps1ControlFlowModel, build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts
@@ -23,6 +23,7 @@ from refinery.lib.scripts.ps1.analysis.worldflow import build_world_reach
 from refinery.lib.scripts.ps1.ast import get_body, resolve_command_name
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
+    Ps1AssignmentExpression,
     Ps1CastExpression,
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
@@ -98,6 +99,9 @@ class _Answering:
         return self._answer
 
     def may_raise_behind(self, paths, start) -> bool:
+        return self._answer
+
+    def may_fire_behind(self, paths, start) -> bool:
         return self._answer
 
     def may_end_the_run_behind(self, paths, start) -> bool:
@@ -1886,6 +1890,21 @@ class TestPs1WhetherAnErrorLeavesTheBodyItWasRaisedIn(TestBase):
         )
         self.assertFalse(faults.escapes_the_body(point, Ps1ErrorKind.STATEMENT))
         self.assertTrue(_observed(faults, point))
+
+
+class TestPs1TheFaultReaderAnswersForTheTreeAsItIsWhenAsked(TestBase):
+
+    def test_a_store_edited_to_run_a_script_block_hands_back_its_error(self):
+        tree, faults = _model("$v = 'a'")
+        statement = tree.body[0]
+        self.assertFalse(faults.hands_back_a_body_error(statement))
+        store = next(node for node in tree.walk() if isinstance(node, Ps1AssignmentExpression))
+        call = next(
+            node for node in Ps1Parser("& { [int]'a' }").parse().walk()
+            if isinstance(node, Ps1CommandInvocation)
+        )
+        set_child(store, 'value', call)
+        self.assertTrue(faults.hands_back_a_body_error(statement))
 
 
 class TestPs1ARaiseEscapesATrapBodyThatRunsOnlyWhereItsBlockMayFireTheTrap(TestBase):

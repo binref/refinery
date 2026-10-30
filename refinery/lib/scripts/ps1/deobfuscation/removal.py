@@ -22,7 +22,7 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     statement_can_raise,
 )
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
-from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
+from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach, RaiseVerdicts
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -37,6 +37,14 @@ class _Proposal(NamedTuple):
     """
     statement: Statement
     replacement: list[Statement]
+
+
+def _raise_verdicts(handlers: Ps1HandlerVerdicts, world: Ps1WorldReach | None) -> RaiseVerdicts:
+    """
+    The raise verdicts a plan or a batch reads: under its world where it was given one, and
+    without one otherwise, so that a `trap` deletion and the lines of its body are weighed alike.
+    """
+    return handlers.raises(world is not None)
 
 
 def _removes_a_handler(statement: Node) -> bool:
@@ -290,11 +298,12 @@ class Ps1RemovalPlan:
         whether what the `trap` guards may raise is read under `world` when one was given and
         without one otherwise, which is the question the replacement veto asks of
         `refinery.lib.scripts.ps1.analysis.effects.statement_can_raise` too, and whether the region
-        a resuming `trap` skips is observable.
-        Absent, no `trap` is removed: the question cannot be asked without it, and keeping the
-        handler is the answer that changes nothing. A `handlers` built over another fault model or
-        another world than the ones given is refused, because its verdicts would be about a
-        different tree.
+        a resuming `trap` skips is observable. The same reading of what may fire a `trap` decides
+        whether the veto passes over a line in its body as one no run reaches.
+        Absent, no `trap` is removed and every `trap` body is read as one that may run: neither
+        question can be asked without it, and keeping the code is the answer that changes nothing.
+        A `handlers` built over another fault model or another world than the ones given is
+        refused, because its verdicts would be about a different tree.
         """
         if handlers is not None:
             if handlers.faults is not faults or world is not None and handlers.world is not world:
@@ -450,7 +459,7 @@ class Ps1RemovalPlan:
         if not self.removals_may_fault:
             return False
         handlers = self.handlers
-        raises = None if handlers is None else handlers.raises(self.world is not None)
+        raises = None if handlers is None else _raise_verdicts(handlers, self.world)
         return deletion_is_observable(proposal.statement, faults, self.world, self.error_state, raises)
 
     def _allowed(self) -> list[_Proposal]:
@@ -494,7 +503,7 @@ class Ps1RemovalPlan:
             if error_state is None or not error_state.success_flag_write_observed(p.statement)
         ]
         statements = [p.statement for p in candidates if isinstance(p.statement, Ps1TrapStatement)]
-        raises = handlers.raises(self.world is not None)
+        raises = _raise_verdicts(handlers, self.world)
         granted = {id(trap) for trap in faults.removable_traps(statements, raises, handlers.skips)}
         return [p for p in candidates if id(p.statement) in granted]
 
@@ -812,7 +821,7 @@ class Ps1RemovalPlans:
             return set()
         handlers = self.handlers
         assert handlers is not None
-        raises = handlers.raises(self.world is not None)
+        raises = _raise_verdicts(handlers, self.world)
         return {id(plans[index]) for index in self.faults.removals_that_wait(groups, raises)}
 
     def _installable(self) -> list[tuple[_Proposal, Node]]:

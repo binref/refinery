@@ -1772,8 +1772,7 @@ def point_raise_kinds(
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.kinds_the_try_catches` reads an
     expression it evaluates as raising, with every part `expression_cannot_fault` clears read as
     raising nothing. A point whose operands `refinery.lib.scripts.ps1.ast.point_operands`
-    cannot name may raise a statement-terminating error and one no list reports; a script block a
-    `switch` runs as a condition fails as the `switch` itself does.
+    cannot name may raise a statement-terminating error and one no list reports.
     """
     kinds = Ps1ErrorKind.THROWN if isinstance(point, Ps1ThrowStatement) else Ps1ErrorKind.NONE
     operands = point_operands(point)
@@ -2088,9 +2087,10 @@ class _TreeStamp:
 class _RaiseVerdicts:
     """
     Whether something behind a handler may raise, and whether it may raise an error that ends the
-    run, read with `statement_can_raise` under one world (or none) and kept per component of each
-    graph's `refinery.lib.scripts.ps1.analysis.faults.Ps1ErrorPaths`, so that every handler guarding
-    the same statements is answered by one walk over them. Refused once the tree moves, as "may
+    run, read with `statement_can_raise` under one world (or none), and whether something behind a
+    `trap` may fire it, read with `point_may_fire_a_trap`; each kept per component of each graph's
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1ErrorPaths`, so that every handler guarding the
+    same statements is answered by one walk over them. Refused once the tree moves, as "may
     raise".
     """
 
@@ -2098,11 +2098,15 @@ class _RaiseVerdicts:
         self._faults = faults
         self._world = world
         self._stamp = stamp
-        self._memos: dict[tuple[Ps1ErrorPaths, bool], dict[int, bool]] = {}
+        self._memos: dict[tuple[Ps1ErrorPaths, Callable[[CfgNode], bool]], dict[int, bool]] = {}
 
     def _raises(self, node: CfgNode) -> bool:
         raiser = raiser_of(node)
         return raiser is not None and statement_can_raise(raiser, self._faults, self._world())
+
+    def _fires(self, node: CfgNode) -> bool:
+        raiser = raiser_of(node)
+        return raiser is not None and point_may_fire_a_trap(raiser, self._faults, self._world())
 
     def _ends_the_run(self, node: CfgNode) -> bool:
         raiser = raiser_of(node)
@@ -2112,15 +2116,19 @@ class _RaiseVerdicts:
             and statement_can_raise(raiser, self._faults, self._world())
         )
 
-    def may_raise_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
+    def _behind(self, paths: Ps1ErrorPaths, start: CfgNode, test: Callable[[CfgNode], bool]) -> bool:
         if self._stamp.moved():
             return True
-        return paths.behind(start, self._raises, self._memos.setdefault((paths, False), {}))
+        return paths.behind(start, test, self._memos.setdefault((paths, test), {}))
+
+    def may_raise_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
+        return self._behind(paths, start, self._raises)
 
     def may_end_the_run_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
-        if self._stamp.moved():
-            return True
-        return paths.behind(start, self._ends_the_run, self._memos.setdefault((paths, True), {}))
+        return self._behind(paths, start, self._ends_the_run)
+
+    def may_fire_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
+        return self._behind(paths, start, self._fires)
 
 
 class _PastVerdicts:
@@ -2605,6 +2613,32 @@ def statement_can_raise(
     if operand is None:
         return True
     return not expression_cannot_fault(operand, stmt, faults, world)
+
+
+def point_may_fire_a_trap(
+    point: Node,
+    faults: Ps1FaultReach,
+    world: Ps1WorldReach | None = None,
+) -> bool:
+    """
+    Whether evaluating the point *point* stands for may raise an error that fires a `trap` guarding
+    it: what the point evaluates (`refinery.lib.scripts.ps1.ast.point_operands`) is not cleared
+    by `expression_cannot_fault`, it is a `throw`, or the operands cannot be named. A function
+    definition evaluates nothing where it stands, since what its body raises arrives where it is
+    called, and a call is a command no clearing covers.
+
+    This reads a point where `statement_can_raise` reads a whole statement: a jump raises what its
+    value raises, and the point of an `if` what its first test does, its bodies being points of
+    their own.
+    """
+    if isinstance(point, Ps1FunctionDefinition):
+        return False
+    if isinstance(point, Ps1ThrowStatement):
+        return True
+    operands = point_operands(point)
+    if operands is None:
+        return True
+    return any(not expression_cannot_fault(operand, point, faults, world) for operand in operands)
 
 
 def emptying_unhooks_a_handler(block: Node) -> bool:
