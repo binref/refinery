@@ -552,6 +552,23 @@ class TestDominance(TestBase):
                 method = self._method(ast, 'handlers', 'onload')
                 self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), method), expected)
 
+    def test_a_store_before_the_one_call_of_a_library_function_does_not_precede_the_calls_of_its_loader(self):
+        """
+        A file of nothing but function declarations is a library: code that loads it calls `use`
+        by name once the file has run, without running `main` first. Where the file calls `main`
+        itself, it is no library, and the call of `use` in `main` is the only one.
+        """
+        cases = {
+            'function main() { G = 5; use(); } function use() { return G; }': False,
+            'function main() { G = 5; use(); } function use() { return G; } main();': True,
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                ast = JsParser(source).parse()
+                dom = build_dominance(build_semantic_model(ast))
+                store = next(node for node in ast.walk() if isinstance(node, JsAssignmentExpression))
+                self.assertEqual(dom.runs_before_function(store, self._func(ast, 'use')), expected)
+
     def test_a_function_installed_as_the_prototype_is_ordered_by_its_creation(self):
         """
         A function stored at `o.__proto__` becomes the prototype of `o`, so the inherited read

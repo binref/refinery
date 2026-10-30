@@ -10,6 +10,8 @@ slots and their `build_*` wiring.
 """
 from __future__ import annotations
 
+from functools import partial
+
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.js.analysis.assignment import (
     DefiniteAssignmentModel,
@@ -141,7 +143,7 @@ class ModelCache(ModelCacheBase):
             eval_is_trusted(self.options),
             self.file_kind,
             exports_are_read_outside(self.options),
-            lambda name: is_host_entrypoint(self.options, name),
+            partial(is_host_entrypoint, self.options),
         ))
 
     @property

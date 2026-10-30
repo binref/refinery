@@ -723,20 +723,16 @@ class ConversionInstalls:
         """
         Whether every read of the name *binding*, which holds a function, constructs with it, reads
         its `prototype`, is the right of `instanceof`, or is a test; and the function cannot be
-        reached another way: the name is neither exported, nor written at entry, nor reached through
-        a handed object or by reflection, and no `constructor` property escapes in the program
+        reached another way: nothing reaches the name where no read of it stands
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_a_read`), and no
+        `constructor` property escapes in the program
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.constructors_may_escape`). *reads*
         are the reads through which the name reaches the function, all of its reads by default
         (`refinery.lib.scripts.js.analysis.model.FunctionNames.reads_of`).
         """
-        if (
-            binding is None
-            or binding.exported
-            or binding.written_at_entry
-            or binding.reachable_through_a_handed_object
-        ):
+        if binding is None or self._model.reached_without_a_read(binding):
             return False
-        if self._model.constructors_may_escape() or self._model.reflection_can_reach(binding):
+        if self._model.constructors_may_escape():
             return False
         for read in binding.reads if reads is None else reads:
             parent = enclosing_operator(read)
@@ -823,14 +819,10 @@ class ConversionInstalls:
     def _calls_or_tests_only(self, binding: Binding) -> bool:
         """
         Whether every read of *binding* calls it or only tests it, and nothing reaches the name
-        without a read.
+        without a read
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_a_read`).
         """
-        if (
-            binding.exported
-            or binding.written_at_entry
-            or binding.reachable_through_a_handed_object
-            or self._model.reflection_can_reach(binding)
-        ):
+        if self._model.reached_without_a_read(binding):
             return False
         return all(_is_direct_callee(read) or read_is_only_tested(read) for read in binding.reads)
 

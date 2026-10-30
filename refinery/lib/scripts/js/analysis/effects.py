@@ -938,6 +938,19 @@ def _result_goes_nowhere(node: Node) -> bool:
             return value_is_discarded(node)
 
 
+def _is_called_by_name(reference: Node) -> bool:
+    """
+    Whether *reference* is a name that is itself the callee of a call, which runs what it holds
+    there and hands it nowhere.
+    """
+    parent = reference.parent
+    return (
+        isinstance(reference, JsIdentifier)
+        and isinstance(parent, JsCallExpression)
+        and parent.callee is reference
+    )
+
+
 class _WriteClass(enum.Enum):
     """
     How far a member write through a container base can be observed by code outside the writing
@@ -1025,8 +1038,8 @@ class EffectModel:
         self._member_write_cache: dict[int, _WriteClass] = {}
         self._uses_arguments_cache: dict[int, bool] = {}
         self._mutators_escape_cache: dict[int, bool] = {}
-        self._escape_cache: dict[int, bool] = {}
-        self._keeps_closures_cache: dict[int, bool] = {}
+        self._escape_cache: dict[Node, bool] = {}
+        self._keeps_closures_cache: dict[Node, bool] = {}
         self._some_mutator_cache: dict[int, bool] = {}
         self._settlement = settlement
         self._function_use_cache: dict[tuple[Node, frozenset[Node]], FunctionUse] = {}
@@ -1072,17 +1085,18 @@ class EffectModel:
         or handed out without its name, through the `caller` of another function, its own
         `arguments` or `new.target`
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_its_name`). And code
-        outside the file may call it while the file runs
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.callable_from_outside`): a host calls
-        a declared entry point whenever the script hands it control.
+        outside the file may call it by a name it reaches
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`): a host calls
+        a declared entry point whenever the script hands it control, and code loading a library
+        calls its functions once the file has run, as an importer calls an export.
 
         A call to such a function can land at a point no call site pins down; a function only ever
         called directly by name has all its invocations enumerated by those call sites. Memoized
         per function.
         """
-        cached = self._escape_cache.get(id(func))
+        cached = self._escape_cache.get(func)
         if cached is None:
-            cached = self._escape_cache[id(func)] = self._compute_function_escapes(func)
+            cached = self._escape_cache[func] = self._compute_function_escapes(func)
         return cached
 
     def _compute_function_escapes(self, func: Node) -> bool:
@@ -1092,12 +1106,12 @@ class EffectModel:
         if (
             isinstance(func, FUNCTION_NODES) and is_generator_function(func)
             or self.model.reached_without_its_name(func)
-            or self.model.callable_from_outside(func)
         ):
             return True
         for binding in names.bindings:
             if (
                 binding.exported
+                or self.model.reached_from_outside(binding)
                 or binding.writes
                 or binding.dynamic_refs
                 or len(binding.declarations) != 1
@@ -1105,14 +1119,7 @@ class EffectModel:
                 return True
             if not self.model.binding_pinned_to(binding, func):
                 return True
-            for ref in names.references_of(binding):
-                parent = ref.parent
-                if (
-                    isinstance(ref, JsIdentifier)
-                    and isinstance(parent, JsCallExpression)
-                    and parent.callee is ref
-                ):
-                    continue
+            if not all(_is_called_by_name(ref) for ref in names.references_of(binding)):
                 return True
         return False
 
@@ -1756,54 +1763,61 @@ class EffectModel:
             }
         else:
             summary.dead_zone_reads = set()
-        if isinstance(func, FUNCTION_NODES) and self._keeps_its_closures(func):
-            summary.captured_writes = {
+        if isinstance(func, FUNCTION_NODES):
+            owned = {
                 binding
-                for binding in summary.captured_writes
-                if not self._owns_binding(binding, func)
+                for binding in summary.captured_writes | summary.written_bindings
+                if self._owns_binding(binding, func)
             }
-            summary.written_bindings = {
-                binding
-                for binding in summary.written_bindings
-                if not self._owns_binding(binding, func)
-            }
+            if owned and self._keeps_its_closures(func):
+                summary.captured_writes = summary.captured_writes - owned
+                summary.written_bindings = summary.written_bindings - owned
         return summary
 
     def _keeps_its_closures(self, func: Node) -> bool:
         """
-        Whether no function written inside *func* can run once the run of *func* that made it has
-        returned: each is called where it stands and is no generator, or runs only where its name
-        is called (`function_escapes`), which no code outside that run can reach. A write such a
-        function makes to a local of *func* is then one to the local of the run under way, which
-        no caller of *func* sees, and the summary of *func* leaves it out. A function stored where
-        a later run can call it writes the local of the run that made it:
+        Whether no code outside the run of *func* that made a function written inside it can call
+        that function: each runs only at the call where it stands (`_runs_where_it_stands`), or only
+        where its name is called (`function_escapes`), which no code outside that run can reach. A
+        write such a function makes to a local of *func* is then one to the local of the run that
+        made it, which no caller of *func* sees, and the summary of *func* leaves it out; an `async`
+        body an `await` suspends resumes in that run, called by no one. A function stored where a
+        later run can call it writes the local of the run that made it:
 
             var saved; function f(n) { var t = 0; if (n) saved = function () { t++; }; ... }
 
         Memoized per function.
         """
-        cached = self._keeps_closures_cache.get(id(func))
+        cached = self._keeps_closures_cache.get(func)
         if cached is None:
-            cached = self._keeps_closures_cache[id(func)] = all(
+            cached = self._keeps_closures_cache[func] = all(
                 self._runs_where_it_stands(nested) or not self.function_escapes(nested)
                 for nested in func.walk()
                 if nested is not func and isinstance(nested, FUNCTION_NODES)
             )
         return cached
 
-    @staticmethod
-    def _runs_where_it_stands(func: Node) -> bool:
+    def _runs_where_it_stands(self, func: Node) -> bool:
         """
-        Whether *func* is the callee of a call, written where it is called, and no generator,
-        whose body would run at the steps of its object instead.
+        Whether *func* runs at the one call it is the callee of, written where it is called, and
+        nowhere else: it is no generator, whose body would run at the steps of its object instead;
+        nothing reaches it without its name
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_its_name`); and the
+        name a function expression gives itself is only ever called.
         """
         call = enclosing_operator(func)
-        return (
-            isinstance(call, JsCallExpression)
-            and strip_parens(call.callee) is func
-            and isinstance(func, FUNCTION_NODES)
-            and not is_generator_function(func)
-        )
+        if (
+            not isinstance(call, JsCallExpression)
+            or strip_parens(call.callee) is not func
+            or not isinstance(func, FUNCTION_NODES)
+            or is_generator_function(func)
+            or self.model.reached_without_its_name(func)
+        ):
+            return False
+        if not isinstance(func, JsFunctionExpression) or func.id is None:
+            return True
+        own = self.model.binding_of(func.id)
+        return own is not None and not own.dynamic_refs and all(_is_called_by_name(read) for read in own.reads)
 
     def _binding_reads_past_dead_zone(self, binding: Binding) -> bool:
         """
@@ -2611,19 +2625,16 @@ class EffectModel:
     def _name_use(self, name: Binding, spared: frozenset[Node], depth: int) -> FunctionUse:
         """
         The most a read of the name *name*, which may hold a function object, may do to that object,
-        the reads in *spared* aside; a name code can reach without a read is `FunctionUse.TOUCHED`
-        at least. Memoized: a parameter is asked once for every read that hands a function to it.
+        the reads in *spared* aside; a name code can reach without a read
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_a_read`) is
+        `FunctionUse.TOUCHED` at least. Memoized: a parameter is asked once for every read that
+        hands a function to it.
         """
         key = (name, depth, spared)
         use = self._name_use_cache.get(key)
         if use is None:
             use = FunctionUse.IN_PLACE
-            if (
-                name.exported
-                or name.written_at_entry
-                or name.reachable_through_a_handed_object
-                or self.model.reflection_can_reach(name)
-            ):
+            if self.model.reached_without_a_read(name):
                 use = FunctionUse.TOUCHED
             for read in name.reads:
                 if read in spared:

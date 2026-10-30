@@ -229,7 +229,7 @@ def is_evaluable(
     """
     Whether every name a call to *func* reads has an answer, given the *known* names: its body is
     value-closed (`_is_value_closed`), or it is a function expression or an arrow that reads no
-    receiver `this` and whose other free names are only temporaries it assigns before reading them
+    receiver `this` and whose other free names it only ever assigns and never reads
     (`_unresolved_names`).
     """
     if _is_value_closed(func, known, model):

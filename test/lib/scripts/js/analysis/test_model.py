@@ -2345,6 +2345,7 @@ class TestWhatReachesAFunctionWithoutItsName(TestBase):
             'a name holding arguments'   : 'function f(n) { var a = arguments; if (n) a.callee(0); }',
             'arguments handed on'        : 'function f() { g(arguments); }',
             'new.target'                 : 'function f() { if (new.target) new new.target(); }',
+            'new.target in an arrow'     : 'function f() { var make = () => new new.target(); if (new.target) make(); }',
         }.items():
             with self.subTest(label):
                 self.assertTrue(self._reached(source))
@@ -2357,6 +2358,7 @@ class TestWhatReachesAFunctionWithoutItsName(TestBase):
             'a parameter named caller'          : 'function f(caller) { return caller; }',
             'a strict body handing on arguments': 'function f() { "use strict"; g(arguments); }',
             'a strict body reading callee'      : 'function f() { "use strict"; return arguments.callee; }',
+            'the new.target of a function in it': 'function f() { function g() { return new.target; } g(); }',
         }.items():
             with self.subTest(label):
                 self.assertFalse(self._reached(source))
@@ -2426,3 +2428,20 @@ class TestWhatCodeOutsideTheFileReaches(TestBase):
         }.items():
             with self.subTest(label):
                 self.assertEqual(self._answers(source, kind, declared), expected)
+
+    def test_a_name_code_outside_the_file_reaches_is_reached_where_no_read_stands(self):
+        for label, (source, kind, declared, expected) in {
+            'a script declaring the name'       : ('function f() {} f();', FileKind.script, ('f',), True),
+            'a CommonJS file declaring the name': ('function f() {} f();', FileKind.commonjs, ('f',), False),
+            'a script not declaring the name'   : ('function f() {} f();', FileKind.script, (), False),
+            'a library'                         : ('function f() {} function g() {}', FileKind.script, (), True),
+            'an export'                         : ('export function f() {}', FileKind.es_module, (), True),
+        }.items():
+            with self.subTest(label):
+                ast = JsParser(source).parse()
+                model = build_semantic_model(ast, file_kind=kind, host_entrypoint=declared.__contains__)
+                function = _function_named_f(ast)
+                assert function.id is not None
+                binding = model.binding_of(function.id)
+                assert binding is not None
+                self.assertEqual(model.reached_without_a_read(binding), expected)

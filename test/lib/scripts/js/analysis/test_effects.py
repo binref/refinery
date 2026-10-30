@@ -160,6 +160,7 @@ class TestEffectModel(TestBase):
             'a call through the caller of another': 'function g() { g.caller(); } function f() { g(); } f();',
             'a call through its own arguments'    : 'function f(n) { if (n) arguments.callee(0); } f(1);',
             'a construction through new.target'   : 'function f() { if (new.target) new new.target(); } new f();',
+            'a call by code loading a library'    : 'function f() {} function g() { f(); }',
         }.items():
             with self.subTest(label):
                 ast, effects = self._effects(source)
@@ -171,6 +172,19 @@ class TestEffectModel(TestBase):
                 ast = JsParser('function f() {} f();').parse()
                 model = build_semantic_model(ast, file_kind=kind, host_entrypoint=lambda name: name == 'f')
                 self.assertEqual(build_effects(model).function_escapes(self._func(ast, 'f')), expected)
+
+    def test_a_function_code_outside_the_file_reaches_by_name_is_no_object_the_file_alone_uses(self):
+        for label, (source, kind, declared, expected) in {
+            'a script whose host calls f'       : ('function f() {} f();', FileKind.script, ('f',), False),
+            'a CommonJS file whose host calls f': ('function f() {} f();', FileKind.commonjs, ('f',), True),
+            'a script no host calls into'       : ('function f() {} f();', FileKind.script, (), True),
+            'a library'                         : ('function f() {} function g() {}', FileKind.script, (), False),
+        }.items():
+            with self.subTest(label):
+                ast = JsParser(source).parse()
+                model = build_semantic_model(ast, file_kind=kind, host_entrypoint=declared.__contains__)
+                untouched = build_effects(model).function_object_untouched(self._func(ast, 'f'))
+                self.assertEqual(untouched, expected)
 
     def test_a_write_a_callee_makes_to_a_local_of_its_caller_is_no_effect_of_the_caller(self):
         source = 'function f() { var n = 0; function inc() { n = n + 1; } inc(); return n; } f();'
@@ -197,6 +211,23 @@ class TestEffectModel(TestBase):
         summary = effects.summary_of(self._func(ast, 'f'))
         n = self._binding(ast, effects.model, 'n')
         self.assertEqual((summary.captured_writes, summary.written_bindings), ({n}, {n}))
+
+    def test_a_write_by_a_function_called_where_it_stands_is_an_effect_of_the_caller_once_it_hands_itself_out(self):
+        for label, source in {
+            'through its arguments': (
+                'var saved; function f(n) { var t = 1; void function (k) { if (k) t = k;'
+                ' else if (n) saved = arguments.callee; }(0); if (n) f(0); else saved(7); return t; } f(1);'
+            ),
+            'through its own name': (
+                'var saved; function f(n) { var t = 1; void function g(k) { if (k) t = k;'
+                ' else if (n) saved = g; }(0); if (n) f(0); else saved(7); return t; } f(1);'
+            ),
+        }.items():
+            with self.subTest(label):
+                ast, effects = self._effects(source)
+                summary = effects.summary_of(self._func(ast, 'f'))
+                t = self._binding(ast, effects.model, 't')
+                self.assertEqual((t in summary.captured_writes, t in summary.written_bindings), (True, True))
 
     def test_a_tagged_template_runs_its_tag(self):
         ast, effects = self._effects(

@@ -570,7 +570,9 @@ class DominanceModel(DominatorModel):
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.callable_from_outside`) has no
         enumeration at all. One an importer outside every import cycle can call has the end of the
         script as one more point, the script root standing for it (`_statement_completes_before`),
-        since such an importer calls in only once the module has finished.
+        since such an importer calls in only once the module has finished, and so has one code
+        loading a library calls by name
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`).
 
         Memoized by identity: the enumeration is a pure function of *activation* and the model,
         both fixed for the model's lifetime — the whole DominanceModel is rebuilt when the tree
@@ -611,7 +613,7 @@ class DominanceModel(DominatorModel):
                 for site in self.model.reflection_surface_sites(name)
                 if not site.is_descendant_of(function)
             )
-            if name.exported:
+            if name.exported or self.model.reached_from_outside(name):
                 points.append(self.model.root)
         return points
 

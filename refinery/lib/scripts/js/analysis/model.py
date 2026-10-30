@@ -1669,11 +1669,13 @@ def arguments_name_their_function(function: Node) -> bool:
 def references_new_target(root: Node) -> bool:
     """
     Whether *root* reads the `new.target` meta-property, which the parser models as a member access
-    whose object is the reserved word `new`. A `Function`-constructed function is invoked as a call,
-    so its `new.target` is always `undefined`; splicing the body into a real function would rebind
-    `new.target` to the caller's, so a body that reads it cannot be inlined.
+    whose object is the reserved word `new`, as its own: a nested regular function has a
+    `new.target` of its own, an arrow reads the enclosing one (`walk_receiver_scope`). A
+    `Function`-constructed function is invoked as a call, so its `new.target` is always
+    `undefined`; splicing the body into a real function would rebind `new.target` to the caller's,
+    so a body that reads it cannot be inlined.
     """
-    for node in root.walk():
+    for node in walk_receiver_scope(root):
         if (
             isinstance(node, JsMemberExpression)
             and isinstance(node.object, JsIdentifier)
@@ -3355,9 +3357,10 @@ class SemanticModel:
         only tested (`read_is_only_tested`), or the `extends` clause of a class whose own
         constructor makes the `super` calls shown, or which has none, so that its own calls are
         shown in turn; the names of such a class are read the same way, since its prototype is the
-        one it extends; each name holds the function, or the class it constructs, alone and is
-        neither exported nor reached through a handed object, by reflection, or by code outside the
-        file (`reached_from_outside`); no class among them can be constructed without its name
+        one it extends; each name holds the function, or the class it constructs, alone and nothing
+        reaches it where no read of it stands (`reached_without_a_read`): it is neither exported nor
+        written at entry nor reached through a handed object, by reflection, or by code outside the
+        file; no class among them can be constructed without its name
         (`_constructed_without_its_name`); nothing reaches the function without its name
         (`reached_without_its_name`); no class among them extends a constructor the program does
         not declare (`_extends_beyond_the_program`), whose methods construct it; and where a shown
@@ -3390,13 +3393,7 @@ class SemanticModel:
                     complete = False
                     continue
                 name, reads = named
-                if (
-                    name.exported
-                    or name.written_at_entry
-                    or name.reachable_through_a_handed_object
-                    or self.reflection_can_reach(name)
-                    or self.reached_from_outside(name)
-                ):
+                if self.reached_without_a_read(name):
                     complete = False
                 if own not in name.declarations and strip_parens(self.singular_value(name)) is not held:
                     complete = False
@@ -3776,13 +3773,15 @@ class SemanticModel:
 
     def reached_from_outside(self, binding: Binding) -> bool:
         """
-        Whether code outside the file may reach *binding* by name at some point: a host names it
-        (`named_by_the_host`), or the file is a library, holding nothing but function declarations
-        at its top (`declares_only_functions`), and *binding* names one of them as a property of the
-        global object, which code that loads the library calls once the file has run. A pass that
-        could delete such a declaration, fold a read of one into its value, or relocate one out of
-        the global scope asks here before doing so, so that the answer is one predicate's rather
-        than each pass's own.
+        Whether code outside the file may reach *binding* by name at some point through the global
+        object: a host names it (`named_by_the_host`), or the file is a library, holding nothing but
+        function declarations at its top (`declares_only_functions`), and *binding* names one of
+        them as a property of the global object, which code that loads the library calls once the
+        file has run. An importer reaching an export is not among them: that is
+        `Binding.exported`, which a caller asks beside this. A pass that could delete such a
+        declaration, fold a read of one into its value, or relocate one out of the global scope
+        asks here before doing so, so that the answer is one predicate's rather than each pass's
+        own.
         """
         if self.named_by_the_host(binding):
             return True
@@ -3794,6 +3793,24 @@ class SemanticModel:
                 and function.parent is self.root
                 for declaration in binding.declarations
             )
+        )
+
+    def reached_without_a_read(self, binding: Binding) -> bool:
+        """
+        Whether code may reach *binding* where no read of it in the file stands: an importer reads
+        it as an export, the call writes it on entry (`Binding.written_at_entry`), a body the file
+        does not read is handed the object carrying it
+        (`Binding.reachable_through_a_handed_object`), reflection reaches it
+        (`reflection_can_reach`), or code outside the file reaches it by name
+        (`reached_from_outside`). A reader asking whether the reads of a name are every way to what
+        it holds asks here.
+        """
+        return (
+            binding.exported
+            or binding.written_at_entry
+            or binding.reachable_through_a_handed_object
+            or self.reflection_can_reach(binding)
+            or self.reached_from_outside(binding)
         )
 
     def importer_may_run_first(self, binding: Binding) -> bool:
