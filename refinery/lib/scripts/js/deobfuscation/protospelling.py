@@ -29,11 +29,7 @@ from refinery.lib.scripts import Node, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import Role, SemanticModel, reference_role
-from refinery.lib.scripts.js.deobfuscation.helpers import (
-    ScriptLevelTransformer,
-    access_key,
-    names_the_intrinsic,
-)
+from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer, access_key
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsCallExpression,
@@ -141,7 +137,7 @@ class JsPrototypeSpellingNormalization(ScriptLevelTransformer):
             return None
         if effects.global_key_written(owner, _PROTO_KEY):
             return None
-        return owner if names_the_intrinsic(owner, node, model) else None
+        return owner if model.bare_name_reaches_the_host(owner, node) else None
 
     def _owner_read_through_constructor(
         self,
@@ -160,7 +156,7 @@ class JsPrototypeSpellingNormalization(ScriptLevelTransformer):
         owner = _owner_of_literal(inner.object, effects)
         if owner is None or effects.global_key_written(owner, _CONSTRUCTOR_KEY):
             return None
-        return owner if names_the_intrinsic(owner, node, model) else None
+        return owner if model.bare_name_reaches_the_host(owner, node) else None
 
     def _owner_read_through_get_prototype_of(
         self,
@@ -183,9 +179,9 @@ class JsPrototypeSpellingNormalization(ScriptLevelTransformer):
         owner = _owner_of_literal(node.arguments[0], effects)
         if owner is None or effects.global_key_written('Object', _GET_PROTOTYPE_OF):
             return None
-        if not names_the_intrinsic('Object', node, model):
+        if not model.bare_name_reaches_the_host('Object', node):
             return None
-        return owner if names_the_intrinsic(owner, node, model) else None
+        return owner if model.bare_name_reaches_the_host(owner, node) else None
 
 
 def _owner_of_literal(node: Node | None, effects: EffectModel) -> str | None:

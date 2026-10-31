@@ -26,6 +26,7 @@ from refinery.lib.scripts.js.analysis.model import (
     _governing_target,
     _property_key_name,
     enclosing_function,
+    is_invocation_target,
     is_member_write_target,
     reference_role,
 )
@@ -50,7 +51,6 @@ from refinery.lib.scripts.js.model import (
     JsLogicalExpression,
     JsMemberExpression,
     JsNewExpression,
-    JsNumericLiteral,
     JsParenthesizedExpression,
     JsProperty,
     JsReturnStatement,
@@ -61,12 +61,12 @@ from refinery.lib.scripts.js.model import (
     JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclarator,
+    _primitive_literal_text,
     accessor_install_method,
     static_property_key,
     static_string,
     strip_parens,
 )
-from refinery.lib.scripts.js.numbers import js_number_to_string
 
 PURE_INTRINSIC_METHODS = frozenset({
     'String.fromCharCode',
@@ -232,7 +232,8 @@ The global names whose escape the scan looks for: every name it records keys for
 _KEY_RECORDED_ROOTS = ESCAPE_WATCHED_ROOTS - ESCAPE_RECORDED_ROOTS
 """
 The watched names whose escape the scan records by key alone: `IntrinsicWrites.key_written`
-answers every key of one handed off, while `IntrinsicWrites.names` still lists it as unwritten.
+answers every key of one handed off, or of one read as a property (`g.Object`) and handed off or
+written through, while `IntrinsicWrites.names` still lists it as unwritten.
 """
 
 
@@ -387,8 +388,8 @@ class _BuiltinReach:
         scan reads every call, as one that writes nothing; a key a fold collapses to one of those
         methods renews the models
         (`refinery.lib.scripts.js.deobfuscation.simplify.REVEALING_STRINGS`). A name an assignment
-        stores into hands no value anywhere; what a logical assignment evaluates to, which may be the
-        name's old value, is asked of the assignment.
+        stores into hands no value anywhere; what a logical assignment evaluates to, which may be
+        the name's old value, is asked of the assignment.
         """
         for member in _written_members(_write_target(node)):
             if member.object is not None and self.unattributed(member.object):
@@ -463,12 +464,12 @@ def _destructured_under_a_builtin_key(target: Node) -> bool:
 
 def _certain_key(member: JsMemberExpression) -> str | None:
     """
-    The key *member* certainly reads: a name, a string (`static_property_key`), or the index a
-    numeric literal names; `None` for any other key.
+    The key *member* certainly reads: a name, a string (`static_property_key`), or the string a
+    number, boolean or `null` literal converts to (`_primitive_literal_text`); `None` for any other
+    key.
     """
-    prop = strip_parens(member.property)
-    if member.computed and isinstance(prop, JsNumericLiteral):
-        return js_number_to_string(prop.value)
+    if member.computed and (text := _primitive_literal_text(member.property)) is not None:
+        return text
     return static_property_key(member)
 
 
@@ -496,10 +497,11 @@ class IntrinsicWrites(NamedTuple):
     scan resolved write targets through, kept for `follows_only_through_bindings`. *followable*
     says whether the scan follows every write the program makes on a built-in object: none reaches
     one through a value read without spelling its owner (`_BuiltinReach`), no watched name is
-    handed off where the scan records the escape by key alone (`_KEY_RECORDED_ROOTS`), and, under
-    the model that suspects code it cannot read, no call runs through a key the reflection check
-    leaves uncounted (`_constructs_through_an_unread_key`). A fold that reads a built-in's chain or
-    converts an object without spelling its owner asks it on top of the questions about *names*.
+    handed off, nor read as a property and handed off or written through, where the scan records
+    the escape by key alone (`_KEY_RECORDED_ROOTS`), and, under the model that suspects code it
+    cannot read, no call runs through a key the reflection check leaves uncounted
+    (`_constructs_through_an_unread_key`). A fold that reads a built-in's chain or converts an
+    object without spelling its owner asks it on top of the questions about *names*.
 
     The two are produced together because they are read off the same nodes and must not disagree:
     a name recorded in one for a reason the other cannot express is a name one caller refuses and
@@ -807,8 +809,9 @@ def _value_escapes(
     if target is not None:
         return not (names and names <= _names_bound_to(model, aliases, target))
     parent = value.parent
-    if isinstance(parent, JsReturnStatement) or (
-        isinstance(parent, JsArrowFunctionExpression) and parent.body is value
+    if (
+        isinstance(parent, JsReturnStatement)
+        or isinstance(parent, JsArrowFunctionExpression) and parent.body is value
     ):
         return _returned_value_escapes(model, aliases, value, names, depth)
     return _hands_over(model, aliases, value, depth)
@@ -884,26 +887,34 @@ def _returned_value_escapes(
 def _written_through(value: Node) -> bool:
     """
     Whether a member chain whose foot is *value*, looking through the forms that forward it, is
-    written or deleted somewhere along it, or invokes an accessor install on what it holds.
+    written or deleted somewhere along it, or invokes on what it holds an accessor install or a
+    method that writes its receiver (`_invokes_a_write`).
     """
     cursor = value
     while (parent := cursor.parent) is not None:
         if isinstance(parent, JsMemberExpression):
             if parent.object is not cursor:
                 return False
-            if is_member_write_target(parent):
-                return True
-            call = parent.parent
-            if (
-                isinstance(call, JsCallExpression)
-                and call.callee is parent
-                and accessor_install_method(parent)
-            ):
+            if is_member_write_target(parent) or _invokes_a_write(parent):
                 return True
         elif not isinstance(parent, _VALUE_FORWARDING_NODES):
             return False
         cursor = parent
     return False
+
+
+def _invokes_a_write(member: JsMemberExpression) -> bool:
+    """
+    Whether *member* is invoked as an accessor install
+    (`refinery.lib.scripts.js.model.accessor_install_method`) or as a method that writes the object
+    it is read off (`refinery.lib.scripts.js.builtins.RECEIVER_WRITING_METHODS`):
+    `globalThis.Array.prototype.push(5)` stores an element every array then inherits.
+    """
+    if not is_invocation_target(member):
+        return False
+    if accessor_install_method(member) is not None:
+        return True
+    return _certain_key(member) in RECEIVER_WRITING_METHODS
 
 
 def _names_a_member_property(node: JsIdentifier) -> bool:
@@ -1027,9 +1038,29 @@ def _callee_is_write_free(
     write-free while one that passes it on (`g(o)`) does not. That reuse also answers the return
     case: a parameter returned goes wherever each call of the callee puts its value, and one a call
     may receive another way escapes, as do `return [o]` and `return { m: o }`.
+
+    The answer depends on *func* and *depth* alone, so one scan decides it once for each pair
+    (`_IntrinsicAliases.write_free`): a function that returns its parameter is asked about at each
+    of its calls, and deciding it walks every one of them (`_returned_value_escapes`).
     """
     if func is None or depth > _CALLEE_DEPTH_LIMIT:
         return False
+    key = func, depth
+    known = aliases.write_free.get(key)
+    if known is None:
+        known = aliases.write_free[key] = _parameters_stay_unwritten(model, aliases, func, depth)
+    return known
+
+
+def _parameters_stay_unwritten(
+    model: SemanticModel,
+    aliases: _IntrinsicAliases,
+    func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
+    depth: int,
+) -> bool:
+    """
+    The answer `_callee_is_write_free` gives for *func* at *depth*, decided anew.
+    """
     scope = model.parameter_scope(func)
     if scope is None:
         return False
@@ -1054,7 +1085,7 @@ def _callee_is_write_free(
         ):
             return False
         if isinstance(node, JsIdentifier) and node.name in params:
-            if reference_role(node) is Role.READ:
+            if not _names_a_member_property(node) and reference_role(node) is Role.READ:
                 names = aliases.names_denoted_by(node)
                 if _value_escapes(model, aliases, node, names, depth):
                     return False
@@ -1118,6 +1149,11 @@ class _IntrinsicAliases:
         self.model = model
         self._answers: dict[Binding, frozenset[str]] = {}
         self._sources: dict[Binding, tuple[frozenset[str], tuple[Binding, ...]]] = {}
+        self.write_free: dict[tuple[Node, int], bool] = {}
+        """
+        What `_callee_is_write_free` decided of each callee at each depth, during the scan that
+        built this relation and threads it through every question it asks.
+        """
 
     def names_denoted_by(self, node: JsIdentifier) -> frozenset[str]:
         """

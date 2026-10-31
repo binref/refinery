@@ -2203,6 +2203,14 @@ A_PROTOTYPE_WRITTEN_THROUGH_A_PROPERTY_OF_THE_GLOBAL_OBJECT = {
     "var p = ''.__proto__; globalThis['p'].nope = 5; console.log('abc'.nope);": '5\n',
 }
 
+#: Programs writing a prototype through a name holding a constructor that the scan follows to no
+#: built-in: one destructured off the global object under its name, and one a logical assignment
+#: leaves holding what it held, mapped to what Node prints for them.
+A_PROTOTYPE_WRITTEN_THROUGH_A_NAME_HOLDING_A_CONSTRUCTOR = {
+    "var {'String': S} = globalThis; S.prototype.zz = 5; console.log('abc'.zz);": '5\n',
+    "var o = Object; var m = (o ||= 0); m.prototype.nope = 1; console.log(({}).nope, [].nope, 'abc'.nope);": '1 1 1\n',
+}
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAPrototypeWrittenThroughAValueTheGuardDoesNotFollowIsNotFolded(TestBase):
@@ -2210,9 +2218,10 @@ class TestAPrototypeWrittenThroughAValueTheGuardDoesNotFollowIsNotFolded(TestBas
     The guard of the folds that read a built-in's chain
     (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.followable`) follows a built-in
     object through the reads, names and forwarding forms that may hold one. The result of a call
-    other than one to a method named `getPrototypeOf`, and a property of the global object a
-    top-level `var` holds, are neither, so a write through them leaves a read of a key no prototype
-    held before folded to `undefined`.
+    other than one to a method named `getPrototypeOf`, a property of the global object a top-level
+    `var` holds, a constructor destructured off the global object under its name, and a name a
+    logical assignment leaves holding a constructor are none of those, so a write through them
+    leaves a read of a key no prototype held before folded to `undefined`.
     """
 
     @wontfix(
@@ -2234,6 +2243,70 @@ class TestAPrototypeWrittenThroughAValueTheGuardDoesNotFollowIsNotFolded(TestBas
     )
     def test_the_deobfuscation_of_a_classic_script_prints_what_it_prints(self):
         rows = A_PROTOTYPE_WRITTEN_THROUGH_A_PROPERTY_OF_THE_GLOBAL_OBJECT
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    @wontfix(
+        'no obfuscator and no program writes a prototype through a constructor it destructures off '
+        'the global object or keeps in a name through a logical assignment'
+    )
+    def test_the_deobfuscation_of_a_write_through_a_name_holding_a_constructor_prints_what_it_prints(self):
+        rows = A_PROTOTYPE_WRITTEN_THROUGH_A_NAME_HOLDING_A_CONSTRUCTOR
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A program storing an element on `Array.prototype` through its own `push` and reading it off a
+#: new array inside a function it calls, mapped to what Node prints for it.
+A_PROTOTYPE_WRITTEN_BY_ITS_OWN_METHOD_AND_READ_IN_A_FUNCTION = {
+    'Array.prototype.push(5); function f() { return [][0]; } console.log(f());': '5\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPrototypeWrittenByItsOwnMethodIsReadInAFunctionTheEvaluatorRuns(TestBase):
+    """
+    The scan of writes to the built-ins reads no call as a write, so `Array.prototype.push(5)`
+    records nothing. The folds of the simplifier that read a built-in's chain ask whether the scan
+    follows every write (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.followable`),
+    which such a call answers no to; the evaluator running a call of a function the program declares
+    does not ask, and answers `[][0]` in its body as `undefined`.
+    """
+
+    @wontfix('no obfuscator and no program stores an element on Array.prototype through its own push')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_PROTOTYPE_WRITTEN_BY_ITS_OWN_METHOD_AND_READ_IN_A_FUNCTION
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A classic script reading a property nothing writes off an empty object, under a name the global
+#: object holds, mapped to what a host prints for it.
+A_PROPERTY_OF_AN_EMPTY_OBJECT_NAMED_LIKE_A_GLOBAL = {
+    'var o = {}; console.log(o.Math);': 'undefined\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPropertyOfAnEmptyObjectNamedLikeAGlobalStaysUndefined(TestBase):
+    """
+    An empty object literal whose properties are only read under known keys is taken apart into one
+    variable per property, named after the property, and one nothing writes becomes a declaration
+    with no value. In a classic script, a top-level `var Math` declares nothing new: the name keeps
+    the built-in the global object holds, so `var Math; console.log(Math)` prints the `Math` object
+    where the program printed `undefined`. In a browser, `var name` reads the window's name the same
+    way.
+    """
+
+    @unittest.expectedFailure
+    def test_the_deobfuscation_of_a_classic_script_prints_what_it_prints(self):
+        rows = A_PROPERTY_OF_AN_EMPTY_OBJECT_NAMED_LIKE_A_GLOBAL
         self.assertEqual(
             {source: before_and_after_in_a_host(source) for source in rows},
             each_program_still_prints(rows),

@@ -5,12 +5,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from refinery.lib.scripts import Expression, Node, set_child, set_child_list, set_value
+from refinery.lib.scripts import (
+    Expression,
+    Node,
+    _replace_in_parent,
+    set_child,
+    set_child_list,
+    set_value,
+)
 from refinery.lib.scripts.js.analysis.assignment import DefiniteAssignmentModel
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import GLOBAL_OBJECT, EffectModel
 from refinery.lib.scripts.js.analysis.environment import GUARANTEED_GLOBALS
+from refinery.lib.scripts.js.analysis.intrinsics import ESCAPE_WATCHED_ROOTS
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     SAME_REALM_GLOBAL_OBJECT_ALIASES,
@@ -45,7 +53,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_truthy,
     is_valid_property_key,
     make_string_literal,
-    names_the_intrinsic,
     numeric_value,
     spelled_for_the_callee_position,
     string_value,
@@ -141,7 +148,10 @@ prototype, a conversion key. A key they cannot read is none of them to those rea
 that turns code spelling no string into one spelling such a string shows the models a fact the
 models it holds do not record. The methods that write their receiver
 (`refinery.lib.scripts.js.builtins.RECEIVER_WRITING_METHODS`) are read the same way, but only as
-the key of a method a call runs, which is where the write scan looks for them.
+the key of a method a call runs, which is where the write scan looks for them, and so are the
+names whose escape the scan watches
+(`refinery.lib.scripts.js.analysis.intrinsics.ESCAPE_WATCHED_ROOTS`), but only as a computed key,
+where the scan reads `g['Date']` as the global it names.
 """
 
 
@@ -172,8 +182,9 @@ def _spells_a_revealing_string(replaced: Node, value: str) -> bool:
     """
     Whether the string *value*, written in place of *replaced*, spells one of `REVEALING_STRINGS`
     as `refinery.lib.scripts.js.model.static_string` reads it, alone or with the concatenations it
-    completes, or spells a method that writes its receiver where it names the method a call runs
-    (`_names_a_called_method`). A concatenation holding a piece that reads as no string reads as
+    completes, spells a method that writes its receiver where it names the method a call runs
+    (`_names_a_called_method`), or spells a name whose escape the scan watches where it is a
+    computed key (`_names_a_key`). A concatenation holding a piece that reads as no string reads as
     none, and so does every concatenation holding it, so the climb stops at the first.
 
     Code that already reads as *value* leaves every reading around it as it was. A string a fold
@@ -192,6 +203,8 @@ def _spells_a_revealing_string(replaced: Node, value: str) -> bool:
             cursor, parent = parent, parent.parent
         if spelled in RECEIVER_WRITING_METHODS and _names_a_called_method(parent, cursor):
             return True
+        if spelled in ESCAPE_WATCHED_ROOTS and _names_a_key(parent, cursor):
+            return True
         if not isinstance(parent, JsBinaryExpression) or parent.operator != '+':
             return False
         if parent.left is cursor:
@@ -202,11 +215,18 @@ def _spells_a_revealing_string(replaced: Node, value: str) -> bool:
     return False
 
 
+def _names_a_key(parent: Node | None, key: Node) -> bool:
+    """
+    Whether *key* is the computed key of the member access *parent*.
+    """
+    return isinstance(parent, JsMemberExpression) and parent.computed and parent.property is key
+
+
 def _names_a_called_method(parent: Node | None, key: Node) -> bool:
     """
     Whether *key* is the computed key of the member access *parent*, which a call invokes.
     """
-    if not isinstance(parent, JsMemberExpression) or not parent.computed or parent.property is not key:
+    if not isinstance(parent, JsMemberExpression) or not _names_a_key(parent, key):
         return False
     call = parent.parent
     while isinstance(call, JsParenthesizedExpression):
@@ -236,8 +256,8 @@ class JsSimplifications(PinnedTransformer):
         """
         The held models, renewed first where a fold since the last renewal wrote what shows them a
         fact the held ones lack (`visit`, `_written_constructor`). The renewal waits for the
-        decision after the fold, by which point what it wrote stands in the tree. A decision that
-        hands this pass to a helper reading the shared cache by itself, as
+        decision after the fold, by which point what it wrote stands in the tree (`visit`). A
+        decision that hands this pass to a helper reading the shared cache by itself, as
         `refinery.lib.scripts.js.deobfuscation.helpers.try_inline_trivial_function` does, asks this
         first.
         """
@@ -253,6 +273,11 @@ class JsSimplifications(PinnedTransformer):
         conditional collapses to is seen as surely as one an operator computes. The dispatch of
         `refinery.lib.scripts.Visitor.visit` is written out rather than called, so that a deep tree
         costs this pass no more stack than it costs any other transform.
+
+        A replacement returned while a renewal is due is written in its place at once. The walk of
+        `refinery.lib.scripts.Transformer.generic_visit` writes the items of a list only once it has
+        visited all of them, and the renewal the next item's decision makes would otherwise build
+        models of the tree the fold has not changed yet, and count itself done.
         """
         kind = type(node)
         handler = self._dispatch.get(kind)
@@ -263,6 +288,8 @@ class JsSimplifications(PinnedTransformer):
             value = static_string(replacement)
             if value is not None and _spells_a_revealing_string(node, value):
                 self._renewal_due = True
+        if replacement is not None and self._renewal_due:
+            _replace_in_parent(node, replacement)
         return replacement
 
     @property
@@ -659,10 +686,10 @@ class JsSimplifications(PinnedTransformer):
         """
         The global name of the constructor *function* where that name still denotes it at *node*
         (`refinery.lib.scripts.js.analysis.effects.EffectModel.trusted_intrinsic_name`,
-        `refinery.lib.scripts.js.deobfuscation.helpers.names_the_intrinsic`), or `None`; no other
-        built-in function has a name to write. `Function` keeps the spelling it has, since what the
-        reflection check reads of a construction is how its callee is spelled; the reflection pass
-        recognizes a spelling through `constructor`
+        `refinery.lib.scripts.js.analysis.model.SemanticModel.bare_name_reaches_the_host`), or
+        `None`; no other built-in function has a name to write. `Function` keeps the spelling it
+        has, since what the reflection check reads of a construction is how its callee is spelled;
+        the reflection pass recognizes a spelling through `constructor`
         (`refinery.lib.scripts.js.analysis.tampering.denotes_function_intrinsic`). For the same
         reason a read whose `constructor` is read in turn keeps its spelling:
         `[].constructor.constructor` names `Function` to every reader of the text, and
@@ -680,7 +707,7 @@ class JsSimplifications(PinnedTransformer):
             return None
         if not self.effects.trusted_intrinsic_name(function.name):
             return None
-        if not names_the_intrinsic(function.name, node, self.model):
+        if not self.model.bare_name_reaches_the_host(function.name, node):
             return None
         name = JsIdentifier(name=function.name)
         if _respells(name, node):

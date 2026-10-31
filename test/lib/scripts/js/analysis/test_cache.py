@@ -608,6 +608,18 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         many = self._builds(self._gated(80))[:2]
         self.assertEqual(few, many)
 
+    @staticmethod
+    def _revealing(count: int) -> str:
+        """
+        A script with *count* folds that each spell `valueOf`, a key the models read.
+        """
+        return '\n'.join('f(String.fromCharCode(118, 97, 108, 117, 101, 79, 102));' for _ in range(count))
+
+    @unittest.expectedFailure
+    @a_property_of_the_pin_itself
+    def test_folds_spelling_a_key_the_models_read_do_not_multiply_model_builds(self):
+        self.assertEqual(self._builds(self._revealing(10))[:2], self._builds(self._revealing(80))[:2])
+
     @a_property_of_the_pin_itself
     def test_gated_folds_build_each_model_once(self):
         self.assertEqual((1, 1), self._builds(self._gated(40))[:2])

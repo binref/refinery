@@ -56,7 +56,6 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     Scope,
     SemanticModel,
-    crosses_dynamic_scope,
     enclosing_operator,
     is_invocation_target,
     is_member_write_target,
@@ -1093,29 +1092,6 @@ def name_is_unbound(node: JsIdentifier, model: SemanticModel) -> bool:
         and not model.read_has_dynamic_effect(node)
         and not model.free_name_reachable_by_direct_eval(node)
     )
-
-
-def names_the_intrinsic(name: str, at: Node, model: SemanticModel) -> bool:
-    """
-    Whether *name* denotes the intrinsic at *at* rather than something the program can have given a
-    meaning of its own. A file declaring `var Object = {prototype: {}}` names its own object with
-    it, and rewriting a spelling to `Object.prototype` there would name that one instead of the
-    prototype the spelling reaches.
-
-    This is `name_is_unbound` asked of a name that is not written anywhere yet, so it cannot be
-    asked through a reference to one. The three ways that predicate lists are all asked here: a
-    binding, which `lookup` reports and which is crossed deliberately so that a `with` between the
-    two does not hide it; the `with` itself, whose object may carry a property of the name and
-    answer the read from it; and a direct `eval`, which declares bindings no reference records.
-    """
-    scope = model.scope_of(at)
-    if scope is None:
-        return False
-    if model.lookup(name, scope, cross_dynamic=True) is not None:
-        return False
-    if crosses_dynamic_scope(scope):
-        return False
-    return not model.free_name_reachable_by_direct_eval(at)
 
 
 def integer_literal(node: Node | None) -> int | None:

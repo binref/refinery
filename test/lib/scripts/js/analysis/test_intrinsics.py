@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, lines_executed
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.ledger import (
     Program,
@@ -14,7 +14,10 @@ from test.lib.scripts.js.ledger import (
     prints,
 )
 
+from refinery.lib.scripts.js.analysis import intrinsics
 from refinery.lib.scripts.js.analysis.cache import ModelCache
+from refinery.lib.scripts.js.analysis.intrinsics import build_intrinsic_writes
+from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import JsAssignmentExpression, JsExpressionStatement, JsIdentifier
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
@@ -636,3 +639,62 @@ class TestABuiltInReturnedToACallThatReadsFromItStillFolds(TestBase):
     def test_the_method_of_the_built_in_folds_beside_it(self):
         row = A_BUILT_IN_REACHED_THROUGH_A_PROPERTY_OR_A_RETURN['returned and read from by the caller']
         self.assertIn("'B'", deobfuscate_source(row.text, execution=ExecutionModel.commonjs))
+
+
+#: Programs calling a method that writes the object it is called on through a chain holding
+#: `Array.prototype`, reached through a property of the global object, through what a function
+#: returns, or through a parameter a function returns. Each stores an element every array then
+#: inherits, which `[][0]` reads.
+A_PROTOTYPE_WRITTEN_BY_ITS_OWN_METHOD = (
+    'globalThis.Array.prototype.push(5);',
+    "globalThis['Array'].prototype.unshift(5);",
+    'var g = globalThis; g.Array.prototype.splice(0, 0, 5);',
+    '(globalThis.Array.prototype.push)(5);',
+    'function g() { return Array; } g().prototype.push(5);',
+    'function g() { return Array.prototype; } g().push(5);',
+    'function id(o) { return o; } id(Array.prototype).push(5);',
+)
+
+
+class TestAMethodWritingItsReceiverCalledThroughAChainWritesTheBuiltIn(TestBase):
+
+    def test_the_scan_records_the_built_in_the_chain_holds_as_written(self):
+        for source in A_PROTOTYPE_WRITTEN_BY_ITS_OWN_METHOD:
+            with self.subTest(source=source):
+                self.assertIn('Array', ModelCache(JsParser(source).parse()).intrinsic_writes.names)
+
+    def test_a_read_of_the_element_it_stores_is_kept(self):
+        for source in A_PROTOTYPE_WRITTEN_BY_ITS_OWN_METHOD:
+            with self.subTest(source=source):
+                self.assertIn('[][0]', deobfuscate_source(F'{source} console.log([][0]);'))
+
+
+class TestAPropertyNamedLikeAParameterIsNoReadOfIt(TestBase):
+
+    def test_a_built_in_handed_to_a_function_reading_only_such_a_property_is_not_written(self):
+        source = 'function get(data) { return data.data; } get(Math);'
+        self.assertNotIn('Math', ModelCache(JsParser(source).parse()).intrinsic_writes.names)
+
+
+class TestTheScanDecidesEachCalleeOnce(TestBase):
+    """
+    Whether a call hands a value to code that may write it unseen depends on the function it calls
+    alone, and deciding it for a function that returns its parameter walks every call of that
+    function. Each call handing such a function a built-in, or a value read under a key not known,
+    asks it again.
+    """
+
+    @staticmethod
+    def _work(argument: str):
+        def work(count: int) -> int:
+            calls = '\n'.join(F's += id({argument}) | 0;' for _ in range(count))
+            source = F'function id(x) {{ return x; }}\nvar a = [1], s = 0, i = 0;\n{calls}'
+            model = build_semantic_model(JsParser(source).parse())
+            return lines_executed(lambda: build_intrinsic_writes(model), intrinsics)
+        return work
+
+    def test_the_work_for_a_built_in_handed_to_each_call_grows_linearly(self):
+        self.assertWorkGrowsLinearly(self._work('Math'), 100)
+
+    def test_the_work_for_a_value_read_under_a_key_not_known_handed_to_each_call_grows_linearly(self):
+        self.assertWorkGrowsLinearly(self._work('a[i]'), 100)

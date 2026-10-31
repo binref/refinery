@@ -116,6 +116,26 @@ _A_WRITE_IN_A_STRING_OF_CODE: dict[str, str] = {
     """): 'JJ 5 undefined\n',
 }
 
+#: A program whose write on a built-in object shows only once a fold spells the key it goes through,
+#: mapped to what it prints: `caller` joined in an array beside a read the write decides, and `Date`
+#: built from its character codes where it names a property of the global object.
+_A_WRITE_A_FOLD_SPELLS: dict[str, str] = {
+    inspect.cleandoc("""
+        var done = false;
+        function getM() { if (!done) { done = true; evil(); } return Math; }
+        function evil() { var g = evil[a[0]]; g().floor = function () { return 42; }; }
+        var a = [['cal', 'ler'].join(''), [].nope];
+        getM().PI;
+        console.log(Math.floor(1.5));
+    """): '42\n',
+    inspect.cleandoc("""
+        function getGlobal() { return globalThis; }
+        var g = getGlobal();
+        g[String.fromCharCode(68, 97, 116, 101)].now = function () { return 5e12; };
+        console.log(Date.now() > 4102444800000);
+    """): 'true\n',
+}
+
 #: A program reading functions the language installs, mapped to what it prints and to the text it
 #: deobfuscates to in any host.
 _A_BUILTIN_FUNCTION_READ: dict[str, tuple[str, str]] = {
@@ -133,8 +153,8 @@ _A_BUILTIN_FUNCTION_READ: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: A program calling or constructing with a constructor read off a value, mapped to what it prints and
-#: to the text the default model deobfuscates it to in any host. The model that suspects code it
+#: A program calling or constructing with a constructor read off a value, mapped to what it prints
+#: and to the text the default model deobfuscates it to in any host. The model that suspects code it
 #: cannot read counts no call through `constructor` (`test_unfixed_defects`), and keeps every fold
 #: from leaning on one.
 _A_CONSTRUCTOR_CALLED: dict[str, tuple[str, str]] = {
@@ -305,6 +325,21 @@ class TestAWriteThroughABuiltinNoNameShows(TestBase):
                 self.assertEqual(behavior(_deobfuscated(source, strict=True)), (prints, None))
 
 
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAWriteAFoldSpells(TestBase):
+
+    def test_node_prints_what_the_row_records(self):
+        for source, prints in _A_WRITE_A_FOLD_SPELLS.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(source), (prints, None))
+
+    def test_each_deobfuscation_prints_it_too(self):
+        for source, prints in _A_WRITE_A_FOLD_SPELLS.items():
+            for strict in (True, False):
+                with self.subTest(source=source, strict=strict):
+                    self.assertEqual(behavior(_deobfuscated(source, strict)), (prints, None))
+
+
 class TestAFunctionTheLanguageInstalls(TestBase):
 
     def test_a_read_of_one_folds_in_every_host(self):
@@ -368,6 +403,15 @@ class TestTheGuardOfTheFolds(TestBase):
 
     def test_a_logical_assignment_hands_off_the_value_the_name_held(self):
         self.assertFalse(self._followed('var k = [].at; f(k ||= 1);'))
+
+    def test_object_function_and_boolean_read_as_properties_and_written_through_or_handed_off(self):
+        for source in (
+            'globalThis.Object.prototype.nope = 5;',
+            "window['Function'].prototype.nope = 5;",
+            'f(global.Boolean);',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._followed(source))
 
 
 class TestTheStringsAFoldRenewsTheModelsFor(TestBase):
