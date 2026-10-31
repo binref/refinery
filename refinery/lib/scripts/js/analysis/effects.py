@@ -2495,7 +2495,7 @@ class EffectModel:
             return False
         return not function.is_constructor or not self.global_key_written(function.name, 'name')
 
-    def builtin_function_constructed_by_function(self, function: BuiltinFunction) -> bool:
+    def builtin_function_constructor_untouched(self, function: BuiltinFunction) -> bool:
         """
         Whether reading `constructor` off the built-in *function* gives `Function`: a function owns
         no `constructor`, so the read reaches `Function.prototype`, unless the program writes that

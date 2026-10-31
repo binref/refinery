@@ -157,6 +157,13 @@ The two properties that expose the prototype chain itself. Both exist on every v
 built-ins every value of a type inherits.
 """
 
+OBJECT_PROTOTYPE_MEMBERS = PROTOTYPE_METHODS['Object'] | PROTOTYPE_CHAIN_PROPERTIES
+"""
+The members every plain object inherits from `Object.prototype`. An access of one of these names on
+an object that does not own it resolves through the prototype rather than to `undefined`, so a fold
+that treats an absent own-property as `undefined` must leave these intact.
+"""
+
 BUILTIN_MEMBER_NAMES = frozenset().union(*PROTOTYPE_METHODS.values()) | PROTOTYPE_CHAIN_PROPERTIES
 """
 Every key a read off a value of a built-in type may find on its prototype chain. A read of one hands

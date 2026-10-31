@@ -719,7 +719,11 @@ the program's own and stays.
 _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {
     HostEnvironment.universal: _EnvironmentSpec(GUARANTEED_GLOBALS, GUARANTEED_GLOBALS),
     HostEnvironment.node: _EnvironmentSpec(
-        GUARANTEED_GLOBALS | _NODE_GLOBALS, GUARANTEED_GLOBALS, _NODE_ABSENT, 'function {name}() {{ [native code] }}'),
+        GUARANTEED_GLOBALS | _NODE_GLOBALS,
+        GUARANTEED_GLOBALS,
+        _NODE_ABSENT,
+        native_function_text='function {name}() {{ [native code] }}',
+    ),
     HostEnvironment.browser: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _BROWSER_GLOBALS, GUARANTEED_GLOBALS, _BROWSER_ABSENT),
     HostEnvironment.worker: _EnvironmentSpec(

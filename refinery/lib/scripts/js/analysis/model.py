@@ -40,9 +40,9 @@ from refinery.lib.scripts.js.analysis.environment import (
     HostEnvironment,
     node_require_runs_no_code,
 )
+from refinery.lib.scripts.js.builtins import OBJECT_PROTOTYPE_MEMBERS
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
-    OBJECT_PROTOTYPE_MEMBERS,
     JsArrayExpression,
     JsArrayPattern,
     JsArrowFunctionExpression,
@@ -3455,7 +3455,7 @@ class SemanticModel:
         (`_keys_a_call_spells`), may not select what the table inherits, where `valueOf` hands it
         back: where the literal spells every key, it has to be one of them, and where some key of
         the literal is one only the run knows, it may not be a member every object inherits
-        (`refinery.lib.scripts.js.model.OBJECT_PROTOTYPE_MEMBERS`). A key only the run knows may
+        (`refinery.lib.scripts.js.builtins.OBJECT_PROTOTYPE_MEMBERS`). A key only the run knows may
         name such a member too; the way lists the accesses under one as unkeyed, which
         `_calls_shown` takes for an entry's call only where its caller assumes such a key is one of
         the literal's own.

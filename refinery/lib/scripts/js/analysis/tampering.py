@@ -148,8 +148,9 @@ def denotes_function_intrinsic(
     `DominanceModel.binding_established_before` call runs only beside the stock value.
 
     *builtin_function* says whether a node denotes a function the language installs, read without
-    an effect: `[].at.constructor` is `Function` as `f.constructor` is for a plain function `f`.
-    Only a caller that evaluates such reads can say so; without it no such base is recognized.
+    an effect, whose `constructor` read still reaches `Function`: `[].at.constructor` is `Function`
+    as `f.constructor` is for a plain function `f`. Only a caller that evaluates such reads can say
+    so; without it no such base is recognized.
     """
     return _denotes_function_intrinsic(
         callee, model, effects, dominance,

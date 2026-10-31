@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from refinery.lib.scripts import Expression, Node, Transformer, set_child, set_child_list, set_value
+from refinery.lib.scripts import Expression, Node, set_child, set_child_list, set_value
 from refinery.lib.scripts.js.analysis.assignment import DefiniteAssignmentModel
-from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
+from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import GLOBAL_OBJECT, EffectModel
 from refinery.lib.scripts.js.analysis.environment import GUARANTEED_GLOBALS
@@ -27,16 +27,15 @@ from refinery.lib.scripts.js.analysis.model import (
     reference_role,
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
-from refinery.lib.scripts.js.builtins import RECEIVER_WRITING_METHODS
+from refinery.lib.scripts.js.builtins import OBJECT_PROTOTYPE_MEMBERS, RECEIVER_WRITING_METHODS
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_MEMBERS,
     MAX_RESULT_ARRAY_LEN,
-    OBJECT_PROTOTYPE_MEMBERS,
+    PinnedTransformer,
     access_key,
     allocated_object_type,
     coerces_uninterceptably,
     converted_operand,
-    denoted_member,
     denoted_value,
     escape_js_string,
     folded_literal,
@@ -215,26 +214,56 @@ def _names_a_called_method(parent: Node | None, key: Node) -> bool:
     return isinstance(call, JsCallExpression) and strip_parens(call.callee) is parent
 
 
-class JsSimplifications(Transformer):
+class JsSimplifications(PinnedTransformer):
 
     def __init__(self):
         super().__init__()
-        self._cache: ModelCache | None = None
         self._renewal_due = False
+        self._undecided: set[Node] = set()
+
+    def _forget_edits(self) -> None:
+        self._renewal_due = False
+        self._undecided = set()
 
     @property
     def cache(self) -> ModelCache:
         """
-        The models a decision reads, renewed first where a fold since the last renewal wrote what
-        shows them a fact the held ones lack (`_written`). The renewal waits for the decision after
-        the fold, by which point what it wrote stands in the tree.
+        The models a decision reads (`_facts`).
         """
-        cache = self._cache
-        assert cache is not None
+        return self._facts()
+
+    def _facts(self) -> ModelCache:
+        """
+        The held models, renewed first where a fold since the last renewal wrote what shows them a
+        fact the held ones lack (`visit`, `_written_constructor`). The renewal waits for the
+        decision after the fold, by which point what it wrote stands in the tree. A decision that
+        hands this pass to a helper reading the shared cache by itself, as
+        `refinery.lib.scripts.js.deobfuscation.helpers.try_inline_trivial_function` does, asks this
+        first.
+        """
         if self._renewal_due:
-            self._renewal_due = False
-            cache.renew()
-        return cache
+            self.renew_models()
+        return self.held_models()
+
+    def visit(self, node: Node) -> Node | None:
+        """
+        Visit *node*, and make a renewal due where the replacement a fold returns for it reads as a
+        string that shows the models a fact (`_spells_a_revealing_string`). Every fold returns its
+        replacement through here, so a key that `String.fromCharCode`, a `join`, a sequence or a
+        conditional collapses to is seen as surely as one an operator computes. The dispatch of
+        `refinery.lib.scripts.Visitor.visit` is written out rather than called, so that a deep tree
+        costs this pass no more stack than it costs any other transform.
+        """
+        kind = type(node)
+        handler = self._dispatch.get(kind)
+        if handler is None:
+            handler = self._dispatch[kind] = getattr(self, F'visit_{kind.__name__}', self.generic_visit)
+        replacement = handler(node)
+        if replacement is not None and not self._renewal_due:
+            value = static_string(replacement)
+            if value is not None and _spells_a_revealing_string(node, value):
+                self._renewal_due = True
+        return replacement
 
     @property
     def model(self) -> SemanticModel:
@@ -284,10 +313,12 @@ class JsSimplifications(Transformer):
 
     def visit_JsScript(self, node: JsScript):
         """
-        Attach the shared model cache for the whole script, then rewrite with the models held for the
-        length of the pass. Rebuilding them per rewrite is what made deobfuscation cost the product of
-        tree size and rewrite count; a fold gate is consulted on nearly every rewrite, so each rewrite
-        paid for a full rebuild of the semantic and effect models.
+        Attach the shared model cache for the whole script, then rewrite with the models held for
+        the length of the pass (`refinery.lib.scripts.js.deobfuscation.helpers.PinnedTransformer`),
+        renewed only where a fold shows them a fact. Rebuilding them per rewrite is what made
+        deobfuscation cost the product of tree size and rewrite count; a fold gate is consulted on
+        nearly every rewrite, so each rewrite paid for a full rebuild of the semantic and effect
+        models.
 
         Holding them is sound because this pass cannot loosen the facts those models report. It only ever
         removes bindings, never adds one, so a name reported as locally bound stays bound and reading
@@ -310,16 +341,17 @@ class JsSimplifications(Transformer):
         is remove an escape, by deleting a dead branch containing one; that shrinks the set, which is the
         direction a held answer may safely be stale in.
 
-        A built-in object a read reaches without spelling its owner is one the scan cannot attribute a
-        write through, and a value that may be one is unattributed
-        (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.followable`): a fold that reads such
-        a value away, or collapses a key it was read under to a name the scan does not count, leaves fewer
-        of them, never more.
+        A built-in object a read reaches without spelling its owner is one the scan cannot attribute
+        a write through, and a value that may be one is unattributed
+        (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.followable`): a fold that
+        reads such a value away, or collapses a key it was read under to a name the scan does not
+        count, leaves fewer of them, never more.
 
-        Two edits do show the models a fact the held ones lack: a string written where code spelled none,
-        when it reads as a name a reader looks for (`REVEALING_STRINGS`), which a fold computing a key from
-        operators does; and the name of a constructor written where a read reached it, which the scan then
-        follows. Such a fold renews the models before the next decision (`cache`).
+        Two edits do show the models a fact the held ones lack: a string written where code spelled
+        none, when it reads as a name a reader looks for (`REVEALING_STRINGS`), which any fold
+        collapsing a key may write (`visit`); and the name of a constructor written where a read
+        reached it, which the scan then follows. Such a fold renews the models before the next
+        decision (`cache`).
 
         The same argument covers the freshness the effect model reports for a container base. A binding is
         judged fresh only when this pass owns every value it takes, and the pass adds no value to any binding;
@@ -331,14 +363,12 @@ class JsSimplifications(Transformer):
         The pin also has to keep every model the window reads consistent with its entry. A model that
         reads the live tree would otherwise be built at the first gate that consults it, which can
         fall after an earlier fold's edit, layering it over held base models from an earlier tree —
-        the one state no unpinned run builds, which the pin's exit refuses. Warming the root-reading
-        models at entry forecloses that; a model derived only from them stays a pure function of the
-        held bases wherever it is first built.
+        the one state no unpinned run builds, which the pin's exit refuses. Building the models at
+        entry, before the first fold, forecloses that; a model derived only from them stays a pure
+        function of the held bases wherever it is first built.
         """
-        self._cache = model_cache(self, node)
-        self._renewal_due = False
-        with self._cache.pinned():
-            self._cache.warm()
+        with self.holding_models(node):
+            self.held_models()
             self.generic_visit(node)
         return None
 
@@ -594,10 +624,18 @@ class JsSimplifications(Transformer):
         """
         if node.operator not in BINARY_OPS:
             return None
-        known, value = denoted_value(node, self.model, self._uninterceptable, self._effect_model)
+        known, value = self._denoted(node)
         if not known:
             return None
         return self._written(node, value)
+
+    def _denoted(self, node: Node | None) -> tuple[bool, Value]:
+        """
+        The value *node* denotes (`refinery.lib.scripts.js.deobfuscation.helpers.denoted_value`)
+        with the facts of this pass's effect model, remembering what nothing decided in
+        `_undecided`.
+        """
+        return denoted_value(node, self.model, self._uninterceptable, self._effect_model, self._undecided)
 
     def _written(self, node: Node, value: Value) -> Expression | None:
         """
@@ -607,8 +645,7 @@ class JsSimplifications(Transformer):
         `void 0` are how `NaN` and `undefined` are written, and writing either in place of itself
         would rewrite the node for as long as the pass is allowed to run. The fold of a unary
         operator, of a binary operator, and of a member read write here, being the folds whose value
-        may be any value. A string that shows the models a name (`_spells_a_revealing_string`) makes
-        a renewal due. A function the language installs is written as the constructor it may be
+        may be any value. A function the language installs is written as the constructor it may be
         (`_written_constructor`).
         """
         if isinstance(value, BuiltinFunction):
@@ -616,8 +653,6 @@ class JsSimplifications(Transformer):
         literal = folded_literal(value)
         if literal is None or _respells(literal, node):
             return None
-        if isinstance(value, str) and _spells_a_revealing_string(node, value):
-            self._renewal_due = True
         return literal
 
     def _written_constructor(self, node: Node, function: BuiltinFunction) -> Expression | None:
@@ -725,6 +760,7 @@ class JsSimplifications(Transformer):
         self.generic_visit(node)
         fn = strip_parens(node.callee)
         if isinstance(fn, JsFunctionExpression):
+            self._facts()
             replacement = try_inline_trivial_function(fn, node.arguments, transformer=self)
             if replacement is None:
                 return None
@@ -1031,14 +1067,14 @@ class JsSimplifications(Transformer):
         `'1'`, and a reader that only recognized a string key would decide every index access to be
         undecidable.
 
-        Naming the property converts the key, and an array or an object converts through a prototype
-        method the file can replace: `Array.prototype.join = () => '2'` makes `'abc'[[1]]` read `'c'`.
-        A key that is no primitive is therefore converted only where that conversion is vouched for
-        (`refinery.lib.scripts.js.deobfuscation.helpers.converted_operand`).
+        Naming the property converts the key, and an array or an object converts through a
+        prototype method the file can replace: `Array.prototype.join = () => '2'` makes `'abc'[[1]]`
+        read `'c'`. A key that is no primitive is therefore converted only where that conversion is
+        vouched for (`refinery.lib.scripts.js.deobfuscation.helpers.converted_operand`).
         """
         if not node.computed:
             return node.property.name if isinstance(node.property, JsIdentifier) else None
-        known, key = denoted_value(node.property, self.model, self._uninterceptable, self._effect_model)
+        known, key = self._denoted(node.property)
         if not known:
             return None
         known, key = converted_operand(key, self._uninterceptable, self._effect_model, gated=True)
@@ -1052,7 +1088,7 @@ class JsSimplifications(Transformer):
         constructed with, as `''.constructor(5)` calls `String` (`_written_constructor`). The call
         then passes no receiver where the read passed its object, and no constructor reads one.
         """
-        known, value = denoted_member(node, self.model, self._uninterceptable, self._effect_model)
+        known, value = self._denoted(node)
         if not known or not isinstance(value, BuiltinFunction):
             return None
         return self._written_constructor(node, value)
@@ -1083,16 +1119,16 @@ class JsSimplifications(Transformer):
         prototype can shadow, and `'abc'.nope` is `undefined` where the chain is the one the
         language describes and the file writes no built-in object behind the scan's back.
 
-        The object is asked with `denoted_value`, which decides a literal, a global value name, and an
-        operator or a read over those — every one of them free of effects — so nothing is discarded
-        by replacing the access with what it reads, and no separate effect gate is needed.
+        The object is asked with `denoted_value`, which decides a literal, a global value name, and
+        an operator or a read over those — every one of them free of effects — so nothing is
+        discarded by replacing the access with what it reads, and no separate effect gate is needed.
 
         An index answers a string, and a string is the one value whose spelling a statement position
         reads: standing alone at the top of a body it is a directive. `'abc'[0];` is an ordinary
         statement that ends a Directive Prologue, and `'a';` continues one, which would make a
         `'use strict'` below it govern the file it merely stood in. Such a read is left alone.
         """
-        known, value = denoted_member(node, self.model, self._uninterceptable, self._effect_model)
+        known, value = self._denoted(node)
         if not known:
             return None
         if isinstance(value, str) and self._stands_in_a_directive_prologue(node):
@@ -1284,7 +1320,7 @@ class JsSimplifications(Transformer):
             typed = self._typeof_of_global_read(operand)
             if typed is not None:
                 return make_string_literal(typed)
-        known, value = denoted_value(node, self.model, self._uninterceptable, self._effect_model)
+        known, value = self._denoted(node)
         if not known:
             return None
         return self._written(node, value)

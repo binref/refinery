@@ -23,6 +23,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Binding,
     Role,
     SemanticModel,
+    _governing_target,
     _property_key_name,
     enclosing_function,
     is_member_write_target,
@@ -34,6 +35,7 @@ from refinery.lib.scripts.js.builtins import (
     RECEIVER_WRITING_METHODS,
 )
 from refinery.lib.scripts.js.model import (
+    LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsBinaryExpression,
@@ -49,7 +51,6 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsNewExpression,
     JsNumericLiteral,
-    JsObjectPattern,
     JsParenthesizedExpression,
     JsProperty,
     JsReturnStatement,
@@ -271,8 +272,9 @@ class _BuiltinReach:
         """
         Whether *node* may evaluate to an unattributed value. The values and bindings *node* may
         take its value from are searched with a stack rather than by recursion, so a chain of names
-        of any length costs no depth, and every one searched without finding an unattributed value
-        is remembered as having none.
+        of any length costs no depth. Every one searched without finding an unattributed value is
+        remembered as having none, and every one on the way from *node* to one found is remembered
+        as having one, so the many reads of one name cost one search between them.
         """
         known = self._answers.get(node)
         if known is not None:
@@ -283,29 +285,37 @@ class _BuiltinReach:
             return leaf
         searched: list[Node | Binding] = [node]
         seen: set[Node | Binding] = {node}
-        pending: list[Node | Binding] = sources
+        reached_from: dict[Node | Binding, Node | Binding] = {}
+        pending: list[tuple[Node | Binding, Node | Binding]] = [(source, node) for source in sources]
+        found: Node | Binding | None = None
         while pending:
-            item = pending.pop()
+            item, origin = pending.pop()
             if item in seen:
                 continue
             seen.add(item)
+            reached_from[item] = origin
             known = self._answers.get(item)
             if known is False:
                 continue
             if known is True:
+                found = item
                 break
             searched.append(item)
             leaf, sources = self._sources(item)
             if leaf:
-                known = True
+                found = item
                 break
-            pending.extend(sources)
-        if known is True:
-            self._answers[node] = True
-            return True
-        for item in searched:
-            self._answers[item] = False
-        return False
+            pending.extend((source, item) for source in sources)
+        if found is None:
+            for item in searched:
+                self._answers[item] = False
+            return False
+        cursor = found
+        while cursor is not node:
+            self._answers[cursor] = True
+            cursor = reached_from[cursor]
+        self._answers[node] = True
+        return True
 
     def _sources(self, item: Node | Binding) -> tuple[bool, list[Node | Binding]]:
         """
@@ -336,14 +346,18 @@ class _BuiltinReach:
             sources = [node.consequent, node.alternate]
         elif isinstance(node, JsSequenceExpression):
             sources = node.expressions[-1:]
-        elif isinstance(node, JsAssignmentExpression) and node.operator == '=':
-            sources = [node.right]
+        elif isinstance(node, JsAssignmentExpression):
+            if node.operator == '=':
+                sources = [node.right]
+            elif node.operator in LOGICAL_ASSIGNMENT_OPERATORS:
+                sources = [node.left, node.right]
         return False, [source for source in sources if source is not None]
 
     def _binding_sources(self, binding: Binding) -> tuple[bool, list[Node | Binding]]:
         """
-        Whether *binding* takes an unattributed value from a destructuring by itself, and otherwise
-        the values its declarators and the assignments to it store.
+        Whether *binding* takes an unattributed value from a destructuring by itself
+        (`_destructured_under_a_builtin_key`), and otherwise the values its declarators and the
+        assignments to it store. A declaration and an assignment destructure alike.
         """
         sources: list[Node | Binding] = []
         for declaration in binding.declarations:
@@ -351,15 +365,15 @@ class _BuiltinReach:
             if isinstance(parent, JsVariableDeclarator) and parent.id is declaration:
                 if parent.init is not None:
                     sources.append(parent.init)
-            elif isinstance(parent, JsProperty) and isinstance(parent.parent, JsObjectPattern):
-                key = _property_key_name(parent)
-                if key is None or key in BUILTIN_MEMBER_NAMES:
-                    return True, []
+            elif _destructured_under_a_builtin_key(declaration):
+                return True, []
         for reference in (*binding.writes, *binding.indefinite_writes):
             parent = reference.parent
             if isinstance(parent, JsAssignmentExpression) and parent.left is reference:
                 if parent.right is not None:
                     sources.append(parent.right)
+            elif _destructured_under_a_builtin_key(reference):
+                return True, []
         return False, sources
 
     def trips_at(self, node: Node) -> bool:
@@ -372,7 +386,9 @@ class _BuiltinReach:
         counts here although it names its owner. A method under a key not known is read as the
         scan reads every call, as one that writes nothing; a key a fold collapses to one of those
         methods renews the models
-        (`refinery.lib.scripts.js.deobfuscation.simplify.REVEALING_STRINGS`).
+        (`refinery.lib.scripts.js.deobfuscation.simplify.REVEALING_STRINGS`). A name an assignment
+        stores into hands no value anywhere; what a logical assignment evaluates to, which may be the
+        name's old value, is asked of the assignment.
         """
         for member in _written_members(_write_target(node)):
             if member.object is not None and self.unattributed(member.object):
@@ -382,12 +398,15 @@ class _BuiltinReach:
             if isinstance(callee, JsMemberExpression) and callee.object is not None:
                 if _certain_key(callee) in RECEIVER_WRITING_METHODS and self._may_be_a_builtin(callee.object):
                     return True
+        if isinstance(node, JsIdentifier) and reference_role(node) is not Role.READ:
+            return False
         return self.unattributed(node) and self._handed_off(node)
 
     def _may_be_a_builtin(self, node: Node) -> bool:
         """
-        Whether *node* may evaluate to a built-in object: an unattributed value, or a value rooted at
-        a name the scan watches (`ESCAPE_WATCHED_ROOTS`), as `Array.prototype` is rooted at `Array`.
+        Whether *node* may evaluate to a built-in object: an unattributed value, or a value rooted
+        at a name the scan watches (`ESCAPE_WATCHED_ROOTS`), as `Array.prototype` is rooted at
+        `Array`.
         """
         if self.unattributed(node):
             return True
@@ -419,6 +438,27 @@ class _BuiltinReach:
         if target is not None:
             return not isinstance(strip_parens(target), JsIdentifier)
         return _hands_over(self.model, self.aliases, cursor, 0)
+
+
+def _destructured_under_a_builtin_key(target: Node) -> bool:
+    """
+    Whether the destructuring that stores into *target* reads, on its way there, a key a built-in
+    type's chain may supply (`refinery.lib.scripts.js.builtins.BUILTIN_MEMBER_NAMES`) or a key not
+    known. Each of `({constructor: S} = '')`, `var {constructor: S = 0} = ''` and
+    `var {constructor: {prototype: P}} = ''` stores a built-in object without spelling its owner.
+    The way from *target* to the pattern is the climb
+    `refinery.lib.scripts.js.analysis.model.is_member_write_target` takes, through defaults and
+    nested patterns, so every property it passes is one the destructuring reads.
+    """
+    _, outermost = _governing_target(target)
+    cursor = target
+    while cursor is not outermost and cursor.parent is not None:
+        cursor = cursor.parent
+        if isinstance(cursor, JsProperty):
+            key = _property_key_name(cursor)
+            if key is None or key in BUILTIN_MEMBER_NAMES:
+                return True
+    return False
 
 
 def _certain_key(member: JsMemberExpression) -> str | None:

@@ -68,6 +68,7 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.builtins import (
     CONSTRUCTORS,
+    OBJECT_PROTOTYPE_MEMBERS,
     PROTOTYPE_CHAIN_PROPERTIES,
     PROTOTYPE_FUNCTIONS,
     PROTOTYPE_METHODS,
@@ -75,7 +76,6 @@ from refinery.lib.scripts.js.builtins import (
 from refinery.lib.scripts.js.lexer import is_identifier_name
 from refinery.lib.scripts.js.model import (
     LOGICAL_ASSIGNMENT_OPERATORS,
-    OBJECT_PROTOTYPE_MEMBERS,
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -1139,6 +1139,7 @@ def denoted_value(
     model: SemanticModel,
     uninterceptable: Callable[[Value], bool],
     effects: Callable[[], EffectModel] | None = None,
+    undecided: set[Node] | None = None,
 ) -> tuple[bool, Value]:
     """
     The value *node* denotes, as `(True, value)`, or `(False, None)` when nothing decides it. This is
@@ -1160,10 +1161,35 @@ def denoted_value(
     it. Only such a caller ever holds a `refinery.lib.scripts.js.values.BuiltinFunction`. The model
     is asked for on every question rather than held, so a pass renewing its models asks the renewed
     ones.
+
+    A caller asking about the operands of one tree again and again hands in a set *undecided*, which
+    remembers every node nothing decided and answers it at once the next time. Each operator of a
+    chain no fold decides would otherwise ask the whole chain below it again. The answer holds while
+    neither the node nor the facts the models report change, so the set is the caller's to drop.
     """
     node = strip_parens(node)
     if node is None:
         return False, None
+    if undecided is None:
+        return _denoted_value(node, model, uninterceptable, effects, None)
+    if node in undecided:
+        return False, None
+    known, value = _denoted_value(node, model, uninterceptable, effects, undecided)
+    if not known:
+        undecided.add(node)
+    return known, value
+
+
+def _denoted_value(
+    node: Node,
+    model: SemanticModel,
+    uninterceptable: Callable[[Value], bool],
+    effects: Callable[[], EffectModel] | None,
+    undecided: set[Node] | None,
+) -> tuple[bool, Value]:
+    """
+    The value `denoted_value` answers for *node*, which no parentheses wrap.
+    """
     if isinstance(node, JsIdentifier):
         if effects is not None and node.name in CONSTRUCTORS and name_is_unbound(node, model):
             if effects().trusted_intrinsic_name(node.name):
@@ -1175,7 +1201,7 @@ def denoted_value(
         apply = UNARY_OPS.get(node.operator)
         if apply is None:
             return False, None
-        known, value = denoted_value(node.operand, model, uninterceptable, effects)
+        known, value = denoted_value(node.operand, model, uninterceptable, effects, undecided)
         if not known:
             return False, None
         if node.operator in COERCING_UNARY_OPERATORS:
@@ -1185,9 +1211,9 @@ def denoted_value(
         return True, apply(value)
     if effects is not None:
         if isinstance(node, JsMemberExpression) and not is_member_write_target(node):
-            return denoted_member(node, model, uninterceptable, effects)
+            return denoted_member(node, model, uninterceptable, effects, undecided)
         if isinstance(node, JsBinaryExpression) and node.operator in BINARY_OPS:
-            return _denoted_binary(node, model, uninterceptable, effects)
+            return _denoted_binary(node, model, uninterceptable, effects, undecided)
     return extract_literal_value(node)
 
 
@@ -1196,6 +1222,7 @@ def _denoted_binary(
     model: SemanticModel,
     uninterceptable: Callable[[Value], bool],
     effects: Callable[[], EffectModel],
+    undecided: set[Node] | None,
 ) -> tuple[bool, Value]:
     """
     The value the binary operator *node* computes from its two decided operands, for
@@ -1203,10 +1230,10 @@ def _denoted_binary(
     (`refinery.lib.scripts.js.values.converted_operands`) is converted as `converted_operand`
     converts it first. A power whose value the language leaves to the engine is not decided.
     """
-    known, left = denoted_value(node.left, model, uninterceptable, effects)
+    known, left = denoted_value(node.left, model, uninterceptable, effects, undecided)
     if not known:
         return False, None
-    known, right = denoted_value(node.right, model, uninterceptable, effects)
+    known, right = denoted_value(node.right, model, uninterceptable, effects, undecided)
     if not known:
         return False, None
     convert_left, convert_right = converted_operands(node.operator, left, right)
@@ -1257,16 +1284,17 @@ def denoted_member(
     model: SemanticModel,
     uninterceptable: Callable[[Value], bool],
     effects: Callable[[], EffectModel],
+    undecided: set[Node] | None = None,
 ) -> tuple[bool, Value]:
     """
     The value the member read *node* yields off a decided object under a decided key, for
-    `denoted_value`: an own data property of the object (`read_data_property`), and otherwise what
-    its prototype chain answers (`inherited_member`). Naming the property converts a computed key
-    as an operator converts an operand (`converted_operand`). A read off `null` or `undefined`
-    throws and is not decided.
+    `denoted_value`, whose *undecided* this shares: an own data property of the object
+    (`read_data_property`), and otherwise what its prototype chain answers (`inherited_member`).
+    Naming the property converts a computed key as an operator converts an operand
+    (`converted_operand`). A read off `null` or `undefined` throws and is not decided.
     """
     if node.computed:
-        known, key = denoted_value(node.property, model, uninterceptable, effects)
+        known, key = denoted_value(node.property, model, uninterceptable, effects, undecided)
         if not known:
             return False, None
         known, key = converted_operand(key, uninterceptable, effects, gated=True)
@@ -1277,7 +1305,7 @@ def denoted_member(
         name = node.property.name
     else:
         return False, None
-    known, obj = denoted_value(node.object, model, uninterceptable, effects)
+    known, obj = denoted_value(node.object, model, uninterceptable, effects, undecided)
     if not known or obj is None or obj is JS_NULL:
         return False, None
     outcome, value = read_data_property(obj, name)
@@ -1320,10 +1348,10 @@ def inherited_member(value: Value, key: str, effects: EffectModel) -> tuple[bool
 
 def _builtin_function_member(function: BuiltinFunction, key: str, effects: EffectModel) -> tuple[bool, Value]:
     """
-    What a read of *key* off the built-in *function* answers, for `inherited_member`: the `name`
-    the function owns (`refinery.lib.scripts.js.analysis.effects.EffectModel.builtin_function_named`),
+    What a read of *key* off the built-in *function* answers, for `inherited_member`: the `name` the
+    function owns (`refinery.lib.scripts.js.analysis.effects.EffectModel.builtin_function_named`),
     the `Function` its `constructor` reaches
-    (`refinery.lib.scripts.js.analysis.effects.EffectModel.builtin_function_constructed_by_function`),
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.builtin_function_constructor_untouched`),
     and a method of `Function.prototype` on an intact chain. Any other key is not decided.
     """
     if key == 'name':
@@ -1331,7 +1359,7 @@ def _builtin_function_member(function: BuiltinFunction, key: str, effects: Effec
             return False, None
         return True, function.name
     if key == 'constructor':
-        if not effects.builtin_function_constructed_by_function(function):
+        if not effects.builtin_function_constructor_untouched(function):
             return False, None
         return True, CONSTRUCTORS['Function']
     method = PROTOTYPE_FUNCTIONS.get(('Function', key))

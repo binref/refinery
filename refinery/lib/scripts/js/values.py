@@ -35,8 +35,8 @@ class BuiltinFunction:
     It is an object whose `typeof` is `'function'`. Converting it to a primitive gives the text the
     host's engine writes for it, which no value of this domain knows, so `to_string` raises
     `HostApproximated` and a fold asks the host instead
-    (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.native_function_text`); every host
-    writes that text in the syntax of a function, which reads as no number.
+    (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.native_function_text`); every
+    host writes that text in the syntax of a function, which reads as no number.
     """
     __slots__ = 'name', 'is_constructor'
 
@@ -470,8 +470,8 @@ may be an object. `!`, `typeof` and `void` take the operand to a truth value, a 
 nothing without asking it anything.
 """
 
-#: The value-domain types that model a JavaScript object: an array, a plain object, a function, and a
-#: function the language installs. They share the two behaviours the primitives do not: a
+#: The value-domain types that model a JavaScript object: an array, a plain object, a function,
+#: and a function the language installs. They share the two behaviours the primitives do not: a
 #: ToPrimitive that runs a conversion, and an equality by reference rather than by value.
 OBJECT_VALUE_TYPES = (
     list,

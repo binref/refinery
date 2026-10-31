@@ -32,15 +32,18 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 
 from refinery.lib.scripts.js.analysis.conversions import CONVERSION_KEYS, RECEIVER_INSTALL_METHODS
+from refinery.lib.scripts.js.analysis.effects import build_effects
 from refinery.lib.scripts.js.analysis.intrinsics import _SURFACE_KEYS, SPECIES_KEYS
 from refinery.lib.scripts.js.analysis.model import (
     _DISPLACING_CHAIN_KEYS,
     _PROTOTYPE_KEEPING_KEYS,
     _PROTOTYPE_REFLECTING_CALLEES,
     REFLECTIVE_INTRINSICS,
+    build_semantic_model,
 )
 from refinery.lib.scripts.js.deobfuscation.simplify import REVEALING_STRINGS
 from refinery.lib.scripts.js.model import ACCESSOR_INSTALL_METHODS, CONVERSION_INSTALL_METHODS
+from refinery.lib.scripts.js.parser import JsParser
 from refinery.units.scripting.djs import djs
 
 #: An expression only the built-in objects answer for, mapped to the text it folds to.
@@ -68,6 +71,9 @@ _A_WRITE_NO_NAME_SHOWS: dict[str, str] = {
     "Object.getPrototypeOf('').nope = 5; console.log('abc'.nope);": '5\n',
     "Math.__proto__.nope = 5; console.log('abc'.nope);": '5\n',
     "var {constructor: S} = ''; S.prototype.nope = 5; console.log('abc'.nope);": '5\n',
+    "var {constructor: S = 0} = ''; S.prototype.nope = 5; console.log('abc'.nope);": '5\n',
+    "var {constructor: {prototype: P}} = ''; P.nope = 5; console.log('abc'.nope);": '5\n',
+    "var P; ({constructor: P} = ''); P.prototype.nope = 5; console.log('abc'.nope);": '5\n',
     "(class {}).__proto__.__proto__.nope = 5; console.log('abc'.nope);": '5\n',
     "(new Date).__proto__.__proto__.nope = 5; console.log('abc'.nope);": '5\n',
     "(function () { arguments.__proto__.nope = 5; })(); console.log('abc'.nope);": '5\n',
@@ -76,9 +82,11 @@ _A_WRITE_NO_NAME_SHOWS: dict[str, str] = {
     "(1 + '').constructor.prototype.nope = 5; console.log('abc'.nope);": '5\n',
     "var o = {s: ''}; o.s.constructor.prototype.nope = 5; console.log('abc'.nope);": '5\n',
     "var e = ''; e.constructor.prototype.xyz = function () {}; console.log(typeof 'abc'.xyz);": 'function\n',
-    "[].__proto__.push(5); console.log([][0]);": '5\n',
-    "var p = [].__proto__; p.push(5); console.log([][0]);": '5\n',
+    '[].__proto__.push(5); console.log([][0]);': '5\n',
+    'var p = [].__proto__; p.push(5); console.log([][0]);': '5\n',
     "[].__proto__[[] + 'push'](5); console.log([][0]);": '5\n',
+    '[].__proto__[String.fromCharCode(112, 117, 115, 104)](5); console.log([][0]);': '5\n',
+    "[].__proto__[(0, 'push')](5); console.log([][0]);": '5\n',
     "[].constructor.prototype.join = function () { return 'J'; }; console.log([] + []);": 'JJ\n',
     inspect.cleandoc("""
         var k1 = process.argv.length > 99 ? '' : 'constructor';
@@ -120,7 +128,7 @@ _A_BUILTIN_FUNCTION_READ: dict[str, tuple[str, str]] = {
     inspect.cleandoc("""
         console.log(''.trimLeft.name, [].at.name, String.name, ''.constructor === String, typeof [].at);
     """): (
-        "trimStart at String true function\n",
+        'trimStart at String true function\n',
         "console.log('trimStart', 'at', 'String', true, 'function');",
     ),
 }
@@ -170,7 +178,12 @@ _A_BUILTIN_FUNCTION_CHANGED: dict[str, str] = {
         g([].at);
         console.log([].at.constructor('return 1')());
     """): 'X\n',
-    "function g(o) { o.constructor = 5; } g([].at); console.log([].at.constructor === Function);": 'false\n',
+    'function g(o) { o.constructor = 5; } g([].at); console.log([].at.constructor === Function);': 'false\n',
+    inspect.cleandoc("""
+        function g(o) { o.constructor = function () { return function () { return 'X'; }; }; }
+        g(Object);
+        console.log(Object.constructor('return 1')());
+    """): 'X\n',
     inspect.cleandoc("""
         function g(o) { Object.setPrototypeOf(o, null); }
         g([].at);
@@ -338,6 +351,23 @@ class TestAFunctionTheLanguageInstalls(TestBase):
             for strict, environment in _EVERY_MODE:
                 with self.subTest(source=source, strict=strict, environment=environment):
                     self.assertEqual(behavior(_deobfuscated(source, strict, environment)), (prints, None))
+
+
+class TestTheGuardOfTheFolds(TestBase):
+
+    @staticmethod
+    def _followed(source: str) -> bool:
+        model = build_semantic_model(JsParser(source).parse())
+        return build_effects(model).builtin_writes_followed()
+
+    def test_a_read_under_an_unknown_key_stored_into_a_name_hands_nothing_off(self):
+        self.assertTrue(self._followed('var a = [1, 2, 3], i = 0, k; k = a[i];'))
+
+    def test_the_name_holding_it_is_handed_off_where_it_is_read(self):
+        self.assertFalse(self._followed('var a = [1, 2, 3], i = 0, k; k = a[i]; f(k);'))
+
+    def test_a_logical_assignment_hands_off_the_value_the_name_held(self):
+        self.assertFalse(self._followed('var k = [].at; f(k ||= 1);'))
 
 
 class TestTheStringsAFoldRenewsTheModelsFor(TestBase):

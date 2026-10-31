@@ -2097,8 +2097,8 @@ class TestAnAccessorInstalledOnABuiltInRunsWhereItIsRead(TestBase):
 #: Programs replacing a method of a built-in through a route that does not spell the name of the
 #: built-in, then calling it, mapped to what Node prints for them: a prototype reached from a value
 #: (`Object.getPrototypeOf(new Date())`, `__proto__` of an instance, the prototype of a string, the
-#: constructor of a string taken apart by a pattern), a global read under a key only the run
-#: computes, and the `vm` module running the write in the same context.
+#: constructor of a string or the prototype of an array taken apart by a pattern), a global read
+#: under a key only the run computes, and the `vm` module running the write in the same context.
 A_BUILT_IN_REPLACED_WITHOUT_SPELLING_ITS_NAME = {
     inspect.cleandoc("""
         Object.getPrototypeOf(new Date()).getTime = function () { return 5000000000000; };
@@ -2134,6 +2134,11 @@ A_BUILT_IN_REPLACED_WITHOUT_SPELLING_ITS_NAME = {
         S.prototype.toUpperCase = function () { return 'replaced'; };
         console.log('a'.toUpperCase());
     """): 'replaced\n',
+    inspect.cleandoc("""
+        var {__proto__: p} = [];
+        p.join = function () { return '5'; };
+        console.log(+[]);
+    """): '5\n',
     inspect.cleandoc("""
         var k = ['Da', 'te'].join('');
         globalThis[k].now = function () { return 5e12; };
@@ -2176,6 +2181,61 @@ class TestABuiltInReplacedWithoutSpellingItsNameIsNotFolded(TestBase):
         rows = A_BUILT_IN_REPLACED_WITHOUT_SPELLING_ITS_NAME
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Programs writing a prototype they reach through the result of a call, then reading a key no
+#: prototype held before, mapped to what Node prints for them. The guard of the folds that read a
+#: built-in's chain (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.followable`)
+#: reads only a call of a method named `getPrototypeOf` as one that may answer a built-in object.
+A_PROTOTYPE_WRITTEN_THROUGH_THE_RESULT_OF_A_CALL = {
+    "Reflect.get(Object(''), '__proto__').nope = 5; console.log('abc'.nope);": '5\n',
+    '[].__proto__.valueOf().nope = 5; console.log([].nope);': '5\n',
+    "var gp = Object.getPrototypeOf; gp('').nope = 5; console.log('abc'.nope);": '5\n',
+    "Object.getPrototypeOf.call(0, '').nope = 5; console.log('abc'.nope);": '5\n',
+    "({}).__lookupGetter__('__proto__').call('').nope = 5; console.log('abc'.nope);": '5\n',
+}
+
+#: A classic script writing a prototype it reaches through a property of the global object that a
+#: top-level `var` holds, mapped to what a host prints for it.
+A_PROTOTYPE_WRITTEN_THROUGH_A_PROPERTY_OF_THE_GLOBAL_OBJECT = {
+    "var p = ''.__proto__; globalThis['p'].nope = 5; console.log('abc'.nope);": '5\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPrototypeWrittenThroughAValueTheGuardDoesNotFollowIsNotFolded(TestBase):
+    """
+    The guard of the folds that read a built-in's chain
+    (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.followable`) follows a built-in
+    object through the reads, names and forwarding forms that may hold one. The result of a call
+    other than one to a method named `getPrototypeOf`, and a property of the global object a
+    top-level `var` holds, are neither, so a write through them leaves a read of a key no prototype
+    held before folded to `undefined`.
+    """
+
+    @wontfix(
+        'no obfuscator and no program writes a prototype it reaches through Reflect.get, an aliased '
+        'getPrototypeOf or a property of the global object; reading every call result as a possible '
+        'built-in would refuse the folds in every script that writes a property of what a call '
+        'returns'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_PROTOTYPE_WRITTEN_THROUGH_THE_RESULT_OF_A_CALL
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    @wontfix(
+        'no obfuscator and no program writes a prototype it reaches through a property of the '
+        'global object that a top-level var holds'
+    )
+    def test_the_deobfuscation_of_a_classic_script_prints_what_it_prints(self):
+        rows = A_PROTOTYPE_WRITTEN_THROUGH_A_PROPERTY_OF_THE_GLOBAL_OBJECT
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
             each_program_still_prints(rows),
         )
 

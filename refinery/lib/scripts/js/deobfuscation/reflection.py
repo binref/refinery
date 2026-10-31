@@ -1097,8 +1097,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
         """
         A resolver reporting whether an expression denotes a function the language installs, as the
         simplifier decides it (`refinery.lib.scripts.js.deobfuscation.helpers.denoted_value` with
-        the run's effect model): `[].at` and `''.constructor` do. Every expression it decides reads
-        without an effect. Resolved lazily against *root*'s current models.
+        the run's effect model), whose `constructor` read the effect model says still reaches
+        `Function`: `[].at` and `''.constructor` do. A name holding a constructor denotes it as long
+        as the program writes nothing on it by name, while handing it to code that gives it a
+        `constructor` of its own is recorded by key alone, so the second question is asked of every
+        such function. Every expression it decides reads without an effect. Resolved lazily against
+        *root*'s current models.
         """
         def resolve(node: Node) -> bool:
             cache = model_cache(self, root)
@@ -1111,7 +1115,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 lambda converted: coerces_uninterceptably(cache.effects, converted),
                 lambda: cache.effects,
             )
-            return known and isinstance(value, BuiltinFunction)
+            if not known or not isinstance(value, BuiltinFunction):
+                return False
+            return cache.effects.builtin_function_constructor_untouched(value)
 
         return resolve
 
