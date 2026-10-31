@@ -2808,9 +2808,9 @@ class TestADiscardedCompletionValueIsRemoved(TestJsDeobfuscator):
         source = 'function f() {\n  return 5042;\n}\nf();'
         self.assertEqual(source, self._remove_unused(source))
 
-    def test_a_return_of_a_value_read_stays(self):
+    def test_a_return_of_a_local_no_call_reads_goes(self):
         source = '(function() {\n  var r = x;\n  return r;\n})();'
-        self.assertEqual(source, self._remove_unused(source))
+        self.assertEqual('(function() {\n  var r = x;\n})();', self._remove_unused(source))
 
 
 class TestLivenessIsHeldFromTheStartOfASweep(TestJsDeobfuscator):

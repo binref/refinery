@@ -338,7 +338,8 @@ class TestRegressionBugs(TestJsDeobfuscator):
     def test_read_of_lexical_in_dead_zone_is_not_relocated(self):
         """
         `var r = x` reads `x` before its `let` declaration — a temporal-dead-zone `ReferenceError` — so
-        the read must not be relocated across the declaration and the throwing program is left unchanged.
+        the read must not be relocated across the declaration and stays where it throws; the
+        `return` of its value, which no call reads, goes.
         """
         source = inspect.cleandoc(
             """
@@ -349,12 +350,13 @@ class TestRegressionBugs(TestJsDeobfuscator):
             })();
             """
         )
-        self.assertEqual(self._run_transformers(source), self._deobfuscate(source))
+        self.assertEqual('(function() {\n  var r = x;\n  let x;\n})();', self._deobfuscate(source))
 
     def test_typeof_of_lexical_in_dead_zone_is_not_folded(self):
         """
         `typeof x` on a lexical in its temporal dead zone throws rather than yielding `'undefined'`, so
-        the pipeline must not fold it and leaves the throwing program unchanged.
+        the pipeline must not fold it and the throwing read stays; the `return` of its value, which
+        no call reads, goes.
         """
         source = inspect.cleandoc(
             """
@@ -365,7 +367,7 @@ class TestRegressionBugs(TestJsDeobfuscator):
             })();
             """
         )
-        self.assertEqual(self._run_transformers(source), self._deobfuscate(source))
+        self.assertEqual('(function() {\n  var r = typeof x;\n  let x;\n})();', self._deobfuscate(source))
 
     def test_typeof_of_lexical_declared_first_still_folds(self):
         source = inspect.cleandoc(

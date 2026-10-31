@@ -29,10 +29,11 @@ This transformer performs seven phases:
    stores with their duplicates loses each duplicate. A descriptor installed anywhere on the global
    object, or any reflective surface, keeps every store: an installed accessor fires on each one.
 
-6. **Discarded completion value removal** — a `return` of an inert constant, in a function whose
-   every invocation throws its completion value away and that carries no name a host could call it
-   by, ends the body with a value nothing observes; the statement goes and control falls off the
-   end the same way.
+6. **Discarded completion value removal** — a `return` ending the body of a function whose every
+   invocation throws its completion value away and that carries no name a host could call it by
+   returns a value nothing observes; control falls off the end the same way without it. A `return`
+   of a value that costs nothing to compute goes, and any other becomes the statement of its
+   expression, so that a store it made (`return a = f;`) is one the dead variable removal reads.
 
 7. **Empty statement removal** — an empty statement standing in a statement list executes nothing
    and goes; one standing as the whole body of a branch stays, being that branch's body itself.
@@ -41,7 +42,7 @@ from __future__ import annotations
 
 from typing import Iterable, Iterator, NamedTuple
 
-from refinery.lib.scripts import ListRemoval, Node, set_child, tree_root
+from refinery.lib.scripts import ListRemoval, Node, _replace_in_parent, set_child, tree_root
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel
@@ -122,6 +123,7 @@ from refinery.lib.scripts.js.strict import (
     is_use_strict_directive,
     strict_mode_at,
 )
+from refinery.lib.scripts.js.values import OBJECT_VALUE_TYPES
 
 
 def _global_alias_read_names(model: SemanticModel, root: Node) -> frozenset[str]:
@@ -467,11 +469,13 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         initializer; and they add a bare `var` for a name they take from the script scope. A
         removal deletes references, so a binding the held model calls live may be dead now, never
         the reverse, and a write it calls established still precedes every read it established.
-        None of the edits puts a node that was in the tree at the sweep's start under a node the
+        None of these edits puts a node that was in the tree at the sweep's start under a node the
         sweep creates, so the held control-flow model, which places a node by climbing its parents
-        when asked, places every such node where it was built. The tampering model enumerates
-        invocations over the live tree when asked, so it is asked only by the first stage, before
-        any edit.
+        when asked, places every such node where it was built. The one edit that does, a `return`
+        whose value nothing reads becoming the statement of its expression
+        (`_state_discarded_values`), is the sweep's last, after which no model of the sweep is
+        asked. The tampering model enumerates invocations over the live tree when asked, so it is
+        asked only by the first stage, before any edit.
         """
         while True:
             previously_changed = self.changed
@@ -482,7 +486,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 self._cache = cache
                 self._names_read_in_the_script = None
                 self._has_reflection = cache.model.has_reflection_surface()
-                self._remove_discarded_completions(node)
+                discarded_values = self._remove_discarded_completions(node)
                 self._remove_stores_of_undefined(node)
                 self._remove_dead_stores(node)
                 self._remove_redundant_global_stores(node)
@@ -490,6 +494,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 self._localize_pseudo_globals(node)
                 self.generic_visit(node)
                 self._process_body(node, node.body)
+                self._state_discarded_values(node, discarded_values)
             pass_changed = self.changed
             # Carry the cumulative change flag without going through the setter: this is bookkeeping,
             # not a tree mutation, so it must not drop the shared model cache.
@@ -747,41 +752,46 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return None
         return _GlobalMemberStore(name, value, base)
 
-    def _remove_discarded_completions(self, root: JsScript):
+    def _remove_discarded_completions(self, root: JsScript) -> list[JsReturnStatement]:
         """
-        Drop the `return` of an inert constant in a function whose every invocation throws its
-        completion value away, when that return ends the body — control falls off the end either
-        way. The invocation question is the tampering model's
+        Drop the value of the `return` ending the body of a function whose every invocation throws
+        its completion value away (`_value_goes_nowhere`); control falls off the end either way. A
+        `return` whose value costs nothing to compute (`_is_removable`) goes; a `return` of a store
+        is returned, to become the store at the end of the sweep (`_state_discarded_values`), which
+        the removal of dead variables then reads; any other stays a `return`, the shape in which
+        other passes read a forwarder. The invocation question is the tampering model's
         (`TamperingModel.every_invocation_discards_the_value` over the forward value-flow
-        enumeration): a function whose value escapes anywhere, or that the text never invokes,
-        keeps its return.
+        enumeration): a function whose value escapes anywhere, or that the text never invokes, keeps
+        its return.
 
-        Two gates keep this to residue. The value is a constant the program spelled, so nothing
-        any later pass could fold from the invocation is lost — a fold splices a callee's value
-        only where it can prove the callee pure, a proof that can arrive after this sweep runs, and
-        a constant return discarded everywhere is a wrapper's vestigial answer, not information.
-        And the function carries no name a host could call it by: a top-level function is a
-        property of the global object, so the file is not the whole program and a caller outside it
-        may read a completion value every invocation in the text discards.
+        The function carries no name a host could call it by: a top-level function is a property of
+        the global object, so the file is not the whole program and a caller outside it may read a
+        completion value every invocation in the text discards. An `async` function keeps the
+        return of anything but a primitive the text spells
+        (`refinery.lib.scripts.js.deobfuscation.helpers.denoted_value`): it settles its promise with
+        the value, which reads `then` off an object, and that read runs code where the value is one
+        with a getter.
         """
         assert self._cache is not None
         removals: list[JsReturnStatement] = []
+        statements: list[JsReturnStatement] = []
         for node in root.walk():
             if not isinstance(node, JsReturnStatement) or node.argument is None:
                 continue
-            if not isinstance(strip_parens(node.argument), (
-                JsStringLiteral,
-                JsNumericLiteral,
-                JsBooleanLiteral,
-                JsNullLiteral,
-            )):
-                continue
             function = enclosing_function(node)
-            if function is None:
+            if not isinstance(function, FUNCTION_NODES):
                 continue
-            body = getattr(function, 'body', None)
+            body = function.body
             if not isinstance(body, JsBlockStatement) or not body.body or body.body[-1] is not node:
                 continue
+            if function.is_async:
+                constant, value = denoted_value(
+                    node.argument,
+                    self.model,
+                    lambda converted: coerces_uninterceptably(self.effects, converted),
+                )
+                if not constant or isinstance(value, OBJECT_VALUE_TYPES):
+                    continue
             names = self.model.function_names(function)
             if names is not None and any(
                 name.exported
@@ -791,11 +801,48 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             ):
                 continue
             if not self._cache.tampering.every_invocation_discards_the_value(
-                function, value_is_discarded,
+                function, self._value_goes_nowhere,
             ):
                 continue
-            removals.append(node)
+            if self._is_removable(node.argument):
+                removals.append(node)
+            elif isinstance(strip_parens(node.argument), JsAssignmentExpression):
+                statements.append(node)
         self._remove_all(removals)
+        return statements
+
+    def _value_goes_nowhere(self, node: Node) -> bool:
+        """
+        Whether the value of *node* is thrown away (`value_is_discarded`): where the script's own
+        completion value is kept (`refinery.lib.scripts.js.options.preserves_script_return`), an
+        expression statement that may supply it
+        (`refinery.lib.scripts.js.deobfuscation.helpers.reaches_script_completion`) hands its value
+        to whoever evaluated the script.
+        """
+        if not value_is_discarded(node):
+            return False
+        if not preserves_script_return(self.options):
+            return True
+        statement = node.parent
+        while isinstance(statement, JsParenthesizedExpression):
+            statement = statement.parent
+        return (
+            not isinstance(statement, JsExpressionStatement)
+            or not reaches_script_completion(statement, self.model.root)
+        )
+
+    def _state_discarded_values(self, root: JsScript, returns: list[JsReturnStatement]):
+        """
+        Put the expression of each `return` in *returns*, whose value nothing reads, in a statement
+        of its own, `return a = f;` becoming `a = f;`, which the next sweep reads like any other
+        statement. A `return` an earlier stage of this sweep removed, with its function or alone,
+        stands in the tree no more and stays as it is.
+        """
+        for node in returns:
+            if node.argument is None or tree_root(node) is not root:
+                continue
+            if _replace_in_parent(node, JsExpressionStatement(expression=node.argument)):
+                self.mark_changed()
 
     def _remove_empty_statements(self, root: JsScript):
         """
