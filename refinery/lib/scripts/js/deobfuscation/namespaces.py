@@ -23,6 +23,7 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     enclosing_operator,
     is_member_write_target,
+    statement_list_of,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BatchedScopeTransformer,
@@ -347,7 +348,9 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         reaches at most once whenever the scope runs
         (`refinery.lib.scripts.analysis.cycles.CycleModel`). Every access of the namespace that runs
         after it then reaches the one object it made, as one after `var NS = {}` does; that every
-        access runs after it is the caller's to ask.
+        access runs after it is the caller's to ask. The statement goes with the declaration, so it
+        stands in a statement list (`refinery.lib.scripts.js.analysis.model.statement_list_of`) and
+        not as the body of a label, whose store would outlive the declaration.
         """
         if not isinstance(declarator.id, JsIdentifier):
             return None
@@ -367,6 +370,8 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
             and isinstance(created := store.right, JsObjectExpression)
             and not created.properties
             and isinstance(statement := store.parent, JsExpressionStatement)
+            and (holder := statement.parent) is not None
+            and statement_list_of(holder) is not None
         ):
             return None
         owner = scope if isinstance(scope, JsScript) else scope.parent

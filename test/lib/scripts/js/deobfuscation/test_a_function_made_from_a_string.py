@@ -17,7 +17,9 @@ from test.lib.scripts.js.analysis.differential import (
 )
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 
+from refinery.lib.scripts.js.deobfuscation.flatfunctions import JsFunctionUnflattening
 from refinery.lib.scripts.js.options import ExecutionModel
+from refinery.lib.scripts.js.parser import JsParser
 from refinery.units.scripting.djs import djs
 
 
@@ -98,6 +100,14 @@ DEFAULTED_PARAMETERS: dict[str, Program] = {
             console.log(t());
             """),
         prints('object'),
+        Reading.COMMONJS,
+    ),
+    'a default writing a name of the function calling it': Program(
+        a_program("""
+            function f() { var x = 0; function g(a = (x = 5)) { return a; } g(); return x; }
+            console.log(f());
+            """),
+        prints('5'),
         Reading.COMMONJS,
     ),
 }
@@ -438,6 +448,24 @@ FORWARDERS_THROUGH_AN_ARRAY: dict[str, Program] = {
         prints('1'),
         Reading.COMMONJS,
     ),
+    'a strict forwarder to a function its element makes strict, reading this': Program(
+        a_program("""
+            var T = [function () { 'use strict'; var [t, args] = arguments; function f() { return typeof this; } return f.apply(this, args); }];
+            function g() { 'use strict'; return T[0].apply(this, [T, arguments]); }
+            console.log(g());
+            """),
+        prints('undefined'),
+        Reading.COMMONJS,
+    ),
+    'a forwarder whose length is read, to a function its element makes strict': Program(
+        a_program("""
+            var T = [function () { 'use strict'; var [t, args] = arguments; function f(a) { return a + 1; } return f.apply(this, args); }];
+            function g() { return T[0].apply(this, [T, arguments]); }
+            console.log(g.length, g(1));
+            """),
+        prints('0 2'),
+        Reading.COMMONJS,
+    ),
 }
 
 #: The three together: a flag computed from a default, the function running text that declares the
@@ -492,6 +520,13 @@ class TestAFunctionMadeFromAStringIsWrittenOut(TestBase):
             ),
             'console.log(true, false, null);',
         )
+
+    def test_a_call_whose_callee_has_a_default_writing_a_name_of_the_caller_stays_a_call(self):
+        text = deobfuscate_source(
+            DEFAULTED_PARAMETERS['a default writing a name of the function calling it'].text,
+            execution=ExecutionModel.commonjs,
+        )
+        self.assertIn('console.log(f());', text)
 
     def test_each_text_declaring_and_answering_a_function_becomes_that_function(self):
         self.assertEqual(
@@ -566,6 +601,7 @@ class TestAFunctionMadeFromAStringIsWrittenOut(TestBase):
             'a forwarder in strict code to a sloppy function reading this',
             'a getter forwarding to a function with a parameter',
             'an element reading the array it is handed',
+            'a forwarder whose length is read, to a function its element makes strict',
         ):
             with self.subTest(label=label):
                 text = deobfuscate_source(
@@ -573,6 +609,33 @@ class TestAFunctionMadeFromAStringIsWrittenOut(TestBase):
                     execution=ExecutionModel.commonjs,
                 )
                 self.assertIn('.apply(this, [T, arguments])', text)
+
+    def test_a_strict_forwarder_taking_the_function_back_keeps_its_directive(self):
+        self.assertEqual(
+            deobfuscate_source(
+                FORWARDERS_THROUGH_AN_ARRAY[
+                    'a strict forwarder to a function its element makes strict, reading this'
+                ].text,
+                execution=ExecutionModel.commonjs,
+            ),
+            a_program("""
+                function g() {
+                  'use strict';
+                  return typeof this;
+                }
+                console.log(g());
+                """).rstrip(),
+        )
+
+    def test_a_forwarder_taking_the_directive_of_the_element_along_keeps_the_tree_whole(self):
+        ast = JsParser(
+            FORWARDERS_THROUGH_AN_ARRAY[
+                'a strict function writing a parameter its arguments object reads, forwarded from sloppy code'
+            ].text
+        ).parse()
+        JsFunctionUnflattening().visit(ast)
+        detached = [child for node in ast.walk() for child in node.children() if child.parent is not node]
+        self.assertEqual(detached, [])
 
     def test_all_three_together_leave_the_program(self):
         self.assertEqual(

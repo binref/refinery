@@ -792,6 +792,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 )
                 if not constant or isinstance(value, OBJECT_VALUE_TYPES):
                     continue
+            removable = self._is_removable(node.argument)
+            if not removable and not isinstance(strip_parens(node.argument), JsAssignmentExpression):
+                continue
             names = self.model.function_names(function)
             if names is not None and any(
                 name.exported
@@ -804,9 +807,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 function, self._value_goes_nowhere,
             ):
                 continue
-            if self._is_removable(node.argument):
+            if removable:
                 removals.append(node)
-            elif isinstance(strip_parens(node.argument), JsAssignmentExpression):
+            else:
                 statements.append(node)
         self._remove_all(removals)
         return statements

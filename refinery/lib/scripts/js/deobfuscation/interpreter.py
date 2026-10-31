@@ -2523,12 +2523,18 @@ class JsInterpreter:
         declare locally — a write through a closure into a captured outer variable. A nested call runs
         in an isolated child interpreter with an environment of its own and no write-back, so the
         mutation would be silently lost. Refusing to evaluate leaves the call in place for a real
-        engine to run and keeps the fold sound rather than producing a wrong constant.
+        engine to run and keeps the fold sound rather than producing a wrong constant. The default of
+        a parameter runs in the call too, where the parameters are local and nothing the body
+        declares is.
         """
+        parameters = named_parameters(func) or []
+        local_names: set[str] = {name for name, _ in parameters}
+        for _, default in parameters:
+            if default is not None and self._writes_a_name_of_the_caller(default, local_names):
+                return True
         body = func.body
         if not isinstance(body, JsBlockStatement):
             return False
-        local_names: set[str] = {name for name, _ in named_parameters(func) or ()}
         if isinstance(func, JsFunctionDeclaration) and isinstance(func.id, JsIdentifier):
             local_names.add(func.id.name)
         for node in walk_scope(body):
@@ -2538,7 +2544,14 @@ class JsInterpreter:
                         local_names.add(decl.id.name)
             elif isinstance(node, JsFunctionDeclaration) and isinstance(node.id, JsIdentifier):
                 local_names.add(node.id.name)
-        for node in walk_scope(body):
+        return self._writes_a_name_of_the_caller(body, local_names)
+
+    def _writes_a_name_of_the_caller(self, code: Node, local_names: set[str]) -> bool:
+        """
+        Whether *code*, outside the functions it holds, assigns to a name the calling environment
+        binds that *local_names* does not hold.
+        """
+        for node in walk_scope(code):
             if isinstance(node, JsAssignmentExpression) and isinstance(node.left, JsIdentifier):
                 name = node.left.name
             elif isinstance(node, JsUpdateExpression) and isinstance(node.argument, JsIdentifier):

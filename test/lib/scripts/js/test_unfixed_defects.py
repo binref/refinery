@@ -6689,3 +6689,38 @@ class TestAGlobalStoredThroughALocalHoldingTheGlobalObjectIsRead(TestBase):
     deobfuscation reads `x` as 1 where the function holding the store is called with an argument;
     the same body called without one, or as a named function, keeps the store.
     """
+
+
+#: A program whose base constructor returns a built-in, which becomes the receiver of the derived
+#: constructor that writes a method through it, mapped to what Node prints for it.
+A_BUILT_IN_A_BASE_CONSTRUCTOR_RETURNS_WRITTEN_THROUGH_THE_RECEIVER = {
+    inspect.cleandoc('''
+        function A() { return Math; }
+        class B extends A { constructor() { void super(); this.max = function () { return 7; }; } }
+        new B();
+        console.log(Math.max(1, 2));
+    '''):
+        '7\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABuiltInABaseConstructorReturnsIsTheReceiverOfTheDerivedOne(TestBase):
+    """
+    A base constructor returning an object makes it the `this` of the derived constructor that
+    calls `super()`. The scan judges a returned built-in where the value of each call goes, and the
+    value of `void super()` goes nowhere, so the write `this.max = f` is not seen as a write of
+    `Math.max`: the deobfuscation prints `2`.
+    """
+
+    @wontfix(
+        'no obfuscated file and no program returns a built-in from a function a class extends to '
+        'write through the receiver it becomes; the obfuscation never writes such a class, and '
+        'the shape is made up for the defect'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_BUILT_IN_A_BASE_CONSTRUCTOR_RETURNS_WRITTEN_THROUGH_THE_RECEIVER
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )

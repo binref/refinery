@@ -69,6 +69,7 @@ from refinery.lib.scripts import (
     Expression,
     Node,
     Statement,
+    _clone_node,
     _remove_from_parent,
     _replace_in_parent,
     set_child_list,
@@ -814,8 +815,9 @@ class _TableForwarded(_Restoration):
     """
     A function the obfuscation left a forwarder to the element of an array that holds `G`'s
     declaration, with the parameters it takes over from `G` and the directive it takes along where
-    `G` is strict and the forwarder is not. The edit leaves `G` with no parameters and an empty
-    body; nothing reaches it any more.
+    `G` is strict and the forwarder is not. The forwarder keeps its own directive prologue, and a
+    copy of the directive it takes along follows it, since the element keeps its own. The edit
+    leaves `G` with no parameters and an empty body; nothing reaches it any more.
     """
     forwarder: JsFunctionDeclaration | JsFunctionExpression
     element: JsFunctionExpression
@@ -835,9 +837,10 @@ class _TableForwarded(_Restoration):
         body = self.forwarder.body
         moved = self.target.body
         assert body is not None and moved is not None
-        statements = list(moved.body)
+        statements: list[Statement] = [*directive_prologue(body)]
         if self.directive is not None:
-            statements.insert(0, self.directive)
+            statements.append(_clone_node(self.directive))
+        statements.extend(moved.body)
         set_child_list(self.forwarder, 'params', self.parameters.build())
         set_child_list(body, 'body', statements)
         set_child_list(self.target, 'params', [])
@@ -1002,9 +1005,11 @@ def _forwarded_through_a_table(
     reach itself through `arguments`; `G` holds no `with` and no direct `eval`, and every name it
     reads finds from inside `F` the binding it finds where it stands (`_wrapper_scope_holds`,
     `_names_land`). `F` runs in the mode of `G`: where `G` is strict and `F` is not, `F` takes the
-    directive along, which requires plain parameters and a `G` that reads no `this`, since `F` no
-    longer coerces the receiver it hands on. A strict `F` cannot run a sloppy `G`. The parameters
-    are taken as `_forwarded` takes them.
+    directive along, which requires a `G` that reads no `this`, since `F` no longer coerces the
+    receiver it hands on. A strict `F` cannot run a sloppy `G`. The parameters are taken as
+    `_forwarded` takes them, and `F` keeps its own directive prologue, so where it says or takes
+    along `use strict`, the parameters it takes have to be plain names, which the language demands
+    of a function whose body says so.
     """
     model = cache.model
     forwarding = _table_forwarding(wrapper, model)
@@ -1065,8 +1070,6 @@ def _forwarded_through_a_table(
     if target_is_strict and not wrapper_is_strict:
         if directive is None or references_receiver_this(target):
             return None
-        if not all(isinstance(param, JsIdentifier) for param in target.params):
-            return None
         moved_directive = directive
     wrapper_scope = model.function_scope(wrapper)
     if wrapper_scope is None:
@@ -1076,6 +1079,10 @@ def _forwarded_through_a_table(
         return None
     parameters = _forwarded_parameters(wrapper, wrapper_scope, own_arguments, target, model)
     if parameters is None:
+        return None
+    says_use_strict = moved_directive is not None or declares_use_strict(body)
+    plain = not parameters.tail and all(isinstance(param, JsIdentifier) for param in parameters.head)
+    if says_use_strict and not plain:
         return None
     element = array.elements[k]
     assert isinstance(element, JsFunctionExpression)

@@ -674,6 +674,18 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
                 self.assertEqual(behavior(source), behavior(self._flatten(source)))
                 self.assertEqual(*before_and_after(source))
 
+    def test_a_namespace_whose_object_a_labelled_statement_makes_stays(self):
+        """
+        The statement making the object would have to go with `var NS`, and the body of a label
+        cannot go alone: the store left behind writes an undeclared name, which throws in strict
+        code.
+        """
+        source = (
+            "'use strict'; function f(c) { var NS; made: NS = {}; NS.a = c + 1; return NS.a; }"
+            ' console.log(f(1));'
+        )
+        self.assertEqual(self._flatten(source), JsSynthesizer().convert(JsParser(source).parse()))
+
     def test_two_namespaces_declared_in_one_statement_flatten_together(self):
         """
         Both plans hold the one `var` statement that declares `A` and `B`. The first removes its own
