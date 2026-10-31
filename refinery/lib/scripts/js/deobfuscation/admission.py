@@ -47,10 +47,8 @@ from refinery.lib.scripts.js.model import (
     JsFunctionNode,
     JsIdentifier,
     JsMemberExpression,
-    JsNumericLiteral,
     JsReturnStatement,
     JsScript,
-    JsStringLiteral,
     JsSwitchCase,
     JsSwitchStatement,
     JsVariableDeclaration,
@@ -67,14 +65,12 @@ def _is_value_closed(
 ) -> bool:
     """
     Check whether a function's body is closed enough for the interpreter to evaluate a call to
-    it: it references only its own parameters, names declared within its body, the names in
-    *known* (a function already proven pure or a binding holding a constant), registry built-ins,
-    and well-known globals. This is the *value* precondition — every name the interpreter needs is
-    resolvable — and is deliberately separate from the *effect* precondition that a call writes no
-    observable state, which `refinery.lib.scripts.js.analysis.effects.EffectModel` decides. A body
-    that is a single switch-return (globalConcealing shape) qualifies even when its return
-    expressions reference external names, because the irreducible fallback substitutes the
-    parameters into them.
+    it: every part of it a call computes (`_computed_parts`) references only its own parameters,
+    names declared within its body, the names in *known* (a function already proven pure or a
+    binding holding a constant), registry built-ins, and well-known globals. This is the *value*
+    precondition — every name the interpreter needs is resolvable — and is deliberately separate
+    from the *effect* precondition that a call writes no observable state, which
+    `refinery.lib.scripts.js.analysis.effects.EffectModel` decides.
     """
     for param in func.params:
         if not isinstance(param, JsIdentifier):
@@ -90,10 +86,10 @@ def _is_value_closed(
         local_names.add(func.id.name)
     if references_receiver_this(body):
         return False
-    if _is_switch_return_pattern(body, local_names):
-        return True
-    for node in walk_scope(body):
-        if isinstance(node, JsIdentifier) and is_reference(node) and node.name not in local_names:
+    for part in _computed_parts(body):
+        for node in walk_scope(part):
+            if not isinstance(node, JsIdentifier) or not is_reference(node) or node.name in local_names:
+                continue
             name = node.name
             if name in known:
                 continue
@@ -105,53 +101,29 @@ def _is_value_closed(
     return True
 
 
-def _is_switch_return_pattern(body, local_names: set[str]) -> bool:
+def _computed_parts(body: Node) -> list[Node]:
     """
-    Check whether the function body is a switch statement where every case returns an expression.
-    This is the globalConcealing pattern where return expressions may reference external names
-    but the dispatch logic itself is pure (switch on a parameter).
+    The parts of a function's *body* a call computes, which is all of it but for one shape: a body
+    that opens with a switch whose every case is one `return` of an expression, a lookup by key. A
+    case's expression may read names the call cannot resolve, because a return of an expression
+    the interpreter cannot reduce is spliced into the call site with the parameters substituted;
+    the discriminant, the case tests and every statement after the switch are computed.
     """
-    if not isinstance(body, JsBlockStatement):
-        return False
-    stmts = body.body
-    if not stmts:
-        return False
-    switch = stmts[0]
-    if not isinstance(switch, JsSwitchStatement):
-        return False
-    for remaining in stmts[1:]:
-        if isinstance(remaining, JsReturnStatement) and remaining.argument is None:
-            continue
-        return False
-    if switch.discriminant is None:
-        return False
-    if isinstance(switch.discriminant, JsIdentifier):
-        if switch.discriminant.name not in local_names:
-            return False
-    elif not _all_refs_local(switch.discriminant, local_names):
-        return False
-    if not switch.cases:
-        return False
+    if not isinstance(body, JsBlockStatement) or not body.body:
+        return [body]
+    switch, *after = body.body
+    if not isinstance(switch, JsSwitchStatement) or switch.discriminant is None or not switch.cases:
+        return [body]
+    tests: list[Node] = []
     for case in switch.cases:
-        if not isinstance(case, JsSwitchCase):
-            return False
-        if case.test is not None and not isinstance(case.test, (JsStringLiteral, JsNumericLiteral)):
-            return False
-        case_body = case.body
-        if len(case_body) != 1:
-            return False
-        stmt = case_body[0]
-        if not isinstance(stmt, JsReturnStatement) or stmt.argument is None:
-            return False
-    return True
-
-
-def _all_refs_local(node: Node, local_names: set[str]) -> bool:
-    for child in node.walk():
-        if isinstance(child, JsIdentifier) and is_reference(child):
-            if child.name not in local_names:
-                return False
-    return True
+        if not isinstance(case, JsSwitchCase) or len(case.body) != 1:
+            return [body]
+        returned = case.body[0]
+        if not isinstance(returned, JsReturnStatement) or returned.argument is None:
+            return [body]
+        if case.test is not None:
+            tests.append(case.test)
+    return [switch.discriminant, *tests, *after]
 
 
 def _collect_declared_names(body, names: set[str]) -> None:
