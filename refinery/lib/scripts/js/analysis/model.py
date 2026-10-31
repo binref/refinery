@@ -3509,6 +3509,17 @@ class SemanticModel:
         known = complete and bool(spelled) and None not in spelled
         return {string for string in spelled if string is not None}, known
 
+    def shown_calls(
+        self,
+        function: JsFunctionNode,
+    ) -> list[JsCallExpression | JsNewExpression] | None:
+        """
+        Every call and construction that runs *function*, which are the expressions its return
+        value becomes (`_calls_shown`), or `None` where one may come another way.
+        """
+        calls, complete = self._calls_shown(function)
+        return [call.node for call in calls] if complete else None
+
     def reached_only_by_shown_calls(self, function: JsFunctionNode, *, own_keys: bool = False) -> bool:
         """
         Whether every way to *function* is a call the text shows or a test of its names

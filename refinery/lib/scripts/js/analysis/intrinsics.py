@@ -23,6 +23,8 @@ from refinery.lib.scripts.js.analysis.model import (
     Binding,
     Role,
     SemanticModel,
+    enclosing_function,
+    is_member_write_target,
     reference_role,
 )
 from refinery.lib.scripts.js.model import (
@@ -40,6 +42,7 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsNewExpression,
     JsParenthesizedExpression,
+    JsReturnStatement,
     JsSequenceExpression,
     JsSpreadElement,
     JsTaggedTemplateExpression,
@@ -375,13 +378,25 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
         record(frozenset(scope.bindings), None)
         pending.extend(scope.children)
     aliases = _IntrinsicAliases(model)
+
+    def record_escape(watched: frozenset[str]) -> None:
+        record_keys(watched, None)
+        names.update(watched & ESCAPE_RECORDED_ROOTS)
+
     for node in model.root.walk():
         if isinstance(node, JsIdentifier):
-            if reference_role(node) is Role.READ:
+            if not _names_a_member_property(node) and reference_role(node) is Role.READ:
                 watched = aliases.names_denoted_by(node) & ESCAPE_WATCHED_ROOTS
                 if watched and _value_escapes(model, aliases, node, watched):
-                    record_keys(watched, None)
-                    names.update(watched & ESCAPE_RECORDED_ROOTS)
+                    record_escape(watched)
+            continue
+        if isinstance(node, JsMemberExpression):
+            key = static_property_key(node)
+            watched = frozenset() if key is None else frozenset({key}) & ESCAPE_WATCHED_ROOTS
+            if not watched:
+                continue
+            if _written_through(node) or _value_escapes(model, aliases, node, watched):
+                record_escape(watched)
             continue
         if isinstance(node, JsCallExpression):
             for base in _accessor_install_targets(node):
@@ -475,13 +490,14 @@ def _install_reaches_the_global_object(model: SemanticModel, call: JsCallExpress
 def _value_escapes(
     model: SemanticModel,
     aliases: _IntrinsicAliases,
-    node: JsIdentifier,
+    node: Node,
     names: frozenset[str],
     depth: int = 0,
 ) -> bool:
     """
     Whether the value read at *node* — which may denote the intrinsics *names* — reaches code that
-    could write a property on it without this analysis seeing the write.
+    could write a property on it without this analysis seeing the write. A property read names its
+    value at the member access, so a caller asks about `g.String` there, not at the name `String`.
 
     The question is deliberately inverted. Tracking where an intrinsic *flows to* would need a
     binder from each argument to its parameter, and that binder reaches none of the routes an
@@ -502,6 +518,8 @@ def _value_escapes(
     - the test of a branch or a loop, which converts it to a boolean and calls nothing on an object
       (`if (String.prototype)`)
     - a rebinding whose target the alias analysis still resolves to the same names (`var m = Math`)
+    - a return of a function whose every call the text shows, where the value at none of those
+      calls escapes and none is written through (`_returned_value_escapes`)
 
     That last arm is what makes one predicate serve both this scan and the parameter-escape question
     inside `_callee_is_write_free`, rather than two walks differing by a flag. A rebinding is safe
@@ -530,6 +548,10 @@ def _value_escapes(
         return isinstance(parent.parent, JsTaggedTemplateExpression)
     if isinstance(parent, (JsUnaryExpression, JsBinaryExpression)):
         return False
+    if isinstance(parent, JsReturnStatement) or (
+        isinstance(parent, JsArrowFunctionExpression) and parent.body is value
+    ):
+        return _returned_value_escapes(model, aliases, value, names, depth)
     target = None
     if isinstance(parent, JsVariableDeclarator) and parent.init is value:
         target = parent.id
@@ -540,7 +562,70 @@ def _value_escapes(
     return True
 
 
-def _forwarded_value(node: JsIdentifier) -> Node | None:
+def _returned_value_escapes(
+    model: SemanticModel,
+    aliases: _IntrinsicAliases,
+    value: Node,
+    names: frozenset[str],
+    depth: int,
+) -> bool:
+    """
+    Whether *value*, returned by the function enclosing it, escapes where that function returns it:
+    every call and construction of the function is shown (`SemanticModel.shown_calls`), the value
+    escapes at none of them, and none is the foot of a member chain written through or installed on
+    (`_written_through`), a write the scan attributes to the name at the foot of a chain and so
+    never to a call. A generator or an async function hands its value to an object, which escapes.
+    """
+    function = enclosing_function(value)
+    if not isinstance(function, FUNCTION_NODES) or depth > _CALLEE_DEPTH_LIMIT or function.is_async:
+        return True
+    if isinstance(function, (JsFunctionDeclaration, JsFunctionExpression)) and function.generator:
+        return True
+    calls = model.shown_calls(function)
+    if calls is None:
+        return True
+    return any(
+        _written_through(call) or _value_escapes(model, aliases, call, names, depth + 1)
+        for call in calls
+    )
+
+
+def _written_through(value: Node) -> bool:
+    """
+    Whether a member chain whose foot is *value*, looking through the forms that forward it, is
+    written or deleted somewhere along it, or invokes an accessor install on what it holds.
+    """
+    cursor = value
+    while (parent := cursor.parent) is not None:
+        if isinstance(parent, JsMemberExpression):
+            if parent.object is not cursor:
+                return False
+            if is_member_write_target(parent):
+                return True
+            call = parent.parent
+            if (
+                isinstance(call, JsCallExpression)
+                and call.callee is parent
+                and accessor_install_method(parent)
+            ):
+                return True
+        elif not isinstance(parent, _VALUE_FORWARDING_NODES):
+            return False
+        cursor = parent
+    return False
+
+
+def _names_a_member_property(node: JsIdentifier) -> bool:
+    """
+    Whether *node* is the name a dotted member access reads, whose value is the access itself.
+    """
+    parent = node.parent
+    if not isinstance(parent, JsMemberExpression):
+        return False
+    return parent.property is node and not parent.computed
+
+
+def _forwarded_value(node: Node) -> Node | None:
     """
     The outermost expression still carrying *node*'s value, or `None` when no enclosing form can
     hand that value on. The walk looks through the forms that forward a value unchanged —
@@ -631,10 +716,9 @@ def _callee_is_write_free(
 
     The parameter-escape question routes back through `_value_escapes` rather than scanning for
     identifiers, so a callee that merely *reads* through its parameter (`return o.PI`) stays
-    write-free while one that passes it on (`g(o)`) does not. That reuse also subsumes the return
-    case without a branch of its own: a parameter in a return position matches no sparing arm, so it
-    escapes — and by the same rule so do `return [o]`, `return { m: o }`, and an arrow's concise
-    body, which an explicit return check missed.
+    write-free while one that passes it on (`g(o)`) does not. That reuse also answers the return
+    case: a parameter returned goes wherever each call of the callee puts its value, and one a call
+    may receive another way escapes, as do `return [o]` and `return { m: o }`.
     """
     if func is None or depth > _CALLEE_DEPTH_LIMIT:
         return False

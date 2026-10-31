@@ -415,176 +415,6 @@ class TestAWriteTheModeRefusesIsNotAWriteThatDoesNothing(TestBase):
         )
 
 
-#: A program whose function reads its variables out of a stack hanging off an object rather than out
-#: of the rest parameter it declares, mapped to what Node prints for it. The truncation is written on
-#: the qualified name and the rest parameter is named nowhere but in the parameter list, so it is the
-#: qualified stack that each of these is about. The elements reach the function through the object:
-#: one program stores them after the declaration, one writes them into the object literal, one
-#: reaches the stack through a chain of two names, one holds two of them, one calls the function
-#: twice, and one has the body write an element back for the file to read after the call.
-A_STACK_REACHED_THROUGH_A_QUALIFIED_NAME = {
-    'var NS = { F: {} };\n'
-    'function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }\n'
-    'NS.F.stk = [5];\n'
-    'console.log(f());\n': '10\n',
-
-    'var NS = { F: { stk: [5] } };\n'
-    'function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }\n'
-    'console.log(f(3));\n': '10\n',
-
-    'var NS = { stk: [5] };\n'
-    'function f(...r) { NS.stk.length = 1; return NS.stk[0] * 2; }\n'
-    'console.log(f(3));\n': '10\n',
-
-    'var NS = { F: { stk: [5, 7] } };\n'
-    'function f(...r) { NS.F.stk.length = 2; return NS.F.stk[0] + NS.F.stk[1]; }\n'
-    'console.log(f());\n': '12\n',
-
-    'var NS = { F: { stk: [5] } };\n'
-    'function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }\n'
-    'console.log(f() + f());\n': '20\n',
-
-    'var NS = { F: { stk: [5] } };\n'
-    'function f(...r) { NS.F.stk.length = 1; NS.F.stk[0] = NS.F.stk[0] + 1; }\n'
-    'f();\n'
-    'console.log(NS.F.stk[0]);\n': '6\n',
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAStackHangingOffAnObjectIsNotTheArgumentsOfACall(TestBase):
-    """
-    A function can pack its variables into an array reached through a qualified name instead of into
-    the rest parameter it declares. That array belongs to the object, so what it holds is whatever
-    the program put there and the call that runs the function need pass nothing at all.
-
-    Unpacking such a function into one taking plain parameters rewrites the callee alone. No call
-    site is given the elements the object held, so a read that named a slot of the stack now names a
-    parameter nobody passes, and a write that filled one now fills a parameter the object never
-    sees. Where the stack is the rest parameter itself the same rewrite is sound, since there the
-    elements are exactly the arguments of the call; that is the stack
-    `test.lib.scripts.js.deobfuscation.test_restunpack` states its laws over.
-    """
-
-    @unittest.expectedFailure
-    def test_the_elements_the_object_holds_survive_the_unpacking(self):
-        """
-        Node prints `10`, `10`, `10`, `12`, `20`, and `6` for the six programs of
-        `A_STACK_REACHED_THROUGH_A_QUALIFIED_NAME`. Their deobfuscations print `NaN`, `6`, `6`,
-        `NaN`, `NaN`, and `5`: the two programs whose call passes an argument read that argument
-        where an element of the object stood, the three that pass none read a parameter no call
-        supplies, and the last leaves the object holding the element it started with. The same
-        computation with the stack written as the rest parameter itself, `f(...s)` truncated at
-        `s.length = 1` and called as `f(5)`, prints `10` on both sides.
-        """
-        rows = A_STACK_REACHED_THROUGH_A_QUALIFIED_NAME
-        self.assertEqual(
-            {source: before_and_after(source) for source in rows},
-            each_program_still_prints(rows),
-        )
-
-
-#: A program whose function stores into a stack reached through a qualified name under a key that is
-#: no parameter's index, mapped to what Node prints for it. The stack starts empty and the call
-#: passes nothing in all but one, where the one index key is a parameter the call is handed the very
-#: value the object holds: no element ever has to cross the call boundary, so what any of these
-#: reports is the name the rewrite writes and nothing about where a value came from. The keys are an
-#: identifier, a string, a negative index, and a decimal that is not the canonical spelling of the
-#: one it resembles; the chain is two names long or one; and the last two ask, in a file with no
-#: directive in it, how many properties the run left on the global object.
-A_QUALIFIED_STACK_KEY_THAT_NAMES_NO_PARAMETER = {
-    "'use strict';\n"
-    'var NS = { F: { stk: [] } };\n'
-    'function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; return NS.F.stk.a; }\n'
-    'console.log(f());\n': '3\n',
-
-    "'use strict';\n"
-    'var NS = { F: { stk: [] } };\n'
-    "function f(...r) { NS.F.stk.length = 0; NS.F.stk['zz'] = 3; return NS.F.stk['zz']; }\n"
-    'console.log(f());\n': '3\n',
-
-    "'use strict';\n"
-    'var NS = { F: { stk: [] } };\n'
-    'function f(...r) { NS.F.stk.length = 0; NS.F.stk[-1] = 3; return NS.F.stk[-1]; }\n'
-    'console.log(f());\n': '3\n',
-
-    "'use strict';\n"
-    'var NS = { F: { stk: [] } };\n'
-    "function f(...r) { NS.F.stk.length = 0; NS.F.stk['01'] = 3; return NS.F.stk['01']; }\n"
-    'console.log(f());\n': '3\n',
-
-    "'use strict';\n"
-    'var NS = { stk: [] };\n'
-    'function f(...r) { NS.stk.length = 0; NS.stk.a = 3; return NS.stk.a; }\n'
-    'console.log(f());\n': '3\n',
-
-    "'use strict';\n"
-    'var NS = { F: { stk: [] } };\n'
-    'function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; NS.F.stk.b = 4;'
-    ' return NS.F.stk.a * NS.F.stk.b; }\n'
-    'console.log(f());\n': '12\n',
-
-    "'use strict';\n"
-    'var NS = { F: { stk: [4] } };\n'
-    'function f(...r) { NS.F.stk.length = 1; NS.F.stk.a = 3; return NS.F.stk[0] + NS.F.stk.a; }\n'
-    'console.log(f(4));\n': '7\n',
-
-    'var NS = { F: { stk: [] } };\n'
-    'function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; return NS.F.stk.a; }\n'
-    'var before = Object.getOwnPropertyNames(globalThis).length;\n'
-    'f();\n'
-    'console.log(Object.getOwnPropertyNames(globalThis).length - before);\n': '0\n',
-
-    'var NS = { stk: [] };\n'
-    'function f(...r) { NS.stk.length = 0; NS.stk.a = 3; return NS.stk.a; }\n'
-    'var before = Object.getOwnPropertyNames(globalThis).length;\n'
-    'f();\n'
-    'console.log(Object.getOwnPropertyNames(globalThis).length - before);\n': '0\n',
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAnUnpackedStackDeclaresTheLocalsItMints(TestBase):
-    """
-    Unpacking a rest-array stack turns each key into an identifier, and a key that names no
-    parameter turns into an identifier the program never had. Such a name is the rewrite's to
-    introduce: a binding for it exists only if the rewrite writes one.
-
-    `refinery.lib.scripts.js.deobfuscation.restunpack.JsRestArrayUnpacking` writes it where the
-    stack is a plain local, and writes none where the stack is reached through a qualified name.
-    Every key of a qualified stack that is not an index the parameter list covers therefore comes
-    back as a bare assignment to a name nothing declares, which is an implicit global where the
-    function is sloppy code and a `ReferenceError` where it is strict code.
-
-    This is the second thing that branch gets wrong and it is not the first. What
-    `TestAStackHangingOffAnObjectIsNotTheArgumentsOfACall` pins is where a value comes from, an
-    element the object held being sought in an argument the call never passed; here every value
-    stays inside the body that computes it and only the binding is missing. Declaring the locals
-    would leave that entry exactly as it is, and supplying the elements would leave this one exactly
-    as it is.
-    """
-
-    @unittest.expectedFailure
-    def test_a_key_that_names_no_parameter_is_declared_where_it_is_written(self):
-        """
-        Node prints `3`, `3`, `3`, `3`, `3`, `12` and `7` for the seven strict programs of
-        `A_QUALIFIED_STACK_KEY_THAT_NAMES_NO_PARAMETER`, and `0` for the two sloppy ones, which run
-        leaving the global object with the properties it already had. Each strict deobfuscation
-        throws a `ReferenceError` having printed nothing, the body coming back as `v0 = 3;` and a
-        read of `v0` with `v0` declared nowhere in the file; each sloppy one prints `1`, that same
-        write having put the name on the global object.
-
-        The same computations with the stack written as the rest parameter itself — `f(...s)` with
-        `s.length = 0` and `s.a = 3` — reach the branch that declares what it mints, and print `3`
-        and `0` on both sides.
-        """
-        rows = A_QUALIFIED_STACK_KEY_THAT_NAMES_NO_PARAMETER
-        self.assertEqual(
-            {source: before_and_after(source) for source in rows},
-            each_program_still_prints(rows),
-        )
-
-
 #: A region that runs strict, holding an assignment to a name no declaration binds, mapped to the
 #: behavior Node gives it. Assigning to an unresolvable reference is a `ReferenceError` in strict
 #: code where sloppy code creates a property of the global object, so the statement's one effect is
@@ -2343,35 +2173,6 @@ class TestABuiltInReplacedWithoutSpellingItsNameIsNotFolded(TestBase):
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
-
-
-class TestABuiltInReplacedThroughAKeyedMemberOfTheGlobalObjectIsWritten(TestBase):
-    """
-    The scan of writes to the built-ins
-    (`refinery.lib.scripts.js.analysis.intrinsics.build_intrinsic_writes`) attributes a write to
-    the names the foot of its chain may be, and the foot of `globalThis['Date'].now` is
-    `globalThis`: the write is recorded against the global object and not against `Date`. A fold
-    that trusts `Date` or `Math` and runs before another pass spells the member `Date.now` answers
-    for the built-in: Node prints `true` for the program below and its deobfuscation `false`.
-
-        globalThis['Date'].now = function () { return 5e12; };
-        console.log(Date.now() > 4102444800000);
-
-    Spelled `globalThis.Date`, the key reads as the name `Date`, which the scan of escapes counts.
-    The fix reads a member of the global object under a known key as the global it names wherever
-    the scans track names.
-    """
-
-    @unittest.expectedFailure
-    def test_a_write_through_a_keyed_member_of_the_global_object_writes_the_built_in(self):
-        written = {
-            source: name in ModelCache(JsParser(source).parse()).intrinsic_writes.names
-            for source, name in (
-                ("globalThis['Date'].now = function () { return 5e12; };", 'Date'),
-                ("globalThis['Math'].floor = function () { return 42; };", 'Math'),
-            )
-        }
-        self.assertEqual(written, {source: True for source in written})
 
 
 class TestAPropertyNamedLikeABuiltInLeavesTheBuiltInTrusted(TestBase):
@@ -6284,62 +6085,6 @@ class TestACheckOfDefineIsNotDecidedPastCodeFunctionBuilds(TestBase):
                 self.assertEqual(behavior(deobfuscated_by_the_unit(row.text)), row.prints)
 
 
-#: Programs calling a member of a rest parameter's array through a chain of members whose length
-#: is written for the rest array, run as a CommonJS file, mapped to what Node prints for each: the
-#: array stored on a local object, and another object's array.
-A_REST_ARRAY_READ_THROUGH_A_CHAIN_OF_MEMBERS = {
-    'the rest array stored on a local object': Program(
-        a_program("""
-            var f = function (...a) {
-              var s = { k: a };
-              s.k.length = 2;
-              return s.k[1](s.k[0]);
-            };
-            console.log(f(1, function () { return this.length; }));
-            """),
-        prints('2'),
-        Reading.COMMONJS,
-    ),
-    'an array of another object': Program(
-        a_program("""
-            var s = { k: [] };
-            var f = function (...a) {
-              s.k.length = 2;
-              return s.k[1](s.k[0]);
-            };
-            s.k[1] = function (x) { return x; };
-            console.log(f(5, 6));
-            """),
-        prints('undefined'),
-        Reading.COMMONJS,
-    ),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestARestArrayIsUnpackedOnlyFromItsOwnName(TestBase):
-    """
-    Unpacking a rest parameter into named parameters
-    (`refinery.lib.scripts.js.deobfuscation.restunpack`) takes any chain of members whose `length`
-    is written as the rest array, `s.k.length = 2` included, so an unrelated object's array becomes
-    the parameters (the output throws a `TypeError`) and a local object holding the array keeps
-    naming the array the unpacking removed (a `ReferenceError`).
-    `test.lib.scripts.js.deobfuscation.test_restunpack.TestRestUnpack.test_frame_qualified` pins
-    the unpacking of such a chain; the fix changes that test.
-    """
-
-    def test_node_prints_what_each_row_pins(self):
-        for label, row in A_REST_ARRAY_READ_THROUGH_A_CHAIN_OF_MEMBERS.items():
-            with self.subTest(label=label):
-                self.assertEqual(row.behaves(), row.prints)
-
-    @unittest.expectedFailure
-    def test_the_deobfuscation_prints_what_the_program_prints(self):
-        for label, row in A_REST_ARRAY_READ_THROUGH_A_CHAIN_OF_MEMBERS.items():
-            with self.subTest(label=label):
-                self.assertEqual(row.read(), row.required())
-
-
 #: Programs reading through an accessor a table of more strings than a fold may write, which a
 #: function called in place or a named call returns.
 A_TABLE_A_CALL_RETURNS = {
@@ -6719,3 +6464,115 @@ class TestAnEntryOfATableHandedBackUnderAKeyKnownOnlyAtRuntimeKeepsWhatItIsHande
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+#: A sloppy function reading its receiver under a key only the runtime resolves, called without a
+#: receiver, mapped to the behavior Node gives it as a classic script.
+A_RECEIVER_A_BARE_CALL_SUPPLIES_READ_UNDER_A_RUNTIME_KEY = {
+    'the indirect eval read off the receiver': Program(
+        a_program("""
+            function f(k) { return this[k]; }
+            var x = 1;
+            f('eval')('x = 2');
+            console.log(x);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_RECEIVER_A_BARE_CALL_SUPPLIES_READ_UNDER_A_RUNTIME_KEY)
+class TestAReceiverABareCallSuppliesReadUnderARuntimeKeyIsAReflectionSurface(TestBase):
+    """
+    A sloppy function called without a receiver runs with the global object as its `this`, so
+    `this[k]` there reads any global, `eval` among them. The read counts as a reflection surface
+    only where `this` is the top level's (`_is_reflective_member` asks the spelling), while the
+    destructuring `const { [k]: e } = this` and the write `this[k] = v` ask whether the receiver may
+    be the global object (`SemanticModel.receiver_may_be_the_global_object`). The program evaluates
+    `x = 2` through the indirect `eval` and prints `2`; the deobfuscation folds the read of `x` to
+    `1`. The read has to ask the question the destructuring asks.
+    """
+
+
+#: A function handed the global object that a second function returns, writing a global under a key
+#: the call passes, mapped to the behavior Node gives it as a CommonJS file.
+THE_GLOBAL_OBJECT_RETURNED_BY_A_FUNCTION_AND_HANDED_ON = {
+    'a write of String through the handed object': Program(
+        a_program("""
+            function getG() { var g; try { g = globalThis; } catch (e) { g = this; } return g; }
+            function t(x, k, v) { x[k] = v; }
+            t(getG(), 'String', { fromCharCode: function () { return 'B'; } });
+            console.log(String.fromCharCode(65));
+            """),
+        prints('B'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(THE_GLOBAL_OBJECT_RETURNED_BY_A_FUNCTION_AND_HANDED_ON)
+class TestTheGlobalObjectReturnedByAFunctionIsTheGlobalObject(TestBase):
+    """
+    The model recognizes the global object where the text spells it, where a name the file gives it
+    holds it, and where a `this` may be it (`SemanticModel.may_be_the_global_object`). A value a
+    call returns is none of them, so the object `getG()` returns, handed to `t`, is no hand-over of
+    the global object, and the write `t` makes through it under the key `'String'` is no opaque
+    global write. Node prints `B`; the deobfuscation folds `String.fromCharCode(65)` to `'A'` before
+    the call of `getG` is inlined to `globalThis`. A value has to be the global object wherever a
+    function returning it is called.
+    """
+
+
+class TestAReceiverOnlyInstancesSupplyIsNoGlobalObject(TestBase):
+    """
+    Strict code, every class body among it, is never handed the global object for a missing
+    receiver: its `this` is the global object only where some code hands that object over. Here
+    only instances of `C` reach its methods, so the store under a key only the run knows writes no
+    built-in, and Node prints `A`. The model takes every `this` for the global object, counts the
+    store as an opaque write to it, and keeps `String.fromCharCode(65)` unfolded. Telling which
+    strict code may be handed the object takes a whole-program fact of its own.
+    """
+
+    @unittest.expectedFailure
+    def test_the_call_folds_under_the_node_host(self):
+        deobfuscated = deobfuscate_source(
+            inspect.cleandoc("""
+                class C { constructor(k) { this[k] = 1; } set(k, v) { this[k] = v; } }
+                var key = process.argv.length > 9 ? 'String' : 'x';
+                new C(key).set(key, 0);
+                console.log(String.fromCharCode(65));
+                """),
+            execution=ExecutionModel.commonjs,
+            environment=HostEnvironment.node,
+        )
+        self.assertIn("console.log('A');", deobfuscated)
+
+
+class TestABuiltInStoredIntoAPropertyReadUnderARuntimeKeyStaysIntact(TestBase):
+    """
+    `String` is stored into a property of an object and read back only under a key the run
+    computes; nothing writes through what is read, so `String.fromCharCode(65)` is `'A'` wherever it
+    runs. The intrinsic-write scan counts every built-in stored into a property as written, since
+    no reading of the text tells which later read under a computed key reaches the property and
+    what is done with it there; the call stays unfolded. Following the property needs the escape
+    sites ordered against the reads, which the scan does not do.
+    """
+
+    @unittest.expectedFailure
+    def test_the_call_folds(self):
+        deobfuscated = deobfuscate_source(
+            inspect.cleandoc("""
+                var s = {};
+                s.b = String;
+                var k = process.argv.length > 9 ? 'b' : 'c';
+                var t = s[k];
+                console.log(t, String.fromCharCode(65));
+                """),
+            execution=ExecutionModel.commonjs,
+            environment=HostEnvironment.node,
+        )
+        self.assertIn("console.log(t, 'A');", deobfuscated)

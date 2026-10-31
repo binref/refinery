@@ -1730,25 +1730,9 @@ class TestTheDecoysOfADefaultedAccessor(TestJsDeobfuscator):
             'c6D?T00H$Zs%8KHfzY??vBYQl0ssI200dcD'
         )).decode('utf8')
         result = self._deobfuscate(source)
-        self.assertTrue(result.endswith(inspect.cleandoc(
-            """
-            function fizzbuzz(limit) {
-              var lines = [];
-              for (var i = 1; i <= limit; i++) {
-                var line = '';
-                if (i % 3 === 0) {
-                  line += 'Fizz';
-                }
-                if (i % 5 === 0) {
-                  line += 'Buzz';
-                }
-                lines.push(line || String(i));
-              }
-              return lines.join(', ');
-            }
-            console.log('FizzBuzz: ' + fizzbuzz(15));
-            """
-        )))
+        self.assertTrue(result.endswith(
+            "\nconsole.log('FizzBuzz: 1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14, FizzBuzz');"
+        ))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

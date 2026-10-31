@@ -26,7 +26,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     insert_after_prologue,
     is_receiver_binding_call,
-    member_key,
     numeric_value,
     property_is_inherited,
     references_receiver_this,
@@ -72,12 +71,7 @@ non-uint32 length such as `1e300` throws `RangeError`, but any uint32 up to 4294
 
 class _TruncationInfo(NamedTuple):
     param_count: int
-    stack_chain: str | None
     length_access: JsMemberExpression
-
-
-class _NestedFrameAccess(Exception):
-    pass
 
 
 def _extract_truncation(
@@ -85,16 +79,19 @@ def _extract_truncation(
     rest_name: str,
 ) -> _TruncationInfo | None:
     """
-    Find the `.length = N` truncation statement in the function body. Returns the param count
-    and the stack chain key (None for simple case where rest param IS the stack). Returns None
-    if no truncation pattern is found.
+    Find the `.length = N` truncation of the rest array in the function body. Returns the param
+    count, or None if no truncation pattern is found.
 
     The object decides which statement is the truncation, and the length is read afterwards: the
-    first write to the length of the rest array or of a resolvable chain is the one this rewrite is
-    about, and a length it cannot read as a parameter count means the rewrite cannot be done.
-    Reading the length first and moving on when it does not answer would let a later, unrelated
-    `.length =` stand in for the real one, and the parameter list would then be built from a count
-    belonging to something else.
+    first write to the length of the rest array is the one this rewrite is about, and a length it
+    cannot read as a parameter count means the rewrite cannot be done. Reading the length first and
+    moving on when it does not answer would let a later, unrelated `.length =` stand in for the real
+    one, and the parameter list would then be built from a count belonging to something else.
+
+    A length written on anything but the rest parameter is no truncation of it. An array an object
+    holds is the object's: what it holds is whatever the program stored there, and that the program
+    stored the rest array there is a question of what the object holds, which the passes that take
+    such objects apart answer, leaving the rest parameter itself.
     """
     for stmt in stmts:
         if not isinstance(stmt, JsExpressionStatement):
@@ -110,20 +107,14 @@ def _extract_truncation(
         if not isinstance(lhs.property, JsIdentifier) or lhs.property.name != 'length':
             continue
         obj = lhs.object
-        if isinstance(obj, JsIdentifier) and obj.name == rest_name:
-            chain = None
-        elif isinstance(obj, JsMemberExpression):
-            chain = member_key(obj)
-            if chain is None:
-                continue
-        else:
+        if not isinstance(obj, JsIdentifier) or obj.name != rest_name:
             continue
         rhs = expr.right
         n = None if rhs is None else numeric_value(rhs)
         length = None if n is None else exact_integer(n)
         if length is None or not (0 <= length <= _MAX_PARAMETERS):
             return None
-        return _TruncationInfo(length, chain, lhs)
+        return _TruncationInfo(length, lhs)
     return None
 
 
@@ -192,46 +183,6 @@ def _stores_a_function_reading_no_receiver(member: JsMemberExpression) -> bool:
         return False
     value = strip_parens(store.right)
     return isinstance(value, FUNCTION_NODES) and not references_receiver_this(value)
-
-
-def _collect_accesses_frame(
-    body: JsBlockStatement,
-    stack_chain: str,
-) -> dict[str, list[JsMemberExpression]] | None:
-    """
-    Collect all accesses to the frame-qualified stack chain. Returns None if any access exists
-    inside a nested function (closure capture prevents demasking).
-    """
-    accesses: dict[str, list[JsMemberExpression]] = {}
-    try:
-        _walk_collect_frame(body, stack_chain, accesses, depth=0)
-    except _NestedFrameAccess:
-        return None
-    return accesses
-
-
-def _walk_collect_frame(
-    node: Node,
-    stack_chain: str,
-    accesses: dict[str, list[JsMemberExpression]],
-    depth: int,
-) -> None:
-    for child in node.children():
-        if isinstance(child, (JsFunctionExpression, JsFunctionDeclaration)):
-            _walk_collect_frame(child, stack_chain, accesses, depth + 1)
-            continue
-        if isinstance(child, JsMemberExpression):
-            obj = child.object
-            if isinstance(obj, JsMemberExpression):
-                chain = member_key(obj)
-                if chain == stack_chain:
-                    key = _extract_access_key(child)
-                    if key is not None:
-                        if depth > 0:
-                            raise _NestedFrameAccess
-                        accesses.setdefault(key, []).append(child)
-                        continue
-        _walk_collect_frame(child, stack_chain, accesses, depth)
 
 
 def _truncated_before_every_access(
@@ -422,16 +373,11 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
         result = _extract_truncation(fn.body.body, rest_name)
         if result is None:
             return False
-        param_count, stack_chain, length_access = result
-        if stack_chain is None:
-            stack = length_access.object
-            if not isinstance(stack, JsIdentifier) or model.resolve(stack) is not binding:
-                return False
-            accesses = _collect_accesses_simple(model, binding, length_access, param_count)
-        elif binding.captured:
+        param_count, length_access = result
+        stack = length_access.object
+        if not isinstance(stack, JsIdentifier) or model.resolve(stack) is not binding:
             return False
-        else:
-            accesses = _collect_accesses_frame(fn.body, stack_chain)
+        accesses = _collect_accesses_simple(model, binding, length_access, param_count)
         if accesses is None or not _truncated_before_every_access(dominance, length_access, accesses):
             return False
         if param_count > 0 and not any(str(i) in accesses for i in range(param_count)):
@@ -452,8 +398,7 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
                 _replace_in_parent(access_node, replacement)
         _remove_truncation(fn.body, length_access)
         set_child_list(fn, 'params', parameters.build())
-        if stack_chain is None:
-            self._add_local_declarations(fn.body, names.local_names)
+        self._add_local_declarations(fn.body, names.local_names)
         return True
 
     def _add_local_declarations(

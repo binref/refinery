@@ -462,3 +462,177 @@ class TestAMethodOfAStringFoldsPastATestOfItsPrototype(TestBase):
             },
             FOLDED_PAST_A_TEST,
         )
+
+
+class TestABuiltInReadAsAPropertyIsJudgedWhereTheAccessStands(TestBase):
+    """
+    `g.String` reads the built-in where `g` is the global object, and the value it reads is the
+    access, so where that value goes is decided at the access and not at the name of the property.
+    The base is not asked whether it is the global object: a name may hold the object where no
+    reading of the text says so.
+    """
+
+    @staticmethod
+    def _written(source: str) -> frozenset[str]:
+        return ModelCache(JsParser(source).parse()).intrinsic_writes.names
+
+    def test_a_built_in_read_off_the_global_object_and_called_or_read_from_is_not_written(self):
+        for source in (
+            'globalThis.String(1);',
+            'globalThis.String.fromCharCode(65);',
+            "globalThis['String'](1);",
+            'var g = globalThis; g.Array.isArray(x);',
+            'new globalThis.Array(3);',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._written(source) & {'String', 'Array'})
+
+    def test_a_built_in_read_as_a_property_and_handed_on_is_written(self):
+        for source in (
+            "var s = {}; s.x = globalThis['String'];",
+            'var s = {}; s.x = globalThis.String;',
+            'f(globalThis.String);',
+            'var s = {}; s.x = o.String;',
+            'globalThis.String.prototype.x = 1;',
+        ):
+            with self.subTest(source=source):
+                self.assertIn('String', self._written(source))
+
+
+class TestABuiltInReplacedThroughAKeyedMemberOfTheGlobalObjectIsWritten(TestBase):
+    """
+    A write through `globalThis['Date'].now` writes the built-in `Date`, as one through
+    `globalThis.Date.now` does.
+    """
+
+    def test_a_write_through_a_keyed_member_of_the_global_object_writes_the_built_in(self):
+        written = {
+            source: name in ModelCache(JsParser(source).parse()).intrinsic_writes.names
+            for source, name in (
+                ("globalThis['Date'].now = function () { return 5e12; };", 'Date'),
+                ("globalThis['Math'].floor = function () { return 42; };", 'Math'),
+            )
+        }
+        self.assertEqual(written, {source: True for source in written})
+
+
+class TestABuiltInReturnedIsJudgedWhereEachCallStands(TestBase):
+    """
+    A function returning a built-in hands it to each of its calls, so where every call of the
+    function is shown, the built-in goes where each call's value goes. A call whose value is written
+    through hands the write to the built-in, and the scan attributes a write to the name at the foot
+    of the chain, which a call is not.
+    """
+
+    @staticmethod
+    def _written(source: str) -> frozenset[str]:
+        return ModelCache(JsParser(source).parse()).intrinsic_writes.names
+
+    def test_a_built_in_returned_to_calls_that_read_from_it_is_not_written(self):
+        for source in (
+            "function g(k) { switch (k) { case 'a': return String; } } g('a').fromCharCode(65);",
+            'function g() { return String; } g()(1);',
+            'var g = () => String; g().fromCharCode(65);',
+            'function g() { return globalThis.String; } new (g())(1);',
+            'function g() { return String; } if (g()) { f(); }',
+            'function g() { return String; } function h() { return g(); } h().fromCharCode(65);',
+        ):
+            with self.subTest(source=source):
+                self.assertNotIn('String', self._written(source))
+
+    def test_a_built_in_returned_to_a_call_handing_it_on_or_writing_through_it_is_written(self):
+        for source in (
+            'function g() { return String; } var s = g();',
+            'function g() { return String; } g().prototype.x = 1;',
+            'function g() { return String; } g().fromCharCode = f;',
+            'function g() { return String; } (0, g()).fromCharCode = f;',
+            'function g() { return String; } delete g().fromCharCode;',
+            "function g() { return String; } g().__defineGetter__('x', f);",
+            'function g() { return String; } h(g());',
+            'function g() { return String; } function h() { return g(); } h().prototype.x = 1;',
+            'var g = () => String; g().prototype.x = 1;',
+        ):
+            with self.subTest(source=source):
+                self.assertIn('String', self._written(source))
+
+    def test_a_built_in_returned_where_a_call_may_come_another_way_is_written(self):
+        for source in (
+            'function g() { return String; } h(g);',
+            'var o = { g() { return String; } }; o.g().fromCharCode(65);',
+            'async function g() { return String; } g();',
+            'function* g() { return String; } g().next();',
+        ):
+            with self.subTest(source=source):
+                self.assertIn('String', self._written(source))
+
+
+#: Programs reaching `String` through a property read off the global object or through what a
+#: function returns, each either reading from it or replacing `fromCharCode` through it before
+#: calling `String.fromCharCode`, mapped to what Node prints for them run as CommonJS files.
+A_BUILT_IN_REACHED_THROUGH_A_PROPERTY_OR_A_RETURN: dict[str, Program] = {
+    'read off the global object and stored': Program(
+        a_program("""
+            var s = {};
+            s.x = globalThis['String'];
+            s.x.fromCharCode = function () { return 'B'; };
+            console.log(String.fromCharCode(65));
+            """),
+        prints('B'),
+        Reading.COMMONJS,
+    ),
+    'returned and written through by the caller': Program(
+        a_program("""
+            function g(k) { switch (k) { case 'a': return String; } return undefined; }
+            g('a').fromCharCode = function () { return 'B'; };
+            console.log(String.fromCharCode(65));
+            """),
+        prints('B'),
+        Reading.COMMONJS,
+    ),
+    'returned through a second function and written through': Program(
+        a_program("""
+            function g() { return String; }
+            function h() { return g(); }
+            h().fromCharCode = function () { return 'B'; };
+            console.log(String.fromCharCode(65));
+            """),
+        prints('B'),
+        Reading.COMMONJS,
+    ),
+    'returned and read from by the caller': Program(
+        a_program("""
+            function g(k) { switch (k) { case 'a': return String; } return undefined; }
+            console.log(g('a').fromCharCode(65), String.fromCharCode(66));
+            """),
+        prints('A B'),
+        Reading.COMMONJS,
+    ),
+    'read off the global object and called': Program(
+        a_program("""
+            console.log(globalThis.String(1) + globalThis.String.fromCharCode(65));
+            """),
+        prints('1A'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutABuiltInReachedThroughAPropertyOrAReturn(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in A_BUILT_IN_REACHED_THROUGH_A_PROPERTY_OR_A_RETURN.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    def test_each_program_still_prints_it_after_the_deobfuscation(self):
+        for label, row in A_BUILT_IN_REACHED_THROUGH_A_PROPERTY_OR_A_RETURN.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
+class TestABuiltInReturnedToACallThatReadsFromItStillFolds(TestBase):
+
+    def test_the_method_of_the_built_in_folds_beside_it(self):
+        row = A_BUILT_IN_REACHED_THROUGH_A_PROPERTY_OR_A_RETURN['returned and read from by the caller']
+        self.assertIn("'B'", deobfuscate_source(row.text, execution=ExecutionModel.commonjs))

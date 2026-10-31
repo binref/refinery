@@ -3,10 +3,20 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test.lib.scripts.js.analysis.differential import behavior, node_executable
+from test import TestBase
+from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_source, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import (
+    Program,
+    Reading,
+    a_program,
+    before_and_after,
+    each_program_still_prints,
+    prints,
+)
 
 from refinery.lib.scripts.js.deobfuscation.restunpack import JsRestArrayUnpacking
+from refinery.lib.scripts.js.options import ExecutionModel
 
 
 class TestVariableDemasking(TestJsDeobfuscator):
@@ -56,13 +66,14 @@ class TestVariableDemasking(TestJsDeobfuscator):
             ),
         )
 
-    def test_frame_qualified(self):
+    def test_a_stack_an_object_holds_is_not_the_rest_parameter(self):
         self.assertEqual(
             inspect.cleandoc(
                 """
                 var NS = {};
-                NS.fn = function(p0) {
-                  return p0 * 2;
+                NS.fn = function(...r) {
+                  NS.F.stk.length = 1;
+                  return NS.F.stk[0] * 2;
                 };
                 """
             ),
@@ -881,3 +892,234 @@ class TestARestArrayNamedBeyondItsOwnBody(TestJsDeobfuscator):
             {source: (behavior(source), behavior(self._demask(source))) for source in rows},
             {source: ((printed, None), (printed, None)) for source, printed in rows.items()},
         )
+
+
+#: Programs whose function stores its rest array into an object it creates and works through the
+#: object, mapped to what Node prints for each. In every one the array is read or written as a
+#: whole, so it has to stay the object's: the first has a call write an element through the object
+#: it was handed, the second joins the array, and the third has a call read an element under a key
+#: only the runtime knows.
+_A_REST_ARRAY_AN_OBJECT_HOLDS = {
+    (
+        'function h(o) { o.k[0] = 10; }\n'
+        'function f(...r) { var j = {}; j["k"] = r; j.k.length = 2; h(j); return j.k[0] + j.k[1]; }\n'
+        'console.log(f(1, 2));\n'
+    ): '12\n',
+    (
+        'function f(...r) {\n'
+        '  var j = {}; j["k"] = r; j.k.length = 2; console.log(j.k.join()); return j.k[0] + j.k[1];\n'
+        '}\n'
+        'console.log(f(1, 2, 3));\n'
+    ): '1,2\n3\n',
+    (
+        'function h(o, i) { return o.k[i]; }\n'
+        'function f(...r) { var j = {}; j["k"] = r; j.k.length = 2; return h(j, 1) + j.k[0]; }\n'
+        'console.log(f(1, 2));\n'
+    ): '3\n',
+}
+
+
+class TestARestArrayAnObjectHoldsIsNotTheRestParameter(TestJsDeobfuscator):
+    """
+    A function may store its rest array into an object and truncate and index it there. Whether the
+    array the object holds is the rest array is a question of what the object holds, which the
+    passes that take such objects apart answer; this pass rewrites the rest parameter itself and
+    leaves a function whose only truncation is written on an object as it is.
+    """
+
+    def _demask(self, source: str) -> str:
+        return self._run_transformer(source, JsRestArrayUnpacking)
+
+    def test_a_truncation_written_on_an_object_holding_the_rest_array_is_left_alone(self):
+        source = inspect.cleandoc(
+            """
+            var f = function(...r) {
+              var j = {};
+              j.k = r;
+              j.k.length = 2;
+              return j.k[0] + j.k[1];
+            };
+            """
+        )
+        self.assertEqual(source, self._demask(source))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_the_same_before_and_after_the_deobfuscation(self):
+        rows = _A_REST_ARRAY_AN_OBJECT_HOLDS
+        deobfuscated = {
+            source: deobfuscate_source(source, execution=ExecutionModel.commonjs) for source in rows
+        }
+        self.assertEqual(
+            {source: (behavior(source), behavior(deobfuscated[source])) for source in rows},
+            {source: ((printed, None), (printed, None)) for source, printed in rows.items()},
+        )
+
+
+#: Programs whose function reads its variables out of a stack hanging off an object rather than out
+#: of the rest parameter it declares, mapped to what Node prints for each. The truncation is written
+#: on the qualified name and the rest parameter is named nowhere but in the parameter list. The
+#: elements reach the function through the object: one program stores them after the declaration,
+#: one writes them into the object literal, one reaches the stack through a chain of two names, one
+#: holds two of them, one calls the function twice, and one has the body write an element back for
+#: the file to read after the call.
+A_STACK_REACHED_THROUGH_A_QUALIFIED_NAME = {
+    'var NS = { F: {} };\n'
+    'function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }\n'
+    'NS.F.stk = [5];\n'
+    'console.log(f());\n': '10\n',
+
+    'var NS = { F: { stk: [5] } };\n'
+    'function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }\n'
+    'console.log(f(3));\n': '10\n',
+
+    'var NS = { stk: [5] };\n'
+    'function f(...r) { NS.stk.length = 1; return NS.stk[0] * 2; }\n'
+    'console.log(f(3));\n': '10\n',
+
+    'var NS = { F: { stk: [5, 7] } };\n'
+    'function f(...r) { NS.F.stk.length = 2; return NS.F.stk[0] + NS.F.stk[1]; }\n'
+    'console.log(f());\n': '12\n',
+
+    'var NS = { F: { stk: [5] } };\n'
+    'function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }\n'
+    'console.log(f() + f());\n': '20\n',
+
+    'var NS = { F: { stk: [5] } };\n'
+    'function f(...r) { NS.F.stk.length = 1; NS.F.stk[0] = NS.F.stk[0] + 1; }\n'
+    'f();\n'
+    'console.log(NS.F.stk[0]);\n': '6\n',
+}
+
+
+#: Programs whose function stores into a stack reached through a qualified name under a key that is
+#: no parameter's index, mapped to what Node prints for each. The keys are an identifier, a string,
+#: a negative index, and a decimal that is not the canonical spelling of the one it resembles; the
+#: chain is two names long or one; and the last two ask, in a file with no directive in it, how many
+#: properties the run left on the global object.
+A_QUALIFIED_STACK_KEY_THAT_NAMES_NO_PARAMETER = {
+    "'use strict';\n"
+    'var NS = { F: { stk: [] } };\n'
+    'function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; return NS.F.stk.a; }\n'
+    'console.log(f());\n': '3\n',
+
+    "'use strict';\n"
+    'var NS = { F: { stk: [] } };\n'
+    "function f(...r) { NS.F.stk.length = 0; NS.F.stk['zz'] = 3; return NS.F.stk['zz']; }\n"
+    'console.log(f());\n': '3\n',
+
+    "'use strict';\n"
+    'var NS = { F: { stk: [] } };\n'
+    'function f(...r) { NS.F.stk.length = 0; NS.F.stk[-1] = 3; return NS.F.stk[-1]; }\n'
+    'console.log(f());\n': '3\n',
+
+    "'use strict';\n"
+    'var NS = { F: { stk: [] } };\n'
+    "function f(...r) { NS.F.stk.length = 0; NS.F.stk['01'] = 3; return NS.F.stk['01']; }\n"
+    'console.log(f());\n': '3\n',
+
+    "'use strict';\n"
+    'var NS = { stk: [] };\n'
+    'function f(...r) { NS.stk.length = 0; NS.stk.a = 3; return NS.stk.a; }\n'
+    'console.log(f());\n': '3\n',
+
+    "'use strict';\n"
+    'var NS = { F: { stk: [] } };\n'
+    'function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; NS.F.stk.b = 4;'
+    ' return NS.F.stk.a * NS.F.stk.b; }\n'
+    'console.log(f());\n': '12\n',
+
+    "'use strict';\n"
+    'var NS = { F: { stk: [4] } };\n'
+    'function f(...r) { NS.F.stk.length = 1; NS.F.stk.a = 3; return NS.F.stk[0] + NS.F.stk.a; }\n'
+    'console.log(f(4));\n': '7\n',
+
+    'var NS = { F: { stk: [] } };\n'
+    'function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; return NS.F.stk.a; }\n'
+    'var before = Object.getOwnPropertyNames(globalThis).length;\n'
+    'f();\n'
+    'console.log(Object.getOwnPropertyNames(globalThis).length - before);\n': '0\n',
+
+    'var NS = { stk: [] };\n'
+    'function f(...r) { NS.stk.length = 0; NS.stk.a = 3; return NS.stk.a; }\n'
+    'var before = Object.getOwnPropertyNames(globalThis).length;\n'
+    'f();\n'
+    'console.log(Object.getOwnPropertyNames(globalThis).length - before);\n': '0\n',
+}
+
+
+#: Programs calling a member of a rest parameter's array through a chain of members whose length
+#: is written for the rest array, run as a CommonJS file, mapped to what Node prints for each: the
+#: array stored on a local object, and another object's array.
+A_REST_ARRAY_READ_THROUGH_A_CHAIN_OF_MEMBERS = {
+    'the rest array stored on a local object': Program(
+        a_program("""
+            var f = function (...a) {
+              var s = { k: a };
+              s.k.length = 2;
+              return s.k[1](s.k[0]);
+            };
+            console.log(f(1, function () { return this.length; }));
+            """),
+        prints('2'),
+        Reading.COMMONJS,
+    ),
+    'an array of another object': Program(
+        a_program("""
+            var s = { k: [] };
+            var f = function (...a) {
+              s.k.length = 2;
+              return s.k[1](s.k[0]);
+            };
+            s.k[1] = function (x) { return x; };
+            console.log(f(5, 6));
+            """),
+        prints('undefined'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAStackHangingOffAnObjectIsNotTheArgumentsOfACall(TestBase):
+    """
+    A function can pack its variables into an array reached through a qualified name instead of into
+    the rest parameter it declares. That array belongs to the object, so what it holds is whatever
+    the program put there, and the call that runs the function need pass nothing at all.
+    """
+
+    def test_the_elements_the_object_holds_survive_the_unpacking(self):
+        rows = A_STACK_REACHED_THROUGH_A_QUALIFIED_NAME
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAKeyOfAStackHangingOffAnObjectStaysAKeyOfTheStack(TestBase):
+    """
+    A key of a stack reached through a qualified name that is no parameter's index names a property
+    of the array the object holds, never a variable: none is declared for it, and in sloppy code
+    none lands on the global object.
+    """
+
+    def test_each_program_still_prints_what_it_prints(self):
+        rows = A_QUALIFIED_STACK_KEY_THAT_NAMES_NO_PARAMETER
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestARestArrayIsUnpackedOnlyFromItsOwnName(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in A_REST_ARRAY_READ_THROUGH_A_CHAIN_OF_MEMBERS.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_REST_ARRAY_READ_THROUGH_A_CHAIN_OF_MEMBERS.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
