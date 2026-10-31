@@ -119,7 +119,9 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
     value_is_discarded,
 )
+from refinery.lib.scripts.js.lexer import is_identifier_name
 from refinery.lib.scripts.js.numbers import canonical_array_index, exact_integer
+from refinery.lib.scripts.js.token import RESERVED_WORD_NAMES
 from refinery.lib.scripts.js.strict import (
     has_parameter_expressions,
     strict_mode_at,
@@ -4671,6 +4673,48 @@ class SemanticModel:
             return False
         return self.lookup(node.name, self._node_scope.get(node)) is None
 
+    def _reads_a_wrapper_name_as_global_code(self, node: JsIdentifier) -> bool:
+        """
+        Whether the read of `eval` at *node* is the callee of an indirect `eval` reading a name the
+        CommonJS wrapper binds as global code, `(0, eval)('name')` or `(0, eval)('typeof name')`:
+        the spelling into which the reflection pass turns such a read of a packed body, which global
+        code reads as the global object's property of that name, or as no name at all. The call does
+        nothing else, so it reaches nothing the text does not show, and it is no reflective surface.
+        The name has to be one the host binds around the file
+        (`Binding.supplied_by_host`) that global code does not see and that no access through the
+        global object reaches: under a module reading, a store `globalThis.name = v` is recorded
+        against the file's binding of the name, and the call would read what it stored. Any other
+        name read this way may be the global object or an intrinsic, whose value goes on unseen.
+        """
+        if node.name != 'eval':
+            return False
+        sequence = node.parent
+        if not isinstance(sequence, JsSequenceExpression) or sequence.expressions[-1] is not node:
+            return False
+        if not all(isinstance(e, (JsNumericLiteral, JsStringLiteral)) for e in sequence.expressions[:-1]):
+            return False
+        callee: Node = sequence
+        while isinstance(callee.parent, JsParenthesizedExpression):
+            callee = callee.parent
+        call = callee.parent
+        if not isinstance(call, JsCallExpression) or call.callee is not callee or len(call.arguments) != 1:
+            return False
+        text = call.arguments[0]
+        if not isinstance(text, JsStringLiteral) or text.value is None:
+            return False
+        name = text.value.removeprefix('typeof ')
+        if not is_identifier_name(name) or name in RESERVED_WORD_NAMES:
+            return False
+        binding = self.root_scope.bindings.get(name)
+        return (
+            binding is not None
+            and binding.supplied_by_host
+            and not self.reaches_global_object(binding)
+            and not binding.indefinite_writes
+            and not binding.reachable_through_a_handed_object
+            and all(isinstance(reference, JsIdentifier) for reference in self.references(binding))
+        )
+
     def code_load_sites(self) -> list[Node]:
         """
         The calls by which the program has Node's `require` load code its text does not hold
@@ -4806,7 +4850,11 @@ class SemanticModel:
             elif isinstance(node, JsImportExpression):
                 sites.append(node)
             elif isinstance(node, JsIdentifier):
-                if self._reads_reflective_intrinsic(node) and not self._surface_is_trusted(node):
+                if (
+                    self._reads_reflective_intrinsic(node)
+                    and not self._reads_a_wrapper_name_as_global_code(node)
+                    and not self._surface_is_trusted(node)
+                ):
                     sites.append(node)
             elif isinstance(node, JsMemberExpression):
                 surface = _is_reflective_member(node) or self._computed_read_aliases_a_global(node)

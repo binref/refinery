@@ -6576,3 +6576,116 @@ class TestABuiltInStoredIntoAPropertyReadUnderARuntimeKeyStaysIntact(TestBase):
             environment=HostEnvironment.node,
         )
         self.assertIn("console.log(t, 'A');", deobfuscated)
+
+
+#: A CommonJS file storing a name the CommonJS wrapper binds into the global object before it loads
+#: another file that reads the global object's property of that name.
+A_WRAPPER_NAME_STORED_ON_THE_GLOBAL_OBJECT_FOR_A_LOADED_FILE = (
+    a_program("""
+        globalThis.__filename = 'set';
+        require('./other.js');
+        """),
+    a_program("""
+        console.log(globalThis.__filename);
+        """),
+)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAWrapperNameStoredOnTheGlobalObjectIsAGlobal(TestBase):
+    """
+    In a CommonJS file, `globalThis.__filename = 'set'` makes a property of the global object, which
+    a file the program loads reads; the file's own `__filename` is the wrapper's parameter and stays
+    as it was. The model records the store against that parameter, which nothing in the file reads,
+    so the store goes as dead and the loaded file prints `undefined`.
+    """
+
+    @wontfix(
+        'storing a name the CommonJS wrapper binds onto the global object for another file is made '
+        'up for the defect; exposing require for code run through vm, the shape such code takes, keeps '
+        'its store'
+    )
+    def test_the_loaded_file_reads_the_store(self):
+        main, other = A_WRAPPER_NAME_STORED_ON_THE_GLOBAL_OBJECT_FOR_A_LOADED_FILE
+        rewritten = deobfuscate_source(main, execution=ExecutionModel.commonjs, environment=HostEnvironment.node)
+        self.assertEqual(
+            (
+                module_graph_behavior({'main.js': main, 'other.js': other}, 'main.js'),
+                module_graph_behavior({'main.js': rewritten, 'other.js': other}, 'main.js'),
+            ),
+            (prints('set'), prints('set')),
+        )
+
+
+#: Programs storing a replacement for a reflective intrinsic into the global object under a key only
+#: the run computes, before calling the intrinsic by its bare name, mapped to the behavior Node
+#: gives them.
+A_REFLECTIVE_INTRINSIC_REPLACED_UNDER_A_RUNTIME_KEY = {
+    'an indirect eval': Program(
+        a_program("""
+            var k = ['ev', 'al'].join('');
+            globalThis[k] = function () { return 'replaced'; };
+            console.log((0, eval)('1 + 1'));
+            """),
+        prints('replaced'),
+    ),
+    'a Function construction': Program(
+        a_program("""
+            var k = ['Func', 'tion'].join('');
+            globalThis[k] = function () { return function () { return 'replaced'; }; };
+            console.log(Function('return 1 + 1')());
+            """),
+        prints('replaced'),
+    ),
+    'a direct eval': Program(
+        a_program("""
+            var k = ['ev', 'al'].join('');
+            globalThis[k] = function () { return 'replaced'; };
+            console.log(eval('1 + 1'));
+            """),
+        prints('replaced'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_REFLECTIVE_INTRINSIC_REPLACED_UNDER_A_RUNTIME_KEY)
+class TestAReflectiveIntrinsicReplacedUnderARuntimeKeyIsNotInlined(TestBase):
+    """
+    The call runs the replacement, so the text it is handed is not code to inline. The reflection
+    pass takes a bare `eval` or `Function` that no binding holds for the intrinsic and inlines the
+    text. Declining where a store under a computed key may have replaced the intrinsic is not enough
+    on its own: the unit trusts what `eval` runs by default and takes a declined `eval` for inert, so
+    `var v = false; eval('v = true'); if (!v) ...` would lose its write. The fix has to read a
+    declined site as code that may do anything.
+    """
+
+
+#: A classic script storing into the global object through a local holding it, inside a function
+#: expression called with an argument, mapped to what a host prints for it.
+A_GLOBAL_STORED_THROUGH_A_LOCAL_HOLDING_THE_GLOBAL_OBJECT = {
+    'in a function expression called with an argument': Program(
+        a_program("""
+            var x = 1;
+            (function (w) {
+              var g = globalThis;
+              g.x = 2;
+              return w;
+            })({});
+            console.log(x);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_GLOBAL_STORED_THROUGH_A_LOCAL_HOLDING_THE_GLOBAL_OBJECT)
+class TestAGlobalStoredThroughALocalHoldingTheGlobalObjectIsRead(TestBase):
+    """
+    `g` holds the global object, so `g.x = 2` stores into the global `x` the script prints. The
+    deobfuscation reads `x` as 1 where the function holding the store is called with an argument;
+    the same body called without one, or as a named function, keeps the store.
+    """

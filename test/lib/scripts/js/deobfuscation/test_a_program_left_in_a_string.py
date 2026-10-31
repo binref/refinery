@@ -3,13 +3,15 @@ Programs that leave part of themselves in a string, which a `Function` construct
 runs, read the way Node reads a file it runs as a module.
 
 A CommonJS file is sloppy code unless it says otherwise, so where `refinery.djs` is told the file is
-one, a payload that runs differently as strict code is unpacked into it. Where the file may be an
-ES module as well, such a payload stays in its string, because unpacked it would run as strict
-code. Either way a payload reading a name the CommonJS wrapper binds — `require`, `module`,
-`exports`, `__filename`, `__dirname` — stays in its string: the string runs as global code, which
-does not see these names, and the same text unpacked into the file would read the wrapper's. So
-does a payload declaring one where it would land at the top of the file, which is the body of the
-function the wrapper is, and a payload holding a direct `eval`, which reads the scope it runs in.
+one, a payload that runs differently as strict code is unpacked into it. Where the file may be an ES
+module as well, such a payload stays in its string, because unpacked it would run as strict code.
+Either way a payload using a name the CommonJS wrapper binds — `require`, `module`, `exports`,
+`__filename`, `__dirname` — runs as global code, which does not see these names, while the same text
+unpacked into the file would read the wrapper's. A `Function` body that only reads such a name is
+unpacked with each read an indirect `eval` of the name, which reads the global scope as the string
+did. Any other use of the name stays in its string, as does a payload declaring one where it would
+land at the top of the file, which is the body of the function the wrapper is, and a payload holding
+a direct `eval`, which reads the scope it runs in.
 """
 from __future__ import annotations
 
@@ -559,6 +561,195 @@ class TestAPayloadReadingANameTheCommonJsWrapperBindsStaysInItsString(TestBase):
         )
 
 
+#: Programs whose payload reads a name the CommonJS wrapper binds, or the type of one, and does
+#: nothing else with it, each with what Node makes of it as a CommonJS file and as an ES module. The
+#: payload is unpacked, and every such read stays a read of the global scope, an indirect `eval` of
+#: the name, which throws where nothing on the global object holds the name, as the payload does.
+A_PAYLOAD_READING_A_WRAPPER_NAME_AS_GLOBAL_CODE = {
+    'a packed body reading __dirname in a function it never calls': FileProgram(
+        a_program("""
+            Function("p", "function f() { return __dirname; } if (typeof globalThis.unset === 'function') f(); console.log('ran');")({});
+            """),
+        prints('ran'),
+        prints('ran'),
+    ),
+    'a Function body reading __dirname where it runs': FileProgram(
+        a_program("""
+            try { Function("console.log(__dirname)")(); } catch (e) { console.log(e.name); }
+            """),
+        prints('ReferenceError'),
+        prints('ReferenceError'),
+    ),
+    'a Function body reading a __filename the program put on the global object': FileProgram(
+        a_program("""
+            globalThis.__filename = 'set';
+            console.log(Function("return __filename")());
+            """),
+        prints('set'),
+        prints('set'),
+    ),
+    'a Function body calling require': FileProgram(
+        a_program("""
+            try { Function("require('fs')")(); } catch (e) { console.log(e.name); }
+            """),
+        prints('ReferenceError'),
+        prints('ReferenceError'),
+    ),
+    'a Function body reading the type of module beside a value it computes': FileProgram(
+        a_program("""
+            console.log(Function("return [typeof module, 6 * 7].join(' ')")());
+            """),
+        prints('undefined 42'),
+        prints('undefined 42'),
+    ),
+}
+
+#: Programs whose payload reads a name the CommonJS wrapper binds where no read of the global scope
+#: written into the file reads what it reads: inside a `with` body, whose object may hold the name,
+#: beside a binding of `eval` of its own, after a store that may replace the global `eval`, or as
+#: the target of a write. Each with what Node makes of it as a CommonJS file and as an ES module.
+A_PAYLOAD_READING_A_WRAPPER_NAME_NO_GLOBAL_READ_REPRODUCES = {
+    'a Function body reading the type of __dirname after eval was replaced under a computed key': FileProgram(
+        a_program("""
+            var k = ['ev', 'al'].join('');
+            globalThis[k] = function () { return 'replaced'; };
+            console.log(Function("return typeof __dirname")());
+            """),
+        prints('undefined'),
+        prints('undefined'),
+    ),
+    'a packed body reading __dirname inside a with statement': FileProgram(
+        a_program("""
+            Function("p", "with ({__dirname: 'w'}) console.log(__dirname);")({});
+            """),
+        prints('w'),
+        prints('w'),
+    ),
+    'a Function body binding eval and reading the type of __dirname': FileProgram(
+        a_program("""
+            Function("var eval = 0; console.log(typeof __dirname, eval);")();
+            """),
+        prints('undefined 0'),
+        prints('undefined 0'),
+    ),
+    'a Function body holding __dirname as a shorthand property': FileProgram(
+        a_program("""
+            try { Function("console.log({__dirname})")(); } catch (e) { console.log(e.name); }
+            """),
+        prints('ReferenceError'),
+        prints('ReferenceError'),
+    ),
+    'a Function body writing __dirname': FileProgram(
+        a_program("""
+            Function("__dirname = 'w'; console.log(globalThis.__dirname);")();
+            """),
+        prints('w'),
+        prints('w'),
+    ),
+}
+
+#: Programs holding an indirect `eval` of the type of a name, the only code that may run as text,
+#: each with what Node makes of it as a CommonJS file and as an ES module. That `eval` reads one
+#: name of the global scope, so it hides nothing the rest of the file has to be kept for.
+AN_INDIRECT_EVAL_READING_ONE_GLOBAL_NAME = {
+    'beside a test of a key of a function nothing writes': FileProgram(
+        a_program("""
+            function f() {}
+            if ('k' in f) console.log('never');
+            console.log((0, eval)('typeof __dirname'));
+            """),
+        prints('undefined'),
+        prints('undefined'),
+    ),
+    'of a name only the file declares': FileProgram(
+        a_program("""
+            var x = 1;
+            console.log((0, eval)('typeof x'));
+            """),
+        prints('undefined'),
+        prints('undefined'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPayloadReadingAWrapperNameReadsItAsGlobalCode(TestBase):
+
+    def testnode_prints_what_each_row_pins(self):
+        node_prints_what_each_row_pins(self, A_PAYLOAD_READING_A_WRAPPER_NAME_AS_GLOBAL_CODE)
+        node_prints_what_each_row_pins(self, A_PAYLOAD_READING_A_WRAPPER_NAME_NO_GLOBAL_READ_REPRODUCES)
+        node_prints_what_each_row_pins(self, AN_INDIRECT_EVAL_READING_ONE_GLOBAL_NAME)
+
+    def test_each_payload_reading_the_name_is_unpacked(self):
+        rows = A_PAYLOAD_READING_A_WRAPPER_NAME_AS_GLOBAL_CODE
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            unpacked = {
+                label: deobfuscate_source(row.text, execution=execution)
+                for label, row in rows.items()
+            }
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    {label: 'Function(' in text for label, text in unpacked.items()},
+                    {label: False for label in rows},
+                )
+
+    def test_each_program_reading_the_name_still_prints_what_it_prints(self):
+        each_reading_still_prints(
+            self,
+            A_PAYLOAD_READING_A_WRAPPER_NAME_AS_GLOBAL_CODE,
+            (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
+        )
+
+    def test_a_payload_reading_the_name_where_no_global_read_reproduces_stays_packed(self):
+        rows = A_PAYLOAD_READING_A_WRAPPER_NAME_NO_GLOBAL_READ_REPRODUCES
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            kept = {
+                label: deobfuscate_source(row.text, execution=execution)
+                for label, row in rows.items()
+            }
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    {label: 'Function(' in text for label, text in kept.items()},
+                    {label: True for label in rows},
+                )
+
+    def test_each_program_no_global_read_reproduces_still_prints_what_it_prints(self):
+        each_reading_still_prints(
+            self,
+            A_PAYLOAD_READING_A_WRAPPER_NAME_NO_GLOBAL_READ_REPRODUCES,
+            (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
+        )
+
+    def test_the_packed_reads_of_the_name_become_indirect_evals_of_it(self):
+        self.assertEqual(
+            deobfuscate_source(
+                A_PAYLOAD_READING_A_WRAPPER_NAME_AS_GLOBAL_CODE[
+                    'a Function body reading the type of module beside a value it computes'
+                ].text,
+                execution=ExecutionModel.commonjs,
+            ),
+            "console.log([(0, eval)('typeof module'), 42].join(' '));",
+        )
+
+    def test_a_test_of_a_key_beside_an_indirect_eval_of_one_name_is_decided(self):
+        self.assertEqual(
+            deobfuscate_source(
+                AN_INDIRECT_EVAL_READING_ONE_GLOBAL_NAME[
+                    'beside a test of a key of a function nothing writes'
+                ].text,
+                execution=ExecutionModel.commonjs,
+            ),
+            "console.log((0, eval)('typeof __dirname'));",
+        )
+
+    def test_each_program_with_an_indirect_eval_of_one_name_still_prints_what_it_prints(self):
+        each_reading_still_prints(
+            self,
+            AN_INDIRECT_EVAL_READING_ONE_GLOBAL_NAME,
+            (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
+        )
+
+
 #: Programs whose function, called once, declares a name the CommonJS wrapper binds, each with what
 #: Node makes of it as a CommonJS file and as an ES module. Inlining the function would move the
 #: declaration to the top of the file, which is the body of the function the wrapper is: a `let`,
@@ -1049,3 +1240,111 @@ class TestThePackersOwnOutputIsUnpacked(TestBase):
                 self.assertEqual(
                     self._deobfuscated(PACKED_GLOBALS, switch), PACKED_GLOBALS_UNPACKED
                 )
+
+
+#: Programs reading a global by the indirect `eval` of its name where the reflection pass leaves the
+#: call standing, a local or a parameter of that name standing at the call, and handing on what it
+#: reads: the global object or a built-in, which an alias read by name would show. Each with what
+#: Node prints, and the reading it prints it under.
+AN_INDIRECT_EVAL_OF_A_NAME_WHOSE_VALUE_GOES_ON: dict[str, Program] = {
+    'the global object beside a local of its name': Program(
+        a_program("""
+            var x = 1;
+            function f() {
+              var globalThis = {};
+              (0, eval)('globalThis').x = 2;
+              return globalThis;
+            }
+            f();
+            console.log(x);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+    'the global object beside a local of its name, written under a key the run knows': Program(
+        a_program("""
+            var x = 1;
+            function f(k) {
+              var globalThis = {};
+              (0, eval)('globalThis')[k] = 2;
+              return globalThis;
+            }
+            f('x');
+            console.log(x);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+    'the global object beside a parameter of its name, written under a key the run knows': Program(
+        a_program("""
+            function f(globalThis) { return (0, eval)('globalThis'); }
+            var g = f(0);
+            g[Math.random() < 2 ? 'String' : 'x'] = { fromCharCode: function () { return 'B'; } };
+            console.log(String.fromCharCode(65));
+            """),
+        prints('B'),
+        Reading.COMMONJS,
+    ),
+    'a built-in beside a local of its name': Program(
+        a_program("""
+            function f() {
+              var String = 0;
+              var s = (0, eval)('String');
+              s.fromCharCode = function () { return 'B'; };
+              return String;
+            }
+            f();
+            console.log(String.fromCharCode(65));
+            """),
+        prints('B'),
+        Reading.COMMONJS,
+    ),
+    'Function beside a local of its name': Program(
+        a_program("""
+            var x = 1;
+            function f() {
+              var Function = 0;
+              (0, eval)('Function')('x = 2')();
+              return Function;
+            }
+            f();
+            console.log(x);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+    'Function beside a parameter of its name, reading a global': Program(
+        a_program("""
+            function f(Function) { return (0, eval)('Function'); }
+            var secret = 'kept';
+            console.log(f(0)('return secret')());
+            """),
+        prints('kept'),
+        Reading.SCRIPT,
+    ),
+    'a parameter named global beside the indirect eval of global': Program(
+        a_program("""
+            var counter = 0;
+            (function (global) {
+              (0, eval)('global').counter = 5;
+            })(this);
+            console.log(counter);
+            """),
+        prints('5'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnIndirectEvalOfANameWhoseValueGoesOnStillPrintsWhatItPrints(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in AN_INDIRECT_EVAL_OF_A_NAME_WHOSE_VALUE_GOES_ON.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    def test_each_program_still_prints_it_after_the_deobfuscation(self):
+        for label, row in AN_INDIRECT_EVAL_OF_A_NAME_WHOSE_VALUE_GOES_ON.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())

@@ -3316,13 +3316,21 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
             source, JsReflectionInlining, DeobfuscationOptions(execution=execution)
         )
 
-    def test_a_payload_reading_a_wrapper_name_is_left_standing_where_the_file_may_be_commonjs(self):
+    def test_a_payload_reading_a_wrapper_name_is_read_as_global_code_where_the_file_may_be_commonjs(self):
         rows = self.WRAPPER_NAME_READS
+        read_as_global_code = {
+            'console.log(Function("return typeof require")());': "console.log((0, eval)('typeof require'));",
+            'console.log(Function("return typeof module")());': "console.log((0, eval)('typeof module'));",
+            'console.log(Function("return typeof exports")());': "console.log((0, eval)('typeof exports'));",
+            'console.log((0, eval)("typeof __dirname"));': 'console.log((0, eval)("typeof __dirname"));',
+            'console.log((0, eval)("typeof __filename"));': 'console.log((0, eval)("typeof __filename"));',
+            'setTimeout("console.log(typeof module)", 0);': 'setTimeout("console.log(typeof module)", 0);',
+        }
         for execution in (ExecutionModel.commonjs, ExecutionModel.module):
             with self.subTest(execution.name):
                 self.assertEqual(
                     {source: self._reflect(source, execution) for source in rows},
-                    {source: source for source in rows},
+                    read_as_global_code,
                 )
 
     def test_the_same_payload_is_inlined_into_a_script(self):
@@ -3353,7 +3361,7 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
                     self._reflect(source, execution),
                 )
 
-    def test_a_payload_reading_a_wrapper_name_the_file_assigns_is_left_standing(self):
+    def test_a_payload_reading_a_wrapper_name_the_file_assigns_is_read_as_global_code(self):
         source = inspect.cleandoc(
             """
             exports = module.exports = {};
@@ -3362,7 +3370,10 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
         )
         for execution in (ExecutionModel.commonjs, ExecutionModel.module):
             with self.subTest(execution.name):
-                self.assertEqual(self._reflect(source, execution), source)
+                self.assertEqual(
+                    self._reflect(source, execution),
+                    "exports = module.exports = {};\nconsole.log((0, eval)('typeof exports'));",
+                )
 
     def test_a_payload_declaring_a_wrapper_name_is_left_standing_at_the_top_of_the_file(self):
         rows = [

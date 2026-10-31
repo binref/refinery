@@ -32,6 +32,7 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     build_semantic_model,
     crosses_dynamic_scope,
+    enclosing_operator,
     is_direct_eval_call,
     name_uses_in_scope,
     reference_role,
@@ -49,6 +50,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     hoist_path_is_clear,
     inlined_declarations_safe,
     is_valid_identifier,
+    make_string_literal,
     names_this_realms_global_object,
     nothing_still_names,
     preserve_script_end_value,
@@ -76,11 +78,14 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsMemberExpression,
     JsNewExpression,
+    JsNumericLiteral,
     JsObjectExpression,
+    JsProperty,
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
+    JsUnaryExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     Statement,
@@ -616,6 +621,58 @@ def _body_declared_names(body_model: SemanticModel) -> set[str]:
     }
 
 
+def _global_code_reads(
+    parsed: JsScript,
+    body_model: SemanticModel,
+    names: Collection[str],
+) -> list[tuple[Expression, str]] | None:
+    """
+    For every reference *parsed* makes to one of the free *names*, the expression that reads it and
+    the text global code reads it with: the name itself, or `typeof` of it where the reference is
+    the operand of one, since an unresolvable name answers `typeof` with a string and every other
+    read with a `ReferenceError`. `None` where a reference does anything else — writes or deletes
+    the name, or is the shorthand of a property, whose key the name also is — or where a bare name
+    standing at the reference would not reach the global scope: a `with` body may supply it, a
+    direct `eval` may have declared it, or the body binds `eval` there, which the indirect `eval`
+    reading it must denote.
+    """
+    reads: list[tuple[Expression, str]] = []
+    for ident in parsed.walk():
+        if (
+            not isinstance(ident, JsIdentifier)
+            or ident.name not in names
+            or not body_model.is_reference(ident)
+        ):
+            continue
+        if reference_role(ident) is not Role.READ:
+            return None
+        if isinstance(ident.parent, JsProperty) and ident.parent.shorthand:
+            return None
+        if not body_model.bare_name_reaches_the_host(ident.name, ident):
+            return None
+        if not body_model.bare_name_reaches_the_host('eval', ident):
+            return None
+        holder = enclosing_operator(ident)
+        if isinstance(holder, JsUnaryExpression) and holder.operator == 'typeof':
+            reads.append((holder, F'typeof {ident.name}'))
+        else:
+            reads.append((ident, ident.name))
+    return reads
+
+
+def _indirect_eval_of(text: str) -> JsCallExpression:
+    """
+    The indirect `eval` of *text*, which runs it as global code wherever it stands.
+    """
+    return JsCallExpression(
+        callee=JsSequenceExpression(expressions=[
+            JsNumericLiteral(value=0, raw='0'),
+            JsIdentifier(name='eval'),
+        ]),
+        arguments=[make_string_literal(text)],
+    )
+
+
 def _body_written_free_names(body_model: SemanticModel, parsed: JsScript) -> set[str]:
     """
     The names *parsed* writes without binding them locally — the subset of `_body_free_names` whose
@@ -883,6 +940,20 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 return ident.name
             return None
         return resolve
+
+    def _no_opaque_global_write_before(self, root: JsScript, at: Node) -> bool:
+        """
+        Whether no store into the global object under a key only the run knows may have replaced a
+        global by the time *at* runs: the program makes no such store
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.has_opaque_global_write`), or the
+        tampering oracle orders every one after *at*
+        (`refinery.lib.scripts.js.analysis.cache.ModelCache.builtins_intact_at`). A global a bare
+        name reads, a reflective intrinsic among them, is what its name says at *at* only where this
+        holds; a store the text spells under the name binds the name in the model, which resolving
+        the name declines already.
+        """
+        cache = model_cache(self, root)
+        return not cache.model.has_opaque_global_write() or cache.builtins_intact_at(at)
 
     def _string_argument_value(self, root: JsScript) -> Callable[[Expression | None], str | None]:
         """
@@ -1231,8 +1302,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if (
             binding is not None
             and binding.scope is cache.model.root_scope
-            and cache.model.has_opaque_global_write()
-            and not cache.builtins_intact_at(node)
+            and not self._no_opaque_global_write_before(root, node)
         ):
             return None
         value = strip_parens(cache.model.singular_value(binding))
@@ -1648,11 +1718,14 @@ class JsReflectionInlining(ScriptLevelTransformer):
         capture — declines. Where the file may run as CommonJS, a name the host binds around the
         file (`refinery.lib.scripts.js.analysis.model.Binding.supplied_by_host`) is such a name,
         written or not: global code reading `require` reads a global that does not exist, and the
-        same text at *site* reads the one the host hands the file. A direct `eval` in such a body
-        reads and declares names on the scope chain at run time, which no free-name check sees;
-        where the file runs as a module, the chain at *site* holds the file's own scope and, for a
-        CommonJS file, the host's parameters, so the body declines. Direct `eval` runs in the
-        caller's scope, which is *site* itself, so its references and `this` are already correct
+        same text at *site* reads the one the host hands the file. A `Function`-constructed body
+        that only reads such a name keeps reading the global scope, each read becoming an indirect
+        `eval` of the name (`_global_code_reads`), where `eval` is still the language's at *site*
+        (`_no_opaque_global_write_before`); any other use of the name declines. A direct `eval` in
+        such a body reads and declares names on the scope chain at run time, which no free-name
+        check sees; where the file runs as a module, the chain at *site* holds the file's own scope
+        and, for a CommonJS file, the host's parameters, so the body declines. Direct `eval` runs in
+        the caller's scope, which is *site* itself, so its references and `this` are already correct
         there and only the checks below apply. A top-level `return` is a SyntaxError in evaluated
         code, so an eval body with one declines. Declaration handling is delegated to
         `_reflected_declarations_safe`. Anything not provably safe is left intact (returns `None`) —
@@ -1732,6 +1805,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         if synthesized and not root_model.bare_name_reaches_the_host('globalThis', site):
             return None
+        host_bound: set[str] = set()
+        global_reads: list[tuple[Expression, str]] = []
         if resolves_globally and free:
             if crosses_dynamic_scope(site_scope):
                 return None
@@ -1744,12 +1819,28 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 if name in site_resolved:
                     continue
                 binding = root_model.lookup(name, site_scope, exclude=exclude)
-                if binding is not None and not root_model.reaches_global_object(binding):
+                if binding is None or root_model.reaches_global_object(binding):
+                    continue
+                if scope is not ReflectedScope.FUNCTION_CONSTRUCTOR or not binding.supplied_by_host:
                     return None
+                host_bound.add(name)
+        if host_bound:
+            if (
+                'eval' in self._spliced_names
+                or not root_model.bare_name_reaches_the_host('eval', site)
+                or not self._no_opaque_global_write_before(root, site)
+            ):
+                return None
+            reads = _global_code_reads(parsed, body_model, host_bound)
+            if reads is None:
+                return None
+            global_reads = reads
         if declared and not self._reflected_declarations_safe(
             body_model, root_model, site_scope, site, scope, at_global_scope, exclude,
         ):
             return None
+        for read, text in global_reads:
+            _replace_in_parent(read, _indirect_eval_of(text))
         self._spliced_names |= declared | _body_written_free_names(body_model, parsed)
         return parsed
 
