@@ -959,7 +959,6 @@ KEPT = {
     THE_ARRAY_ITERATOR_IS_DEFINED_ANEW_AND_THE_START_STATE_SPREADS_A_LITERAL: 'arrays iterate otherwise',
     A_JUMP_WHOSE_CONDITION_READS_MORE_THAN_THE_STATE: 'the next block is not decided by the state',
     A_START_STATE_THAT_READS_A_PARAMETER: 'the next block is not decided by the state',
-    A_JUMP_WHOSE_CONDITION_COMPARES_TWO_NEW_ARRAYS: 'the next block is not decided by the state',
     THE_MACHINE_CALLED_BEFORE_ITS_DECLARATION: 'the machine runs elsewhere',
     THE_MACHINE_CALLED_AGAIN_BETWEEN_ITS_DECLARATION_AND_ITS_CALL: 'the machine runs elsewhere',
     THE_MACHINE_NAMED_BETWEEN_ITS_DECLARATION_AND_ITS_CALL: 'the machine is read elsewhere',
@@ -1006,6 +1005,16 @@ class TestArrayMachines(TestJsDeobfuscator):
         """
         self.assertEqual(
             self._deobfuscate(A_MACHINE_WHOSE_PARAMETERS_ARE_COPIED_CALLED_FURTHER_DOWN),
+            "console.log('small!', 'big!');",
+        )
+
+    def test_a_jump_whose_condition_another_pass_decides_is_recovered(self):
+        """
+        Two array literals are two objects, so `[] === []` is `false` whatever the state holds; once
+        another pass folds it, the next block is decided by the state.
+        """
+        self.assertEqual(
+            self._deobfuscate(A_JUMP_WHOSE_CONDITION_COMPARES_TWO_NEW_ARRAYS),
             "console.log('small!', 'big!');",
         )
 
@@ -1125,6 +1134,7 @@ class TestNodePrintsTheSameForEachArrayMachine(TestJsDeobfuscator):
         yield from KEPT
         yield A_TABLE_READ_BY_A_METHOD_UNDER_A_COMPUTED_KEY
         yield A_MACHINE_WHOSE_PARAMETERS_ARE_COPIED_CALLED_FURTHER_DOWN
+        yield A_JUMP_WHOSE_CONDITION_COMPARES_TWO_NEW_ARRAYS
         yield A_CLASS_READING_ITS_INSTANCE_UNDER_A_KEY_FROM_A_TABLE_OF_THE_MACHINE
         yield A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_THE_SAME_NAMES
         yield A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_A_WRAPPER_OF_THE_SAME_NAMES

@@ -1,0 +1,181 @@
+"""
+The functions the language installs on the prototypes of the values a fold holds, and the
+constructors owning those prototypes. `PROTOTYPE_METHODS` is the one table of them: what a member
+read on a string, an array, a number, a boolean or a function is answered by where the value does
+not own the key, which keys such a read can never find, and which reads hand out an object the
+program may write a built-in through. The analysis that guards a fold and the fold itself both read
+it here, so neither states a second answer.
+"""
+from __future__ import annotations
+
+PROTOTYPE_METHODS: dict[str, frozenset[str]] = {
+    'Object': frozenset({
+        '__defineGetter__',
+        '__defineSetter__',
+        '__lookupGetter__',
+        '__lookupSetter__',
+        'hasOwnProperty',
+        'isPrototypeOf',
+        'propertyIsEnumerable',
+        'toLocaleString',
+        'toString',
+        'valueOf',
+    }),
+    'Function': frozenset({
+        'apply',
+        'bind',
+        'call',
+        'toString',
+    }),
+    'Array': frozenset({
+        'at',
+        'concat',
+        'copyWithin',
+        'entries',
+        'every',
+        'fill',
+        'filter',
+        'find',
+        'findIndex',
+        'findLast',
+        'findLastIndex',
+        'flat',
+        'flatMap',
+        'forEach',
+        'includes',
+        'indexOf',
+        'join',
+        'keys',
+        'lastIndexOf',
+        'map',
+        'pop',
+        'push',
+        'reduce',
+        'reduceRight',
+        'reverse',
+        'shift',
+        'slice',
+        'some',
+        'sort',
+        'splice',
+        'toLocaleString',
+        'toReversed',
+        'toSorted',
+        'toSpliced',
+        'toString',
+        'unshift',
+        'values',
+        'with',
+    }),
+    'String': frozenset({
+        'anchor',
+        'at',
+        'big',
+        'blink',
+        'bold',
+        'charAt',
+        'charCodeAt',
+        'codePointAt',
+        'concat',
+        'endsWith',
+        'fixed',
+        'fontcolor',
+        'fontsize',
+        'includes',
+        'indexOf',
+        'isWellFormed',
+        'italics',
+        'lastIndexOf',
+        'link',
+        'localeCompare',
+        'match',
+        'matchAll',
+        'normalize',
+        'padEnd',
+        'padStart',
+        'repeat',
+        'replace',
+        'replaceAll',
+        'search',
+        'slice',
+        'small',
+        'split',
+        'startsWith',
+        'strike',
+        'sub',
+        'substr',
+        'substring',
+        'sup',
+        'toLocaleLowerCase',
+        'toLocaleUpperCase',
+        'toLowerCase',
+        'toString',
+        'toUpperCase',
+        'toWellFormed',
+        'trim',
+        'trimEnd',
+        'trimLeft',
+        'trimRight',
+        'trimStart',
+        'valueOf',
+    }),
+    'Number': frozenset({
+        'toExponential',
+        'toFixed',
+        'toLocaleString',
+        'toPrecision',
+        'toString',
+        'valueOf',
+    }),
+    'Boolean': frozenset({
+        'toString',
+        'valueOf',
+    }),
+}
+"""
+The function-valued own properties of the prototype of each constructor named, `constructor` aside,
+enumerated from a real engine rather than from the subset this package can run: `normalize` is a
+function whether or not a fold can evaluate it, and a read answering `undefined` for it would
+contradict `typeof`. Symbol-keyed members are left out, since no string names them.
+"""
+
+ALIASED_METHODS: dict[tuple[str, str], str] = {
+    ('String', 'trimLeft')  : 'trimStart',
+    ('String', 'trimRight') : 'trimEnd',
+}
+"""
+The prototype keys that hold the same function as another key of the same prototype, mapped to
+that other key: `''.trimLeft === ''.trimStart`, and the function's `name` is `trimStart`.
+"""
+
+PROTOTYPE_CHAIN_PROPERTIES = frozenset({'__proto__', 'constructor'})
+"""
+The two properties that expose the prototype chain itself. Both exist on every value, so answering
+`undefined` for them is wrong, and a read of either hands out an object whose properties are the
+built-ins every value of a type inherits.
+"""
+
+BUILTIN_MEMBER_NAMES = frozenset().union(*PROTOTYPE_METHODS.values()) | PROTOTYPE_CHAIN_PROPERTIES
+"""
+Every key a read off a value of a built-in type may find on its prototype chain. A read of one hands
+out a built-in object, whose properties a write through the read replaces for every value.
+"""
+
+RECEIVER_WRITING_METHODS = frozenset({
+    '__defineGetter__',
+    '__defineSetter__',
+    'copyWithin',
+    'fill',
+    'pop',
+    'push',
+    'reverse',
+    'shift',
+    'sort',
+    'splice',
+    'unshift',
+})
+"""
+The methods in `PROTOTYPE_METHODS` that write a property of the object they are called on: the
+accessor installers of `Object.prototype` and the mutators of `Array.prototype`. Called on a
+prototype, `[].__proto__.push(5)` stores an element every array then inherits.
+"""

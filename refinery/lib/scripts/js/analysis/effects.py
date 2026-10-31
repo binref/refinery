@@ -2450,6 +2450,16 @@ class EffectModel:
         """
         return self.intrinsic_writes.key_written(name, key)
 
+    def builtin_writes_followed(self) -> bool:
+        """
+        Whether every write the program makes on a built-in object is one the questions about names
+        see (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.followable`). A fold that
+        reads a built-in's chain or converts an object without spelling the owner of either asks
+        this beside `read_chain_intact`: `[].constructor.prototype.join = f` replaces the join of
+        every array while writing `Array` by no name.
+        """
+        return self.intrinsic_writes.followable
+
     def _prototypes_intact(self, owner: str, roots: frozenset[str], region: list[Node] | None = None) -> bool:
         """
         `refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.roots_unwritten` with the

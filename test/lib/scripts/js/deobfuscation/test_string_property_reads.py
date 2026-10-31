@@ -8,9 +8,10 @@ replacing the access with the value it reads.
 
 Every other key is the prototype chain's to answer, and a file is free to install one before the
 read runs. An index past the end, an index below zero, a key that merely looks like an index
-(`'01'`, `'-0'`, `'1.0'`, `' 1'`), a method name such as `charAt`, and a name nothing defines are
-therefore left standing; the cases below run a file that installs each of them through Node to show
-the read still finds it.
+(`'01'`, `'-0'`, `'1.0'`, `' 1'`), and a name nothing defines are `undefined` in a file that leaves
+the prototypes alone, and fold to that; in a file that installs one they are left standing, and the
+cases below run such a file through Node to show the read still finds it. A method name such as
+`charAt` is a function no literal spells, and is left standing everywhere.
 
 Which key is being read is itself a question with an answer only the engine has whenever the key is
 not already a primitive. Naming a property converts the key, and an array or an object converts
@@ -83,21 +84,29 @@ _DECIDED: dict[str, tuple[str, str]] = {
     F'{_ASTRAL_PRODUCED}[3]'           : ("'b'", 'S[98]'),
 }
 
+#: Each read of a key no string owns and no prototype of an untouched engine holds, which a file
+#: leaving the prototypes alone reads as `undefined`.
+_NO_PROTOTYPE_HOLDS = [
+    "'abc'[3]",
+    "'abc'[9]",
+    "'abc'[4294967295]",
+    "'abc'[-1]",
+    "''[0]",
+    "'abc'['-0']",
+    "'abc'['01']",
+    "'abc'['00']",
+    "'abc'['1.0']",
+    "'abc'[0.5]",
+    "'abc'[' 1']",
+    "'abc'.nope",
+    "'abc'['nope']",
+    F'{_ASTRAL_LITERAL}[4]',
+]
+
 #: Each read no prototype-free string decides, mapped to the text it is left standing as. Where the
 #: two differ, the difference is the synthesizer spelling a computed key as a dot access; the access
 #: is still there and still asks the engine.
 _LEFT_STANDING: dict[str, str] = {
-    "'abc'[3]"                : "'abc'[3]",
-    "'abc'[9]"                : "'abc'[9]",
-    "'abc'[4294967295]"       : "'abc'[4294967295]",
-    "'abc'[-1]"               : "'abc'[-1]",
-    "''[0]"                   : "''[0]",
-    "'abc'['-0']"             : "'abc'['-0']",
-    "'abc'['01']"             : "'abc'['01']",
-    "'abc'['00']"             : "'abc'['00']",
-    "'abc'['1.0']"            : "'abc'['1.0']",
-    "'abc'[0.5]"              : "'abc'[0.5]",
-    "'abc'[' 1']"             : "'abc'[' 1']",
     "'abc'[NaN]"              : "'abc'[NaN]",
     "'abc'[void 0]"           : "'abc'[void 0]",
     "'abc'.charAt"            : "'abc'.charAt",
@@ -105,11 +114,8 @@ _LEFT_STANDING: dict[str, str] = {
     "'abc'.toUpperCase"       : "'abc'.toUpperCase",
     "'abc'.constructor"       : "'abc'.constructor",
     "'abc'.__proto__"         : "'abc'.__proto__",
-    "'abc'.nope"              : "'abc'.nope",
-    "'abc'['nope']"           : "'abc'.nope",
     '(1).length'              : '(1).length',
     'true.length'             : 'true.length',
-    F'{_ASTRAL_LITERAL}[4]'   : F'{_ASTRAL_LITERAL}[4]',
 }
 
 #: A read whose key is not a primitive, mapped to the text it is left standing as and to the
@@ -254,6 +260,18 @@ class TestAReadTheStringDecides(TestBase):
             with self.subTest(expression=expression):
                 expected = _DECIDED[expression][1]
                 self.assertEqual((answer, replacement), (expected, expected))
+
+
+class TestAReadNoPrototypeAnswers(TestBase):
+
+    def test_a_key_no_prototype_holds_folds_to_undefined(self):
+        for expression in _NO_PROTOTYPE_HOLDS:
+            with self.subTest(expression=expression):
+                self.assertEqual(_fold(expression), 'void 0')
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_reads_undefined_for_each_of_them(self):
+        self.assertEqual(code_units(_NO_PROTOTYPE_HOLDS), ['undefined'] * len(_NO_PROTOTYPE_HOLDS))
 
 
 class TestAReadTheStringDoesNotDecide(TestBase):

@@ -417,8 +417,8 @@ THE_SHAPE_EACH_PASS_IS_FOR = {
         + NL + 'console.log(x.join(""));',
     ),
     'stringarray': (a_string_array(), "console.log('hello');"),
-    'scramble': (a_scramble(), "console.log(typeof 'https://api.github.com'.then);"),
-    'b91strings': (a_base91_table(), "console.log(typeof 'log'.then);"),
+    'scramble': (a_scramble(), "console.log('undefined');"),
+    'b91strings': (a_base91_table(), "console.log('undefined');"),
     'argwrap in statement position': (
         a_self_disabling_wrapper_as_a_statement(),
         _lines(
@@ -547,7 +547,7 @@ A_WRAPPER_THE_PASS_IS_RIGHT_TO_ANSWER = {
     ),
     a_dispatcher(read=F'typeof {A_DISPATCH}.then'): (
         'undefined' + NL,
-        "console.log(typeof 'ab'.then);",
+        "console.log('undefined');",
     ),
     a_dispatcher(entry='async ', read=F'typeof {A_DISPATCH}.then'): (
         'function' + NL,

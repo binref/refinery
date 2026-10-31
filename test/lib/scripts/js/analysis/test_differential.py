@@ -3085,10 +3085,10 @@ class TestNumericLiteralsAreDoubles(TestBase):
             """),
         )
 
-    def test_an_array_index_folds_only_when_the_folded_number_is_an_integer(self):
+    def test_an_array_index_folds_to_its_element_and_a_fraction_to_undefined(self):
         self._folds_to(
             'console.log([10, 20, 30][1 + 1], [10, 20, 30][0.5 + 1]);',
-            'console.log(30, [10, 20, 30][1.5]);')
+            'console.log(30, void 0);')
 
     def test_exponentiation_with_a_large_integer_exponent_terminates(self):
         """

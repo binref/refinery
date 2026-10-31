@@ -68,14 +68,14 @@ a literal, which is what the fold asks for, so every read is left standing.
 row rejoins `_DECIDED` the day it does.
 """
 
-#: A name that is close to `length` without being it, mapped to the read that asks for it and to
-#: the text that read is left standing as. Where the two differ the key was rewritten as a dot
-#: access; the access is still there and still asks the engine, which is what answers it.
-_A_NAME_THAT_IS_NOT_LENGTH: dict[str, tuple[str, str]] = {
-    'len'     : ('[1, 2, 3].len', '[1, 2, 3].len'),
-    'lengths' : ('[1, 2, 3].lengths', '[1, 2, 3].lengths'),
-    'Length'  : ("[1, 2, 3]['Length']", '[1, 2, 3].Length'),
-    'length ' : ("[1, 2, 3]['length ']", "[1, 2, 3]['length ']"),
+#: A name that is close to `length` without being it, mapped to the read that asks for it. No
+#: prototype of an untouched engine holds one, so a file leaving the prototypes alone reads each as
+#: `undefined`.
+_A_NAME_THAT_IS_NOT_LENGTH: dict[str, str] = {
+    'len'     : '[1, 2, 3].len',
+    'lengths' : '[1, 2, 3].lengths',
+    'Length'  : "[1, 2, 3]['Length']",
+    'length ' : "[1, 2, 3]['length ']",
 }
 
 #: A read over a literal holding a spread, mapped to the count Node answers it with. None of these
@@ -259,10 +259,15 @@ class TestACountTheFoldDoesNotReach(TestBase):
 
 class TestAKeyThatIsNotLength(TestBase):
 
-    def test_a_name_that_is_only_close_to_length_is_left_standing(self):
-        for name, (read, standing) in _A_NAME_THAT_IS_NOT_LENGTH.items():
+    def test_a_name_that_is_only_close_to_length_folds_to_undefined(self):
+        for name, read in _A_NAME_THAT_IS_NOT_LENGTH.items():
             with self.subTest(name=name):
-                self.assertEqual(_fold(read), standing)
+                self.assertEqual(_fold(read), 'void 0')
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_reads_undefined_for_each_of_them(self):
+        reads = list(_A_NAME_THAT_IS_NOT_LENGTH.values())
+        self.assertEqual(code_units(reads), ['undefined'] * len(reads))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -296,7 +301,7 @@ class TestWhatTheLiteralCannotDecideIsLeftToTheEngine(TestBase):
         )
 
     def test_a_name_that_is_not_length_is_answered_by_whatever_the_prototype_carries(self):
-        for name, (read, _) in _A_NAME_THAT_IS_NOT_LENGTH.items():
+        for name, read in _A_NAME_THAT_IS_NOT_LENGTH.items():
             source = F"Array.prototype['{name}'] = 99; console.log({read});"
             with self.subTest(name=name):
                 self.assertEqual(

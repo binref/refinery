@@ -590,3 +590,23 @@ The binary operators that convert an operand: every one in `BINARY_OPS` but stri
 compares the values as they are. Converting an object runs its `valueOf`, `toString` or
 `Symbol.toPrimitive`, so an operand of one of these runs code wherever it may be an object.
 """
+
+
+def converted_operands(operator: str, a: Value, b: Value) -> tuple[bool, bool]:
+    """
+    Whether the binary *operator* in `BINARY_OPS` converts the object *a* and the object *b* to
+    primitives when applied to them; a primitive is never converted. Loose equality converts
+    neither operand where both are objects, which it compares by reference, or where one is `null`
+    or `undefined`, which it compares with nothing else; it converts the object of an object and a
+    primitive, as every other coercing operator converts every object operand.
+    """
+    if operator not in COERCING_BINARY_OPERATORS:
+        return False, False
+    a_object = isinstance(a, OBJECT_VALUE_TYPES)
+    b_object = isinstance(b, OBJECT_VALUE_TYPES)
+    if operator in ('==', '!='):
+        if a_object and b_object:
+            return False, False
+        if a is None or a is JS_NULL or b is None or b is JS_NULL:
+            return False, False
+    return a_object, b_object

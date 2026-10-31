@@ -27,14 +27,16 @@ from refinery.lib.scripts.js.analysis.model import (
     reference_role,
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
+from refinery.lib.scripts.js.builtins import RECEIVER_WRITING_METHODS
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_MEMBERS,
     MAX_RESULT_ARRAY_LEN,
     OBJECT_PROTOTYPE_MEMBERS,
-    MemberRead,
     access_key,
     allocated_object_type,
     coerces_uninterceptably,
+    converted_operand,
+    denoted_member,
     denoted_value,
     escape_js_string,
     folded_literal,
@@ -45,7 +47,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_valid_property_key,
     make_string_literal,
     numeric_value,
-    read_data_property,
     spelled_for_the_callee_position,
     string_value,
     try_inline_trivial_function,
@@ -80,6 +81,8 @@ from refinery.lib.scripts.js.model import (
     JsUnaryExpression,
     callee_form_sensitive,
     object_member_access_runs_accessor,
+    static_concatenation,
+    static_string,
     strip_parens,
 )
 from refinery.lib.scripts.js.numbers import exact_integer
@@ -89,7 +92,6 @@ from refinery.lib.scripts.js.strict import joins_directive_prologue, spelling_st
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.lib.scripts.js.values import (
     BINARY_OPS,
-    HostApproximated,
     converts_uninterceptably,
     to_string,
 )
@@ -108,6 +110,37 @@ _MIRRORED_COMPARISONS = {
     '>'  : '<',
     '>=' : '<=',
 }
+
+REVEALING_STRINGS = frozenset({
+    'Function',
+    'Reflect',
+    '__defineGetter__',
+    '__defineSetter__',
+    '__proto__',
+    'arguments',
+    'assign',
+    'callee',
+    'caller',
+    'constructor',
+    'defineProperties',
+    'defineProperty',
+    'eval',
+    'getPrototypeOf',
+    'prototype',
+    'setPrototypeOf',
+    'toPrimitive',
+    'toString',
+    'valueOf',
+})
+"""
+The strings the semantic and effect models look for in a key or a string literal and read as the
+presence of something only where they find one: an install, a reflective name, a read reaching a
+prototype, a conversion key. A key they cannot read is none of them to those readers, so a fold
+that turns code spelling no string into one spelling such a string shows the models a fact the
+models it holds do not record. The methods that write their receiver
+(`refinery.lib.scripts.js.builtins.RECEIVER_WRITING_METHODS`) are read the same way, but only as
+the key of a method a call runs, which is where the write scan looks for them.
+"""
 
 
 def _respells(literal: Expression, node: Node) -> bool:
@@ -133,36 +166,93 @@ def _is_the_object_of_an_in(node: Node) -> bool:
     )
 
 
+def _spells_a_revealing_string(replaced: Node, value: str) -> bool:
+    """
+    Whether the string *value*, written in place of *replaced*, spells one of `REVEALING_STRINGS`
+    as `refinery.lib.scripts.js.model.static_string` reads it, alone or with the concatenations it
+    completes, or spells a method that writes its receiver where it names the method a call runs
+    (`_names_a_called_method`). A concatenation holding a piece that reads as no string reads as
+    none, and so does every concatenation holding it, so the climb stops at the first.
+    """
+    cursor: Node = replaced
+    spelled: str | None = value
+    while spelled is not None:
+        if spelled in REVEALING_STRINGS:
+            return True
+        parent = cursor.parent
+        while isinstance(parent, JsParenthesizedExpression):
+            cursor, parent = parent, parent.parent
+        if spelled in RECEIVER_WRITING_METHODS and _names_a_called_method(parent, cursor):
+            return True
+        if not isinstance(parent, JsBinaryExpression) or parent.operator != '+':
+            return False
+        if parent.left is cursor:
+            spelled = static_concatenation(parent, spelled, static_string(parent.right))
+        else:
+            spelled = static_concatenation(parent, static_string(parent.left), spelled)
+        cursor = parent
+    return False
+
+
+def _names_a_called_method(parent: Node | None, key: Node) -> bool:
+    """
+    Whether *key* is the computed key of the member access *parent*, which a call invokes.
+    """
+    if not isinstance(parent, JsMemberExpression) or not parent.computed or parent.property is not key:
+        return False
+    call = parent.parent
+    while isinstance(call, JsParenthesizedExpression):
+        call = call.parent
+    return isinstance(call, JsCallExpression) and strip_parens(call.callee) is parent
+
+
 class JsSimplifications(Transformer):
 
     def __init__(self):
         super().__init__()
         self._cache: ModelCache | None = None
+        self._renewal_due = False
+
+    @property
+    def cache(self) -> ModelCache:
+        """
+        The models a decision reads, renewed first where a fold since the last renewal wrote what
+        shows them a fact the held ones lack (`_written`). The renewal waits for the decision after
+        the fold, by which point what it wrote stands in the tree.
+        """
+        cache = self._cache
+        assert cache is not None
+        if self._renewal_due:
+            self._renewal_due = False
+            cache.renew()
+        return cache
 
     @property
     def model(self) -> SemanticModel:
-        assert self._cache is not None
-        return self._cache.model
+        return self.cache.model
 
     @property
     def assignment(self) -> DefiniteAssignmentModel:
-        assert self._cache is not None
-        return self._cache.assignment
+        return self.cache.assignment
 
     @property
     def effects(self) -> EffectModel:
-        assert self._cache is not None
-        return self._cache.effects
+        return self.cache.effects
 
     @property
     def dominance(self) -> DominanceModel:
-        assert self._cache is not None
-        return self._cache.dominance
+        return self.cache.dominance
 
     @property
     def reaching(self) -> ReachingModel:
-        assert self._cache is not None
-        return self._cache.reaching
+        return self.cache.reaching
+
+    def _effect_model(self) -> EffectModel:
+        """
+        The effect model a question of `refinery.lib.scripts.js.deobfuscation.helpers.denoted_value`
+        is asked of when it is asked, which is the one `cache` holds by then.
+        """
+        return self.effects
 
     def _global_object_alias_base(self, member: JsMemberExpression) -> bool:
         """
@@ -211,6 +301,16 @@ class JsSimplifications(Transformer):
         is remove an escape, by deleting a dead branch containing one; that shrinks the set, which is the
         direction a held answer may safely be stale in.
 
+        A built-in object a read reaches without spelling its owner is one the scan cannot attribute a
+        write through, and a value that may be one is unattributed
+        (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.followable`): a fold that reads such
+        a value away, or collapses a key it was read under to a name the scan does not count, leaves fewer
+        of them, never more.
+
+        One edit does show the models a fact the held ones lack: a string written where code spelled none,
+        when it reads as a name a reader looks for (`REVEALING_STRINGS`), which a fold computing a key from
+        operators does. Such a fold renews the models before the next decision (`cache`).
+
         The same argument covers the freshness the effect model reports for a container base. A binding is
         judged fresh only when this pass owns every value it takes, and the pass adds no value to any binding;
         the array guarantee that an allocating method's result depends on is withdrawn by a write to
@@ -226,6 +326,7 @@ class JsSimplifications(Transformer):
         held bases wherever it is first built.
         """
         self._cache = model_cache(self, node)
+        self._renewal_due = False
         with self._cache.pinned():
             self._cache.warm()
             self.generic_visit(node)
@@ -474,24 +575,17 @@ class JsSimplifications(Transformer):
 
     def _fold_known_operands(self, node: JsBinaryExpression) -> Expression | None:
         """
-        The literal for what *node* computes where both operands denote a primitive, answered by
+        The literal for what *node* computes where both operands are decided, answered by
         `refinery.lib.scripts.js.values.BINARY_OPS`, so that a fold performed here and the same
         operator applied by the interpreter cannot disagree. A primitive converts by an operation no
-        program can replace, so the values alone decide the result. A power whose value the language
-        leaves to the engine is not written.
+        program can replace, and an object operand only where its conversion is vouched for
+        (`refinery.lib.scripts.js.deobfuscation.helpers.converted_operand`). A power whose value the
+        language leaves to the engine is not written.
         """
-        apply = BINARY_OPS.get(node.operator)
-        if apply is None:
+        if node.operator not in BINARY_OPS:
             return None
-        known, left = self._denoted_primitive(node.left)
+        known, value = denoted_value(node, self.model, self._uninterceptable, self._effect_model)
         if not known:
-            return None
-        known, right = self._denoted_primitive(node.right)
-        if not known:
-            return None
-        try:
-            value = apply(left, right)
-        except HostApproximated:
             return None
         return self._written(node, value)
 
@@ -502,12 +596,15 @@ class JsSimplifications(Transformer):
         write none: no literal denotes the value, or the literal spells *node* again. `0 / 0` and
         `void 0` are how `NaN` and `undefined` are written, and writing either in place of itself
         would rewrite the node for as long as the pass is allowed to run. The fold of a unary
-        operator, of a binary operator over two primitives, and of a member read write here, being
-        the folds whose value may be any value.
+        operator, of a binary operator, and of a member read write here, being the folds whose value
+        may be any value. A string that shows the models a name (`_spells_a_revealing_string`) makes
+        a renewal due.
         """
         literal = folded_literal(value)
         if literal is None or _respells(literal, node):
             return None
+        if isinstance(value, str) and _spells_a_revealing_string(node, value):
+            self._renewal_due = True
         return literal
 
     def _denoted_primitive(self, node: Node | None) -> tuple[bool, Value]:
@@ -545,8 +642,7 @@ class JsSimplifications(Transformer):
         window = clock_window(self.options)
         if window is None or (decided := window.comparison(operator, time)) is None:
             return None
-        assert self._cache is not None
-        if not self._cache.trust_at(node).reads_the_clock(clock):
+        if not self.cache.trust_at(node).reads_the_clock(clock):
             return None
         return decided
 
@@ -751,15 +847,13 @@ class JsSimplifications(Transformer):
         return JsSequenceExpression(expressions=[test, kept])
 
     def _read_established(self, node: JsIdentifier) -> bool:
-        assert self._cache is not None
-        return self._cache.read_established(node)
+        return self.cache.read_established(node)
 
     def visit_JsConditionalExpression(self, node: JsConditionalExpression):
         self.generic_visit(node)
         if node.test is None:
             return None
-        assert self._cache is not None
-        truthy = is_truthy(node.test, self._cache)
+        truthy = is_truthy(node.test, self.cache)
         if truthy is None:
             return None
         return self._discarding(node, node.test, node.consequent if truthy else node.alternate)
@@ -831,24 +925,13 @@ class JsSimplifications(Transformer):
                 return node.property
             return None
         if reads_a_value:
-            if (folded := self._folded_string_property(node)) is not None:
-                return folded
             if (folded := self._folded_array_length(node)) is not None:
                 return folded
+            if (element := self._literal_array_element(node)) is not None:
+                return element
+            if (folded := self._folded_member(node)) is not None:
+                return folded
         if node.computed and node.object is not None and node.property is not None:
-            if (
-                reads_a_value
-                and isinstance(node.object, JsArrayExpression)
-                and isinstance(node.property, JsNumericLiteral)
-            ):
-                idx = exact_integer(node.property.value)
-                elements = node.object.elements
-                if (
-                    idx is not None
-                    and 0 <= idx < len(elements)
-                    and all(e is not None and is_literal(e) for e in elements)
-                ):
-                    return elements[idx]
             prop_str = string_value(node.property)
             if prop_str is not None and is_valid_property_key(prop_str):
                 set_value(node, 'computed', False)
@@ -897,46 +980,58 @@ class JsSimplifications(Transformer):
         `'1'`, and a reader that only recognized a string key would decide every index access to be
         undecidable.
 
-        A key that is not a primitive is refused however well its value is known, because naming the
-        property is what converts it and an array or an object converts through a prototype method
-        the file can replace. `Array.prototype.join = () => '2'` makes `'abc'[[1]]` read `'c'`, so a
-        reader that spelled the key `'1'` from the element would answer with the wrong character.
+        Naming the property converts the key, and an array or an object converts through a prototype
+        method the file can replace: `Array.prototype.join = () => '2'` makes `'abc'[[1]]` read `'c'`.
+        A key that is no primitive is therefore converted only where that conversion is vouched for
+        (`refinery.lib.scripts.js.deobfuscation.helpers.converted_operand`).
         """
         if not node.computed:
             return node.property.name if isinstance(node.property, JsIdentifier) else None
-        known, key = denoted_value(node.property, self.model, self._uninterceptable)
-        if not known or not converts_uninterceptably(key):
+        known, key = denoted_value(node.property, self.model, self._uninterceptable, self._effect_model)
+        if not known:
+            return None
+        known, key = converted_operand(key, self._uninterceptable, self._effect_model, gated=True)
+        if not known:
             return None
         return to_string(key)
 
-    def _folded_string_property(self, node: JsMemberExpression) -> Expression | None:
+    def _literal_array_element(self, node: JsMemberExpression) -> Expression | None:
         """
-        The value a property read on a constant string denotes, as a node, or `None` when the read is
-        not one this decides. `'abc'.length` is `3` and `'abc'[1]` is `'b'`, both own properties of the
-        string that no prototype can shadow, so reading them needs no assumption about the chain.
+        The element an array literal of literals holds at the index a numeric literal names, handed
+        back as the node the file spelled it with.
+        """
+        array, index = node.object, node.property
+        if not node.computed or not isinstance(array, JsArrayExpression):
+            return None
+        if not isinstance(index, JsNumericLiteral):
+            return None
+        idx = exact_integer(index.value)
+        elements = array.elements
+        if idx is None or not 0 <= idx < len(elements):
+            return None
+        if not all(e is not None and is_literal(e) for e in elements):
+            return None
+        return elements[idx]
 
-        Only a string is read here. An array literal's index is already answered by handing back the
-        element node, which keeps the spelling the file wrote it with, and its `length` is a function
-        of the literal's shape rather than of any value. A string has no such node to hand back: the
-        character at an index is a value the file never spelled.
+    def _folded_member(self, node: JsMemberExpression) -> Expression | None:
+        """
+        The value a property read off a decided value denotes, as a node, or `None` when the read is
+        not one this decides (`refinery.lib.scripts.js.deobfuscation.helpers.denoted_member`).
+        `'abc'.length` is `3` and `'abc'[1]` is `'b'`, own properties of the string that no
+        prototype can shadow, and `'abc'.nope` is `undefined` where the chain is the one the
+        language describes and the file writes no built-in object behind the scan's back.
 
         The object is asked with `denoted_value`, which decides a literal, a global value name, and an
-        operator over either — every one of them free of effects — so nothing is discarded by
-        replacing the access with what it reads, and no separate effect gate is needed.
+        operator or a read over those — every one of them free of effects — so nothing is discarded
+        by replacing the access with what it reads, and no separate effect gate is needed.
 
         An index answers a string, and a string is the one value whose spelling a statement position
         reads: standing alone at the top of a body it is a directive. `'abc'[0];` is an ordinary
         statement that ends a Directive Prologue, and `'a';` continues one, which would make a
         `'use strict'` below it govern the file it merely stood in. Such a read is left alone.
         """
-        key = self._member_key(node)
-        if key is None:
-            return None
-        known, obj = denoted_value(node.object, self.model, self._uninterceptable)
-        if not known or not isinstance(obj, str):
-            return None
-        outcome, value = read_data_property(obj, key)
-        if outcome is not MemberRead.FOUND:
+        known, value = denoted_member(node, self.model, self._uninterceptable, self._effect_model)
+        if not known:
             return None
         if isinstance(value, str) and self._stands_in_a_directive_prologue(node):
             return None
@@ -1091,8 +1186,7 @@ class JsSimplifications(Transformer):
         node = strip_parens(operand)
         if not isinstance(node, JsIdentifier):
             return None
-        assert self._cache is not None
-        return self._cache.trust_at(node).global_typeof(node.name)
+        return self.cache.trust_at(node).global_typeof(node.name)
 
     def visit_JsUnaryExpression(self, node: JsUnaryExpression):
         """
@@ -1128,7 +1222,7 @@ class JsSimplifications(Transformer):
             typed = self._typeof_of_global_read(operand)
             if typed is not None:
                 return make_string_literal(typed)
-        known, value = denoted_value(node, self.model, self._uninterceptable)
+        known, value = denoted_value(node, self.model, self._uninterceptable, self._effect_model)
         if not known:
             return None
         return self._written(node, value)
@@ -1168,8 +1262,7 @@ class JsSimplifications(Transformer):
             if nullish is None:
                 return None
             return self._discarding(node, node.left, node.right) if nullish else node.left
-        assert self._cache is not None
-        truthy = is_truthy(node.left, self._cache)
+        truthy = is_truthy(node.left, self.cache)
         if truthy is None:
             return None
         if op == '&&':

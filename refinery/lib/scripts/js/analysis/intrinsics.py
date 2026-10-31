@@ -13,7 +13,7 @@ for it. The registry of intrinsics the scan watches lives here for the same reas
 """
 from __future__ import annotations
 
-from typing import Iterator, NamedTuple
+from typing import Iterator, NamedTuple, Sequence
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.components import strongly_connected_components
@@ -23,9 +23,15 @@ from refinery.lib.scripts.js.analysis.model import (
     Binding,
     Role,
     SemanticModel,
+    _property_key_name,
     enclosing_function,
     is_member_write_target,
     reference_role,
+)
+from refinery.lib.scripts.js.builtins import (
+    BUILTIN_MEMBER_NAMES,
+    PROTOTYPE_CHAIN_PROPERTIES,
+    RECEIVER_WRITING_METHODS,
 )
 from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
@@ -33,6 +39,7 @@ from refinery.lib.scripts.js.model import (
     JsBinaryExpression,
     JsCallExpression,
     JsConditionalExpression,
+    JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
     JsFunctionDeclaration,
@@ -41,7 +48,10 @@ from refinery.lib.scripts.js.model import (
     JsLogicalExpression,
     JsMemberExpression,
     JsNewExpression,
+    JsNumericLiteral,
+    JsObjectPattern,
     JsParenthesizedExpression,
+    JsProperty,
     JsReturnStatement,
     JsSequenceExpression,
     JsSpreadElement,
@@ -55,6 +65,7 @@ from refinery.lib.scripts.js.model import (
     static_string,
     strip_parens,
 )
+from refinery.lib.scripts.js.numbers import js_number_to_string
 
 PURE_INTRINSIC_METHODS = frozenset({
     'String.fromCharCode',
@@ -89,7 +100,7 @@ PURE_GLOBAL_FUNCTIONS = frozenset({
     'isFinite',
 })
 
-SPECIES_KEYS = frozenset({'constructor', '__proto__'})
+SPECIES_KEYS = PROTOTYPE_CHAIN_PROPERTIES
 """
 The two property names that decide what an allocating `Array.prototype` method returns.
 ArraySpeciesCreate reads `constructor[Symbol.species]` off the receiver, and `__proto__` replaces
@@ -105,11 +116,6 @@ handing that value to unanalysable code is as dangerous as handing over the intr
 something whose properties nobody consults when the intrinsic is used: patching a property of the
 number `Math.PI` or of the function `Math.floor` cannot change what `Math.floor(1.7)` returns, while
 patching one of `Array.prototype` decides what `[1, 2].join()` means.
-
-`refinery.lib.scripts.js.deobfuscation.helpers.PROTOTYPE_CHAIN_PROPERTIES` holds the same two
-species keys for the same reason, but importing it here would invert the layering this module rests
-on — the interpreter imports from the analysis layer, never the reverse, as `PROTOTYPE_OWNERS` also
-records.
 """
 
 PURE_INTRINSIC_ROOTS = (
@@ -222,13 +228,238 @@ The global names whose escape the scan looks for: every name it records keys for
 `ESCAPE_RECORDED_ROOTS` records by name.
 """
 
+_KEY_RECORDED_ROOTS = ESCAPE_WATCHED_ROOTS - ESCAPE_RECORDED_ROOTS
+"""
+The watched names whose escape the scan records by key alone: `IntrinsicWrites.key_written`
+answers every key of one handed off, while `IntrinsicWrites.names` still lists it as unwritten.
+"""
+
+
+class _BuiltinReach:
+    """
+    Which values of a program may be a built-in object the scan cannot attribute a write through to
+    the root owning it, and whether a write, a call writing its receiver, or a hand-off reaches one:
+    the question behind `IntrinsicWrites.followable`.
+
+    The scan attributes a write to the name at the foot of the chain it goes through and follows
+    that name through the bindings holding it (`_IntrinsicAliases`). A built-in object reached
+    without spelling its owner escapes both: `''.constructor.prototype.x = 1` writes
+    `String.prototype` through no name, and so does `var p = [].__proto__; p.x = 1`. A value is
+    *unattributed* where it may be such an object:
+
+    - a member read whose key is unknown, or one a built-in type's chain supplies
+      (`refinery.lib.scripts.js.builtins.BUILTIN_MEMBER_NAMES`): each may hand out a prototype or a
+      function the language installed;
+    - `prototype` read off an unattributed value;
+    - a call of a method named `getPrototypeOf`;
+    - a name of a binding that a declarator or an assignment stores an unattributed value into, or
+      that a destructuring takes under a key the first arm counts;
+    - an operand handed on unchanged by a logical operator, a conditional, a sequence or a plain
+      assignment, where the operand is unattributed.
+
+    A fold leaves the set of unattributed values as it was or smaller: a key it collapses to a
+    string the first arm does not count takes a value out, and a forwarding form it removes is one
+    the search looked through.
+    """
+
+    def __init__(self, model: SemanticModel, aliases: _IntrinsicAliases):
+        self.model = model
+        self.aliases = aliases
+        self._answers: dict[Node | Binding, bool] = {}
+
+    def unattributed(self, node: Node) -> bool:
+        """
+        Whether *node* may evaluate to an unattributed value. The values and bindings *node* may
+        take its value from are searched with a stack rather than by recursion, so a chain of names
+        of any length costs no depth, and every one searched without finding an unattributed value
+        is remembered as having none.
+        """
+        known = self._answers.get(node)
+        if known is not None:
+            return known
+        leaf, sources = self._sources(node)
+        if leaf or not sources:
+            self._answers[node] = leaf
+            return leaf
+        searched: list[Node | Binding] = [node]
+        seen: set[Node | Binding] = {node}
+        pending: list[Node | Binding] = sources
+        while pending:
+            item = pending.pop()
+            if item in seen:
+                continue
+            seen.add(item)
+            known = self._answers.get(item)
+            if known is False:
+                continue
+            if known is True:
+                break
+            searched.append(item)
+            leaf, sources = self._sources(item)
+            if leaf:
+                known = True
+                break
+            pending.extend(sources)
+        if known is True:
+            self._answers[node] = True
+            return True
+        for item in searched:
+            self._answers[item] = False
+        return False
+
+    def _sources(self, item: Node | Binding) -> tuple[bool, list[Node | Binding]]:
+        """
+        Whether *item* is unattributed by itself, and otherwise the values and bindings it may take
+        its value from.
+        """
+        if isinstance(item, Binding):
+            return self._binding_sources(item)
+        node = strip_parens(item)
+        if isinstance(node, JsIdentifier):
+            binding = self.model.resolve(node)
+            return False, [] if binding is None else [binding]
+        if isinstance(node, JsMemberExpression):
+            key = _certain_key(node)
+            if key is None or key in BUILTIN_MEMBER_NAMES:
+                return True, []
+            if key == 'prototype' and node.object is not None:
+                return False, [node.object]
+            return False, []
+        if isinstance(node, JsCallExpression):
+            callee = strip_parens(node.callee)
+            reads_a_prototype = isinstance(callee, JsMemberExpression) and static_property_key(callee) == 'getPrototypeOf'
+            return reads_a_prototype, []
+        sources: Sequence[Node | None] = ()
+        if isinstance(node, JsLogicalExpression):
+            sources = [node.left, node.right]
+        elif isinstance(node, JsConditionalExpression):
+            sources = [node.consequent, node.alternate]
+        elif isinstance(node, JsSequenceExpression):
+            sources = node.expressions[-1:]
+        elif isinstance(node, JsAssignmentExpression) and node.operator == '=':
+            sources = [node.right]
+        return False, [source for source in sources if source is not None]
+
+    def _binding_sources(self, binding: Binding) -> tuple[bool, list[Node | Binding]]:
+        """
+        Whether *binding* takes an unattributed value from a destructuring by itself, and otherwise
+        the values its declarators and the assignments to it store.
+        """
+        sources: list[Node | Binding] = []
+        for declaration in binding.declarations:
+            parent = declaration.parent
+            if isinstance(parent, JsVariableDeclarator) and parent.id is declaration:
+                if parent.init is not None:
+                    sources.append(parent.init)
+            elif isinstance(parent, JsProperty) and isinstance(parent.parent, JsObjectPattern):
+                key = _property_key_name(parent)
+                if key is None or key in BUILTIN_MEMBER_NAMES:
+                    return True, []
+        for reference in (*binding.writes, *binding.indefinite_writes):
+            parent = reference.parent
+            if isinstance(parent, JsAssignmentExpression) and parent.left is reference:
+                if parent.right is not None:
+                    sources.append(parent.right)
+        return False, sources
+
+    def trips_at(self, node: Node) -> bool:
+        """
+        Whether *node* writes a built-in object in a way the scan does not follow: it writes through
+        an unattributed value, calls a method that writes its receiver
+        (`refinery.lib.scripts.js.builtins.RECEIVER_WRITING_METHODS`) on a value that may be a
+        built-in object, or is an unattributed value and hands it off. The scan reads no call as a
+        write, so `Array.prototype.push(5)`, which stores an element every array then inherits,
+        counts here although it names its owner. A method under a key not known is read as the
+        scan reads every call, as one that writes nothing; a key a fold collapses to one of those
+        methods renews the models
+        (`refinery.lib.scripts.js.deobfuscation.simplify.REVEALING_STRINGS`).
+        """
+        for member in _written_members(_write_target(node)):
+            if member.object is not None and self.unattributed(member.object):
+                return True
+        if isinstance(node, JsCallExpression):
+            callee = strip_parens(node.callee)
+            if isinstance(callee, JsMemberExpression) and callee.object is not None:
+                if _certain_key(callee) in RECEIVER_WRITING_METHODS and self._may_be_a_builtin(callee.object):
+                    return True
+        return self.unattributed(node) and self._handed_off(node)
+
+    def _may_be_a_builtin(self, node: Node) -> bool:
+        """
+        Whether *node* may evaluate to a built-in object: an unattributed value, or a value rooted at
+        a name the scan watches (`ESCAPE_WATCHED_ROOTS`), as `Array.prototype` is rooted at `Array`.
+        """
+        if self.unattributed(node):
+            return True
+        return any(
+            self.aliases.names_denoted_by(root) & ESCAPE_WATCHED_ROOTS
+            for root in _denoted_roots(node)
+        )
+
+    def _handed_off(self, node: Node) -> bool:
+        """
+        Whether the unattributed value at *node*, carried outward through the forms that hand it on,
+        reaches a position `_hands_over` reads as handing it over, or is stored into anything but a
+        name, whose binding the search follows instead. A read off it hands over nothing: what the
+        read yields is a value of its own, which this asks about where it stands.
+        """
+        cursor = node
+        while True:
+            parent = cursor.parent
+            if parent is None or isinstance(parent, JsExpressionStatement):
+                return False
+            if isinstance(parent, JsMemberExpression) and parent.object is cursor:
+                return False
+            if isinstance(parent, JsConditionalExpression) and parent.test is cursor:
+                return False
+            if not isinstance(parent, _VALUE_FORWARDING_NODES):
+                break
+            cursor = parent
+        target = _rebinding_target(cursor)
+        if target is not None:
+            return not isinstance(strip_parens(target), JsIdentifier)
+        return _hands_over(self.model, self.aliases, cursor, 0)
+
+
+def _certain_key(member: JsMemberExpression) -> str | None:
+    """
+    The key *member* certainly reads: a name, a string (`static_property_key`), or the index a
+    numeric literal names; `None` for any other key.
+    """
+    prop = strip_parens(member.property)
+    if member.computed and isinstance(prop, JsNumericLiteral):
+        return js_number_to_string(prop.value)
+    return static_property_key(member)
+
+
+def _constructs_through_an_unread_key(model: SemanticModel, node: Node) -> bool:
+    """
+    Whether, under the model that suspects code it cannot read, *node* calls or constructs through a
+    `constructor` read or a key not known. The reflection check counts no such read that is invoked
+    in place (`test_unfixed_defects.TestCodeRunThroughAConstructorReadInPlaceIsAReflectionSurface`),
+    so a string of code `[].constructor.constructor(s)()` runs is one nothing else accounts for.
+    """
+    if model.trust_eval or not isinstance(node, (JsCallExpression, JsNewExpression)):
+        return False
+    callee = strip_parens(node.callee)
+    if not isinstance(callee, JsMemberExpression):
+        return False
+    key = _certain_key(callee)
+    return key is None or key == 'constructor'
+
 
 class IntrinsicWrites(NamedTuple):
     """
     What one scan of a program says about the globals it writes: *names*, the set a caller asks
     about a whole name with, and *keys*, the properties each of the watched names was written at —
     or `None` for a name whose written keys this scan cannot bound. *aliases* is the relation the
-    scan resolved write targets through, kept for `follows_only_through_bindings`.
+    scan resolved write targets through, kept for `follows_only_through_bindings`. *followable*
+    says whether the scan follows every write the program makes on a built-in object: none reaches
+    one through a value read without spelling its owner (`_BuiltinReach`), no watched name is
+    handed off where the scan records the escape by key alone (`_KEY_RECORDED_ROOTS`), and, under
+    the model that suspects code it cannot read, no call runs through a key the reflection check
+    leaves uncounted (`_constructs_through_an_unread_key`). A fold that reads a built-in's chain or
+    converts an object without spelling its owner asks it on top of the questions about *names*.
 
     The two are produced together because they are read off the same nodes and must not disagree:
     a name recorded in one for a reason the other cannot express is a name one caller refuses and
@@ -238,6 +469,7 @@ class IntrinsicWrites(NamedTuple):
     names: frozenset[str]
     keys: dict[str, frozenset[str] | None]
     aliases: _IntrinsicAliases
+    followable: bool
 
     def key_written(self, name: str, key: str) -> bool:
         """
@@ -378,12 +610,19 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
         record(frozenset(scope.bindings), None)
         pending.extend(scope.children)
     aliases = _IntrinsicAliases(model)
+    reach = _BuiltinReach(model, aliases)
+    followable = True
 
     def record_escape(watched: frozenset[str]) -> None:
+        nonlocal followable
         record_keys(watched, None)
         names.update(watched & ESCAPE_RECORDED_ROOTS)
+        if watched & _KEY_RECORDED_ROOTS:
+            followable = False
 
     for node in model.root.walk():
+        if followable and (reach.trips_at(node) or _constructs_through_an_unread_key(model, node)):
+            followable = False
         if isinstance(node, JsIdentifier):
             if not _names_a_member_property(node) and reference_role(node) is Role.READ:
                 watched = aliases.names_denoted_by(node) & ESCAPE_WATCHED_ROOTS
@@ -405,16 +644,7 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
             if install_key is not None and _install_reaches_the_global_object(model, node):
                 record(frozenset({install_key}), None)
             continue
-        target = None
-        if isinstance(node, JsAssignmentExpression):
-            target = node.left
-        elif isinstance(node, JsUpdateExpression):
-            target = node.argument
-        elif isinstance(node, JsUnaryExpression) and node.operator == 'delete':
-            target = node.operand
-        elif isinstance(node, (JsForInStatement, JsForOfStatement)):
-            target = node.left
-        for member in _written_members(target):
+        for member in _written_members(_write_target(node)):
             for base in _member_chain_roots(member):
                 record(aliases.names_denoted_by(base), static_property_key(member))
             written_global = model.may_name_a_global(member)
@@ -424,6 +654,7 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
         frozenset(names),
         {name: None if written is None else frozenset(written) for name, written in keys.items()},
         aliases,
+        followable,
     )
 
 
@@ -532,6 +763,37 @@ def _value_escapes(
     value = _forwarded_value(node)
     if value is None:
         return False
+    target = _rebinding_target(value)
+    if target is not None:
+        return not (names and names <= _names_bound_to(model, aliases, target))
+    parent = value.parent
+    if isinstance(parent, JsReturnStatement) or (
+        isinstance(parent, JsArrowFunctionExpression) and parent.body is value
+    ):
+        return _returned_value_escapes(model, aliases, value, names, depth)
+    return _hands_over(model, aliases, value, depth)
+
+
+def _rebinding_target(value: Node) -> Node | None:
+    """
+    The target *value* is stored into, where it is the initializer of a declarator or the right
+    side of an assignment, or `None` where it stands anywhere else.
+    """
+    parent = value.parent
+    if isinstance(parent, JsVariableDeclarator) and parent.init is value:
+        return parent.id
+    if isinstance(parent, JsAssignmentExpression) and parent.right is value:
+        return parent.left
+    return None
+
+
+def _hands_over(model: SemanticModel, aliases: _IntrinsicAliases, value: Node, depth: int) -> bool:
+    """
+    Whether the position *value* stands in hands its value to code that could write a property on
+    it unseen: every position but those `_value_escapes` lists as handing nothing over, where a
+    rebinding (`_rebinding_target`) and a return count as handing it over. Whether either of those
+    spares the value depends on the names it may denote, which only `_value_escapes` knows.
+    """
     parent = value.parent
     if isinstance(parent, _TESTED_FORMS) and parent.test is value:
         return False
@@ -548,17 +810,6 @@ def _value_escapes(
         return isinstance(parent.parent, JsTaggedTemplateExpression)
     if isinstance(parent, (JsUnaryExpression, JsBinaryExpression)):
         return False
-    if isinstance(parent, JsReturnStatement) or (
-        isinstance(parent, JsArrowFunctionExpression) and parent.body is value
-    ):
-        return _returned_value_escapes(model, aliases, value, names, depth)
-    target = None
-    if isinstance(parent, JsVariableDeclarator) and parent.init is value:
-        target = parent.id
-    elif isinstance(parent, JsAssignmentExpression) and parent.right is value:
-        target = parent.left
-    if target is not None:
-        return not (names and names <= _names_bound_to(model, aliases, target))
     return True
 
 
@@ -623,6 +874,23 @@ def _names_a_member_property(node: JsIdentifier) -> bool:
     if not isinstance(parent, JsMemberExpression):
         return False
     return parent.property is node and not parent.computed
+
+
+def _write_target(node: Node) -> Node | None:
+    """
+    The target the write at *node* stores through: the left of an assignment, the operand of an
+    update or a `delete`, or the head of a `for`-`in` or `for`-`of`; `None` where *node* writes
+    nothing.
+    """
+    if isinstance(node, JsAssignmentExpression):
+        return node.left
+    if isinstance(node, JsUpdateExpression):
+        return node.argument
+    if isinstance(node, JsUnaryExpression) and node.operator == 'delete':
+        return node.operand
+    if isinstance(node, (JsForInStatement, JsForOfStatement)):
+        return node.left
+    return None
 
 
 def _forwarded_value(node: Node) -> Node | None:
@@ -739,18 +1007,9 @@ def _callee_is_write_free(
     if body is None:
         return False
     for node in body.walk():
-        target = None
-        if isinstance(node, JsAssignmentExpression):
-            target = node.left
-        elif isinstance(node, JsUpdateExpression):
-            target = node.argument
-        elif isinstance(node, JsUnaryExpression) and node.operator == 'delete':
-            target = node.operand
-        elif isinstance(node, (JsForInStatement, JsForOfStatement)):
-            target = node.left
         if any(
             base.name in params
-            for member in _written_members(target)
+            for member in _written_members(_write_target(node))
             for base in _member_chain_roots(member)
         ):
             return False

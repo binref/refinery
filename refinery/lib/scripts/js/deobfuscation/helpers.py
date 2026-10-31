@@ -58,12 +58,14 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     enclosing_operator,
     is_invocation_target,
+    is_member_write_target,
     is_use_position,
     pattern_identifiers,
     reference_role,
     tolerates_unresolvable,
     walk_receiver_scope,
 )
+from refinery.lib.scripts.js.builtins import PROTOTYPE_CHAIN_PROPERTIES, PROTOTYPE_METHODS
 from refinery.lib.scripts.js.lexer import is_identifier_name
 from refinery.lib.scripts.js.model import (
     LOGICAL_ASSIGNMENT_OPERATORS,
@@ -135,15 +137,19 @@ from refinery.lib.scripts.js.strict import (
 from refinery.lib.scripts.js.token import FUTURE_RESERVED, KEYWORDS
 from refinery.lib.scripts.js.utf16 import SURROGATE_PAIR, code_units, from_code_units
 from refinery.lib.scripts.js.values import (
+    BINARY_OPS,
     COERCING_UNARY_OPERATORS,
     GLOBAL_VALUE_NAMES,
     JS_HOLE,
     JS_NULL,
     OBJECT_VALUE_TYPES,
     UNARY_OPS,
+    HostApproximated,
     JsBuffer,
+    converted_operands,
     converts_uninterceptably,
     to_boolean,
+    to_string,
 )
 
 _Plan = TypeVar('_Plan')
@@ -166,11 +172,8 @@ the global object holds for `NaN` and `Infinity`.
 
 VOID_LITERAL_OPERANDS = (JsNumericLiteral, JsStringLiteral, JsBooleanLiteral, JsNullLiteral)
 
-FUNCTION_MEMBERS = OBJECT_PROTOTYPE_MEMBERS | frozenset({
-    'apply',
+FUNCTION_MEMBERS = OBJECT_PROTOTYPE_MEMBERS | PROTOTYPE_METHODS['Function'] | frozenset({
     'arguments',
-    'bind',
-    'call',
     'caller',
     'length',
     'name',
@@ -182,42 +185,15 @@ and `prototype`, the legacy `arguments` and `caller`, and what `Function.prototy
 `Object.prototype` supply.
 """
 
-STRING_PROTOTYPE_METHODS = frozenset({
-    'anchor', 'at', 'big', 'blink', 'bold', 'charAt', 'charCodeAt', 'codePointAt', 'concat',
-    'endsWith', 'fixed', 'fontcolor', 'fontsize', 'includes', 'indexOf', 'isWellFormed', 'italics',
-    'lastIndexOf', 'link', 'localeCompare', 'match', 'matchAll', 'normalize', 'padEnd', 'padStart',
-    'repeat', 'replace', 'replaceAll', 'search', 'slice', 'small', 'split', 'startsWith', 'strike',
-    'sub', 'substr', 'substring', 'sup', 'toLocaleLowerCase', 'toLocaleUpperCase', 'toLowerCase',
-    'toString', 'toUpperCase', 'toWellFormed', 'trim', 'trimEnd', 'trimLeft', 'trimRight',
-    'trimStart', 'valueOf',
-})
+STRING_PROTOTYPE_METHODS = PROTOTYPE_METHODS['String']
 
-ARRAY_PROTOTYPE_METHODS = frozenset({
-    'at', 'concat', 'copyWithin', 'entries', 'every', 'fill', 'filter', 'find', 'findIndex',
-    'findLast', 'findLastIndex', 'flat', 'flatMap', 'forEach', 'includes', 'indexOf', 'join',
-    'keys', 'lastIndexOf', 'map', 'pop', 'push', 'reduce', 'reduceRight', 'reverse', 'shift',
-    'slice', 'some', 'sort', 'splice', 'toLocaleString', 'toReversed', 'toSorted', 'toSpliced',
-    'toString', 'unshift', 'values', 'with',
-})
-"""
-The callable members of `String.prototype` and `Array.prototype`, enumerated from a real engine
-rather than from the subset this package implements. Reading one of these names yields the method
-itself, so a reader that answers `undefined` for the ones we cannot evaluate would contradict
-`typeof`; membership and evaluability are separate questions.
-"""
+ARRAY_PROTOTYPE_METHODS = PROTOTYPE_METHODS['Array']
 
 SEQUENCE_DATA_PROPERTIES = frozenset({'length'})
 """
 The non-callable inherited properties of a string or array. `length` is the only one, which is why
 it must never be reached through a method registry: `'abc'.length` is the number `3` and
 `'abc'.length()` is a `TypeError`, whereas a registry entry would answer `3` to both.
-"""
-
-PROTOTYPE_CHAIN_PROPERTIES = frozenset({'__proto__', 'constructor'})
-"""
-The two properties that expose the prototype chain itself. Both exist on every value, so answering
-`undefined` for them is wrong, but modelling them would hand out the `Function` constructor that
-`[].constructor.constructor('...')()` reflection depends on. They are therefore left unevaluated.
 """
 
 
@@ -1132,6 +1108,7 @@ def denoted_value(
     node: Node | None,
     model: SemanticModel,
     uninterceptable: Callable[[Value], bool],
+    effects: Callable[[], EffectModel] | None = None,
 ) -> tuple[bool, Value]:
     """
     The value *node* denotes, as `(True, value)`, or `(False, None)` when nothing decides it. This is
@@ -1144,6 +1121,12 @@ def denoted_value(
     `refinery.lib.scripts.js.values.converts_uninterceptably` for a caller without one, which
     vouches for no object at all. It is asked only of a value an operator converts, so a caller
     whose effect model is built on demand pays for it only there.
+
+    A caller that hands in the *effects* of the program it rewrites has two more forms decided: a
+    member read (`denoted_member`), and a binary operator of
+    `refinery.lib.scripts.js.values.BINARY_OPS` over two decided operands, each object operand it
+    converts converted as `converted_operand` converts it. The model is asked for on every question
+    rather than held, so a pass renewing its models asks the renewed ones.
     """
     node = strip_parens(node)
     if node is None:
@@ -1156,13 +1139,127 @@ def denoted_value(
         apply = UNARY_OPS.get(node.operator)
         if apply is None:
             return False, None
-        known, value = denoted_value(node.operand, model, uninterceptable)
+        known, value = denoted_value(node.operand, model, uninterceptable, effects)
         if not known:
             return False, None
-        if node.operator in COERCING_UNARY_OPERATORS and not uninterceptable(value):
-            return False, None
+        if node.operator in COERCING_UNARY_OPERATORS:
+            known, value = converted_operand(value, uninterceptable, effects, gated=False)
+            if not known:
+                return False, None
         return True, apply(value)
+    if effects is not None:
+        if isinstance(node, JsMemberExpression) and not is_member_write_target(node):
+            return denoted_member(node, model, uninterceptable, effects)
+        if isinstance(node, JsBinaryExpression) and node.operator in BINARY_OPS:
+            return _denoted_binary(node, model, uninterceptable, effects)
     return extract_literal_value(node)
+
+
+def _denoted_binary(
+    node: JsBinaryExpression,
+    model: SemanticModel,
+    uninterceptable: Callable[[Value], bool],
+    effects: Callable[[], EffectModel],
+) -> tuple[bool, Value]:
+    """
+    The value the binary operator *node* computes from its two decided operands, for
+    `denoted_value`. Each operand the operator converts
+    (`refinery.lib.scripts.js.values.converted_operands`) is converted as `converted_operand`
+    converts it first. A power whose value the language leaves to the engine is not decided.
+    """
+    known, left = denoted_value(node.left, model, uninterceptable, effects)
+    if not known:
+        return False, None
+    known, right = denoted_value(node.right, model, uninterceptable, effects)
+    if not known:
+        return False, None
+    convert_left, convert_right = converted_operands(node.operator, left, right)
+    if convert_left:
+        known, left = converted_operand(left, uninterceptable, effects, gated=True)
+        if not known:
+            return False, None
+    if convert_right:
+        known, right = converted_operand(right, uninterceptable, effects, gated=True)
+        if not known:
+            return False, None
+    try:
+        return True, BINARY_OPS[node.operator](left, right)
+    except HostApproximated:
+        return False, None
+
+
+def converted_operand(
+    value: Value,
+    uninterceptable: Callable[[Value], bool],
+    effects: Callable[[], EffectModel] | None,
+    gated: bool,
+) -> tuple[bool, Value]:
+    """
+    *value* as an operator or a computed key converts it, as `(True, value)`, or `(False, None)`
+    where converting it may run code the program installed. A primitive converts by an operation no
+    program replaces. An object converts where *uninterceptable* vouches for its conversion and,
+    where *gated*, where the scan follows every write the program makes on a built-in object
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.builtin_writes_followed`), which a
+    binary operator and a key ask; a unary operator asks *uninterceptable* alone.
+    """
+    if converts_uninterceptably(value):
+        return True, value
+    if gated and (effects is None or not effects().builtin_writes_followed()):
+        return False, None
+    if not uninterceptable(value):
+        return False, None
+    return True, value
+
+
+def denoted_member(
+    node: JsMemberExpression,
+    model: SemanticModel,
+    uninterceptable: Callable[[Value], bool],
+    effects: Callable[[], EffectModel],
+) -> tuple[bool, Value]:
+    """
+    The value the member read *node* yields off a decided object under a decided key, for
+    `denoted_value`: an own data property of the object (`read_data_property`), and otherwise what
+    its prototype chain answers (`inherited_member`). Naming the property converts a computed key
+    as an operator converts an operand (`converted_operand`). A read off `null` or `undefined`
+    throws and is not decided.
+    """
+    if node.computed:
+        known, key = denoted_value(node.property, model, uninterceptable, effects)
+        if not known:
+            return False, None
+        known, key = converted_operand(key, uninterceptable, effects, gated=True)
+        if not known:
+            return False, None
+        name = to_string(key)
+    elif isinstance(node.property, JsIdentifier):
+        name = node.property.name
+    else:
+        return False, None
+    known, obj = denoted_value(node.object, model, uninterceptable, effects)
+    if not known or obj is None or obj is JS_NULL:
+        return False, None
+    outcome, value = read_data_property(obj, name)
+    if outcome is MemberRead.FOUND:
+        return True, value
+    return inherited_member(obj, name, effects())
+
+
+def inherited_member(value: Value, key: str, effects: EffectModel) -> tuple[bool, Value]:
+    """
+    What the prototype chain of *value*, which does not own *key*, answers for a read of it, as
+    `(True, value)`, or `(False, None)` where nothing decides it. A key no prototype of the chain
+    holds is `undefined` (`property_provably_absent`) where the scan also follows every write the
+    program makes on a built-in object
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.builtin_writes_followed`): the chain
+    question asks about names, and `[].constructor.prototype.x = 1` writes the chain of every array
+    through none.
+    """
+    if not effects.builtin_writes_followed():
+        return False, None
+    if property_provably_absent(effects, type(value), key):
+        return True, None
+    return False, None
 
 
 def allocated_object_type(node: Node | None) -> str | None:
