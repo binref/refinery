@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.js.analysis.tampering import TamperingModel
     from refinery.lib.scripts.js.values import Value
 
-from refinery.lib.scripts import Node
+from refinery.lib.scripts import Expression, Node
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment, typeof_of_global
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
@@ -54,6 +54,7 @@ from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
+    JsAssignmentPattern,
     JsBinaryExpression,
     JsBlockStatement,
     JsBooleanLiteral,
@@ -196,6 +197,28 @@ class _ReturnIrreducible(Exception):
     """
     def __init__(self, node: Node):
         self.node = node
+
+
+def named_parameters(func: Node) -> list[tuple[str, Expression | None]] | None:
+    """
+    The parameters of *func* as the name each binds and the default it is given, or `None` where one
+    binds no single name: a pattern or a rest element. A default is evaluated when the call starts,
+    where an argument is missing or `undefined`, in a scope that holds the parameters before it, and
+    those after it only in their dead zone.
+    """
+    parameters: list[tuple[str, Expression | None]] = []
+    for param in getattr(func, 'params', ()):
+        if isinstance(param, JsIdentifier):
+            parameters.append((param.name, None))
+        elif (
+            isinstance(param, JsAssignmentPattern)
+            and isinstance(param.left, JsIdentifier)
+            and param.right is not None
+        ):
+            parameters.append((param.left.name, param.right))
+        else:
+            return None
+    return parameters
 
 
 def _to_index(value: Value) -> int:
@@ -1366,15 +1389,15 @@ class JsInterpreter:
         if self._model is not None and _shadows_a_name_in_a_block(func, self._model):
             raise InterpreterError
         self._entered.add(func)
-        params = func.params
-        param_names: list[str] = []
-        for p in params:
-            if not isinstance(p, JsIdentifier):
-                raise InterpreterError
-            param_names.append(p.name)
+        parameters = named_parameters(func)
+        if parameters is None:
+            raise InterpreterError
         self._env = {}
-        for i, name in enumerate(param_names):
-            self._env[name] = arguments[i] if i < len(arguments) else None
+        for i, (name, default) in enumerate(parameters):
+            value = arguments[i] if i < len(arguments) else None
+            if value is None and default is not None:
+                value = self._eval_default(default)
+            self._env[name] = value
         body = func.body
         for name in self._collect_hoisted_var_names(body):
             if name == 'arguments' and not isinstance(func, JsArrowFunctionExpression):
@@ -1412,6 +1435,21 @@ class JsInterpreter:
                     raise InterpreterError
                 raise
         return None
+
+    def _eval_default(self, default: Expression) -> Value:
+        """
+        The value of a parameter's *default*, evaluated before the body's declarations exist. A
+        default whose value is not known ends the interpretation, since no expression of the body
+        stands in for it; one that throws makes the call throw.
+        """
+        try:
+            return self._eval(default)
+        except IrreducibleExpression:
+            raise InterpreterError
+        except _ThrowSignal:
+            if self._depth == 0:
+                raise InterpreterError
+            raise
 
     @staticmethod
     def _collect_hoisted_var_names(body) -> list[str]:
@@ -2490,7 +2528,7 @@ class JsInterpreter:
         body = func.body
         if not isinstance(body, JsBlockStatement):
             return False
-        local_names: set[str] = {p.name for p in func.params if isinstance(p, JsIdentifier)}
+        local_names: set[str] = {name for name, _ in named_parameters(func) or ()}
         if isinstance(func, JsFunctionDeclaration) and isinstance(func.id, JsIdentifier):
             local_names.add(func.id.name)
         for node in walk_scope(body):

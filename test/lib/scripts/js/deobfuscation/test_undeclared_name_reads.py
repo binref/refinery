@@ -594,14 +594,7 @@ _A_PARAMETER_DEFAULT_THAT_CANNOT_THROW: dict[str, _Rewrite] = {
             console.log(f());
             """
         ),
-        inspect.cleandoc(
-            """
-            function f(a = 5) {
-              return a;
-            }
-            console.log(f());
-            """
-        ),
+        'console.log(5);',
     ),
     'a default inside an object pattern reading a declared global': _Rewrite(
         inspect.cleandoc(
@@ -629,12 +622,7 @@ _A_PARAMETER_DEFAULT_THAT_CANNOT_THROW: dict[str, _Rewrite] = {
             console.log(g());
             """
         ),
-        inspect.cleandoc(
-            """
-            var g = (a = 'xy') => a;
-            console.log(g());
-            """
-        ),
+        "console.log('xy');",
     ),
 }
 """

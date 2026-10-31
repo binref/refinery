@@ -46,6 +46,18 @@ instead:
       return flat(args);
     }
 
+A function may also be left a forwarder to a function kept in an array, which takes the array
+and the arguments and hands the arguments on to the function it declares:
+
+    var T = [function () {
+      var [t, args] = arguments;
+      function body(value) { return twice(value); }
+      return body.apply(this, args);
+    }];
+    function add() { return T[0].apply(this, [T, arguments]); }
+
+The forwarder gets the parameters and the body of the declared function, which keeps neither, and
+the array goes once nothing reads it.
 """
 from __future__ import annotations
 
@@ -86,6 +98,8 @@ from refinery.lib.scripts.js.deobfuscation.parameters import (
     unpacking_moves_into_parameters,
 )
 from refinery.lib.scripts.js.model import (
+    FUNCTION_NODES,
+    JsArrayExpression,
     JsArrayPattern,
     JsAssignmentExpression,
     JsCallExpression,
@@ -94,18 +108,25 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
+    JsMethodDefinition,
+    JsNumericLiteral,
     JsObjectExpression,
+    JsProperty,
+    JsPropertyKind,
     JsRestElement,
     JsReturnStatement,
     JsScript,
     JsSpreadElement,
+    JsThisExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
     JsWithStatement,
+    static_property_key,
     strip_parens,
 )
-from refinery.lib.scripts.js.strict import directive_prologue, strict_mode_at
+from refinery.lib.scripts.js.numbers import exact_integer
+from refinery.lib.scripts.js.strict import declares_use_strict, directive_prologue, strict_mode_at
 
 
 class _Held(NamedTuple):
@@ -153,7 +174,8 @@ class _Restoration(ABC):
     """
     An edit that puts the body of a function moved out of a wrapper back into the wrapper. The
     statement holding the function it was moved into, the holder, stays in the body of the program
-    until every edit of the pass is made, which then removes all of them at once.
+    until every edit of the pass is made, which then removes all of them at once; a holder that is
+    the element of an array goes with the array, once nothing reads it.
     """
 
     @property
@@ -163,7 +185,7 @@ class _Restoration(ABC):
 
     @property
     @abstractmethod
-    def holder(self) -> Statement:
+    def holder(self) -> Statement | JsFunctionExpression:
         ...
 
     @abstractmethod
@@ -739,11 +761,35 @@ def _forwarded(
     held = _moving_function(model.resolve(callee), callee, wrapper, root, cache)
     if held is None or (target := held.function).body is None:
         return None
-    if (
-        references_receiver_this(target)
-        or references_new_target(target)
-        or arguments_name_their_function(target)
-    ):
+    if references_receiver_this(target):
+        return None
+    parameters = _forwarded_parameters(wrapper, wrapper_scope, own_arguments, target, model)
+    if parameters is None:
+        return None
+    return _Forwarded(wrapper, target, held.holder, parameters)
+
+
+def _forwarded_parameters(
+    wrapper: JsFunctionDeclaration | JsFunctionExpression,
+    wrapper_scope: Scope,
+    own_arguments: Binding,
+    target: JsFunctionDeclaration | JsFunctionExpression,
+    model: SemanticModel,
+) -> ParameterList | None:
+    """
+    The parameters a forwarder *wrapper* takes from *target*, the function it hands its own
+    `arguments` to, where the body of *target* can run as the body of *wrapper*: nothing reaches
+    *target* through `new.target` or its own `arguments`; the body finds its names in the scope
+    of *wrapper* (`_wrapper_scope_holds`, `_names_land`), whose `arguments` stands for the one
+    *target* had; *wrapper* takes the parameters as they are where every call of it is shown, and
+    otherwise keeps its `length` of 0
+    (`refinery.lib.scripts.js.deobfuscation.parameters.parameter_list`); and its `arguments`
+    object aliases the parameters exactly where that of *target* did, or *target* cannot tell
+    (`refinery.lib.scripts.js.analysis.model.observes_arguments_aliasing`). The receiver and the
+    modes of the two are the caller's to settle.
+    """
+    assert target.body is not None
+    if references_new_target(target) or arguments_name_their_function(target):
         return None
     if not _wrapper_scope_holds(wrapper, wrapper_scope, model, reframed=True):
         return None
@@ -760,7 +806,280 @@ def _forwarded(
     after = parameters.aliases_arguments(strict=strict)
     if before != after and observes_arguments_aliasing(target):
         return None
-    return _Forwarded(wrapper, target, held.holder, parameters)
+    return parameters
+
+
+@dataclass
+class _TableForwarded(_Restoration):
+    """
+    A function the obfuscation left a forwarder to the element of an array that holds `G`'s
+    declaration, with the parameters it takes over from `G` and the directive it takes along where
+    `G` is strict and the forwarder is not. The edit leaves `G` with no parameters and an empty
+    body; nothing reaches it any more.
+    """
+    forwarder: JsFunctionDeclaration | JsFunctionExpression
+    element: JsFunctionExpression
+    target: JsFunctionDeclaration
+    parameters: ParameterList
+    directive: Statement | None
+
+    @property
+    def wrapper(self) -> JsFunctionDeclaration | JsFunctionExpression:
+        return self.forwarder
+
+    @property
+    def holder(self) -> JsFunctionExpression:
+        return self.element
+
+    def apply(self) -> None:
+        body = self.forwarder.body
+        moved = self.target.body
+        assert body is not None and moved is not None
+        statements = list(moved.body)
+        if self.directive is not None:
+            statements.insert(0, self.directive)
+        set_child_list(self.forwarder, 'params', self.parameters.build())
+        set_child_list(body, 'body', statements)
+        set_child_list(self.target, 'params', [])
+        set_child_list(moved, 'body', [])
+
+
+def _table_forwarding(
+    wrapper: Node,
+    model: SemanticModel,
+) -> tuple[JsCallExpression, JsMemberExpression, Binding, int] | None:
+    """
+    For a forwarder *wrapper*, `function F() { return T[k].apply(this, [T, arguments]); }`, the
+    call, the read of the element, the binding of `T` and the index `k`; `None` for any other
+    function. Both names `T` find the one binding, and `arguments` is the forwarder's own.
+    """
+    if not isinstance(wrapper, (JsFunctionDeclaration, JsFunctionExpression)):
+        return None
+    body = wrapper.body
+    if wrapper.generator or wrapper.is_async or wrapper.params or body is None:
+        return None
+    statements = body.body[len(directive_prologue(body)):]
+    if (
+        len(statements) != 1
+        or not isinstance(statement := statements[0], JsReturnStatement)
+        or not isinstance(call := statement.argument, JsCallExpression)
+        or call.optional
+        or not isinstance(method := call.callee, JsMemberExpression)
+        or method.optional
+        or static_property_key(method) != 'apply'
+        or not isinstance(element := method.object, JsMemberExpression)
+        or element.optional
+        or not element.computed
+        or not isinstance(index := element.property, JsNumericLiteral)
+        or not isinstance(table := element.object, JsIdentifier)
+        or len(call.arguments) != 2
+        or not isinstance(call.arguments[0], JsThisExpression)
+        or not isinstance(handed := call.arguments[1], JsArrayExpression)
+        or len(handed.elements) != 2
+        or not isinstance(again := handed.elements[0], JsIdentifier)
+        or not isinstance(source := handed.elements[1], JsIdentifier)
+        or source.name != 'arguments'
+    ):
+        return None
+    k = exact_integer(index.value)
+    if k is None or k < 0:
+        return None
+    binding = model.resolve(table)
+    if binding is None or model.resolve(again) is not binding:
+        return None
+    scope = model.function_scope(wrapper)
+    if scope is None or model.resolve(source) is not scope.bindings.get('arguments'):
+        return None
+    return call, element, binding, k
+
+
+def _forwarding_element(
+    element: Node | None,
+    model: SemanticModel,
+) -> tuple[JsFunctionDeclaration, Statement | None, JsVariableDeclaration] | None:
+    """
+    For an array element that is a function forwarding its second argument to a function it
+    declares, `function () { var [t, args] = arguments; function G(...) {...} return G.apply(this,
+    args); }`, the declaration of `G`, the element's `use strict` directive where it has one, and
+    the unpacking of the arguments; `None` for anything else. The element does nothing else, and
+    `G` is reached by the call alone: nothing reads `t`, `args` is read by the call only, and
+    neither `G` nor the element is named anywhere but there.
+    """
+    if (
+        not isinstance(element, JsFunctionExpression)
+        or element.generator
+        or element.is_async
+        or element.params
+        or (body := element.body) is None
+    ):
+        return None
+    prologue = directive_prologue(body)
+    strict = declares_use_strict(body)
+    if len(prologue) != int(strict):
+        return None
+    statements = body.body[len(prologue):]
+    if len(statements) != 3:
+        return None
+    unpacking, target, forward = statements
+    if (
+        not isinstance(unpacking, JsVariableDeclaration)
+        or unpacking.kind is not JsVarKind.VAR
+        or len(unpacking.declarations) != 1
+        or not isinstance(declarator := unpacking.declarations[0], JsVariableDeclarator)
+        or not isinstance(pattern := declarator.id, JsArrayPattern)
+        or len(pattern.elements) != 2
+        or not isinstance(table := pattern.elements[0], JsIdentifier)
+        or not isinstance(args := pattern.elements[1], JsIdentifier)
+        or not isinstance(source := declarator.init, JsIdentifier)
+        or source.name != 'arguments'
+        or not isinstance(target, JsFunctionDeclaration)
+        or target.id is None
+        or target.generator
+        or target.is_async
+        or target.body is None
+        or not isinstance(forward, JsReturnStatement)
+        or not isinstance(call := forward.argument, JsCallExpression)
+        or call.optional
+        or not isinstance(method := call.callee, JsMemberExpression)
+        or method.optional
+        or static_property_key(method) != 'apply'
+        or not isinstance(callee := method.object, JsIdentifier)
+        or len(call.arguments) != 2
+        or not isinstance(call.arguments[0], JsThisExpression)
+        or not isinstance(handed := call.arguments[1], JsIdentifier)
+    ):
+        return None
+    scope = model.function_scope(element)
+    if scope is None or model.resolve(source) is not scope.bindings.get('arguments'):
+        return None
+    unread = model.binding_of(table)
+    passed = model.binding_of(args)
+    declared = model.binding_of(target.id)
+    if unread is None or passed is None or declared is None:
+        return None
+    if model.references(unread) or model.references(passed) != [handed]:
+        return None
+    if model.references(declared) != [callee] or declared.dynamic_refs:
+        return None
+    if element.id is not None:
+        own = model.binding_of(element.id)
+        if own is None or model.references(own):
+            return None
+    return target, prologue[0] if strict else None, unpacking
+
+
+def _is_a_method(function: Node) -> bool:
+    """
+    Whether *function* is written as a method, a getter or a setter, of a class or of an object
+    literal, whose parameters the language fixes or which no `new` constructs.
+    """
+    owner = function.parent
+    if isinstance(owner, JsMethodDefinition):
+        return True
+    return isinstance(owner, JsProperty) and (owner.method or owner.kind is not JsPropertyKind.INIT)
+
+
+def _forwarded_through_a_table(
+    wrapper: JsFunctionDeclaration | JsFunctionExpression,
+    cache: ModelCache,
+) -> _TableForwarded | None:
+    """
+    The edit that puts the parameters and the body of `G` back into the forwarder *wrapper*, `F`,
+    which hands its receiver and its arguments to the element `T[k]` of an array, which hands them
+    on to the function `G` it declares (`_table_forwarding`, `_forwarding_element`), or `None`
+    where `F` would not compute what it computes now.
+
+    `T[k]` must hold that element whenever `F` runs: `T` is one array of such elements, declared
+    once, established before `F` reads it and never written, and every reference to it is a
+    forwarder's, which hands the array to an element that does not read it, so nothing changes
+    an element; no other forwarder reads the element `k`, which the edit leaves empty. Each `apply`
+    must find the built-in
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.intrinsic_dispatch_trusted`), and the
+    unpacking of the arguments must still be the language's at the call.
+
+    `F` is a plain function and no method (`_is_a_method`). The receiver and the arguments reach
+    `G` as they reach `F`, so `G` may read its own `arguments` but no `new.target`, and may not
+    reach itself through `arguments`; `G` holds no `with` and no direct `eval`, and every name it
+    reads finds from inside `F` the binding it finds where it stands (`_wrapper_scope_holds`,
+    `_names_land`). `F` runs in the mode of `G`: where `G` is strict and `F` is not, `F` takes the
+    directive along, which requires plain parameters and a `G` that reads no `this`, since `F` no
+    longer coerces the receiver it hands on. A strict `F` cannot run a sloppy `G`. The parameters
+    are taken as `_forwarded` takes them.
+    """
+    model = cache.model
+    forwarding = _table_forwarding(wrapper, model)
+    if forwarding is None or _is_a_method(wrapper):
+        return None
+    _, read, table, k = forwarding
+    if (
+        len(table.declarations) != 1
+        or table.writes
+        or table.dynamic_refs
+        or table.exported
+        or model.reflection_can_reach(table)
+        or model.reached_from_outside(table)
+    ):
+        return None
+    declarator = table.declarations[0].parent
+    if (
+        not isinstance(declarator, JsVariableDeclarator)
+        or declarator.id is not table.declarations[0]
+        or not isinstance(array := declarator.init, JsArrayExpression)
+        or k >= len(array.elements)
+    ):
+        return None
+    elements = [_forwarding_element(element, model) for element in array.elements]
+    if not all(elements):
+        return None
+    readers: list[int] = []
+    for reference in model.references(table):
+        holder = reference.parent
+        while holder is not None and not isinstance(holder, FUNCTION_NODES):
+            holder = holder.parent
+        other = _table_forwarding(holder, model) if holder is not None else None
+        if other is None or other[2] is not table:
+            return None
+        if reference is other[1].object:
+            readers.append(other[3])
+    if readers.count(k) != 1:
+        return None
+    if not cache.dominance.binding_established_before(table, read):
+        return None
+    forwarded = elements[k]
+    assert forwarded is not None
+    target, directive, unpacking = forwarded
+    if not model.intrinsic_dispatch_trusted():
+        return None
+    if not cache.trust_at(unpacking).chain(list):
+        return None
+    for node in target.walk():
+        if is_direct_eval_call(node) or isinstance(node, JsWithStatement):
+            return None
+    body = wrapper.body
+    assert body is not None and target.body is not None
+    target_is_strict = strict_mode_at(target.body)
+    wrapper_is_strict = strict_mode_at(body)
+    if wrapper_is_strict and not target_is_strict:
+        return None
+    moved_directive = None
+    if target_is_strict and not wrapper_is_strict:
+        if directive is None or references_receiver_this(target):
+            return None
+        if not all(isinstance(param, JsIdentifier) for param in target.params):
+            return None
+        moved_directive = directive
+    wrapper_scope = model.function_scope(wrapper)
+    if wrapper_scope is None:
+        return None
+    own_arguments = wrapper_scope.bindings.get('arguments')
+    if own_arguments is None:
+        return None
+    parameters = _forwarded_parameters(wrapper, wrapper_scope, own_arguments, target, model)
+    if parameters is None:
+        return None
+    element = array.elements[k]
+    assert isinstance(element, JsFunctionExpression)
+    return _TableForwarded(wrapper, element, target, parameters, moved_directive)
 
 
 class JsFunctionUnflattening(ScriptLevelTransformer):
@@ -778,6 +1097,8 @@ class JsFunctionUnflattening(ScriptLevelTransformer):
                 plan = _plan(function, node, cache)
                 if plan is None:
                     plan = _forwarded(function, node, cache)
+                if plan is None:
+                    plan = _forwarded_through_a_table(function, cache)
                 if plan is not None:
                     plans.append(plan)
         taken = _apart(plans)

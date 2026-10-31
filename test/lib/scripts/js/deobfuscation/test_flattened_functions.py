@@ -1298,14 +1298,7 @@ PUT_BACK: dict[str, str] = {
             console.log(sum(3).v);
         """
     ),
-    'a default reading an outer name (object first)': inspect.cleandoc(
-        """
-            function add(a, b = 3) {
-              return a + b;
-            }
-            console.log(add(1, 2), add(1));
-        """
-    ),
+    'a default reading an outer name (object first)': 'console.log(3, 4);',
     'a local of the flat function named like an outer name it reads': inspect.cleandoc(
         """
             console.log('outerinner');
@@ -1361,10 +1354,7 @@ PUT_BACK: dict[str, str] = {
     'the strict form (object first) with a default reading an outer name': inspect.cleandoc(
         """
             'use strict';
-            function addTo(a, b = 5) {
-              return a + b;
-            }
-            console.log(addTo(2), addTo(3, 4));
+            console.log(7, 7);
         """
     ),
     'a static method of a class in the strict form': inspect.cleandoc(
@@ -1510,39 +1500,9 @@ PUT_BACK: dict[str, str] = {
             Promise.resolve().then(() => console.log(1)).then(() => console.log(2)).then(() => console.log(3));
         """
     ),
-    'a default reads a name the flat body also declares': inspect.cleandoc(
-        """
-            function outer() {
-              function W(a = 'top') {
-                return a;
-              }
-              return W();
-            }
-            console.log(outer());
-        """
-    ),
-    'a default calls a name the flat body declares as a function': inspect.cleandoc(
-        """
-            function outer() {
-              function W(a = 'top') {
-                return a;
-              }
-              return W();
-            }
-            console.log(outer());
-        """
-    ),
-    'a default reads a name the flat body declares with let': inspect.cleandoc(
-        """
-            function outer() {
-              function W(a = 'top') {
-                return a;
-              }
-              return W();
-            }
-            console.log(outer());
-        """
-    ),
+    'a default reads a name the flat body also declares': "console.log('top');",
+    'a default calls a name the flat body declares as a function': "console.log('top');",
+    'a default reads a name the flat body declares with let': "console.log('top');",
     'a sloppy block function in the flat body named like a member name, read after the block': inspect.cleandoc(
         """
             console.log('string');

@@ -32,6 +32,7 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     build_semantic_model,
     crosses_dynamic_scope,
+    enclosing_function,
     enclosing_operator,
     is_direct_eval_call,
     name_uses_in_scope,
@@ -45,6 +46,7 @@ from refinery.lib.scripts.js.analysis.tampering import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     body_returns_undefined,
+    expression_a_call_answers,
     extract_literal_value,
     get_body,
     hoist_path_is_clear,
@@ -67,6 +69,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.deobfuscation.nameproxy import NameProxy, Reading
 from refinery.lib.scripts.js.deobfuscation.strict_divergence import diverges_under_strict
 from refinery.lib.scripts.js.model import (
+    FUNCTION_NODES,
     SCRIPT_CONTEXT,
     CodeContext,
     JsAwaitExpression,
@@ -74,6 +77,7 @@ from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsExpressionStatement,
     JsForOfStatement,
+    JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
@@ -84,6 +88,7 @@ from refinery.lib.scripts.js.model import (
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
+    JsSpreadElement,
     JsStringLiteral,
     JsUnaryExpression,
     JsVariableDeclaration,
@@ -98,6 +103,7 @@ from refinery.lib.scripts.js.options import preserves_script_return
 from refinery.lib.scripts.js.strict import (
     collect_strict_violations,
     declares_use_strict,
+    directive_prologue,
     strict_mode_at,
 )
 
@@ -671,6 +677,80 @@ def _indirect_eval_of(text: str) -> JsCallExpression:
         ]),
         arguments=[make_string_literal(text)],
     )
+
+
+def _as_the_function_it_answers(parsed: JsScript) -> JsScript | None:
+    """
+    The evaluated text *parsed* rewritten as the one expression its value is, where it declares a
+    function and answers it by name, `function f() {...} f;`: a named function expression, which
+    creates the same function under the same name, the name bound inside it as the declaration bound
+    it. A `use strict` directive of the text makes the function strict and moves into its body; a
+    function whose parameters forbid the directive there is declined, and so is one whose body may
+    write its own name, which the declaration lets it do and the expression does not. `None` for
+    any other text. Where else the declaration would have been visible is the caller's question.
+    """
+    prologue = directive_prologue(parsed)
+    strict = declares_use_strict(parsed)
+    if len(prologue) != int(strict):
+        return None
+    rest = parsed.body[len(prologue):]
+    if len(rest) != 2:
+        return None
+    declaration, answer = rest
+    if not isinstance(declaration, JsFunctionDeclaration) or declaration.id is None:
+        return None
+    if not isinstance(answer, JsExpressionStatement):
+        return None
+    name = strip_parens(answer.expression) if answer.expression is not None else None
+    if not isinstance(name, JsIdentifier) or name.name != declaration.id.name:
+        return None
+    if strict and not all(isinstance(param, JsIdentifier) for param in declaration.params):
+        return None
+    body_model = build_semantic_model(parsed)
+    binding = body_model.binding_of(declaration.id)
+    if binding is None or not body_model.binding_never_reassigned(binding):
+        return None
+    body = declaration.body
+    if body is None:
+        return None
+    if strict:
+        set_body(body, [*prologue, *body.body])
+    function = JsFunctionExpression(
+        id=JsIdentifier(name=declaration.id.name),
+        params=list(declaration.params),
+        body=body,
+        generator=declaration.generator,
+        is_async=declaration.is_async,
+    )
+    set_body(parsed, [JsExpressionStatement(expression=function)])
+    return parsed
+
+
+def _direct_eval_of_its_parameter(
+    function: Node,
+    free_global_name: Callable[[Expression | None], str | None],
+) -> JsCallExpression | None:
+    """
+    The direct `eval` a call of *function* answers, where its body is one `return` of the direct
+    `eval` of its first parameter, a plain name it never writes:
+
+        function w(code) { return eval(code); }
+
+    A call of it runs the text it is handed in a new scope of *function*, which holds that
+    parameter and the call's `arguments`.
+    """
+    answered = expression_a_call_answers(function) if isinstance(function, FUNCTION_NODES) else None
+    if answered is None or not answered.param_names:
+        return None
+    evaluated = strip_parens(answered.return_expression)
+    if not isinstance(evaluated, JsCallExpression) or not is_direct_eval_call(evaluated):
+        return None
+    if free_global_name(evaluated.callee) != 'eval' or len(evaluated.arguments) != 1:
+        return None
+    argument = strip_parens(evaluated.arguments[0])
+    if not isinstance(argument, JsIdentifier) or argument.name != answered.param_names[0]:
+        return None
+    return evaluated
 
 
 def _body_written_free_names(body_model: SemanticModel, parsed: JsScript) -> set[str]:
@@ -1264,7 +1344,57 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 code, site, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,
             )
             return (ReflectedScope.GLOBAL_EVAL, parsed) if parsed is not None else None
-        return None
+        parsed = self._resolve_eval_wrapper_call(node, site, root)
+        return (ReflectedScope.DIRECT_EVAL, parsed) if parsed is not None else None
+
+    def _resolve_eval_wrapper_call(
+        self,
+        node: JsCallExpression,
+        site: Node,
+        root: JsScript,
+    ) -> JsScript | None:
+        """
+        The text a call of a function answering the direct `eval` of its parameter runs
+        (`_direct_eval_of_its_parameter`), where it means at *site* what it means in the scope the
+        call creates, or `None`. The call must reach that function, hand it a string, and pass no
+        other argument that is not droppable. The text is read in the mode of the function's
+        `eval`; a function it declares and answers is the expression of that function
+        (`_as_the_function_it_answers`), whose declaration nothing else in that scope sees. What
+        remains is admitted as an `eval` at *site* whose text runs at the function's `eval`
+        (`_admit_reflected_body` with an origin). The function's `eval` must still be the language's
+        when the call runs (`_no_opaque_global_write_before`).
+        """
+        if node.optional or not node.arguments or any(isinstance(a, JsSpreadElement) for a in node.arguments):
+            return None
+        if not self._no_opaque_global_write_before(root, node):
+            return None
+        cache = model_cache(self, root)
+        function = cache.effects.static_callee(node)
+        if function is None:
+            return None
+        origin = _direct_eval_of_its_parameter(function, self._free_global)
+        if origin is None or not cache.dominance.callee_established_before(node):
+            return None
+        code = string_value(node.arguments[0]) or self._eval_string(node.arguments[0])
+        if code is None:
+            return None
+        if not all(self._argument_may_be_dropped(argument, root) for argument in node.arguments[1:]):
+            return None
+        parsed = _try_parse(
+            code,
+            strict=strict_mode_at(origin) or self._destination_may_be_strict(site, root),
+            module=cache.model.file_kind.may_be_an_es_module,
+            context=code_context_at(origin),
+        )
+        if parsed is None:
+            return None
+        if len(parsed.body) != 1:
+            parsed = _as_the_function_it_answers(parsed)
+            if parsed is None:
+                return None
+        return self._admit_reflected_body(
+            parsed, site, root, ReflectedScope.DIRECT_EVAL, False, origin=origin,
+        )
 
     def _resolved_constructor_call(
         self, node: JsCallExpression, root: JsScript,
@@ -1706,6 +1836,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         substituted: Collection[JsIdentifier] = (),
         invocation_arguments: list[Node] | None = None,
         exclude: Collection[Binding] = (),
+        origin: JsCallExpression | None = None,
     ) -> JsScript | None:
         """
         Decide whether inlining the reflected body *parsed* at *site* preserves meaning, given the
@@ -1797,6 +1928,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         declared = _body_declared_names(body_model)
         if not self._spliced_names.isdisjoint(free | declared):
             return None
+        if origin is not None and not self._runs_alike_at_its_origin(
+            parsed, body_model, free, declared, origin, site, root,
+        ):
+            return None
         if not free and not declared:
             return parsed
         root_model = model_cache(self, root).model
@@ -1843,6 +1978,63 @@ class JsReflectionInlining(ScriptLevelTransformer):
             _replace_in_parent(read, _indirect_eval_of(text))
         self._spliced_names |= declared | _body_written_free_names(body_model, parsed)
         return parsed
+
+    def _runs_alike_at_its_origin(
+        self,
+        parsed: JsScript,
+        body_model: SemanticModel,
+        free: set[str],
+        declared: set[str],
+        origin: JsCallExpression,
+        site: Node,
+        root: JsScript,
+    ) -> bool:
+        """
+        Whether the text *parsed*, which runs at *origin*, a direct `eval` in a function the call at
+        *site* runs, does at *site* what it does there. The scope it runs in is a new one of that
+        function, so a declaration of the text lands there and nothing at *site* sees it, and its
+        `this`, `new.target` and `arguments` are the function's: none of them may be in the text.
+        Every free name must find the same binding from *origin* and from *site*, none of the
+        function's own, with no `with` body or direct `eval` able to supply it on either path. A
+        direct `eval` anywhere in the text reads, when it runs, the scopes around the place the text
+        runs, the function's among them, which no free-name check sees, so the text may hold none.
+        The text is read in the mode of *origin*, and where *site* may read it in the other mode it
+        must not run differently there (`diverges_under_strict`).
+        """
+        if declared or 'arguments' in free:
+            return False
+        if any(is_direct_eval_call(node) for node in parsed.walk()):
+            return False
+        if references_receiver_this(parsed) or references_new_target(parsed):
+            return False
+        origin_is_strict = strict_mode_at(origin) or declares_use_strict(parsed)
+        if (
+            origin_is_strict and not strict_mode_at(site)
+            or not origin_is_strict and self._destination_may_be_strict(site, root)
+        ):
+            if diverges_under_strict(parsed, body_model, frozenset()):
+                return False
+        model = model_cache(self, root).model
+        function = enclosing_function(origin)
+        origin_scope = model.scope_of(origin)
+        site_scope = model.scope_of(site)
+        if function is None or origin_scope is None or site_scope is None:
+            return False
+        if crosses_dynamic_scope(origin_scope) or crosses_dynamic_scope(site_scope):
+            return False
+        for name in free:
+            binding = model.lookup(name, origin_scope)
+            if binding is not model.lookup(name, site_scope):
+                return False
+            if binding is None:
+                if (
+                    model.free_name_reachable_by_direct_eval(origin.arguments[0])
+                    or model.free_name_reachable_by_direct_eval(site)
+                ):
+                    return False
+            elif binding.declared_within(function):
+                return False
+        return True
 
     def _reflected_declarations_safe(
         self,

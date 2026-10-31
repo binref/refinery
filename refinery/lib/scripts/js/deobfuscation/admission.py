@@ -33,6 +33,7 @@ from refinery.lib.scripts.js.deobfuscation.interpreter import (
     JsInterpreter,
     _ThrowSignal,
     is_runtime_name,
+    named_parameters,
     names_runtime_builtin,
 )
 from refinery.lib.scripts.js.model import (
@@ -42,6 +43,8 @@ from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsCallExpression,
     JsCatchClause,
+    JsClassDeclaration,
+    JsClassExpression,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsFunctionNode,
@@ -72,14 +75,20 @@ def _is_value_closed(
     from the *effect* precondition that a call writes no observable state, which
     `refinery.lib.scripts.js.analysis.effects.EffectModel` decides.
     """
-    for param in func.params:
-        if not isinstance(param, JsIdentifier):
-            return False
+    parameters = named_parameters(func)
+    if parameters is None:
+        return False
     body = func.body
     if body is None:
         return True
-    local_names = {p.name for p in func.params if isinstance(p, JsIdentifier)}
+    local_names = {name for name, _ in parameters}
     _collect_declared_names(body, local_names)
+    for position, (_, default) in enumerate(parameters):
+        if default is None:
+            continue
+        earlier = {name for name, _ in parameters[:position]}
+        if not _default_is_value_closed(default, earlier, local_names, known, model):
+            return False
     if isinstance(func, JsFunctionDeclaration) and isinstance(func.id, JsIdentifier):
         local_names.add(func.id.name)
     elif isinstance(func, JsFunctionExpression) and isinstance(func.id, JsIdentifier):
@@ -98,6 +107,40 @@ def _is_value_closed(
             if name == 'arguments' and call_supplies_an_arguments_object(model, func):
                 continue
             return False
+    return True
+
+
+def _default_is_value_closed(
+    default: Node,
+    earlier: set[str],
+    local_names: set[str],
+    known: set[str],
+    model: SemanticModel,
+) -> bool:
+    """
+    Whether a parameter's *default* has an answer for every name it reads where it is evaluated:
+    before the body runs, in a scope holding the *earlier* parameters. It may read those, the names
+    in *known*, registry built-ins and well-known globals. It reads no other name of the function's
+    own, *local_names*: a later parameter or the parameter itself is still in its dead zone, and a
+    name the body declares is not yet declared there, so the default reads the binding outside. A
+    function written in a default closes over that scope and the receiver it reads is the call's,
+    so neither is evaluated.
+    """
+    if references_receiver_this(default):
+        return False
+    for node in default.walk():
+        if isinstance(node, FUNCTION_NODES) or isinstance(node, (JsClassDeclaration, JsClassExpression)):
+            return False
+        if not isinstance(node, JsIdentifier) or not is_reference(node):
+            continue
+        name = node.name
+        if name in earlier:
+            continue
+        if name in local_names:
+            return False
+        if name in known or names_runtime_builtin(node, model) or names_global_value(node, model):
+            continue
+        return False
     return True
 
 

@@ -18,28 +18,9 @@ class TestJsDeobfuscator(TestUnitBase):
     def test_obfuscated_fizzbuzz_02(self):
         data = self.download_sample('add3c81c1c408baf46cec9daf3fbf025df6960072be53776291142da6f3472d9')
         test = data | self.load() | str
-        goal = inspect.cleandoc(
-            '''
-            function dJ_rQ_R(ViBA8K, txDwfK = [], wHsINo) {
-              for (wHsINo = 0x1; wHsINo <= ViBA8K; wHsINo++) {
-                if (wHsINo % 0xf === 0x0) {
-                  txDwfK.push('FizzBuzz');
-                } else {
-                  if (wHsINo % 0x3 === 0x0) {
-                    txDwfK.push('Fizz');
-                  } else {
-                    if (wHsINo % 0x5 === 0x0) {
-                      txDwfK.push('Buzz');
-                    } else {
-                      txDwfK.push(wHsINo);
-                    }
-                  }
-                }
-              }
-              return txDwfK;
-            }
-            console.log(dJ_rQ_R(0x14));
-            '''
+        goal = (
+            "console.log([1, 2, 'Fizz', 4, 'Buzz', 'Fizz', 7, 8, 'Fizz', 'Buzz', 11, 'Fizz', 13, 14,"
+            " 'FizzBuzz', 16, 17, 'Fizz', 19, 'Buzz']);"
         )
         self.assertEqual(test, goal)
 

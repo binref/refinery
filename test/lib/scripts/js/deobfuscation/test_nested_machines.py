@@ -2053,26 +2053,13 @@ FLATTENED_TWICE_DEOBFUSCATED = inspect.cleandoc(
       }
       return -1;
     }
-    function GPgIgQ(cFd5H4X, d6VElg = ', ') {
-      function MvmeD2R(cj8ac0) {
-        var hdEeet;
-        hdEeet = String(cj8ac0);
-        return '"' + hdEeet + '"';
-      }
-      var z80HZjY;
-      z80HZjY = [];
-      for (const entry of cFd5H4X) {
-        z80HZjY.push(MvmeD2R(entry));
-      }
-      return z80HZjY.join(d6VElg);
-    }
     console.log('negative', 'zero', 'odd', 'large even', 'huge even');
     console.log(aoaT3J6([3, 8, 12], x => {
       return x > 5;
     }), aoaT3J6([1], x => {
       return x > 5;
     }));
-    console.log(GPgIgQ(['a', 'b']), GPgIgQ([1, 2, 3], '/'));
+    console.log('"a", "b"', '"1"/"2"/"3"');
     console.log(gzflAJ(1, 2, 3), gzflAJ(5, 6));
     console.log('6!', 'none!');
     """
@@ -2756,19 +2743,6 @@ FLATTENED_TWICE_AGAIN = inspect.cleandoc(
 
 FLATTENED_TWICE_AGAIN_DEOBFUSCATED = inspect.cleandoc(
     """
-    function qDscIjS(vpKs618, uZRGvl = ', ') {
-      function dgVoWM(ZBiLRWQ) {
-        var rrJ0ZV;
-        rrJ0ZV = String(ZBiLRWQ);
-        return '"' + rrJ0ZV + '"';
-      }
-      var FMyKiG;
-      FMyKiG = [];
-      for (const entry of vpKs618) {
-        FMyKiG.push(dgVoWM(entry));
-      }
-      return FMyKiG.join(uZRGvl);
-    }
     function SjWnru4(BLmGHN, ...Kmjc_bL) {
       var GphWaC;
       GphWaC = BLmGHN;
@@ -2797,7 +2771,7 @@ FLATTENED_TWICE_AGAIN_DEOBFUSCATED = inspect.cleandoc(
     }), Gb9Abz([1], x => {
       return x > 5;
     }));
-    console.log(qDscIjS(['a', 'b']), qDscIjS([1, 2, 3], '/'));
+    console.log('"a", "b"', '"1"/"2"/"3"');
     console.log(SjWnru4(1, 2, 3), SjWnru4(5, 6));
     console.log('6!', 'none!');
     """
@@ -2809,19 +2783,6 @@ FLATTENED_TWICE_AGAIN_DEOBFUSCATED = inspect.cleandoc(
 #: `FLATTENED_INTO_ONE_ARRAY_SHA256`.
 FLATTENED_INTO_ONE_ARRAY_DEOBFUSCATED = inspect.cleandoc(
     """
-    function qbK3lb(X8zYSmr, ZLGEG90 = ', ') {
-      function We6tze(fq8oR7i) {
-        var R7cZ20;
-        R7cZ20 = String(fq8oR7i);
-        return '"' + R7cZ20 + '"';
-      }
-      var i7_qAH3;
-      i7_qAH3 = [];
-      for (const entry of X8zYSmr) {
-        i7_qAH3.push(We6tze(entry));
-      }
-      return i7_qAH3.join(ZLGEG90);
-    }
     function ejJdWE(vCQ8tv, ...ItWZ7r) {
       var ITVgkA;
       ITVgkA = vCQ8tv;
@@ -2850,7 +2811,7 @@ FLATTENED_INTO_ONE_ARRAY_DEOBFUSCATED = inspect.cleandoc(
     }), Agwm_HD([1], x => {
       return x > 5;
     }));
-    console.log(qbK3lb(['a', 'b']), qbK3lb([1, 2, 3], '/'));
+    console.log('"a", "b"', '"1"/"2"/"3"');
     console.log(ejJdWE(1, 2, 3), ejJdWE(5, 6));
     console.log('6!', 'none!');
     """
