@@ -15,12 +15,18 @@ import inspect
 import unittest
 
 from test import TestBase
-from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
+from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_source, node_executable
+from test.lib.scripts.js.deobfuscation.test_a_table_read_through_an_accessor import deobfuscated_by_the_unit
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
-from refinery.lib.scripts.js.model import JsAssignmentPattern, JsFunctionDeclaration, JsIdentifier
+from refinery.lib.scripts.js.model import (
+    JsAssignmentPattern,
+    JsFunctionDeclaration,
+    JsFunctionExpression,
+    JsIdentifier,
+)
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
@@ -32,8 +38,8 @@ def deobfuscated(source: str) -> str:
 class TestTheModelAnswersWhetherACallPassesAParameter(TestBase):
 
     @staticmethod
-    def _never_passed(source: str) -> dict[str, bool]:
-        model = build_semantic_model(JsParser(source).parse())
+    def _never_passed(source: str, trusting: bool = False) -> dict[str, bool]:
+        model = build_semantic_model(JsParser(source).parse(), trust_eval=trusting)
         function = next(node for node in model.root.walk() if isinstance(node, JsFunctionDeclaration))
         answers = {}
         for parameter in function.params:
@@ -59,17 +65,114 @@ class TestTheModelAnswersWhetherACallPassesAParameter(TestBase):
             with self.subTest(source=source):
                 self.assertEqual(self._never_passed(source), {'a': False, 'p': False})
 
-    def test_a_function_called_through_call_or_apply_or_handed_on_has_calls_the_text_does_not_show(self):
+    def test_a_function_handed_on_has_calls_the_text_does_not_show(self):
+        self.assertEqual(self._never_passed('function f(a, p) {} f(1); g(f);'), {'a': False, 'p': False})
+
+    def test_a_function_nothing_calls_passes_nothing_the_answer_could_rest_on(self):
+        self.assertEqual(self._never_passed('function f(a, p) {}'), {'a': False, 'p': False})
+
+    def test_a_call_through_call_or_apply_passes_what_follows_the_receiver(self):
         for source in (
             'function f(a, p) {} f.call(null, 1);',
             'function f(a, p) {} f.apply(null, [1]);',
-            'function f(a, p) {} f(1); g(f);',
+            'function f(a, p) {} f.call(null, 1); f.apply(null);',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(self._never_passed(source), {'a': False, 'p': True})
+
+    def test_apply_of_a_list_not_written_out_or_a_spread_receiver_may_pass_any_parameter(self):
+        for source in (
+            'function f(a, p) {} f.apply(null, xs);',
+            'function f(a, p) {} f.apply(null, [1, , 2]);',
+            'function f(a, p) {} f.call(...xs);',
         ):
             with self.subTest(source=source):
                 self.assertEqual(self._never_passed(source), {'a': False, 'p': False})
 
-    def test_a_function_nothing_calls_passes_nothing_the_answer_could_rest_on(self):
-        self.assertEqual(self._never_passed('function f(a, p) {}'), {'a': False, 'p': False})
+    def test_a_call_the_program_may_have_replaced_shows_no_call(self):
+        for source in (
+            'Object.getPrototypeOf(function () {}).call = g; function f(a, p) {} f.call(null, 1);',
+            'Function.prototype.call = g; function f(a, p) {} f.call(null, 1);',
+            'var F = Function; F.prototype.apply = g; function f(a, p) {} f.apply(null, [1]);',
+        ):
+            for trusting in (False, True):
+                with self.subTest(source=source, trusting=trusting):
+                    self.assertEqual(self._never_passed(source, trusting), {'a': False, 'p': False})
+
+    def test_a_program_calling_or_reading_a_property_of_function_shows_the_call(self):
+        for source in (
+            'new Function("return this")(); function f(a, p) {} f.call(null, 1);',
+            'Function.prototype.toString.call(g); function f(a, p) {} f.call(null, 1);',
+        ):
+            for trusting in (False, True):
+                with self.subTest(source=source, trusting=trusting):
+                    self.assertEqual(self._never_passed(source, trusting), {'a': False, 'p': trusting})
+
+
+class TestTheModelAnswersWhetherACallThroughATablePassesAParameter(TestBase):
+
+    @staticmethod
+    def _never_passed(source: str) -> bool:
+        model = build_semantic_model(JsParser(source).parse())
+        entry = next(
+            node for node in model.root.walk()
+            if isinstance(node, JsFunctionExpression) and node.params
+        )
+        parameter = entry.params[0]
+        assert isinstance(parameter, JsIdentifier)
+        binding = model.binding_of(parameter)
+        assert binding is not None
+        return model.parameter_never_passed(binding)
+
+    def test_an_entry_no_call_through_its_table_passes_an_argument_to_is_never_passed(self):
+        for source in (
+            'var t; t = {f: function (p) {}}; function d(k) { return t[k](); } d("f");',
+            'var t = {f: function (p) {}}; function d(k) { return t[k].apply(this); } d("f");',
+            'var t = {f: function (p) {}}; t.f(); t["f"].call(null);',
+            'var t = {f: function (p) {}, g: () => this}; t.f(); if (t) t.g();',
+            'function d(k, t) { t = {f: function (p) {}}; return t[k](); } d("f", 1);',
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(self._never_passed(source))
+
+    def test_an_entry_a_call_through_its_table_may_pass_an_argument_to_is_passed(self):
+        for source in (
+            'var t = {f: function (p) {}}; function d(k, v) { return t[k](v); } d("f");',
+            'var t = {f: function (p) {}}; function d(k, v) { return t[k].apply(null, v); } d("f", []);',
+            'var t = {f: function (p) {}}; function d(k, v) { return t[k].call(null, v); } d("f");',
+            'var t = {f: function (p) {}}; t.f(); new t.f(1);',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._never_passed(source))
+
+    def test_an_entry_called_under_a_key_only_the_run_knows_is_never_passed_only_where_such_a_key_is_taken_for_its_own(self):
+        source = 'var t = {f: function (p) {}}; function d(k) { return t[k](); } d(input());'
+        model = build_semantic_model(JsParser(source).parse())
+        entry = next(node for node in model.root.walk() if isinstance(node, JsFunctionExpression))
+        parameter = entry.params[0]
+        assert isinstance(parameter, JsIdentifier)
+        binding = model.binding_of(parameter)
+        assert binding is not None
+        self.assertEqual(
+            (model.parameter_never_passed(binding), model.parameter_never_passed(binding, own_keys=True)),
+            (False, True),
+        )
+
+    def test_an_entry_of_a_table_that_may_be_handed_on_has_calls_the_text_does_not_show(self):
+        for source in (
+            'var t = {f: function (p) {}}; t.f(); g(t);',
+            'var t = {f: function (p) {}}; t.f(); var h = t.f;',
+            'var t = {f: function (p) {}}; t.f(); t.f.x = 1;',
+            'var t = {f: function (p) {}}; t.f(); t.valueOf();',
+            'var t = {f: function (p) {}, g: function () { return this; }}; t.f();',
+            'var t = {f: function (p) {}, g() { return super.valueOf(); }}; t.f();',
+            'var t = {f: function (p) {}, get g() { return 1; }}; t.f();',
+            'var t = {f: function (p) {}, ...o}; t.f();',
+            'var t = {f: function (p) {}, g: h}; t.f();',
+            'g({f: function (p) {}}.f());',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._never_passed(source))
 
 
 #: Programs holding a function whose parameter list ends in parameters no call passes, the shape
@@ -897,6 +1000,382 @@ class TestAFunctionAHostCallsKeepsItsParameters(TestBase):
                     entrypoints=('handler',),
                 )
                 self.assertIn(kept, text)
+
+
+#: The entry of a table every program of `THROUGH_A_TABLE` holds, an object literal whose name is
+#: read only to call one of its entries, which ends its parameter list in a function stored under
+#: `if (!p)`; called without an argument it says `own`, and it calls the function it is handed.
+ENTRY = inspect.cleandoc("""
+    run: function (p) {
+      if (!p) {
+        p = function () {
+          return 'own';
+        };
+      }
+      return p();
+    },
+""")
+
+PASSED = inspect.cleandoc("""
+    function passed() {
+      return 'passed';
+    }
+""")
+
+
+def holding_the_entry(text: str) -> str:
+    """
+    The program *text* with the line `ENTRY` replaced by the entry `ENTRY` holds, indented as the
+    line is, and the line `PASSED` by the function `PASSED` declares.
+    """
+    lines = []
+    for line in a_program(text).splitlines():
+        indent = line[:len(line) - len(line.lstrip())]
+        if line.strip() == 'ENTRY':
+            lines.extend(indent + part for part in ENTRY.splitlines())
+        elif line.strip() == 'PASSED':
+            lines.extend(indent + part for part in PASSED.splitlines())
+        else:
+            lines.append(line)
+    return a_program('\n'.join(lines))
+
+
+#: Programs calling an entry of a table, mapped to what Node prints for each run as a CommonJS
+#: file: the entry selected by a key only the run knows and called directly, through `apply` or
+#: `call`, with or without an argument, from a table a parameter holds, and the table handed back,
+#: by an entry reading its `this`, by the `valueOf` it inherits, by a method or an accessor reading
+#: it through `super`, by its prototype, through a mapped `arguments`, or by a `call` the program
+#: replaced; and a function called through `call` and `apply` alone, by its name or where it is
+#: written.
+THROUGH_A_TABLE: dict[str, Program] = {
+    'a table an inherited method hands back under a key the program computes': Program(
+        a_program("""
+            var T = { e: function () { return String; } };
+            function d(k) { return T[k](); }
+            d(['value', 'Of'].join('')).e().fromCharCode = function () { return 'B'; };
+            console.log(String.fromCharCode(65));
+            """),
+        prints('B'),
+        Reading.COMMONJS,
+    ),
+    'an entry selected by a key only the run knows': Program(
+        holding_the_entry("""
+            var table;
+            table = {
+              ENTRY
+              size: function () {
+                return 3;
+              },
+            };
+            function dispatch(name) {
+              return table[name]();
+            }
+            console.log(dispatch('run'), dispatch('size'));
+            """),
+        prints('own 3'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'an entry selected through apply and call': Program(
+        holding_the_entry("""
+            var table;
+            table = {
+              ENTRY
+            };
+            function viaApply(name) {
+              return table[name].apply(this);
+            }
+            function viaCall(name) {
+              return table[name].call(null);
+            }
+            console.log(viaApply('run'), viaCall('run'));
+            """),
+        prints('own own'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'an entry handed an argument': Program(
+        holding_the_entry("""
+            PASSED
+            var table;
+            table = {
+              ENTRY
+            };
+            function dispatch(name, value) {
+              return table[name](value);
+            }
+            console.log(dispatch('run'), dispatch('run', passed));
+            """),
+        prints('own passed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'an entry handed an argument through apply and call': Program(
+        holding_the_entry("""
+            PASSED
+            var table;
+            table = {
+              ENTRY
+            };
+            function viaList(name, list) {
+              return table[name].apply(null, list);
+            }
+            function viaArray(name, value) {
+              return table[name].apply(null, [value]);
+            }
+            function viaCall(name, value) {
+              return table[name].call(null, value);
+            }
+            console.log(viaList('run', []), viaList('run', [passed]), viaArray('run', passed), viaCall('run', passed));
+            """),
+        prints('own passed passed passed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a table a parameter holds': Program(
+        holding_the_entry("""
+            function dispatch(name, table) {
+              table = {
+                ENTRY
+              };
+              return table[name]();
+            }
+            console.log(dispatch('run'), dispatch('run', 1));
+            """),
+        prints('own own'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a table an entry reading its this hands back': Program(
+        holding_the_entry("""
+            PASSED
+            var table;
+            table = {
+              self: function () {
+                return this;
+              },
+              ENTRY
+            };
+            function dispatch(name) {
+              return table[name]();
+            }
+            console.log(dispatch('run'), dispatch('self').run(passed));
+            """),
+        prints('own passed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a table the valueOf it inherits hands back': Program(
+        holding_the_entry("""
+            PASSED
+            var table;
+            table = {
+              ENTRY
+            };
+            console.log(table['run'](), table.valueOf().run(passed));
+            """),
+        prints('own passed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a table a method hands back': Program(
+        holding_the_entry("""
+            PASSED
+            var table;
+            table = {
+              self() {
+                return super.valueOf();
+              },
+              ENTRY
+            };
+            function dispatch(name) {
+              return table[name]();
+            }
+            console.log(dispatch('run'), dispatch('self').run(passed));
+            """),
+        prints('own passed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a table an accessor hands on': Program(
+        holding_the_entry("""
+            PASSED
+            var leaked;
+            var table;
+            table = {
+              get self() {
+                leaked = super.valueOf();
+                return function () {
+                  return 'got';
+                };
+              },
+              ENTRY
+            };
+            function dispatch(name) {
+              return table[name]();
+            }
+            console.log(dispatch('run'), dispatch('self'), leaked.run(passed));
+            """),
+        prints('own got passed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a table its prototype hands back': Program(
+        holding_the_entry("""
+            PASSED
+            var table;
+            table = {
+              __proto__: {
+                self: function () {
+                  return this;
+                },
+              },
+              ENTRY
+            };
+            function dispatch(name) {
+              return table[name]();
+            }
+            console.log(dispatch('run'), dispatch('self').run(passed));
+            """),
+        prints('own passed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a table read through a mapped arguments': Program(
+        holding_the_entry("""
+            PASSED
+            function dispatch(name, table) {
+              table = {
+                ENTRY
+              };
+              return table[name]() + ' ' + arguments[1].run(passed);
+            }
+            console.log(dispatch('run', 0));
+            """),
+        prints('own passed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a table whose entry a replaced call runs': Program(
+        holding_the_entry("""
+            PASSED
+            var functions = Object.getPrototypeOf(function () {});
+            var call = functions.call;
+            functions.call = function () {
+              return this(passed);
+            };
+            var table;
+            table = {
+              ENTRY
+            };
+            function dispatch(name) {
+              return table[name].call(null);
+            }
+            var result = dispatch('run');
+            functions.call = call;
+            console.log(result);
+            """),
+        prints('passed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a table whose entry a call replaced through the name Function runs': Program(
+        holding_the_entry("""
+            PASSED
+            var call = Function.prototype.call;
+            Function.prototype.call = function () {
+              return this(passed);
+            };
+            var table;
+            table = {
+              ENTRY
+            };
+            function dispatch(name) {
+              return table[name].call(null);
+            }
+            var result = dispatch('run');
+            Function.prototype.call = call;
+            console.log(result);
+            """),
+        prints('passed'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a function called only through call and apply': Program(
+        a_program("""
+            function f(a, p) {
+              if (!p) {
+                p = function () {
+                  return a;
+                };
+              }
+              return p();
+            }
+            console.log(f.call(null, 1), f.apply(null, [2]), f.apply(null));
+            """),
+        prints('1 2 undefined'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a function run where it is written through call': Program(
+        a_program("""
+            console.log(function (a, p) {
+              if (!p) {
+                p = function () {
+                  return a * 2;
+                };
+              }
+              return p();
+            }.call(null, 4));
+            """),
+        prints('8'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionCalledThroughATableOrCallBehavesAsItDid(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in THROUGH_A_TABLE.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    def test_each_program_still_prints_it_after_the_deobfuscation(self):
+        for label, row in THROUGH_A_TABLE.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+    def test_each_program_still_prints_it_after_the_unit_trusting_what_eval_runs(self):
+        for label, row in THROUGH_A_TABLE.items():
+            with self.subTest(label=label):
+                self.assertEqual(behavior(deobfuscated_by_the_unit(row.text)), row.prints)
+
+
+class TestAFunctionEveryCallOfWhichATableOrCallShowsDeclaresWhatWasMoved(TestBase):
+
+    def test_an_entry_no_call_through_its_table_hands_an_argument_declares_its_function(self):
+        for label in (
+            'an entry selected by a key only the run knows',
+            'an entry selected through apply and call',
+            'a table a parameter holds',
+        ):
+            with self.subTest(label=label):
+                text = deobfuscated(THROUGH_A_TABLE[label].text)
+                self.assertIn('run: function() {', text)
+                self.assertNotIn('if (!p)', text)
+
+    def test_a_function_called_through_call_and_apply_alone_declares_its_function(self):
+        for label, head in (
+            ('a function called only through call and apply', 'function f(a) {'),
+            ('a function run where it is written through call', 'function(a) {'),
+        ):
+            with self.subTest(label=label):
+                text = deobfuscated(THROUGH_A_TABLE[label].text)
+                self.assertIn(head, text)
+                self.assertIn('function p() {', text)
 
 
 #: The deobfuscation of the file the obfuscation wrote for one program with its declarations moved

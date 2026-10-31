@@ -2028,7 +2028,7 @@ class TestTheElementsOfArgumentsHoldWhatTheCallsShownPass(TestBase):
         self.assertIn('2', values)
 
     def test_a_call_that_may_come_another_way_leaves_the_elements_incomplete_with_the_shown_values(self):
-        source = 'function f() { return arguments[1]; } f(1, 2); f.call(null, 3, 4);'
+        source = 'function f() { return arguments[1]; } f(1, 2); (0, f)(3, 4);'
         values, complete = self._passed(source, 1)
         self.assertFalse(complete)
         self.assertIn('2', values)
@@ -2082,7 +2082,6 @@ class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
 
     def test_a_call_that_may_come_another_way_leaves_the_list_incomplete_with_the_shown_values(self):
         for label, source in {
-            'call'                           : 'function f(p) { return p; } f(1); f.call(null, 2);',
             'a callback'                     : 'function f(p) { return p; } f(1); [2].forEach(f);',
             'a sequence'                     : 'function f(p) { return p; } f(1); (0, f)(2);',
             'an object method'               : 'function f(p) { return p; } f(1); var o = { f: f }; o.f(2);',

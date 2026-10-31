@@ -228,7 +228,12 @@ def _locals(function: JsFunctionNode, cache: ModelCache) -> list[_Local] | None:
     The parameters that end the list of *function* and become declarations of its body, last first,
     or `None` where none does. Every call of the function is one the text shows, the host's included
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_only_by_shown_calls`), so
-    nothing else passes them or reads the `length`. The run is the obfuscation's only where one of
+    nothing else passes them or reads the `length`; a call through a table under a key only the run
+    knows is taken for a call of one of the table's own entries (`own_keys`), which is how a router
+    of the obfuscation selects them by random keys, while a key that names what every object
+    inherits there is a program made up for it
+    (`TestAnEntryOfATableHandedBackUnderAKeyKnownOnlyAtRuntimeKeepsWhatItIsHanded`). The run is
+    the obfuscation's only where one of
     them holds a function stored under `if (!p)`, a shape no author writes; a run of plain or
     defaulted parameters alone is the shape an optional argument has, and stays. A function whose
     body tests none of its parameters that way is therefore passed over before the model is asked
@@ -245,7 +250,7 @@ def _locals(function: JsFunctionNode, cache: ModelCache) -> list[_Local] | None:
     ):
         return None
     model = cache.model
-    if not model.reached_only_by_shown_calls(function):
+    if not model.reached_only_by_shown_calls(function, own_keys=True):
         return None
     declared = _names_declared_in_the_body(function)
     found: list[_Local] = []
@@ -261,7 +266,7 @@ def _locals(function: JsFunctionNode, cache: ModelCache) -> list[_Local] | None:
         binding = model.binding_of(name)
         if (
             binding is None
-            or not model.parameter_never_passed(binding)
+            or not model.parameter_never_passed(binding, own_keys=True)
             or model.reflection_can_reach(binding)
             or model.references(binding, exclude=body)
         ):

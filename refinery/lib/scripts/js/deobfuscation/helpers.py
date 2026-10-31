@@ -67,6 +67,7 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.lexer import is_identifier_name
 from refinery.lib.scripts.js.model import (
     LOGICAL_ASSIGNMENT_OPERATORS,
+    OBJECT_PROTOTYPE_MEMBERS,
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -164,26 +165,6 @@ the global object holds for `NaN` and `Infinity`.
 """
 
 VOID_LITERAL_OPERANDS = (JsNumericLiteral, JsStringLiteral, JsBooleanLiteral, JsNullLiteral)
-
-OBJECT_PROTOTYPE_MEMBERS = frozenset({
-    '__defineGetter__',
-    '__defineSetter__',
-    '__lookupGetter__',
-    '__lookupSetter__',
-    '__proto__',
-    'constructor',
-    'hasOwnProperty',
-    'isPrototypeOf',
-    'propertyIsEnumerable',
-    'toLocaleString',
-    'toString',
-    'valueOf',
-})
-"""
-The members every plain object inherits from `Object.prototype`. An access of one of these names on
-an object that does not own it resolves through the prototype rather than to `undefined`, so a fold
-that treats an absent own-property as `undefined` must leave these intact.
-"""
 
 FUNCTION_MEMBERS = OBJECT_PROTOTYPE_MEMBERS | frozenset({
     'apply',

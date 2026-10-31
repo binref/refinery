@@ -42,6 +42,7 @@ from refinery.lib.scripts.js.analysis.environment import (
 )
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
+    OBJECT_PROTOTYPE_MEMBERS,
     JsArrayExpression,
     JsArrayPattern,
     JsArrowFunctionExpression,
@@ -90,6 +91,7 @@ from refinery.lib.scripts.js.model import (
     JsParenthesizedExpression,
     JsProperty,
     JsPropertyDefinition,
+    JsPropertyKind,
     JsRestElement,
     JsReturnStatement,
     JsScript,
@@ -1036,6 +1038,27 @@ def _member_reaches_dispatch_surface(member: JsMemberExpression) -> bool:
     return _prototype_surface_escapes(member)
 
 
+def _function_reaches_its_prototype(read: Node) -> bool:
+    """
+    Whether the read *read* of the `Function` intrinsic lets text write through the prototype
+    every function finds `call` and `apply` on: it is neither invoked nor consumed for a verdict
+    (`_read_forwards_no_alias`), and it flows onward, reads a key only the run knows, or reads a
+    key that keeps yielding that prototype and writes through what it yields or hands it on
+    (`_prototype_surface_escapes`). Any other key it reads names a property of `Function` itself.
+    """
+    if _call_of(read) is not None or _read_forwards_no_alias(read):
+        return False
+    access = _enclosing_member_access(read)
+    if access is None:
+        return True
+    key = static_property_key(access)
+    if key is None:
+        return True
+    if key not in _PROTOTYPE_KEEPING_KEYS:
+        return False
+    return _prototype_surface_escapes(access)
+
+
 def _prototype_surface_escapes(access: JsMemberExpression) -> bool:
     """
     Whether the prototype-surface value the member *access* yields can be written through or flow
@@ -1845,6 +1868,53 @@ def _call_of(node: Node) -> JsCallExpression | JsNewExpression | None:
     return None
 
 
+class ShownCall(NamedTuple):
+    """
+    A call of a function the text shows (`SemanticModel._calls_shown`): the call or `new` that runs
+    it, and the arguments the function receives there, `None` where the text does not write them
+    out, as for `f.apply(t, list)`.
+    """
+    node: JsCallExpression | JsNewExpression
+    arguments: Sequence[Node] | None
+
+
+def _invocation(read: Node) -> tuple[ShownCall, bool] | None:
+    """
+    The call that invokes the value read at *read*, with the arguments it hands that value, and
+    whether it goes through the `call` or `apply` of the value: a call or `new` with the read as
+    its callee passes its own arguments; a call of the read's `call` passes those after the
+    receiver, and one of its `apply` the elements of an array written in place without holes, none
+    where it has no second argument, and arguments not written out otherwise. `None` where the
+    read is not invoked in one of these ways.
+    """
+    direct = _call_of(read)
+    if direct is not None:
+        return ShownCall(direct, direct.arguments), False
+    method = _enclosing_member_access(read)
+    if method is None:
+        return None
+    key = static_property_key(method)
+    if key != 'call' and key != 'apply':
+        return None
+    call = _call_of(method)
+    if not isinstance(call, JsCallExpression):
+        return None
+    arguments = call.arguments
+    if arguments and isinstance(strip_parens(arguments[0]), JsSpreadElement):
+        return ShownCall(call, None), True
+    if key == 'call':
+        return ShownCall(call, arguments[1:]), True
+    if len(arguments) < 2:
+        return ShownCall(call, []), True
+    listed = strip_parens(arguments[1])
+    if not isinstance(listed, JsArrayExpression):
+        return ShownCall(call, None), True
+    elements = [element for element in listed.elements if element is not None]
+    if len(elements) < len(listed.elements):
+        return ShownCall(call, None), True
+    return ShownCall(call, elements), True
+
+
 def _extended_by(read: Node) -> JsClassDeclaration | JsClassExpression | None:
     """
     The class whose `extends` clause is the read *read*, or `None`.
@@ -1902,12 +1972,30 @@ def _constructed_without_its_name(cls: JsClassDeclaration | JsClassExpression) -
     return False
 
 
-def _passed_at(call: JsCallExpression | JsNewExpression, position: int) -> tuple[Node | None, bool]:
+class _Way(NamedTuple):
     """
-    The argument *call* passes at *position*, `None` when it passes none there, and whether a
-    spread at or before the position hides which argument that is.
+    A name `SemanticModel._calls_shown` follows to a function or class: its binding, the nodes
+    through which it may reach what it is called through, and what it has to hold alone for those
+    to be every way there, `None` where whatever else it holds changes nothing: the own name of a
+    function or class expression, and the name of a table, which is reached through its reads
+    alone. Of a table, *unkeyed* are the nodes that select under a key only the run knows, which
+    may name what the table inherits rather than one of its own entries.
+    """
+    binding: Binding
+    nodes: Sequence[Node]
+    alone: Node | None
+    unkeyed: frozenset[Node] = frozenset()
+
+
+def _passed_at(call: ShownCall, position: int) -> tuple[Node | None, bool]:
+    """
+    The argument *call* passes at *position*, `None` when it passes none there, and whether the
+    arguments are not written out or a spread at or before the position hides which argument that
+    is.
     """
     arguments = call.arguments
+    if arguments is None:
+        return None, True
     if any(isinstance(strip_parens(argument), JsSpreadElement) for argument in arguments[:position + 1]):
         return None, True
     if position < len(arguments):
@@ -2590,7 +2678,8 @@ class SemanticModel:
         self._constructions_hidden: bool | None = None
         self._declares_only_functions: bool | None = None
         self._values_through_calls: dict[Binding, tuple[list[Node], bool]] = {}
-        self._shown_calls: dict[Node, tuple[list[JsCallExpression | JsNewExpression], bool]] = {}
+        self._shown_calls: dict[tuple[Node, bool], tuple[list[ShownCall], bool]] = {}
+        self._table_ways: dict[JsObjectExpression, _Way | None] = {}
         self._module_may_be_reentered = False
         self._annex_b_copies: list[AnnexBCopy] = []
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
@@ -3210,12 +3299,13 @@ class SemanticModel:
         """
         `binding_values`, with a parameter read through the calls of its function the text shows:
         its values are its own writes, its default, and the argument each such call passes at its
-        position (`values_at_call`). A call shown is a call or `new` directly through a name
-        holding the function, its own name included, or the call of a function written as the
-        callee; for a class constructor, a `new` of its class the same way, and a `super` call in
-        the constructor of a class extending it. A value one of these calls passes is listed
-        whatever other calls exist and whatever the other parameters are; only a spread at or
-        before the position hides which argument the call passes there.
+        position (`values_at_call`). A call shown is one `_calls_shown` lists: an invocation of a
+        name holding the function, its own name included, of a table entry it may select, or of
+        the function where it is written; for a class constructor, a `new` of its class the same
+        way, and a `super` call in the constructor of a class extending it. A value one of these
+        calls passes is listed whatever other calls exist and whatever the other parameters are;
+        only a spread at or before the position, or arguments the call does not write out, hide
+        which argument the call passes there.
 
         The list is complete only when no call can come another way (`_calls_shown`) and every
         shown call passes an argument at the position, or the parameter has a default. Every
@@ -3265,6 +3355,9 @@ class SemanticModel:
         passed: list[Node] = []
         for call in calls:
             if position is None:
+                if call.arguments is None:
+                    complete = False
+                    continue
                 for argument in call.arguments:
                     argument = strip_parens(argument)
                     if isinstance(argument, JsSpreadElement):
@@ -3279,13 +3372,13 @@ class SemanticModel:
                 passed.append(argument)
         return passed, complete
 
-    def parameter_never_passed(self, binding: Binding) -> bool:
+    def parameter_never_passed(self, binding: Binding, *, own_keys: bool = False) -> bool:
         """
         Whether the function of the parameter *binding* is called, and no call can pass an argument
         to the parameter, which then holds `undefined` or its default whenever the function starts:
         it is a name of a parameter list, plain or with a default, every way to its function is a
-        call the text shows (`_calls_shown`), there is one at least, and none of those passes an
-        argument at its position or a spread at or before it.
+        call the text shows (`_calls_shown`, with *own_keys*), there is one at least, and none of
+        those passes an argument at its position or hides which argument it passes there.
         """
         if len(binding.declarations) != 1:
             return False
@@ -3293,7 +3386,7 @@ class SemanticModel:
         if declared is None:
             return False
         function, position, _ = declared
-        calls, complete = self._calls_shown(function)
+        calls, complete = self._calls_shown(function, own_keys=own_keys)
         if not complete or not calls:
             return False
         for call in calls:
@@ -3302,39 +3395,128 @@ class SemanticModel:
                 return False
         return True
 
-    def _names_calling(self, held: Node) -> list[tuple[Binding, list[ReferenceNode]] | None]:
+    def _names_calling(self, held: Node) -> list[_Way | None]:
         """
-        The names the function or class *held* is called or constructed through, each with the
-        reads through which it reaches *held*: its declared names (`function_names`), or the one
-        name a declarator or an assignment statement stores it into (`name_holding`), and the own
+        The names the function or class *held* is called or constructed through: its declared
+        names (`function_names`), the one name a declarator or an assignment statement stores it
+        into (`name_holding`), or the name of a table holding it (`_table_holding`), and the own
         name of a function or class expression. `None` stands for a holder that is no name. One
-        written as the callee of a call or a `new` is held by none.
+        invoked where it is written (`_invocation_of`) is held by none.
         """
-        names: list[tuple[Binding, list[ReferenceNode]] | None] = []
+        names: list[_Way | None] = []
         if isinstance(held, JsFunctionDeclaration):
             declared = self.function_names(held)
             if declared is None:
                 names.append(None)
             else:
-                names.extend((name, declared.reads_of(name)) for name in declared.bindings)
+                names.extend(_Way(name, declared.reads_of(name), held) for name in declared.bindings)
         elif isinstance(held, JsClassDeclaration):
             own = self.binding_of(held.id) if isinstance(held.id, JsIdentifier) else None
-            names.append(None if own is None else (own, own.reads))
-        elif _call_of(held) is None:
+            names.append(None if own is None else _Way(own, own.reads, held))
+        elif self._invocation_of(held) is None:
             holder = self.name_holding(held)
-            names.append(None if holder is None else (holder, holder.reads))
+            if holder is None:
+                names.append(self._table_holding(held))
+            else:
+                names.append(_Way(holder, holder.reads, held))
         if isinstance(held, (JsFunctionExpression, JsClassExpression)) and isinstance(held.id, JsIdentifier):
             own = self.binding_of(held.id)
-            names.append(None if own is None else (own, own.reads))
+            names.append(None if own is None else _Way(own, own.reads, None))
         return names
 
-    def reached_only_by_shown_calls(self, function: JsFunctionNode) -> bool:
+    def _table_holding(self, held: Node) -> _Way | None:
+        """
+        The way to a function written as the value of a property of an object literal
+        (`_table_way`), or `None` where *held* is written anywhere else. Memoized per literal.
+        """
+        entry = enclosing_operator(held)
+        if not isinstance(entry, JsProperty) or strip_parens(entry.value) is not held:
+            return None
+        table = entry.parent
+        if not isinstance(table, JsObjectExpression):
+            return None
+        if table not in self._table_ways:
+            self._table_ways[table] = None
+            self._table_ways[table] = self._table_way(table)
+        return self._table_ways[table]
+
+    def _table_way(self, table: JsObjectExpression) -> _Way | None:
+        """
+        The way to a function written as the value of a property of the object literal *table*:
+        the one name the literal is stored into (`name_holding`), with a node for each read of it,
+        the member access it is the object of where it is one, which may select the function, and
+        the read itself otherwise. `None` where the table can reach code that is not shown:
+        an invocation through the table hands it over as `this`, so every property has to be a
+        plain one (`key: value`, no accessor, method or spread, which may read it through `super`)
+        whose value is a function reading no `this` of its own (`_function_observes_its_this`);
+        and a key the text spells, or a string a call shown passes for it
+        (`_keys_a_call_spells`), may not select what the table inherits, where `valueOf` hands it
+        back: where the literal spells every key, it has to be one of them, and where some key of
+        the literal is one only the run knows, it may not be a member every object inherits
+        (`refinery.lib.scripts.js.model.OBJECT_PROTOTYPE_MEMBERS`). A key only the run knows may
+        name such a member too; the way lists the accesses under one as unkeyed, which
+        `_calls_shown` takes for an entry's call only where its caller assumes such a key is one of
+        the literal's own.
+        """
+        holder = self.name_holding(table)
+        if holder is None:
+            return None
+        keys: set[str] = set()
+        every_key_spelled = True
+        for prop in table.properties:
+            if (
+                not isinstance(prop, JsProperty)
+                or prop.kind is not JsPropertyKind.INIT
+                or prop.method
+                or not isinstance(value := strip_parens(prop.value), (JsFunctionExpression, JsArrowFunctionExpression))
+                or self._function_observes_its_this(value, set(), 0)
+            ):
+                return None
+            if (key := _property_key_name(prop)) is not None:
+                keys.add(key)
+            else:
+                every_key_spelled = False
+        nodes: list[Node] = []
+        unkeyed: set[Node] = set()
+        for read in holder.reads:
+            access = _enclosing_member_access(read)
+            if access is None:
+                nodes.append(read)
+                continue
+            key = static_property_key(access)
+            spelled, known = ({key}, True) if key is not None else self._keys_a_call_spells(access)
+            foreign = spelled - keys
+            if foreign and (every_key_spelled or foreign & OBJECT_PROTOTYPE_MEMBERS):
+                return None
+            if not known:
+                unkeyed.add(access)
+            nodes.append(access)
+        return _Way(holder, nodes, None, frozenset(unkeyed))
+
+    def _keys_a_call_spells(self, access: JsMemberExpression) -> tuple[set[str], bool]:
+        """
+        The strings the computed key of *access* may be by what the text spells, and whether those
+        are all it may be: where the key is a name, each string among the values it may hold
+        (`values_through_calls`), what a call shown passes for a parameter among them, all of them
+        where the list is complete and every value is a string the text spells. Any other value,
+        and any other key, is one only the run knows.
+        """
+        key = strip_parens(access.property)
+        if not access.computed or not isinstance(key, JsIdentifier):
+            return set(), False
+        values, complete = self.values_through_calls(self.resolve(key))
+        spelled = [static_string(value) for value in values]
+        known = complete and bool(spelled) and None not in spelled
+        return {string for string in spelled if string is not None}, known
+
+    def reached_only_by_shown_calls(self, function: JsFunctionNode, *, own_keys: bool = False) -> bool:
         """
         Whether every way to *function* is a call the text shows or a test of its names
-        (`SemanticModel._calls_shown`), and no class extends it, so that nothing reads a property
-        of it: the static code of a class extending it reads its properties through `super`.
+        (`SemanticModel._calls_shown`, with *own_keys*), and no class extends it, so that nothing
+        reads a property of it: the static code of a class extending it reads its properties
+        through `super`.
         """
-        if not self._calls_shown(function)[1]:
+        if not self._calls_shown(function, own_keys=own_keys)[1]:
             return False
         return not any(
             _extended_by(read) is not None
@@ -3342,42 +3524,51 @@ class SemanticModel:
             for read in reads
         )
 
-    def _shown_names(self, function: JsFunctionNode) -> list[tuple[Binding, list[ReferenceNode]]]:
+    def _shown_names(self, function: JsFunctionNode) -> list[tuple[Binding, Sequence[Node]]]:
         """
-        The names `_calls_shown` follows to *function* or to the class it constructs, each with its
-        reads.
+        The names `_calls_shown` follows to *function* or to the class it constructs, each with the
+        nodes through which it may reach it.
         """
         held = constructed_class(function) or function
-        return [named for named in self._names_calling(held) if named is not None]
+        return [(way.binding, way.nodes) for way in self._names_calling(held) if way is not None]
 
-    def _calls_shown(self, function: JsFunctionNode) -> tuple[list[JsCallExpression | JsNewExpression], bool]:
+    def _calls_shown(
+        self,
+        function: JsFunctionNode,
+        *,
+        own_keys: bool = False,
+    ) -> tuple[list[ShownCall], bool]:
         """
         The calls of *function* the text shows, in the sense of `values_through_calls`, and whether
-        no call can come another way: every read of the names it is called through is such a call,
-        only tested (`read_is_only_tested`), or the `extends` clause of a class whose own
-        constructor makes the `super` calls shown, or which has none, so that its own calls are
-        shown in turn; the names of such a class are read the same way, since its prototype is the
-        one it extends; each name holds the function, or the class it constructs, alone and nothing
-        reaches it where no read of it stands (`reached_without_a_read`): it is neither exported nor
-        written at entry nor reached through a handed object, by reflection, or by code outside the
-        file; no class among them can be constructed without its name
+        no call can come another way: every node through which a name it is called through may
+        reach it (`_names_calling`) is invoked (`_invocation_of`), only tested
+        (`read_is_only_tested`), or the `extends` clause of a class whose own constructor makes the
+        `super` calls shown, or which has none, so that its own calls are shown in turn; the names
+        of such a class are read the same way, since its prototype is the one it extends; each name
+        holds what it has to hold alone (`_Way`), and nothing reaches it where no read of it stands
+        (`reached_without_a_read`): it is neither exported nor written at entry nor reached through
+        a handed object, by reflection, or by code outside the file; no class among them can be
+        constructed without its name
         (`_constructed_without_its_name`); nothing reaches the function without its name
         (`reached_without_its_name`); no class among them extends a constructor the program does
         not declare (`_extends_beyond_the_program`), whose methods construct it; and where a shown
         call constructs it, no construction is hidden (`constructions_may_be_hidden`), through an
-        escaping `constructor` property, a `new` of one, or `new.target`. Memoized per function.
+        escaping `constructor` property, a `new` of one, or `new.target`. A table read under a key
+        only the run knows (`_Way.unkeyed`) may select what the table inherits, `valueOf` handing it
+        back, so it is a way no call shows, unless *own_keys* has such a key taken for one of the
+        literal's own: an assumption only a caller that has argued it may make. Memoized per
+        function and assumption.
         """
-        cached = self._shown_calls.get(function)
+        cached = self._shown_calls.get((function, own_keys))
         if cached is not None:
             return cached
-        calls: list[JsCallExpression | JsNewExpression] = []
+        calls: list[ShownCall] = []
         complete = not self.reached_without_its_name(function)
         root = constructed_class(function) or function
         pending: list[Node] = [root]
         seen = {root}
         while pending:
             held = pending.pop()
-            own = held.id if isinstance(held, (JsFunctionExpression, JsClassExpression)) else None
             cls = held if isinstance(held, (JsClassDeclaration, JsClassExpression)) else None
             forwards = held is root or (cls is not None and _super_calls(cls) is None)
             if cls is not None and (
@@ -3385,26 +3576,29 @@ class SemanticModel:
                 or self._extends_beyond_the_program(cls)
             ):
                 complete = False
-            direct = _call_of(held)
+            direct = self._invocation_of(held)
             if direct is not None and forwards:
                 calls.append(direct)
-            for named in self._names_calling(held):
-                if named is None:
+            for way in self._names_calling(held):
+                if way is None:
                     complete = False
                     continue
-                name, reads = named
-                if self.reached_without_a_read(name):
+                if self.reached_without_a_read(way.binding):
                     complete = False
-                if own not in name.declarations and strip_parens(self.singular_value(name)) is not held:
+                if way.alone is not None and strip_parens(self.singular_value(way.binding)) is not way.alone:
                     complete = False
-                for read in reads:
-                    call = _call_of(read)
+                for read in way.nodes:
+                    if read in way.unkeyed and not own_keys:
+                        complete = False
+                        continue
+                    call = self._invocation_of(read)
                     subclass = _extended_by(read)
                     if call is not None:
                         if forwards:
                             calls.append(call)
                     elif subclass is not None:
-                        calls.extend(_super_calls(subclass) or ())
+                        supers = _super_calls(subclass) or ()
+                        calls.extend(ShownCall(call, call.arguments) for call in supers)
                         if subclass not in seen:
                             seen.add(subclass)
                             pending.append(subclass)
@@ -3412,11 +3606,11 @@ class SemanticModel:
                         complete = False
         if (
             complete
-            and any(isinstance(call, JsNewExpression) for call in calls)
+            and any(isinstance(call.node, JsNewExpression) for call in calls)
             and self.constructions_may_be_hidden()
         ):
             complete = False
-        cached = self._shown_calls[function] = calls, complete
+        cached = self._shown_calls[function, own_keys] = calls, complete
         return cached
 
     def _binding_value_channels(
@@ -5464,9 +5658,7 @@ class SemanticModel:
             return None
         if not parent.arguments or strip_parens(parent.arguments[0]) is not node:
             return None
-        if self.has_reflection_surface() or self.has_opaque_global_write():
-            return False
-        if self._dispatch_surface_reachable():
+        if not self.intrinsic_dispatch_trusted():
             return False
         target = strip_parens(callee.object)
         if isinstance(target, FUNCTION_NODES):
@@ -5547,28 +5739,78 @@ class SemanticModel:
                 access = _enclosing_member_access(access)
         return False
 
+    def intrinsic_dispatch_trusted(self) -> bool:
+        """
+        Whether a call of `call` or `apply` on a function finds the built-in: no reflection surface
+        stands, through which code could replace it, nothing is stored on the global object under
+        a runtime key (`has_opaque_global_write`), and no text reaches the prototype surface the
+        dispatch walks (`_dispatch_surface_reachable`), `Function.prototype` among it. The one
+        answer every reader that counts on such a call reaching the built-in asks.
+        """
+        return not (
+            self.has_reflection_surface()
+            or self.has_opaque_global_write()
+            or self._dispatch_surface_reachable()
+        )
+
+    def _invocation_of(self, read: Node) -> ShownCall | None:
+        """
+        The call that invokes the value read at *read* (`_invocation`), where one that goes through
+        `call` or `apply` finds the built-in (`intrinsic_dispatch_trusted`).
+        """
+        invocation = _invocation(read)
+        if invocation is None:
+            return None
+        call, through_a_method = invocation
+        if through_a_method and not self.intrinsic_dispatch_trusted():
+            return None
+        return call
+
     def _dispatch_surface_reachable(self) -> bool:
         """
         Whether text can obtain and then write through the prototype surface an `apply`/`call`
-        dispatch walks, without spelling `Function` — a name whose read is already a reflection
-        surface. A write there may replace the intrinsic the dispatch is trusted to find, so while
-        one is possible anywhere, no receiver hand-over is safe. A `getPrototypeOf`/
+        dispatch walks. A write there may replace the intrinsic the dispatch is trusted to find, so
+        while one is possible anywhere, no receiver hand-over is safe. A `getPrototypeOf`/
         `setPrototypeOf` member reaches the surface as a call and counts on sight, since an alias
         of it leaves no chain to climb. A `__proto__` or `constructor` key yields the surface as a
         value and counts exactly when what it yields is written through or flows onward
         (`_prototype_surface_escapes`): the obfuscator's own defense reads `.constructor(...)`
         merely to invoke it, and a gate refusing every such read would refuse the corpus it exists
-        to fold. Keys are read statically (`static_property_key`), so a computed key no fold
-        collapses stays unrecognized — the documented residual of every static key reading in
-        this model.
+        to fold. The `Function` intrinsic, read by its name, under a key naming it, or destructured,
+        counts where it reaches its prototype (`_function_reaches_its_prototype`): the trusting
+        model takes what it runs for inert and does not count its read as a reflection surface,
+        but a write through its prototype is no code it runs. Keys are read statically
+        (`static_property_key`), so a computed key no fold collapses stays unrecognized — the
+        documented residual of every static key reading in this model.
         """
         if self._dispatch_surface_reached is None:
             self._dispatch_surface_reached = any(
-                isinstance(node, JsMemberExpression)
-                and _member_reaches_dispatch_surface(node)
-                for node in self.root.walk()
+                self._reaches_dispatch_surface(node) for node in self.root.walk()
             )
         return self._dispatch_surface_reached
+
+    def _reaches_dispatch_surface(self, node: Node) -> bool:
+        """
+        Whether *node* lets text touch the prototype surface an `apply`/`call` dispatch walks, in
+        the sense of `_dispatch_surface_reachable`.
+        """
+        if isinstance(node, JsMemberExpression):
+            if _member_reaches_dispatch_surface(node):
+                return True
+            return (
+                member_property_name(node) == 'Function'
+                and not is_member_write_target(node)
+                and _function_reaches_its_prototype(node)
+            )
+        if isinstance(node, JsIdentifier):
+            return (
+                node.name == 'Function'
+                and self._reads_reflective_intrinsic(node)
+                and _function_reaches_its_prototype(node)
+            )
+        if isinstance(node, (JsVariableDeclarator, JsAssignmentExpression)):
+            return self._destructures_a_reflective_intrinsic(node)
+        return False
 
     def _function_observes_its_this(
         self,

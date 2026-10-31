@@ -6669,3 +6669,53 @@ class TestAFileLevelVarABrowserDefinesAsAnAccessorIsNotReadAsAPlainVariable(Test
         source = 'var name = 1; console.log(typeof name);'
         deobfuscated = deobfuscate_source(source, environment=HostEnvironment.browser)
         self.assertNotIn("'number'", deobfuscated)
+
+
+#: A program whose table of functions is handed back by the `valueOf` every object inherits,
+#: selected under a key only the run knows, mapped to what Node prints run as a CommonJS file.
+A_TABLE_HANDED_BACK_UNDER_A_KEY_KNOWN_ONLY_AT_RUNTIME = {
+    inspect.cleandoc('''
+        var table;
+        table = {
+          run: function (p) {
+            if (!p) {
+              p = function () {
+                return 'own';
+              };
+            }
+            return p();
+          },
+        };
+        function dispatch(name) {
+          return table[name]();
+        }
+        console.log(dispatch('run'), dispatch('valueOf').run(function () {
+          return 'passed';
+        }));
+    '''):
+        'own passed\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnEntryOfATableHandedBackUnderAKeyKnownOnlyAtRuntimeKeepsWhatItIsHanded(TestBase):
+    """
+    The calls of an entry of a table are the calls through the name holding the table, and a key
+    only the run knows is taken for one of the table's own. Selecting `valueOf`, which every object
+    inherits, hands the table back, and a call through what it hands back passes the entry an
+    argument: the function the entry stores under `if (!p)` is declared again and the argument
+    ignored.
+    """
+
+    @wontfix(
+        'no obfuscated file selects what a table inherits: the obfuscation keys the table of its '
+        'router with random strings of six characters, none of them a name every object inherits, '
+        'and no program selects valueOf under a key it reads at runtime to call an entry of the '
+        'table it hands back'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_TABLE_HANDED_BACK_UNDER_A_KEY_KNOWN_ONLY_AT_RUNTIME
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
