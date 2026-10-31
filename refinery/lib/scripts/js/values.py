@@ -24,13 +24,38 @@ from refinery.lib.scripts.js.model import (
 from refinery.lib.scripts.js.numbers import js_number_to_string, js_string_to_number, to_js_number
 from refinery.lib.scripts.js.utf16 import to_code_units
 
+
+class BuiltinFunction:
+    """
+    A function the language installs, as a fold holds one: the one instance
+    `refinery.lib.scripts.js.builtins` keeps for each such function, so that two reads of one
+    function are one value and reads of two functions are two. *name* is the `name` the function
+    owns, and *is_constructor* marks one of the constructors a global name holds.
+
+    It is an object whose `typeof` is `'function'`. Converting it to a primitive gives the text the
+    host's engine writes for it, which no value of this domain knows, so `to_string` raises
+    `HostApproximated` and a fold asks the host instead
+    (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.native_function_text`); every host
+    writes that text in the syntax of a function, which reads as no number.
+    """
+    __slots__ = 'name', 'is_constructor'
+
+    def __init__(self, name: str, is_constructor: bool):
+        self.name = name
+        self.is_constructor = is_constructor
+
+    def __repr__(self) -> str:
+        return F'BuiltinFunction({self.name!r})'
+
+
 if TYPE_CHECKING:
     from typing import TypeAlias
 
     from refinery.lib.scripts.js.model import JsFunctionNode
 
     Value: TypeAlias = (
-        str | float | bool | list | dict | JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None
+        str | float | bool | list | dict | JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
+        | BuiltinFunction | None
     )
 
 
@@ -178,6 +203,8 @@ def to_boolean(value: Value) -> bool:
         return True
     if isinstance(value, FUNCTION_NODES):
         return True
+    if isinstance(value, BuiltinFunction):
+        return True
     return False
 
 
@@ -236,6 +263,8 @@ def to_string(value: Value) -> str:
         return ','.join(_array_element_string(v) for v in value)
     if isinstance(value, FUNCTION_NODES):
         return function_source(value)
+    if isinstance(value, BuiltinFunction):
+        raise HostApproximated
     return '[object Object]'
 
 
@@ -281,6 +310,8 @@ def js_typeof(value: Value) -> str:
     if isinstance(value, str):
         return 'string'
     if isinstance(value, FUNCTION_NODES):
+        return 'function'
+    if isinstance(value, BuiltinFunction):
         return 'function'
     return 'object'
 
@@ -439,15 +470,16 @@ may be an object. `!`, `typeof` and `void` take the operand to a truth value, a 
 nothing without asking it anything.
 """
 
-#: The value-domain types that model a JavaScript object: an array, a plain object, and a function.
-#: They share the two behaviours the primitives do not: a ToPrimitive that runs a conversion, and an
-#: equality by reference rather than by value.
+#: The value-domain types that model a JavaScript object: an array, a plain object, a function, and a
+#: function the language installs. They share the two behaviours the primitives do not: a
+#: ToPrimitive that runs a conversion, and an equality by reference rather than by value.
 OBJECT_VALUE_TYPES = (
     list,
     dict,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsArrowFunctionExpression,
+    BuiltinFunction,
 )
 
 

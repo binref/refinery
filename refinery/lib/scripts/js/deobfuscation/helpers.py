@@ -48,7 +48,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
-from refinery.lib.scripts.js.analysis.intrinsics import ESCAPE_WATCHED_ROOTS
+from refinery.lib.scripts.js.analysis.intrinsics import ESCAPE_WATCHED_ROOTS, PROTOTYPE_OWNERS
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     SAME_REALM_GLOBAL_OBJECT_ALIASES,
@@ -56,6 +56,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     Scope,
     SemanticModel,
+    crosses_dynamic_scope,
     enclosing_operator,
     is_invocation_target,
     is_member_write_target,
@@ -65,7 +66,12 @@ from refinery.lib.scripts.js.analysis.model import (
     tolerates_unresolvable,
     walk_receiver_scope,
 )
-from refinery.lib.scripts.js.builtins import PROTOTYPE_CHAIN_PROPERTIES, PROTOTYPE_METHODS
+from refinery.lib.scripts.js.builtins import (
+    CONSTRUCTORS,
+    PROTOTYPE_CHAIN_PROPERTIES,
+    PROTOTYPE_FUNCTIONS,
+    PROTOTYPE_METHODS,
+)
 from refinery.lib.scripts.js.lexer import is_identifier_name
 from refinery.lib.scripts.js.model import (
     LOGICAL_ASSIGNMENT_OPERATORS,
@@ -144,6 +150,7 @@ from refinery.lib.scripts.js.values import (
     JS_NULL,
     OBJECT_VALUE_TYPES,
     UNARY_OPS,
+    BuiltinFunction,
     HostApproximated,
     JsBuffer,
     converted_operands,
@@ -1088,6 +1095,29 @@ def name_is_unbound(node: JsIdentifier, model: SemanticModel) -> bool:
     )
 
 
+def names_the_intrinsic(name: str, at: Node, model: SemanticModel) -> bool:
+    """
+    Whether *name* denotes the intrinsic at *at* rather than something the program can have given a
+    meaning of its own. A file declaring `var Object = {prototype: {}}` names its own object with
+    it, and rewriting a spelling to `Object.prototype` there would name that one instead of the
+    prototype the spelling reaches.
+
+    This is `name_is_unbound` asked of a name that is not written anywhere yet, so it cannot be
+    asked through a reference to one. The three ways that predicate lists are all asked here: a
+    binding, which `lookup` reports and which is crossed deliberately so that a `with` between the
+    two does not hide it; the `with` itself, whose object may carry a property of the name and
+    answer the read from it; and a direct `eval`, which declares bindings no reference records.
+    """
+    scope = model.scope_of(at)
+    if scope is None:
+        return False
+    if model.lookup(name, scope, cross_dynamic=True) is not None:
+        return False
+    if crosses_dynamic_scope(scope):
+        return False
+    return not model.free_name_reachable_by_direct_eval(at)
+
+
 def integer_literal(node: Node | None) -> int | None:
     """
     The value of the numeric literal *node* when it is a finite integer.
@@ -1122,16 +1152,22 @@ def denoted_value(
     vouches for no object at all. It is asked only of a value an operator converts, so a caller
     whose effect model is built on demand pays for it only there.
 
-    A caller that hands in the *effects* of the program it rewrites has two more forms decided: a
-    member read (`denoted_member`), and a binary operator of
-    `refinery.lib.scripts.js.values.BINARY_OPS` over two decided operands, each object operand it
-    converts converted as `converted_operand` converts it. The model is asked for on every question
-    rather than held, so a pass renewing its models asks the renewed ones.
+    A caller that hands in the *effects* of the program it rewrites has three more forms decided: a
+    name still holding one of the constructors `refinery.lib.scripts.js.builtins.CONSTRUCTORS` keeps
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.trusted_intrinsic_name`), a member read
+    (`denoted_member`), and a binary operator of `refinery.lib.scripts.js.values.BINARY_OPS` over
+    two decided operands, each object operand it converts converted as `converted_operand` converts
+    it. Only such a caller ever holds a `refinery.lib.scripts.js.values.BuiltinFunction`. The model
+    is asked for on every question rather than held, so a pass renewing its models asks the renewed
+    ones.
     """
     node = strip_parens(node)
     if node is None:
         return False, None
     if isinstance(node, JsIdentifier):
+        if effects is not None and node.name in CONSTRUCTORS and name_is_unbound(node, model):
+            if effects().trusted_intrinsic_name(node.name):
+                return True, CONSTRUCTORS[node.name]
         if not names_global_value(node, model):
             return False, None
         return True, GLOBAL_VALUE_NAMES[node.name]
@@ -1197,11 +1233,16 @@ def converted_operand(
     """
     *value* as an operator or a computed key converts it, as `(True, value)`, or `(False, None)`
     where converting it may run code the program installed. A primitive converts by an operation no
-    program replaces. An object converts where *uninterceptable* vouches for its conversion and,
-    where *gated*, where the scan follows every write the program makes on a built-in object
+    program replaces. A function the language installs converts to the text the host writes for it
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.builtin_function_text`). Any other
+    object converts where *uninterceptable* vouches for its conversion and, where *gated*, where
+    the scan follows every write the program makes on a built-in object
     (`refinery.lib.scripts.js.analysis.effects.EffectModel.builtin_writes_followed`), which a
     binary operator and a key ask; a unary operator asks *uninterceptable* alone.
     """
+    if isinstance(value, BuiltinFunction):
+        text = None if effects is None else effects().builtin_function_text(value)
+        return (False, None) if text is None else (True, text)
     if converts_uninterceptably(value):
         return True, value
     if gated and (effects is None or not effects().builtin_writes_followed()):
@@ -1248,18 +1289,55 @@ def denoted_member(
 def inherited_member(value: Value, key: str, effects: EffectModel) -> tuple[bool, Value]:
     """
     What the prototype chain of *value*, which does not own *key*, answers for a read of it, as
-    `(True, value)`, or `(False, None)` where nothing decides it. A key no prototype of the chain
-    holds is `undefined` (`property_provably_absent`) where the scan also follows every write the
-    program makes on a built-in object
+    `(True, value)`, or `(False, None)` where nothing decides it. Every answer needs the scan to
+    follow every write the program makes on a built-in object
     (`refinery.lib.scripts.js.analysis.effects.EffectModel.builtin_writes_followed`): the chain
-    question asks about names, and `[].constructor.prototype.x = 1` writes the chain of every array
+    questions ask about names, and `[].constructor.prototype.x = 1` writes the chain of every array
     through none.
+
+    On an intact chain (`refinery.lib.scripts.js.analysis.effects.EffectModel.read_chain_intact`),
+    `constructor` is the constructor owning the prototype of the value's type and a method key is
+    the function that prototype, or `Object.prototype` behind it, holds
+    (`refinery.lib.scripts.js.builtins.PROTOTYPE_FUNCTIONS`). A key no prototype of the chain holds
+    is `undefined` (`property_provably_absent`). A function the language installs answers only for
+    the keys `_builtin_function_member` reads.
     """
     if not effects.builtin_writes_followed():
         return False, None
+    if isinstance(value, BuiltinFunction):
+        return _builtin_function_member(value, key, effects)
+    owner = PROTOTYPE_OWNERS.get(type(value).__name__)
+    if owner in CONSTRUCTORS and effects.read_chain_intact(type(value)):
+        if key == 'constructor':
+            return True, CONSTRUCTORS[owner]
+        method = PROTOTYPE_FUNCTIONS.get((owner, key)) or PROTOTYPE_FUNCTIONS.get(('Object', key))
+        if method is not None:
+            return True, method
     if property_provably_absent(effects, type(value), key):
         return True, None
     return False, None
+
+
+def _builtin_function_member(function: BuiltinFunction, key: str, effects: EffectModel) -> tuple[bool, Value]:
+    """
+    What a read of *key* off the built-in *function* answers, for `inherited_member`: the `name`
+    the function owns (`refinery.lib.scripts.js.analysis.effects.EffectModel.builtin_function_named`),
+    the `Function` its `constructor` reaches
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.builtin_function_constructed_by_function`),
+    and a method of `Function.prototype` on an intact chain. Any other key is not decided.
+    """
+    if key == 'name':
+        if not effects.builtin_function_named(function):
+            return False, None
+        return True, function.name
+    if key == 'constructor':
+        if not effects.builtin_function_constructed_by_function(function):
+            return False, None
+        return True, CONSTRUCTORS['Function']
+    method = PROTOTYPE_FUNCTIONS.get(('Function', key))
+    if method is None or not effects.read_chain_intact(JsFunctionExpression):
+        return False, None
+    return True, method
 
 
 def allocated_object_type(node: Node | None) -> str | None:

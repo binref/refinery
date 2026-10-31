@@ -46,6 +46,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_truthy,
     is_valid_property_key,
     make_string_literal,
+    names_the_intrinsic,
     numeric_value,
     spelled_for_the_callee_position,
     string_value,
@@ -82,6 +83,7 @@ from refinery.lib.scripts.js.model import (
     callee_form_sensitive,
     object_member_access_runs_accessor,
     static_concatenation,
+    static_property_key,
     static_string,
     strip_parens,
 )
@@ -92,6 +94,7 @@ from refinery.lib.scripts.js.strict import joins_directive_prologue, spelling_st
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.lib.scripts.js.values import (
     BINARY_OPS,
+    BuiltinFunction,
     converts_uninterceptably,
     to_string,
 )
@@ -173,7 +176,13 @@ def _spells_a_revealing_string(replaced: Node, value: str) -> bool:
     completes, or spells a method that writes its receiver where it names the method a call runs
     (`_names_a_called_method`). A concatenation holding a piece that reads as no string reads as
     none, and so does every concatenation holding it, so the climb stops at the first.
+
+    Code that already reads as *value* leaves every reading around it as it was. A string a fold
+    completed since the models were last renewed made a renewal due when its last piece was
+    written, so writing the whole of it in place of its pieces shows them nothing.
     """
+    if static_string(replaced) == value:
+        return False
     cursor: Node = replaced
     spelled: str | None = value
     while spelled is not None:
@@ -307,9 +316,10 @@ class JsSimplifications(Transformer):
         a value away, or collapses a key it was read under to a name the scan does not count, leaves fewer
         of them, never more.
 
-        One edit does show the models a fact the held ones lack: a string written where code spelled none,
+        Two edits do show the models a fact the held ones lack: a string written where code spelled none,
         when it reads as a name a reader looks for (`REVEALING_STRINGS`), which a fold computing a key from
-        operators does. Such a fold renews the models before the next decision (`cache`).
+        operators does; and the name of a constructor written where a read reached it, which the scan then
+        follows. Such a fold renews the models before the next decision (`cache`).
 
         The same argument covers the freshness the effect model reports for a container base. A binding is
         judged fresh only when this pass owns every value it takes, and the pass adds no value to any binding;
@@ -598,14 +608,50 @@ class JsSimplifications(Transformer):
         would rewrite the node for as long as the pass is allowed to run. The fold of a unary
         operator, of a binary operator, and of a member read write here, being the folds whose value
         may be any value. A string that shows the models a name (`_spells_a_revealing_string`) makes
-        a renewal due.
+        a renewal due. A function the language installs is written as the constructor it may be
+        (`_written_constructor`).
         """
+        if isinstance(value, BuiltinFunction):
+            return self._written_constructor(node, value)
         literal = folded_literal(value)
         if literal is None or _respells(literal, node):
             return None
         if isinstance(value, str) and _spells_a_revealing_string(node, value):
             self._renewal_due = True
         return literal
+
+    def _written_constructor(self, node: Node, function: BuiltinFunction) -> Expression | None:
+        """
+        The global name of the constructor *function* where that name still denotes it at *node*
+        (`refinery.lib.scripts.js.analysis.effects.EffectModel.trusted_intrinsic_name`,
+        `refinery.lib.scripts.js.deobfuscation.helpers.names_the_intrinsic`), or `None`; no other
+        built-in function has a name to write. `Function` keeps the spelling it has, since what the
+        reflection check reads of a construction is how its callee is spelled; the reflection pass
+        recognizes a spelling through `constructor`
+        (`refinery.lib.scripts.js.analysis.tampering.denotes_function_intrinsic`). For the same
+        reason a read whose `constructor` is read in turn keeps its spelling:
+        `[].constructor.constructor` names `Function` to every reader of the text, and
+        `Array.constructor` only to one that evaluates `Array`. The scan follows writes and
+        hand-offs through the name, so writing it makes a renewal due.
+        """
+        if not function.is_constructor or function.name == 'Function':
+            return None
+        holder = enclosing_operator(node)
+        if (
+            isinstance(holder, JsMemberExpression)
+            and strip_parens(holder.object) is node
+            and static_property_key(holder) == 'constructor'
+        ):
+            return None
+        if not self.effects.trusted_intrinsic_name(function.name):
+            return None
+        if not names_the_intrinsic(function.name, node, self.model):
+            return None
+        name = JsIdentifier(name=function.name)
+        if _respells(name, node):
+            return None
+        self._renewal_due = True
+        return name
 
     def _denoted_primitive(self, node: Node | None) -> tuple[bool, Value]:
         """
@@ -905,10 +951,12 @@ class JsSimplifications(Transformer):
 
         Where the value is applied, the arms part company, because they write down different things.
         The alias arm writes another way of naming the same function, so it has only to keep the
-        receiver a call reads off a member and the scope a direct `eval` needs. The arms that write a
-        constant have nothing to keep: a constant is neither callable nor a constructor, so the
-        application throws whatever they do, and folding only changes which text the `TypeError`
-        names — which is why they refuse a `new` the alias arm is free to fold under.
+        receiver a call reads off a member and the scope a direct `eval` needs. The constructor arm
+        writes the name of the constructor a read reaches (`_invoked_constructor`), which no call
+        reads a receiver of. The arms that write a constant have nothing to keep: a constant is
+        neither callable nor a constructor, so the application throws whatever they do, and folding
+        only changes which text the `TypeError` names — which is why they refuse a `new` the alias
+        arm is free to fold under.
         """
         self.generic_visit(node)
         in_read_position = not is_member_write_target(node)
@@ -924,6 +972,9 @@ class JsSimplifications(Transformer):
             if in_read_position and not is_invocation_target(node):
                 return node.property
             return None
+        if in_read_position and is_constructed_or_invoked(node):
+            if (constructor := self._invoked_constructor(node)) is not None:
+                return constructor
         if reads_a_value:
             if (folded := self._folded_array_length(node)) is not None:
                 return folded
@@ -994,6 +1045,17 @@ class JsSimplifications(Transformer):
         if not known:
             return None
         return to_string(key)
+
+    def _invoked_constructor(self, node: JsMemberExpression) -> Expression | None:
+        """
+        The global name of the constructor the read *node* reaches where it is called or
+        constructed with, as `''.constructor(5)` calls `String` (`_written_constructor`). The call
+        then passes no receiver where the read passed its object, and no constructor reads one.
+        """
+        known, value = denoted_member(node, self.model, self._uninterceptable, self._effect_model)
+        if not known or not isinstance(value, BuiltinFunction):
+            return None
+        return self._written_constructor(node, value)
 
     def _literal_array_element(self, node: JsMemberExpression) -> Expression | None:
         """

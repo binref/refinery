@@ -109,6 +109,7 @@ def denotes_function_intrinsic(
     positioned_value: Callable[[Binding, Node], Node | None] | None = None,
     spliced_names: Collection[str] = (),
     depth: int = 0,
+    builtin_function: Callable[[Node], bool] | None = None,
 ) -> bool | None:
     """
     Whether *callee* denotes the `Function` intrinsic — the callee every spelling of a code
@@ -145,12 +146,16 @@ def denotes_function_intrinsic(
     establishment question is answered by the query's own leg — the same
     `SemanticModel.binding_establishment_sites` rules — and the stock
     `DominanceModel.binding_established_before` call runs only beside the stock value.
+
+    *builtin_function* says whether a node denotes a function the language installs, read without
+    an effect: `[].at.constructor` is `Function` as `f.constructor` is for a plain function `f`.
+    Only a caller that evaluates such reads can say so; without it no such base is recognized.
     """
     return _denotes_function_intrinsic(
         callee, model, effects, dominance,
         eval_string=eval_string, read_effect=read_effect,
         positioned_value=positioned_value, spliced_names=spliced_names,
-        depth=depth, aliases=None,
+        depth=depth, aliases=None, builtin_function=builtin_function,
     )
 
 
@@ -164,6 +169,7 @@ def function_intrinsic_aliases(
     read_effect: Callable[[Node], bool] | None = None,
     positioned_value: Callable[[Binding, Node], Node | None] | None = None,
     spliced_names: Collection[str] = (),
+    builtin_function: Callable[[Node], bool] | None = None,
 ) -> list[Binding] | None:
     """
     The name-to-value bindings *callee* resolves through to the `Function` intrinsic — one entry
@@ -178,7 +184,7 @@ def function_intrinsic_aliases(
         callee, model, effects, dominance,
         eval_string=eval_string, read_effect=read_effect,
         positioned_value=positioned_value, spliced_names=spliced_names,
-        depth=0, aliases=aliases,
+        depth=0, aliases=aliases, builtin_function=builtin_function,
     )
     if verdict is True:
         return aliases
@@ -197,6 +203,7 @@ def _denotes_function_intrinsic(
     spliced_names: Collection[str],
     depth: int,
     aliases: list[Binding] | None,
+    builtin_function: Callable[[Node], bool] | None,
 ) -> bool | None:
 
     def resolved_member(member: JsMemberExpression) -> bool | None:
@@ -254,11 +261,12 @@ def _denotes_function_intrinsic(
             eval_string=eval_string, read_effect=read_effect,
             positioned_value=positioned_value,
             spliced_names=spliced_names, depth=depth + 1, aliases=aliases,
+            builtin_function=builtin_function,
         )
     if effects.global_key_written('Function', 'constructor'):
         return False
     if isinstance(expr, JsMemberExpression):
-        return _denotes_function_constructor(expr, read_effect, resolved_member)
+        return _denotes_function_constructor(expr, read_effect, resolved_member, builtin_function)
     return False
 
 
@@ -266,6 +274,7 @@ def _denotes_function_constructor(
     expr: JsMemberExpression,
     read_effect: Callable[[Node], bool] | None = None,
     resolved_member: Callable[[JsMemberExpression], bool | None] | None = None,
+    builtin_function: Callable[[Node], bool] | None = None,
 ) -> bool | None:
     """
     Whether *expr* evaluates to the `Function` intrinsic, reached by `.constructor` navigation from
@@ -289,7 +298,8 @@ def _denotes_function_constructor(
     The one spelling left is a `.constructor` read whose base is a *name* rather than a literal —
     `f.constructor`, `f[key]` — where only the model can pin the base to one function value and
     only the caller can read the key. That arm is *resolved_member*, a resolver the caller injects
-    for exactly those questions, keeping this predicate model-free.
+    for exactly those questions, keeping this predicate model-free. A base that is a function the
+    language installs, `[].at`, is one only *builtin_function* can recognize, for the same reason.
     """
     if _static_member_key(expr) != 'constructor':
         return resolved_member is not None and resolved_member(expr)
@@ -301,6 +311,8 @@ def _denotes_function_constructor(
     if isinstance(base, JsMemberExpression) and _static_member_key(base) == 'constructor':
         inner = base.object
         return inner is not None and side_effect_free(inner, read_effect=read_effect)
+    if builtin_function is not None and builtin_function(base):
+        return True
     return resolved_member is not None and resolved_member(expr)
 
 

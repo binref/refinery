@@ -46,6 +46,8 @@ from refinery.lib.scripts.js.analysis.tampering import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     body_returns_undefined,
+    coerces_uninterceptably,
+    denoted_value,
     expression_a_call_answers,
     extract_literal_value,
     get_body,
@@ -106,6 +108,7 @@ from refinery.lib.scripts.js.strict import (
     directive_prologue,
     strict_mode_at,
 )
+from refinery.lib.scripts.js.values import BuiltinFunction
 
 _REFLECTIVE_CALLEE_NAMES = REFLECTIVE_INTRINSICS | TIMER_NAMES | SYNC_EVAL_NAMES
 
@@ -1085,7 +1088,30 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 read_effect=self._read_effect,
                 positioned_value=cache.tampering.singular_value_at,
                 spliced_names=self._spliced_names,
+                builtin_function=self._builtin_function(root),
             ) is True
+
+        return resolve
+
+    def _builtin_function(self, root: JsScript) -> Callable[[Node], bool]:
+        """
+        A resolver reporting whether an expression denotes a function the language installs, as the
+        simplifier decides it (`refinery.lib.scripts.js.deobfuscation.helpers.denoted_value` with
+        the run's effect model): `[].at` and `''.constructor` do. Every expression it decides reads
+        without an effect. Resolved lazily against *root*'s current models.
+        """
+        def resolve(node: Node) -> bool:
+            cache = model_cache(self, root)
+            model = cache.model
+            if model.scope_of(node) is None:
+                return False
+            known, value = denoted_value(
+                node,
+                model,
+                lambda converted: coerces_uninterceptably(cache.effects, converted),
+                lambda: cache.effects,
+            )
+            return known and isinstance(value, BuiltinFunction)
 
         return resolve
 
@@ -1483,6 +1509,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             eval_string=self._eval_string, read_effect=self._read_effect,
             positioned_value=cache.tampering.singular_value_at,
             spliced_names=self._spliced_names,
+            builtin_function=self._builtin_function(root),
         )
         if aliases is None:
             return None

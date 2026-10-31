@@ -47,6 +47,7 @@ from typing import Callable, Iterator, Sequence
 
 from refinery.lib.scripts import Expression, Node, tree_root, tree_version
 from refinery.lib.scripts.js.analysis.conversions import (
+    CONVERSION_KEYS,
     RECEIVER_INSTALL_METHODS,
     ConversionInstalls,
     ConversionSettlement,
@@ -131,7 +132,11 @@ from refinery.lib.scripts.js.model import (
     value_is_discarded,
     wraps_return,
 )
-from refinery.lib.scripts.js.values import COERCING_BINARY_OPERATORS, COERCING_UNARY_OPERATORS
+from refinery.lib.scripts.js.values import (
+    COERCING_BINARY_OPERATORS,
+    COERCING_UNARY_OPERATORS,
+    BuiltinFunction,
+)
 
 _FRESH_ARRAY_RESULT_METHODS = frozenset({
     'slice',
@@ -2459,6 +2464,50 @@ class EffectModel:
         every array while writing `Array` by no name.
         """
         return self.intrinsic_writes.followable
+
+    def builtin_function_text(self, function: BuiltinFunction) -> str | None:
+        """
+        The string converting the built-in *function* gives in the host the model assumes
+        (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.native_function_text`), or
+        `None` where the conversion may run code the program installed. It runs
+        `Function.prototype.toString` unless the program gave a conversion key
+        (`refinery.lib.scripts.js.analysis.conversions.CONVERSION_KEYS`) to `Function.prototype`,
+        to `Object.prototype`, or to the constructor *function* names; a write to the function
+        through no name is one `builtin_writes_followed` refuses, and so is a write by a code
+        string a reflection surface may run.
+        """
+        if not self.builtin_writes_followed() or self.model.has_reflection_surface():
+            return None
+        owners = ['Function', 'Object']
+        if function.is_constructor:
+            owners.append(function.name)
+        if any(self.global_key_written(owner, key) for owner in owners for key in CONVERSION_KEYS):
+            return None
+        return self.model.environment.native_function_text(function.name)
+
+    def builtin_function_named(self, function: BuiltinFunction) -> bool:
+        """
+        Whether the built-in *function* still owns the `name` the language gave it: the program
+        writes no `name` key on the constructor *function* names, and none on any built-in through
+        no name (`builtin_writes_followed`).
+        """
+        if not self.builtin_writes_followed():
+            return False
+        return not function.is_constructor or not self.global_key_written(function.name, 'name')
+
+    def builtin_function_constructed_by_function(self, function: BuiltinFunction) -> bool:
+        """
+        Whether reading `constructor` off the built-in *function* gives `Function`: a function owns
+        no `constructor`, so the read reaches `Function.prototype`, unless the program writes that
+        key there or gives the function a `constructor` or a prototype of its own. Each is a write
+        on `Function` or on the constructor *function* names, or one through no name
+        (`builtin_writes_followed`).
+        """
+        if not self.builtin_writes_followed() or self.global_key_written('Function', 'constructor'):
+            return False
+        if not function.is_constructor:
+            return True
+        return not any(self.global_key_written(function.name, key) for key in SPECIES_KEYS)
 
     def _prototypes_intact(self, owner: str, roots: frozenset[str], region: list[Node] | None = None) -> bool:
         """

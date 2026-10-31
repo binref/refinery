@@ -8,6 +8,8 @@ it here, so neither states a second answer.
 """
 from __future__ import annotations
 
+from refinery.lib.scripts.js.values import BuiltinFunction
+
 PROTOTYPE_METHODS: dict[str, frozenset[str]] = {
     'Object': frozenset({
         '__defineGetter__',
@@ -159,6 +161,32 @@ BUILTIN_MEMBER_NAMES = frozenset().union(*PROTOTYPE_METHODS.values()) | PROTOTYP
 """
 Every key a read off a value of a built-in type may find on its prototype chain. A read of one hands
 out a built-in object, whose properties a write through the read replaces for every value.
+"""
+
+CONSTRUCTORS: dict[str, BuiltinFunction] = {
+    owner: BuiltinFunction(owner, is_constructor=True) for owner in PROTOTYPE_METHODS
+}
+"""
+The constructor owning each prototype of `PROTOTYPE_METHODS`, by the global name holding it.
+"""
+
+
+def _prototype_functions() -> dict[tuple[str, str], BuiltinFunction]:
+    functions: dict[tuple[str, str], BuiltinFunction] = {}
+    for owner, methods in PROTOTYPE_METHODS.items():
+        for key in methods:
+            name = ALIASED_METHODS.get((owner, key), key)
+            function = functions.get((owner, name))
+            if function is None:
+                function = functions[owner, name] = BuiltinFunction(name, is_constructor=False)
+            functions[owner, key] = function
+    return functions
+
+
+PROTOTYPE_FUNCTIONS = _prototype_functions()
+"""
+The function each prototype of `PROTOTYPE_METHODS` holds under each of its keys, by the name of the
+constructor owning the prototype and the key. The keys `ALIASED_METHODS` pairs hold one function.
 """
 
 RECEIVER_WRITING_METHODS = frozenset({

@@ -28,13 +28,12 @@ from __future__ import annotations
 from refinery.lib.scripts import Node, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import (
-    Role,
-    SemanticModel,
-    crosses_dynamic_scope,
-    reference_role,
+from refinery.lib.scripts.js.analysis.model import Role, SemanticModel, reference_role
+from refinery.lib.scripts.js.deobfuscation.helpers import (
+    ScriptLevelTransformer,
+    access_key,
+    names_the_intrinsic,
 )
-from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer, access_key
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsCallExpression,
@@ -142,7 +141,7 @@ class JsPrototypeSpellingNormalization(ScriptLevelTransformer):
             return None
         if effects.global_key_written(owner, _PROTO_KEY):
             return None
-        return owner if _names_the_intrinsic(owner, node, model) else None
+        return owner if names_the_intrinsic(owner, node, model) else None
 
     def _owner_read_through_constructor(
         self,
@@ -161,7 +160,7 @@ class JsPrototypeSpellingNormalization(ScriptLevelTransformer):
         owner = _owner_of_literal(inner.object, effects)
         if owner is None or effects.global_key_written(owner, _CONSTRUCTOR_KEY):
             return None
-        return owner if _names_the_intrinsic(owner, node, model) else None
+        return owner if names_the_intrinsic(owner, node, model) else None
 
     def _owner_read_through_get_prototype_of(
         self,
@@ -184,9 +183,9 @@ class JsPrototypeSpellingNormalization(ScriptLevelTransformer):
         owner = _owner_of_literal(node.arguments[0], effects)
         if owner is None or effects.global_key_written('Object', _GET_PROTOTYPE_OF):
             return None
-        if not _names_the_intrinsic('Object', node, model):
+        if not names_the_intrinsic('Object', node, model):
             return None
-        return owner if _names_the_intrinsic(owner, node, model) else None
+        return owner if names_the_intrinsic(owner, node, model) else None
 
 
 def _owner_of_literal(node: Node | None, effects: EffectModel) -> str | None:
@@ -219,30 +218,6 @@ def _owner_of_literal(node: Node | None, effects: EffectModel) -> str | None:
     if isinstance(node, JsObjectExpression) and not node.properties:
         return 'Object'
     return None
-
-
-def _names_the_intrinsic(name: str, at: Node, model: SemanticModel) -> bool:
-    """
-    Whether *name* denotes the intrinsic at *at* rather than something the program can have given a
-    meaning of its own. A file declaring `var Object = {prototype: {}}` names its own object with
-    it, and rewriting a spelling to `Object.prototype` there would name that one instead of the
-    prototype the spelling reaches.
-
-    This is `refinery.lib.scripts.js.deobfuscation.helpers.name_is_unbound` asked of a name that is
-    not written anywhere yet, so it cannot be asked through a reference to one. The three ways that
-    predicate lists are all asked here: a binding, which `lookup` reports and which is crossed
-    deliberately so that a `with` between the two does not hide it; the `with` itself, whose object
-    may carry a property of the name and answer the read from it; and a direct `eval`, which
-    declares bindings no reference records.
-    """
-    scope = model.scope_of(at)
-    if scope is None:
-        return False
-    if model.lookup(name, scope, cross_dynamic=True) is not None:
-        return False
-    if crosses_dynamic_scope(scope):
-        return False
-    return not model.free_name_reachable_by_direct_eval(at)
 
 
 def _a_prototype_of(owner: str) -> JsMemberExpression:

@@ -541,10 +541,14 @@ class _EnvironmentSpec:
     host-conditional global is a configurable, deletable property of the global object, so a program
     that deletes one makes a later bare read of it throw; a language-mandated name is treated as present
     regardless, preserving the sound default's behavior exactly where the host adds nothing.
+    *native_function_text* is the text the host's engine gives a function the language installs when
+    it is converted, `{name}` standing for the function's name, where every engine the host covers
+    gives the same.
     """
     provided: frozenset[str]
     mandated: frozenset[str]
     absent: frozenset[str] = frozenset()
+    native_function_text: str | None = None
 
     def provides(self, name: str) -> bool:
         return name in self.provided
@@ -637,6 +641,18 @@ class HostEnvironment(enum.Enum):
         """
         return _SPECS[self].presence(name)
 
+    def native_function_text(self, name: str) -> str | None:
+        """
+        The string this host's engine gives for a function the language installs under *name* when
+        it is converted, or `None` where the engines this member covers may write it differently.
+        Only `node` answers, with `function at() { [native code] }` for `[].at`. The Windows Script
+        Host, which `universal` covers, writes a line break before `function`, before
+        `[native code]`, and on either side of the closing brace, so the two share no character;
+        the engines of the browsers are not measured.
+        """
+        text = _SPECS[self].native_function_text
+        return None if text is None else text.format(name=name)
+
 
 def typeof_of_global(name: str, environment: HostEnvironment) -> str | None:
     """
@@ -703,7 +719,7 @@ the program's own and stays.
 _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {
     HostEnvironment.universal: _EnvironmentSpec(GUARANTEED_GLOBALS, GUARANTEED_GLOBALS),
     HostEnvironment.node: _EnvironmentSpec(
-        GUARANTEED_GLOBALS | _NODE_GLOBALS, GUARANTEED_GLOBALS, _NODE_ABSENT),
+        GUARANTEED_GLOBALS | _NODE_GLOBALS, GUARANTEED_GLOBALS, _NODE_ABSENT, 'function {name}() {{ [native code] }}'),
     HostEnvironment.browser: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _BROWSER_GLOBALS, GUARANTEED_GLOBALS, _BROWSER_ABSENT),
     HostEnvironment.worker: _EnvironmentSpec(
