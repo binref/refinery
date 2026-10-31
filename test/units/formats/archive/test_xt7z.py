@@ -11,9 +11,33 @@ from unittest import mock
 from ... import TestUnitBase
 
 
-from refinery.lib.un7z import SIGNATURE_HEADER_SIZE, SzArchive, SzCorruptArchive, SzPasswordRequired
-from refinery.lib.un7z.coders import CODEC_COPY, decompress_folder
+from refinery.lib.un7z import (
+    SIGNATURE_HEADER_SIZE,
+    SzArchive,
+    SzCorruptArchive,
+    SzPasswordRequired,
+    SzUnsupportedMethod,
+)
+from refinery.lib.un7z.coders import (
+    CODEC_ARM,
+    CODEC_ARM64,
+    CODEC_ARMT,
+    CODEC_BCJ_X86,
+    CODEC_COPY,
+    CODEC_DELTA,
+    CODEC_IA64,
+    CODEC_PPC,
+    CODEC_RISCV,
+    CODEC_SPARC,
+    decompress_folder,
+)
 from refinery.lib.un7z.headers import BindPair, Coder, Folder, parse_signature_header, SIGNATURE
+
+
+def _filter_empty_input(codec_id: bytes, properties: bytes) -> bytes:
+    coder = Coder(codec_id=codec_id, num_in_streams=1, num_out_streams=1, properties=properties)
+    folder = Folder(coders=[coder], bind_pairs=[], packed_indices=[0], unpack_sizes=[0])
+    return bytes(decompress_folder(folder, [memoryview(b'')]))
 
 
 class Test7zipFileExtractor(TestUnitBase):
@@ -383,6 +407,29 @@ class Test7zipFileExtractor(TestUnitBase):
         )
         with self.assertRaises(SzCorruptArchive):
             decompress_folder(folder, [])
+
+    def test_a_branch_filter_without_a_start_offset_refuses_any_properties(self):
+        for codec in (CODEC_BCJ_X86, CODEC_PPC, CODEC_IA64, CODEC_ARM, CODEC_ARMT, CODEC_SPARC):
+            with self.subTest(codec=codec.hex()), self.assertRaises(SzUnsupportedMethod):
+                _filter_empty_input(codec, bytes(4))
+
+    def test_an_arm64_or_riscv_start_offset_has_four_bytes(self):
+        for codec in (CODEC_ARM64, CODEC_RISCV):
+            for properties in (bytes(2), bytes(5)):
+                with self.subTest(codec=codec.hex(), size=len(properties)), self.assertRaises(SzUnsupportedMethod):
+                    _filter_empty_input(codec, properties)
+
+    def test_an_arm64_start_offset_is_a_multiple_of_four_and_a_riscv_start_offset_of_two(self):
+        with self.assertRaises(SzUnsupportedMethod):
+            _filter_empty_input(CODEC_ARM64, (2).to_bytes(4, 'little'))
+        with self.assertRaises(SzUnsupportedMethod):
+            _filter_empty_input(CODEC_RISCV, (1).to_bytes(4, 'little'))
+        self.assertEqual(_filter_empty_input(CODEC_RISCV, (2).to_bytes(4, 'little')), b'')
+
+    def test_a_delta_filter_takes_exactly_one_property_byte(self):
+        for properties in (b'', bytes(2)):
+            with self.subTest(size=len(properties)), self.assertRaises(SzUnsupportedMethod):
+                _filter_empty_input(CODEC_DELTA, properties)
 
     def test_a_damaged_first_file_of_an_archive_without_encryption_fails_alone(self):
         data = bytearray(self.download_sample('4950524235e3e594afe8b60ec3a7dc7ca9431b27e5c4bb728d166f403ef83131'))

@@ -91,10 +91,27 @@ def _decompress_copy(data: bytes | bytearray | memoryview, props: bytes, unpack_
     return data
 
 
-def _filter_delta(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
-    distance = 1
+def _fixed_start_offset(props: bytes) -> int:
     if props:
-        distance = props[0] + 1
+        raise SzUnsupportedMethod(F'The filter takes no properties; got {len(props)} bytes.')
+    return 0
+
+
+def _aligned_start_offset(props: bytes, alignment: int) -> int:
+    if not props:
+        return 0
+    if len(props) != 4:
+        raise SzUnsupportedMethod(F'The filter takes 0 or 4 property bytes; got {len(props)}.')
+    offset = int.from_bytes(props, 'little')
+    if offset % alignment:
+        raise SzUnsupportedMethod(F'The start offset {offset:#x} is not a multiple of {alignment}.')
+    return offset
+
+
+def _filter_delta(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
+    if len(props) != 1:
+        raise SzUnsupportedMethod(F'The delta filter takes 1 property byte; got {len(props)}.')
+    distance = props[0] + 1
     state = bytearray(distance)
     output = bytearray(len(data))
     j = 0
@@ -109,13 +126,11 @@ def _filter_delta(data: bytes | bytearray | memoryview, props: bytes) -> bytearr
 
 
 def _filter_bcj_x86(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
+    ip = _fixed_start_offset(props)
     buf = bytearray(data)
     size = len(buf)
     if size < 5:
         return buf
-    ip = 0
-    if props and len(props) >= 4:
-        ip = int.from_bytes(props[:4], 'little')
     prev_mask = 0
     prev_pos = ip - 5
     pos = 0
@@ -165,10 +180,8 @@ _BCJ_MASK_TO_BIT_NUMBER = [0, 1, 2, 2, 3, 3, 3, 3]
 
 
 def _filter_arm(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
+    ip = _fixed_start_offset(props)
     buf = bytearray(data)
-    ip = 0
-    if props and len(props) >= 4:
-        ip = int.from_bytes(props[:4], 'little')
     pos = 0
     while pos + 3 < len(buf):
         if buf[pos + 3] == 0xEB:
@@ -184,10 +197,8 @@ def _filter_arm(data: bytes | bytearray | memoryview, props: bytes) -> bytearray
 
 
 def _filter_armt(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
+    ip = _fixed_start_offset(props)
     buf = bytearray(data)
-    ip = 0
-    if props and len(props) >= 4:
-        ip = int.from_bytes(props[:4], 'little')
     pos = 0
     while pos + 3 < len(buf):
         b1 = buf[pos + 1]
@@ -206,10 +217,8 @@ def _filter_armt(data: bytes | bytearray | memoryview, props: bytes) -> bytearra
 
 
 def _filter_ppc(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
+    ip = _fixed_start_offset(props)
     buf = bytearray(data)
-    ip = 0
-    if props and len(props) >= 4:
-        ip = int.from_bytes(props[:4], 'little')
     pos = 0
     while pos + 3 < len(buf):
         if buf[pos] == 0x48 and (buf[pos + 3] & 0x03) == 0x01:
@@ -229,10 +238,8 @@ def _filter_ppc(data: bytes | bytearray | memoryview, props: bytes) -> bytearray
 
 
 def _filter_ia64(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
+    ip = _fixed_start_offset(props)
     buf = bytearray(data)
-    ip = 0
-    if props and len(props) >= 4:
-        ip = int.from_bytes(props[:4], 'little')
     pos = 0
     while pos + 15 < len(buf):
         tmpl = buf[pos] & 0x1F
@@ -272,10 +279,8 @@ _IA64_BRANCH_TABLE = {
 
 
 def _filter_sparc(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
+    ip = _fixed_start_offset(props)
     buf = bytearray(data)
-    ip = 0
-    if props and len(props) >= 4:
-        ip = int.from_bytes(props[:4], 'little')
     pos = 0
     while pos + 3 < len(buf):
         b0 = buf[pos]
@@ -298,10 +303,8 @@ def _filter_sparc(data: bytes | bytearray | memoryview, props: bytes) -> bytearr
 
 
 def _filter_arm64(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
+    ip = _aligned_start_offset(props, 4)
     buf = bytearray(data)
-    ip = 0
-    if props and len(props) >= 4:
-        ip = int.from_bytes(props[:4], 'little')
     M32 = 0xFFFFFFFF
     pos = 0
     size = len(buf) & ~3
@@ -334,10 +337,8 @@ def _filter_arm64(data: bytes | bytearray | memoryview, props: bytes) -> bytearr
 
 
 def _filter_riscv(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
+    ip = _aligned_start_offset(props, 2)
     buf = bytearray(data)
-    ip = 0
-    if props and len(props) >= 4:
-        ip = int.from_bytes(props[:4], 'little')
     M32 = 0xFFFFFFFF
     size = len(buf) & ~1
     if size <= 6:
