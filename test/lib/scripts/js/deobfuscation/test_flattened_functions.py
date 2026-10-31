@@ -2364,6 +2364,205 @@ class TestAFlattenedFunctionIsPutBackTogether(TestBase):
         )
 
 
+#: Programs whose flat function, or the target of a forwarder, a statement at the top of the
+#: program stores into a name, `F = function ...;`, the form the recovery of a machine leaves every
+#: function of a program in, mapped to what Node prints for each run as a CommonJS file.
+STORED: dict[str, Program] = {
+    'a flat function stored after the wrapper': Program(
+        a_program("""
+            var F;
+            function add(...A) { var O = { get k() { return base; } }; return F(A, O); }
+            var base = process.argv[2] ? 1 : 2;
+            F = function ([a, b], O) { return O.k + a * b; };
+            console.log(add(3, 4));
+            """),
+        prints('14'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'an async flat function stored under a name of its own': Program(
+        a_program("""
+            var F;
+            async function twice(...A) { var O = { get k() { return base; } }; return F(A, O); }
+            var base = process.argv[2] ? 1 : 2;
+            F = async function flat_twice([v], O) { await null; return v * O.k; };
+            twice(4).then(r => console.log(r));
+            """),
+        prints('8'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'an async flat function stored under a name of its own, in a program spelling caller': Program(
+        a_program("""
+            var F;
+            async function twice(...A) { var O = { get k() { return base; } }; return F(A, O); }
+            var base = process.argv[2] ? 1 : 2;
+            F = async function flat_twice([v], O) { await null; return v * O.k; };
+            if (process.argv[2] === 'caller') { console.log(twice.caller); }
+            twice(4).then(r => console.log(r));
+            """),
+        prints('8'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a flat function stored after the wrapper was first called': Program(
+        a_program("""
+            var F;
+            function add(...A) { var O = { get k() { return base; } }; return F(A, O); }
+            var base = process.argv[2] ? 1 : 2;
+            try { console.log(add(3, 4)); } catch (e) { console.log(e.name); }
+            F = function ([a, b], O) { return O.k + a * b; };
+            console.log(add(3, 4));
+            """),
+        prints('TypeError', '14'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a stored flat function reading its own name': Program(
+        a_program("""
+            var F;
+            function count(...A) { var O = { get k() { return base; } }; return F(A, O); }
+            var base = process.argv[2] ? 1 : 2;
+            F = function self([n], O) { return n <= 0 ? O.k : 1 + self([n - 1], O); };
+            console.log(count(3));
+            """),
+        prints('5'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'the target of a forwarder stored after the forwarder': Program(
+        a_program("""
+            var G;
+            function F() { return G(...arguments); }
+            var base = process.argv[2] ? 1 : 2;
+            G = function (a, b) { return a * b + base; };
+            console.log(F(3, 4));
+            """),
+        prints('14'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+}
+
+#: The text the deobfuscation writes for each program of `STORED`: the body back in the wrapper
+#: where the store has run before the wrapper reads the name, nothing reads the function's own name,
+#: and the program spells no `caller` where the function would be called by another name; the
+#: store left as it is otherwise.
+STORED_DEOBFUSCATED: dict[str, str] = {
+    'a flat function stored after the wrapper': inspect.cleandoc(
+        """
+            function add(a, b) {
+              return base + a * b;
+            }
+            var base = process.argv[2] ? 1 : 2;
+            console.log(add(3, 4));
+        """
+    ),
+    'an async flat function stored under a name of its own': inspect.cleandoc(
+        """
+            async function twice(...A) {
+              async function F([v]) {
+                await null;
+                return v * base;
+              }
+              return F(A);
+            }
+            var base = process.argv[2] ? 1 : 2;
+            twice(4).then(r => console.log(r));
+        """
+    ),
+    'an async flat function stored under a name of its own, in a program spelling caller': inspect.cleandoc(
+        """
+            var F;
+            async function twice(...A) {
+              var O = { get k() {
+                return base;
+              } };
+              return F(A, O);
+            }
+            var base = process.argv[2] ? 1 : 2;
+            F = async function flat_twice([v], O) {
+              await null;
+              return v * O.k;
+            };
+            if (process.argv[2] === 'caller') {
+              console.log(twice.caller);
+            }
+            twice(4).then(r => console.log(r));
+        """
+    ),
+    'a flat function stored after the wrapper was first called': inspect.cleandoc(
+        """
+            var F;
+            function add(...A) {
+              var O = { get k() {
+                return base;
+              } };
+              return F(A, O);
+            }
+            var base = process.argv[2] ? 1 : 2;
+            try {
+              console.log(add(3, 4));
+            } catch (e) {
+              console.log(e.name);
+            }
+            F = function([a, b], O) {
+              return O.k + a * b;
+            };
+            console.log(add(3, 4));
+        """
+    ),
+    'a stored flat function reading its own name': inspect.cleandoc(
+        """
+            var F;
+            function count(...A) {
+              var O = { get k() {
+                return base;
+              } };
+              return F(A, O);
+            }
+            var base = process.argv[2] ? 1 : 2;
+            F = function self([n], O) {
+              return n <= 0 ? O.k : 1 + self([n - 1], O);
+            };
+            console.log(count(3));
+        """
+    ),
+    'the target of a forwarder stored after the forwarder': inspect.cleandoc(
+        """
+            function F(a, b) {
+              return a * b + base;
+            }
+            var base = process.argv[2] ? 1 : 2;
+            console.log(F(3, 4));
+        """
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionAStoreHoldsBehavesAsItDid(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        for label, row in STORED.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    def test_each_program_still_prints_it_after_the_deobfuscation(self):
+        for label, row in STORED.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
+class TestAFunctionAStoreHoldsIsPutBackWhereTheStoreRunsFirst(TestBase):
+
+    def test_each_program_reads_as_pinned(self):
+        self.assertEqual(
+            {label: deobfuscated(row.text) for label, row in STORED.items()},
+            STORED_DEOBFUSCATED,
+        )
+
+
 #: Programs holding a forwarder in the shape the integrity lock writes, mapped to what Node prints
 #: for each run as a CommonJS file: the forwarder called, constructed, handed on, exported, its
 #: `length` read, and a target reading `this`, its `arguments`, itself through `arguments.callee`,

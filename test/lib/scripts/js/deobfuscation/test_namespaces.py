@@ -59,6 +59,30 @@ A_KEY_A_BARE_NAME_CANNOT_CARRY = [
 ]
 
 
+#: Programs declaring a namespace bare, `var NS;`, whose object a later statement makes where the
+#: object is not one every access reaches: made again on every round of a loop, read by a function
+#: called before it is made, made twice, or made by a nested function.
+A_NAMESPACE_MADE_WHERE_NOT_EVERY_ACCESS_REACHES_IT = {
+    'made in a loop': (
+        'function f(n) { var NS, seen = []; for (var i = 0; i < n; i++) {'
+        ' NS = {}; seen.push(NS.a); NS.a = i; } return seen.join(); } console.log(f(3));'
+    ),
+    'read before it is made': (
+        'function f() { var NS; function g() { return NS.a; }'
+        ' try { g(); } catch (e) { console.log(e.name); } NS = {}; NS.a = 1; return g(); }'
+        ' console.log(f());'
+    ),
+    'made twice': (
+        'function f() { var NS; NS = {}; NS.a = 1; var g = function () { return NS.a; };'
+        ' NS = {}; return g(); } console.log(f());'
+    ),
+    'made by a nested function': (
+        'function f() { var NS; function make() { NS = {}; } make(); NS.a = 1; return NS.a; }'
+        ' console.log(f());'
+    ),
+}
+
+
 class TestNamespaceFlattening(TestJsDeobfuscator):
 
     def _flatten(self, source: str) -> str:
@@ -590,6 +614,65 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             'SINK(1, 6);',
             self._deobfuscate('var X = {a: 1}; X.Y = [5, 6]; SINK(X.a, X.Y[1]);'),
         )
+
+    def test_a_namespace_declared_bare_and_made_once_in_a_block_flattens(self):
+        """
+        The recovery of a machine declares an object the machine makes in a block as `var NS;` and
+        leaves the statement making it in the block. It runs once per call of `f`, before every
+        access, so the keys become variables of `f` and the object goes.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(c) {
+              var NS;
+              if (c) {
+                NS = {};
+                NS.a = c;
+                NS.g = function () { return NS.a + 1; };
+                return NS.g();
+              }
+              return 0;
+            }
+            console.log(f(process.argv[2] ? 0 : 5));
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f(c) {
+                  var a, g;
+                  if (c) {
+                    a = c;
+                    g = function() {
+                      return a + 1;
+                    };
+                    return g();
+                  }
+                  return 0;
+                }
+                console.log(f(process.argv[2] ? 0 : 5));
+                """
+            ),
+            self._flatten(source),
+        )
+        self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
+
+    def test_a_namespace_made_where_not_every_access_reaches_it_stays(self):
+        for label, source in A_NAMESPACE_MADE_WHERE_NOT_EVERY_ACCESS_REACHES_IT.items():
+            with self.subTest(label):
+                self.assertEqual(self._flatten(source), JsSynthesizer().convert(JsParser(source).parse()))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_namespace_made_where_not_every_access_reaches_it_still_prints_it(self):
+        """
+        Flattened, a key would keep what an earlier round of the loop stored, a read the object
+        answers with a throw would answer, and a function made before the second object would read
+        what is stored into the first.
+        """
+        for label, source in A_NAMESPACE_MADE_WHERE_NOT_EVERY_ACCESS_REACHES_IT.items():
+            with self.subTest(label):
+                self.assertEqual(behavior(source), behavior(self._flatten(source)))
+                self.assertEqual(*before_and_after(source))
 
     def test_two_namespaces_declared_in_one_statement_flatten_together(self):
         """

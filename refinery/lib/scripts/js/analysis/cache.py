@@ -13,6 +13,7 @@ from __future__ import annotations
 from functools import partial
 
 from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.js.analysis.assignment import (
     DefiniteAssignmentModel,
     build_definite_assignment,
@@ -77,6 +78,7 @@ class ModelCache(ModelCacheBase):
         '_model',
         '_intrinsic_writes',
         '_control_flow',
+        '_cycles',
         '_effects',
         '_liveness',
         '_dominance',
@@ -118,6 +120,7 @@ class ModelCache(ModelCacheBase):
     _model: SemanticModel | None
     _intrinsic_writes: IntrinsicWrites | None
     _control_flow: ControlFlowModel | None
+    _cycles: CycleModel | None
     _effects: EffectModel | None
     _liveness: LivenessModel | None
     _dominance: DominanceModel | None
@@ -164,6 +167,14 @@ class ModelCache(ModelCacheBase):
         return self._lazy('_control_flow', lambda: build_control_flow_model(self.root))
 
     @property
+    def cycles(self) -> CycleModel:
+        """
+        The `refinery.lib.scripts.analysis.cycles.CycleModel` over the graphs of `control_flow`:
+        which points of the script control can reach more than once.
+        """
+        return self._lazy('_cycles', lambda: CycleModel(self.control_flow))
+
+    @property
     def liveness(self) -> LivenessModel:
         return self._lazy('_liveness', lambda: build_liveness(self.model, self.control_flow))
 
@@ -205,7 +216,7 @@ class ModelCache(ModelCacheBase):
             self.model,
             self.effects,
             self.dominance,
-            self.control_flow,
+            self.cycles,
         ))
 
     def builtins_intact_at(self, anchor: Node) -> bool:

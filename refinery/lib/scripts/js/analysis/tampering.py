@@ -49,7 +49,6 @@ from typing import Callable, Collection, NamedTuple
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cycles import CycleModel
-from refinery.lib.scripts.js.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import AnchoredTrust, EffectModel, side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
@@ -321,9 +320,10 @@ class TamperingModel:
     The anchored trust oracle for one script, built over a
     `refinery.lib.scripts.js.analysis.model.SemanticModel`, an
     `refinery.lib.scripts.js.analysis.effects.EffectModel`, a
-    `refinery.lib.scripts.js.analysis.dominance.DominanceModel`, and the control-flow model the
-    cycle questions go through. Ask whether the built-ins are intact at one point with
-    `builtins_intact_at`, and the trust questions of a fold or an execution there with `trust_at`;
+    `refinery.lib.scripts.js.analysis.dominance.DominanceModel`, and the
+    `refinery.lib.scripts.analysis.cycles.CycleModel` the cycle questions go through. Ask whether
+    the built-ins are intact at one point with `builtins_intact_at`, and the trust questions of a
+    fold or an execution there with `trust_at`;
     ask which single value a binding holds at one point with
     `singular_value_at` — the positioned value question the same models answer; ask whether every
     invocation of a function discards its completion value with
@@ -335,12 +335,12 @@ class TamperingModel:
         model: SemanticModel,
         effects: EffectModel,
         dominance: DominanceModel,
-        control_flow: ControlFlowModel,
+        cycles: CycleModel,
     ):
         self.model = model
         self.effects = effects
         self.dominance = dominance
-        self._cycles = CycleModel(control_flow)
+        self._cycles = cycles
         self._site_list: list[Node] | None = None
         self._sites_unenumerable = False
         self._program_wide: bool | None = None
@@ -843,11 +843,11 @@ def build_tampering(
     model: SemanticModel,
     effects: EffectModel,
     dominance: DominanceModel,
-    control_flow: ControlFlowModel,
+    cycles: CycleModel,
 ) -> TamperingModel:
     """
-    Build the `TamperingModel` for a script's analysis models, reusing *dominance* and
-    *control_flow* the caller already holds. The host entry points the multiplicity guard refuses
+    Build the `TamperingModel` for a script's analysis models, reusing *dominance* and *cycles*
+    the caller already holds. The host entry points the multiplicity guard refuses
     are the ones *model* was built under.
     """
-    return TamperingModel(model, effects, dominance, control_flow)
+    return TamperingModel(model, effects, dominance, cycles)

@@ -8,6 +8,7 @@ from unittest import mock
 
 from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_within, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import wontfix
 
 from refinery.lib.scripts import TREE_RECURSION_DEPTH
 from refinery.lib.scripts.js.deobfuscation.cff import JsStateMachineUnflattening, statemachine
@@ -193,9 +194,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
-              var R;
-              R = {};
-              R.k = -10;
               var wrapper = function(...rest) {
                 return rest[0] + rest[1];
               };
@@ -244,9 +242,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
-              var R;
-              R = {};
-              R.k = 50;
               var wrapper = function(...rest) {
                 return "resolved";
               };
@@ -2025,6 +2020,186 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             """
         ))
 
+    NESTED_ARGUMENT_PATTERN_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = { F: {} }, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    F.helper = function(...rest) {
+                      return gen(40, 10, { F: scope.F, L: {} }, rest)["next"]()["value"];
+                    };
+                    F.result = F.helper([n], 'x') + F.helper([n, 1], 'y');
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    return done = true, F.result;
+                  case 50:
+                    [[L.x, L.y = false], L.o] = args;
+                    a = 60, b = 0;
+                    break;
+                  case 60:
+                    return L.o + L.x + L.y;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        console.log(outer(3));
+        """
+    )
+
+    NESTED_ARGUMENT_PATTERN_WITH_A_REST_AND_A_DEFAULT_READING_INTO_IT_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = { F: {} }, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    F.helper = function(...rest) {
+                      return gen(40, 10, { F: scope.F, L: {} }, rest)["next"]()["value"];
+                    };
+                    F.result = F.helper([n, 2, 1]) + ':' + F.helper([n], 'o');
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    return done = true, F.result;
+                  case 50:
+                    [[L.x, ...L.r], L.o = L.x] = args;
+                    a = 60, b = 0;
+                    break;
+                  case 60:
+                    return L.o + L.x + L.r.length;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        console.log(outer(3));
+        """
+    )
+
+    NESTED_ARGUMENT_PATTERN_AFTER_ANOTHER_STATEMENT_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = { F: {} }, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    F.helper = function(...rest) {
+                      return gen(40, 10, { F: scope.F, L: {} }, rest)["next"]()["value"];
+                    };
+                    F.result = F.helper([n], 'x');
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    return done = true, F.result;
+                  case 50:
+                    L.k = 1;
+                    [[L.x], L.o] = args;
+                    a = 60, b = 0;
+                    break;
+                  case 60:
+                    return L.o + L.x + L.k;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        console.log(outer(3));
+        """
+    )
+
+    def test_generator_cff_nested_argument_pattern_becomes_a_nested_parameter(self):
+        """
+        A flattened function stores its arguments as `[[a, b = d], O]`: the first argument is
+        unpacked by a pattern of its own, which becomes a pattern parameter with the same default.
+        """
+        result = self._run_transformer(self.NESTED_ARGUMENT_PATTERN_CFF, JsStateMachineUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer(n) {
+              var F = {};
+              F.helper = function([x_1, y_1 = false], o_1) {
+                var L = {};
+                L.x = x_1;
+                L.y = y_1;
+                L.o = o_1;
+                return L.o + L.x + L.y;
+              };
+              F.result = F.helper([n], 'x') + F.helper([n, 1], 'y');
+              return F.result;
+            }
+            console.log(outer(3));
+            """
+        ))
+
+    def test_generator_cff_default_reading_a_slot_of_a_nested_pattern_reads_its_parameter(self):
+        """
+        The default of the second argument reads the first element of the first, stored before it
+        is evaluated; the nested pattern also ends in a rest element.
+        """
+        result = self._run_transformer(
+            self.NESTED_ARGUMENT_PATTERN_WITH_A_REST_AND_A_DEFAULT_READING_INTO_IT_CFF,
+            JsStateMachineUnflattening,
+        )
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer(n) {
+              var F = {};
+              F.helper = function([x_1, ...r_1], o_1 = x_1) {
+                var L = {};
+                L.x = x_1;
+                L.r = r_1;
+                L.o = o_1;
+                return L.o + L.x + L.r.length;
+              };
+              F.result = F.helper([n, 2, 1]) + ':' + F.helper([n], 'o');
+              return F.result;
+            }
+            console.log(outer(3));
+            """
+        ))
+
+    def test_generator_cff_nested_argument_pattern_after_another_statement_stays_a_store(self):
+        """
+        Unpacking the first argument runs its iterator, which a parameter list does at the call:
+        behind another statement of the body, the store stays where it runs.
+        """
+        result = self._run_transformer(
+            self.NESTED_ARGUMENT_PATTERN_AFTER_ANOTHER_STATEMENT_CFF,
+            JsStateMachineUnflattening,
+        )
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer(n) {
+              var F = {};
+              F.helper = function(...rest) {
+                var L = {};
+                L.k = 1;
+                [[L.x], L.o] = rest;
+                return L.o + L.x + L.k;
+              };
+              F.result = F.helper([n], 'x');
+              return F.result;
+            }
+            console.log(outer(3));
+            """
+        ))
+
     SCOPE_NAME_REBOUND_CFF = inspect.cleandoc(
         """
         function outer() {
@@ -3734,6 +3909,160 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             self.NEGATIVE_ZERO_STATE_CFF,
         ):
             with self.subTest(source):
+                self.assertEqual(
+                    self._run_transformers(source),
+                    self._run_transformer(source, JsStateMachineUnflattening),
+                )
+
+    ROUTING_OBJECT_NAME_A_REST_PARAMETER_REBINDS_CFF = inspect.cleandoc(
+        """
+        function outer(key) {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    [scope.NS.k] = [25];
+                    scope.NS.fill = function (...scope) { scope[key] = 7; return scope.length; };
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.k + 10:
+                    return done = true, scope.NS.fill(1, 2);
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        console.log(outer(5));
+        """
+    )
+
+    ROUTING_SLOT_NAME_A_PARAMETER_REBINDS_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    [scope.NS.k] = [25];
+                    scope.NS.twice = function (k) { k = k * 2; return k; };
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.k + 10:
+                    return done = true, scope.NS.twice(4);
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        console.log(outer());
+        """
+    )
+
+    def test_generator_cff_write_through_a_rest_parameter_named_like_the_scope_routes(self):
+        """
+        The function the case stores names its rest parameter like the scope object and stores
+        into it under a key only the call knows: that store writes the array of its arguments, no
+        routing slot.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(key) {
+                  var NS = {};
+                  NS.fill = function(...scope) {
+                    scope[key] = 7;
+                    return scope.length;
+                  };
+                  return NS.fill(1, 2);
+                }
+                console.log(outer(5));
+                """
+            ),
+            self._run_transformer(
+                self.ROUTING_OBJECT_NAME_A_REST_PARAMETER_REBINDS_CFF, JsStateMachineUnflattening
+            ),
+        )
+
+    def test_generator_cff_write_of_a_parameter_named_like_a_routing_slot_routes(self):
+        """
+        The function the case stores writes its parameter `k`, which the `with` statement around
+        it does not reach: no routing slot is written. The bare `k` it reads still counts as a read
+        of the slot, so the slot's store stays.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  var NS = {};
+                  [NS.k] = [25];
+                  NS.twice = function(k) {
+                    k = k * 2;
+                    return k;
+                  };
+                  return NS.twice(4);
+                }
+                console.log(outer());
+                """
+            ),
+            self._run_transformer(
+                self.ROUTING_SLOT_NAME_A_PARAMETER_REBINDS_CFF, JsStateMachineUnflattening
+            ),
+        )
+
+    @wontfix(
+        'the namespaces of a machine stand for the scopes of the function it flattened, which no '
+        'program can hand to a function as a value; the machine hands them only to itself'
+    )
+    def test_generator_cff_routing_slot_written_through_a_namespace_handed_to_a_function_stays(self):
+        """
+        The function the case stores is handed the namespace holding the routing slot and writes
+        that slot under a key only the call knows, whatever its parameter is named.
+        """
+        for name in ('NS', 'o'):
+            source = inspect.cleandoc(
+                F"""
+                function outer(key) {{
+                  function* gen(a, b, scope = {{NS: {{}}}}, args) {{
+                    while (a + b !== 100) {{
+                      with (scope.RV || scope) {{
+                        switch (a + b) {{
+                          case 10:
+                            [scope.NS.k] = [25];
+                            scope.NS.fill = function ({name}) {{ {name}[key] = 0; }};
+                            a = 20, b = 15;
+                            break;
+                          case scope.NS.k + 10:
+                            scope.NS.fill(scope.NS);
+                            a = 30, b = 10;
+                            break;
+                          case scope.NS.k + 40:
+                            return done = true, "routed by the slot the function wrote";
+                          default:
+                            return done = true, "default";
+                        }}
+                      }}
+                    }}
+                  }}
+                  var done;
+                  var result = gen(5, 5)["next"]()["value"];
+                  if (done) {{ return result; }}
+                }}
+                console.log(outer("k"));
+                """
+            )
+            with self.subTest(name):
                 self.assertEqual(
                     self._run_transformers(source),
                     self._run_transformer(source, JsStateMachineUnflattening),
@@ -7061,6 +7390,11 @@ ENTRY_POINTS = {
     'WRAPPER_MADE_IN_A_BLOCK_PLACED_TWICE_CFF': (
         'console.log(outer([1, 1, 0]).length, outer([0, 0, 1])[2](7, 8, 9));'
     ),
+    'NESTED_ARGUMENT_PATTERN_CFF': '',
+    'NESTED_ARGUMENT_PATTERN_WITH_A_REST_AND_A_DEFAULT_READING_INTO_IT_CFF': '',
+    'NESTED_ARGUMENT_PATTERN_AFTER_ANOTHER_STATEMENT_CFF': '',
+    'ROUTING_OBJECT_NAME_A_REST_PARAMETER_REBINDS_CFF': '',
+    'ROUTING_SLOT_NAME_A_PARAMETER_REBINDS_CFF': '',
 }
 
 

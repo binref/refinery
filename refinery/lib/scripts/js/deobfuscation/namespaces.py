@@ -9,11 +9,12 @@ from refinery.lib.scripts import (
     BodyEdit,
     Expression,
     Node,
+    _remove_from_parent,
     _replace_in_parent,
     is_attached,
     set_child_list,
 )
-from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
@@ -130,6 +131,7 @@ class _NamespacePlan(NamedTuple):
     name: str
     declarator: JsVariableDeclarator
     declaration: JsVariableDeclaration
+    creation: JsExpressionStatement | None
     flattenable: set[str]
     hoisted: dict[str, _PropertyAssignment]
     declarations: set[str]
@@ -142,7 +144,15 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
     object literal and is only ever used via property access. Emits `var` declarations for the
     flattened property names. A property whose name conflicts with an existing variable in the
     scope, or that a plain object inherits, is left on the namespace object. A namespace that a
-    method may read through `this` is left whole.
+    method may read through `this` is left whole. A namespace may also be declared bare and made
+    by one statement of its scope that runs at most once whenever the scope does, and before every
+    access of the namespace (`_creation`):
+
+        var NS;
+        if (c) { NS = {}; NS.f = function () { ... }; NS.f(); }
+
+    holds one object wherever an access runs, as `var NS = {}` does, and the statement goes with
+    the declaration.
 
     The pass is batched: every scope's decisions read the models the invocation entered with, and
     the edits run once the traversal ends. The decisions read four kinds of model fact, and the
@@ -165,6 +175,10 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
       preceded is preceded by the declaration as well.
     - `property_absent_from_written_chain` for inherited keys. No batch edit writes a prototype or
       a global, so the written chain the effects model read is the one the batch leaves behind.
+    - `DominanceModel.runs_before_all` and `refinery.lib.scripts.analysis.cycles.CycleModel` for
+      the statement creating a namespace declared bare. The statement the batch removes with such a
+      namespace stores an object into a declared name and cannot throw, so no other statement runs
+      earlier or more often without it.
 
     A hoist moves the function expression's body into the declaration rather than copying it, so
     the declaration carries every edit a plan of a scope inside that body applied first. Such a
@@ -197,11 +211,20 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         decl_stmt: JsVariableDeclaration,
     ) -> _NamespacePlan | None:
         assert self._root is not None
-        accesses = namespace_accesses(self._references(scope, name, declarator))
+        cache = model_cache(self, self._root)
+        creation = None
+        if declarator.init is None:
+            if (creation := self._creation(scope, declarator, cache)) is None:
+                return None
+        accesses = namespace_accesses(self._references(scope, name, declarator, creation))
         if not accesses:
             return None
+        if creation is not None and not cache.dominance.runs_before_all(
+            creation,
+            [access for nodes in accesses.values() for access in nodes],
+        ):
+            return None
         props = set(accesses)
-        cache = model_cache(self, self._root)
         model = cache.model
         namespace_id = declarator.id
         if isinstance(namespace_id, JsIdentifier):
@@ -243,6 +266,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
             name=name,
             declarator=declarator,
             declaration=decl_stmt,
+            creation=creation,
             flattenable=flattenable,
             hoisted=hoisted,
             declarations=declarations,
@@ -257,6 +281,8 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         anchors: list[Node] = [entry.statement for entry in plan.hoisted.values()]
         if plan.remove_declarator:
             anchors.append(plan.declaration)
+            if plan.creation is not None:
+                anchors.append(plan.creation)
         if not all(is_attached(anchor) for anchor in anchors):
             return
         if not self._rewrite(plan.scope, plan.name, plan.declarator, plan.flattenable):
@@ -266,6 +292,8 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         self._emit_function_declarations(plan.scope, plan.hoisted)
         if plan.remove_declarator:
             self._remove_declarator(plan.scope, plan.declarator, plan.declaration)
+            if plan.creation is not None:
+                _remove_from_parent(plan.creation)
         self.changed = True
 
     @staticmethod
@@ -286,6 +314,10 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
 
     @staticmethod
     def _find_candidates(body: list) -> Iterator[tuple[str, JsVariableDeclarator, JsVariableDeclaration]]:
+        """
+        The `var` declarators of the scope body *body* that may declare a namespace: one with an
+        empty object literal, and one with no value, which `_creation` reads further.
+        """
         for stmt in body:
             if not isinstance(stmt, JsVariableDeclaration):
                 continue
@@ -296,22 +328,77 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
                     continue
                 if not isinstance(decl.id, JsIdentifier):
                     continue
-                if not isinstance(decl.init, JsObjectExpression):
-                    continue
-                if decl.init.properties:
+                if decl.init is not None and (
+                    not isinstance(decl.init, JsObjectExpression)
+                    or decl.init.properties
+                ):
                     continue
                 yield decl.id.name, decl, stmt
 
     @staticmethod
-    def _references(scope: Node, name: str, declarator: JsVariableDeclarator) -> list[Node]:
+    def _creation(
+        scope: Node,
+        declarator: JsVariableDeclarator,
+        cache: ModelCache,
+    ) -> JsExpressionStatement | None:
+        """
+        The statement `NS = {};` creating the object of a namespace declared without a value,
+        `var NS;`: the one write of the name, a statement of the code of *scope* itself that control
+        reaches at most once whenever the scope runs
+        (`refinery.lib.scripts.analysis.cycles.CycleModel`). Every access of the namespace that runs
+        after it then reaches the one object it made, as one after `var NS = {}` does; that every
+        access runs after it is the caller's to ask.
+        """
+        if not isinstance(declarator.id, JsIdentifier):
+            return None
+        binding = cache.model.binding_of(declarator.id)
+        if (
+            binding is None
+            or binding.declarations != [declarator.id]
+            or binding.has_indefinite_write
+            or len(binding.writes) != 1
+        ):
+            return None
+        target = binding.writes[0]
+        if not (
+            isinstance(store := target.parent, JsAssignmentExpression)
+            and store.operator == '='
+            and store.left is target
+            and isinstance(created := store.right, JsObjectExpression)
+            and not created.properties
+            and isinstance(statement := store.parent, JsExpressionStatement)
+        ):
+            return None
+        owner = scope if isinstance(scope, JsScript) else scope.parent
+        located = cache.control_flow.locate(statement)
+        if (
+            owner is None
+            or located is None
+            or located[0] is not cache.control_flow.graph_of(owner)
+            or cache.cycles.on_a_cycle(*located)
+        ):
+            return None
+        return statement
+
+    @staticmethod
+    def _references(
+        scope: Node,
+        name: str,
+        declarator: JsVariableDeclarator,
+        creation: JsExpressionStatement | None,
+    ) -> list[Node]:
         """
         Every reference to the namespace variable in the scope subtree: each identifier spelling its
-        name but its declaration, and one in non-computed property position (`other.NS`), which
-        names a property rather than the variable.
+        name but its declaration, the target of the statement creating it, and one in non-computed
+        property position (`other.NS`), which names a property rather than the variable.
         """
+        created = None
+        if creation is not None and isinstance(creation.expression, JsAssignmentExpression):
+            created = creation.expression.left
         return [
             node for node in JsNamespaceFlattening._walk_pruning_shadows(scope, name)
             if node is not declarator.id
+            and node is not created
             and isinstance(node, JsIdentifier)
             and node.name == name
             and not (

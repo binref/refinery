@@ -2028,25 +2028,37 @@ def _writes_a_routing_slot(
     whose ids *handled* holds: they store a property under any key along that path, a variable of
     such a name, which the `with` statement may resolve to the slot or its object, or a property
     under a key only known at runtime or under `__proto__` on an object of such a name. They may
-    also declare such a variable.
+    also declare such a variable. A name that code between a statement and the write binds anew
+    (`_walk_scoped`), as a parameter of a function the statement holds does, means that binding
+    and no longer reaches the `with` statement.
     """
     names = {name for path in routing for name in path[1:]}
     holders = {name for path in routing for name in path[:-1]}
+    watched = frozenset(names | holders)
     for stmt in stmts:
-        for node in stmt.walk():
+        for node, shadowed in _walk_scoped(stmt, watched):
             if isinstance(node, JsMemberExpression):
                 if id(node) in handled or not is_member_write_target(node):
                     continue
                 if (key := access_key(node)) in names:
                     return True
-                if (key is None or key == '__proto__') and _holder_name(node.object) in holders:
+                if (
+                    (key is None or key == '__proto__')
+                    and (holder := _holder_name(node.object)) in holders
+                    and not (isinstance(node.object, JsIdentifier) and holder in shadowed)
+                ):
                     return True
             elif isinstance(node, JsVariableDeclarator):
                 declared: set[str] = set()
                 _collect_binding_names(node.id, declared)
-                if not names.isdisjoint(declared):
+                if not names.isdisjoint(declared - shadowed):
                     return True
-            elif isinstance(node, JsIdentifier) and node.name in names and is_use_position(node):
+            elif (
+                isinstance(node, JsIdentifier)
+                and node.name in names
+                and node.name not in shadowed
+                and is_use_position(node)
+            ):
                 if is_member_write_target(node):
                     return True
                 if (
@@ -4600,15 +4612,66 @@ class _ArgumentSlot(NamedTuple):
     default: Expression | None
 
 
-def _argument_slots(
+class _ArgumentPattern(NamedTuple):
+    """
+    An array pattern an argument store unpacks into, `[e1, …, en]` or `[e1, …, ...r]`: its elements,
+    each a slot (`_ArgumentSlot`) or an array pattern of its own, the slot taking the remaining
+    elements where it ends in a rest element, and the default an element `[…] = default` of the
+    pattern around it gives it.
+    """
+    elements: list[_ArgumentSlot | _ArgumentPattern]
+    remainder: Expression | None
+    default: Expression | None
+
+    @property
+    def nested(self) -> bool:
+        """
+        Whether an element of the pattern is a pattern itself, which unpacks an argument.
+        """
+        return any(isinstance(element, _ArgumentPattern) for element in self.elements)
+
+    def slots(self) -> Iterator[Expression]:
+        """
+        The slots the pattern fills, in the order it fills them.
+        """
+        for element in self.elements:
+            if isinstance(element, _ArgumentPattern):
+                yield from element.slots()
+            else:
+                yield element.target
+        if self.remainder is not None:
+            yield self.remainder
+
+    def defaulted(self) -> Iterator[tuple[Expression, int]]:
+        """
+        Every default the pattern evaluates, in the order it evaluates them, each with the number
+        of slots filled before it: the default of an element is evaluated before that element's
+        own slots are filled.
+        """
+        filled = 0
+        for element in self.elements:
+            if element.default is not None:
+                yield element.default, filled
+            if isinstance(element, _ArgumentPattern):
+                for default, before in element.defaulted():
+                    yield default, filled + before
+                filled += sum(1 for _ in element.slots())
+            else:
+                filled += 1
+
+
+def _argument_pattern(
     pattern: JsArrayExpression | JsArrayPattern,
     activation: _Activation,
-) -> tuple[list[_ArgumentSlot], Expression | None] | None:
+    default: Expression | None = None,
+) -> _ArgumentPattern | None:
     """
-    The slots an argument store `[s1, …, sn] = rest` or `[s1, …, ...r] = rest` fills, in order,
-    and the slot taking the remaining arguments where the pattern ends in a rest element. `None`
-    where one of them is not a slot of *activation*'s own scope object (`_is_activation_slot`), or
-    the pattern skips an element. An element may carry a default, `s = d`.
+    The pattern an argument store `[e1, …, en] = rest` or `[e1, …, ...r] = rest` unpacks the
+    arguments into, with *default* as its own. Each element is a slot of *activation*'s own scope
+    object (`_is_activation_slot`) or an array pattern of such elements, as the store of a
+    flattened function's arguments, `[[NS.a, NS.b = d], NS.O] = rest`, has one. An element may
+    carry a default, `s = d`, and a pattern may end in a rest element whose target is a slot. `None`
+    for any other element, a hole among them.
     """
     elements = list(pattern.elements)
     remainder: Expression | None = None
@@ -4617,15 +4680,20 @@ def _argument_slots(
         elements.pop()
         if not _is_activation_slot(remainder, activation):
             return None
-    slots: list[_ArgumentSlot] = []
+    parts: list[_ArgumentSlot | _ArgumentPattern] = []
     for element in elements:
-        target, default = element, None
+        target, value = element, None
         if isinstance(element, JsAssignmentPattern):
-            target, default = element.left, element.right
-        if target is None or not _is_activation_slot(target, activation):
+            target, value = element.left, element.right
+        if isinstance(target, (JsArrayExpression, JsArrayPattern)):
+            if (inner := _argument_pattern(target, activation, value)) is None:
+                return None
+            parts.append(inner)
+        elif target is not None and _is_activation_slot(target, activation):
+            parts.append(_ArgumentSlot(target, value))
+        else:
             return None
-        slots.append(_ArgumentSlot(target, default))
-    return slots, remainder
+    return _ArgumentPattern(parts, remainder, default)
 
 
 def _activation_slot_identity(node: Node, activation: _Activation) -> tuple[str, ...] | None:
@@ -4737,14 +4805,19 @@ def _unpack_argument_stores(
     `refinery.lib.scripts.js.deobfuscation.parameters.parameter_list` writes. A parameter takes a
     name no identifier and no static key of the function spells.
 
-    An element with a default, `[NS.a, NS.b = d] = rest`, gives its parameter that default where the
-    destructuring is the first statement of the body and `_default_reads` admits it: the default
-    reads no `this`, no name the body binds, and of the scope object only a plain read of an element
-    before it, which becomes a read of that element's parameter. The store
+    An element with a default, `[NS.a, NS.b = d] = rest`, gives its parameter that default where
+    `_default_reads` admits it: the default reads no `this`, no name the body binds, and of the
+    scope object only a plain read of a slot filled before it, which becomes a read of that slot's
+    parameter. The store
 
         [NS.a, NS.b = NS.a] = rest;
 
-    gives the wrapper the parameters `(a, b = a)`.
+    gives the wrapper the parameters `(a, b = a)`. An element may also be an array pattern of such
+    elements, which unpacks one argument, as the store of a flattened function's arguments does:
+    `[[NS.a, NS.b = false], NS.O] = rest` gives the parameters `([a, b = false], O)`. A default runs
+    code and so does unpacking an argument, which the parameter list does at the call, so a store
+    holding either has to be the one store and the first statement of the body, and the wrapper no
+    generator, whose body runs only at its first step.
     """
     params = function.params
     if (
@@ -4755,7 +4828,7 @@ def _unpack_argument_stores(
         or references_own_arguments(function)
     ):
         return
-    stores: list[tuple[JsAssignmentExpression, list[_ArgumentSlot], Expression | None]] = []
+    stores: list[tuple[JsAssignmentExpression, _ArgumentPattern]] = []
     for read in _references_to(function.body.body, frozenset({rest.argument.name})):
         store = read.parent
         if not (
@@ -4765,12 +4838,30 @@ def _unpack_argument_stores(
             and isinstance(statement := store.parent, JsExpressionStatement)
             and statement.parent is function.body
             and isinstance(pattern := store.left, (JsArrayExpression, JsArrayPattern))
-            and (slots := _argument_slots(pattern, activation)) is not None
+            and (argument := _argument_pattern(pattern, activation)) is not None
         ):
             return
-        stores.append((store, *slots))
-    if not stores or len(stores) > 1 and any(remainder is not None for _, _, remainder in stores):
+        stores.append((store, argument))
+    if not stores:
         return
+    store, argument = max(stores, key=lambda entry: len(list(entry[1].slots())))
+    runs_code = argument.nested or any(argument.defaulted())
+    if len(stores) > 1 and any(
+        other.remainder is not None or other.nested or any(other.defaulted())
+        for _, other in stores
+    ):
+        return
+    if runs_code and (
+        store.parent is not function.body.body[0]
+        or is_generator_function(function)
+    ):
+        return
+    filled = list(argument.slots())
+    defaults: dict[Node, dict[Node, int]] = {}
+    for default, before in argument.defaulted():
+        if (reads := _default_reads(default, filled[:before], function, activation)) is None:
+            return
+        defaults[default] = reads
     taken = {node.name for node in function.walk() if isinstance(node, JsIdentifier)}
     taken.update(
         key for node in function.walk()
@@ -4783,52 +4874,48 @@ def _unpack_argument_stores(
         taken.add(name)
         return name
 
-    defaults: dict[int, tuple[Expression, dict[Node, int]]] = {}
-    for store, slots, _ in stores:
-        for index, (_, default) in enumerate(slots):
-            if default is None:
-                continue
-            if len(stores) > 1 or store.parent is not function.body.body[0]:
-                return
-            earlier = [slot.target for slot in slots[:index]]
-            if (reads := _default_reads(default, earlier, function, activation)) is None:
-                return
-            defaults[index] = default, reads
-    names: list[str] = []
-    for index in range(max(len(slots) for _, slots, _ in stores)):
-        target = next(slots[index].target for _, slots, _ in stores if index < len(slots))
-        names.append(fresh(target))
-    remainders = [remainder for _, _, remainder in stores if remainder is not None]
-    remainder_name = fresh(remainders[0]) if remainders else None
+    filled_by = [list(other.slots()) for _, other in stores]
+    names = [
+        fresh(next(slots[index] for slots in filled_by if index < len(slots)))
+        for index in range(len(filled))
+    ]
+    unbound = iter(names)
 
-    def parameter(index: int, name: str) -> Expression:
-        if index not in defaults:
-            return JsIdentifier(name=name)
-        default, reads = defaults[index]
-        value = _clone_node(default)
-        for node, copy in list(zip(default.walk(), value.walk())):
+    def value(default: Expression) -> Expression:
+        reads = defaults[default]
+        copied = _clone_node(default)
+        for node, copy in list(zip(default.walk(), copied.walk())):
             if (slot := reads.get(node)) is None:
                 continue
-            if copy is value:
-                value = JsIdentifier(name=names[slot])
+            if copy is copied:
+                copied = JsIdentifier(name=names[slot])
             else:
                 _replace_in_parent(copy, JsIdentifier(name=names[slot]))
-        return JsAssignmentPattern(left=JsIdentifier(name=name), right=value)
+        return copied
 
-    new_params: list[Expression] = [parameter(index, name) for index, name in enumerate(names)]
-    if remainder_name is not None:
-        new_params.append(JsRestElement(argument=JsIdentifier(name=remainder_name)))
-    parameters = parameter_list(new_params, function, None)
+    def parameter(part: _ArgumentSlot | _ArgumentPattern) -> Expression:
+        if isinstance(part, _ArgumentPattern):
+            bound: Expression = JsArrayPattern(elements=parameters_of(part))
+        else:
+            bound = JsIdentifier(name=next(unbound))
+        if part.default is None:
+            return bound
+        return JsAssignmentPattern(left=bound, right=value(part.default))
+
+    def parameters_of(pattern: _ArgumentPattern) -> list[Expression | None]:
+        elements: list[Expression | None] = [parameter(part) for part in pattern.elements]
+        if pattern.remainder is not None:
+            elements.append(JsRestElement(argument=JsIdentifier(name=next(unbound))))
+        return elements
+
+    parameters = parameter_list(parameters_of(argument), function, None)
     if parameters is None:
         return
-    for store, slots, remainder in stores:
+    for store, argument in stores:
         assignments: list[Expression] = [
-            JsAssignmentExpression(operator='=', left=slot.target, right=JsIdentifier(name=name))
-            for slot, name in zip(slots, names)
+            JsAssignmentExpression(operator='=', left=slot, right=JsIdentifier(name=name))
+            for slot, name in zip(argument.slots(), names)
         ]
-        if remainder is not None and remainder_name is not None:
-            assignments.append(JsAssignmentExpression(
-                operator='=', left=remainder, right=JsIdentifier(name=remainder_name)))
         statement = store.parent
         assert statement is not None and function.body is not None
         body = function.body.body
