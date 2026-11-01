@@ -43,29 +43,31 @@ _A_HAND_OFF_A_FOLD_READS_AWAY: dict[str, tuple[str, str]] = {
 }
 
 #: A program writing a built-in through a value the assumption would read away, mapped to what it
-#: prints: a fold made under the assumption writes the key the build after it records.
-_A_WRITE_THE_ASSUMPTION_WOULD_HIDE: dict[str, str] = {
-    F'function show(t) {{ console.log(t, [].x); }} [][{_K}].prototype.x = 5; show(1); show(2);': '1 5\n2 5\n',
-    F'for (var i = 0; i < 2; i++) {{ console.log(i, [].x); [][{_K}].prototype.x = 5; }}': '0 undefined\n1 5\n',
-    F'var o = {{h: function (A) {{ A.prototype.x = 5; }}}}; o.h([][{_K}]); console.log(1, [].x);': '1 5\n',
-    "[][('__pro' + ([] + []) + 'to__')].x = 5; console.log(1, [].x);": '1 5\n',
-    F'for (var n = 0; n < 9; n++) {{ if ([].x === 5) break; [][{_K}].prototype.x = 5; }} console.log(n);': '1\n',
-    F"for (;;) {{ if ([].x === 5) break; [][{_K}].prototype.x = 5; }} console.log('done');": 'done\n',
-    "[][[] + '__proto__'].x = 5; console.log([].x);": '5\n',
-    "var p = [][[] + '__proto__']; p.x = 5; console.log([].x);": '5\n',
-    "var P = Object.getPrototypeOf([]); (P['pus' + 'ah'[1]])(5); console.log([][0]);": '5\n',
+#: prints and to the read the write decides: a fold made under the assumption writes the key the
+#: build after it records.
+_A_WRITE_THE_ASSUMPTION_WOULD_HIDE: dict[str, tuple[str, str]] = {
+    F'function show(t) {{ console.log(t, [].x); }} [][{_K}].prototype.x = 5; show(1); show(2);': ('1 5\n2 5\n', '[].x'),
+    F'for (var i = 0; i < 2; i++) {{ console.log(i, [].x); [][{_K}].prototype.x = 5; }}': ('0 undefined\n1 5\n', '[].x'),
+    F'var o = {{h: function (A) {{ A.prototype.x = 5; }}}}; o.h([][{_K}]); console.log(1, [].x);': ('1 5\n', '[].x'),
+    "[][('__pro' + ([] + []) + 'to__')].x = 5; console.log(1, [].x);": ('1 5\n', '[].x'),
+    F'for (var n = 0; n < 9; n++) {{ if ([].x === 5) break; [][{_K}].prototype.x = 5; }} console.log(n);': ('1\n', '[].x'),
+    F"for (;;) {{ if ([].x === 5) break; [][{_K}].prototype.x = 5; }} console.log('done');": ('done\n', '[].x'),
+    "[][[] + '__proto__'].x = 5; console.log([].x);": ('5\n', '[].x'),
+    "var p = [][[] + '__proto__']; p.x = 5; console.log([].x);": ('5\n', '[].x'),
+    "var P = Object.getPrototypeOf([]); (P['pus' + 'ah'[1]])(5); console.log([][0]);": ('5\n', '[][0]'),
 }
 
-#: A program whose result still hands a built-in to code that writes it, mapped to what it prints.
-_A_RESULT_THAT_STILL_HANDS_A_BUILT_IN_ON: dict[str, str] = {
+#: A program whose result still hands a built-in to code that writes it, mapped to what it prints
+#: and to the read the write decides.
+_A_RESULT_THAT_STILL_HANDS_A_BUILT_IN_ON: dict[str, tuple[str, str]] = {
     inspect.cleandoc("""
         var h = {};
         var k = Math.random() < 2 ? 'a' : 'b';
         h[k] = function (o) { o.x = 5; };
         h[k]([].__proto__);
         console.log([].x, [].at.name);
-    """): '5 at\n',
-    '[].at.constructor("return function (f) { f.__proto__.x = 5; }")()([]); console.log([].x);': '5\n',
+    """): ('5 at\n', '[].x'),
+    '[].at.constructor("return function (f) { f.__proto__.x = 5; }")()([]); console.log([].x);': ('5\n', '[].x'),
 }
 
 #: A program whose hand-off a fold of the first run proves unreachable, mapped to what it prints and
@@ -106,23 +108,32 @@ class TestTheSecondRunDecodesWhatTheHandOffBlocked(TestBase):
                 self.assertEqual((behavior(source), behavior(folded)), ((prints, None), (prints, None)))
 
 
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestTheSecondRunKeepsNoFoldTheWriteDisproves(TestBase):
 
+    def test_each_deobfuscation_leaves_standing_the_read_the_write_decides(self):
+        rows = _A_WRITE_THE_ASSUMPTION_WOULD_HIDE | _A_RESULT_THAT_STILL_HANDS_A_BUILT_IN_ON
+        for source, (_, read) in rows.items():
+            for strict, environment in _EVERY_MODE:
+                with self.subTest(source=source, strict=strict, environment=environment):
+                    self.assertIn(read, _deobfuscated(source, strict, environment))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_node_prints_what_each_row_records(self):
         rows = _A_WRITE_THE_ASSUMPTION_WOULD_HIDE | _A_RESULT_THAT_STILL_HANDS_A_BUILT_IN_ON
-        for source, prints in rows.items():
+        for source, (prints, _) in rows.items():
             with self.subTest(source=source):
                 self.assertEqual(behavior(source), (prints, None))
 
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_each_deobfuscation_of_a_write_the_assumption_would_hide_prints_it_too(self):
-        for source, prints in _A_WRITE_THE_ASSUMPTION_WOULD_HIDE.items():
+        for source, (prints, _) in _A_WRITE_THE_ASSUMPTION_WOULD_HIDE.items():
             for strict, environment in _EVERY_MODE:
                 with self.subTest(source=source, strict=strict, environment=environment):
                     self.assertEqual(behavior(_deobfuscated(source, strict, environment)), (prints, None))
 
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_each_deobfuscation_of_a_result_still_handing_a_built_in_on_prints_it_too(self):
-        for source, prints in _A_RESULT_THAT_STILL_HANDS_A_BUILT_IN_ON.items():
+        for source, (prints, _) in _A_RESULT_THAT_STILL_HANDS_A_BUILT_IN_ON.items():
             for strict, environment in _EVERY_MODE:
                 with self.subTest(source=source, strict=strict, environment=environment):
                     self.assertEqual(behavior(_deobfuscated(source, strict, environment)), (prints, None))

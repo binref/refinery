@@ -8,6 +8,7 @@ the program can answer, such as whether converting it runs code the file install
 from __future__ import annotations
 
 import re
+import string
 
 from collections import Counter
 from contextlib import contextmanager
@@ -1207,9 +1208,7 @@ def _denoted_value(
     return extract_literal_value(node)
 
 
-PLAIN_PATTERN_CHARACTERS = frozenset(
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 !"#%&\',-:;<=>@_`~'
-)
+PLAIN_PATTERN_CHARACTERS = frozenset(F'{string.ascii_letters}{string.digits} !"#%&\',-:;<=>@_`~')
 """
 The characters a regular expression pattern holds that stand for themselves wherever they appear:
 the letters, the digits, and the printable ASCII characters with no meaning in a pattern. The
@@ -1384,11 +1383,13 @@ def inherited_member(value: Value, key: str, effects: EffectModel) -> tuple[bool
     through none.
 
     On an intact chain (`refinery.lib.scripts.js.analysis.effects.EffectModel.read_chain_intact`),
-    `constructor` is the constructor owning the prototype of the value's type and a method key is
-    the function that prototype, or `Object.prototype` behind it, holds
-    (`refinery.lib.scripts.js.builtins.PROTOTYPE_FUNCTIONS`). A key no prototype of the chain holds
-    is `undefined` (`property_provably_absent`). A function the language installs answers only for
-    the keys `_builtin_function_member` reads.
+    `constructor` is the constructor owning the prototype of the value's type. Where
+    `refinery.lib.scripts.js.builtins.PROTOTYPE_METHODS` lists the methods of that prototype, a
+    method key is the function that prototype, or `Object.prototype` behind it, holds
+    (`refinery.lib.scripts.js.builtins.PROTOTYPE_FUNCTIONS`), where the host has it
+    (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.has_function`). A key no
+    prototype of the chain holds is `undefined` (`property_provably_absent`). A function the
+    language installs answers only for the keys `_builtin_function_member` reads.
     """
     if not effects.builtin_writes_followed():
         return False, None
@@ -1398,9 +1399,13 @@ def inherited_member(value: Value, key: str, effects: EffectModel) -> tuple[bool
     if owner in CONSTRUCTORS and effects.read_chain_intact(type(value)):
         if key == 'constructor':
             return True, CONSTRUCTORS[owner]
-        method = PROTOTYPE_FUNCTIONS.get((owner, key)) or PROTOTYPE_FUNCTIONS.get(('Object', key))
-        if method is not None:
-            return True, method
+        if owner not in PROTOTYPE_METHODS:
+            return False, None
+        environment = effects.model.environment
+        for holder in (owner, 'Object'):
+            method = PROTOTYPE_FUNCTIONS.get((holder, key))
+            if method is not None:
+                return (True, method) if environment.has_function(holder, key) else (False, None)
     if property_provably_absent(effects, type(value), key):
         return True, None
     return False, None

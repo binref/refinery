@@ -7,6 +7,7 @@ import base64
 import json
 import math
 import re
+import string
 import sys
 import urllib.parse
 
@@ -252,10 +253,13 @@ class RegisteredBuiltin(NamedTuple):
     """
     A function of `BUILTIN_REGISTRY`. *function* computes what a call answers. *reads_strings*
     marks a function that reads every argument as a string and as nothing else, so an argument
-    converts as an operator converts an operand.
+    converts as an operator converts an operand. *engine_written* marks a function whose answer the
+    engine writes in its own way, as JScript writes the tags of the HTML methods in upper case, so
+    that only a host with one engine answers for it.
     """
     function: Callable
     reads_strings: bool
+    engine_written: bool
 
 
 BUILTIN_REGISTRY: dict[tuple, RegisteredBuiltin] = {}
@@ -263,16 +267,22 @@ BUILTIN_REGISTRY: dict[tuple, RegisteredBuiltin] = {}
 
 def registered_builtin(key: tuple, environment: HostEnvironment) -> RegisteredBuiltin | None:
     """
-    The function `BUILTIN_REGISTRY` holds under *key* where the host *environment* has it
-    (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.has_function`), the one lookup
-    both the interpreter and the simplifier make.
+    The function `BUILTIN_REGISTRY` holds under *key* where the host *environment* answers for it,
+    the one lookup both the interpreter and the simplifier make: a method of a prototype or a global
+    function the host has (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.has_function`),
+    whose answer, where the engine writes it, the host has one engine to write. A method of a
+    constructor itself, such as `String.fromCharCode`, is taken to be in every host.
     """
     builtin = BUILTIN_REGISTRY.get(key)
     if builtin is None:
         return None
+    if builtin.engine_written and environment.engine is None:
+        return None
     owner, name = key
     if isinstance(owner, type):
         owner = PROTOTYPE_OWNERS.get(owner.__name__)
+    elif owner is not None:
+        return builtin
     if not environment.has_function(owner, name):
         return None
     return builtin
@@ -297,9 +307,9 @@ def _in_code_units(fn: Callable) -> Callable:
     return in_code_units
 
 
-def _register(key: tuple, *, reads_strings: bool = False):
+def _register(key: tuple, *, reads_strings: bool = False, engine_written: bool = False):
     def _decorator(fn: Callable):
-        BUILTIN_REGISTRY[key] = RegisteredBuiltin(_in_code_units(fn), reads_strings)
+        BUILTIN_REGISTRY[key] = RegisteredBuiltin(_in_code_units(fn), reads_strings, engine_written)
         return fn
     return _decorator
 
@@ -563,7 +573,7 @@ def _register_html_method(method: str, tag: str, attribute: str) -> None:
     to a string and every `"` in it written as `&quot;` as the value of *attribute*, where there is
     one.
     """
-    @_register((str, method), reads_strings=True)
+    @_register((str, method), reads_strings=True, engine_written=True)
     def _create_html(s: str, args: list[Value]) -> Value:
         opening = tag
         if attribute:
@@ -1084,9 +1094,7 @@ def _global_escape(args: list[Value]) -> Value:
     return ''.join(escaped)
 
 
-_ESCAPE_UNESCAPED = frozenset(
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@*_+-./'
-)
+_ESCAPE_UNESCAPED = frozenset(F'{string.ascii_letters}{string.digits}@*_+-./')
 
 
 @_register((None, 'unescape'), reads_strings=True)

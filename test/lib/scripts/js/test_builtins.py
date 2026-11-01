@@ -16,7 +16,7 @@ from refinery.lib.scripts.js.builtins import ALIASED_METHODS, PROTOTYPE_METHODS
 #: property of its prototype but `constructor`, each with the `name` of the function it holds and
 #: the other keys holding the same function.
 _THE_PROTOTYPES_OF_NODE = inspect.cleandoc("""
-    var owners = {Object: Object, Function: Function, Array: Array, String: String, Number: Number, Boolean: Boolean, RegExp: RegExp};
+    var owners = {Object: Object, Function: Function, Array: Array, String: String, Number: Number, Boolean: Boolean};
     var table = {};
     Object.keys(owners).forEach(function (owner) {
       var prototype = owners[owner].prototype;

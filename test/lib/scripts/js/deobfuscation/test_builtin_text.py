@@ -4,9 +4,10 @@ Strings only a built-in writes.
 `escape` writes the escapes of ECMA-262 B.2.1.1 in every host. The HTML methods of
 `String.prototype`, the text of an array iterator, the characters `Date()` writes at fixed
 positions and the text of a regular expression are folded only where the host is pinned to one
-engine, which is Node: the Windows Script Host, which the default host covers, is not known to have
-the first two, and the last two are written by the engine. A built-in the program writes stops
-each of them, whether the program names it or reaches it through a value.
+engine, which is Node: the Windows Script Host, which the default host covers, writes the tags of
+the HTML methods in upper case and has no iterators, and the last two are written by the engine. A
+built-in the program writes stops each of them, whether the program names it or reaches it through
+a value.
 
 Every answer is Node's, under the default deobfuscation, under it in Node, and under the one that
 suspects code it cannot read in Node.
@@ -101,6 +102,28 @@ _A_STRING_LEFT_TO_THE_ENGINE = [
     "console.log(RegExp('(') + '');",
 ]
 
+#: A program reading methods of `Array.prototype` the Windows Script Host does not have, and one
+#: it has but writes its own text for, mapped to what Node prints, to the text the default
+#: deobfuscation writes, and to the text the deobfuscation writes in Node.
+_A_METHOD_NOT_EVERY_HOST_ANSWERS_ALIKE: dict[str, tuple[str, str, str]] = {
+    "console.log(typeof [].values, !![].entries, typeof ''.italics);": (
+        'function true function\n',
+        "console.log(typeof [].values, !![].entries, 'function');",
+        "console.log('function', true, 'function');",
+    ),
+}
+
+#: A program that hands to code no scan reads a function it reads under the name of a method of
+#: `RegExp.prototype` off an object no regular expression is, mapped to what Node prints for it, and
+#: to the text the deobfuscation writes for it, which still folds a read that asks the prototype of
+#: strings.
+_A_READ_NAMED_LIKE_A_METHOD_OF_A_REGULAR_EXPRESSION: dict[str, tuple[str, str]] = {
+    "var cp = require('child_process'); var run = require('util').promisify(cp.exec); console.log('abc'.nope, typeof run);": (
+        'undefined function\n',
+        "var cp = require('child_process');\nvar run = require('util').promisify(cp.exec);\nconsole.log(void 0, typeof run);",
+    ),
+}
+
 #: Each model and host a deobfuscation below is asked under.
 _EVERY_MODE = [
     (False, 'universal'),
@@ -157,3 +180,37 @@ class TestAStringTheProgramOrTheEngineDecides(TestBase):
             for strict, environment in _EVERY_MODE:
                 with self.subTest(source=source, strict=strict, environment=environment):
                     self.assertEqual(behavior(_deobfuscated(source, strict, environment)), behavior(source))
+
+
+class TestAMethodNotEveryHostAnswersAlike(TestBase):
+
+    def test_the_default_deobfuscation_leaves_what_the_windows_script_host_answers_otherwise(self):
+        for source, (_, universal, _) in _A_METHOD_NOT_EVERY_HOST_ANSWERS_ALIKE.items():
+            with self.subTest(source=source):
+                self.assertEqual(_deobfuscated(source, False, 'universal'), universal)
+
+    def test_the_deobfuscation_in_node_folds_it(self):
+        for source, (_, _, folded) in _A_METHOD_NOT_EVERY_HOST_ANSWERS_ALIKE.items():
+            with self.subTest(source=source):
+                self.assertEqual(_deobfuscated(source, False, 'node'), folded)
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_what_each_row_records_for_the_program_and_its_folded_text(self):
+        for source, (prints, _, folded) in _A_METHOD_NOT_EVERY_HOST_ANSWERS_ALIKE.items():
+            with self.subTest(source=source):
+                self.assertEqual((behavior(source), behavior(folded)), ((prints, None), (prints, None)))
+
+
+class TestAReadNamedLikeAMethodOfARegularExpression(TestBase):
+
+    def test_each_deobfuscation_still_folds_what_the_prototype_of_strings_answers(self):
+        for source, (_, folded) in _A_READ_NAMED_LIKE_A_METHOD_OF_A_REGULAR_EXPRESSION.items():
+            for strict, environment in _EVERY_MODE:
+                with self.subTest(source=source, strict=strict, environment=environment):
+                    self.assertEqual(_deobfuscated(source, strict, environment), folded)
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_what_each_row_records_for_the_program_and_its_folded_text(self):
+        for source, (prints, folded) in _A_READ_NAMED_LIKE_A_METHOD_OF_A_REGULAR_EXPRESSION.items():
+            with self.subTest(source=source):
+                self.assertEqual((behavior(source), behavior(folded)), ((prints, None), (prints, None)))

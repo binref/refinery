@@ -111,9 +111,11 @@ from test.lib.scripts.js.test_parser_recovery import (
 
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
+from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.model import static_string
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.pipeline import PipelineObserver
 from refinery.units.scripting.djs import djs
 
 
@@ -7038,3 +7040,77 @@ class TestCodeHoldingAnInvalidRegularExpressionIsNotSpliced(TestBase):
             {source: before_and_after(source) for source in rows},
             {source: (does, does) for source, does in rows.items()},
         )
+
+
+#: A program spelled in six characters whose code declares a variable, as the strict deobfuscation
+#: for Node reads it: the code builds a function from text spelling `var qf = 1;` and calls it.
+A_PAYLOAD_DECLARING_A_VARIABLE = (
+    "[]['flat']['constructor']('var q' + ([]['flat'] + '')[9] + ' = 1; console.log(q' + ([]['flat'] + '')[9]"
+    " + ', q' + ([]['flat'] + '')[9] + ');')();"
+)
+
+
+class TestAPayloadDeclaringAVariableIsDecodedByTheStrictDeobfuscation(TestBase):
+    """
+    The second run compares each build of the write scan with the build before it and gives up at
+    the first that records a name the earlier one did not. The scan records every name a scope
+    binds, so the spliced code's own `var qf` ends the run, and the strict deobfuscation leaves the
+    construction standing; the same code without the declaration is decoded. No fold relied on
+    `qf` being unwritten, since no earlier tree read that name. A correct comparison counts a
+    gained name only where an earlier tree read it or a fold asks about it without reading it.
+    """
+
+    @unittest.expectedFailure
+    def test_the_construction_is_decoded(self):
+        decoded = A_PAYLOAD_DECLARING_A_VARIABLE.encode('utf8') | djs(strict=True, environment='node') | str
+        self.assertNotIn('constructor', decoded)
+
+
+class TestOneReadNoFoldDecidesKeepsTheSecondRunFromTheOthers(TestBase):
+    """
+    `'abc'[{}]` reads under a key the scan cannot read and hands the value to `console.log`, so
+    the scan of the result does not follow every write and the second run is thrown away whole:
+    `'abc'[[1]]` beside it stays, although alone it folds to `'b'`. The assumption is made and
+    checked for the whole program at once; a correct second run keeps each fold whose premise no
+    write it does not follow can reach.
+    """
+
+    @unittest.expectedFailure
+    def test_the_read_the_second_run_decides_is_folded(self):
+        source = "console.log('abc'[[1]], 'abc'[{}]);"
+        self.assertEqual(source.encode('utf8') | djs() | str, "console.log('b', 'abc'[{}]);")
+
+
+class _PassCounter(PipelineObserver):
+    """
+    Counts every transformer invocation of a run, the second run's included.
+    """
+
+    def __init__(self):
+        self.passes = 0
+
+    def before(self, group: str, transformer: type, ast) -> None:
+        self.passes += 1
+
+    def fork(self) -> PipelineObserver:
+        return self
+
+
+class TestASecondRunNoFoldCanUseIsNotRun(TestBase):
+    """
+    A hand-off under a key the scan cannot read starts the second run, and the unit repeats it in
+    its next round on the same tree, although no fold of the program asks whether the scan follows
+    every write. The two programs differ in a hand-off no fold can decide, so a run that starts the
+    second run only where a fold was refused for that question invokes the passes equally often.
+    """
+
+    @staticmethod
+    def _passes(source: str) -> int:
+        counter = _PassCounter()
+        deobfuscate(JsParser(source).parse(), observer=counter)
+        return counter.passes
+
+    @unittest.expectedFailure
+    def test_a_hand_off_no_fold_can_decide_costs_no_passes(self):
+        head = "var k = Math.random() < 2 ? 'a' : 'b';"
+        self.assertEqual(self._passes(F'{head} h([][k]);'), self._passes(F'{head} h([]);'))

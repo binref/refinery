@@ -1283,7 +1283,7 @@ class JsSimplifications(PinnedTransformer):
         args: list[Value] = []
         for argument in node.arguments:
             if builtin.reads_strings:
-                known, value = denoted_value(argument, self.model, self._uninterceptable, self._effect_model)
+                known, value = self._denoted(argument)
                 if known:
                     known, value = converted_operand(value, self._uninterceptable, self._effect_model, gated=True)
             else:

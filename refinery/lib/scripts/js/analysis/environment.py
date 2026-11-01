@@ -34,7 +34,7 @@ import operator
 from dataclasses import dataclass
 from typing import Callable, NamedTuple
 
-from refinery.lib.scripts.js.builtins import HTML_METHODS, ITERATOR_METHODS
+from refinery.lib.scripts.js.builtins import ITERATOR_METHODS
 
 
 class Presence(enum.Enum):
@@ -547,8 +547,10 @@ class JsEngine(enum.Enum):
 
     def function_text(self, name: str) -> str:
         """
-        The text a function the language installs under *name* converts to:
-        `function at() { [native code] }` for `[].at`.
+        The text a function the language installs under *name* converts to, which reads as follows
+        for `[].at`:
+
+            function at() { [native code] }
         """
         return F'function {name}() {{ [native code] }}'
 
@@ -564,8 +566,10 @@ class JsEngine(enum.Enum):
     def date_character(self, index: int) -> str | None:
         """
         The character the string `Date()` returns holds at *index* whatever the time, or `None`
-        where it depends on the time. The string reads `Www Mmm DD YYYY HH:MM:SS GMT+hhmm` and
-        then the name of the time zone, which fixes these positions where the year has four digits.
+        where it depends on the time. The string reads as follows and then holds the name of the
+        time zone, which fixes these positions where the year has four digits:
+
+            Www Mmm DD YYYY HH:MM:SS GMT+hhmm
         """
         return _V8_DATE_CHARACTERS.get(index)
 
@@ -584,12 +588,10 @@ _V8_DATE_CHARACTERS = {
 }
 
 
-ENGINE_FUNCTIONS = frozenset(
-    {('String', method) for method in HTML_METHODS} | {('Array', method) for method in ITERATOR_METHODS}
-)
+ENGINE_FUNCTIONS = frozenset(('Array', method) for method in ITERATOR_METHODS)
 """
 The functions the language installs, by the owner of the prototype holding them and their key,
-that a host covering the Windows Script Host is not known to have: JScript defines none of them.
+that a host covering the Windows Script Host does not have: JScript, its engine, has no iterators.
 Only a host with one engine is known to have them (`HostEnvironment.has_function`).
 """
 

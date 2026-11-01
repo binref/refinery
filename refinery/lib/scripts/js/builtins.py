@@ -133,12 +133,6 @@ PROTOTYPE_METHODS: dict[str, frozenset[str]] = {
         'toString',
         'valueOf',
     }),
-    'RegExp': frozenset({
-        'compile',
-        'exec',
-        'test',
-        'toString',
-    }),
 }
 """
 The function-valued own properties of the prototype of each constructor named, `constructor` aside,
@@ -203,10 +197,13 @@ out a built-in object, whose properties a write through the read replaces for ev
 """
 
 CONSTRUCTORS: dict[str, BuiltinFunction] = {
-    owner: BuiltinFunction(owner, is_constructor=True) for owner in PROTOTYPE_METHODS
+    owner: BuiltinFunction(owner, is_constructor=True) for owner in (*PROTOTYPE_METHODS, 'RegExp')
 }
 """
-The constructor owning each prototype of `PROTOTYPE_METHODS`, by the global name holding it.
+The constructor owning each prototype of `PROTOTYPE_METHODS`, and `RegExp`, by the global name
+holding it. The methods of `RegExp.prototype` are left out of `PROTOTYPE_METHODS`: `exec` and
+`test` are names a program reads off many objects no regular expression is, such as the module
+`child_process`, and `BUILTIN_MEMBER_NAMES` would count every such read as one off a built-in.
 """
 
 
