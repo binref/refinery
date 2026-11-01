@@ -1620,7 +1620,10 @@ def apply(operator: str, left: Ps1Fact, right: Ps1Fact) -> Ps1Outcome:
     spelling.
     """
     operator = operator.lower()
-    cell = binary_outcome(operator, *(_grid_type(left), _grid_type(right)))  # type: ignore[misc]
+    left_type, right_type = _grid_type(left), _grid_type(right)
+    if left_type is None or right_type is None:
+        return NOTHING
+    cell = binary_outcome(operator, left_type, right_type)
     if cell is None:
         return NOTHING
     if not cell.may_throw or _throws_are_modelled(operator, left, right):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import unittest
 
 from refinery.lib.scripts.ps1 import data
@@ -521,6 +522,12 @@ class TestPs1MemberOriginQueries(unittest.TestCase):
     def test_the_generic_method_table_floors_a_member_that_is_not_a_method(self):
         with self.assertRaises(ValueError):
             data._required_reflection_method_keys({('text.stringbuilder', 'length')})
+
+    def test_the_type_table_floors_a_method_parameter_whose_type_is_not_spelled(self):
+        record = copy.deepcopy(data._TYPE_TABLE['System.String'])
+        record['members']['Substring']['overloads'][0]['parameters'][0]['type'] = None
+        with self.assertRaises(ValueError):
+            data._require_spelled_parameter_types({'System.String': record})
 
 
 class TestPs1InheritedStaticShadowing(unittest.TestCase):

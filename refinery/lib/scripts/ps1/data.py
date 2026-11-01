@@ -146,8 +146,31 @@ _ENGINE_TYPES: dict[str, dict] = {
     _name: _engine_enum(_name, _members) for _name, _members in _ENGINE_ENUMS.items()
 }
 
+
+def _require_spelled_parameter_types(table: dict[str, dict]) -> None:
+    """
+    Fail the load where a collected method has a parameter whose type is not spelled. Every reader
+    of an overload hands that spelling to `resolve_type`, which reads spellings and nothing else, so
+    a capture that left one out would otherwise stop the first script to reach the method rather
+    than the load.
+    """
+    for name, record in table.items():
+        for member, entry in record['members'].items():
+            if entry.get('kind') != 'method':
+                continue
+            for overload in entry.get('overloads') or ():
+                for parameter in overload.get('parameters') or ():
+                    spelling = parameter.get('type')
+                    if not isinstance(spelling, str) or not spelling:
+                        raise ValueError(
+                            F'the collected method {name}.{member} has a parameter whose type is '
+                            F'not spelled; the reader and the collected data are out of step.'
+                        )
+
+
 #: The .NET types the resolver answers for: the collected table and, beside it, the engine's own.
 _TYPE_TABLE: dict[str, dict] = {**_TYPES['types'], **_ENGINE_TYPES}
+_require_spelled_parameter_types(_TYPE_TABLE)
 
 
 class _EnumTable(typing.NamedTuple):
@@ -809,7 +832,20 @@ def resolve_type(name: str | Ps1TypeName) -> Ps1TypeName | None:
     `System.Char`; what an array's members actually are is `_member_surface`'s question, asked of the
     name this returns.
     """
-    parsed = parse_type_name(name) if isinstance(name, str) else name
+    if isinstance(name, str):
+        return _resolve_spelling(name)
+    return _canonical_type_name(name)
+
+
+@functools.lru_cache(maxsize=0x1000)
+def _resolve_spelling(name: str) -> Ps1TypeName | None:
+    """
+    `resolve_type` of a spelling, remembered: the answer depends on the text alone, since the tables
+    it is looked up in are fixed once this module has loaded, and a script asks about the same few
+    spellings hundreds of thousands of times. The bound keeps a process that reads one script after
+    another from holding on to every spelling any of them wrote.
+    """
+    parsed = parse_type_name(name)
     if parsed is None:
         return None
     return _canonical_type_name(parsed)
