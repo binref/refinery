@@ -21,7 +21,12 @@ from __future__ import annotations
 
 from typing import Iterable, Sequence, TypeVar
 
-from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, Projection
+from refinery.lib.scripts.analysis.cfg import (
+    CfgNode,
+    ControlFlowGraph,
+    Projection,
+    walk_reading,
+)
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 
 _D = TypeVar('_D')
@@ -33,9 +38,11 @@ class ReachabilityQuery:
     `refinery.lib.scripts.analysis.cfg.Projection`, the path-between question asked from them, and the
     `reaching_definition` selection asked from that.
 
-    The memo is the reason this is an object rather than a function. One definition is asked against
-    many uses, so the forward set from the definition is computed once and reused; the graphs do not
-    change for as long as the model lives, so nothing invalidates it.
+    The memos are the reason this is an object rather than a function. A caller asking what one node
+    reaches asks it again of the same node, so each set is computed once and reused, and a caller
+    asking whether a candidate lies between asks it again of the same candidates and the same
+    definition for every use; the graphs do not change for as long as the model lives, so nothing
+    invalidates either.
 
     **The projection belongs to the instance and not to the call.** Every set this holds was computed
     under one reading of the graph, and the memo is keyed by node and direction with no room for a
@@ -48,6 +55,8 @@ class ReachabilityQuery:
         self._dominators = dominators
         self._projection = projection
         self._reach: dict[tuple[int, bool], frozenset[int]] = {}
+        self._upstream: dict[tuple[int, frozenset[int], int], dict[int, bool]] = {}
+        self._asked: set[tuple[int, bool]] = set()
 
     def reachable(self, node: CfgNode, *, forward: bool) -> frozenset[int]:
         """
@@ -75,11 +84,34 @@ class ReachabilityQuery:
         Whether any node in *candidates* — given as node ids of *graph* — lies on some path from
         *source* to *target*.
 
-        Asked as two walks rather than one path enumeration: a node lies between the two exactly when
-        it is reachable forward from *source* and *target* is reachable forward from it, and the
-        second half is the same as it being reachable backward from *target*. The forward set is
-        intersected first and the backward walk is skipped entirely when that comes back empty, which
-        is the common case for a caller whose candidate set is small.
+        A node lies between the two exactly when it is reachable forward from *source* and *target*
+        is reachable forward from it, which is the same as it being reachable backward from
+        *target*.
+
+        **Where *source* dominates *target*, one walk backward from *target* answers it.** A node
+        the entry reaches, that reaches *target*, and that *source* could reach at all by the order
+        of `ControlFlowGraph.condensation` — whose component numbers fall along every edge, so
+        nothing *source* reaches is numbered above it — is a node *source* does reach: a path from
+        the entry to it avoiding *source*, continued to *target*, would avoid *source* too. So the
+        walk goes upstream from *target* over components, never past the number of *source*, and
+        stops at the nearest component the entry reaches that holds a candidate
+        (`Condensation.found_within`). It never visits what *source* reaches but *target* does not,
+        and what it settles is kept per candidate set and bound, so that the uses of one definition
+        share one walk. That is every question `reaching_definition` asks and every question asked
+        from the entry. The argument needs both walks to read one relation, which a hub-bound
+        *source* does not (`refinery.lib.scripts.analysis.cfg.walk_reading`).
+
+        **The walk is taken only where one of the two ends is new**: a *source* not asked from
+        before, or a *target* not asked toward before. A walk visits only what the flood from its
+        new end would, so the walks together cost no more than the floods would have; a question
+        whose ends are both old is answered by those floods, computed once and kept for every
+        further candidate set between them. Two hundred variables defined in one statement and read
+        in another cost two floods, where a walk per variable would cross the stretch between the
+        two statements two hundred times.
+
+        Every other question intersects the two floods `reachable` memoizes, the forward set first,
+        and so does every question whose two floods are already at hand, since nothing answers it
+        for less.
 
         Candidates stay *ids* rather than becoming nodes, which is why *graph* is asked for. Every
         layer above builds these sets as ids and memoizes them that way, and a signature taking nodes
@@ -92,17 +124,73 @@ class ReachabilityQuery:
         it; where the run carries on afterwards is exactly what the forward edges do not draw, so the
         backward walk from *target* will not find it however certainly the real run passes through
         it. Answering from the walk alone would say a binder written in a `trap` body does not lie
-        between a definition and a use it in fact rebinds.
+        between a definition and a use it in fact rebinds. Such candidates are asked of the forward
+        set before either way of answering the rest.
         """
         candidates = frozenset(candidates)
         if not candidates:
             return False
+        source_end, target_end = (id(source), True), (id(target), False)
+        new = source_end not in self._asked or target_end not in self._asked
+        self._asked.add(source_end)
+        self._asked.add(target_end)
+        projection = self._projection
+        if projection.declines_the_hub:
+            unplaced = candidates & graph.hub_bound
+            if unplaced and not unplaced.isdisjoint(self.reachable(source, forward=True)):
+                return True
+        if source_end not in self._reach or target_end not in self._reach:
+            reading = walk_reading(target, forward=False, projection=projection)
+            if (
+                walk_reading(source, forward=True, projection=projection) is reading
+                and self._dominators.dominates_node(graph, source, target, projection)
+            ):
+                held = self._held_upstream(graph, source, target, candidates, reading, walk=new)
+                if held is not None:
+                    return held
         downstream = self.reachable(source, forward=True) & candidates
-        if not downstream:
+        return bool(downstream) and not downstream.isdisjoint(self.reachable(target, forward=False))
+
+    def _held_upstream(
+        self,
+        graph: ControlFlowGraph,
+        source: CfgNode,
+        target: CfgNode,
+        candidates: frozenset[int],
+        reading: Projection,
+        *,
+        walk: bool,
+    ) -> bool | None:
+        """
+        `any_between` for a *source* that dominates *target* under *reading*: whether a component
+        the entry reaches, numbered no higher than that of *source*, holds a candidate and reaches
+        *target*. `None` where no earlier walk under the same candidates and bound settled it and
+        *walk* says not to walk.
+        """
+        condensation = graph.condensation(reading)
+        start = condensation.number_of(target)
+        bound = condensation.number_of(source)
+        assert start is not None and bound is not None
+        key = (id(graph), candidates, bound)
+        memo = self._upstream.get(key)
+        if memo is None:
+            memo = self._upstream[key] = {}
+        known = memo.get(start)
+        if known is not None or not walk:
+            return known
+        reached = self._dominators.reached_from_entry(graph, self._projection)
+        components = condensation.components
+
+        def holds_a_candidate(number: int) -> bool:
+            members = components[number]
+            if id(members[0]) not in reached:
+                return False
+            for node in members:
+                if id(node) in candidates:
+                    return True
             return False
-        if self._projection.declines_the_hub and downstream & graph.hub_bound:
-            return True
-        return bool(downstream & self.reachable(target, forward=False))
+
+        return condensation.found_within(start, holds_a_candidate, memo, downstream=False, limit=bound)
 
     def reaching_definition(
         self,

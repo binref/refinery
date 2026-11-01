@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import itertools
+
 from typing import Callable
 
 from test import TestBase
@@ -121,6 +123,50 @@ class TestACondensationAnswersWhatTheEdgesReach(TestBase):
             assert number is not None
             condensation.holds(number, test, memo, downstream=True)
         self.assertEqual(sorted(asked), sorted(set(asked)))
+
+    def test_every_edge_between_two_components_runs_to_a_lower_number(self):
+        for shape, edges in _SHAPES.items():
+            graph, _ = _graph(edges)
+            condensation = Condensation(graph.nodes, _successors)
+            for node in graph.nodes:
+                for successor in node.successors:
+                    number = condensation.number_of(node)
+                    reached = condensation.number_of(successor)
+                    assert number is not None and reached is not None
+                    if number != reached:
+                        with self.subTest(shape=shape):
+                            self.assertGreater(number, reached)
+
+    def test_a_test_is_found_within_a_limit_exactly_when_a_node_there_passes_it_and_is_on_one_side(self):
+        for shape, edges in _SHAPES.items():
+            graph, named = _graph(edges)
+            condensation = Condensation(graph.nodes, _successors)
+            count = len(condensation.components)
+            for (marked_name, marked), limit in itertools.product(named.items(), range(count)):
+                mark = condensation.number_of(marked)
+                assert mark is not None
+
+                def test(number: int) -> bool:
+                    return number == mark
+                for (downstream, step), order in itertools.product(
+                    ((True, _successors), (False, _predecessors)),
+                    (list, reversed),
+                ):
+                    inside = mark >= limit if downstream else mark <= limit
+                    memo: dict[int, bool] = {}
+                    for name, node in order(list(named.items())):
+                        number = condensation.number_of(node)
+                        assert number is not None
+                        if not (number >= limit if downstream else number <= limit):
+                            continue
+                        expected = inside and (node is marked or id(marked) in _closure(node, step))
+                        with self.subTest(
+                            shape=shape, marked=marked_name, node=name, downstream=downstream, limit=limit
+                        ):
+                            self.assertEqual(
+                                condensation.found_within(number, test, memo, downstream=downstream, limit=limit),
+                                expected,
+                            )
 
     def test_a_node_the_condensation_was_not_built_over_has_no_component(self):
         _, named = _graph({'a': ['b'], 'b': [], 'c': ['a']})

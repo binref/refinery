@@ -305,7 +305,12 @@ class DominatorModel:
         and under `Projection.FORWARD` it dominates what follows it. Both answers are right about
         different questions, and a caller that did not choose got whichever this happened to be
         written with.
+
+        The entry dominates exactly the nodes it reaches, which `reached_from_entry` answers without
+        the tree: a graph asked nothing but questions from its entry never needs one built.
         """
+        if a is graph.entry:
+            return id(b) in self.reached_from_entry(graph, projection)
         return self.tree_of(graph, projection).dominates(a, b)
 
     def tree_of(self, graph: ControlFlowGraph, projection: Projection) -> DominanceTree:

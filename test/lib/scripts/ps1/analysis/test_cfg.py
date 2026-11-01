@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import unittest
 
 from inspect import cleandoc
@@ -12,6 +13,7 @@ from refinery.lib.scripts.analysis.cfg import (
     CfgEdge,
     CfgNode,
     ControlFlowGraph,
+    ControlFlowModel,
     Projection,
     flood,
     flood_labels,
@@ -21,9 +23,11 @@ from refinery.lib.scripts.analysis.cfg import (
     reachable_forward_from_any,
     reachable_forward_labels,
     reachable_from_any,
+    walk_reading,
 )
 from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
+from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
 from refinery.lib.scripts.ps1.analysis.cfg import (
     Ps1ReportNode,
     build_control_flow_model,
@@ -1498,6 +1502,82 @@ class TestPs1ALabelledWalkAnswersEveryLabelAsItsOwnWalkWould(TestBase):
         assert inside is not None
         with self.assertRaises(ValueError):
             reachable_forward_labels(graphs[id(tree)], {'inside': [inside]})
+
+
+class TestPs1APathBetweenQuestionAnswersAsTheTwoFloodsWould(TestBase):
+    """
+    A node lies between two others when the forward flood from the first and the backward flood
+    from the second both return it; under the reading that declines the hub, a statement of a
+    resuming handler needs only the first, because where it carries on is the hub that reading
+    leaves out. Asked of every pair of nodes and every node of the trap-guarded scripts the
+    labelled walks are checked against, under both readings.
+    """
+
+    def test_every_node_lies_between_two_others_exactly_when_the_floods_say_so(self):
+        for script in TestPs1ALabelledWalkAnswersEveryLabelAsItsOwnWalkWould._SCRIPTS:
+            graphs = build_ps1_control_flow(Ps1Parser(script).parse())
+            dominators = DominatorModel(ControlFlowModel(graphs))
+            for graph in graphs.values():
+                for projection in Projection:
+                    asked_before = ReachabilityQuery(dominators, projection)
+                    unplaced = graph.hub_bound if projection.declines_the_hub else frozenset()
+                    wrong = []
+                    for source, target in itertools.product(graph.nodes, repeat=2):
+                        forward = flood([source], forward=True, projection=projection)
+                        backward = flood([target], forward=False, projection=projection)
+                        for node in graph.nodes:
+                            key = id(node)
+                            expected = key in forward and (key in backward or key in unplaced)
+                            asked_first = ReachabilityQuery(dominators, projection)
+                            if (
+                                asked_first.any_between(graph, source, target, {key}) != expected
+                                or asked_before.any_between(graph, source, target, {key}) != expected
+                            ):
+                                wrong.append((source, target, node))
+                    with self.subTest(script=script, projection=projection.name):
+                        self.assertEqual(len(wrong), 0)
+
+    def test_the_components_reached_under_a_walk_s_reading_hold_what_a_flood_from_its_start_returns(self):
+        for script in TestPs1ALabelledWalkAnswersEveryLabelAsItsOwnWalkWould._SCRIPTS:
+            graphs = build_ps1_control_flow(Ps1Parser(script).parse())
+            for graph in graphs.values():
+                for projection, forward in itertools.product(Projection, (True, False)):
+                    walked: dict[Projection, list[frozenset[int]]] = {}
+                    wrong = []
+                    for node in graph.nodes:
+                        reading = walk_reading(node, forward=forward, projection=projection)
+                        condensation = graph.condensation(reading)
+                        if reading not in walked:
+                            walked[reading] = condensation.accumulate(
+                                lambda number: frozenset(id(member) for member in condensation.components[number]),
+                                frozenset.union,
+                                downstream=forward,
+                            )
+                        number = condensation.number_of(node)
+                        assert number is not None
+                        if walked[reading][number] != flood([node], forward=forward, projection=projection):
+                            wrong.append(node)
+                    with self.subTest(script=script, projection=projection.name, forward=forward):
+                        self.assertEqual(len(wrong), 0)
+
+    def test_a_statement_of_a_resuming_handler_lies_between_a_failing_statement_and_the_next(self):
+        tree = Ps1Parser(cleandoc("""
+            trap { 'handled'; continue }
+            $v = [int]$args[0]
+            $w = [int]$args[1]
+        """)).parse()
+        graphs = build_ps1_control_flow(tree)
+        graph = graphs[id(tree)]
+        trap = tree.body[0]
+        assert isinstance(trap, Ps1TrapStatement) and trap.body is not None
+        handled = graph.node_of(trap.body.body[0])
+        first = graph.node_of(tree.body[1])
+        second = graph.node_of(tree.body[2])
+        assert handled is not None and first is not None and second is not None
+        for projection in Projection:
+            query = ReachabilityQuery(DominatorModel(ControlFlowModel(graphs)), projection)
+            with self.subTest(projection=projection.name):
+                self.assertTrue(query.any_between(graph, first, second, {id(handled)}))
 
 
 class TestPs1AnErrorNothingTakesIsReportedPastItsStatement(_Ps1ControlFlowGraphs):

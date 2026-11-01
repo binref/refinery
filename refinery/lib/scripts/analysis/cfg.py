@@ -291,6 +291,20 @@ def flood(
     return seen
 
 
+def walk_reading(source: CfgNode, *, forward: bool, projection: Projection) -> Projection:
+    """
+    The reading `flood` walks *source* alone under, which is `_split_sources`' rule for one source,
+    with `Projection.MAY` standing for both readings of a graph that draws no hub, as
+    `ControlFlowGraph.condensation` keys it. Two walks of one graph under one reading walk one
+    relation, which is what a caller combining their answers over that condensation must know: the
+    components reached from that of *source* hold exactly the nodes `flood` returns from it. That
+    holds for *source* and not for every node sharing its component, since another node of it may
+    be walked under the other reading.
+    """
+    coarse, _, declines = _split_sources([source], forward=forward, projection=projection)
+    return Projection.MAY if coarse or not declines else projection
+
+
 def _split_sources(
     sources: list[CfgNode], *, forward: bool, projection: Projection,
 ) -> tuple[list[CfgNode], list[CfgNode], bool]:
@@ -519,6 +533,7 @@ class ControlFlowGraph:
         self._completions: dict[int, tuple[Node, list[CfgNode]]] = {}
         self._spans: dict[int, tuple[Node, range]] = {}
         self._positions: dict[int, int] | None = None
+        self._condensations: dict[Projection, Condensation[CfgNode]] = {}
         self.entry = CfgNode(self, None)
         self.exit = CfgNode(self, None)
         self.nodes: list[CfgNode] = [self.entry, self.exit]
@@ -683,6 +698,20 @@ class ControlFlowGraph:
         be answered by the cheaper one.
         """
         return self._resuming
+
+    def condensation(self, projection: Projection) -> Condensation[CfgNode]:
+        """
+        This graph condensed into its strongly connected components under *projection*, computed
+        on first use and kept, as `_reached_after` and `_positions` are: a graph does not change
+        once it is built. A graph that `carries_resumption` reports nothing of has one condensation
+        and not two, for the reason `refinery.lib.scripts.analysis.dominance.DominatorModel.tree_of`
+        keeps one tree for it.
+        """
+        reading = projection if self._resuming else Projection.MAY
+        found = self._condensations.get(reading)
+        if found is None:
+            found = self._condensations[reading] = Condensation(self.nodes, reading.successors)
+        return found
 
 
 def reachable_forward_from_any(

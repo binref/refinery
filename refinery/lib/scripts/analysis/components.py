@@ -78,10 +78,15 @@ class Condensation(Generic[_Vertex]):
     component a component has an edge into carries a smaller number. A component is `looped` when it
     holds more than one node or a node with an edge to itself: only then does a node reach itself,
     which is what a caller excluding the node that asks has to know.
+
+    The components are tuples because a condensation may be shared: a control-flow graph keeps one
+    per reading for every question asked of it.
     """
 
     def __init__(self, nodes: Iterable[_Vertex], successors: Callable[[_Vertex], Iterable[_Vertex]]):
-        self.components = strongly_connected_components(nodes, successors)
+        self.components: tuple[tuple[_Vertex, ...], ...] = tuple(
+            tuple(component) for component in strongly_connected_components(nodes, successors)
+        )
         self._index = {
             id(member): number
             for number, component in enumerate(self.components)
@@ -195,3 +200,51 @@ class Condensation(Generic[_Vertex]):
             memo[current] = False
             stack.pop()
         return memo[number]
+
+    def found_within(
+        self,
+        number: int,
+        test: Callable[[int], bool],
+        memo: dict[int, bool],
+        *,
+        downstream: bool,
+        limit: int,
+    ) -> bool:
+        """
+        Whether *test* holds of component *number* or of a component on one side of it — what it
+        reaches when *downstream*, what reaches it otherwise — leaving out every component numbered
+        below *limit* going downstream and above it going upstream. Numbers fall along every edge,
+        so no component inside that bound is reached only through one outside it.
+
+        The question `holds` answers, asked by a caller for whom one answer is worth less than the
+        walk to the far end of the bound: the walk is breadth-first and ends at the first component
+        that passes, so the nearest one decides. *memo* keeps what a walk settles — every component
+        visited by one that finds nothing, and the path from *number* to the component found by one
+        that does — for the next walk under the same test and limit, and belongs to the caller
+        beside those two.
+        """
+        known = memo.get(number)
+        if known is not None:
+            return known
+        edges = self._downstream if downstream else self._upstream
+        parent = {number: number}
+        queue = [number]
+        for current in queue:
+            if memo.get(current) or test(current):
+                while current != number:
+                    memo[current] = True
+                    current = parent[current]
+                memo[number] = True
+                return True
+            for other in edges[current]:
+                if (
+                    other in parent
+                    or (other < limit if downstream else other > limit)
+                    or memo.get(other) is False
+                ):
+                    continue
+                parent[other] = current
+                queue.append(other)
+        for current in queue:
+            memo[current] = False
+        return False

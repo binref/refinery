@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import itertools
+
 from typing import Iterable, Sequence
+from unittest.mock import patch
 
 from test import TestBase
 from test.lib.scripts.analysis import graph_from_edges
 
-from refinery.lib.scripts.analysis.cfg import ControlFlowModel, Projection
+from refinery.lib.scripts.analysis.cfg import (
+    ControlFlowGraph,
+    ControlFlowModel,
+    Projection,
+    flood,
+)
+from refinery.lib.scripts.analysis.components import Condensation
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
 
@@ -13,6 +22,88 @@ STRAIGHT = {'a': ['b'], 'b': ['c'], 'c': []}
 BRANCH = {'a': ['t', 'f'], 't': ['j'], 'f': ['j'], 'j': []}
 LOOP = {'a': ['h'], 'h': ['b', 'x'], 'b': ['h'], 'x': []}
 FORK = {'a': ['b', 'd'], 'b': ['c'], 'c': [], 'd': []}
+NESTED_LOOPS = {'a': ['h'], 'h': ['i', 'x'], 'i': ['b', 'h'], 'b': ['i'], 'x': []}
+BACK_TO_ENTRY = {'a': ['b'], 'b': ['a', 'c'], 'c': []}
+ISLANDS = {'a': ['b'], 'b': [], 'orphan': ['b'], 'island': ['isle'], 'isle': ['island']}
+
+
+class TestAnyBetween(TestBase):
+
+    @staticmethod
+    def _query(graph: ControlFlowGraph) -> ReachabilityQuery:
+        model = ControlFlowModel({id(graph.owner): graph})
+        return ReachabilityQuery(DominatorModel(model), Projection.MAY)
+
+    def _between(self, edges: dict[str, list[str]], source: str, target: str, *names: str) -> bool:
+        graph, named = graph_from_edges(edges)
+        candidates = {id(named[name]) for name in names}
+        return self._query(graph).any_between(graph, named[source], named[target], candidates)
+
+    def test_a_node_lies_between_exactly_when_both_floods_from_the_ends_return_it(self):
+        shapes = (STRAIGHT, BRANCH, LOOP, FORK, NESTED_LOOPS, BACK_TO_ENTRY, ISLANDS)
+        for edges, listed_backwards in itertools.product(shapes, (False, True)):
+            graph, named = graph_from_edges(edges)
+            if listed_backwards:
+                graph.nodes.reverse()
+            dominators = DominatorModel(ControlFlowModel({id(graph.owner): graph}))
+            asked_before = ReachabilityQuery(dominators, Projection.MAY)
+            ids = [id(node) for node in named.values()]
+            sets = [{key} for key in ids] + [set(pair) for pair in itertools.combinations(ids, 2)]
+            for source, target in itertools.product(named.values(), repeat=2):
+                forward = flood([source], forward=True, projection=Projection.MAY)
+                backward = flood([target], forward=False, projection=Projection.MAY)
+                for candidates in sets:
+                    expected = bool(candidates & forward & backward)
+                    asked_first = ReachabilityQuery(dominators, Projection.MAY)
+                    with self.subTest(edges=edges, backwards=listed_backwards, candidates=len(candidates)):
+                        self.assertEqual(asked_first.any_between(graph, source, target, candidates), expected)
+                        self.assertEqual(asked_before.any_between(graph, source, target, candidates), expected)
+
+    def test_many_candidate_sets_between_the_same_two_ends_cross_the_stretch_once(self):
+        names = [F'n{index}' for index in range(1200)]
+        edges = {name: [names[index + 1]] for index, name in enumerate(names[:-1])}
+        edges[names[-1]] = []
+        graph, named = graph_from_edges(edges)
+        query = self._query(graph)
+        source, target = named['n0'], named['n1000']
+        walks = 0
+        walk = Condensation.found_within
+
+        def counted(*args, **kwargs):
+            nonlocal walks
+            walks += 1
+            return walk(*args, **kwargs)
+
+        with patch.object(Condensation, 'found_within', counted):
+            for name in names[1001:]:
+                self.assertFalse(query.any_between(graph, source, target, {id(named[name])}))
+        self.assertEqual(walks, 1)
+
+    def test_a_node_written_before_the_source_does_not_lie_between_it_and_a_later_node(self):
+        self.assertFalse(self._between(STRAIGHT, 'b', 'c', 'a'))
+
+    def test_a_node_on_a_loop_through_the_source_lies_between_it_and_the_loop_exit(self):
+        self.assertTrue(self._between(LOOP, 'h', 'x', 'b'))
+
+    def test_a_node_on_an_inner_loop_lies_between_the_outer_head_and_the_exit(self):
+        self.assertTrue(self._between(NESTED_LOOPS, 'h', 'x', 'b'))
+
+    def test_a_node_only_the_source_reaches_does_not_lie_between_it_and_another(self):
+        self.assertFalse(self._between(FORK, 'a', 'c', 'd'))
+
+    def test_a_node_no_run_reaches_does_not_lie_between_two_that_one_does(self):
+        self.assertFalse(self._between(ISLANDS, 'a', 'b', 'orphan'))
+
+    def test_a_node_no_run_reaches_lies_nowhere_even_when_the_graph_lists_it_first(self):
+        graph, named = graph_from_edges(ISLANDS)
+        graph.nodes.sort(key=lambda node: node is not named['orphan'])
+        orphan = {id(named['orphan'])}
+        self.assertFalse(self._query(graph).any_between(graph, named['a'], named['b'], orphan))
+
+    def test_an_id_the_graph_does_not_hold_lies_nowhere(self):
+        graph, named = graph_from_edges(STRAIGHT)
+        stranger = {id(object())}
+        self.assertFalse(self._query(graph).any_between(graph, named['a'], named['c'], stranger))
 
 
 class TestReachingDefinition(TestBase):

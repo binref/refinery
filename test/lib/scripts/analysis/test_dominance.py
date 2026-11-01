@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import tracemalloc
 
 from typing import Iterator
@@ -7,8 +8,8 @@ from typing import Iterator
 from test import TestBase
 from test.lib.scripts.analysis import graph_from_edges as _graph
 
-from refinery.lib.scripts.analysis.cfg import CfgNode, Projection
-from refinery.lib.scripts.analysis.dominance import DominanceTree
+from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowModel, Projection
+from refinery.lib.scripts.analysis.dominance import DominanceTree, DominatorModel
 
 SHAPES = {
     'straight': {'a': ['b'], 'b': ['c'], 'c': []},
@@ -236,3 +237,15 @@ class TestDominanceTree(TestBase):
             tracemalloc.stop()
         self.assertTrue(tree.dominates(named[names[0]], named[names[-1]]))
         self.assertLess(peak, 8 << 20)
+
+
+class TestDominatorModel(TestBase):
+
+    def test_the_model_answers_every_pair_as_the_tree_does(self):
+        for name, edges in SHAPES.items():
+            graph, named = _graph(edges)
+            model = DominatorModel(ControlFlowModel({id(graph.owner): graph}))
+            tree = DominanceTree(graph, Projection.MAY)
+            for a, b in itertools.product(named.values(), repeat=2):
+                with self.subTest(name):
+                    self.assertEqual(model.dominates_node(graph, a, b, Projection.MAY), tree.dominates(a, b))

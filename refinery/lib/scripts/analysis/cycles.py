@@ -37,8 +37,12 @@ from __future__ import annotations
 from typing import Callable
 
 from refinery.lib.scripts import Node
-from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, ControlFlowModel
-from refinery.lib.scripts.analysis.components import Condensation
+from refinery.lib.scripts.analysis.cfg import (
+    CfgNode,
+    ControlFlowGraph,
+    ControlFlowModel,
+    Projection,
+)
 
 #: What a language may answer about the body a control-flow graph belongs to: the element whose
 #: evaluation runs that body, and whether the site runs it more than once. `None` means the language
@@ -57,7 +61,7 @@ def nodes_on_a_cycle(graph: ControlFlowGraph) -> frozenset[int]:
     component-size test gets wrong — a construct that iterates over nothing but its own head, such as
     a dispatch whose every arm is empty, is one node reaching only itself.
     """
-    condensation = Condensation(graph.nodes, lambda node: node.successors)
+    condensation = graph.condensation(Projection.MAY)
     return frozenset(
         id(node)
         for number, component in enumerate(condensation.components)
