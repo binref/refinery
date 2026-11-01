@@ -136,7 +136,26 @@ from refinery.lib.scripts.js.values import (
     COERCING_BINARY_OPERATORS,
     COERCING_UNARY_OPERATORS,
     BuiltinFunction,
+    RegExpObject,
 )
+
+_REGEXP_TEXT_KEYS = CONVERSION_KEYS | frozenset({
+    'source',
+    'flags',
+    'hasIndices',
+    'global',
+    'ignoreCase',
+    'multiline',
+    'dotAll',
+    'unicode',
+    'unicodeSets',
+    'sticky',
+})
+"""
+The keys of `RegExp.prototype` whose replacement changes what converting a regular expression
+gives: a conversion key, and the getters `RegExp.prototype.toString` reads, `source` and `flags`
+and every flag `flags` reads in turn.
+"""
 
 _FRESH_ARRAY_RESULT_METHODS = frozenset({
     'slice',
@@ -2467,9 +2486,10 @@ class EffectModel:
 
     def builtin_function_text(self, function: BuiltinFunction) -> str | None:
         """
-        The string converting the built-in *function* gives in the host the model assumes
-        (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.native_function_text`), or
-        `None` where the conversion may run code the program installed. It runs
+        The string converting the built-in *function* gives in the engine of the host the model
+        assumes (`refinery.lib.scripts.js.analysis.environment.JsEngine.function_text`), or `None`
+        where that host has no one engine or the conversion may run code the program installed. It
+        runs
         `Function.prototype.toString` unless the program gave a conversion key
         (`refinery.lib.scripts.js.analysis.conversions.CONVERSION_KEYS`) to `Function.prototype`,
         to `Object.prototype`, or to the constructor *function* names; a write to the function
@@ -2483,7 +2503,43 @@ class EffectModel:
             owners.append(function.name)
         if any(self.global_key_written(owner, key) for owner in owners for key in CONVERSION_KEYS):
             return None
-        return self.model.environment.native_function_text(function.name)
+        engine = self.model.environment.engine
+        return None if engine is None else engine.function_text(function.name)
+
+    def array_iterator_conversion_untouched(self) -> bool:
+        """
+        Whether converting an array iterator
+        (`refinery.lib.scripts.js.values.ArrayIterator`) runs `Object.prototype.toString` and gives
+        `[object Array Iterator]`. The scan has to follow every write on a built-in object, since the
+        prototype of every array iterator is reached through no name; the program may give `Object`
+        no conversion key (`refinery.lib.scripts.js.analysis.conversions.CONVERSION_KEYS`) and write
+        no `Iterator`, whose prototype every array iterator inherits; and no reflection surface may
+        run a code string that does either.
+        """
+        if not self.builtin_writes_followed() or self.model.has_reflection_surface():
+            return False
+        if 'Iterator' in self.intrinsic_writes.names:
+            return False
+        return not any(self.global_key_written('Object', key) for key in CONVERSION_KEYS)
+
+    def regexp_text(self, value: RegExpObject) -> str | None:
+        """
+        The string converting the regular expression *value* gives in the engine of the host the
+        model assumes (`refinery.lib.scripts.js.analysis.environment.JsEngine.regexp_text`), or
+        `None` where that host has no one engine or the conversion may run code the program
+        installed. It runs `RegExp.prototype.toString`, which reads the getters of
+        `_REGEXP_TEXT_KEYS`, unless the program writes one of those keys on `RegExp` or a conversion
+        key on `Object`; a write through no name is one `builtin_writes_followed` refuses, and so
+        is a write by a code string a reflection surface may run.
+        """
+        engine = self.model.environment.engine
+        if engine is None or not self.builtin_writes_followed() or self.model.has_reflection_surface():
+            return None
+        if any(self.global_key_written('RegExp', key) for key in _REGEXP_TEXT_KEYS):
+            return None
+        if any(self.global_key_written('Object', key) for key in CONVERSION_KEYS):
+            return None
+        return engine.regexp_text(value.source)
 
     def builtin_function_named(self, function: BuiltinFunction) -> bool:
         """

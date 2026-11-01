@@ -10,7 +10,7 @@ import re
 import sys
 import urllib.parse
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from typing import Callable
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 from refinery.lib.scripts import Expression, Node
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment, typeof_of_global
+from refinery.lib.scripts.js.analysis.intrinsics import PROTOTYPE_OWNERS
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
@@ -28,6 +29,7 @@ from refinery.lib.scripts.js.analysis.model import (
     call_supplies_an_arguments_object,
     statement_list_holding,
 )
+from refinery.lib.scripts.js.builtins import HTML_METHODS
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     PROTO_KEY,
     SEQUENCE_DATA_PROPERTIES,
@@ -246,7 +248,34 @@ def _to_array_length(value: Value) -> int:
     return length
 
 
-BUILTIN_REGISTRY: dict[tuple, Callable] = {}
+class RegisteredBuiltin(NamedTuple):
+    """
+    A function of `BUILTIN_REGISTRY`. *function* computes what a call answers. *reads_strings*
+    marks a function that reads every argument as a string and as nothing else, so an argument
+    converts as an operator converts an operand.
+    """
+    function: Callable
+    reads_strings: bool
+
+
+BUILTIN_REGISTRY: dict[tuple, RegisteredBuiltin] = {}
+
+
+def registered_builtin(key: tuple, environment: HostEnvironment) -> RegisteredBuiltin | None:
+    """
+    The function `BUILTIN_REGISTRY` holds under *key* where the host *environment* has it
+    (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.has_function`), the one lookup
+    both the interpreter and the simplifier make.
+    """
+    builtin = BUILTIN_REGISTRY.get(key)
+    if builtin is None:
+        return None
+    owner, name = key
+    if isinstance(owner, type):
+        owner = PROTOTYPE_OWNERS.get(owner.__name__)
+    if not environment.has_function(owner, name):
+        return None
+    return builtin
 
 
 def _in_code_units(fn: Callable) -> Callable:
@@ -268,9 +297,9 @@ def _in_code_units(fn: Callable) -> Callable:
     return in_code_units
 
 
-def _register(key: tuple):
+def _register(key: tuple, *, reads_strings: bool = False):
     def _decorator(fn: Callable):
-        BUILTIN_REGISTRY[key] = _in_code_units(fn)
+        BUILTIN_REGISTRY[key] = RegisteredBuiltin(_in_code_units(fn), reads_strings)
         return fn
     return _decorator
 
@@ -525,6 +554,26 @@ def _str_at(s: str, args: list[Value]) -> Value:
     if 0 <= idx < len(s):
         return s[idx]
     return None
+
+
+def _register_html_method(method: str, tag: str, attribute: str) -> None:
+    """
+    Register the method *method* of `refinery.lib.scripts.js.builtins.HTML_METHODS` as the
+    `CreateHTML` of ECMA-262 B.2.2.2.1: the string wrapped in *tag*, with the argument converted
+    to a string and every `"` in it written as `&quot;` as the value of *attribute*, where there is
+    one.
+    """
+    @_register((str, method), reads_strings=True)
+    def _create_html(s: str, args: list[Value]) -> Value:
+        opening = tag
+        if attribute:
+            value = to_string(args[0] if args else None).replace('"', '&quot;')
+            opening = F'{tag} {attribute}="{value}"'
+        return F'<{opening}>{s}</{tag}>'
+
+
+for _method, (_tag, _attribute) in HTML_METHODS.items():
+    _register_html_method(_method, _tag, _attribute)
 
 
 @_register(('String', 'fromCharCode'))
@@ -961,7 +1010,7 @@ def _global_string(args: list[Value]) -> Value:
     return to_string(args[0])
 
 
-@_register((None, 'atob'))
+@_register((None, 'atob'), reads_strings=True)
 def _global_atob(args: list[Value]) -> Value:
     """
     Apply the WHATWG forgiving-base64 decode, which is what `atob` answers with. Padding is read
@@ -985,7 +1034,7 @@ def _global_atob(args: list[Value]) -> Value:
         raise InterpreterError
 
 
-@_register((None, 'btoa'))
+@_register((None, 'btoa'), reads_strings=True)
 def _global_btoa(args: list[Value]) -> Value:
     if not args:
         raise InterpreterError
@@ -1016,7 +1065,31 @@ answers `'100%'`.
 """
 
 
-@_register((None, 'unescape'))
+@_register((None, 'escape'), reads_strings=True)
+def _global_escape(args: list[Value]) -> Value:
+    """
+    Apply the `escape` of ECMA-262 B.2.1.1 to the code units of the argument: a letter, a digit and
+    one of `@*_+-./` stay, a code unit below 256 becomes `%XX`, and every other one `%uXXXX`.
+    """
+    s = to_string(args[0]) if args else 'undefined'
+    escaped: list[str] = []
+    for unit in s:
+        code = ord(unit)
+        if unit in _ESCAPE_UNESCAPED:
+            escaped.append(unit)
+        elif code < 0x100:
+            escaped.append(F'%{code:02X}')
+        else:
+            escaped.append(F'%u{code:04X}')
+    return ''.join(escaped)
+
+
+_ESCAPE_UNESCAPED = frozenset(
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@*_+-./'
+)
+
+
+@_register((None, 'unescape'), reads_strings=True)
 def _global_unescape(args: list[Value]) -> Value:
     if not args:
         return 'undefined'
@@ -1041,7 +1114,7 @@ def _utf8_sequence_length(lead: int) -> int:
     raise InterpreterError
 
 
-@_register((None, 'decodeURIComponent'))
+@_register((None, 'decodeURIComponent'), reads_strings=True)
 def _global_decode_uri_component(args: list[Value]) -> Value:
     """
     Apply the `Decode` operation of the specification over the code units of the argument, with no
@@ -1079,7 +1152,7 @@ def _global_decode_uri_component(args: list[Value]) -> Value:
     return ''.join(result)
 
 
-@_register((None, 'encodeURIComponent'))
+@_register((None, 'encodeURIComponent'), reads_strings=True)
 def _global_encode_uri_component(args: list[Value]) -> Value:
     if not args:
         raise InterpreterError
@@ -1919,6 +1992,15 @@ class JsInterpreter:
         model = self._model
         return model is not None and model.scope_of(node) is None
 
+    @property
+    def _environment(self) -> HostEnvironment:
+        """
+        The host the model this interpreter reads assumes, or the one assuming nothing where it reads
+        none.
+        """
+        model = self._model
+        return HostEnvironment.universal if model is None else model.environment
+
     def _names_a_runtime_builtin(self, node: JsIdentifier) -> bool:
         """
         Whether *node* still reaches the host built-in of that name. Without a model this answers
@@ -2098,8 +2180,7 @@ class JsInterpreter:
             if (trust := self._trust) is not None:
                 result = trust.global_typeof(name)
             else:
-                environment = self._model.environment if self._model is not None else HostEnvironment.universal
-                result = typeof_of_global(name, environment)
+                result = typeof_of_global(name, self._environment)
             if result is None:
                 raise IrreducibleExpression(node)
             return result
@@ -2253,10 +2334,10 @@ class JsInterpreter:
         func = self._resolve_function_node(callee)
         if func is not None:
             return self._call_function(func, args)
-        builtin = BUILTIN_REGISTRY.get((None, name))
+        builtin = registered_builtin((None, name), self._environment)
         if builtin is not None and self._names_a_runtime_builtin(callee):
             self._require_convertible_arguments(args)
-            return builtin(args)
+            return builtin.function(args)
         raise InterpreterError
 
     def _eval_method_call(self, node: JsCallExpression) -> Value:
@@ -2270,14 +2351,14 @@ class JsInterpreter:
             static_name = member.object.name
             method_name = self._member_key(member)
             args = [self._eval(a) for a in node.arguments]
-            builtin = BUILTIN_REGISTRY.get((static_name, method_name))
+            builtin = registered_builtin((static_name, method_name), self._environment)
             if builtin is not None:
                 if not self._names_a_static_object(member.object):
                     raise InterpreterError
                 if not self._callee_is_intact(node):
                     raise InterpreterError
                 self._require_convertible_arguments(args)
-                return builtin(args)
+                return builtin.function(args)
             raise InterpreterError
         obj = self._eval(member.object)
         if obj is None or obj is JS_NULL:
@@ -2291,14 +2372,14 @@ class JsInterpreter:
             # effect or a throw inside one is not lost to this TypeError.
             _js_throw('TypeError', F'{to_string(obj)}.{method_name} is not a function')
         obj_type = type(obj)
-        builtin = BUILTIN_REGISTRY.get((obj_type, method_name))
+        builtin = registered_builtin((obj_type, method_name), self._environment)
         if builtin is None and obj_type is not list and isinstance(obj, list):
-            builtin = BUILTIN_REGISTRY.get((list, method_name))
+            builtin = registered_builtin((list, method_name), self._environment)
         if builtin is not None:
             if not self._prototype_is_intact(obj_type):
                 raise InterpreterError
             self._require_convertible_arguments(args)
-            result = builtin(obj, args)
+            result = builtin.function(obj, args)
             if isinstance(obj, JsBuffer) and isinstance(result, list) and not isinstance(result, JsBuffer):
                 result = JsBuffer(result)
             return result

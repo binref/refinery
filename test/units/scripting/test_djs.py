@@ -313,6 +313,24 @@ class TestJsHostEnvironmentPin(TestUnitBase):
         self.assertEqual(source | self.load(environment='node') | str, 'alert(1);')
         self.assertNotEqual(source | self.load() | str, 'alert(1);')
 
+    def test_two_programs_spelled_in_six_characters_print_what_they_spell_where_the_host_is_node(self):
+        """
+        The sample holds two programs the encoder of the six-character style wrote, one to a line,
+        each run in the scope it stands in. The first spells every character the encoder has a
+        recipe for and one it spells by its code, and hands a function the language installs to
+        `console.log`; the second spells three characters by their codes. Their letters are read
+        off the text of functions the language installs, of an array iterator, of the HTML methods
+        of strings, of `escape`, of `Date()` and of regular expressions, which only the Node host
+        settles.
+        """
+        data = self.download_sample('aceff5e1592b4b731373d1a68b9db19637a4af058682d0f2011719870bf077bd')
+        spelled = inspect.cleandoc("""
+            console.log("abcdefghijklmnopqrstuvwxyz ABCDEFGIMNRST 0123456789 %&()+,-./:;<=>?[]{}~", [].slice);
+            console.log('Hi!');
+        """)
+        self.assertEqual(data | self.load(environment='node') | str, spelled)
+        self.assertNotEqual(data | self.load() | str, spelled)
+
     def test_an_unknown_host_keyword_is_a_usage_error(self):
         with self.assertRaises(Exception):
             self.load(environment='mainframe')

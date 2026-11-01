@@ -67,6 +67,7 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.builtins import (
     CONSTRUCTORS,
+    ITERATOR_METHODS,
     OBJECT_PROTOTYPE_MEMBERS,
     PROTOTYPE_CHAIN_PROPERTIES,
     PROTOTYPE_FUNCTIONS,
@@ -107,6 +108,7 @@ from refinery.lib.scripts.js.model import (
     JsObjectExpression,
     JsParenthesizedExpression,
     JsProperty,
+    JsRegExpLiteral,
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
@@ -149,9 +151,11 @@ from refinery.lib.scripts.js.values import (
     JS_NULL,
     OBJECT_VALUE_TYPES,
     UNARY_OPS,
+    ArrayIterator,
     BuiltinFunction,
     HostApproximated,
     JsBuffer,
+    RegExpObject,
     converted_operands,
     converts_uninterceptably,
     to_boolean,
@@ -287,6 +291,10 @@ def _converts_without_installed_code(
     def answers(item: Value) -> bool:
         if converts_uninterceptably(item):
             return True
+        if isinstance(item, ArrayIterator):
+            return effects is not None and effects.array_iterator_conversion_untouched()
+        if isinstance(item, RegExpObject):
+            return False
         if isinstance(item, dict):
             if any(name in item for name in _TO_PRIMITIVE_METHODS):
                 return False
@@ -1190,7 +1198,80 @@ def _denoted_value(
             return denoted_member(node, model, uninterceptable, effects, undecided)
         if isinstance(node, JsBinaryExpression) and node.operator in BINARY_OPS:
             return _denoted_binary(node, model, uninterceptable, effects, undecided)
+        if isinstance(node, (JsCallExpression, JsNewExpression)):
+            return _denoted_construction(node, model, uninterceptable, effects, undecided)
+        if isinstance(node, JsRegExpLiteral):
+            if node.flags or not node.terminated or not is_plain_pattern(node.pattern):
+                return False, None
+            return True, RegExpObject(node.pattern)
     return extract_literal_value(node)
+
+
+PLAIN_PATTERN_CHARACTERS = frozenset(
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 !"#%&\',-:;<=>@_`~'
+)
+"""
+The characters a regular expression pattern holds that stand for themselves wherever they appear:
+the letters, the digits, and the printable ASCII characters with no meaning in a pattern. The
+characters of a group, a class, a quantifier or an escape are left out, and so is the slash, which
+ends a literal.
+"""
+
+
+def is_plain_pattern(pattern: str, *, slash: bool = False) -> bool:
+    """
+    Whether *pattern* holds only `PLAIN_PATTERN_CHARACTERS`, and slashes where *slash* allows them,
+    so that the regular expression it builds matches exactly that text and its source is that text
+    with every slash escaped.
+    """
+    return all(c in PLAIN_PATTERN_CHARACTERS or slash and c == '/' for c in pattern)
+
+
+_ITERATOR_FUNCTIONS = frozenset(PROTOTYPE_FUNCTIONS['Array', method] for method in ITERATOR_METHODS)
+
+
+def _denoted_construction(
+    node: JsCallExpression | JsNewExpression,
+    model: SemanticModel,
+    uninterceptable: Callable[[Value], bool],
+    effects: Callable[[], EffectModel],
+    undecided: set[Node] | None,
+) -> tuple[bool, Value]:
+    """
+    The object a call or a construction builds where the language alone decides it, for
+    `denoted_value`: an array iterator (`refinery.lib.scripts.js.values.ArrayIterator`), which
+    `entries`, `keys` or `values` called without arguments on a decided array returns where the
+    host has that method, and a regular expression (`refinery.lib.scripts.js.values.RegExpObject`),
+    which `RegExp` called or constructed without arguments, or with a decided string of
+    `PLAIN_PATTERN_CHARACTERS` and slashes, builds. Neither runs code the program installed, and
+    each evaluation builds a new object.
+    """
+    if isinstance(node, JsCallExpression) and node.optional:
+        return False, None
+    callee = strip_parens(node.callee)
+    known, function = denoted_value(callee, model, uninterceptable, effects, undecided)
+    if not known or not isinstance(function, BuiltinFunction):
+        return False, None
+    arguments = node.arguments
+    if function is CONSTRUCTORS['RegExp']:
+        if not arguments:
+            return True, RegExpObject('')
+        if len(arguments) != 1:
+            return False, None
+        known, pattern = denoted_value(arguments[0], model, uninterceptable, effects, undecided)
+        if not known or not isinstance(pattern, str) or not is_plain_pattern(pattern, slash=True):
+            return False, None
+        return True, RegExpObject(pattern)
+    if function not in _ITERATOR_FUNCTIONS or arguments or isinstance(node, JsNewExpression):
+        return False, None
+    if not isinstance(callee, JsMemberExpression):
+        return False, None
+    known, receiver = denoted_value(callee.object, model, uninterceptable, effects, undecided)
+    if not known or type(receiver) is not list:
+        return False, None
+    if not effects().model.environment.has_function('Array', function.name):
+        return False, None
+    return True, ArrayIterator()
 
 
 def _denoted_binary(
@@ -1245,6 +1326,9 @@ def converted_operand(
     """
     if isinstance(value, BuiltinFunction):
         text = None if effects is None else effects().builtin_function_text(value)
+        return (False, None) if text is None else (True, text)
+    if isinstance(value, RegExpObject):
+        text = None if effects is None else effects().regexp_text(value)
         return (False, None) if text is None else (True, text)
     if converts_uninterceptably(value):
         return True, value

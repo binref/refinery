@@ -5721,7 +5721,7 @@ class TestAForgivingDecodeReadsTheLengthOfItsArgumentBeforeItsPadding(TestBase):
         return json.loads(output)
 
     def _builtin_answers(self) -> list[str | None]:
-        decode = BUILTIN_REGISTRY[None, 'atob']
+        decode = BUILTIN_REGISTRY[None, 'atob'].function
         answers = []
         for argument in _ATOB_ARGUMENTS:
             try:
@@ -5927,7 +5927,7 @@ class TestTheUriFunctionsAnswerEveryArgumentTheWayNodeDoes(TestBase):
             row: list[list[int] | None] = []
             for name in _URI_FUNCTIONS:
                 try:
-                    row.append([ord(unit) for unit in BUILTIN_REGISTRY[None, name]([argument])])
+                    row.append([ord(unit) for unit in BUILTIN_REGISTRY[None, name].function([argument])])
                 except InterpreterError:
                     row.append(None)
             answers.append(row)

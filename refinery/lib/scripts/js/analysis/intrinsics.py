@@ -171,6 +171,7 @@ PROTOTYPE_OWNERS: dict[str, str] = {
     'JsFunctionDeclaration': 'Function',
     'JsFunctionExpression': 'Function',
     'JsArrowFunctionExpression': 'Function',
+    'RegExpObject': 'RegExp',
 }
 """
 The intrinsic whose prototype supplies the methods of each interpreter value type, keyed by type
@@ -212,13 +213,14 @@ that supply each value type's members. A caller asking about a name outside it i
 this scan was not built to answer, and is told so.
 """
 
-ESCAPE_RECORDED_ROOTS = PURE_INTRINSIC_ROOTS | frozenset({'RegExp', 'Date'})
+ESCAPE_RECORDED_ROOTS = PURE_INTRINSIC_ROOTS | frozenset({'RegExp', 'Date', 'Iterator'})
 """
 The global names an escape records as written by name, not only by key: the names a fold trusts
 to run code. A fold runs the methods of the pure roots, a fold that decides what a regular
 expression answers trusts `RegExp`, so `p(RegExp)` for a `p` that replaces `RegExp.prototype.test`
-must withdraw that trust, and a fold that decides a comparison of the clock trusts `Date`, which
-`Reflect.set(Date, 'now', f)` must withdraw.
+must withdraw that trust, a fold that decides a comparison of the clock trusts `Date`, which
+`Reflect.set(Date, 'now', f)` must withdraw, and a fold that converts an array iterator trusts the
+prototype `Iterator` holds, which every such iterator inherits.
 
 `Object` and `Function` are left out on purpose. Real samples hand `Object` to a call this scan
 cannot resolve, and recording that escape refuses every fold that trusts `Object.prototype` in

@@ -133,6 +133,12 @@ PROTOTYPE_METHODS: dict[str, frozenset[str]] = {
         'toString',
         'valueOf',
     }),
+    'RegExp': frozenset({
+        'compile',
+        'exec',
+        'test',
+        'toString',
+    }),
 }
 """
 The function-valued own properties of the prototype of each constructor named, `constructor` aside,
@@ -148,6 +154,32 @@ ALIASED_METHODS: dict[tuple[str, str], str] = {
 """
 The prototype keys that hold the same function as another key of the same prototype, mapped to
 that other key: `''.trimLeft === ''.trimStart`, and the function's `name` is `trimStart`.
+"""
+
+HTML_METHODS: dict[str, tuple[str, str]] = {
+    'anchor'    : ('a', 'name'),
+    'big'       : ('big', ''),
+    'blink'     : ('blink', ''),
+    'bold'      : ('b', ''),
+    'fixed'     : ('tt', ''),
+    'fontcolor' : ('font', 'color'),
+    'fontsize'  : ('font', 'size'),
+    'italics'   : ('i', ''),
+    'link'      : ('a', 'href'),
+    'small'     : ('small', ''),
+    'strike'    : ('strike', ''),
+    'sub'       : ('sub', ''),
+    'sup'       : ('sup', ''),
+}
+"""
+The methods of `String.prototype` ECMA-262 B.2.2.2 to B.2.2.14 define, each mapped to the tag it
+wraps the string in and to the attribute it writes its argument into, or the empty string where it
+writes none.
+"""
+
+ITERATOR_METHODS = frozenset({'entries', 'keys', 'values'})
+"""
+The methods of `Array.prototype` that return an iterator over the array.
 """
 
 PROTOTYPE_CHAIN_PROPERTIES = frozenset({'__proto__', 'constructor'})

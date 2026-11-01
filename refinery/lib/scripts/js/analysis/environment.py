@@ -34,6 +34,8 @@ import operator
 from dataclasses import dataclass
 from typing import Callable, NamedTuple
 
+from refinery.lib.scripts.js.builtins import HTML_METHODS, ITERATOR_METHODS
+
 
 class Presence(enum.Enum):
     """
@@ -533,6 +535,65 @@ yields `'function'`.
 """
 
 
+class JsEngine(enum.Enum):
+    """
+    The engine a host runs scripts in, where every engine the host covers is that one engine. It
+    answers what the language leaves to the engine: the text a function the language installs
+    converts to, the text a regular expression converts to, and the characters `Date()` writes at
+    fixed positions. A host whose engines differ has none, and a fold of any of these refuses there.
+    The answers of `v8` were read out of Node 24.
+    """
+    v8 = 'v8'
+
+    def function_text(self, name: str) -> str:
+        """
+        The text a function the language installs under *name* converts to:
+        `function at() { [native code] }` for `[].at`.
+        """
+        return F'function {name}() {{ [native code] }}'
+
+    def regexp_text(self, source: str) -> str:
+        """
+        The text a regular expression without flags converts to, whose pattern *source* is made of
+        characters standing for themselves: the engine writes an empty pattern as `(?:)` and a slash
+        as an escaped one, so that the text reads back as the same expression.
+        """
+        escaped = source.replace('/', '\\/') if source else '(?:)'
+        return F'/{escaped}/'
+
+    def date_character(self, index: int) -> str | None:
+        """
+        The character the string `Date()` returns holds at *index* whatever the time, or `None`
+        where it depends on the time. The string reads `Www Mmm DD YYYY HH:MM:SS GMT+hhmm` and
+        then the name of the time zone, which fixes these positions where the year has four digits.
+        """
+        return _V8_DATE_CHARACTERS.get(index)
+
+
+_V8_DATE_CHARACTERS = {
+    3  : ' ',
+    7  : ' ',
+    10 : ' ',
+    15 : ' ',
+    18 : ':',
+    21 : ':',
+    24 : ' ',
+    25 : 'G',
+    26 : 'M',
+    27 : 'T',
+}
+
+
+ENGINE_FUNCTIONS = frozenset(
+    {('String', method) for method in HTML_METHODS} | {('Array', method) for method in ITERATOR_METHODS}
+)
+"""
+The functions the language installs, by the owner of the prototype holding them and their key,
+that a host covering the Windows Script Host is not known to have: JScript defines none of them.
+Only a host with one engine is known to have them (`HostEnvironment.has_function`).
+"""
+
+
 @dataclass(frozen=True)
 class _EnvironmentSpec:
     """
@@ -541,14 +602,12 @@ class _EnvironmentSpec:
     host-conditional global is a configurable, deletable property of the global object, so a program
     that deletes one makes a later bare read of it throw; a language-mandated name is treated as present
     regardless, preserving the sound default's behavior exactly where the host adds nothing.
-    *native_function_text* is the text the host's engine gives a function the language installs when
-    it is converted, `{name}` standing for the function's name, where every engine the host covers
-    gives the same.
+    *engine* is the engine every engine the host covers is, where there is one.
     """
     provided: frozenset[str]
     mandated: frozenset[str]
     absent: frozenset[str] = frozenset()
-    native_function_text: str | None = None
+    engine: JsEngine | None = None
 
     def provides(self, name: str) -> bool:
         return name in self.provided
@@ -641,17 +700,25 @@ class HostEnvironment(enum.Enum):
         """
         return _SPECS[self].presence(name)
 
-    def native_function_text(self, name: str) -> str | None:
+    def has_function(self, owner: str | None, key: str) -> bool:
         """
-        The string this host's engine gives for a function the language installs under *name* when
-        it is converted, or `None` where the engines this member covers may write it differently.
-        Only `node` answers, with `function at() { [native code] }` for `[].at`. The Windows Script
-        Host, which `universal` covers, writes a line break before `function`, before
-        `[native code]`, and on either side of the closing brace, so the two share no character;
-        the engines of the browsers are not measured.
+        Whether a call of the function the language installs under *key* on the prototype of the
+        constructor *owner*, or as a global where *owner* is `None`, finds that function in this
+        host. Every host is taken to have each such function but those of `ENGINE_FUNCTIONS`, which
+        only a host with one engine is known to have.
         """
-        text = _SPECS[self].native_function_text
-        return None if text is None else text.format(name=name)
+        return self.engine is not None or (owner, key) not in ENGINE_FUNCTIONS
+
+    @property
+    def engine(self) -> JsEngine | None:
+        """
+        The engine every engine this host covers is, or `None` where they may differ. Only `node`
+        has one. The Windows Script Host, which `universal` covers, writes the text of a function
+        the language installs with a line break before `function`, before `[native code]`, and on
+        either side of the closing brace, so it shares no character with what V8 writes; the
+        engines of the browsers are not measured.
+        """
+        return _SPECS[self].engine
 
 
 def typeof_of_global(name: str, environment: HostEnvironment) -> str | None:
@@ -722,7 +789,7 @@ _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {
         GUARANTEED_GLOBALS | _NODE_GLOBALS,
         GUARANTEED_GLOBALS,
         _NODE_ABSENT,
-        native_function_text='function {name}() {{ [native code] }}',
+        engine=JsEngine.v8,
     ),
     HostEnvironment.browser: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _BROWSER_GLOBALS, GUARANTEED_GLOBALS, _BROWSER_ABSENT),

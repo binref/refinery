@@ -34,9 +34,9 @@ class BuiltinFunction:
 
     It is an object whose `typeof` is `'function'`. Converting it to a primitive gives the text the
     host's engine writes for it, which no value of this domain knows, so `to_string` raises
-    `HostApproximated` and a fold asks the host instead
-    (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.native_function_text`); every
-    host writes that text in the syntax of a function, which reads as no number.
+    `HostApproximated` and a fold asks the engine instead
+    (`refinery.lib.scripts.js.analysis.environment.JsEngine.function_text`); every host writes
+    that text in the syntax of a function, which reads as no number.
     """
     __slots__ = 'name', 'is_constructor'
 
@@ -48,6 +48,37 @@ class BuiltinFunction:
         return F'BuiltinFunction({self.name!r})'
 
 
+class ArrayIterator:
+    """
+    The object `entries`, `keys` or `values` returns on an array, as a fold holds one: every call
+    gives a new one, equal only to itself. Its `typeof` is `'object'`, and converting it runs
+    `Object.prototype.toString`, which writes `[object Array Iterator]` from the tag the prototype
+    of every such iterator holds. Whether the program replaced either is the caller's question
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.array_iterator_conversion_untouched`).
+    """
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return 'ArrayIterator()'
+
+
+class RegExpObject:
+    """
+    A regular expression without flags, as a fold holds one, whose pattern *source* is made of
+    characters standing for themselves: every literal evaluated and every call of `RegExp` gives a
+    new one, equal only to itself. Its `typeof` is `'object'`, and converting it gives text the
+    engine writes (`refinery.lib.scripts.js.analysis.environment.JsEngine.regexp_text`), so
+    `to_string` raises `HostApproximated` and a fold asks the engine instead.
+    """
+    __slots__ = 'source',
+
+    def __init__(self, source: str):
+        self.source = source
+
+    def __repr__(self) -> str:
+        return F'RegExpObject({self.source!r})'
+
+
 if TYPE_CHECKING:
     from typing import TypeAlias
 
@@ -55,7 +86,7 @@ if TYPE_CHECKING:
 
     Value: TypeAlias = (
         str | float | bool | list | dict | JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
-        | BuiltinFunction | None
+        | BuiltinFunction | ArrayIterator | RegExpObject | None
     )
 
 
@@ -203,7 +234,7 @@ def to_boolean(value: Value) -> bool:
         return True
     if isinstance(value, FUNCTION_NODES):
         return True
-    if isinstance(value, BuiltinFunction):
+    if isinstance(value, (BuiltinFunction, ArrayIterator, RegExpObject)):
         return True
     return False
 
@@ -263,8 +294,10 @@ def to_string(value: Value) -> str:
         return ','.join(_array_element_string(v) for v in value)
     if isinstance(value, FUNCTION_NODES):
         return function_source(value)
-    if isinstance(value, BuiltinFunction):
+    if isinstance(value, (BuiltinFunction, RegExpObject)):
         raise HostApproximated
+    if isinstance(value, ArrayIterator):
+        return '[object Array Iterator]'
     return '[object Object]'
 
 
@@ -470,9 +503,10 @@ may be an object. `!`, `typeof` and `void` take the operand to a truth value, a 
 nothing without asking it anything.
 """
 
-#: The value-domain types that model a JavaScript object: an array, a plain object, a function,
-#: and a function the language installs. They share the two behaviours the primitives do not: a
-#: ToPrimitive that runs a conversion, and an equality by reference rather than by value.
+#: The value-domain types that model a JavaScript object: an array, a plain object, a function, a
+#: function the language installs, an array iterator and a regular expression. They share the two
+#: behaviours the primitives do not: a ToPrimitive that runs a conversion, and an equality by
+#: reference rather than by value.
 OBJECT_VALUE_TYPES = (
     list,
     dict,
@@ -480,6 +514,8 @@ OBJECT_VALUE_TYPES = (
     JsFunctionExpression,
     JsArrowFunctionExpression,
     BuiltinFunction,
+    ArrayIterator,
+    RegExpObject,
 )
 
 

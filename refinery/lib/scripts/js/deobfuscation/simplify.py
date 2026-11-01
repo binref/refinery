@@ -60,7 +60,11 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     utf16_code_units,
     value_to_node,
 )
-from refinery.lib.scripts.js.deobfuscation.interpreter import BUILTIN_REGISTRY, STATIC_OBJECTS
+from refinery.lib.scripts.js.deobfuscation.interpreter import (
+    STATIC_OBJECTS,
+    RegisteredBuiltin,
+    registered_builtin,
+)
 from refinery.lib.scripts.js.model import (
     LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrayExpression,
@@ -93,7 +97,7 @@ from refinery.lib.scripts.js.model import (
     static_string,
     strip_parens,
 )
-from refinery.lib.scripts.js.numbers import exact_integer
+from refinery.lib.scripts.js.numbers import canonical_array_index, exact_integer
 from refinery.lib.scripts.js.options import clock_window
 from refinery.lib.scripts.js.precedence import parens_required
 from refinery.lib.scripts.js.strict import joins_directive_prologue, spelling_states
@@ -812,16 +816,16 @@ class JsSimplifications(PinnedTransformer):
         method_name = access_key(callee)
         if method_name is None:
             return None
-        builtin = BUILTIN_REGISTRY.get((static_name, method_name))
+        builtin = registered_builtin((static_name, method_name), self.model.environment)
         if builtin is None:
             return None
         if not self.effects.call_is_foldable(node):
             return None
-        args = self._builtin_arguments(node)
+        args = self._builtin_arguments(node, builtin)
         if args is None:
             return None
         try:
-            result = builtin(args)
+            result = builtin.function(args)
         except Exception:
             return None
         return folded_literal(result)
@@ -830,16 +834,16 @@ class JsSimplifications(PinnedTransformer):
         callee = node.callee
         if not isinstance(callee, JsIdentifier):
             return None
-        builtin = BUILTIN_REGISTRY.get((None, callee.name))
+        builtin = registered_builtin((None, callee.name), self.model.environment)
         if builtin is None:
             return None
         if not self.effects.call_is_foldable(node):
             return None
-        args = self._builtin_arguments(node)
+        args = self._builtin_arguments(node, builtin)
         if args is None:
             return None
         try:
-            result = builtin(args)
+            result = builtin.function(args)
         except Exception:
             return None
         return folded_literal(result)
@@ -857,20 +861,20 @@ class JsSimplifications(PinnedTransformer):
         if not known:
             return None
         if isinstance(receiver, str):
-            builtin = BUILTIN_REGISTRY.get((str, method_name))
+            builtin = registered_builtin((str, method_name), self.model.environment)
         elif isinstance(receiver, list):
-            builtin = BUILTIN_REGISTRY.get((list, method_name))
+            builtin = registered_builtin((list, method_name), self.model.environment)
         else:
             return None
         if builtin is None:
             return None
         if not self.effects.call_is_foldable(node, receiver_type=type(receiver)):
             return None
-        args = self._builtin_arguments(node)
+        args = self._builtin_arguments(node, builtin)
         if args is None:
             return None
         try:
-            result = builtin(receiver, args)
+            result = builtin.function(receiver, args)
         except Exception:
             return None
         return folded_literal(result)
@@ -1045,6 +1049,8 @@ class JsSimplifications(PinnedTransformer):
                 return element
             if (folded := self._folded_member(node)) is not None:
                 return folded
+            if (character := self._folded_date_character(node)) is not None:
+                return character
         if node.computed and node.object is not None and node.property is not None:
             prop_str = string_value(node.property)
             if prop_str is not None and is_valid_property_key(prop_str):
@@ -1162,6 +1168,46 @@ class JsSimplifications(PinnedTransformer):
             return None
         return self._written(node, value)
 
+    def _folded_date_character(self, node: JsMemberExpression) -> Expression | None:
+        """
+        The character a read at a decided index off `p + Date()` holds whatever the time, where `p`
+        is a decided primitive and `Date` the function the language installs, called without
+        arguments. The string the engine of the host writes for the time
+        (`refinery.lib.scripts.js.analysis.environment.JsEngine.date_character`) fixes some of its
+        positions while the year has four digits, which the window of times the run assumes
+        (`refinery.lib.scripts.js.options.clock_window`) guarantees, and a position inside `p` holds
+        the character of `p`. Both operands are free of effects, so nothing is discarded by writing
+        the character in place of the read.
+        """
+        engine = self.model.environment.engine
+        if engine is None or clock_window(self.options) is None or not node.computed:
+            return None
+        concatenation = strip_parens(node.object)
+        if not isinstance(concatenation, JsBinaryExpression) or concatenation.operator != '+':
+            return None
+        call = strip_parens(concatenation.right)
+        if (
+            not isinstance(call, JsCallExpression)
+            or call.optional
+            or call.arguments
+            or self.effects.trusted_intrinsic(call.callee) != 'Date'
+        ):
+            return None
+        known, prefix = self._denoted(concatenation.left)
+        if not known or not converts_uninterceptably(prefix):
+            return None
+        known, key = self._denoted(node.property)
+        if not known or not converts_uninterceptably(key):
+            return None
+        index = canonical_array_index(to_string(key))
+        if index is None:
+            return None
+        text = to_string(prefix)
+        character = text[index] if index < len(text) else engine.date_character(index - len(text))
+        if character is None or self._stands_in_a_directive_prologue(node):
+            return None
+        return make_string_literal(character)
+
     def _stands_in_a_directive_prologue(self, node: Node) -> bool:
         """
         Whether *node* is the whole of a statement that a Directive Prologue would take in were it
@@ -1224,17 +1270,26 @@ class JsSimplifications(PinnedTransformer):
         """
         return coerces_uninterceptably(self.effects, value)
 
-    def _builtin_arguments(self, node: JsCallExpression) -> list[Value] | None:
+    def _builtin_arguments(self, node: JsCallExpression, builtin: RegisteredBuiltin) -> list[Value] | None:
         """
-        The values of the arguments of *node* for `BUILTIN_REGISTRY` dispatch, or `None` where one
-        of them denotes nothing or may convert through a method the program replaced. A built-in may
+        The values of the arguments of *node* for a call of *builtin*, or `None` where one of them
+        denotes nothing or may convert through a method the program replaced. A built-in may
         convert any argument it is handed, as `Number([5])` runs `Array.prototype.join`, so each is
-        asked `refinery.lib.scripts.js.deobfuscation.helpers.coerces_uninterceptably`.
+        asked `refinery.lib.scripts.js.deobfuscation.helpers.coerces_uninterceptably`. A built-in
+        that reads every argument as a string gets each converted as an operator converts an
+        operand (`refinery.lib.scripts.js.deobfuscation.helpers.converted_operand`), which gives a
+        function the language installs the text the host's engine writes for it.
         """
         args: list[Value] = []
         for argument in node.arguments:
-            known, value = denoted_value(argument, self.model, self._uninterceptable)
-            if not known or not self._uninterceptable(value):
+            if builtin.reads_strings:
+                known, value = denoted_value(argument, self.model, self._uninterceptable, self._effect_model)
+                if known:
+                    known, value = converted_operand(value, self._uninterceptable, self._effect_model, gated=True)
+            else:
+                known, value = denoted_value(argument, self.model, self._uninterceptable)
+                known = known and self._uninterceptable(value)
+            if not known:
                 return None
             args.append(value)
         return args
