@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import tracemalloc
 import unittest
 
 from refinery.lib.scripts.ps1 import data
@@ -85,6 +86,18 @@ class TestPs1MetadataReader(unittest.TestCase):
         self.assertIsNone(data.resolve_type('NotARealType'))
         self.assertIsNone(data.resolve_type('q[1]'))
         self.assertIsNone(data.resolve_type(''))
+
+    def test_a_spelling_longer_than_any_type_name_is_let_go_once_resolved(self):
+        filler = 'A' * 0xFFFF
+        tracemalloc.start()
+        try:
+            before, _ = tracemalloc.get_traced_memory()
+            for index in range(64):
+                self.assertIsNone(data.resolve_type(F'[{index}{filler}'))
+            after, _ = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertLess(after - before, 1 << 20)
 
     def test_canonical_type_is_resolve_type(self):
         self.assertEqual(data.canonical_type('int'), data.resolve_type('int'))

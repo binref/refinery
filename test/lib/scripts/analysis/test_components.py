@@ -137,6 +137,22 @@ class TestACondensationAnswersWhatTheEdgesReach(TestBase):
                         with self.subTest(shape=shape):
                             self.assertGreater(number, reached)
 
+    def test_every_component_the_first_node_reaches_is_numbered_below_every_other(self):
+        for (shape, edges), listed_backwards in itertools.product(_SHAPES.items(), (False, True)):
+            graph, named = _graph(edges)
+            nodes = graph.nodes[::-1] if listed_backwards else graph.nodes
+            for first_name, first in named.items():
+                condensation = Condensation([first, *nodes], _successors)
+                reached = {id(first)} | _closure(first, _successors)
+                inside: list[int] = []
+                outside: list[int] = []
+                for node in nodes:
+                    number = condensation.number_of(node)
+                    assert number is not None
+                    (inside if id(node) in reached else outside).append(number)
+                with self.subTest(shape=shape, first=first_name, backwards=listed_backwards):
+                    self.assertLess(max(inside), min(outside, default=len(condensation.components)))
+
     def test_a_test_is_found_within_a_limit_exactly_when_a_node_there_passes_it_and_is_on_one_side(self):
         for shape, edges in _SHAPES.items():
             graph, named = _graph(edges)

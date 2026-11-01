@@ -6,6 +6,8 @@ them without importing a module that is itself built on them.
 """
 from __future__ import annotations
 
+import itertools
+
 from typing import Callable, Generic, Iterable, Iterator, TypeVar
 
 _Vertex = TypeVar('_Vertex')
@@ -21,7 +23,9 @@ def strongly_connected_components(
     nodes that can all reach one another; every node reachable from one of *nodes* is in exactly one
     of them, and nodes are told apart by identity. Each component is listed after every component it
     has an edge into, so a caller combining answers along the edges finds those of everything a
-    component reaches already listed.
+    component reaches already listed. The walk from each of *nodes* in turn lists all it reaches
+    and no earlier walk did before the next one starts, so every component the first of *nodes*
+    reaches is listed before every component it does not.
 
     Tarjan's algorithm, driven by an explicit stack rather than by recursion: the graphs are as deep
     as the script is long and a deeply nested body would otherwise exhaust the interpreter's stack
@@ -75,9 +79,10 @@ class Condensation(Generic[_Vertex]):
     everything that reaches it, is answered once per component rather than once per node that asks.
 
     Components are numbered in the order `strongly_connected_components` lists them, so every
-    component a component has an edge into carries a smaller number. A component is `looped` when it
-    holds more than one node or a node with an edge to itself: only then does a node reach itself,
-    which is what a caller excluding the node that asks has to know.
+    component a component has an edge into carries a smaller number, and every component the first
+    of *nodes* reaches carries a smaller number than any it does not. A component is `looped` when
+    it holds more than one node or a node with an edge to itself: only then does a node reach
+    itself, which is what a caller excluding the node that asks has to know.
 
     The components are tuples because a condensation may be shared: a control-flow graph keeps one
     per reading for every question asked of it.
@@ -112,6 +117,7 @@ class Condensation(Generic[_Vertex]):
         self._downstream = downstream
         self._upstream = [tuple(found) for found in upstream]
         self._looped = looped
+        self._sizes: list[int] | None = None
 
     def number_of(self, node: _Vertex) -> int | None:
         """
@@ -119,6 +125,17 @@ class Condensation(Generic[_Vertex]):
         not built over.
         """
         return self._index.get(id(node))
+
+    def size_up_to(self, number: int) -> int:
+        """
+        How many nodes the components numbered no higher than *number* hold together, which is at
+        least how many a node of component *number* reaches, since nothing it reaches is numbered
+        above it.
+        """
+        sizes = self._sizes
+        if sizes is None:
+            sizes = self._sizes = list(itertools.accumulate(len(component) for component in self.components))
+        return sizes[number]
 
     def downstream(self, number: int) -> tuple[int, ...]:
         """

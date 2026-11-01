@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import itertools
+import tracemalloc
 
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 from unittest.mock import patch
 
 from test import TestBase
 from test.lib.scripts.analysis import graph_from_edges
+from test.lib.scripts.analysis.test_dominance import SHAPES as DOMINANCE_SHAPES
 
 from refinery.lib.scripts.analysis.cfg import (
+    CfgNode,
     ControlFlowGraph,
     ControlFlowModel,
     Projection,
@@ -40,7 +43,7 @@ class TestAnyBetween(TestBase):
         return self._query(graph).any_between(graph, named[source], named[target], candidates)
 
     def test_a_node_lies_between_exactly_when_both_floods_from_the_ends_return_it(self):
-        shapes = (STRAIGHT, BRANCH, LOOP, FORK, NESTED_LOOPS, BACK_TO_ENTRY, ISLANDS)
+        shapes = (STRAIGHT, BRANCH, LOOP, FORK, NESTED_LOOPS, BACK_TO_ENTRY, ISLANDS, *DOMINANCE_SHAPES.values())
         for edges, listed_backwards in itertools.product(shapes, (False, True)):
             graph, named = graph_from_edges(edges)
             if listed_backwards:
@@ -59,25 +62,89 @@ class TestAnyBetween(TestBase):
                         self.assertEqual(asked_first.any_between(graph, source, target, candidates), expected)
                         self.assertEqual(asked_before.any_between(graph, source, target, candidates), expected)
 
-    def test_many_candidate_sets_between_the_same_two_ends_cross_the_stretch_once(self):
-        names = [F'n{index}' for index in range(1200)]
+    @staticmethod
+    def _chain(names: list[str]) -> tuple[ControlFlowGraph, dict[str, CfgNode]]:
         edges = {name: [names[index + 1]] for index, name in enumerate(names[:-1])}
         edges[names[-1]] = []
-        graph, named = graph_from_edges(edges)
-        query = self._query(graph)
-        source, target = named['n0'], named['n1000']
-        walks = 0
+        return graph_from_edges(edges)
+
+    @staticmethod
+    def _walks():
+        return patch.object(Condensation, 'found_within', autospec=True, side_effect=Condensation.found_within)
+
+    @staticmethod
+    def _tests(tested: list[int]):
         walk = Condensation.found_within
 
-        def counted(*args, **kwargs):
-            nonlocal walks
-            walks += 1
-            return walk(*args, **kwargs)
+        def counted(
+            condensation: Condensation,
+            number: int,
+            test: Callable[[int], bool],
+            memo: dict[int, bool],
+            **bounds,
+        ):
+            def counting(component: int) -> bool:
+                tested.append(component)
+                return test(component)
+            return walk(condensation, number, counting, memo, **bounds)
 
-        with patch.object(Condensation, 'found_within', counted):
+        return patch.object(Condensation, 'found_within', counted)
+
+    def test_many_candidate_sets_between_the_same_two_ends_walk_the_stretch_once(self):
+        names = [F'n{index}' for index in range(1200)]
+        graph, named = self._chain(names)
+        query = self._query(graph)
+        source, target = named['n0'], named['n1000']
+        with self._walks() as walks:
             for name in names[1001:]:
                 self.assertFalse(query.any_between(graph, source, target, {id(named[name])}))
-        self.assertEqual(walks, 1)
+        self.assertEqual(walks.call_count, 1)
+
+    def test_one_source_asked_toward_many_targets_tests_fewer_components_than_two_floods(self):
+        names = [F'n{index}' for index in range(2001)]
+        graph, named = self._chain(names)
+        query = self._query(graph)
+        source = named['n1000']
+        tested: list[int] = []
+        with self._tests(tested):
+            for index in range(1000):
+                above, below = named[names[index]], named[names[1001 + index]]
+                self.assertFalse(query.any_between(graph, source, below, {id(above)}))
+        self.assertLess(len(tested), 2 * len(graph.nodes))
+
+    def test_a_question_asked_again_is_answered_without_a_walk_or_a_flood(self):
+        names = [F'{kind}{index}' for index in range(500) for kind in ('first', 'second', 'read', 'third')]
+        graph, named = self._chain(names)
+        query = self._query(graph)
+        questions = []
+        for index in range(500):
+            earlier, later = named[F'first{index}'], named[F'third{index}']
+            questions.append((named[F'second{index}'], named[F'read{index}'], {id(earlier), id(later)}))
+        for source, target, candidates in questions:
+            self.assertFalse(query.any_between(graph, source, target, candidates))
+        floods = patch.object(DominatorModel, 'reachable', autospec=True, side_effect=DominatorModel.reachable)
+        with self._walks() as walked, floods as flooded:
+            for source, target, candidates in questions:
+                self.assertFalse(query.any_between(graph, source, target, candidates))
+        self.assertEqual((walked.call_count, flooded.call_count), (0, 0))
+
+    def test_equal_candidate_sets_asked_from_many_sources_are_held_once(self):
+        names = [F'k{index}' for index in range(2000)]
+        for index in range(200):
+            names.extend((F'd{index}', F'x{index}', F'r{index}'))
+        graph, named = self._chain(names)
+        query = self._query(graph)
+        kills = [id(node) for name, node in named.items() if name[0] in 'kx']
+        self.assertTrue(query.any_between(graph, named['d0'], named['r0'], set(kills)))
+        tracemalloc.start()
+        try:
+            before, _ = tracemalloc.get_traced_memory()
+            for index in range(1, 200):
+                self.assertTrue(query.any_between(graph, named[F'd{index}'], named[F'r{index}'], set(kills)))
+            after, _ = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertLess(after - before, 1 << 21)
 
     def test_a_node_written_before_the_source_does_not_lie_between_it_and_a_later_node(self):
         self.assertFalse(self._between(STRAIGHT, 'b', 'c', 'a'))

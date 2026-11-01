@@ -832,9 +832,18 @@ def resolve_type(name: str | Ps1TypeName) -> Ps1TypeName | None:
     `System.Char`; what an array's members actually are is `_member_surface`'s question, asked of the
     name this returns.
     """
-    if isinstance(name, str):
-        return _resolve_spelling(name)
-    return _canonical_type_name(name)
+    if not isinstance(name, str):
+        return _canonical_type_name(name)
+    if len(name) > _REMEMBERED_SPELLING_LENGTH:
+        return _resolve_spelling.__wrapped__(name)
+    return _resolve_spelling(name)
+
+
+#: The longest spelling `_resolve_spelling` remembers. A script can put any text where a type name
+#: goes, and so can an input that is not PowerShell at all, since a JSON array parses as one type
+#: literal, while a type name is never this long; a longer spelling is resolved and let go, where
+#: remembering it would hold the text until four thousand other spellings had displaced it.
+_REMEMBERED_SPELLING_LENGTH = 0x400
 
 
 @functools.lru_cache(maxsize=0x1000)
@@ -842,8 +851,9 @@ def _resolve_spelling(name: str) -> Ps1TypeName | None:
     """
     `resolve_type` of a spelling, remembered: the answer depends on the text alone, since the tables
     it is looked up in are fixed once this module has loaded, and a script asks about the same few
-    spellings hundreds of thousands of times. The bound keeps a process that reads one script after
-    another from holding on to every spelling any of them wrote.
+    spellings hundreds of thousands of times. The bound on the count, with the one on the length
+    `resolve_type` applies, keeps a process that reads one script after another from holding on to
+    every spelling any of them wrote.
     """
     parsed = parse_type_name(name)
     if parsed is None:

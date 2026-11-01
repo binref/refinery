@@ -294,15 +294,14 @@ def flood(
 def walk_reading(source: CfgNode, *, forward: bool, projection: Projection) -> Projection:
     """
     The reading `flood` walks *source* alone under, which is `_split_sources`' rule for one source,
-    with `Projection.MAY` standing for both readings of a graph that draws no hub, as
-    `ControlFlowGraph.condensation` keys it. Two walks of one graph under one reading walk one
-    relation, which is what a caller combining their answers over that condensation must know: the
-    components reached from that of *source* hold exactly the nodes `flood` returns from it. That
-    holds for *source* and not for every node sharing its component, since another node of it may
-    be walked under the other reading.
+    named as `ControlFlowGraph.reading` names it. Two walks of one graph under one reading walk one
+    relation, which is what a caller combining their answers over the condensation of that reading
+    (`ControlFlowGraph.condensation`) must know: the components reached from that of *source* hold
+    exactly the nodes `flood` returns from it. That holds for *source* and not for every node
+    sharing its component, since another node of it may be walked under the other reading.
     """
-    coarse, _, declines = _split_sources([source], forward=forward, projection=projection)
-    return Projection.MAY if coarse or not declines else projection
+    coarse, _, _ = _split_sources([source], forward=forward, projection=projection)
+    return Projection.MAY if coarse else source.graph.reading(projection)
 
 
 def _split_sources(
@@ -699,18 +698,31 @@ class ControlFlowGraph:
         """
         return self._resuming
 
+    def reading(self, projection: Projection) -> Projection:
+        """
+        The reading a walk over this graph under *projection* takes: *projection* itself where the
+        graph `carries_resumption`, and `Projection.MAY` where it does not, since a graph that draws
+        no hub is walked alike under both. Everything kept per reading of a graph is keyed by this,
+        here and in `refinery.lib.scripts.analysis.dominance.DominatorModel`, so that a condensation
+        and a dominance tree asked for under one projection describe one relation.
+        """
+        return projection if self.carries_resumption else Projection.MAY
+
     def condensation(self, projection: Projection) -> Condensation[CfgNode]:
         """
         This graph condensed into its strongly connected components under *projection*, computed
-        on first use and kept, as `_reached_after` and `_positions` are: a graph does not change
-        once it is built. A graph that `carries_resumption` reports nothing of has one condensation
-        and not two, for the reason `refinery.lib.scripts.analysis.dominance.DominatorModel.tree_of`
-        keeps one tree for it.
+        on first use and kept per `reading`, as `_reached_after` and `_positions` are kept: a graph
+        does not change once it is built.
+
+        The walk that numbers the components starts at the entry, so every component the entry
+        reaches is numbered below every component it does not, whatever order `nodes` lists them
+        in: a walk bounded by the number of a node the entry reaches stays within what it reaches.
         """
-        reading = projection if self._resuming else Projection.MAY
+        reading = self.reading(projection)
         found = self._condensations.get(reading)
         if found is None:
-            found = self._condensations[reading] = Condensation(self.nodes, reading.successors)
+            found = Condensation((self.entry, *self.nodes), reading.successors)
+            self._condensations[reading] = found
         return found
 
 

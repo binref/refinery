@@ -321,20 +321,25 @@ class DominatorModel:
         draw the same edges over it, so both keys answer from the `Projection.MAY` entry. That is
         nearly every script, and it is what keeps a second consumer asking the forward reading from
         doubling the dominance work of the whole run.
+
+        A flood `reached_from_entry` kept for the same key before the tree existed is dropped once
+        the tree is built, since the tree holds the same set and is what is read from then on.
         """
         key = self._key(graph, projection)
         found = self._trees.get(key)
         if found is None:
             found = self._trees[key] = DominanceTree(graph, key[1])
+            self._reached.pop(key, None)
         return found
 
     @staticmethod
     def _key(graph: ControlFlowGraph, projection: Projection) -> tuple[int, Projection]:
         """
-        The key the answers about *graph* under *projection* are memoized under: a graph that
+        The key the answers about *graph* under *projection* are memoized under: its
+        `refinery.lib.scripts.analysis.cfg.ControlFlowGraph.reading`, since a graph that
         `carries_resumption` reports nothing of draws the same edges under both projections.
         """
-        return id(graph), projection if graph.carries_resumption else Projection.MAY
+        return id(graph), graph.reading(projection)
 
     def reached_from_entry(self, graph: ControlFlowGraph, projection: Projection) -> Set[int]:
         """
