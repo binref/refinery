@@ -547,3 +547,31 @@ class TestAPassThatRaisesIsNoReadingTheAuditKeeps(TestBase):
         audit.failed(_THE_GROUP, raising)
         audit.after(_THE_GROUP, TheDirectiveSweptOutOfTheBody, ast, False)
         self.assertEqual(audit.report(), '')
+
+
+class TestARunWhoseResultMayBeDiscardedReportsThroughAFork(TestBase):
+    """
+    A run the caller may throw away reports to a fork of the audit, and what the fork saw reaches
+    the audit only where the caller keeps the run. The edit moves the mode of `f`, so a fork that
+    leaked into the audit unmerged would name it.
+    """
+
+    @staticmethod
+    def _forked_run(audit: StrictModeAudit):
+        fork = audit.fork()
+        ast = JsParser(A_STRICT_FUNCTION_IN_A_SLOPPY_SCRIPT).parse()
+        TransformerGroup(_THE_GROUP, TheDirectiveSweptOutOfTheBody).run(ast, observer=fork)
+        return fork
+
+    def test_a_fork_that_is_not_merged_leaves_the_report_empty(self):
+        audit = StrictModeAudit()
+        self._forked_run(audit)
+        self.assertEqual(audit.report(), '')
+
+    def test_a_merged_fork_reports_what_it_saw(self):
+        audit = StrictModeAudit()
+        audit.merge(self._forked_run(audit))
+        self.assertEqual(
+            [(movement.group, movement.transformer) for movement in audit.movements],
+            [(_THE_GROUP, TheDirectiveSweptOutOfTheBody.__name__)],
+        )

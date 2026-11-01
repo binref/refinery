@@ -114,6 +114,7 @@ from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.model import static_string
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
+from refinery.units.scripting.djs import djs
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -6899,4 +6900,141 @@ class TestABuiltInABaseConstructorReturnsIsTheReceiverOfTheDerivedOne(TestBase):
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
+        )
+
+
+#: A program calling a method of `Array.prototype` under a key the run reads only after the call is
+#: scanned, mapped to what Node prints for it.
+A_METHOD_CALLED_UNDER_A_KEY_THE_RUN_READS_LATE = {
+    "var k = ['push'][0]; Array.prototype[k](5); console.log([][0]);": '5\n',
+    "var o = {k: 'push'}; Array.prototype[o.k](5); console.log([][0]);": '5\n',
+    "function k() { return 'push'; } Array.prototype[k()](5); console.log([][0]);": '5\n',
+    "var P = Array.prototype; P[['push']](5); console.log([][0]);": '5\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAMethodCalledUnderAKeyTheRunReadsLateWritesItsReceiver(TestBase):
+    """
+    `Array.prototype.push(5)` stores 5 at index 0 of the prototype every array reads through, so
+    `[][0]` is 5. The write scan reads a call under a key it cannot read as a call that writes
+    nothing, and the trusting model folds `[][0]` to `undefined` before a later pass reads the key as
+    `push`, or never reads `['push']` as a key at all. A correct scan counts a call under a key it
+    cannot read as one that may write its receiver.
+    """
+
+    def test_node_prints_what_each_row_records(self):
+        for source, output in A_METHOD_CALLED_UNDER_A_KEY_THE_RUN_READS_LATE.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(source), (output, None))
+
+    @unittest.expectedFailure
+    def test_the_trusting_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_METHOD_CALLED_UNDER_A_KEY_THE_RUN_READS_LATE
+        self.assertEqual(
+            {source: behavior(source.encode('utf8') | djs() | str) for source in rows},
+            {source: (output, None) for source, output in rows.items()},
+        )
+
+
+#: A program building a function through `constructor` read twice under a key the run reads only
+#: after the construction is scanned, or never, mapped to what Node prints for it.
+A_FUNCTION_BUILT_UNDER_A_KEY_THE_RUN_READS_LATE = {
+    "var F = []['constr' + 'uctor']['constr' + 'uctor']; F('Math.floor = function () { return 7; }')(); console.log(Math.floor(1.5));": '7\n',
+    "function k() { return 'constr' + 'uctor'; } var F = [][k()][k()]; F('Math.floor = function () { return 7; }')(); console.log(Math.floor(1.5));": '7\n',
+    "var k = ['constructor'][Math.random() < 2 ? 0 : 1]; var F = [][k][k]; F('Math.floor = function () { return 7; }')(); console.log(Math.floor(1.5));": '7\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionBuiltUnderAKeyTheRunReadsLateRunsItsCode(TestBase):
+    """
+    `[].constructor.constructor` is `Function`, and the function it builds replaces `Math.floor`
+    before the program calls it. The strict model counts a construction through a key it cannot read
+    (`refinery.lib.scripts.js.analysis.intrinsics._constructs_through_an_unread_key`), but it folds
+    `Math.floor(1.5)` to 1 on a model built before a later pass reads the key, or where the key is
+    never read and the reader looking for `constructor` counts it as some other key. A correct
+    reader counts a key it cannot read as `constructor`.
+    """
+
+    def test_node_prints_what_each_row_records(self):
+        for source, output in A_FUNCTION_BUILT_UNDER_A_KEY_THE_RUN_READS_LATE.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(source), (output, None))
+
+    @unittest.expectedFailure
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_FUNCTION_BUILT_UNDER_A_KEY_THE_RUN_READS_LATE
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A program replacing a built-in through a value no write scan can attribute to it, mapped to what
+#: Node prints for it: the global object handed to a callback, and `String.prototype` reached under a
+#: key spelled at runtime.
+A_BUILT_IN_REPLACED_THROUGH_A_CALLBACK_OR_A_SPELLED_KEY = {
+    "[globalThis].forEach(function (g) { g.unescape = function () { return 'X'; }; }); console.log(unescape('%41'));": 'X\n',
+    "''[[] + 'constructor'].prototype.toUpperCase = function () { return 'X'; }; console.log('a'.toUpperCase());": 'X\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABuiltInReplacedThroughACallbackOrASpelledKeyIsNotFolded(TestBase):
+    """
+    Each program replaces the built-in it then calls, and the deobfuscation folds the call as the
+    built-in the language describes. The global object handed to a callback reaches no name the
+    scan follows, and a call of a string method asks only about the writes the scan attributes to a
+    name, where `''[k].prototype` names none.
+    """
+
+    def test_node_prints_what_each_row_records(self):
+        for source, output in A_BUILT_IN_REPLACED_THROUGH_A_CALLBACK_OR_A_SPELLED_KEY.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(source), (output, None))
+
+    @wontfix(
+        'no obfuscator and no program replaces a built-in through the global object handed to a '
+        'callback or through a prototype reached under a key it spells at runtime; the forms code '
+        'uses, the global object handed to a function called in place and a name holding it, keep '
+        'the call'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_BUILT_IN_REPLACED_THROUGH_A_CALLBACK_OR_A_SPELLED_KEY
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A program building a function from code holding an invalid regular expression after printing a
+#: line, mapped to what Node does with it: it prints the line, and building the function throws.
+CODE_HOLDING_AN_INVALID_REGULAR_EXPRESSION = {
+    "console.log(1); console.log(Function('return/(/')());": ('1\n', 'SyntaxError'),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestCodeHoldingAnInvalidRegularExpressionIsNotSpliced(TestBase):
+    """
+    The pattern `(` is no regular expression, so building the function throws when the program
+    reaches it. The reflection pass splices the code into the file, which makes the whole file one
+    no engine loads, and the line printed before it is lost.
+    """
+
+    def test_node_does_what_each_row_records(self):
+        for source, does in CODE_HOLDING_AN_INVALID_REGULAR_EXPRESSION.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(source), does)
+
+    @wontfix(
+        'no obfuscator writes an invalid regular expression into code it runs: the code it builds '
+        'is the program it was given, which loads'
+    )
+    def test_the_deobfuscation_does_what_the_program_does(self):
+        rows = CODE_HOLDING_AN_INVALID_REGULAR_EXPRESSION
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            {source: (does, does) for source, does in rows.items()},
         )

@@ -13,11 +13,11 @@ the prototypes alone, and fold to that; in a file that installs one they are lef
 cases below run such a file through Node to show the read still finds it. A method name such as
 `charAt` is a function no literal spells, and is left standing everywhere.
 
-Which key is being read is itself a question with an answer only the engine has whenever the key is
-not already a primitive. Naming a property converts the key, and an array or an object converts
-through `Array.prototype.join` or `Object.prototype.toString`, either of which a file may replace
-before the read runs: `'abc'[[1]]` reads `'b'` in an untouched engine and `'c'` in one where `join`
-was made to answer `'2'`.
+Which key is being read is itself a question whenever the key is not already a primitive. Naming a
+property converts the key, and an array or an object converts through `Array.prototype.join` or
+`Object.prototype.toString`, either of which a file may replace before the read runs: `'abc'[[1]]`
+reads `'b'` in an untouched engine and `'c'` in one where `join` was made to answer `'2'`. Such a
+read folds only where the tool can show that the file replaces no method the conversion runs.
 
 The string need not be spelled in the file. `atob`, `unescape`, `decodeURIComponent`, `JSON.parse`,
 `repeat`, and `toLowerCase` all hand one back, and a read off the result is the same read off the
@@ -100,6 +100,8 @@ _NO_PROTOTYPE_HOLDS = [
     "'abc'[' 1']",
     "'abc'.nope",
     "'abc'['nope']",
+    "'abc'[NaN]",
+    "'abc'[void 0]",
     F'{_ASTRAL_LITERAL}[4]',
 ]
 
@@ -107,8 +109,6 @@ _NO_PROTOTYPE_HOLDS = [
 #: two differ, the difference is the synthesizer spelling a computed key as a dot access; the access
 #: is still there and still asks the engine.
 _LEFT_STANDING: dict[str, str] = {
-    "'abc'[NaN]"              : "'abc'[NaN]",
-    "'abc'[void 0]"           : "'abc'[void 0]",
     "'abc'.charAt"            : "'abc'.charAt",
     "'abc'['charAt']"         : "'abc'.charAt",
     "'abc'.toUpperCase"       : "'abc'.toUpperCase",
@@ -118,14 +118,19 @@ _LEFT_STANDING: dict[str, str] = {
     'true.length'             : 'true.length',
 }
 
+#: A read whose key is an array, in a file that replaces no method of the array's conversion, mapped
+#: to the text the tool folds it to and to the code-unit structure Node answers it with.
+_A_KEY_AN_UNTOUCHED_METHOD_CONVERTS: dict[str, tuple[str, str]] = {
+    "'abc'[[1]]"    : ("'b'", 'S[98]'),
+    "'abc'[['1']]"  : ("'b'", 'S[98]'),
+    "'abc'[[1, 2]]" : ('void 0', 'undefined'),
+}
+
 #: A read whose key is not a primitive, mapped to the text it is left standing as and to the
 #: code-unit structure Node answers it with in an engine nothing has touched. What the key spells is
 #: decided by a prototype method rather than by the element, so reading it off the element names a
 #: property the engine need not have named.
 _A_KEY_A_PROTOTYPE_METHOD_CONVERTS: dict[str, tuple[str, str]] = {
-    "'abc'[[1]]"    : ("'abc'[[1]]", 'S[98]'),
-    "'abc'[['1']]"  : ("'abc'[['1']]", 'S[98]'),
-    "'abc'[[1, 2]]" : ("'abc'[[1, 2]]", 'undefined'),
     "'abc'[{}]"     : ("'abc'[{}]", 'undefined'),
 }
 
@@ -287,6 +292,22 @@ class TestAReadTheStringDoesNotDecide(TestBase):
 
 
 class TestAKeyThatIsNotAPrimitive(TestBase):
+
+    def test_a_key_an_untouched_method_converts_folds_to_what_it_names(self):
+        for expression, (folded, _) in _A_KEY_AN_UNTOUCHED_METHOD_CONVERTS.items():
+            with self.subTest(expression=expression):
+                self.assertEqual(_fold(expression), folded)
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_reads_the_folded_value_from_the_access_it_replaced(self):
+        reads = _A_KEY_AN_UNTOUCHED_METHOD_CONVERTS
+        expressions = list(reads)
+        answers = code_units(expressions)
+        replacements = code_units([reads[e][0] for e in expressions])
+        for expression, answer, replacement in zip(expressions, answers, replacements):
+            with self.subTest(expression=expression):
+                expected = reads[expression][1]
+                self.assertEqual((answer, replacement), (expected, expected))
 
     def test_a_key_a_prototype_method_converts_is_left_standing(self):
         for expression, (standing, _) in _A_KEY_A_PROTOTYPE_METHOD_CONVERTS.items():

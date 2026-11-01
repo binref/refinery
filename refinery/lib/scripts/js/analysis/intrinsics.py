@@ -13,6 +13,8 @@ for it. The registry of intrinsics the scan watches lives here for the same reas
 """
 from __future__ import annotations
 
+import enum
+
 from typing import Iterator, NamedTuple, Sequence
 
 from refinery.lib.scripts import Node
@@ -583,6 +585,88 @@ class IntrinsicWrites(NamedTuple):
         if owner is None:
             return False
         return self.roots_unwritten(owner, INHERITED_CHAIN_ROOTS)
+
+    def records_more_than(self, other: IntrinsicWrites) -> bool:
+        """
+        Whether this scan records a written name, a key written on a name, or a name whose written
+        keys it cannot bound, that the scan *other* does not record.
+        """
+        if self.names - other.names:
+            return True
+        for name, keys in self.keys.items():
+            known = other.keys.get(name, frozenset())
+            if known is None:
+                continue
+            if keys is None or keys - known:
+                return True
+        return False
+
+
+class SpeculationState(enum.Enum):
+    """
+    Where a `WriteSpeculation` stands.
+    """
+    ASSUMING = 'assuming'
+    DISCHARGED = 'discharged'
+    REFUTED = 'refuted'
+
+
+class SpeculationRefuted(Exception):
+    """
+    Raised by `WriteSpeculation.observe` at a build of the scan that records more than the build
+    before it, and at every build after that one.
+    """
+
+
+class WriteSpeculation:
+    """
+    The record of a run that assumes every write on a built-in object the scan does not follow
+    (`IntrinsicWrites.followable`) writes nothing. While it assumes, `observe` presents each build
+    of the scan as following every write and compares it with the build before it: one that
+    records more (`IntrinsicWrites.records_more_than`) refutes the assumption. A build that follows
+    every write and records no more discharges it, and every later build is presented as it is.
+
+    A run that ends discharged may keep its result. Each fold it made before the discharge read the
+    record of some build and assumed nothing outside that record is written. No build records more
+    than the one before, so the record of the discharging build, R, is part of every earlier one.
+    Take an execution and the first write outside the record a fold relied on, if one happens: up to
+    that moment every fold's premise held, so the discharged tree behaves alike up to it and makes
+    the same write. That tree has no write the scan does not follow, so the write is in R, and so in
+    every earlier record: no fold relied on its absence. So no such write happens. Code a splice
+    brings in after the discharge is read by the scan as it is, as in any run.
+    """
+
+    def __init__(self):
+        self.state = SpeculationState.ASSUMING
+        self._record: IntrinsicWrites | None = None
+
+    @property
+    def assuming(self) -> bool:
+        return self.state is SpeculationState.ASSUMING
+
+    @property
+    def discharged(self) -> bool:
+        return self.state is SpeculationState.DISCHARGED
+
+    def observe(self, writes: IntrinsicWrites) -> IntrinsicWrites:
+        """
+        The build *writes* of the scan as the run reads it: presented as following every write
+        while the assumption holds, and as it is once the assumption is discharged. Raises
+        `SpeculationRefuted` where *writes* records more than the build before it, and at every
+        build once that has happened.
+        """
+        if self.state is SpeculationState.DISCHARGED:
+            return writes
+        if self.state is SpeculationState.REFUTED or (
+            self._record is not None and writes.records_more_than(self._record)
+        ):
+            self.state = SpeculationState.REFUTED
+            raise SpeculationRefuted
+        self._record = writes
+        if writes.followable:
+            self.state = SpeculationState.DISCHARGED
+            return writes
+        return writes._replace(followable=True)
 
 
 def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:

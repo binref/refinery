@@ -1140,6 +1140,29 @@ def _clone_node(node: _N) -> _N:
     return clone
 
 
+def restore(node: Node, snapshot: Node) -> None:
+    """
+    Give *node* every field and comment of *snapshot*, a `_clone_node` copy of it taken earlier,
+    and adopt the snapshot's children. Every field goes through the setter that advances the
+    mutation counter, so no cache over the tree keeps a model of what *node* held in between. The
+    snapshot hands its children over and is of no further use.
+    """
+    if type(snapshot) is not type(node):
+        raise TypeError(F'a {type(node).__name__} cannot be restored from a {type(snapshot).__name__}')
+    kinds = dict(_classify_fields(type(node)))
+    for f in dataclasses.fields(node):
+        if f.name == 'parent':
+            continue
+        value = getattr(snapshot, f.name)
+        kind = kinds.get(f.name)
+        if kind is Kind.ChildNode:
+            set_child(node, f.name, value)
+        elif kind is not None and value is not None:
+            set_child_list(node, f.name, value)
+        else:
+            set_value(node, f.name, value)
+
+
 class UnspellableNode(LookupError):
     """
     Raised when a synthesizer is handed a node the model says has no spelling. See

@@ -66,6 +66,20 @@ class PipelineObserver:
         state it was left in is not the pass's result and must not be read as one.
         """
 
+    def fork(self) -> PipelineObserver:
+        """
+        An observer for a run whose result the caller may discard, called around its transformers
+        in place of this one; `merge` adopts what it saw where the caller keeps the result. The base
+        forks to an observer that records nothing, so an observer that does not override both sees
+        nothing of such a run, which is a gap and never a report of a run that was discarded.
+        """
+        return PipelineObserver()
+
+    def merge(self, fork: PipelineObserver) -> None:
+        """
+        Adopt what *fork*, an observer `fork` returned, saw of a run whose result the caller kept.
+        """
+
 
 class TransformerGroup:
     """

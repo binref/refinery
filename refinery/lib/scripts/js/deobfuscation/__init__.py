@@ -3,10 +3,13 @@ JavaScript AST deobfuscation transforms.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import tree_version
+from typing import NamedTuple
+
+from refinery.lib.scripts import _clone_node, restore, tree_version
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.environment import ASSUMED_CLOCK, ClockWindow, HostEnvironment
+from refinery.lib.scripts.js.analysis.intrinsics import SpeculationRefuted
 from refinery.lib.scripts.js.deobfuscation.antidbg import JsRemoveSelfDefending
 from refinery.lib.scripts.js.deobfuscation.argwrap import JsAssignmentsAsFunctionArgs
 from refinery.lib.scripts.js.deobfuscation.b91strings import (
@@ -146,6 +149,15 @@ def deobfuscate(
     carried over. A change in that run leaves the settled tree behind, since a fold may let a pass
     decode more, so the pipeline runs again as long as a run that changed the tree ends on one it
     refused a conversion on.
+
+    A run that ends on a tree whose write scan does not follow every write
+    (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.followable`) has refused every
+    fold that reads a built-in's chain, among them the folds that would read the hand-off away. The
+    pipeline then runs to settlement again on that tree, over the same models, assuming that every
+    write the scan does not follow writes nothing, and keeps the result only where the assumption
+    was discharged (`refinery.lib.scripts.js.analysis.intrinsics.WriteSpeculation`); everywhere
+    else the tree is restored. No tree is settled for that run before it reaches a fixpoint of its
+    own, since it may decode keys the run before it could not.
     """
     options = DeobfuscationOptions(
         execution=execution,
@@ -159,24 +171,80 @@ def deobfuscate(
     settlement = ConversionSettlement()
     models = ModelCache(ast, options, settlement)
     JsLZStringDecoder.read_input(models)
-    steps = _pipeline.run(
-        ast,
-        max_steps=max_steps,
-        models=models,
-        options=options,
-        observer=observer,
-    )
-    while settlement.waits_on(tree_version(ast)):
-        settlement.settle(tree_version(ast))
-        settled_steps = _pipeline.run(
+    run = _Run(ast, max_steps, models, options, settlement)
+    steps = run.to_settlement(0, observer)
+    if models.intrinsic_writes.followable:
+        return steps
+    return run.assuming_followed_writes(steps, observer)
+
+
+class _Run(NamedTuple):
+    """
+    What every pipeline run of one `deobfuscate` call shares.
+    """
+    ast: JsScript
+    max_steps: int
+    models: ModelCache
+    options: DeobfuscationOptions
+    settlement: ConversionSettlement
+
+    def to_settlement(self, steps: int, observer: PipelineObserver | None) -> int:
+        """
+        Run the pipeline until it reaches a fixpoint on a tree the settlement record does not wait
+        on, with *steps* carried over, and return the steps taken in all.
+        """
+        ast = self.ast
+        steps = _pipeline.run(
             ast,
-            max_steps=max_steps,
+            max_steps=self.max_steps,
             initial_steps=steps,
-            models=models,
-            options=options,
+            models=self.models,
+            options=self.options,
             observer=observer,
         )
-        if settled_steps == steps:
-            break
-        steps = settled_steps
-    return steps
+        while self.settlement.waits_on(tree_version(ast)):
+            self.settlement.settle(tree_version(ast))
+            settled_steps = _pipeline.run(
+                ast,
+                max_steps=self.max_steps,
+                initial_steps=steps,
+                models=self.models,
+                options=self.options,
+                observer=observer,
+            )
+            if settled_steps == steps:
+                break
+            steps = settled_steps
+        return steps
+
+    def assuming_followed_writes(self, steps: int, observer: PipelineObserver | None) -> int:
+        """
+        Run to settlement again, assuming that every write the scan does not follow writes nothing,
+        and keep the result only where the run discharged that assumption; see
+        `refinery.lib.scripts.js.analysis.intrinsics.WriteSpeculation`. Otherwise the tree is
+        restored to what it was and *steps* returned. An exception restores it as well and is
+        raised again, except at the recursion limit, where the run before this one is the result.
+        *observer* sees the run through a fork, merged where the result is kept.
+        """
+        ast = self.ast
+        try:
+            snapshot = _clone_node(ast)
+        except RecursionError:
+            return steps
+        fork = None if observer is None else observer.fork()
+        self.settlement.reopen()
+        try:
+            with self.models.speculating() as speculation:
+                speculated_steps = self.to_settlement(steps, fork)
+        except (SpeculationRefuted, RecursionError):
+            pass
+        except BaseException:
+            restore(ast, snapshot)
+            raise
+        else:
+            if speculation.discharged:
+                if observer is not None and fork is not None:
+                    observer.merge(fork)
+                return speculated_steps
+        restore(ast, snapshot)
+        return steps

@@ -201,6 +201,15 @@ class ConversionSettlement:
         self.version = version
         self.waiting = None
 
+    def reopen(self) -> None:
+        """
+        Declare that the run now assumes more than it did when it settled a tree, so the passes may
+        decode keys they could not decode there: no tree is settled, and none waits, until the
+        pipeline reaches its next fixpoint.
+        """
+        self.version = None
+        self.waiting = None
+
 
 def _is_direct_callee(node: Node) -> bool:
     """

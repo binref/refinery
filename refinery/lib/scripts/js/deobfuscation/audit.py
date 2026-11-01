@@ -94,6 +94,14 @@ class StrictModeAudit(PipelineObserver):
     def failed(self, group: str, transformer: type[Transformer]) -> None:
         self._before = {}
 
+    def fork(self) -> StrictModeAudit:
+        return StrictModeAudit()
+
+    def merge(self, fork: PipelineObserver) -> None:
+        if not isinstance(fork, StrictModeAudit):
+            raise TypeError(F'a {type(self).__name__} merges only a fork of its own type')
+        self.movements.extend(fork.movements)
+
     def report(self) -> str:
         """
         The recorded movements, one per line, in the order they happened.

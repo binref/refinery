@@ -10,7 +10,9 @@ slots and their `build_*` wiring.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from functools import partial
+from typing import Generator
 
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.analysis.cycles import CycleModel
@@ -23,7 +25,11 @@ from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
 from refinery.lib.scripts.js.analysis.effects import AnchoredTrust, EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.environment import FileKind
-from refinery.lib.scripts.js.analysis.intrinsics import IntrinsicWrites, build_intrinsic_writes
+from refinery.lib.scripts.js.analysis.intrinsics import (
+    IntrinsicWrites,
+    WriteSpeculation,
+    build_intrinsic_writes,
+)
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
 from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel, build_reaching
@@ -71,7 +77,8 @@ class ModelCache(ModelCacheBase):
     (`refinery.lib.scripts.js.analysis.conversions.ConversionSettlement`). Only
     `refinery.lib.scripts.js.deobfuscation.deobfuscate` creates one; a cache built anywhere else
     holds none, and its effect models then refuse what they would only answer on a tree a run has
-    settled.
+    settled. A run that assumes that every write the scan does not follow writes nothing runs inside
+    `speculating`, which hands every build of the scan to the record of that assumption.
     """
 
     _SLOTS = (
@@ -135,11 +142,40 @@ class ModelCache(ModelCacheBase):
         settlement: ConversionSettlement | None = None,
     ):
         self.settlement = settlement
+        self._speculation: WriteSpeculation | None = None
         super().__init__(root, options)
         self.file_kind = file_kind(self.options, self.root)
 
+    @contextmanager
+    def speculating(self) -> Generator[WriteSpeculation, None, None]:
+        """
+        Serve the block's models under a new
+        `refinery.lib.scripts.js.analysis.intrinsics.WriteSpeculation`, which every build of the
+        write scan in the block passes through. While it assumes, every build of the semantic model
+        also builds the scan, so a tree is checked before a pass acts on what the model says of it,
+        and so is the tree the block leaves. The models held before the block were built without the
+        speculation and are dropped on entry; on exit, those built while it assumed are dropped as
+        well, since they read a scan presented as following writes it does not follow.
+        """
+        speculation = self._speculation = WriteSpeculation()
+        self.invalidate()
+        try:
+            yield speculation
+            self._held_intrinsic_writes()
+        finally:
+            self._speculation = None
+            if not speculation.discharged:
+                self.invalidate()
+
     @property
     def model(self) -> SemanticModel:
+        model = self._semantic_model()
+        speculation = self._speculation
+        if speculation is not None and speculation.assuming:
+            self._held_intrinsic_writes()
+        return model
+
+    def _semantic_model(self) -> SemanticModel:
         return self._lazy('_model', lambda: build_semantic_model(
             self.root,
             host_environment(self.options),
@@ -151,7 +187,15 @@ class ModelCache(ModelCacheBase):
 
     @property
     def intrinsic_writes(self) -> IntrinsicWrites:
-        return self._lazy('_intrinsic_writes', lambda: build_intrinsic_writes(self.model))
+        return self._held_intrinsic_writes()
+
+    def _held_intrinsic_writes(self) -> IntrinsicWrites:
+        return self._lazy('_intrinsic_writes', self._observed_intrinsic_writes)
+
+    def _observed_intrinsic_writes(self) -> IntrinsicWrites:
+        writes = build_intrinsic_writes(self._semantic_model())
+        speculation = self._speculation
+        return writes if speculation is None else speculation.observe(writes)
 
     @property
     def effects(self) -> EffectModel:

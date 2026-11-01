@@ -1351,6 +1351,9 @@ class TestAnAnnouncedChangeMovesTheTree(TestBase):
             if changed and tree_version(ast) == self.entry:
                 self.unsited.append(transformer.__name__)
 
+        def fork(self) -> PipelineObserver:
+            return self
+
     def test_every_change_the_corpus_announces_moved_the_counter(self):
         for index, source in enumerate(_CORPUS):
             with self.subTest(sample=index):
