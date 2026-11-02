@@ -1006,3 +1006,14 @@ class TestManyAnchorsShareOneEnumeration(TestBase):
         elapsed = time.perf_counter() - started
         self.assertTrue(all(verdicts))
         self.assertLess(elapsed, 30.0)
+
+
+class TestAnAnchorRunsAtMostOnce(TestBase):
+
+    def test_a_call_in_a_static_field_runs_once_with_its_class(self):
+        ast = JsParser('function d(i) { return i; } class A { static v = d(0); }').parse()
+        self.assertTrue(ModelCache(ast).tampering.at_most_once(_call_of_name(ast, 'd')))
+
+    def test_a_call_in_a_field_of_a_class_constructed_twice_runs_twice(self):
+        ast = JsParser('function d(i) { return i; } class A { v = d(0); } new A(); new A();').parse()
+        self.assertFalse(ModelCache(ast).tampering.at_most_once(_call_of_name(ast, 'd')))

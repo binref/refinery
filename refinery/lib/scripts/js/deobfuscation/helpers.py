@@ -2431,7 +2431,9 @@ def walk_scope(root: Node, *, include_root_body: bool = False) -> Iterator[Node]
     """
     Walk the AST under *root* without descending into nested function bodies. Function boundary
     nodes are yielded (so their identifiers can be inspected) but their subtrees are suppressed.
-    Children are visited in source order.
+    Children are visited in source order. The walk is textual: it enters the initializer of a class
+    field, which runs at each construction rather than where it is written; the nodes one run
+    evaluates are those `refinery.lib.scripts.js.analysis.evaluation.walk_run` yields.
 
     When *include_root_body* is True and *root* is itself a function, its body IS traversed (only
     inner functions are skipped). This is useful when *root* represents the scope being analyzed.

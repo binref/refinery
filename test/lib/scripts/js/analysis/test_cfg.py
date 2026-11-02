@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import unittest
-
 from test import TestBase
 
 from refinery.lib.scripts.analysis.cfg import ElementLocator
 from refinery.lib.scripts.js.analysis.cfg import ControlFlowGraph, build_cfg, build_control_flow
+from refinery.lib.scripts.js.analysis.evaluation import evaluated_later
 from refinery.lib.scripts.js.model import (
     JsBreakStatement,
     JsCatchClause,
@@ -16,7 +15,9 @@ from refinery.lib.scripts.js.model import (
     JsForOfStatement,
     JsForStatement,
     JsFunctionDeclaration,
+    JsIdentifier,
     JsIfStatement,
+    JsPropertyDefinition,
     JsReturnStatement,
     JsWhileStatement,
 )
@@ -347,11 +348,43 @@ class TestTheLookupOfAStatementStopsAtTheBodyItIsWrittenIn(TestBase):
     def _place_of_the_loop(self, source: str):
         root = JsParser(source).parse()
         loop = next(node for node in root.walk() if isinstance(node, JsForStatement))
-        return ElementLocator(build_control_flow(root)).locate(loop)
+        return ElementLocator(build_control_flow(root), evaluated_later).locate(loop)
 
     def test_a_loop_in_a_function_expression_has_no_place(self):
         self.assertIsNone(self._place_of_the_loop('var f = function () { for (;;) { a; } };'))
 
-    @unittest.expectedFailure
     def test_a_loop_in_a_declared_function_has_no_place(self):
         self.assertIsNone(self._place_of_the_loop('function f() { for (;;) { a; } }'))
+
+
+class TestTheInitializerOfAFieldIsLocatedInAGraphOfItsOwn(TestBase):
+    """
+    The initializer of a field written without `static` runs each time an instance is constructed,
+    so it is evaluated in a graph of its own; the computed key of the field and the initializer of
+    a static field are evaluated once, by the class statement.
+    """
+
+    @staticmethod
+    def _place_of(source: str, name: str):
+        root = JsParser(source).parse()
+        read = next(node for node in root.walk() if isinstance(node, JsIdentifier) and node.name == name)
+        located = ElementLocator(build_control_flow(root), evaluated_later).locate(read)
+        assert located is not None
+        graph, node = located
+        return root, read, graph.owner, node.element
+
+    def test_a_computed_key_is_located_at_the_class_statement(self):
+        root, _, owner, element = self._place_of('class A { [k] = v; }', 'k')
+        self.assertIs(owner, root)
+        self.assertIs(element, root.body[0])
+
+    def test_an_initializer_is_located_in_the_graph_of_its_field(self):
+        _, read, owner, element = self._place_of('class A { [k] = v; }', 'v')
+        self.assertIsInstance(owner, JsPropertyDefinition)
+        self.assertIs(owner, read.parent)
+        self.assertIs(element, read)
+
+    def test_the_initializer_of_a_static_field_is_located_at_the_class_statement(self):
+        root, _, owner, element = self._place_of('class A { static [k] = v; }', 'v')
+        self.assertIs(owner, root)
+        self.assertIs(element, root.body[0])

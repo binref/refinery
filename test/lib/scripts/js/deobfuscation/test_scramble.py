@@ -284,6 +284,75 @@ class TestScrambleStringDecoder(TestJsDeobfuscator):
         """
         self._declines('200000', 'n')
 
+    _A_CIPHER_CLASS_WITH_A_FIELD = {
+        'a field holding the round count': inspect.cleandoc(
+            """
+            class Scramble {
+              rounds = 4;
+              constructor(pw, salt) {
+                this.masterKey = pb(pw, salt, 200000, 32, 'sha256');
+              }
+              decode(input) {
+                return decrypt(input, this.masterKey, this.rounds);
+              }
+            }
+            var instance = new Scramble('2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6', 'fec5863b88643968ecff0c2c8afecbaf');
+            function decode(x) {
+              return instance.decode(x);
+            }
+            console.log(decode('hJQxp9Pvj3X2QId3C4RuMOe1C4EpuSg2b/8JyqzSWjrQm+VgNNg='));
+            """
+        ),
+        'a field shadowing the decode method': inspect.cleandoc(
+            """
+            class Scramble {
+              decode = input => input;
+              constructor(pw, salt) {
+                this.masterKey = pb(pw, salt, 200000, 32, 'sha256');
+                this.rounds = 3;
+              }
+              decode(input) {
+                return decrypt(input, this.masterKey, this.rounds);
+              }
+            }
+            var instance = new Scramble('2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6', 'fec5863b88643968ecff0c2c8afecbaf');
+            function decode(x) {
+              return instance.decode(x);
+            }
+            console.log(decode('hJQxp9Pvj3X2QId3C4RuMOe1C4EpuSg2b/8JyqzSWjrQm+VgNNg='));
+            """
+        ),
+        'a field without an initializer shadowing the decode method': inspect.cleandoc(
+            """
+            class Scramble {
+              decode;
+              constructor(pw, salt) {
+                this.masterKey = pb(pw, salt, 200000, 32, 'sha256');
+                this.rounds = 3;
+              }
+              decode(input) {
+                return decrypt(input, this.masterKey, this.rounds);
+              }
+            }
+            var instance = new Scramble('2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6', 'fec5863b88643968ecff0c2c8afecbaf');
+            function decode(x) {
+              return instance.decode(x);
+            }
+            console.log(decode('hJQxp9Pvj3X2QId3C4RuMOe1C4EpuSg2b/8JyqzSWjrQm+VgNNg='));
+            """
+        ),
+    }
+    """
+    The program of `test_counts_the_pass_can_honour_decode_the_class` with a field written without
+    `static` in the class. The field puts a property on every instance, so `instance.decode` or
+    `this.rounds` may be the field's value rather than what the methods of the class say.
+    """
+
+    def test_a_class_with_a_field_is_not_this_cipher(self):
+        for label, source in self._A_CIPHER_CLASS_WITH_A_FIELD.items():
+            with self.subTest(label):
+                self.assertEqual(source, self._deobfuscate_bounded(source))
+
     def test_global_string_key_alias(self):
         source = inspect.cleandoc(
             """

@@ -793,15 +793,15 @@ class ElementLocator:
     inside an expression (`locate`). Every flow-sensitive layer built on the graphs shares it, so the
     AST-to-graph mapping and its parent-climb live in one place.
 
-    *deferred* names the node types whose content a language evaluates at a time of its own rather
-    than where the node is written, outside every body a graph is drawn for: the initializer of a
-    PowerShell class property runs at each construction, not at the class statement.
+    *apart* is the language's answer to whether a part of a node is evaluated at a time of its own
+    rather than where the node is written, as the body of a function is when it is called and the
+    initializer of a class property each time an instance is constructed. The climb never takes
+    such a step (`locate`).
     """
 
-    def __init__(self, graphs: dict[int, ControlFlowGraph], deferred: tuple[type, ...] = ()):
+    def __init__(self, graphs: dict[int, ControlFlowGraph], apart: Callable[[Node, Node], bool]):
         self._element_graph: dict[int, ControlFlowGraph] = {}
-        self._owners = {id(graph.owner) for graph in graphs.values()}
-        self._deferred = deferred
+        self._apart = apart
         for graph in graphs.values():
             for node in graph.nodes:
                 if node.element is not None:
@@ -820,31 +820,25 @@ class ElementLocator:
         The graph and node that evaluate *element*, climbing out of any expression it is nested in to
         the enclosing statement or loop head, or `None` when it has no enclosing graph node.
 
-        The climb stops at the body *element* is written in rather than continuing into the body
-        around it. Something inside a body that no node of that body's graph stands for — the default
-        of a parameter, an attribute on the body itself — is evaluated when that body is invoked, and
-        the enclosing body's statement that mentions it is not that point. Answering with that
-        statement orders the element against code the invocation may never run beside, which is the
-        false claim the per-body split exists to avoid; `None` says the graphs do not place it, and a
-        caller reads that as unknown.
-
-        The body *element* is itself is not its own boundary: a block is a value written at a point
-        in the body around it, so locating one climbs out to the statement that mentions it. A
-        deferred node is a boundary in the same way a body is, for the same reason.
+        The climb stops where it would step from a part evaluated at a time of its own to the node
+        holding it (*apart*), rather than continuing into the code around that node. Something in
+        such a part that no node of its own graph stands for — the default of a parameter, an
+        attribute on a body, a part no graph is drawn for at all — is evaluated when that part runs,
+        and the statement around the node holding it is not that point. Answering with that
+        statement orders the element against code the run may never be beside, which is the false
+        claim the per-body split exists to avoid; `None` says the graphs do not place it, and a
+        caller reads that as unknown. A node that holds such a part is itself written at a point in
+        the code around it, so locating a function climbs out to the statement that mentions it.
         """
-        cursor: Node | None = element
-        while cursor is not None:
+        cursor = element
+        while True:
             graph = self._element_graph.get(id(cursor))
-            if graph is not None:
-                node = graph.node_of(cursor)
-                if node is not None:
-                    return graph, node
-            if cursor is not element and (
-                id(cursor) in self._owners or isinstance(cursor, self._deferred)
-            ):
+            if graph is not None and (node := graph.node_of(cursor)) is not None:
+                return graph, node
+            holder = cursor.parent
+            if holder is None or self._apart(holder, cursor):
                 return None
-            cursor = cursor.parent
-        return None
+            cursor = holder
 
 
 @dataclass
@@ -1731,17 +1725,17 @@ class ControlFlowModel:
     The per-body control-flow graphs of one script, paired with the `ElementLocator` that maps any
     AST node to the graph node evaluating it. Built once over the script root — the graphs are purely
     syntactic and need no semantic model — and shared by every solver layered on it, which would
-    otherwise each rebuild the whole set. *deferred* is the `ElementLocator` argument of that name.
+    otherwise each rebuild the whole set. *apart* is the `ElementLocator` argument of that name.
     """
 
-    def __init__(self, graphs: dict[int, ControlFlowGraph], deferred: tuple[type, ...] = ()):
+    def __init__(self, graphs: dict[int, ControlFlowGraph], apart: Callable[[Node, Node], bool]):
         self.graphs = graphs
-        self._locator = ElementLocator(graphs, deferred)
+        self._locator = ElementLocator(graphs, apart)
 
     def graph_of(self, owner: Node) -> ControlFlowGraph | None:
         """
-        The control-flow graph owned by *owner* — a function node or the script root — or `None` when
-        it owns none.
+        The control-flow graph owned by *owner* — the script root or a node holding a part that runs
+        at a time of its own — or `None` when it owns none.
         """
         return self.graphs.get(id(owner))
 
@@ -1770,15 +1764,16 @@ class ControlFlowModel:
 def build_control_flow(
     root: Node,
     builder: Callable[[Node], CfgBuilder],
-    function_nodes: tuple[type, ...],
+    owns_a_graph: Callable[[Node], bool],
 ) -> dict[int, ControlFlowGraph]:
     """
-    Build one control-flow graph per function and one for the script itself, keyed by the owner
-    node's identity. The graphs are independent: a nested function appears in its parent's graph only
-    as the statement that defines it, never as descended-into control flow.
+    Build one control-flow graph for the script and one for every node *owns_a_graph* accepts,
+    keyed by the owner node's identity: a function, and in a language that draws one for it, the
+    initializer of a class field. The graphs are independent: a nested function appears in its
+    parent's graph only as the statement that defines it, never as descended-into control flow.
     """
     graphs: dict[int, ControlFlowGraph] = {id(root): builder(root).build()}
     for node in root.walk():
-        if isinstance(node, function_nodes):
+        if owns_a_graph(node):
             graphs[id(node)] = builder(node).build()
     return graphs

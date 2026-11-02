@@ -37,6 +37,7 @@ from refinery.lib.scripts.js.model import (
     JsMethodKind,
     JsNewExpression,
     JsNumericLiteral,
+    JsPropertyDefinition,
     JsReturnStatement,
     JsScript,
     JsStringLiteral,
@@ -103,7 +104,9 @@ def _is_scramble_class(node: Node) -> bool:
     Whether *node* is a class an instance of which decodes a string through a key its constructor
     derives. Only members an instance call reaches are read: a static member of either name is
     reached through the class and never through `instance.decode(x)`, and where two members answer
-    to one name the later one is the member the instance has.
+    to one name the later one is the member the instance has. A class with a field that is not
+    `static` is declined: the field puts a property on every instance, with or without an
+    initializer, and that property may be the `decode` the call reaches or state a method reads.
     """
     body: JsClassBody | None = getattr(node, 'body', None)
     if body is None:
@@ -111,6 +114,8 @@ def _is_scramble_class(node: Node) -> bool:
     decode: JsMethodDefinition | None = None
     constructor: JsMethodDefinition | None = None
     for method in body.body:
+        if isinstance(method, JsPropertyDefinition) and not method.is_static:
+            return False
         if not isinstance(method, JsMethodDefinition) or method.is_static:
             continue
         name = _method_name(method)

@@ -319,5 +319,18 @@ class TestDefiniteAssignment(TestBase):
             with self.subTest(alias=alias):
                 self.assertFalse(self._vouched(F'{alias}.X = 1;\nprobe(X);'))
 
+    def test_a_write_before_the_class_vouches_in_a_field(self):
+        self.assertTrue(self._vouched('X = 1;\nclass A { v = probe(X); }\nnew A();'))
+
+    def test_a_write_before_the_class_vouches_in_a_function_only_a_field_calls(self):
+        self.assertTrue(self._vouched(
+            'X = 1;\nfunction d() { return probe(X); }\nclass A { v = d(); }\nnew A();'
+        ))
+
+    def test_a_write_after_a_construction_inside_the_class_statement_does_not_vouch_in_a_field(self):
+        self.assertFalse(self._vouched(
+            'class A { v = probe(X); static s = new A(); static { X = 1; } }'
+        ))
+
     def test_an_unreachable_read_is_not_vouched_for(self):
         self.assertFalse(self._vouched('X = 1;\nfunction f() { return; probe(X); }\nf();'))

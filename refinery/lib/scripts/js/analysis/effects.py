@@ -43,7 +43,7 @@ import enum
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, Iterator, Sequence
+from typing import Callable, Sequence
 
 from refinery.lib.scripts import Expression, Node, tree_root, tree_version
 from refinery.lib.scripts.js.analysis.conversions import (
@@ -54,6 +54,7 @@ from refinery.lib.scripts.js.analysis.conversions import (
 )
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
 from refinery.lib.scripts.js.analysis.environment import typeof_of_global
+from refinery.lib.scripts.js.analysis.evaluation import owns_a_run, walk_run
 from refinery.lib.scripts.js.analysis.intrinsics import (
     GLOBAL_OBJECT,
     INHERITED_CHAIN_ROOTS,
@@ -121,7 +122,6 @@ from refinery.lib.scripts.js.model import (
     JsPropertyKind,
     JsRestElement,
     JsReturnStatement,
-    JsScript,
     JsSequenceExpression,
     JsSpreadElement,
     JsStringLiteral,
@@ -1146,7 +1146,8 @@ class EffectModel:
         of the object a call returns, wherever that object is stepped. The function may be called
         or handed out without its name, through the `caller` of another function, its own
         `arguments` or `new.target`
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_its_name`). And code
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_its_name`). The
+        initializer of a field runs at each construction of its class, which no call names. And code
         outside the file may call it by a name it reaches
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`): a host calls
         a declared entry point whenever the script hands it control, and code loading a library
@@ -1162,6 +1163,8 @@ class EffectModel:
         return cached
 
     def _compute_function_escapes(self, func: Node) -> bool:
+        if not isinstance(func, FUNCTION_NODES):
+            return True
         names = self.model.function_names(func)
         if names is None:
             return True
@@ -1745,7 +1748,7 @@ class EffectModel:
     def _collect_functions(self) -> list[Node]:
         functions: list[Node] = [self.model.root]
         for node in self.model.root.walk():
-            if isinstance(node, FUNCTION_NODES):
+            if owns_a_run(node):
                 functions.append(node)
         return functions
 
@@ -1785,7 +1788,7 @@ class EffectModel:
         summary = EffectSummary()
         if isinstance(func, FUNCTION_NODES) and wraps_return(func):
             summary.wraps_return = True
-        for node in _body_nodes(func):
+        for node in walk_run(func):
             if isinstance(node, JsThrowStatement):
                 summary.throws = True
             elif isinstance(node, JsIdentifier):
@@ -1812,7 +1815,9 @@ class EffectModel:
                 self._account_call(summary, node, record_call)
             elif isinstance(node, JsImportExpression):
                 summary.calls_unknown = True
-        if isinstance(func, FUNCTION_NODES) and not is_generator_function(func):
+        if func is not self.model.root and not (
+            isinstance(func, FUNCTION_NODES) and is_generator_function(func)
+        ):
             for binding in summary.dead_zone_reads:
                 if (
                     self._owns_binding(binding, func)
@@ -1826,7 +1831,7 @@ class EffectModel:
             }
         else:
             summary.dead_zone_reads = set()
-        if isinstance(func, FUNCTION_NODES):
+        if func is not self.model.root:
             owned = {
                 binding
                 for binding in summary.captured_writes | summary.written_bindings
@@ -1856,7 +1861,7 @@ class EffectModel:
             cached = self._keeps_closures_cache[func] = all(
                 self._runs_where_it_stands(nested) or not self.function_escapes(nested)
                 for nested in func.walk()
-                if nested is not func and isinstance(nested, FUNCTION_NODES)
+                if nested is not func and owns_a_run(nested)
             )
         return cached
 
@@ -2201,7 +2206,7 @@ class EffectModel:
             if callee_func is None or id(callee_func) in visiting:
                 return _FreshKind.NOT_FRESH
             visiting = visiting | {id(callee_func)}
-            returns = [n for n in _body_nodes(callee_func) if isinstance(n, JsReturnStatement)]
+            returns = [n for n in walk_run(callee_func) if isinstance(n, JsReturnStatement)]
             if not returns or not _returns_on_every_path(callee_func):
                 return _FreshKind.NOT_FRESH
             kind = _FreshKind.ARRAY
@@ -3424,31 +3429,6 @@ def _returns_on_every_path(func: Node) -> bool:
     if not isinstance(statements, list) or not statements:
         return isinstance(body, Expression)
     return isinstance(statements[-1], (JsReturnStatement, JsThrowStatement))
-
-
-def _body_nodes(func: Node) -> Iterator[Node]:
-    """
-    Yield the nodes a single execution of *func* evaluates — its parameter list and the statements
-    of its body, with their descendants — without descending into nested function bodies, whose
-    effects belong to *their* calls. Nested function nodes are still yielded so a call to one can be
-    recognized. The parameter list is part of what a call evaluates because a default runs on every
-    call that omits its argument (`function f(a = zzz){}` reads `zzz` before the body is entered),
-    so a scan that started at the body alone could not see an effect the call really has.
-    """
-    if isinstance(func, JsScript):
-        roots: list[Node] = list(func.body)
-    else:
-        roots = list(getattr(func, 'params', ()))
-        body = getattr(func, 'body', None)
-        if body is not None:
-            roots.append(body)
-    stack = list(reversed(roots))
-    while stack:
-        node = stack.pop()
-        yield node
-        if isinstance(node, FUNCTION_NODES):
-            continue
-        stack.extend(reversed(node.children()))
 
 
 def _intrinsics_pristine(model: SemanticModel) -> bool:

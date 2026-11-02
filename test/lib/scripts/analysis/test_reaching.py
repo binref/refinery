@@ -7,13 +7,12 @@ from typing import Callable, Iterable, Sequence
 from unittest.mock import patch
 
 from test import TestBase
-from test.lib.scripts.analysis import graph_from_edges
+from test.lib.scripts.analysis import dominators_of, graph_from_edges
 from test.lib.scripts.analysis.test_dominance import SHAPES as DOMINANCE_SHAPES
 
 from refinery.lib.scripts.analysis.cfg import (
     CfgNode,
     ControlFlowGraph,
-    ControlFlowModel,
     Projection,
     flood,
 )
@@ -34,8 +33,7 @@ class TestAnyBetween(TestBase):
 
     @staticmethod
     def _query(graph: ControlFlowGraph) -> ReachabilityQuery:
-        model = ControlFlowModel({id(graph.owner): graph})
-        return ReachabilityQuery(DominatorModel(model), Projection.MAY)
+        return ReachabilityQuery(dominators_of(graph), Projection.MAY)
 
     def _between(self, edges: dict[str, list[str]], source: str, target: str, *names: str) -> bool:
         graph, named = graph_from_edges(edges)
@@ -48,7 +46,7 @@ class TestAnyBetween(TestBase):
             graph, named = graph_from_edges(edges)
             if listed_backwards:
                 graph.nodes.reverse()
-            dominators = DominatorModel(ControlFlowModel({id(graph.owner): graph}))
+            dominators = dominators_of(graph)
             asked_before = ReachabilityQuery(dominators, Projection.MAY)
             ids = [id(node) for node in named.values()]
             sets = [{key} for key in ids] + [set(pair) for pair in itertools.combinations(ids, 2)]
@@ -187,8 +185,7 @@ class TestReachingDefinition(TestBase):
         name of the node evaluating it.
         """
         graph, named = graph_from_edges(edges)
-        query = ReachabilityQuery(
-            DominatorModel(ControlFlowModel({id(graph.owner): graph})), Projection.MAY)
+        query = ReachabilityQuery(dominators_of(graph), Projection.MAY)
         return query.reaching_definition(
             graph,
             named[use],
@@ -296,8 +293,7 @@ class TestReachingDefinitions(TestBase):
         *definitions* pairs a label with the name of the node evaluating it.
         """
         graph, named = graph_from_edges(edges)
-        query = ReachabilityQuery(
-            DominatorModel(ControlFlowModel({id(graph.owner): graph})), Projection.MAY)
+        query = ReachabilityQuery(dominators_of(graph), Projection.MAY)
         found = query.reaching_definitions(
             graph,
             named[use],

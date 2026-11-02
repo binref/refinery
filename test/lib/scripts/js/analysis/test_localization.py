@@ -54,6 +54,13 @@ class TestLocalization(TestBase):
     def test_pseudo_global_referenced_in_two_functions_is_not_localizable(self):
         self.assertStays('var x; function f() { x = 1; } function g() { return x; } f(); g();')
 
+    def test_pseudo_global_a_field_of_a_returned_class_reads_is_not_localizable(self):
+        self.assertStays(
+            'var x;'
+            ' function f(n) { x = n; return class { y = x; }; }'
+            ' var C = f(1); f(2); console.log(new C().y);'
+        )
+
     def test_pseudo_global_also_written_at_script_scope_is_not_localizable(self):
         self.assertStays('var x; x = 1; function f() { x = 2; return x; } f();')
 

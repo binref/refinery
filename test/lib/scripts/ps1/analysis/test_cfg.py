@@ -13,7 +13,6 @@ from refinery.lib.scripts.analysis.cfg import (
     CfgEdge,
     CfgNode,
     ControlFlowGraph,
-    ControlFlowModel,
     Projection,
     flood,
     flood_labels,
@@ -27,6 +26,7 @@ from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
 from refinery.lib.scripts.ps1.analysis.cfg import (
+    Ps1ControlFlowModel,
     Ps1ReportNode,
     build_control_flow_model,
     build_ps1_control_flow,
@@ -1512,7 +1512,7 @@ class TestPs1APathBetweenQuestionAnswersAsTheTwoFloodsWould(TestBase):
     def test_every_node_lies_between_two_others_exactly_when_the_floods_say_so(self):
         for script in TestPs1ALabelledWalkAnswersEveryLabelAsItsOwnWalkWould._SCRIPTS:
             graphs = build_ps1_control_flow(Ps1Parser(script).parse())
-            dominators = DominatorModel(ControlFlowModel(graphs))
+            dominators = DominatorModel(Ps1ControlFlowModel(graphs, {}))
             for graph in graphs.values():
                 for projection in Projection:
                     asked_before = ReachabilityQuery(dominators, projection)
@@ -1571,7 +1571,7 @@ class TestPs1APathBetweenQuestionAnswersAsTheTwoFloodsWould(TestBase):
         second = graph.node_of(tree.body[2])
         assert handled is not None and first is not None and second is not None
         for projection in Projection:
-            query = ReachabilityQuery(DominatorModel(ControlFlowModel(graphs)), projection)
+            query = ReachabilityQuery(DominatorModel(Ps1ControlFlowModel(graphs, {})), projection)
             with self.subTest(projection=projection.name):
                 self.assertTrue(query.any_between(graph, first, second, {id(handled)}))
 

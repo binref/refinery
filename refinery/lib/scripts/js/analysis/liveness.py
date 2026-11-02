@@ -44,7 +44,11 @@ from refinery.lib.scripts.js.analysis.cfg import (
     ControlFlowModel,
     build_control_flow_model,
 )
-from refinery.lib.scripts.js.analysis.evaluation import evaluated_whenever_completed
+from refinery.lib.scripts.js.analysis.evaluation import (
+    enclosing_run,
+    evaluated_later,
+    evaluated_whenever_completed,
+)
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     Binding,
@@ -54,7 +58,6 @@ from refinery.lib.scripts.js.analysis.model import (
     ScopeKind,
     SemanticModel,
     _governing_target,
-    enclosing_function,
     is_use_position,
     reference_role,
 )
@@ -256,21 +259,21 @@ class LivenessModel:
     def _shallow_idents(self, graph: ControlFlowGraph, element: Node) -> Iterator[JsIdentifier]:
         """
         Yield the identifiers belonging to *element*'s own control-flow node: *element* itself and
-        those in its subtree that are not inside a nested function or a descendant that is itself a
+        those in its subtree that are not in a part evaluated at a time of its own, as the body of a
+        nested function or the initializer of a field is, or in a descendant that is itself a
         separate control-flow node (whose identifiers are accounted there). This keeps a loop or
         branch head from double-counting the body that follows it.
         """
         stack: list[Node] = [element]
         while stack:
             current = stack.pop()
-            if current is not element:
-                if isinstance(current, FUNCTION_NODES):
-                    continue
-                if graph.node_of(current) is not None:
-                    continue
+            if current is not element and graph.node_of(current) is not None:
+                continue
             if isinstance(current, JsIdentifier):
                 yield current
-            stack.extend(current.children())
+            stack.extend(
+                child for child in current.children() if not evaluated_later(current, child)
+            )
 
     def _store_target(self, write: JsIdentifier) -> tuple[Binding | None, Node | None]:
         """
@@ -377,13 +380,14 @@ class LivenessModel:
         inside a function nested below the candidate counts as a separate owner, so a binding
         captured by such a nested closure is rejected, and so is one the candidate's parameter list
         reads or writes: parameter expressions run in a scope of their own, which a `var` the body
-        declares does not reach.
+        declares does not reach. A site in the initializer of a field rejects the binding as well:
+        that initializer runs at each construction, a run of its own that holds no declaration.
         """
         owner: Node | None = None
         body: Node | None = None
         for site in (*binding.reads, *binding.store_sites):
-            function = enclosing_function(site)
-            if function is None:
+            function = enclosing_run(site)
+            if not isinstance(function, FUNCTION_NODES):
                 return None
             if owner is None:
                 owner = function

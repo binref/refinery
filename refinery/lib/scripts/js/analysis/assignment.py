@@ -80,6 +80,7 @@ from refinery.lib.scripts.js.model import (
     JsObjectPattern,
     JsParenthesizedExpression,
     JsProperty,
+    JsPropertyDefinition,
     JsRestElement,
     JsSequenceExpression,
     JsSpreadElement,
@@ -372,7 +373,14 @@ class DefiniteAssignmentModel:
     def _entry_fact(
         self, graph: ControlFlowGraph, facts: dict[int, frozenset[Binding]],
     ) -> frozenset[Binding]:
+        """
+        The bindings definitely assigned when the run *graph* stands for starts. The initializer of
+        a field starts with what holds on entry to its class statement: no instance is constructed
+        before that statement runs, and one may be while it runs, in a static block.
+        """
         owner = graph.owner
+        if isinstance(owner, JsPropertyDefinition):
+            return self._fact_at(owner, facts)
         if not isinstance(owner, FUNCTION_NODES):
             return frozenset()
         if is_generator_function(owner):

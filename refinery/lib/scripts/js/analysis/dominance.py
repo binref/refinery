@@ -46,7 +46,6 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import Projection
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.js.analysis.cfg import (
-    FUNCTION_NODES,
     CfgNode,
     ControlFlowGraph,
     ControlFlowModel,
@@ -54,8 +53,9 @@ from refinery.lib.scripts.js.analysis.cfg import (
     evaluated_part,
 )
 from refinery.lib.scripts.js.analysis.evaluation import (
+    enclosing_run,
     evaluated_whenever_completed,
-    evaluated_with,
+    owns_a_run,
 )
 from refinery.lib.scripts.js.analysis.intrinsics import (
     SPECIES_KEYS,
@@ -65,7 +65,6 @@ from refinery.lib.scripts.js.analysis.intrinsics import (
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     SemanticModel,
-    enclosing_function,
     enclosing_operator,
     is_invocation_target,
     is_member_write_target,
@@ -73,6 +72,7 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.keys import key_may_be, key_text
 from refinery.lib.scripts.js.model import (
+    FUNCTION_NODES,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsCallExpression,
@@ -325,14 +325,12 @@ class DominanceModel(DominatorModel):
         statement evaluating *anchor* has completed before *reference* runs, as `runs_before` asks
         without asking whether that statement evaluates *anchor* at all. A run that skips *anchor*
         has nothing for *reference* to precede, so a fold made at *anchor* holds wherever it is
-        evaluated as long as no such *reference* comes first. That holds only for an *anchor* the
-        statement evaluates while it runs: the initializer of a field runs when an instance is
-        constructed, after the statements following the class, so an *anchor* there orders nothing
-        (`refinery.lib.scripts.js.analysis.evaluation.evaluated_with`).
+        evaluated as long as no such *reference* comes first. An *anchor* in a part that runs at a
+        time of its own, as the initializer of a field does each time an instance is constructed,
+        is located in the graph of that run and ordered there.
         """
         located = self.locate(anchor)
-        element = None if located is None else located[1].element
-        if element is None or not evaluated_with(anchor, element):
+        if located is None or located[1].element is None:
             return False
         return self._runs_after(anchor, reference)
 
@@ -465,7 +463,7 @@ class DominanceModel(DominatorModel):
                         if not self._statement_completes_before(site, point):
                             ordered[current] = False
                         continue
-                    if not isinstance(activation, FUNCTION_NODES):
+                    if not owns_a_run(activation):
                         ordered[current] = False
                         continue
                 if (known := orders.get(activation)) is not None:
@@ -532,7 +530,7 @@ class DominanceModel(DominatorModel):
                     known[function] = True
                     return True
                 if (
-                    isinstance(activation, FUNCTION_NODES)
+                    owns_a_run(activation)
                     and activation not in seen
                     and known.get(activation) is None
                 ):
@@ -568,8 +566,10 @@ class DominanceModel(DominatorModel):
 
         A function is ordered by its creation alone, the one point no invocation can precede, when
         it is bound to no name and matches neither pattern, and when the value of the assignment
-        installing it flows on (`_installed_value_escapes`). A function code outside the file can
-        call while the file runs
+        installing it flows on (`_installed_value_escapes`). So is the initializer of a field: it
+        runs at the constructions of its class, none of which precedes the class statement creating
+        it, and one that statement makes itself, in a static block, shares its node. A function
+        code outside the file can call while the file runs
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.callable_from_outside`) has no
         enumeration at all. One an importer outside every import cycle can call has the end of the
         script as one more point, the script root standing for it (`_statement_completes_before`),
@@ -590,6 +590,8 @@ class DominanceModel(DominatorModel):
         return cache[activation]
 
     def _compute_reference_points(self, function: Node) -> list[Node | _HandOver] | None:
+        if not isinstance(function, FUNCTION_NODES):
+            return [function]
         names = self.model.function_names(function)
         if self.model.callable_from_outside(function):
             return None
@@ -769,7 +771,7 @@ class DominanceModel(DominatorModel):
         owner = self._activation_of(point)
         if (site := self._site_in(definition, owner)) is not None:
             return self._statement_completes_before(site, point)
-        if isinstance(owner, FUNCTION_NODES):
+        if owns_a_run(owner):
             return self._ordered(definition, owner)
         return False
 
@@ -817,14 +819,15 @@ class DominanceModel(DominatorModel):
 
     def _activation_of(self, element: Node) -> Node:
         """
-        The function or script whose invocation evaluates *element*: the nearest function that lexically
-        encloses it, or the script root when none does. This is the unit `runs_before_function` reasons
-        about — a reference in a function's body *or its parameter defaults* runs when that function is
-        invoked, so both must attribute to the function, never to the statement that merely declares it in
-        the enclosing graph.
+        The run owner whose invocation evaluates *element*
+        (`refinery.lib.scripts.js.analysis.evaluation.enclosing_run`), or the script root when no
+        run owner does. This is the unit `runs_before_function` reasons about: a reference in a
+        function's body *or its parameter defaults* runs when that function is invoked, and one in
+        the initializer of a field when an instance is constructed, so each attributes to its run,
+        never to the statement that merely declares it in the enclosing graph.
         """
-        function = enclosing_function(element)
-        return function if function is not None else self.model.root
+        run = enclosing_run(element)
+        return run if run is not None else self.model.root
 
 
 def build_dominance(

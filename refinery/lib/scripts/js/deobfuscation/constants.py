@@ -14,12 +14,11 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
+from refinery.lib.scripts.js.analysis.evaluation import enclosing_run
 from refinery.lib.scripts.js.analysis.model import (
-    FUNCTION_NODES,
     Binding,
     Role,
     SemanticModel,
-    enclosing_function,
     pattern_identifiers,
     reference_role,
 )
@@ -327,10 +326,10 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
       runs before a function, or before every invocation of one. Batch edits remove statements and
       reads, so the set of invocation points can only shrink; a value that preceded them all still
       does.
-    - The effect summaries — `EffectModel.mutated_bindings`, `EffectModel.function_escapes`,
-      `EffectModel.static_callee`, `EffectModel.function_can_mutate` — over functions the batch
-      never rewrites. Removing a call site removes a mutation opportunity rather than adding one,
-      so a function that could not write a binding still cannot.
+    - The effect summaries — `EffectModel.mutators_escape`, `EffectModel.static_callee`,
+      `EffectModel.function_can_mutate`, `EffectModel.some_function_can_mutate` — over functions
+      the batch never rewrites. Removing a call site removes a mutation opportunity rather than
+      adding one, so a function that could not write a binding still cannot.
     - The reference counts that gate removals: no removal decision reads one — a count taken
       before the round's plans apply cannot see the reads another plan of the same round deletes,
       and a substitution whose value is an identifier adds a read the entry snapshot never saw —
@@ -388,7 +387,8 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             (declarator, constant_value)
 
         Also returns the set of fully rejected (mutated) names — those reassigned, updated,
-        destructured, or written by an escaping function, whose value cannot be pinned to a single
+        destructured, or written by a run that escapes (`EffectModel.mutators_escape`), be it a
+        function or the initializer of a field, whose value cannot be pinned to a single
         definition. A candidate a dynamic scope could rewrite with no static write site is no longer
         rejected outright: the reaching query orders every located rebind hazard
         (`SemanticModel.binding_reflection_kill_sites`) against each read, so the reads that stand
@@ -498,26 +498,14 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             uninitialized.pop(target_name, None)
             candidate_bindings.pop(target_name, None)
 
-        functions = [node for node in scope.walk() if isinstance(node, FUNCTION_NODES)]
-
         for cand_name, binding in list(candidate_bindings.items()):
             if (
                 binding.has_global_member_write
                 or model.binding_dynamic_rebind_sites(binding) is None
                 or model.reached_from_outside(binding)
+                or effects.mutators_escape(binding)
             ):
                 _reject(cand_name)
-
-        for func in functions:
-            written = effects.mutated_bindings(func)
-            if not written:
-                continue
-            touched = [n for n, binding in candidate_bindings.items() if binding in written]
-            if not touched:
-                continue
-            if effects.function_escapes(func):
-                for cand_name in touched:
-                    _reject(cand_name)
 
         return candidates, rejected
 
@@ -732,7 +720,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
 
         outer = model.scope_of(scope)
         assert outer is not None
-        owner = enclosing_function(scope)
+        owner = enclosing_run(scope)
 
         called_funcs = _collect_called_functions(scope, effects)
         a_callee_is_unstated = _calls_a_function_of_this_file_by_an_unstated_name(scope, effects)
@@ -760,7 +748,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                     and self._index_array_immutable(obj, effects)
                 ):
                     name = obj.name
-                    enclosing = enclosing_function(obj)
+                    enclosing = enclosing_run(obj)
                     if enclosing is None or enclosing is owner:
                         continue
                     if model.resolve(obj) is not cross_bindings[name]:
@@ -802,7 +790,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             value = entry.value if intrinsic_alias else _constant_node(entry.value, model)
             if value is None:
                 continue
-            enclosing = enclosing_function(node)
+            enclosing = enclosing_run(node)
             if enclosing is None or enclosing is owner:
                 continue
             if model.resolve(node) is not cross_bindings[name]:

@@ -20,12 +20,13 @@ global-object alias — so only a function that does nothing but compute the glo
 """
 from __future__ import annotations
 
-from typing import Iterator, Sequence
+from typing import Sequence
 
 from refinery.lib.scripts import Node, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import GLOBAL_OBJECT, EffectModel
+from refinery.lib.scripts.js.analysis.evaluation import walk_run
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     GLOBAL_OBJECT_ALIASES,
@@ -58,6 +59,7 @@ from refinery.lib.scripts.js.model import (
     JsLabeledStatement,
     JsLogicalExpression,
     JsMemberExpression,
+    JsNewExpression,
     JsNullLiteral,
     JsNumericLiteral,
     JsReturnStatement,
@@ -144,9 +146,11 @@ def _is_finder(
     if not any(_is_global_alias(node, model) for node in func.walk()):
         return False
     for node in func.walk():
+        if isinstance(node, JsNewExpression):
+            return False
         if isinstance(node, JsCallExpression) and not _root_is_local(node.callee, func, model):
             return False
-    returns = [node for node in _own_nodes(func) if isinstance(node, JsReturnStatement)]
+    returns = [node for node in walk_run(func) if isinstance(node, JsReturnStatement)]
     if not returns:
         return False
     if not _FinderThrowFreedom(func, model, effects, dominance).certifies():
@@ -231,7 +235,7 @@ def _is_global_valued(
 
 def _global_taint(func: Node, model: SemanticModel, this_is_global: bool) -> set[int]:
     defs: list[tuple[Binding | None, Node | None]] = []
-    for node in _own_nodes(func):
+    for node in walk_run(func):
         if (
             isinstance(node, JsVariableDeclarator)
             and node.init is not None
@@ -307,7 +311,7 @@ def _closure_returns_global(
     taint = _global_taint(closure, model, this_is_global)
     if isinstance(closure, JsArrowFunctionExpression) and not isinstance(body, JsBlockStatement):
         return _is_global_valued(body, closure, model, taint, visiting, this_is_global)
-    returns = [node for node in _own_nodes(closure) if isinstance(node, JsReturnStatement)]
+    returns = [node for node in walk_run(closure) if isinstance(node, JsReturnStatement)]
     return bool(returns) and all(
         ret.argument is not None
         and _is_global_valued(ret.argument, closure, model, taint, visiting, this_is_global)
@@ -323,7 +327,7 @@ def _sole_value(binding: Binding | None, func: Node, model: SemanticModel) -> No
         parent = decl.parent
         if isinstance(parent, JsVariableDeclarator) and parent.init is not None:
             values.append(parent.init)
-    for node in _own_nodes(func):
+    for node in walk_run(func):
         if (
             isinstance(node, JsAssignmentExpression)
             and node.operator == '='
@@ -558,18 +562,6 @@ def _function_declarations(binding: Binding | None) -> list[Node]:
     if binding is None:
         return []
     return [decl.parent for decl in binding.declarations if isinstance(decl.parent, FUNCTION_NODES)]
-
-
-def _own_nodes(func: Node) -> Iterator[Node]:
-    body = getattr(func, 'body', None)
-    if not isinstance(body, JsBlockStatement):
-        return
-    stack: list[Node] = list(body.body)
-    while stack:
-        node = stack.pop()
-        yield node
-        if not isinstance(node, FUNCTION_NODES):
-            stack.extend(node.children())
 
 
 def _within(node: Node, ancestor: Node) -> bool:

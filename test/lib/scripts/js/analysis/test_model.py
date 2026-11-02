@@ -439,6 +439,10 @@ class TestSemanticModel(TestBase):
         self.assertFalse(binding.is_dead)
         self.assertEqual(len(binding.writes), 1)
 
+    def test_a_read_in_a_field_initializer_marks_captured(self):
+        ast, model = self._model('function o(){ var x = 1; class A { v = x; } return new A(); }')
+        self.assertTrue(self._binding(ast, model, 'x').captured)
+
     def test_local_use_is_not_captured(self):
         ast, model = self._model('function o(){ var x = 1; return x; }')
         self.assertFalse(self._binding(ast, model, 'x').captured)

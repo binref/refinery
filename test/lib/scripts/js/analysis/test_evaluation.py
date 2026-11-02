@@ -8,10 +8,10 @@ from refinery.lib.scripts import Node, child_fields
 from refinery.lib.scripts.js import model
 from refinery.lib.scripts.js.analysis.evaluation import (
     PART_EVALUATION,
+    enclosing_run,
     evaluated_whenever_completed,
-    evaluated_with,
 )
-from refinery.lib.scripts.js.model import JsIdentifier, JsScript
+from refinery.lib.scripts.js.model import JsIdentifier, JsPropertyDefinition, JsScript
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -111,23 +111,24 @@ class TestWhenAPartOfAStatementRuns(TestBase):
 class TestWhetherAPartRunsWithItsStatement(TestBase):
 
     @staticmethod
-    def _with(source: str) -> bool:
+    def _run_of(source: str) -> Node | None:
         script = JsParser(source).parse()
-        assert isinstance(script, JsScript)
-        statement = script.body[-1]
         node = next(
-            node for node in statement.walk()
+            node for node in script.walk()
             if isinstance(node, JsIdentifier) and node.name == 'c'
         )
-        return evaluated_with(node, statement)
+        return enclosing_run(node)
 
     def test_a_part_run_on_some_runs_runs_with_its_statement(self):
-        self.assertTrue(self._with('x && c();'))
-        self.assertTrue(self._with('x ? c() : 0;'))
+        self.assertIsNone(self._run_of('x && c();'))
+        self.assertIsNone(self._run_of('x ? c() : 0;'))
 
     def test_a_computed_key_of_a_class_runs_with_its_statement(self):
-        self.assertTrue(self._with('class A { [c()]() {} }'))
+        self.assertIsNone(self._run_of('class A { [c()]() {} }'))
 
     def test_a_field_initializer_runs_at_a_time_of_its_own(self):
-        self.assertFalse(self._with('class A { v = c(); }'))
-        self.assertFalse(self._with('class A { v = x && c(); }'))
+        self.assertIsInstance(self._run_of('class A { v = c(); }'), JsPropertyDefinition)
+        self.assertIsInstance(self._run_of('class A { v = x && c(); }'), JsPropertyDefinition)
+
+    def test_a_static_field_initializer_runs_with_its_class(self):
+        self.assertIsNone(self._run_of('class A { static v = c(); }'))

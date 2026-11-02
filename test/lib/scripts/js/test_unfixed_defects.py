@@ -5351,107 +5351,55 @@ class TestAScriptKeptForItsValueEndsOnTheValueOfItsLastStore(TestBase):
                 )
 
 
-#: Programs reading or writing a variable in the initializer of an instance field, and changing or
-#: reading the variable between the class statement and the construction, mapped to the behavior an
-#: engine gives them.
-A_VARIABLE_READ_BY_A_FIELD_WHEN_AN_INSTANCE_IS_CONSTRUCTED = {
-    'a var reassigned after the class': Program(
-        a_program("""
-            function f() { var x = 1; class A { v = x; } x = 2; return new A().v; }
-            console.log(f());
-            """),
-        prints('2'),
-    ),
-    'a let assigned after the class': Program(
-        a_program("""
-            function f() { let x; class A { v = x; } x = 2; return new A().v; }
-            console.log(f());
-            """),
-        prints('2'),
-    ),
-    'a file-level var a field of a class its function returns reads': Program(
-        a_program("""
-            var x;
-            function f(n) {
-              x = n;
-              console.log(x);
-              return class { y = x; };
+#: A function flattened into a generator whose run makes a class with a static block declaring a
+#: name its scope object has, mapped to what Node prints for it: inside the block, the name is the
+#: block's own.
+A_STATIC_BLOCK_DECLARING_THE_NAME_OF_THE_SCOPE_OBJECT = Program(
+    a_program("""
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.X = 7;
+                    scope.C = class { static { let scope = { X: 1 }; this.v = scope.X; } };
+                    a = 30, b = 20;
+                    break;
+                  case 50:
+                    return x = true, scope.C.v;
+                }
+              }
             }
-            var C = f(1);
-            f(2);
-            console.log(new C().y);
-            """),
-        prints('1', '2', '2'),
-        Reading.COMMONJS,
-    ),
-    'a var a field writes and a function reads across a construction': Program(
-        a_program("""
-            var x = 1;
-            class C { y = (x = 2); }
-            function h() { var t = x; new C(); return t; }
-            console.log(h());
-            """),
-        prints('1'),
-        Reading.COMMONJS,
-    ),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_VARIABLE_READ_BY_A_FIELD_WHEN_AN_INSTANCE_IS_CONSTRUCTED)
-class TestAFieldReadsAVariableWhenAnInstanceIsConstructed(TestBase):
-    """
-    The initializer of an instance field runs each time an instance is constructed, as the body of a
-    function the class calls then would. The control-flow graph of the function holding the class
-    places it at the class statement instead, so the read in the field is taken to happen before
-    `x = 2`: the dead-store removal drops that store as one nothing reads, and constant inlining
-    writes the earlier value into the field. A class whose fields read state the program sets after
-    declaring the class is a shape real input plausibly holds.
-
-    The same placement hides the field from the questions asked about the function around it. A
-    file-level `var` the function writes and a field reads is moved into the function, so each
-    class it returns keeps the value of the run that made it rather than the last one stored. And a
-    write in a field is not seen at `new C()`, so a value read before the construction is taken to
-    hold after it.
-    """
-
-
-#: Programs reading an alias of a built-in in the initializer of an instance field and replacing
-#: the alias between the class statement and the construction, mapped to what Node prints.
-AN_ALIAS_A_FIELD_READS_REPLACED_BEFORE_CONSTRUCTION = {
-    inspect.cleandoc('''
-        function f(s) {
-          var F;
-          F = Function;
-          class A { x = F("return 7")(); }
-          eval(s);
-          return new A().x;
+          }
+          var x;
+          var result = gen(5, 5)["next"]()["value"];
+          if (x) { return result; }
         }
-        console.log(f("F = function () { return function () { return 8; }; };"));
-    '''):
-        '8\n',
-}
+        console.log(wrapper());
+        """),
+    prints('1'),
+    Reading.SCRIPT,
+)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAnAliasAFieldReadsIsTheOneInPlaceWhenAnInstanceIsConstructed(TestBase):
+class TestANameAStaticBlockDeclaresIsTheBlocksOwnInARecoveredRun(TestBase):
     """
-    The root of `TestAFieldReadsAVariableWhenAnInstanceIsConstructed` with an alias of `Function`
-    for the variable: constant inlining takes the read in the field to happen at the class
-    statement and writes `Function` into it, though an `eval` replaces the alias before the
-    construction.
+    The recovery of a flattened run writes the value a member of the scope object holds at the
+    state in place of a read of it, except where something between the run and the read binds the
+    name of the scope object anew: a block, a catch clause, a loop head or a function. A static
+    block declares names of its own as well, but the recovery does not count it among them, so it
+    writes `this.v = 7` for the read of the block's own `scope.X`, and the program prints `7`.
     """
 
     @wontfix(
-        'no obfuscated file replaces an alias of Function through an eval between a class '
-        'statement and the construction of an instance; this is made up for the defect'
+        'the obfuscator generates the name of the scope object, and only a program declaring a name '
+        'spelled the same way in a static block inside the flattened function reaches the defect'
     )
     def test_the_deobfuscation_prints_what_the_program_prints(self):
-        rows = AN_ALIAS_A_FIELD_READS_REPLACED_BEFORE_CONSTRUCTION
-        self.assertEqual(
-            {source: before_and_after(source) for source in rows},
-            each_program_still_prints(rows),
-        )
+        row = A_STATIC_BLOCK_DECLARING_THE_NAME_OF_THE_SCOPE_OBJECT
+        self.assertEqual(row.read(), row.required())
 
 
 #: Programs writing a key into the prototype every object literal inherits from, through another
@@ -6449,61 +6397,6 @@ class TestAFunctionExpressionAssigningToItsOwnNameKeepsItself(TestBase):
     def test_the_deobfuscation_prints_what_the_program_prints(self):
         row = A_FUNCTION_EXPRESSION_ASSIGNING_TO_ITS_OWN_NAME
         self.assertEqual(row.deobfuscated(), row.prints)
-
-
-#: Programs that call a function again from the initializer of an instance field of a class the
-#: function constructs, mapped to what Node prints for each: the inner run stores into a file-level
-#: `var` the outer one reads after the construction.
-A_FUNCTION_CALLED_AGAIN_FROM_A_FIELD_OF_A_CLASS_IT_CONSTRUCTS = {
-    'a class declared outside the function': Program(
-        a_program("""
-            var x;
-            class K { y = f(0); }
-            function f(n) {
-              x = n;
-              if (n) new K();
-              console.log(x);
-            }
-            f(1);
-            """),
-        prints('0', '0'),
-        Reading.COMMONJS,
-    ),
-    'a class declared inside the function': Program(
-        a_program("""
-            var x;
-            function f(n) {
-              class C { y = n ? f(0) : 0; }
-              x = n;
-              new C();
-              console.log(x);
-            }
-            f(1);
-            """),
-        prints('0', '0'),
-        Reading.COMMONJS,
-    ),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAFunctionCalledAgainFromAFieldOfAClassItConstructsIsSeenToRunAgain(TestBase):
-    """
-    The initializer of an instance field runs at each construction, and the models place it at the
-    class statement (`TestAFieldReadsAVariableWhenAnInstanceIsConstructed`), so a call in it is not
-    seen where `new` runs it.
-    A function that calls itself again through such a field keeps the file-level `var` it reads
-    moved into it.
-    """
-
-    @wontfix(
-        'no program re-enters a function through a field initializer of a class it constructs; '
-        'the entry for field initializers covers the placement this rests on'
-    )
-    def test_the_deobfuscation_prints_what_the_program_prints(self):
-        for label, row in A_FUNCTION_CALLED_AGAIN_FROM_A_FIELD_OF_A_CLASS_IT_CONSTRUCTS.items():
-            with self.subTest(label=label):
-                self.assertEqual(row.deobfuscated(), row.prints)
 
 
 #: Classic scripts with a file-level `var` that the deobfuscation moves into a function or removes,

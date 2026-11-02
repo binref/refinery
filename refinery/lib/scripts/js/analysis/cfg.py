@@ -24,7 +24,7 @@ from refinery.lib.scripts.analysis.cfg import (
     ElementLocator,
 )
 from refinery.lib.scripts.analysis.cfg import build_control_flow as _build_control_flow
-from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES
+from refinery.lib.scripts.js.analysis.evaluation import evaluated_later, owns_a_run
 from refinery.lib.scripts.js.model import (
     LOOP_NODES,
     JsArrayPattern,
@@ -106,7 +106,8 @@ class _Builder(CfgBuilder):
     def body_blocks(self, owner: Node) -> Sequence[Sequence[Node]]:
         """
         The one block a JavaScript body is. A concise arrow function's body is an expression rather
-        than a block, and it is reported as the single statement it evaluates.
+        than a block, and it is reported as the single statement it evaluates, as the initializer of
+        a field is.
         """
         if isinstance(owner, JsScript):
             return [list(owner.body)]
@@ -115,7 +116,7 @@ class _Builder(CfgBuilder):
             return [list(body.body)]
         if isinstance(body, Node):
             return [[body]]
-        return []
+        return [[part for part in owner.children() if evaluated_later(owner, part)]]
 
     def statement(self, statement: Node, frontier: list[CfgNode]) -> list[CfgNode]:
         if isinstance(statement, JsBlockStatement):
@@ -239,10 +240,11 @@ def build_cfg(owner: Node) -> ControlFlowGraph:
 
 def build_control_flow(root: JsScript) -> dict[int, ControlFlowGraph]:
     """
-    Build one control-flow graph per function and for the script itself, keyed by the owner node's
-    identity.
+    Build one control-flow graph for the script and one for each run owner, a function or a field
+    with an initializer (`refinery.lib.scripts.js.analysis.evaluation.owns_a_run`), keyed by the
+    owner node's identity.
     """
-    return _build_control_flow(root, _Builder, FUNCTION_NODES)
+    return _build_control_flow(root, _Builder, owns_a_run)
 
 
 def build_control_flow_model(root: JsScript) -> ControlFlowModel:
@@ -250,4 +252,4 @@ def build_control_flow_model(root: JsScript) -> ControlFlowModel:
     Build the `refinery.lib.scripts.analysis.cfg.ControlFlowModel` for a script root — the shared
     control-flow layer the `DominanceModel` and `LivenessModel` consume.
     """
-    return ControlFlowModel(build_control_flow(root))
+    return ControlFlowModel(build_control_flow(root), evaluated_later)

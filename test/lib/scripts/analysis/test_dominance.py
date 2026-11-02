@@ -6,10 +6,11 @@ import tracemalloc
 from typing import Iterator
 
 from test import TestBase
+from test.lib.scripts.analysis import dominators_of
 from test.lib.scripts.analysis import graph_from_edges as _graph
 
-from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowModel, Projection
-from refinery.lib.scripts.analysis.dominance import DominanceTree, DominatorModel
+from refinery.lib.scripts.analysis.cfg import CfgNode, Projection
+from refinery.lib.scripts.analysis.dominance import DominanceTree
 
 SHAPES = {
     'straight': {'a': ['b'], 'b': ['c'], 'c': []},
@@ -244,7 +245,7 @@ class TestDominatorModel(TestBase):
     def test_the_model_answers_every_pair_as_the_tree_does(self):
         for name, edges in SHAPES.items():
             graph, named = _graph(edges)
-            model = DominatorModel(ControlFlowModel({id(graph.owner): graph}))
+            model = dominators_of(graph)
             tree = DominanceTree(graph, Projection.MAY)
             for a, b in itertools.product(named.values(), repeat=2):
                 with self.subTest(name):

@@ -32,6 +32,7 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsObjectExpression,
     JsParenthesizedExpression,
+    JsPropertyDefinition,
     JsScript,
     JsVariableDeclarator,
 )
@@ -3166,6 +3167,32 @@ class TestAClassBodysMemberNamesAreNotReads(TestBase):
             _call_summary("function f() { var k = 'gk'; class C { [k]() {} } return 1; }"),
             _call_summary("function f() { var k = 'gk'; return 1; }"),
         )
+
+
+class TestAFieldInitializerRunsAtEachConstruction(TestBase):
+    """
+    The initializer of a field written without `static` runs each time an instance is constructed,
+    as the body of a function the class calls then; the class statement only creates it. The
+    initializer of a static field runs while the class statement does.
+    """
+
+    def test_a_function_declaring_a_class_does_not_run_its_field_initializers(self):
+        self.assertEqual(
+            _call_summary('function f() { class C { v = zzz; } return 1; }'),
+            _call_summary('function f() { return 1; }'),
+        )
+
+    def test_a_function_declaring_a_class_runs_its_static_field_initializers(self):
+        self.assertEqual(
+            _call_summary('function f() { class C { static v = zzz; } return 1; }'),
+            _call_summary('function f() { zzz; return 1; }'),
+        )
+
+    def test_the_initializer_of_a_field_escapes_though_no_call_names_it(self):
+        ast = JsParser('class A { v = 1; } new A();').parse()
+        effects = build_effects(build_semantic_model(ast))
+        field = next(node for node in ast.walk() if isinstance(node, JsPropertyDefinition))
+        self.assertTrue(effects.function_escapes(field))
 
 
 _AN_EXPRESSION_A_CALL_EVALUATES: dict[str, tuple[str, str]] = {

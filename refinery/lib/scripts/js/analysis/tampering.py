@@ -51,12 +51,12 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import AnchoredTrust, EffectModel, side_effect_free
+from refinery.lib.scripts.js.analysis.evaluation import enclosing_run
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     ScopeKind,
     SemanticModel,
     _pattern_reflective_exposure,
-    enclosing_function,
     is_unread_source,
     opaque_global_write,
 )
@@ -517,17 +517,18 @@ class TamperingModel:
         function, its own `arguments` or `new.target`
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_its_name`), breaks
         it: it runs again where no textual count sees it. So does an activation the host may invoke
-        freely or that reflective code in its own scope could re-invoke by name.
+        freely or that reflective code in its own scope could re-invoke by name, and the initializer
+        of a field, which runs at each construction of its class.
         """
         located = self.dominance.locate(anchor)
         if located is None:
             return False
         if self._cycles.on_a_cycle(located[0], located[1]):
             return False
-        function = enclosing_function(anchor)
+        function = enclosing_run(anchor)
         seen: set[int] = set()
         while function is not None:
-            if id(function) in seen:
+            if not isinstance(function, FUNCTION_NODES) or id(function) in seen:
                 return False
             seen.add(id(function))
             if self.model.reached_without_its_name(function):
@@ -536,11 +537,11 @@ class TamperingModel:
             if flow.escapes or len(flow.invocations) != 1:
                 return False
             point = flow.invocations[0]
-            if enclosing_function(point) is function:
+            if enclosing_run(point) is function:
                 return False
             if not self._invocation_is_singly_executed(function, point):
                 return False
-            function = enclosing_function(point)
+            function = enclosing_run(point)
         return True
 
     def _invocation_is_singly_executed(self, function: Node, point: Node) -> bool:

@@ -1,7 +1,20 @@
 from __future__ import annotations
 
-from refinery.lib.scripts import Script
-from refinery.lib.scripts.analysis.cfg import CfgBuilder, CfgNode, ControlFlowGraph
+from refinery.lib.scripts import Node, Script
+from refinery.lib.scripts.analysis.cfg import CfgBuilder, CfgNode, ControlFlowGraph, ControlFlowModel
+from refinery.lib.scripts.analysis.dominance import DominatorModel
+
+
+def _nothing_runs_apart(holder: Node, part: Node) -> bool:
+    return False
+
+
+def dominators_of(graph: ControlFlowGraph) -> DominatorModel:
+    """
+    The dominator model over *graph* alone. The nodes of a synthetic graph stand for no code, so no
+    part of anything runs at a time of its own.
+    """
+    return DominatorModel(ControlFlowModel({id(graph.owner): graph}, _nothing_runs_apart))
 
 
 def graph_from_edges(edges: dict[str, list[str]]) -> tuple[ControlFlowGraph, dict[str, CfgNode]]:

@@ -40,6 +40,7 @@ from refinery.lib.scripts.js.analysis.environment import (
     HostEnvironment,
     node_require_runs_no_code,
 )
+from refinery.lib.scripts.js.analysis.evaluation import evaluated_later
 from refinery.lib.scripts.js.builtins import OBJECT_PROTOTYPE_MEMBERS
 from refinery.lib.scripts.js.keys import (
     NO_IS_STRICTER,
@@ -224,6 +225,7 @@ class ScopeKind(enum.Enum):
     CLASS    = 'class'     # noqa
     WITH     = 'with'      # noqa
     STATIC_BLOCK = 'static-block'  # noqa
+    FIELD    = 'field'     # noqa
 
 
 class BindingKind(enum.Enum):
@@ -615,10 +617,15 @@ class Scope:
         body. A parameter default and the body it belongs to are run by one call and share every
         binding either of them makes, and so does the name a function expression answers to inside
         itself, so no closure boundary runs between the three: all of them answer the body's scope.
+        The initializer of a field is run by each construction and not by the code around its class,
+        so the scope it is evaluated in (`ScopeKind.FIELD`) is a closure home of its own, although
+        nothing can be declared in it.
         """
         if self.function_body is not None:
             return self.function_body
-        home = self.var_scope
+        home: Scope | None = self
+        while home is not None and not home.is_var_scope and home.kind is not ScopeKind.FIELD:
+            home = home.parent
         if home is not None and home.function_body is not None:
             return home.function_body
         return home
@@ -2680,15 +2687,19 @@ class SemanticModel:
 
     def function_scope(self, func: Node) -> Scope | None:
         """
-        The scope a function (or the script) introduces for its body: the script's `root_scope`, or
-        the body block's scope for a function node, and `None` when *func* has no body block.
+        The scope a function (or the script) introduces for its body: the script's `root_scope`, the
+        body block's scope for a function node, the scope of its run for a field whose initializer
+        runs at each construction, and `None` when *func* has none of these.
         """
         if isinstance(func, JsScript):
             return self.root_scope
         body = getattr(func, 'body', None)
-        if body is None:
-            return None
-        return self.scope_of(body)
+        if body is not None:
+            return self.scope_of(body)
+        for part in func.children():
+            if evaluated_later(func, part):
+                return self.scope_of(part)
+        return None
 
     def parameter_scope(self, func: Node) -> Scope | None:
         """
@@ -6167,6 +6178,8 @@ class _ScopeBuilder:
             self._visit_class(node, scope)
         elif isinstance(node, JsStaticBlock):
             self._visit_static_block(node, scope)
+        elif isinstance(node, JsPropertyDefinition):
+            self._visit_field(node, scope)
         else:
             for child in node.children():
                 self._visit(child, scope)
@@ -6345,6 +6358,18 @@ class _ScopeBuilder:
             self.model._node_scope[body] = cscope
             for member in body.body:
                 self._visit(member, cscope)
+
+    def _visit_field(self, node: JsPropertyDefinition, enclosing: Scope):
+        """
+        The key and the decorators of a field are evaluated with its class. An initializer that runs
+        at each construction (`refinery.lib.scripts.js.analysis.evaluation.evaluated_later`) is
+        evaluated by a run of its own, in a scope of its own.
+        """
+        for child in node.children():
+            if evaluated_later(node, child):
+                self._visit(child, self._new_scope(ScopeKind.FIELD, node, enclosing))
+            else:
+                self._visit(child, enclosing)
 
     def _visit_static_block(self, node: JsStaticBlock, enclosing: Scope):
         sscope = self._new_scope(ScopeKind.STATIC_BLOCK, node, enclosing)

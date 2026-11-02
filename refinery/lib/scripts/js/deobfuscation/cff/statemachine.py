@@ -27,7 +27,7 @@ from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.js.analysis.cfg import build_cfg
 from refinery.lib.scripts.js.analysis.environment import FileKind
-from refinery.lib.scripts.js.analysis.evaluation import Evaluation, evaluation_of
+from refinery.lib.scripts.js.analysis.evaluation import evaluated_later
 from refinery.lib.scripts.js.analysis.intrinsics import denoting_leaves
 from refinery.lib.scripts.js.analysis.model import (
     annex_b_function_home,
@@ -1813,7 +1813,8 @@ def _extract_state_blocks(
     if not declared.isdisjoint(match.state_var_names):
         return None
     routing = _routing_paths(cases, frozenset(match.state_var_names))
-    flow = DominatorModel(ControlFlowModel({id(match.machine): build_cfg(match.machine)}))
+    graphs = {id(match.machine): build_cfg(match.machine)}
+    flow = DominatorModel(ControlFlowModel(graphs, evaluated_later))
     last_body = max((i for i, case in enumerate(cases) if case.body), default=-1)
     labels: list[_SMCase] = []
     pending: list[Expression | None] = []
@@ -3382,11 +3383,11 @@ def _fold_scope_keys(
     of the key, and the array a wrapper's call starts the machine in as an array literal. Each is
     evaluated on the original node, which anchors the calls that make it, and only where it runs
     at the state: none in code that runs at a time of its own
-    (`refinery.lib.scripts.js.analysis.evaluation.Evaluation.LATER`), such as a nested function,
-    which reads the state when it is called, or the initializer of a class field, which reads it
-    when an instance is made, and none whose scope object or state variables something between the
-    block and the key binds anew (`_scoped_children`). `False` where a key of the block does not
-    decode.
+    (`refinery.lib.scripts.js.analysis.evaluation.evaluated_later`), such as a nested function,
+    which reads the state when it is called, or the initializer of a field written without
+    `static`, which reads it when an instance is made, and none whose scope object or state
+    variables something between the block and the key binds anew (`_scoped_children`). `False`
+    where a key of the block does not decode.
     """
     if match.calls is None or match.scope_param_name is None:
         return True
@@ -3411,7 +3412,7 @@ def _fold_scope_keys(
                 return False
             keys[node] = value
         for child, bound in _scoped_children(node):
-            if evaluation_of(node, child) is Evaluation.LATER:
+            if evaluated_later(node, child):
                 continue
             if not decode(child, hidden | (watched & bound) if bound else hidden):
                 return False
@@ -3623,14 +3624,15 @@ def _references_to(stmts: list[Statement], names: frozenset[str]) -> Iterator[Js
 def _substitute_in_scope(node: Node, env: _StateEnv) -> None:
     """
     Replace state variable identifiers with numeric literals. Code that runs at a time of its own
-    (`refinery.lib.scripts.js.analysis.evaluation.Evaluation.LATER`) is not entered, a nested
+    (`refinery.lib.scripts.js.analysis.evaluation.evaluated_later`) is not entered, a nested
     function at the root as well: a function reads the state variable when it is called, and the
-    initializer of a class field when an instance is made, not at the state being recovered.
+    initializer of a field written without `static` when an instance is made, not at the state
+    being recovered.
     """
     if isinstance(node, FUNCTION_NODES):
         return
     for child, bound in _scoped_children(node):
-        if isinstance(child, FUNCTION_NODES) or evaluation_of(node, child) is Evaluation.LATER:
+        if isinstance(child, FUNCTION_NODES) or evaluated_later(node, child):
             continue
         if (
             isinstance(child, JsMemberExpression)
@@ -4775,8 +4777,9 @@ def _default_reads(
                 return False
             reads[node] = index
             return True
-        inner = nested or isinstance(node, FUNCTION_NODES)
-        return all(visit(child, inner) for child in node.children())
+        return all(
+            visit(child, nested or evaluated_later(node, child)) for child in node.children()
+        )
 
     return reads if visit(default, False) else None
 

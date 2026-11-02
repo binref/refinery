@@ -100,6 +100,23 @@ FUNCTION_NODES = (Ps1ScriptBlock,)
 #: used for a `static` one, and never at the class statement it is written in.
 DEFERRED_NODES = (Ps1PropertyMember,)
 
+
+def _runs_apart(holder: Node, part: Node) -> bool:
+    """
+    Whether *part* of *holder* runs at a time of its own: every part of a script block runs when
+    the block is invoked, and every part of a class property when it is initialized.
+    """
+    return isinstance(holder, (*FUNCTION_NODES, *DEFERRED_NODES))
+
+
+def _owns_a_graph(node: Node) -> bool:
+    """
+    Whether a graph is drawn for *node*: a script block. A class property's initializer has none,
+    so an element in one is located nowhere.
+    """
+    return isinstance(node, FUNCTION_NODES)
+
+
 _LOOP_NODES = (
     Ps1WhileLoop,
     Ps1DoLoop,
@@ -795,7 +812,7 @@ def _build(
     trap_sets: dict[int, Ps1TrapSet],
 ) -> dict[int, ControlFlowGraph]:
     builder = partial(_Builder, descend=descend, trap_sets=trap_sets, dispositions={})
-    return build_control_flow(root, builder, FUNCTION_NODES)
+    return build_control_flow(root, builder, _owns_a_graph)
 
 
 def trap_disposition(trap: Ps1TrapStatement, memo: dict[int, Ps1TrapDisposition]) -> Ps1TrapDisposition:
@@ -825,7 +842,7 @@ class Ps1ControlFlowModel(ControlFlowModel):
     """
 
     def __init__(self, graphs: dict[int, ControlFlowGraph], trap_sets: dict[int, Ps1TrapSet]):
-        super().__init__(graphs, DEFERRED_NODES)
+        super().__init__(graphs, _runs_apart)
         self._trap_sets = trap_sets
         by_graph: dict[ControlFlowGraph, list[Ps1TrapSet]] = {}
         for trap_set in {id(trap_set): trap_set for trap_set in trap_sets.values()}.values():

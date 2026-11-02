@@ -10,12 +10,16 @@ them only, or at a time of its own.
 
 The table fails closed: a part it does not list is taken to be evaluated on some runs only, which
 costs a reduction and never changes what a program does.
+
+The parts evaluated at a time of their own are the one boundary of a run, the code one invocation
+executes: `evaluated_later` asks it of a step, `owns_a_run` of a node, `walk_run` lists what a run
+evaluates and `enclosing_run` names the run that evaluates a node.
 """
 from __future__ import annotations
 
 import enum
 
-from typing import Callable
+from typing import Callable, Iterator, NamedTuple
 
 from refinery.lib.scripts import Node, child_fields
 from refinery.lib.scripts.js.model import (
@@ -89,9 +93,12 @@ from refinery.lib.scripts.js.model import (
 __all__ = [
     'Evaluation',
     'PART_EVALUATION',
+    'enclosing_run',
+    'evaluated_later',
     'evaluated_whenever_completed',
-    'evaluated_with',
     'evaluation_of',
+    'owns_a_run',
+    'walk_run',
 ]
 
 
@@ -120,42 +127,53 @@ def _optional_link_below(node: Node | None) -> bool:
     return False
 
 
-def _past_a_link(holder: Node) -> Evaluation:
+def _assigns_logically(holder: Node) -> bool:
     """
-    The evaluation of the key of a member or the arguments of a call: on some runs only where the
-    link or one below it is optional.
+    Whether *holder* is an assignment with a logical operator, which assigns only when the target's
+    value asks for it.
     """
-    if _optional_link_below(holder):
-        return Evaluation.SOMETIMES
-    return Evaluation.ALWAYS
-
-
-def _assigned_value(holder: Node) -> Evaluation:
-    """
-    The evaluation of the value of an assignment: on some runs only where the operator is a logical
-    one, which assigns only when the target's value asks for it.
-    """
-    if (
+    return (
         isinstance(holder, JsAssignmentExpression)
         and holder.operator in LOGICAL_ASSIGNMENT_OPERATORS
-    ):
-        return Evaluation.SOMETIMES
-    return Evaluation.ALWAYS
+    )
+
+
+def _is_static(holder: Node) -> bool:
+    """
+    Whether *holder* is a `static` field, whose initializer runs while the class statement does.
+    """
+    return isinstance(holder, JsPropertyDefinition) and holder.is_static
+
+
+class _Choice(NamedTuple):
+    """
+    The evaluation of a part that its holder decides: *when* where *test* holds of the holder,
+    *otherwise* where it does not.
+    """
+    test: Callable[[Node], bool]
+    when: Evaluation
+    otherwise: Evaluation
+
+    def of(self, holder: Node) -> Evaluation:
+        return self.when if self.test(holder) else self.otherwise
 
 
 _A = Evaluation.ALWAYS
 _S = Evaluation.SOMETIMES
 _L = Evaluation.LATER
 
+_PAST_A_LINK = _Choice(_optional_link_below, _S, _A)
+
 #: For each node type and child field, when the child is evaluated relative to the node: one of
-#: `Evaluation`, or a function deciding it from the node where its operator or its links decide it.
-PART_EVALUATION: dict[tuple[type[Node], str], Evaluation | Callable[[Node], Evaluation]] = {
+#: `Evaluation`, or a `_Choice` the node makes where its operator, its links or its being `static`
+#: decide it.
+PART_EVALUATION: dict[tuple[type[Node], str], Evaluation | _Choice] = {
     (JsArrayExpression, 'elements')                 : _A,
     (JsArrayPattern, 'elements')                    : _A,
     (JsArrowFunctionExpression, 'params')           : _L,
     (JsArrowFunctionExpression, 'body')             : _L,
     (JsAssignmentExpression, 'left')                : _A,
-    (JsAssignmentExpression, 'right')               : _assigned_value,
+    (JsAssignmentExpression, 'right')               : _Choice(_assigns_logically, _S, _A),
     (JsAssignmentPattern, 'left')                   : _A,
     (JsAssignmentPattern, 'right')                  : _S,
     (JsAwaitExpression, 'argument')                 : _A,
@@ -164,7 +182,7 @@ PART_EVALUATION: dict[tuple[type[Node], str], Evaluation | Callable[[Node], Eval
     (JsBlockStatement, 'body')                      : _S,
     (JsBreakStatement, 'label')                     : _A,
     (JsCallExpression, 'callee')                    : _A,
-    (JsCallExpression, 'arguments')                 : _past_a_link,
+    (JsCallExpression, 'arguments')                 : _PAST_A_LINK,
     (JsCatchClause, 'param')                        : _A,
     (JsCatchClause, 'body')                         : _S,
     (JsClassBody, 'body')                           : _S,
@@ -229,7 +247,7 @@ PART_EVALUATION: dict[tuple[type[Node], str], Evaluation | Callable[[Node], Eval
     (JsLogicalExpression, 'left')                   : _A,
     (JsLogicalExpression, 'right')                  : _S,
     (JsMemberExpression, 'object')                  : _A,
-    (JsMemberExpression, 'property')                : _past_a_link,
+    (JsMemberExpression, 'property')                : _PAST_A_LINK,
     (JsMethodDefinition, 'key')                     : _A,
     (JsMethodDefinition, 'value')                   : _A,
     (JsMethodDefinition, 'decorators')              : _A,
@@ -241,7 +259,7 @@ PART_EVALUATION: dict[tuple[type[Node], str], Evaluation | Callable[[Node], Eval
     (JsProperty, 'key')                             : _A,
     (JsProperty, 'value')                           : _A,
     (JsPropertyDefinition, 'key')                   : _A,
-    (JsPropertyDefinition, 'value')                 : _L,
+    (JsPropertyDefinition, 'value')                 : _Choice(_is_static, _A, _L),
     (JsPropertyDefinition, 'decorators')            : _A,
     (JsRestElement, 'argument')                     : _A,
     (JsReturnStatement, 'argument')                 : _A,
@@ -329,7 +347,7 @@ def evaluation_of(holder: Node, part: Node) -> Evaluation:
     if name is None:
         return _S
     rule = PART_EVALUATION.get((type(holder), name), _S)
-    return rule if isinstance(rule, Evaluation) else rule(holder)
+    return rule if isinstance(rule, Evaluation) else rule.of(holder)
 
 
 def evaluated_whenever_completed(node: Node, element: Node) -> bool:
@@ -347,17 +365,72 @@ def evaluated_whenever_completed(node: Node, element: Node) -> bool:
     return True
 
 
-def evaluated_with(node: Node, element: Node) -> bool:
+def _may_be(rule: Evaluation | _Choice, evaluation: Evaluation) -> bool:
     """
-    Whether *node*, on the runs that evaluate it at all, is evaluated while the statement or loop
-    head *element* holding it is: no part on the way down from *element* to *node* is evaluated at
-    a time of its own (`Evaluation.LATER`), as the initializer of a field is when an instance is
-    constructed.
+    Whether a part *rule* governs is evaluated as *evaluation* for some holder.
+    """
+    if isinstance(rule, Evaluation):
+        return rule is evaluation
+    return evaluation in (rule.when, rule.otherwise)
+
+
+#: The node types with a part that may be evaluated `Evaluation.LATER`: the holders of a run of
+#: their own, a function and a field. `evaluated_later` consults the table for these types only.
+_RUN_HOLDERS = frozenset(
+    node_type for (node_type, _), rule in PART_EVALUATION.items() if _may_be(rule, _L)
+)
+
+
+def evaluated_later(holder: Node, part: Node) -> bool:
+    """
+    Whether *part*, a child of *holder*, is evaluated at a time of its own (`Evaluation.LATER`): the
+    parameters and the body of a function when it is called, the initializer of a field each time
+    an instance is constructed. The boundary of every run.
+    """
+    return type(holder) in _RUN_HOLDERS and evaluation_of(holder, part) is _L
+
+
+def owns_a_run(node: Node | None) -> bool:
+    """
+    Whether some part of *node* is evaluated at a time of its own (`evaluated_later`): a function,
+    or a field written without `static` that has an initializer. Such a node owns a run: a body
+    that is executed apart from the code around it, and each time it is invoked.
+    """
+    return (
+        node is not None
+        and type(node) in _RUN_HOLDERS
+        and any(evaluated_later(node, child) for child in node.children())
+    )
+
+
+def walk_run(owner: Node) -> Iterator[Node]:
+    """
+    The nodes one run of *owner* evaluates: the statements of a script, or the parts of a run
+    owner that are evaluated later (`evaluated_later`), with their descendants down to the parts of
+    a nested node that are evaluated at a time of their own. A nested run owner is yielded, as its
+    creation is part of the run, and so are its parts evaluated with it: the computed key of a
+    field, the name of a function.
+    """
+    if isinstance(owner, JsScript):
+        stack: list[Node] = list(reversed(owner.body))
+    else:
+        stack = [child for child in reversed(owner.children()) if evaluated_later(owner, child)]
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(
+            child for child in reversed(node.children()) if not evaluated_later(node, child)
+        )
+
+
+def enclosing_run(node: Node) -> Node | None:
+    """
+    The run owner (`owns_a_run`) whose run evaluates *node*, or `None` for a node the script's own
+    run evaluates.
     """
     cursor = node
-    while cursor is not element:
-        holder = cursor.parent
-        if holder is None or evaluation_of(holder, cursor) is Evaluation.LATER:
-            return False
+    while (holder := cursor.parent) is not None:
+        if evaluated_later(holder, cursor):
+            return holder
         cursor = holder
-    return True
+    return None
