@@ -4,14 +4,15 @@ from inspect import cleandoc
 
 from test import TestBase
 
-from refinery.lib.scripts import Node
+from refinery.lib.scripts import Block, Expression, Node, _remove_from_parent
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
-from refinery.lib.scripts.ps1.analysis.dispatch import Ps1ErrorKind
-from refinery.lib.scripts.ps1.analysis.raising import Ps1RaiseModel
+from refinery.lib.scripts.ps1.analysis.dispatch import EVERY_KIND, Ps1ErrorKind
+from refinery.lib.scripts.ps1.analysis.raising import Ps1RaiseModel, statement_raise_kinds
 from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
     Ps1FunctionDefinition,
+    Ps1IfStatement,
     Ps1Script,
     Ps1Variable,
 )
@@ -70,6 +71,11 @@ class TestPs1APlainStoreFailsOnlyWhereTheNameIsConstrained(TestBase):
     def test_a_store_of_a_value_that_may_fail_may_fail(self):
         self.assertFalse(self._store_cannot_fail('$x = [int]$args[0]'))
 
+    def test_a_store_into_a_constant_the_engine_defines_may_fail(self):
+        for name in ('PSEdition', 'ShellId', 'PSHome', 'PID', 'Host'):
+            with self.subTest(name=name):
+                self.assertFalse(self._store_cannot_fail(F"${name} = 'a'"))
+
 
 class TestPs1AReadUnderStrictModeIsClearedByAStoreThatCertainlyCompleted(TestBase):
     """
@@ -90,6 +96,14 @@ class TestPs1AReadUnderStrictModeIsClearedByAStoreThatCertainlyCompleted(TestBas
 
     def test_a_read_after_a_store_that_may_fail_inside_a_try_may_fail(self):
         self.assertFalse(self._read_cannot_fail('try { $v = [int]$args[0] } catch { }'))
+
+    def test_a_read_after_a_store_that_may_fail_where_nothing_takes_the_error_may_fail(self):
+        for store in ('$v = [int]$args[0]', '$v = $unset'):
+            with self.subTest(store=store):
+                self.assertFalse(self._read_cannot_fail(store))
+
+    def test_a_read_after_a_store_of_a_read_a_completed_store_clears_cannot_fail(self):
+        self.assertTrue(self._read_cannot_fail('$u = 1\n$v = $u'))
 
     def test_a_read_after_a_store_in_a_loop_that_may_not_run_may_fail(self):
         self.assertFalse(self._read_cannot_fail('foreach ($i in $args) { $v = 1 }'))
@@ -163,3 +177,36 @@ class TestPs1ACallRaisesWhatItsBodyHandsBack(TestBase):
         tree, model = _model("function f { 'a' }\nf -Bogus 1")
         call = next(node for node in tree.body[-1].walk() if isinstance(node, Ps1CommandInvocation))
         self.assertFalse(model.raises_only_what_its_bodies_hand_back(call))
+
+
+class TestPs1AStatementAPassBuildsIsJudgedByEverythingItEvaluates(TestBase):
+    """
+    A pass asks what a statement it is about to splice in may raise, at the statement it would
+    replace. One it builds anew around lines it reuses evaluates a test of its own, which no graph
+    places, and the lines it reuses do not answer for that test.
+    """
+
+    def test_an_if_built_around_a_line_that_cannot_fail_may_fail_on_its_test(self):
+        tree, model = _model("""
+            $u.Foo()
+            $x = 'b'
+        """)
+        replaced, line = tree.body
+        test = _statement(tree, 0)
+        assert isinstance(test, Expression)
+        built = Ps1IfStatement(clauses=[(test, Block(body=[line]))])
+        self.assertTrue(statement_raise_kinds(built, replaced, model.faults, model.world, model))
+
+
+class TestPs1ARaiseModelAnswersOnlyForTheTreeItWasBuiltFor(TestBase):
+
+    def test_a_line_judged_with_a_model_built_before_the_tree_moved_may_raise_every_kind(self):
+        tree, model = _model("""
+            'a'
+            $x = 'b'
+        """)
+        line = tree.body[1]
+        before = statement_raise_kinds(line, line, model.faults, model.world, model)
+        _remove_from_parent(tree.body[0])
+        after = statement_raise_kinds(line, line, model.faults, model.world, model)
+        self.assertEqual((before, after), (Ps1ErrorKind.NONE, EVERY_KIND))

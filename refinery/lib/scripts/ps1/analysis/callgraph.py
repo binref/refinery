@@ -30,6 +30,8 @@ from refinery.lib.scripts.ps1.analysis.world import (
 )
 from refinery.lib.scripts.ps1.ast import (
     assignment_target_variables,
+    bound_argument_value,
+    free_positional_values,
     get_command_name,
     get_member_name,
     get_param_block,
@@ -710,16 +712,7 @@ def _functions_handed_out(node: Node) -> tuple[str, ...] | None:
         return _function_paths_in(node.value)
     if isinstance(node, Ps1CommandInvocation):
         if resolve_command_name(node) == 'get-command' and not _only_a_member_is_read(node):
-            names: list[str] = []
-            for argument in node.arguments:
-                value = argument.value if isinstance(argument, Ps1CommandArgument) else argument
-                if isinstance(argument, Ps1CommandArgument) and value is None:
-                    continue
-                text = string_value(value)
-                if text is None or has_wildcard(text):
-                    return None
-                names.append(normalize_command_name(text))
-            return tuple(names) if names else None
+            return _command_looked_up(node)
         return ()
     if isinstance(node, Ps1InvokeMember) and node.access is Ps1AccessKind.INSTANCE:
         if not member_may_be(node.member, _COMMAND_LOOKUPS):
@@ -730,6 +723,28 @@ def _functions_handed_out(node: Node) -> tuple[str, ...] | None:
         if isinstance(receiver, Ps1Variable) and receiver.name.lower() in ('executioncontext', 'pscmdlet'):
             return None
     return ()
+
+
+def _command_looked_up(command: Ps1CommandInvocation) -> tuple[str, ...] | None:
+    """
+    The key of the function `Get-Command` *command* looks up by name, or `None` where it may list
+    any of them: the name is the value bound to `-Name`, written as such or as the first argument
+    no parameter takes. Every other selection, `-CommandType Function` and `-Verb` among them, and
+    a splat, whose table this cannot see into, lists every function its filter passes.
+    """
+    for argument in command.arguments:
+        if not isinstance(argument, Ps1CommandArgument):
+            return None
+        value = argument.value
+        if isinstance(value, Ps1Variable) and value.splatted:
+            return None
+    written = bound_argument_value(command, 'name')
+    if written is None:
+        written = next(iter(free_positional_values(command, 'get-command')), None)
+    text = None if written is None else string_value(written)
+    if text is None or has_wildcard(text):
+        return None
+    return (normalize_command_name(text),)
 
 
 def _only_a_member_is_read(command: Ps1CommandInvocation) -> bool:

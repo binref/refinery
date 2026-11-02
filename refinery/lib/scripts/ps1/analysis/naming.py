@@ -55,6 +55,8 @@ from refinery.lib.scripts.ps1.ast import (
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,
+    Ps1ArrayExpression,
+    Ps1ArrayLiteral,
     Ps1BinaryExpression,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
@@ -449,8 +451,9 @@ def _subject_value(
 
 def _piped_path(cmd: Ps1CommandInvocation) -> Expression | None:
     """
-    The path a literal written ahead of *cmd* in its pipeline hands it, as `'variable:x' |
-    Remove-Item` does, or `None` where no literal stands there.
+    The path an expression written ahead of *cmd* in its pipeline hands it, as `'variable:x' |
+    Remove-Item` and `'variable:x', 'variable:y' | Remove-Item` do, or `None` where a command
+    stands there, whose output this does not read as a path.
     """
     element = cmd.parent
     if not isinstance(element, Ps1PipelineElement):
@@ -462,7 +465,7 @@ def _piped_path(cmd: Ps1CommandInvocation) -> Expression | None:
     if index == 0:
         return None
     source = pipeline.elements[index - 1].expression
-    if source is None or string_value(source) is None:
+    if source is None or isinstance(source, Ps1CommandInvocation):
         return None
     return source
 
@@ -546,6 +549,9 @@ def _addresses_unreadable_variables(cmd: Ps1CommandInvocation, command: str) -> 
     value = _subject_value(cmd, command, 'path')
     if value is None:
         return False
+    listed = _listed_paths(value)
+    if listed is not None:
+        return any(_drive_of(path) == 'variable' for path in listed)
     written = argument_text(value)
     if written is None:
         return _spelled_drive(value) == 'variable'
@@ -553,6 +559,43 @@ def _addresses_unreadable_variables(cmd: Ps1CommandInvocation, command: str) -> 
     if drive != 'variable':
         return False
     return not rest or has_wildcard(rest)
+
+
+def _listed_paths(value: Node) -> list[Node] | None:
+    """
+    The paths *value* lists where it is a list of them, as `variable:x, variable:y` and
+    `@('variable:x')` are, or `None` where it is not. A command handed a list addresses every path
+    in it, which this reader does not name one by one, so a list naming the `Variable:` drive at all
+    addresses variables whose names it cannot read.
+    """
+    head = unwrap_parens(value)
+    if isinstance(head, Ps1ArrayLiteral):
+        items: list[Node] = list(head.elements)
+    elif isinstance(head, Ps1ArrayExpression):
+        items = [
+            statement.expression
+            if isinstance(statement, Ps1ExpressionStatement) and statement.expression is not None
+            else statement
+            for statement in head.body
+        ]
+    else:
+        return None
+    paths: list[Node] = []
+    for item in items:
+        nested = _listed_paths(item)
+        paths.extend([item] if nested is None else nested)
+    return paths
+
+
+def _drive_of(path: Node) -> str | None:
+    """
+    The drive the path *path* names, lowercased, whether it is written out or computes what follows
+    the drive; `None` where it names none.
+    """
+    written = argument_text(path)
+    if written is None:
+        return _spelled_drive(path) if isinstance(path, Expression) else None
+    return _drive_path(written)[0] if ':' in written else None
 
 
 def _spelled_drive(value: Expression) -> str | None:

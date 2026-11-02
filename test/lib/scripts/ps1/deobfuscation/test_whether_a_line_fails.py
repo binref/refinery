@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import lines_executed
+from test import lines_executed, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.analysis import dispatch, faults, raising
@@ -116,6 +116,34 @@ class TestPs1AReadMayFailUnderStrictModeWhereTheNameMayBeRemoved(_Ps1LineFailure
             Write-Host 'after'
         """, '$v1\n')
 
+    def test_a_read_after_a_removal_handed_a_list_of_paths_stays(self):
+        for removal in (
+            'Remove-Item -Path variable:v1, variable:v2',
+            "'variable:v1', 'variable:v2' | Remove-Item",
+        ):
+            with self.subTest(removal=removal):
+                self.assertKeeps(F"""
+                    Set-StrictMode -Version 1
+                    $v1 = 1
+                    $v2 = 2
+                    {removal}
+                    try {{ $null = $v1; Write-Host 'in' }} catch {{ Write-Host 'caught' }}
+                """, '$v1\n')
+
+    def test_a_read_after_a_store_that_may_fail_where_nothing_takes_the_error_stays(self):
+        """
+        5.1 reports the failed store and carries on without setting `$v1`, so the strict read in
+        the `try` fails and the snippet writes `caught`.
+        """
+        for store in ('$v1 = [int]$p[0]', '$v1 = $unset'):
+            with self.subTest(store=store):
+                self.assertKeeps(F"""
+                    Set-StrictMode -Version 1
+                    $p = $args
+                    {store}
+                    try {{ $null = $v1; Write-Host 'in' }} catch {{ Write-Host 'caught' }}
+                """, '$v1\n')
+
 
 class TestPs1ACallFactCoversWhatWasMeasured(_Ps1LineFailure):
     """
@@ -154,6 +182,19 @@ class TestPs1ACallFactCoversWhatWasMeasured(_Ps1LineFailure):
                     $arguments = @{{ InformationAction = 'Stop' }}
                     f {binding}
                 """)
+
+    @wontfix('no obfuscated script asks the person at the console whether to go on writing to it')
+    def test_a_write_to_the_host_where_a_call_binds_an_inquiring_information_action_keeps_the_trap(self):
+        self.assertKeepsATrap("""
+            function f {
+              [CmdletBinding()]
+              param()
+              trap { Write-Output 'T'; continue }
+              Write-Host 'a'
+              Write-Output 'after'
+            }
+            f -InformationAction Inquire
+        """)
 
     def test_a_raise_in_the_body_of_a_trap_over_lines_the_facts_clear_goes(self):
         """
@@ -243,6 +284,15 @@ class TestPs1ABodyHandedOutAsAValueRunsWhereNoCallNamesIt(_Ps1LineFailure):
             $b = $function:f1
             & $b
         """, 'function f1')
+
+    def test_a_function_a_lookup_by_type_lists_stays(self):
+        for lookup in ('Get-Command -CommandType Function', 'gcm -Type Function'):
+            with self.subTest(lookup=lookup):
+                self.assertKeeps(F"""
+                    function f1 {{ Write-Host 'm1' }}
+                    $c = {lookup} | Where-Object {{ $_.Name -eq 'f1' }}
+                    [regex]::Replace('a', 'a', $c.ScriptBlock)
+                """, 'function f1')
 
 
 class TestPs1ACallTheCallGraphCannotAttributeMayRunAnyFunction(_Ps1LineFailure):

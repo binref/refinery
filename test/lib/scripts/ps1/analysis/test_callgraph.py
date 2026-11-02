@@ -239,6 +239,20 @@ class TestPs1AFunctionTheScriptHandsOutIsReachedWithoutACall(TestBase):
             with self.subTest(use=use):
                 self.assertTrue(self._graph(F"function f1 {{ 'a' }}\n{use}").hands_out('f1'))
 
+    def test_a_lookup_selecting_by_anything_but_a_name_hands_out_every_function(self):
+        for use in (
+            'Get-Command -CommandType Function',
+            'gcm -Type Function',
+            'Get-Command -Module m',
+            "$p = @{ CommandType = 'Function' }; Get-Command @p",
+        ):
+            with self.subTest(use=use):
+                self.assertTrue(self._graph(F"function f1 {{ 'a' }}\n$c = {use}").hands_out('f1'))
+
+    def test_a_lookup_by_name_hands_out_that_function_alone(self):
+        graph = self._graph("function f1 { 'a' }\nfunction f2 { 'b' }\n$c = Get-Command -Name f1 -CommandType Function")
+        self.assertEqual([graph.hands_out('f1'), graph.hands_out('f2')], [True, False])
+
     def test_reading_only_the_name_of_a_lookup_hands_nothing_out(self):
         self.assertFalse(self._graph("function f1 { 'a' }\n(Get-Command f1).Name").hands_out('f1'))
 

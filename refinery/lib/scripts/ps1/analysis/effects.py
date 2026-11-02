@@ -1858,7 +1858,7 @@ def _may_leave_a_record(
 _DYNAMIC_VARIABLE_READERS = frozenset({'get-variable'})
 
 
-class _BodyReads(NamedTuple):
+class Ps1BodyReads(NamedTuple):
     """
     What the functions and stored scriptblocks of one tree read, which a call anywhere may run: the
     names read inside one, and whether a command reading a name given as data stands inside one.
@@ -1886,9 +1886,9 @@ def _name_read(node: Node) -> str | None:
     return None
 
 
-def _reads_in_bodies(root: Node) -> _BodyReads:
+def reads_in_bodies(root: Node) -> Ps1BodyReads:
     """
-    The `_BodyReads` of the tree under *root*, scope by scope as
+    The `Ps1BodyReads` of the tree under *root*, scope by scope as
     `refinery.lib.scripts.ps1.analysis.model.scope_local_nodes` partitions it. It is the same
     answer for every graph of the tree, so its owner asks it once per tree version; a walk per graph
     is the size of the script once per function a resuming `trap` guards.
@@ -1907,7 +1907,7 @@ def _reads_in_bodies(root: Node) -> _BodyReads:
                 dynamic = True
             elif (name := _name_read(node)) is not None:
                 names.add(name)
-    return _BodyReads(frozenset(names), dynamic)
+    return Ps1BodyReads(frozenset(names), dynamic)
 
 
 class _ContinuationReads:
@@ -1937,7 +1937,7 @@ class _ContinuationReads:
     costs nothing.
     """
 
-    def __init__(self, graph: ControlFlowGraph, bodies: _BodyReads, asked: frozenset[str]):
+    def __init__(self, graph: ControlFlowGraph, bodies: Ps1BodyReads, asked: frozenset[str]):
         self.by_name: dict[str, set[int]] = {}
         self.dynamic_readers: set[int] = set()
         self.in_a_body = bodies.names
@@ -2114,7 +2114,7 @@ class _SkipVerdicts:
         self._world = world
         self._root = root
         self._stamp = stamp
-        self._bodies: _BodyReads | None = None
+        self._bodies: Ps1BodyReads | None = None
         self._writes: dict[Node, _Writes] = {}
         self._reads: dict[int, _ContinuationReads] = {}
 
@@ -2131,7 +2131,7 @@ class _SkipVerdicts:
         if self._stamp.moved():
             return [lambda member: True for _ in regions]
         if self._bodies is None:
-            self._bodies = _reads_in_bodies(self._root)
+            self._bodies = reads_in_bodies(self._root)
         reads = self._reads.get(id(graph))
         if reads is None:
             asked = _names_written_under(graph.owner, {graph.owner})

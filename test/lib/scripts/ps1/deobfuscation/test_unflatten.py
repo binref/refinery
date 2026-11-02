@@ -93,6 +93,26 @@ class TestPs1ControlFlowDeflattening(TestPs1):
         self.assertIn('$script:win', result)
         self.assertIn('$script:nix', result)
 
+    @unittest.expectedFailure
+    def test_a_branch_whose_arms_only_move_the_state_keeps_its_test(self):
+        """
+        Both arms of the branch come out empty, and the recovered structure drops the branch with
+        its test, which writes `cond`.
+        """
+        code = cleandoc("""
+            $s = 0
+            while ($s -NE -1) {
+              switch ($s) {
+                0 { if ((Write-Host 'cond') -Eq $null) { $s = 1 } else { $s = 2 } }
+                1 { $s = 3 }
+                2 { $s = 3 }
+                3 { Write-Host 'c'; $s = -1 }
+                default { break }
+              }
+            }
+        """)
+        self.assertIn("Write-Host 'cond'", self._deobfuscate(code))
+
     def test_conditional_one_exit_arm(self):
         code = '\n'.join([
             '$s = 0',

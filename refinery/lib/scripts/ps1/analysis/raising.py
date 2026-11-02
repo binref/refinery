@@ -39,9 +39,12 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CatchClause,
     Ps1CommandArgument,
     Ps1CommandInvocation,
+    Ps1Exit,
+    Ps1ExpressionStatement,
     Ps1ForEachLoop,
     Ps1FunctionDefinition,
     Ps1InvokeMember,
+    Ps1Jump,
     Ps1ParameterDeclaration,
     Ps1ScopeModifier,
     Ps1ScriptBlock,
@@ -169,9 +172,10 @@ def point_raise_kinds(
     `foreach` raises a statement-terminating error where its loop variable may fail the store.
 
     *model* supplies what the bodies an operand runs hand back, and the clearing rules that read
-    the script's name sets and its certain stores. Without it, a body may hand back every kind a
-    body can, every operand that is not cleared raises a statement-terminating error besides, and
-    only `expression_cannot_fault` clears: the reading of a caller that holds no raise model.
+    the script's name sets and its certain stores; one built for a tree that has moved since may
+    raise every kind. Without it, a body may hand back every kind a body can, every operand that is
+    not cleared raises a statement-terminating error besides, and only `expression_cannot_fault`
+    clears: the reading of a caller that holds no raise model.
     """
     if isinstance(point, (Ps1FunctionDefinition, Block)):
         return Ps1ErrorKind.NONE
@@ -193,6 +197,8 @@ def point_raise_kinds(
             if not cleared(operand):
                 kinds |= faults.kinds_the_try_catches(operand, cleared, handed_back) | Ps1ErrorKind.STATEMENT
         return kinds
+    if model.moved():
+        return EVERY_KIND
     if isinstance(point, Ps1ForEachLoop) and not _stores_without_fault(point.variable, model.constrained()):
         kinds |= Ps1ErrorKind.STATEMENT
 
@@ -233,10 +239,20 @@ def statement_raise_kinds(
 ) -> Ps1ErrorKind:
     """
     Every kind of error a point of *stmt* may raise, judged at *position*: the question asked of a
-    statement that is not in the tree yet, at the statement it would replace. A point inside a
-    script block written in *stmt* raises at the point that runs the block and is left out; a
-    statement the graphs place nothing of is judged as one point.
+    statement that is not in the tree yet, at the statement it would replace. A statement the graphs
+    were built from is judged by the points they place in it, where a point inside a script block
+    written in *stmt* raises at the point that runs the block and is left out; one they place
+    nothing of is judged as one point.
+
+    A statement made since is judged as one point where that point is all it evaluates. A compound
+    one holds tests and bodies the graphs would place apart, and they place none of its own tests,
+    so judging it by the parts it reuses from the tree leaves those tests out: it may raise every
+    kind.
     """
+    if not faults.control_flow.built_from(stmt):
+        if not isinstance(stmt, (Ps1ExpressionStatement, Ps1Exit, Ps1Jump, Ps1FunctionDefinition)):
+            return EVERY_KIND
+        return point_raise_kinds(stmt, position, faults, world, model)
     kinds = Ps1ErrorKind.NONE
     judged = False
     for point in faults.points_in(stmt):
@@ -329,10 +345,10 @@ class Ps1RaiseModel:
     What each point of one tree may raise under one reading of the world, *world*, or none: the one
     answer every reader of a point asks, `kinds`, and the one reader of which bodies a call runs,
     `bodies_run_by`. Every model it reads is handed in at construction and belongs to the tree
-    version it was built for; once that tree moves, `kinds` answers every kind, and the model is
-    discarded with the cache that built it. A model a question may not need is handed in as the
-    function the cache answers it with, so that a reading which never asks about a call or a name
-    never builds the models that answer one.
+    version it was built for; once that tree moves (`moved`), `kinds` answers every kind and so does
+    `point_raise_kinds` handed the model, and the model is discarded with the cache that built it.
+    A model a question may not need is handed in as the function the cache answers it with, so that
+    a reading which never asks about a call or a name never builds the models that answer one.
 
     *calls* and *commands* say which bodies a call runs; *defined* gives the calls a definition of
     the name they call certainly ran before (see
@@ -389,40 +405,50 @@ class Ps1RaiseModel:
         """
         What *point* may raise, judged where it stands; every kind once the tree has moved.
         """
-        if self._stamp.moved():
+        if self.moved():
             return EVERY_KIND
         found = self._kinds.get(id(point))
         if found is None:
             found = self._kinds[id(point)] = point_raise_kinds(point, point, self.faults, self.world, self)
         return found
 
+    def moved(self) -> bool:
+        """
+        Whether the tree this model was built for has moved since, after which no answer it holds
+        speaks for the tree.
+        """
+        return self._stamp.moved()
+
     def cannot_fault(self, operand: Node, position: Node) -> bool:
         """
         Whether evaluating *operand* cannot raise where *position* stands: `expression_cannot_fault`,
         and the two clearing rules of the class docstring where the world is closed there.
         """
-        if is_fault_free(operand):
+        return self._cleared(operand, position, self._certainly_stored_before)
+
+    def _cleared(self, operand: Node, position: Node, stored: Callable[[Node], bool]) -> bool:
+        """
+        `cannot_fault`, with *stored* saying of a bare read whether a store to its name certainly
+        completed before it. `expression_cannot_fault` is asked first and clears a bare read where
+        the world is closed and the script arms no strict mode, so *stored* is asked only where
+        strict mode may be armed.
+        """
+        if expression_cannot_fault(operand, position, self.faults, self.world):
             return True
         world = self.world
-        if world is None:
+        if world is None or not world.closed_at(position):
             return False
-        closed = world.closed_at(position)
-        if closed and self._stores_a_cleared_value(operand, position):
+        if self._stores_a_cleared_value(operand, position, stored):
             return True
-        bare = _is_bare_variable_read(operand)
-        if bare and closed and self._certainly_stored_before(operand):
-            return True
-        if not evaluate(operand, calls=call_reader(world)).may_throw:
-            return True
-        return bare and closed and not self.faults.strict_mode_may_be_in_force()
+        return _is_bare_variable_read(operand) and stored(operand)
 
-    def _stores_a_cleared_value(self, operand: Node, position: Node) -> bool:
+    def _stores_a_cleared_value(self, operand: Node, position: Node, stored: Callable[[Node], bool]) -> bool:
         if not isinstance(operand, Ps1AssignmentExpression) or operand.operator != '=':
             return False
         if not _stores_without_fault(operand.target, self.constrained()):
             return False
         value = operand.value
-        return value is not None and self.cannot_fault(value, position)
+        return value is not None and self._cleared(value, position, stored)
 
     def _certainly_stored_before(self, read: Node) -> bool:
         if not isinstance(read, Ps1Variable):
@@ -433,8 +459,17 @@ class Ps1RaiseModel:
         assignment = self._assignment
         if assignment is None:
             assignment = self._assignment = Ps1DefiniteAssignment(
-                self._control_flow, lambda name: name in removed)
+                self._control_flow, lambda name: name in removed, self._completes)
         return assignment.assigned_before(read)
+
+    def _completes(self, store: Node, stored: Callable[[Node], bool]) -> bool:
+        """
+        Whether the expression *store*, which stores into a plain local, certainly completes where
+        it stands, with *stored* saying of a bare read whether a store to its name certainly
+        completed before it. Where nothing takes an error, 5.1 reports it and carries on along the
+        edge a completed store leaves by, so a store that may fail is no certain store.
+        """
+        return self._cleared(store, store, stored)
 
     def handed_back(self, operand: Node) -> Ps1ErrorKind:
         """

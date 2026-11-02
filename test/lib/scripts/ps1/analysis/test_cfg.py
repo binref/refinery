@@ -1713,6 +1713,23 @@ class TestPs1AJumpRunsTheFinallyItLeaves(_Ps1ControlFlowGraphs):
         jump = self._node_for(graph, Ps1BreakStatement)
         self.assertNotIn(outer, jump.successors)
 
+    @unittest.expectedFailure
+    def test_the_finally_a_break_leaves_carries_on_where_the_break_goes(self):
+        """
+        The end of the `finally` body flows to the statement after the `try` alone, so a store it
+        makes is not seen where the `break` arrives.
+        """
+        tree, graph = self._tree_and_graph(cleandoc("""
+            foreach ($i in 1, 2) {
+              try { break } finally { 'f' }
+              return
+            }
+            'after'
+        """))
+        entry, = self._finally_entries(graph, tree)
+        after = self._required_node(graph, tree.body[-1])
+        self.assertIn(id(after), self._forward(entry))
+
 
 class TestPs1AProcessBlockRunsOncePerInput(_Ps1ControlFlowGraphs):
     """

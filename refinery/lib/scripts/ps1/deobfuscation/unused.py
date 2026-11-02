@@ -17,6 +17,7 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     opens_a_redirection_target,
     output_path,
     pruning_erases_body,
+    reads_in_bodies,
     statement_effect,
     unconsumed_statement,
 )
@@ -756,8 +757,7 @@ class Ps1DeadStoreElimination(Transformer):
         model = cache.model
         world = cache.world_reach
         plans = Ps1RemovalPlans(cache.faults, world, cache.error_state, cache.handlers)
-        from refinery.lib.scripts.ps1.analysis.effects import _reads_in_bodies
-        self._body_names = _reads_in_bodies(node).names
+        self._body_names = reads_in_bodies(node).names
         self._calls = cache.call_graph
         self._error_dispatch = cache.faults.dispatch
         for owner in list(node.walk()):

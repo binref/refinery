@@ -1745,6 +1745,13 @@ class ControlFlowModel:
         """
         return self.graphs.get(id(owner))
 
+    def built_from(self, statement: Node) -> bool:
+        """
+        Whether *statement* is a member of a statement sequence one of the graphs was built from,
+        rather than a statement made since, of which no graph holds anything.
+        """
+        return any(graph.built_for(statement) is not None for graph in self.graphs.values())
+
     def node_of(self, element: Node) -> CfgNode | None:
         """
         The control-flow node standing for *element*, or `None` when the graphs do not represent it

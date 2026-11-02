@@ -791,6 +791,7 @@ PS1_KNOWN_VARIABLES: dict[str, str] = {
         'PSCommandPath',
         'PSCulture',
         'PSDefaultParameterValues',
+        'PSEdition',
         'PSEmailServer',
         'PSHome',
         'PSScriptRoot',

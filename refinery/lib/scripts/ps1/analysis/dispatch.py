@@ -371,19 +371,21 @@ class _Tree:
         preferences: frozenset[Ps1Preference],
         called_preferences: frozenset[Ps1Preference],
         guards: Callable[[Node], tuple[bool, ...]],
+        shared: _Tree | None = None,
     ):
         self.preferences = preferences
         self.called = called_preferences
         self.guards = guards
-        self._depths: dict[int, int] = {}
-        self._selections: dict[int, Ps1TrapSelection | None] = {}
-        self._dispositions: dict[int, Ps1TrapDisposition] = {}
+        self._depths: dict[int, int] = {} if shared is None else shared._depths
+        self._selections: dict[int, Ps1TrapSelection | None] = {} if shared is None else shared._selections
+        self._dispositions: dict[int, Ps1TrapDisposition] = {} if shared is None else shared._dispositions
 
     def reading(self, preference: Ps1Preference, called_preference: Ps1Preference) -> _Tree:
         """
-        This tree under one value of the error preference in the script and one in a called body.
+        This tree under one value of the error preference in the script and one in a called body,
+        sharing what no preference changes: the depths, the `trap` sets and how each body ends.
         """
-        return _Tree(frozenset((preference,)), frozenset((called_preference,)), self.guards)
+        return _Tree(frozenset((preference,)), frozenset((called_preference,)), self.guards, self)
 
     def depth_of(self, node: Node) -> int:
         depths = self._depths

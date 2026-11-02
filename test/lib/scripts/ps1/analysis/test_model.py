@@ -959,3 +959,12 @@ class TestPs1TheModelReadsWhichNamesTheScriptMayRemoveOrConstrain(TestBase):
         self.assertIn('x', model.variables_removed)
         self.assertIn('x', model.variables_constrained)
 
+    def test_a_removal_handed_a_list_of_paths_may_remove_each_name_in_it(self):
+        for removal in (
+            'Remove-Item -Path variable:a, variable:b',
+            "'variable:a', 'variable:b' | Remove-Item",
+            "@('variable:a') | Remove-Item",
+        ):
+            with self.subTest(removal=removal):
+                self.assertIn('a', self._model(removal).variables_removed)
+
