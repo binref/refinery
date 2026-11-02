@@ -98,6 +98,8 @@ def _is_literal_initializer(node: Node | None) -> bool:
         for prop in node.properties:
             if not isinstance(prop, JsProperty):
                 return False
+            if prop.computed and (prop.key is None or not is_literal(prop.key)):
+                return False
             if prop.value is None or not _is_literal_initializer(prop.value):
                 return False
         return True
@@ -273,16 +275,26 @@ def _values_read_under(literal: _Container, key: str | None) -> list[Node]:
 
 def _read_values_stay_in_the_call(cache: ModelCache, binding: Binding, held: list[_Container]) -> bool:
     """
-    Whether no list or object the closure built leaves a call through a read of *binding*, which
-    holds one of *held*. Every reference reads through the binding or only tests it, and a read that
-    may answer such a list or object is only tested, read through in turn, or the value of a
-    variable that is itself only read through (`_stored_where_it_is_only_read_through`).
+    Whether no list or object the closure built leaves a call through a reference of *binding*,
+    which holds one of *held* and was already found to be only read through
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`). A
+    reference only tests the binding, reads through it, calls a method on it where *held* holds no
+    list or object, or is the value of a variable that is itself only read through
+    (`_stored_where_it_is_only_read_through`). A read that may answer a list or object of *held* is
+    held to the same rule.
     """
-    if binding.dynamic_refs:
+    holds_containers = any(_containers(_held_values(container)) for container in held)
+    if binding.dynamic_refs and holds_containers:
         return False
     for reference in cache.model.references(binding):
         role = container_reference_role(reference)
         if role is ContainerRole.VERDICT_READ:
+            continue
+        if role is ContainerRole.MEMBER_CALL and not holds_containers:
+            continue
+        if role is ContainerRole.ESCAPE:
+            if not _stored_where_it_is_only_read_through(cache, reference, held):
+                return False
             continue
         if role is not ContainerRole.MEMBER_READ:
             return False
@@ -297,8 +309,6 @@ def _read_values_stay_in_the_call(cache: ModelCache, binding: Binding, held: lis
             read = member
         if not (answered := _containers(values)):
             continue
-        if not isinstance(read, JsMemberExpression):
-            return False
         if container_reference_role(read) is ContainerRole.VERDICT_READ:
             continue
         if not _stored_where_it_is_only_read_through(cache, read, answered):
@@ -308,14 +318,15 @@ def _read_values_stay_in_the_call(cache: ModelCache, binding: Binding, held: lis
 
 def _stored_where_it_is_only_read_through(
     cache: ModelCache,
-    read: JsMemberExpression,
+    read: Node,
     answered: list[_Container],
 ) -> bool:
     """
     Whether *read*, which may answer one of the lists or objects *answered*, initializes a variable
-    nothing else writes and that is only read through
+    declared once, written nowhere else and only read through
     (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`), with no
-    list or object its own reads answer leaving the call either.
+    list or object its own references answer leaving the call either. A second declaration with an
+    initializer writes the variable as well, and no binding records it among its writes.
     """
     declarator = enclosing_operator(read)
     if not isinstance(declarator, JsVariableDeclarator) or strip_parens(declarator.init) is not read:
@@ -325,6 +336,7 @@ def _stored_where_it_is_only_read_through(
     variable = cache.model.binding_of(name)
     return (
         variable is not None
+        and len(variable.declarations) == 1
         and not variable.writes
         and cache.effects.binding_is_immutable_container(variable)
         and _read_values_stay_in_the_call(cache, variable, answered)
@@ -339,13 +351,14 @@ def _closed_over_containers_stay_unchanged(
     Whether every list or object the closure builds stays as it was and inside each call. The IIFE
     builds such a value once, so what one call writes into it, and its identity, reach the next
     call, which the promoted declaration starts from a fresh value instead. The list or object a
-    captured variable holds is only read through: never written into, given to a method that may
-    change it, or handed out
-    (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`). A call
-    on a value it holds is vouched for where every such value is a primitive, which no call can
-    change. A list or object it holds is one the closure built as well, so no read may hand one out
-    (`_read_values_stay_in_the_call`); an object literal setting its prototype is declined, because a
-    read of a key it does not hold may then answer a value the prototype holds.
+    captured variable holds is only read through: never written into or given to a method that may
+    change it
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`), and
+    never handed out, not even to a variable outside the call that is only read through
+    (`_read_values_stay_in_the_call`). A call on a value it holds is vouched for where every such
+    value is a primitive, which no call can change. A list or object it holds is one the closure
+    built as well, so no read may hand one out either; an object literal setting its prototype is
+    declined, because a read of a key it does not hold may then answer a value the prototype holds.
     """
     for statement in closure_decls:
         for declarator in statement.declarations:
@@ -362,9 +375,7 @@ def _closed_over_containers_stay_unchanged(
             inert = None if nested else frozenset()
             if not cache.effects.binding_is_immutable_container(binding, inert_methods=inert):
                 return False
-            if not nested:
-                continue
-            if any(
+            if nested and any(
                 isinstance(container, JsObjectExpression) and object_sets_prototype(container)
                 for container in _containers_within(literal)
             ):

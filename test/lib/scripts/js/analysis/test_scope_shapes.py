@@ -3,12 +3,12 @@ Which scope holds a name, for the three shapes `refinery.lib.scripts.js.analysis
 wrongly: the parameter list of a function that carries an expression, the block a function is
 declared in, and the top level of a classic script, whose `this` is the global object.
 
-The defects themselves were entries of `test.lib.scripts.js.test_unfixed_defects`. What is here is
-the other half of each of them, which a fix is answerable for just as much: the programs the model
-already answers correctly and must go on answering, and the reductions a correct answer costs. A
-scope that is split apart, a value that stops being folded, and a declaration that stops being
-removed each buy correctness with recall, and a cost written down before the change is the only one
-a reader can tell from a regression afterwards.
+The defects themselves were entries of the JavaScript defect ledger. What is here is the other half
+of each of them, which a fix is answerable for just as much: the programs the model already answers
+correctly and must go on answering, and the reductions a correct answer costs. A scope that is split
+apart, a value that stops being folded, and a declaration that stops being removed each buy
+correctness with recall, and a cost written down before the change is the only one a reader can tell
+from a regression afterwards.
 
 The receiver table is the third kind: it is a question about JavaScript rather than about this
 project, asked of a classic script because that is the execution model the question exists in at

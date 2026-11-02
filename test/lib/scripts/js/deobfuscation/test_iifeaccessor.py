@@ -30,6 +30,19 @@ class TestIIFEAccessorPromoter(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._promote(source))
 
+    def test_does_not_promote_when_a_computed_key_of_the_closure_calls_a_function(self):
+        source = inspect.cleandoc(
+            """
+            var get = function() {
+              var data = { [next()]: 1 };
+              return function() {
+                return data.a;
+              };
+            }();
+            """
+        )
+        self.assertEqual(source, self._promote(source))
+
     def test_fold_xor_accessor_pattern_end_to_end(self):
         source = inspect.cleandoc(
             """
@@ -512,9 +525,10 @@ class TestAnAccessorAnIIFEBuildsInABlockIsNotPromoted(TestJsDeobfuscator):
         )
 
 
-#: An accessor whose closure builds a list or an object that a call writes into or hands out, or one
-#: holding a list or an object a read hands out, mapped to what Node prints for the program. The
-#: IIFE builds each of them once, so what one call leaves in it, and its identity, reach the next.
+#: An accessor whose closure builds a list or an object that a call writes into or hands out, also
+#: to a variable outside the call or to a function storing it there, or one holding a list or an
+#: object a read hands out, mapped to what Node prints for the program. The IIFE builds each of them
+#: once, so what one call leaves in it, and its identity, reach the next.
 _AN_ACCESSOR_WHOSE_CLOSED_OVER_VALUE_OUTLIVES_A_CALL: dict[str, str] = {
     'var acc = (function () { var t = [0]; return function (i) { t[0] = t[0] + i; return t[0]; }; })();'
     ' console.log(acc(1), acc(1));': '1 2\n',
@@ -542,6 +556,10 @@ _AN_ACCESSOR_WHOSE_CLOSED_OVER_VALUE_OUTLIVES_A_CALL: dict[str, str] = {
     ' console.log(X(0), X(0));': '2 3\n',
     "var X = function () { var cfg = { list: ['a', 'b'] }; return function () { return cfg.list; }; }();"
     " X().push('c'); console.log(X().length);": '3\n',
+    'var keep; var X = function () { var t = [1]; return function () { keep = t; return 0; }; }();'
+    ' X(); var k = keep; X(); console.log(k === keep);': 'true\n',
+    'var keep; function f(a) { keep = a; } var X = function () { var t = [1]; return function () { f(t); return 0; }; }();'
+    ' X(); var k = keep; X(); console.log(k === keep);': 'true\n',
 }
 
 
@@ -594,6 +612,18 @@ _AN_ACCESSOR_THAT_ONLY_READS_WHAT_IT_CLOSES_OVER: dict[str, tuple[str, str]] = {
             console.log(X(0, 1));
             """
         ), '2\n'),
+    'var X = function () { var t = [[1, 2], [3]]; return function (i) { var u = t; return u[i][0]; }; }();'
+    ' console.log(X(1));': (
+        inspect.cleandoc(
+            """
+            function X(i) {
+              var t = [[1, 2], [3]];
+              var u = t;
+              return u[i][0];
+            }
+            console.log(X(1));
+            """
+        ), '3\n'),
 }
 
 

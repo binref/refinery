@@ -1157,8 +1157,8 @@ class TestAWalkAWrittenChainStillDecidesIsStillWalked(TestBase):
     the loop standing where the names could have been folded in its place.
 
     The refusal is correct and the cost is recall. Closing it needs the per-name question: whether
-    *this* key is enumerable on the chain, and whether the receiver's own slot shadows it. `EffectModel.chain_roots_unwritten` is
-    the whole-chain question the walk asks today, and
+    *this* key is enumerable on the chain, and whether the receiver's own slot shadows it.
+    `EffectModel.chain_roots_unwritten` is the whole-chain question the walk asks today, and
     `refinery.lib.scripts.js.deobfuscation.interpreter.JsInterpreter._exec_for_in` says as much.
     """
 
