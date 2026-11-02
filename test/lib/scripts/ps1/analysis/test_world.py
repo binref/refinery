@@ -961,3 +961,32 @@ class TestPs1ABindingOfOneNameIsTheOpenerTheFloodMayLeaveOut(TestBase):
         ):
             with self.subTest(source):
                 self.assertIsNone(self._bound(source))
+
+
+class TestPs1AMemberNameNobodyCanReadOnATypeLiteralIsOneOfItsStaticMembers(Ps1TypeWorldTest):
+    """
+    A member reached on a type literal with `::` is a static member of that type, and no collected
+    type carries a static, writable property that hooks the command lookup; a type that is not
+    collected may. Every other receiver may reach anything.
+    """
+
+    def test_a_computed_static_call_on_a_collected_type_leaves_the_world_closed(self):
+        for call in ("[Convert]::('FromBase64String')($p)", '[Convert]::($n)($p)'):
+            with self.subTest(call=call):
+                self.assertTrue(self._closed(call))
+
+    def test_a_computed_call_on_anything_else_opens_the_world(self):
+        for call in (
+            '[Zq.Nope.Type]::($m)($b)',
+            '$x.($m)($b)',
+            '$ExecutionContext.InvokeCommand.($m)($b)',
+            '([Convert])::($m)($b)',
+        ):
+            with self.subTest(call=call):
+                self.assertFalse(self._closed(call))
+
+    def test_a_computed_static_call_on_the_block_type_may_make_a_block(self):
+        for call in ("[scriptblock]::($m)('f1')", "[scriptblock]::('Create')('f1')"):
+            with self.subTest(call=call):
+                self.assertFalse(self._closed(call))
+

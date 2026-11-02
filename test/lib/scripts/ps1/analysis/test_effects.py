@@ -12,7 +12,6 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     StatementEffect,
     _reflection_read_is_pure,
     body_is_inert,
-    expression_cannot_fault,
     is_fault_free,
     is_side_effect_free,
     output_path,
@@ -21,6 +20,7 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     statement_effect,
     unconsumed_statement,
 )
+from refinery.lib.scripts.ps1.analysis.raising import expression_cannot_fault
 from refinery.lib.scripts.ps1.analysis.values import certainly_throws
 from refinery.lib.scripts.ps1.analysis.faults import build_fault_reach
 from refinery.lib.scripts.ps1.analysis.world import Ps1TypeWorld, measure_world

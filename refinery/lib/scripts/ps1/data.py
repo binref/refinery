@@ -886,6 +886,8 @@ def _canonical_type_name(parsed: Ps1TypeName) -> Ps1TypeName | None:
                 return None
             arguments.append(resolved)
         base, _, arity = candidate.partition('`')
+        if not arity.isdigit():
+            base, arity = candidate, ''
         return Ps1TypeName(
             name=base,
             arity=int(arity) if arity else 0,
@@ -1807,17 +1809,20 @@ class CallFact(typing.NamedTuple):
     What Windows PowerShell 5.1 was measured to do with one call. `owner` is the type whose method
     is called, `None` for a command, and `name` is the lowercased member or command name.
 
-    `arguments` names, one position at a time, the types of value the fact covers there; `None`
-    covers every argument list. A call whose arguments it covers hands back a value of `returns`,
-    never `$null`, or nothing where `returns` is `System.Void`; and where `fails` is `False`, it
-    cannot fail.
+    `arguments` names, one position at a time, the types of value the fact covers there, or, for a
+    command, the parameter a named argument binds, whose value the next item covers; `None` covers
+    every argument list. A call whose arguments it covers hands back a value of `returns`, never
+    `$null`, or nothing where `returns` is `System.Void`, and the fact says nothing about what it
+    hands back where `returns` is `None`; where `fails` is `False`, it cannot fail. `input` says
+    the fact covers the command handed pipeline input as well.
     """
     kind: CallKind
     owner: Ps1TypeName | None
     name: str
-    arguments: tuple[frozenset[Ps1TypeName], ...] | None
+    arguments: tuple[frozenset[Ps1TypeName] | str, ...] | None
     fails: bool
-    returns: Ps1TypeName
+    returns: Ps1TypeName | None
+    input: bool = False
 
 
 def _method_fact(
@@ -1879,30 +1884,39 @@ def _method_fact(
 
 def _command_fact(
     name: str,
-    arguments: tuple[frozenset[str], ...],
+    arguments: tuple[frozenset[str] | str, ...],
     fails: bool,
-    returns: str,
+    returns: str | None,
+    input: bool = False,
 ) -> CallFact:
     """
     A fact about a command, floored against the collected metadata: the command is collected, and
     what it is said to hand back is among the output types it declares. An entry that fails a floor
     fails the load.
     """
-    declared = command_output_types(name)
-    returned = required_type_key(returns)
-    if declared is None or returned.definition.lower() not in declared:
-        raise ValueError(
-            F'the call fact table says that {name} hands back {returned}, which is not among the '
-            F'output types the collected metadata declares for it; the data and the table are out '
-            F'of step.'
-        )
+    if command(name) is None:
+        raise ValueError(F'the call fact table names {name}, which the collected metadata lacks')
+    returned = None
+    if returns is not None:
+        declared = command_output_types(name)
+        returned = required_type_key(returns)
+        if returns != 'System.Void' and (declared is None or returned.definition.lower() not in declared):
+            raise ValueError(
+                F'the call fact table says that {name} hands back {returned}, which is not among the '
+                F'output types the collected metadata declares for it; the data and the table are out '
+                F'of step.'
+            )
     return CallFact(
         CallKind.COMMAND,
         None,
         name.lower(),
-        tuple(required_type_keys(set(types)) for types in arguments),
+        tuple(
+            types.lower() if isinstance(types, str) else required_type_keys(set(types))
+            for types in arguments
+        ),
         fails,
         returned,
+        input,
     )
 
 
@@ -1939,6 +1953,11 @@ CALL_FACTS = _call_fact_table((
     _method_fact(CallKind.INSTANCE, 'int', 'gethashcode', (), fails=False),
     _method_fact(CallKind.INSTANCE, 'text.stringbuilder', 'tostring', None, fails=True),
     _command_fact('get-random', (), fails=False, returns='int'),
+    _command_fact('out-null', (), fails=False, returns='System.Void', input=True),
+    _command_fact('get-process', (), fails=False, returns=None),
+    _command_fact('select-object', ('first', frozenset({'int'})), fails=False, returns=None, input=True),
+    _command_fact('write-host', (), fails=False, returns='System.Void'),
+    _command_fact('write-host', (frozenset({'string', 'int'}),), fails=False, returns='System.Void'),
 ))
 
 

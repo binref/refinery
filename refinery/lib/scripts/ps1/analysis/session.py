@@ -64,6 +64,15 @@ from refinery.lib.scripts.ps1.model import (
 _ERROR_ACTION_NAME = 'erroraction'
 _ERROR_ACTION = frozenset((_ERROR_ACTION_NAME, *COMMON_PARAMETERS[_ERROR_ACTION_NAME]))
 
+#: The names the `-InformationAction` parameter answers to, read as `_ERROR_ACTION` is: bound to
+#: `Stop` it makes `Write-Host` in the command it is bound on fail after writing, as a `Stop` stored
+#: into `$InformationPreference` does.
+_INFORMATION_ACTION_NAME = 'informationaction'
+_INFORMATION_ACTION = frozenset((
+    _INFORMATION_ACTION_NAME,
+    *COMMON_PARAMETERS[_INFORMATION_ACTION_NAME],
+))
+
 #: Every name a *common* parameter answers to, so that an abbreviation of one can be told from an
 #: abbreviation that reaches several. A command carrying `-ErrorAction` carries the whole set of
 #: them — that is what makes a command advanced — so a prefix reaching another member of this set
@@ -108,23 +117,25 @@ _DEFAULT_PARAMETER_VALUES = 'psdefaultparametervalues'
 _HASHTABLE_MUTATORS = frozenset({'add', 'set_item'})
 
 
-def binds_the_error_action(written: str) -> bool:
+def _binds_only(written: str, surfaces: frozenset[str]) -> bool:
     """
-    Whether the parameter name *written* at a call site binds `-ErrorAction` and nothing else.
+    Whether the parameter name *written* at a call site binds the common parameter whose names are
+    *surfaces* and nothing else.
 
     5.1 binds a parameter by any prefix of its name that no other parameter of the command answers
     to, which `refinery.lib.scripts.ps1.ast.binds_parameter` reads. What it cannot read on its own
-    is the *ambiguity*, and here that is decidable: every command carrying `-ErrorAction` carries
-    every common parameter, so a prefix reaching a second common name reaches it on exactly the
-    commands this asks about. `-e`, `-er` and `-erro` all reach `-ErrorVariable` as well and are
-    measured not to stop; `-errora` reaches this one alone and is measured to stop.
+    is the *ambiguity*, and here that is decidable: every command carrying a common parameter
+    carries every one of them, so a prefix reaching a second common name reaches it on exactly the
+    commands this asks about. `-e`, `-er` and `-erro` all reach `-ErrorVariable` as well as
+    `-ErrorAction` and are measured not to stop; `-errora` reaches `-ErrorAction` alone and is
+    measured to stop.
 
     Refusing an ambiguous prefix is also what keeps a native command out: `powershell.exe -e <b64>`
     hands `-e` to a program rather than to a parameter binder, and reading it as an error action
     pins every handler in the script around the commonest shape in this project's corpus.
     """
     reached = {surface for surface in _COMMON_SURFACES if binds_parameter(written, surface)}
-    return bool(reached) and reached <= _ERROR_ACTION
+    return bool(reached) and reached <= surfaces
 
 
 def selects_stop(value: Node | None) -> bool:
@@ -188,13 +199,15 @@ def selects_silence(value: Node | None) -> bool:
     return _selects_a_member(value, _SILENT_MEMBERS)
 
 
-def _binds_an_error_action(
+def _binds_an_action(
     command: Ps1CommandInvocation,
     selects: typing.Callable[[Node | None], bool],
+    surfaces: frozenset[str] = _ERROR_ACTION,
 ) -> bool:
     """
-    Whether *command* binds `-ErrorAction` to a value *selects* answers for, or carries a splat,
-    whose table this cannot see into. Read as `stops_on_error` describes.
+    Whether *command* binds the action parameter whose names are *surfaces*, `-ErrorAction` unless
+    given, to a value *selects* answers for, or carries a splat, whose table this cannot see into.
+    Read as `stops_on_error` describes.
     """
     arguments = [
         argument for argument in command.arguments
@@ -204,7 +217,7 @@ def _binds_an_error_action(
         value = argument.value
         if isinstance(value, Ps1Variable) and value.splatted:
             return True
-        if not binds_the_error_action(argument.name):
+        if not _binds_only(argument.name, surfaces):
             continue
         if argument.kind is not Ps1CommandArgumentKind.NAMED:
             following = arguments[index + 1] if index + 1 < len(arguments) else None
@@ -349,7 +362,7 @@ def stops_on_error(command: Ps1CommandInvocation) -> bool:
     command carrying a splat is read as carrying the parameter for the same reason: the names it
     binds are in a table this cannot see into.
     """
-    return _binds_an_error_action(command, selects_stop)
+    return _binds_an_action(command, selects_stop)
 
 
 def writes_stop_to_the_preference(node: Node) -> bool:
@@ -566,6 +579,7 @@ class Ps1Session(typing.NamedTuple):
     silenced_by_a_call: bool
     defaults: bool
     seeded: bool
+    informs: bool = False
 
 
 def _keeps_reporting(value: Node) -> bool:
@@ -573,16 +587,20 @@ def _keeps_reporting(value: Node) -> bool:
 
 
 def _session(root: Node) -> Ps1Session:
-    silenced = silenced_by_a_call = defaults = seeded = False
+    silenced = silenced_by_a_call = defaults = seeded = informs = False
     for node in root.walk():
-        if not (silenced and defaults):
+        if not (silenced and defaults and informs):
             names = _names_of(node)
             if not silenced:
                 silenced = _may_write(node, names, _ERROR_ACTION_PREFERENCE, _keeps_reporting)
             if not defaults:
                 defaults = _mentions(node, names, _DEFAULT_PARAMETER_VALUES)
+            if not informs:
+                informs = _mentions(node, names, 'informationpreference')
         if not silenced_by_a_call and isinstance(node, Ps1CommandInvocation):
-            silenced_by_a_call = _binds_an_error_action(node, selects_silence)
+            silenced_by_a_call = _binds_an_action(node, selects_silence)
+        if not informs and isinstance(node, Ps1CommandInvocation):
+            informs = _binds_an_action(node, selects_stop, _INFORMATION_ACTION)
         if not seeded:
             seeded = _may_seed(node)
     return Ps1Session(
@@ -590,6 +608,7 @@ def _session(root: Node) -> Ps1Session:
         silenced_by_a_call or defaults,
         defaults,
         seeded or defaults,
+        informs or defaults,
     )
 
 

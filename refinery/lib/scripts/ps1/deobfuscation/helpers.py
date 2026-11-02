@@ -15,7 +15,12 @@ from refinery.lib.scripts.ps1.analysis.values import (
     integer_of,
     make_string_literal,
 )
-from refinery.lib.scripts.ps1.ast import get_member_name, resolve_command_name, string_value
+from refinery.lib.scripts.ps1.ast import (
+    get_command_name,
+    get_member_name,
+    resolve_command_name,
+    string_value,
+)
 from refinery.lib.scripts.ps1.data import FOREACH_ALIASES, FORMAT_PATTERN, is_type
 from refinery.lib.scripts.ps1.deobfuscation.substitution import substitute_field
 from refinery.lib.scripts.ps1.model import (
@@ -157,9 +162,8 @@ def extract_foreach_scriptblock(
     """
     if not isinstance(expr, Ps1CommandInvocation):
         return None
-    if not isinstance(expr.name, Ps1StringLiteral):
-        return None
-    if expr.name.value.lower() not in FOREACH_ALIASES:
+    name = get_command_name(expr)
+    if name is None or name.lower() not in FOREACH_ALIASES:
         return None
     if resolve_command_name(expr) in shadowed:
         return None

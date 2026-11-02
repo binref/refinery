@@ -9,8 +9,6 @@ only declares the PowerShell model slot and its `build_*` wiring.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
@@ -19,6 +17,7 @@ from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockModel, build_block_
 from refinery.lib.scripts.ps1.analysis.callgraph import (
     Ps1CallGraph,
     build_call_graph,
+    calls_after_a_definition,
     names_used_before_defined,
 )
 from refinery.lib.scripts.ps1.analysis.cfg import Ps1ControlFlowModel, build_control_flow_model
@@ -36,8 +35,10 @@ from refinery.lib.scripts.ps1.analysis.errorstate import (
 )
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach, build_fault_reach
 from refinery.lib.scripts.ps1.analysis.handoff import Ps1CallTrust
-from refinery.lib.scripts.ps1.analysis.model import Ps1SemanticModel, build_semantic_model
+from refinery.lib.scripts.ps1.analysis.model import Ps1NameSet, Ps1SemanticModel, build_semantic_model
 from refinery.lib.scripts.ps1.analysis.objects import Ps1ObjectFlow, build_object_flow
+from refinery.lib.scripts.ps1.analysis.raising import Ps1RaiseModel
+from refinery.lib.scripts.ps1.analysis.session import session_of
 from refinery.lib.scripts.ps1.analysis.world import (
     Ps1TypeWorld,
     Ps1WorldMeasurement,
@@ -46,19 +47,6 @@ from refinery.lib.scripts.ps1.analysis.world import (
 )
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach, build_world_reach
 from refinery.lib.scripts.ps1.model import Ps1Script
-
-
-@dataclass(frozen=True)
-class Ps1UnseenReads:
-    """
-    The names a script may read where no occurrence of them stands: every name, or the ones in
-    `names`. Ask it with `in`.
-    """
-    every_name: bool
-    names: frozenset[str]
-
-    def __contains__(self, key: str) -> bool:
-        return self.every_name or key in self.names
 
 
 class Ps1ModelCache(ModelCacheBase):
@@ -92,7 +80,12 @@ class Ps1ModelCache(ModelCacheBase):
         '_error_state',
         '_handlers',
         '_used_before_defined',
+        '_calls_after_a_definition',
         '_names_may_be_read_unseen',
+        '_names_may_be_removed',
+        '_names_may_be_constrained',
+        '_raises_alone',
+        '_raises_under_the_world',
     )
 
     root: Ps1Script
@@ -112,7 +105,12 @@ class Ps1ModelCache(ModelCacheBase):
     _error_state: Ps1ErrorStateReach | None
     _handlers: Ps1HandlerVerdicts | None
     _used_before_defined: frozenset[str] | None
-    _names_may_be_read_unseen: Ps1UnseenReads | None
+    _calls_after_a_definition: frozenset[int] | None
+    _names_may_be_read_unseen: Ps1NameSet | None
+    _names_may_be_removed: Ps1NameSet | None
+    _names_may_be_constrained: Ps1NameSet | None
+    _raises_alone: Ps1RaiseModel | None
+    _raises_under_the_world: Ps1RaiseModel | None
 
     @property
     def model(self) -> Ps1SemanticModel:
@@ -264,11 +262,47 @@ class Ps1ModelCache(ModelCacheBase):
     @property
     def handlers(self) -> Ps1HandlerVerdicts:
         """
-        The semantic half of whether deleting a handler changes what runs — whether what it guards
-        may raise, and whether a resuming `trap`'s skip is observable — over `faults`, reading
-        `world_reach` only once a verdict needs it.
+        The semantic half of whether deleting a handler changes what runs — what the points it is
+        offered raise, and whether what one run executes and the other skips is observable — over
+        `faults`, reading the raise model of a world reading, and so `world_reach`, only once a
+        verdict needs it.
         """
-        return self._lazy('_handlers', lambda: Ps1HandlerVerdicts(self.faults, lambda: self.world_reach, self.root))
+        return self._lazy('_handlers', lambda: Ps1HandlerVerdicts(self.faults, self.raises, self.root))
+
+    def raises(self, under_the_world: bool) -> Ps1RaiseModel:
+        """
+        `raises_under_the_world` when *under_the_world*, and `raises_alone` otherwise.
+        """
+        return self.raises_under_the_world if under_the_world else self.raises_alone
+
+    @property
+    def raises_under_the_world(self) -> Ps1RaiseModel:
+        """
+        What each point of this root may raise, read under `world_reach`: the one answer every
+        reader of a point that holds a world asks. Every model it reads is handed to it here, built
+        for the tree version it is built for.
+        """
+        return self._lazy('_raises_under_the_world', lambda: self._raise_model(self.world_reach))
+
+    @property
+    def raises_alone(self) -> Ps1RaiseModel:
+        """
+        What each point of this root may raise, read without a world, for a reader that holds none.
+        """
+        return self._lazy('_raises_alone', lambda: self._raise_model(None))
+
+    def _raise_model(self, world: Ps1WorldReach | None) -> Ps1RaiseModel:
+        return Ps1RaiseModel(
+            self.faults,
+            world,
+            lambda: self.call_graph,
+            lambda: self.commands,
+            lambda: self.calls_after_a_definition,
+            lambda: self.names_may_be_removed,
+            lambda: self.names_may_be_constrained,
+            self.control_flow,
+            self.root,
+        )
 
     @property
     def error_state(self) -> Ps1ErrorStateReach:
@@ -290,13 +324,18 @@ class Ps1ModelCache(ModelCacheBase):
         and `cycles`. The one place that question is answered: a pass that decides what a name holds
         at a point asks here rather than walking the tree for an assignment that looks near enough.
         """
-        return self._lazy('_variable_flow', lambda: build_variable_flow(
+        return self._lazy('_variable_flow', self._build_variable_flow)
+
+    def _build_variable_flow(self) -> Ps1VariableFlow:
+        raises = self.raises(True)
+        return build_variable_flow(
             self.model,
             self.control_flow,
             self.dominance,
             self.blocks,
             self.cycles,
-        ))
+            lambda element: bool(raises.kinds(element)),
+        )
 
     @property
     def object_flow(self) -> Ps1ObjectFlow:
@@ -326,7 +365,18 @@ class Ps1ModelCache(ModelCacheBase):
             self.call_graph, self.dominance))
 
     @property
-    def names_may_be_read_unseen(self) -> Ps1UnseenReads:
+    def calls_after_a_definition(self) -> frozenset[int]:
+        """
+        The identities of the calls a definition of the name they call certainly ran before, over
+        `call_graph` and `dominance`; the strict sibling of `used_before_defined`, read by the raise
+        model to decide where a call raises only what the body it runs hands back. See
+        `refinery.lib.scripts.ps1.analysis.callgraph.calls_after_a_definition`.
+        """
+        return self._lazy('_calls_after_a_definition', lambda: calls_after_a_definition(
+            self.call_graph, self.dominance))
+
+    @property
+    def names_may_be_read_unseen(self) -> Ps1NameSet:
         """
         The names this script may read where no occurrence of them stands: the one question a pass
         asks before it deletes a store for want of a reader.
@@ -339,11 +389,38 @@ class Ps1ModelCache(ModelCacheBase):
         variable handed out may be read through its `Value` from wherever it has gone; see
         `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel.variables_handed_out`.
         """
-        return self._lazy('_names_may_be_read_unseen', lambda: Ps1UnseenReads(
+        return self._lazy('_names_may_be_read_unseen', lambda: Ps1NameSet(
             runs_code_supplied_as_data(self.world_measurement)
             or self.model.reads_unreadable_names,
             self.model.variables_handed_out,
         ))
+
+    @property
+    def names_may_be_removed(self) -> Ps1NameSet:
+        """
+        The names a statement of this script may remove, so that no store to one is certainly in
+        place when it is read: those `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel`
+        reads, and every name where the session may bind a default parameter value, which may add a
+        removal to a command that names no variable.
+        """
+        return self._lazy('_names_may_be_removed', lambda: self._doubted_where_defaults_bind(
+            self.model.variables_removed))
+
+    @property
+    def names_may_be_constrained(self) -> Ps1NameSet:
+        """
+        The names a statement of this script may constrain, so that a later plain store to one may
+        fail: those `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel` reads, and every name
+        where the session may bind a default parameter value, as
+        `$PSDefaultParameterValues['New-Variable:Option'] = 'ReadOnly'` does for a later `$x = 2`.
+        """
+        return self._lazy('_names_may_be_constrained', lambda: self._doubted_where_defaults_bind(
+            self.model.variables_constrained))
+
+    def _doubted_where_defaults_bind(self, names: Ps1NameSet) -> Ps1NameSet:
+        if session_of(self.root).defaults:
+            return Ps1NameSet(True, names.names)
+        return names
 
 
 def model_cache(transformer: Transformer, root: Node) -> Ps1ModelCache:

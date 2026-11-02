@@ -949,6 +949,29 @@ BEHAVIOURS: tuple[str, ...] = (
     "$s = $env:COMPUTERNAME; trap { $null = [int]$s; continue }; Invoke-Nonexistent; Write-Host 'rest'",
     "$s = $env:COMPUTERNAME; $t = $env:USERNAME; try { trap { $null = [int]$s; continue }; if ([int]$t) { Write-Host 'x' }; Write-Host 'rest' } catch { Write-Host 'caught' }",
     "trap { Write-Host 'T'; $null = [int]'a'; continue }; Get-Item -BogusParam foo; Write-Host 'after'",
+    #: What the one answer to whether a line can fail rests on: the calls the facts cover beyond
+    #: what their witnesses measure, stores that may or may not fail, a read strict mode fails
+    #: after a removal, calls standing before and after their definition, a typed `trap` that
+    #: declines under `SilentlyContinue`, and lines that may or may not fail under a `trap`.
+    'foreach ($n in 0, 1, 2147483647) { $t = 1, 2, 3 | Select-Object -First $n; Write-Output (,$t) }',
+    "try { $null = 1, 2 | Select-Object -First -1; Write-Output 'ok' } catch { Write-Output 'caught' }",
+    "Write-Host 'a'; Write-Host 1; Write-Host; Write-Output 'after'",
+    "$InformationPreference = 'Stop'; try { Write-Host 'a'; Write-Output 'ok' } catch { Write-Output 'caught' }",
+    "[int]$v = 1; try { $v = 'abc'; Write-Output 'stored' } catch { Write-Output 'caught' }; Write-Output $v",
+    "$o = @{ Name = 'v'; Value = 1; Option = 'ReadOnly' }; New-Variable @o; try { $v = 5; Write-Output 'stored' } catch { Write-Output 'caught' }",
+    "try { $VerbosePreference = 'bogus'; Write-Output 'stored' } catch { Write-Output 'caught' }",
+    "try { $MaximumHistoryCount = -5; Write-Output 'stored' } catch { Write-Output 'caught' }",
+    "[int]$v = 1; . { $v = 'abc' }; Write-Output $v",
+    "Set-StrictMode -Version 1; $v = 1; Remove-Variable v; try { $null = $v; Write-Output 'read' } catch { Write-Output 'caught' }",
+    "trap { Write-Output 'T'; continue }; f1; function f1 { }; Write-Output 'after'",
+    "function f2 { trap { Write-Output 'T'; continue }; f1 }; f2; function f1 { }; f2; Write-Output 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'; if ($true) { trap [System.IO.IOException] { continue }; throw 'x' }; Write-Output 'after'",
+    "[int]$v1 = 1; if ($args.Count -ge 0) { trap { Write-Output 'T'; continue }; $v1 = 'abc' }; Write-Output 'after'",
+    "trap { continue }; if ($True) { $null = [int]$env:COMPUTERNAME; Write-Host 'tail' }; Write-Host 'next'",
+    "trap { continue }; for ($i = 0; $True; $i++) { $null = [int]$env:COMPUTERNAME; Write-Host 'tail'; break }; Write-Host 'next'",
+    "trap { continue }; switch (1) { 1 { $null = [int]$env:COMPUTERNAME; Write-Host 'tail' } }; Write-Host 'next'",
+    "try { $x = 1; $x = [int]$env:COMPUTERNAME } catch { Write-Host 'caught' }; Write-Host $x",
+    "$p = @('a'); function f1 { $null = [int]$p[0]; Write-Host 'm1' }; trap { continue }; f1; Write-Host 'm2'",
 )
 
 
@@ -1855,6 +1878,10 @@ CALLS: tuple[str, ...] = (
     '$types = foreach ($i in 1..2000) { (Get-Random).GetType().FullName }; Write-Output ($types | Sort-Object -Unique)',
     '$t = (Get-Random).GetHashCode(); Write-Output $t.GetType().FullName',
     "$PSDefaultParameterValues = @{ 'Get-Random:Maximum' = 0 }; $t = Get-Random; Write-Output ($null -eq $t)",
+    "'a', 1, $null, @(1, 2), (New-Object Object) | Out-Null; Write-Output 'after'",
+    "try { $null = Get-Process; Write-Output 'ok' } catch { Write-Output 'caught' }",
+    'foreach ($n in 0, 1, 2147483647) { Write-Output $n.GetType().FullName; $t = 1, 2, 3 | Select-Object -First $n; Write-Output (,$t) }',
+    "foreach ($a in 'a', 1) { Write-Output $a.GetType().FullName; Write-Host $a }; Write-Host; Write-Output 'after'",
 )
 
 #: The anchors of `test.lib.scripts.ps1.dispatch.ANCHORS` as 5.1 runs them, one row each. What each

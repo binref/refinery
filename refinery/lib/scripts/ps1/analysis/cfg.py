@@ -49,6 +49,7 @@ from refinery.lib.scripts.ps1.analysis.handlers import (
     Ps1TrapDisposition,
     Ps1TrapSelection,
     declared_traps,
+    handler_acts,
     swallows_every_error,
 )
 from refinery.lib.scripts.ps1.analysis.session import session_of
@@ -67,6 +68,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExitStatement,
     Ps1ForEachLoop,
     Ps1ForLoop,
+    Ps1FunctionDefinition,
     Ps1IfStatement,
     Ps1Jump,
     Ps1PropertyMember,
@@ -131,8 +133,13 @@ class Ps1TrapSet(Ps1TrapSelection):
     """
     The `trap` statements one block declares, as the builder wired them: the selection 5.1 makes
     among them, each member's entry and disposition, and — where the set resumes the block — the
-    slot it resumes at after each statement of the block. `outward` is where an error goes that the
-    set does not take, and where the errors it takes would go if none of it were written.
+    slot it resumes at after each statement of the block. `completions` holds, for each statement
+    of the block, the nodes from which normal control falls through past it, which the graph does
+    not record for a block a set resumes: there the next statement is also reached by resumption,
+    and a reader of `refinery.lib.scripts.analysis.cfg.ControlFlowGraph.completion_of` would read a
+    statement that never completes as one the rest of the block cannot follow. `outward` is where an
+    error goes that the set does not take, and where the errors it takes would go if none of it
+    were written.
     """
 
     def __init__(
@@ -149,6 +156,7 @@ class Ps1TrapSet(Ps1TrapSelection):
         self.chain = tuple(entries[id(trap)] for trap in self.selectable)
         self.dispositions: dict[int, Ps1TrapDisposition] = {}
         self.slots: dict[int, CfgNode] = {}
+        self.completions: dict[int, list[CfgNode]] = {}
         self.outward: CfgNode | None = None
 
     def entry(self, trap: Ps1TrapStatement) -> CfgNode:
@@ -209,6 +217,56 @@ class _TrapBody:
     rethrows: bool = False
 
 
+def _runs_per_input(owner: Node) -> Sequence[Node] | None:
+    """
+    The statements *owner* runs once per object the pipeline hands it: its `process` block, or the
+    body of a `filter`; `None` where it has none.
+    """
+    if not isinstance(owner, Ps1Code):
+        return None
+    if owner.process_block is not None:
+        return owner.process_block.body
+    definition = owner.parent
+    if isinstance(definition, Ps1FunctionDefinition) and definition.is_filter and definition.body is owner:
+        return owner.body
+    return None
+
+
+class _TrapHolders:
+    """
+    Which nodes hold a `trap` outside a script block, answered for the statements of one graph. A
+    subtree is scanned once: each `trap` it holds marks every node from itself up to the nearest
+    script block, so a statement asked about after its subtree was scanned as part of an outer one
+    is answered by the marks alone, and asking of every statement of a nest of trapped blocks costs
+    the size of the nest once.
+    """
+
+    def __init__(self):
+        self._scanned: set[int] = set()
+        self._holders: set[int] = set()
+
+    def holds_a_trap(self, statement: Node) -> bool:
+        scanned = self._scanned
+        holders = self._holders
+        stack = [statement]
+        while stack:
+            node = stack.pop()
+            if id(node) in scanned:
+                continue
+            scanned.add(id(node))
+            if isinstance(node, Ps1TrapStatement):
+                cursor: Node | None = node
+                while (
+                    cursor is not None
+                    and not isinstance(cursor, Ps1ScriptBlock)
+                    and id(cursor) not in holders
+                ):
+                    holders.add(id(cursor))
+                    cursor = cursor.parent
+            stack.extend(child for child in node.children() if not isinstance(child, Ps1ScriptBlock))
+        return id(statement) in holders
+
+
 def _descended_bodies(statement: Node) -> list[list[Node]]:
     """
     The statement lists of the `STATEMENT_LIST_EXPRESSIONS` written in *statement*'s expression tree,
@@ -255,6 +313,7 @@ class _Builder(CfgBuilder):
         )
         self._open_sets: list[Ps1TrapSet] = []
         self._frames: list[_ReportFrame] = []
+        self._trap_holders = _TrapHolders()
 
     def disposition_of(self, trap: Ps1TrapStatement) -> Ps1TrapDisposition:
         """
@@ -455,7 +514,11 @@ class _Builder(CfgBuilder):
         else:
             self.mark_hub_bound(handling)
             self._open_sets.append(trap_set)
-            with self.resumption(resumes):
+            inert = not any(handler_acts(trap) for trap in trap_set.selectable) and not any(
+                self._trap_holders.holds_a_trap(statement)
+                for statement in statements if not isinstance(statement, Ps1TrapStatement)
+            )
+            with self.resumption([] if inert else resumes):
                 exits = self._resumable_sequence(statements, frontier)
             self._open_sets.pop()
         self._handlers.pop()
@@ -495,6 +558,7 @@ class _Builder(CfgBuilder):
         trap_set = self._open_sets[-1]
         for statement in statements:
             built = self.member(statement, frontier)
+            trap_set.completions[id(statement)] = list(built)
             slot = self._resumptions[-1].slot
             if slot is not None:
                 trap_set.slots[id(statement)] = slot
@@ -523,6 +587,27 @@ class _Builder(CfgBuilder):
             key=lambda block: block is not owner.dynamicparam_block,
         )
         return [block.body for block in blocks] + [owner.body]
+
+    def build(self) -> ControlFlowGraph:
+        """
+        The blocks of the owner in the order they run, where the one that runs once per object the
+        pipeline hands the owner, a `process` block or the body of a `filter`, may run any number of
+        times, none included: an empty pipeline runs it not at all, so a store it makes is not
+        certainly made by the time `end` runs.
+        """
+        owner = self.cfg.owner
+        repeated = _runs_per_input(owner)
+        frontier = [self.cfg.entry]
+        for statements in self.body_blocks(owner):
+            if repeated is not None and statements is repeated:
+                head = self.synthetic_node()
+                self.link(frontier, head)
+                self.link(self.block(statements, [head]), head)
+                frontier = [head]
+            else:
+                frontier = self.block(statements, frontier)
+        self.link(frontier, self.cfg.exit)
+        return self.cfg
 
     def statement(self, statement: Node, frontier: list[CfgNode]) -> list[CfgNode]:
         if isinstance(statement, Block):

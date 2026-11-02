@@ -28,6 +28,7 @@ from refinery.lib.scripts.ps1.analysis.values import (
 )
 from refinery.lib.scripts.ps1.ast import (
     get_body,
+    get_command_name,
     is_builtin_variable,
     unwrap_parens,
 )
@@ -139,9 +140,9 @@ def _is_injected_noise_bareword(expr: Expression, cache: Ps1ModelCache) -> bool:
     """
     if not isinstance(expr, Ps1CommandInvocation):
         return False
-    if not isinstance(expr.name, Ps1StringLiteral):
+    name = get_command_name(expr)
+    if name is None:
         return False
-    name = expr.name.value
     name_lower = name.lower()
     if not _carries_assignment_marker(expr, name):
         return False

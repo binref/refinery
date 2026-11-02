@@ -10,7 +10,8 @@ from refinery.lib.scripts import Node, Statement, set_body, set_child
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import Ps1ControlFlowModel, build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts
-from refinery.lib.scripts.ps1.analysis.dispatch import Ps1ErrorKind
+from refinery.lib.scripts.analysis.cfg import distinct
+from refinery.lib.scripts.ps1.analysis.dispatch import EVERY_KIND, Ps1ErrorKind
 from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1FaultReach,
     RaiseVerdicts,
@@ -18,17 +19,18 @@ from refinery.lib.scripts.ps1.analysis.faults import (
     ends_the_script,
 )
 from refinery.lib.scripts.ps1.analysis.handlers import handler_acts
-from refinery.lib.scripts.ps1.analysis.world import measure_world
-from refinery.lib.scripts.ps1.analysis.worldflow import build_world_reach
+from refinery.lib.scripts.ps1.analysis.raising import Ps1RaiseModel
 from refinery.lib.scripts.ps1.ast import get_body, resolve_command_name
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
     Ps1AssignmentExpression,
     Ps1CastExpression,
+    Ps1CatchClause,
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
     Ps1IfStatement,
     Ps1Script,
+    Ps1ScriptBlock,
     Ps1SubExpression,
     Ps1TrapStatement,
 )
@@ -58,7 +60,19 @@ def _offered(reach: Ps1FaultReach, node: Node) -> tuple[Node, ...] | None:
     if found is None:
         return None
     graph, start, _ = found
-    return reach.paths_of(graph).handlers_from(start)
+    handlers: list[Node] = []
+    seen = {start}
+    stack = [start]
+    while stack:
+        current = stack.pop()
+        for target in distinct(t for t in current.successors if graph.is_exceptional(current, t)):
+            if target in seen:
+                continue
+            seen.add(target)
+            stack.append(target)
+            if isinstance(target.element, (Ps1CatchClause, Ps1TrapStatement)):
+                handlers.append(target.element)
+    return tuple(handlers)
 
 
 def _offered_where_placed(reach: Ps1FaultReach, node: Node) -> tuple[Node, ...]:
@@ -73,42 +87,62 @@ def _offered_where_placed(reach: Ps1FaultReach, node: Node) -> tuple[Node, ...]:
 
 def _leaves(reach: Ps1FaultReach, node: Node) -> bool:
     """
-    Whether the error paths let an error raised at *node* past every handler of its body.
+    Whether the error paths let an error raised at *node* past every handler of its body: they
+    lead from it to the exit of the body.
     """
     found = reach.fate_of(node, Ps1ErrorKind.STATEMENT)
     if found is None:
         return True
     graph, start, _ = found
-    return reach.paths_of(graph).route_from(start).leaves_the_body
+    seen = {start}
+    stack = [start]
+    while stack:
+        current = stack.pop()
+        for target in current.successors:
+            if target in seen or not graph.is_exceptional(current, target):
+                continue
+            if target is graph.exit:
+                return True
+            seen.add(target)
+            stack.append(target)
+    return False
 
 
 def _observed(reach: Ps1FaultReach, node: Node) -> bool:
-    return reach.observed_at(node, reach.kinds_a_point_may_raise(node))
+    """
+    Whether a raise at the position *node* stands at is observed: a statement-terminating error,
+    and where the raise there is terminating, the error of a `throw` and one no list reports.
+    """
+    kinds = Ps1ErrorKind.STATEMENT
+    if reach.error_is_terminating(node):
+        kinds |= Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED
+    return reach.observed_at(node, kinds)
 
 
 class _Answering:
     """
-    Raise and skip verdicts that answer every question about what lies behind a handler with
-    *answer*, and never report a raise that ends the run.
+    Raise and skip verdicts that read every point as raising every kind where *answer* holds and
+    as raising nothing otherwise, every call as running a body nothing can name, and every region
+    as observed where *answer* holds.
     """
 
     def __init__(self, answer: bool):
         self._answer = answer
 
-    def landing_observed(self, paths, trap_set) -> bool:
-        return self._answer
+    def kinds(self, point: Node) -> Ps1ErrorKind:
+        return EVERY_KIND if self._answer else Ps1ErrorKind.NONE
 
-    def may_raise_behind(self, paths, start) -> bool:
-        return self._answer
+    def bodies_run_by(self, call: Node) -> None:
+        return None
 
-    def may_fire_behind(self, paths, start) -> bool:
-        return self._answer
+    def bodies_consulted(self, node: Node) -> tuple[tuple[Ps1ScriptBlock, ...], bool]:
+        return (), True
 
-    def may_end_the_run_behind(self, paths, start) -> bool:
-        return False
+    def is_recursive(self, body: Node) -> bool:
+        return True
 
-    def skip_observed_behind(self, paths, start) -> bool:
-        return self._answer
+    def observers(self, graph, regions) -> list:
+        return [lambda member: self._answer for _ in regions]
 
 
 def _no_trap_is_asked_about(trap: Ps1TrapStatement) -> bool:
@@ -116,10 +150,26 @@ def _no_trap_is_asked_about(trap: Ps1TrapStatement) -> bool:
 
 
 def _handler_verdicts(tree: Ps1Script, reach: Ps1FaultReach) -> Ps1HandlerVerdicts:
-    control_flow = build_control_flow_model(tree)
-    world = build_world_reach(measure_world(tree), lambda: control_flow)
-    calls = Ps1ModelCache(tree).call_graph
-    return Ps1HandlerVerdicts(reach, lambda: world, tree)
+    """
+    The handler verdicts over *reach*, reading raise models built over *reach* from the models a
+    cache of *tree* holds.
+    """
+    cache = Ps1ModelCache(tree)
+
+    def raises(under_the_world: bool) -> Ps1RaiseModel:
+        return Ps1RaiseModel(
+            reach,
+            cache.world_reach if under_the_world else None,
+            lambda: cache.call_graph,
+            lambda: cache.commands,
+            lambda: cache.calls_after_a_definition,
+            lambda: cache.names_may_be_removed,
+            lambda: cache.names_may_be_constrained,
+            cache.control_flow,
+            tree,
+        )
+
+    return Ps1HandlerVerdicts(reach, raises, tree)
 
 
 def _trap(node: Node) -> Ps1TrapStatement:
@@ -1008,7 +1058,8 @@ class TestPs1ATrapRemovalWaitsOnlyForATrapRemovedFromABlockAroundIt(TestBase):
 
     @staticmethod
     def _waiting(tree: Ps1Script, reach: Ps1FaultReach, groups: list[list[Node]]) -> set[int]:
-        return reach.removals_that_wait(groups, _handler_verdicts(tree, reach).raises(False))
+        waiting, _ = reach.edits_that_wait(groups, groups, _handler_verdicts(tree, reach).raises(False))
+        return waiting
 
     def test_a_trap_waits_for_the_removal_of_the_resuming_trap_its_errors_land_at(self):
         tree, reach = _model("""
@@ -1202,7 +1253,8 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
     the bracket, and the bracket then yields that value; a resuming `trap` around the whole statement
     instead resumes past it. Where those two land differently the trap changes what runs and cannot
     be removed. The coarse graph cannot tell them apart, because the whole assignment is one node
-    there; the finer graph the transpose reads separates the local step-over from the resume point.
+    there; the finer graph the trap removal reads separates the local step-over from the resume
+point.
 
     The reader is handed only the coarse model — the one construction there is — and draws that finer
     graph itself from its own root, so every reader here reads the step-over and none can be left
@@ -1255,13 +1307,11 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
         self.assertFalse(self._trap_removal_is_observed(
             "trap { continue }; for ($i = 0; $i -lt 3; $i++) { $y = 1 % 0 }; Write-Host 'after'"))
 
-    @unittest.expectedFailure
     def test_a_soft_error_whose_later_runs_write_what_is_read_after_the_loop_keeps_the_trap(self):
         """
         With the `trap`, the first failed cast resumes past the whole loop and `$y` is never set;
         delete the `trap` and 5.1 reports the error, steps over to `$i++`, and the second run sets
-        `$y` to 5, which `Write-Host` prints. The trap abandons the raiser's own later runs, which
-        the step-over reader does not count: it excepts the raiser from its own region.
+        `$y` to 5, which `Write-Host` prints.
         """
         self.assertTrue(self._trap_removal_is_observed(cleandoc("""
             trap { continue }
@@ -1270,13 +1320,12 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
             Write-Host $y
         """)))
 
-    @unittest.expectedFailure
     def test_a_soft_error_in_a_block_a_pipeline_runs_ends_the_whole_statement_and_keeps_the_trap(self):
         """
         With the `trap`, the character above 255 fails inside the `ForEach-Object` block and the
         `trap` resumes past the whole pipeline, so `$k` is never set and 5.1 writes `count=0 key=`.
         Delete the `trap` and 5.1 reports the one failing input and goes on with the next, writing
-        `count=1 key=98`. The fault model reads the raise as the block's own, not the statement's.
+        `count=1 key=98`.
         """
         self.assertTrue(self._trap_removal_is_observed(cleandoc("""
             trap { continue }
@@ -1301,12 +1350,10 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
             'after'
         """)))
 
-    @unittest.expectedFailure
     def test_a_soft_error_after_a_statement_in_an_if_body_lets_the_trap_go(self):
         """
         `'out'` runs before the raiser with the trap and without it, so the trap skips nothing, as
-        at script scope. The `if` statement's own node is read as a soft raiser because its body
-        holds one, and its step-over into the body counts `'out'` as skipped.
+        at script scope.
         """
         self.assertFalse(self._trap_removal_is_observed(cleandoc("""
             trap { continue }
@@ -2019,3 +2066,68 @@ class TestPs1AnErrorIsTakenPastAStatementARunCarriesOnAfter(TestBase):
 
     def test_a_trap_that_breaks_at_once_takes_no_throw_past_it(self):
         self.assertFalse(self._raises_past_the_guard('trap { break }'))
+
+
+class TestPs1AnEditWaitsForATrapDeletionWhoseScopeItTouches(TestBase):
+    """
+    Of edits judged apart, one that touches a statement where an error may go elsewhere once a
+    deleted `trap` set is gone waits for that deletion: the list the set is written in, the bodies
+    that list runs, and the calls that run the body the set is written in. A set offered no error
+    changes no error's fate, and makes nothing wait.
+    """
+
+    @staticmethod
+    def _waits(source: str, deleted, touched):
+        tree = _parse(source)
+        cache = Ps1ModelCache(tree)
+        faults = cache.faults
+        groups_deleted = [[node for node in deleted(tree)], []]
+        groups_touched = [[node for node in deleted(tree)], [touched(tree)]]
+        return faults.edits_that_wait(groups_deleted, groups_touched, cache.handlers.raises(True))
+
+    def test_an_edit_at_the_call_of_a_body_whose_trap_goes_waits(self):
+        waiting, _ = self._waits(
+            """
+                function f { trap { continue }; $null = [int]$args[0]; Write-Host 'f' }
+                f 1
+                Write-Host 'after'
+            """,
+            lambda tree: [tree.body[0].body.body[0]],
+            lambda tree: tree.body[1],
+        )
+        self.assertEqual(waiting, {1})
+
+    def test_an_edit_elsewhere_does_not_wait(self):
+        waiting, _ = self._waits(
+            """
+                function f { trap { continue }; $null = [int]$args[0]; Write-Host 'f' }
+                function g { Write-Host 'g' }
+                g
+            """,
+            lambda tree: [tree.body[0].body.body[0]],
+            lambda tree: tree.body[2],
+        )
+        self.assertEqual(waiting, set())
+
+    def test_an_edit_beside_a_trap_offered_nothing_does_not_wait(self):
+        waiting, _ = self._waits(
+            """
+                function f { trap { continue }; Write-Host 'f' }
+                f
+            """,
+            lambda tree: [tree.body[0].body.body[0]],
+            lambda tree: tree.body[1],
+        )
+        self.assertEqual(waiting, set())
+
+    def test_an_edit_of_the_same_plan_in_the_list_of_the_set_is_withheld(self):
+        tree = _parse("""
+            trap { continue }
+            $null = [int]$args[0]
+            Write-Host 'after'
+        """)
+        cache = Ps1ModelCache(tree)
+        trap, raiser = tree.body[0], tree.body[1]
+        waiting, withheld = cache.faults.edits_that_wait([[trap]], [[trap, raiser]], cache.handlers.raises(True))
+        self.assertEqual((waiting, withheld), (set(), {id(raiser)}))
+

@@ -19,10 +19,10 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     Ps1HandlerVerdicts,
     deletion_is_observable,
     emptying_unhooks_a_handler,
-    statement_can_raise,
 )
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
-from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach, RaiseVerdicts
+from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
+from refinery.lib.scripts.ps1.analysis.raising import Ps1RaiseModel, statement_raise_kinds
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -39,10 +39,10 @@ class _Proposal(NamedTuple):
     replacement: list[Statement]
 
 
-def _raise_verdicts(handlers: Ps1HandlerVerdicts, world: Ps1WorldReach | None) -> RaiseVerdicts:
+def _raise_verdicts(handlers: Ps1HandlerVerdicts, world: Ps1WorldReach | None) -> Ps1RaiseModel:
     """
-    The raise verdicts a plan or a batch reads: under its world where it was given one, and
-    without one otherwise, so that a `trap` deletion and the lines of its body are weighed alike.
+    The raise model a plan or a batch reads: under its world where it was given one, and without
+    one otherwise, so that a `trap` deletion and the lines of its body are weighed alike.
     """
     return handlers.raises(world is not None)
 
@@ -241,9 +241,10 @@ class Ps1RemovalPlan:
     survivor set — more survivors makes a removal more likely — must see the **pre-veto** set,
     `survivors`; the veto therefore runs inside `commit`, after such a guard has had its answer, so a
     vetoed statement is never read as cover for deleting its neighbour. A guard *restrictive* in it —
-    more survivors makes a removal **less** likely — must see the post-veto set, and reads `accepted`
-    rather than `survivors`, or a vetoed statement's dependencies are deleted out from under it.
-    Set-level guards stay with the passes, because they are not the same from one pass to the next.
+    more survivors makes a removal **less** likely — must see the post-veto set, which
+    `Ps1RemovalPlans.accepted` reports, or a vetoed statement's dependencies are deleted out from
+    under it; a pass with such a guard opens its plans through that class. Set-level guards stay
+    with the passes, because they are not the same from one pass to the next.
 
     `removals_may_fault` is the one thing about a pass this class must be told: whether what the pass
     removes can raise. It is passed to
@@ -282,7 +283,7 @@ class Ps1RemovalPlan:
         and a payload the analysis cannot read may change those. Without it that half is refused and
         the veto asks the context-free question alone, which is what every pass got before the
         world was offered — see
-        `refinery.lib.scripts.ps1.analysis.effects.expression_cannot_fault`.
+        `refinery.lib.scripts.ps1.analysis.raising.Ps1RaiseModel.cannot_fault`.
 
         `error_state` is the third model the veto may consult, a sibling of `world`: whether a read
         of the record a raise leaves in `$Error`/`$StackTrace` is reachable after the raiser, which
@@ -296,9 +297,8 @@ class Ps1RemovalPlan:
         the same cache as `faults` and `world`, and handed to
         `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed`:
         whether what the `trap` guards may raise is read under `world` when one was given and
-        without one otherwise, which is the question the replacement veto asks of
-        `refinery.lib.scripts.ps1.analysis.effects.statement_can_raise` too, and whether the region
-        a resuming `trap` skips is observable. The same reading of what may fire a `trap` decides
+        without one otherwise, which is the reading the removal veto and the replacement veto read
+        too, and whether what a run without the `trap` executes is observable. The same reading of what may fire a `trap` decides
         whether the veto passes over a line in its body as one no run reaches.
         Absent, no `trap` is removed and every `trap` body is read as one that may run: neither
         question can be asked without it, and keeping the code is the answer that changes nothing.
@@ -352,8 +352,8 @@ class Ps1RemovalPlan:
     def withdraw(self, statement: Statement) -> None:
         """
         Drop a registered proposal, leaving `statement` where it stands. A pass that shrinks its own
-        batch after reading `accepted` uses this. Nothing needs putting back, because `propose`
-        never let the replacement take anything in the first place.
+        batch after reading `Ps1RemovalPlans.accepted` uses this. Nothing needs putting back, because
+        `propose` never let the replacement take anything in the first place.
         """
         self._proposals.pop(id(statement), None)
         self._verdict = None
@@ -374,29 +374,6 @@ class Ps1RemovalPlan:
         not reach them.
         """
         return self._edit(self._proposals.values()).result()
-
-    @property
-    def accepted(self) -> list[Statement]:
-        """
-        The statements `commit` would edit, without editing them.
-
-        This is for the *restrictive* guards — the ones that allow **fewer** removals as more
-        statements survive, the opposite polarity to `survivors`' readers. Reachability is the
-        example: it concludes a function is dead from the call sites going away, so a vetoed caller
-        it never heard about leaves the emitted script calling a function it does not define. Such a
-        guard asks this, drops what it now forbids with `withdraw`, and asks again; the loop
-        terminates because the batch only shrinks — except under `all_or_nothing`, or against a
-        protected body, where a withdrawal can grow this set, so a pass that loops on `accepted` owes
-        its own termination argument.
-
-        This must not edit the tree: installing a replacement's claim would decide a batch the guard
-        asking has not decided. A caller reads membership as exact — *this is going away* — so a
-        statement reported here that `commit` then leaves standing is a dependency deleted out from
-        under its keeper, the failure the restrictive polarity exists to prevent. That exactness
-        rests on the plan's list actually holding what was proposed: `Ps1RemovalPlans.propose`
-        establishes it by finding the list, and `propose_in` moves it to the caller.
-        """
-        return [proposal.statement for proposal in self._allowed()]
 
     def _edit(self, proposals) -> BodyEdit:
         edit = BodyEdit(self.parent, self.attr)
@@ -420,8 +397,9 @@ class Ps1RemovalPlan:
         `trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'`, which
         writes `next` alone while the unrefused splice would write `tail` too. The refusal fires when
         the target body is guarded by a resuming trap set and a spliced statement other than the last
-        can raise (`statement_can_raise`); a one-statement replacement, or one whose raiser is last,
-        moves nothing. A plan opened to substitute holds no fault model, so this half is skipped
+        can raise where the replaced statement stands
+        (`refinery.lib.scripts.ps1.analysis.raising.statement_raise_kinds`); a one-statement
+        replacement, or one whose raiser is last, moves nothing. A plan opened to substitute holds no fault model, so this half is skipped
         there — a stated follow-on.
 
         **A handler and a statement that might fault are opposite questions.** Deleting a `trap`
@@ -440,13 +418,12 @@ class Ps1RemovalPlan:
             if _rescopes_a_handler(proposal.replacement):
                 return True
             faults = self.faults
-            return (
-                faults is not None
-                and faults.guarded_by_a_resuming_trap(proposal.statement)
-                and any(
-                    statement_can_raise(raiser, faults, self.world)
-                    for raiser in proposal.replacement[:-1]
-                )
+            if faults is None or not faults.guarded_by_a_resuming_trap(proposal.statement):
+                return False
+            raises = None if self.handlers is None else _raise_verdicts(self.handlers, self.world)
+            return any(
+                statement_raise_kinds(raiser, proposal.statement, faults, self.world, raises)
+                for raiser in proposal.replacement[:-1]
             )
         if (
             self.error_state is not None
@@ -465,8 +442,8 @@ class Ps1RemovalPlan:
     def _allowed(self) -> list[_Proposal]:
         """
         The proposals that survive the veto and every set-level refusal this class owns. Kept
-        apart from `commit` so that `accepted` is a query over the decision rather than a second
-        copy of it. It is kept until the proposals or any tree change, because the batch that holds
+        apart from `commit` so that `Ps1RemovalPlans.accepted` is a query over the decision rather
+        than a second copy of it. It is kept until the proposals or any tree change, because the batch that holds
         this plan asks for it while the pass is still walking and again when it commits.
         """
         epoch = mutation_epoch()
@@ -632,8 +609,7 @@ class Ps1RemovalPlans:
         that walks bodies to find its removals is already holding the list, and says so here.
 
         Nothing checks the claim, so a caller that names the wrong list files a proposal `commit`
-        will silently drop and `accepted` will still report; see `Ps1RemovalPlan.accepted` for what
-        rests on it. Filing the same statement a second time drops the first proposal rather than
+        will silently drop and `accepted` will still report; see `accepted` for what rests on it. Filing the same statement a second time drops the first proposal rather than
         leaving it standing, because the alternative is a statement `withdraw` can only reach one of
         — a withdrawal that half happens is what remembering where a proposal landed exists to
         rule out.
@@ -689,7 +665,7 @@ class Ps1RemovalPlans:
         self.propose_in(parent, statement, replacement, attr)
         return True
 
-    def withdraw(self, statement: Statement) -> None:
+    def withdraw(self, statement: Node) -> None:
         """
         Drop a registered proposal wherever it landed. Same contract as `Ps1RemovalPlan.withdraw`.
 
@@ -702,7 +678,7 @@ class Ps1RemovalPlans:
             return
         filed = self._filed.pop(id(statement), None)
         if filed is not None:
-            filed[1].withdraw(statement)
+            filed[1].withdraw(filed[0])
 
     def abandon(self) -> None:
         """
@@ -738,9 +714,24 @@ class Ps1RemovalPlans:
     def accepted(self) -> list[Statement]:
         """
         The statements `commit` would edit across every list this batch touches, plus the
-        direct-field rewrites it would install. Same contract as `Ps1RemovalPlan.accepted`, and the
-        same two limits, plus a third way a withdrawal can grow this set: withdrawing an edit that
-        the batch holds another list back for releases that list; see `_decide`.
+        direct-field rewrites it would install, without editing them.
+
+        This is for the *restrictive* guards — the ones that allow **fewer** removals as more
+        statements survive, the opposite polarity to `survivors`' readers. Reachability is the
+        example: it concludes a function is dead from the call sites going away, so a vetoed caller
+        it never heard about leaves the emitted script calling a function it does not define. Such a
+        guard asks this, drops what it now forbids with `withdraw`, and asks again; the loop
+        terminates because the batch only shrinks — except under `all_or_nothing`, against a
+        protected body, or where withdrawing an edit that the batch holds another list back for
+        releases that list (see `_decide`), where a withdrawal can grow this set, so a pass that
+        loops on `accepted` owes its own termination argument.
+
+        This must not edit the tree: installing a replacement's claim would decide a batch the guard
+        asking has not decided. A caller reads membership as exact — *this is going away* — so a
+        statement reported here that `commit` then leaves standing is a dependency deleted out from
+        under its keeper, the failure the restrictive polarity exists to prevent. That exactness
+        rests on each plan's list actually holding what was proposed: `propose` establishes it by
+        finding the list, and `propose_in` moves it to the caller.
 
         A pass that scatters one logical removal across several lists needs this rather than the
         per-plan answer: `refinery.lib.scripts.ps1.deobfuscation.unused.Ps1JunkStatementRemoval`
@@ -748,11 +739,7 @@ class Ps1RemovalPlans:
         plans, so a veto on either half is only visible here.
         """
         decision = self._decide()
-        accepted = [
-            statement
-            for plan in self._plans.values() if id(plan) not in decision.held_back
-            for statement in plan.accepted
-        ]
+        accepted = [proposal.statement for _, allowed in decision.landing for proposal in allowed]
         accepted.extend(proposal.statement for proposal, _ in decision.rewrites)
         return accepted
 
@@ -765,16 +752,26 @@ class Ps1RemovalPlans:
         larger edit of the batch takes apart is one; see `_Composition`. A handler deletion whose
         verdict read a handler that another list deletes is the other, and which deletions those
         are is the fault model's to say:
-        `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removals_that_wait`. Every edit of
+        `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.edits_that_wait`. Every edit of
         such a list is held back, because its plan judged them as one, and is judged again by the
-        pass's next batch, against the tree this one leaves.
+        pass's next batch, against the tree this one leaves; an edit of the list a deletion of its
+        own plan reads is withheld alone.
         """
         verdicts = [(plan, allowed) for plan in self._plans.values() if (allowed := plan._allowed())]
         rewrites = self._installable()
+        waiting, waiting_rewrites, withheld = self._waiting_for_handler_removals(verdicts, rewrites)
+        if withheld:
+            verdicts = [
+                (plan, kept) for plan, allowed in verdicts
+                if (kept := [proposal for proposal in allowed if id(proposal.statement) not in withheld])
+            ]
+            rewrites = [
+                (proposal, replacement) for proposal, replacement in rewrites
+                if id(proposal.statement) not in withheld
+            ]
         if len(verdicts) + len(rewrites) <= 1:
             return _Decision(verdicts, rewrites, set())
         edits: list[_Edit] = []
-        waiting = self._waiting_for_handler_removals(verdicts)
         for plan, allowed in verdicts:
             free = id(plan) not in waiting
             edits.extend(
@@ -784,7 +781,7 @@ class Ps1RemovalPlans:
         for proposal, replacement in rewrites:
             holder = proposal.statement.parent
             assert holder is not None
-            edits.append(_Edit(proposal.statement, holder, [replacement], True))
+            edits.append(_Edit(proposal.statement, holder, [replacement], id(proposal.statement) not in waiting_rewrites))
         composition = _Composition(edits)
         landing: list[tuple[Ps1RemovalPlan, list[_Proposal]]] = []
         held_back: set[int] = set()
@@ -802,27 +799,36 @@ class Ps1RemovalPlans:
     def _waiting_for_handler_removals(
         self,
         verdicts: list[tuple[Ps1RemovalPlan, list[_Proposal]]],
-    ) -> set[int]:
+        rewrites: list[tuple[_Proposal, Node]],
+    ) -> tuple[set[int], set[int], set[int]]:
         """
-        The plans among *verdicts* whose handler deletions the fault model says have to wait for
-        another plan's.
+        The plans among *verdicts*, and the statements of *rewrites*, whose edits the fault model
+        says have to wait for a `trap` deletion another plan makes, and the statements that wait for
+        one their own plan makes: one rule for every edit,
+        `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.edits_that_wait`.
         """
-        plans: list[Ps1RemovalPlan] = []
-        groups: list[Sequence[Node]] = []
-        for plan, allowed in verdicts:
-            removed = [
+        deleted: list[list[Node]] = []
+        touched: list[list[Node]] = []
+        for _, allowed in verdicts:
+            deleted.append([
                 proposal.statement for proposal in allowed
                 if _removes_a_handler(proposal.statement) and not proposal.replacement
-            ]
-            if removed:
-                plans.append(plan)
-                groups.append(removed)
-        if len(groups) <= 1:
-            return set()
+            ])
+            touched.append([proposal.statement for proposal in allowed])
+        for proposal, _ in rewrites:
+            deleted.append([])
+            touched.append([proposal.statement])
+        if not any(deleted):
+            return set(), set(), set()
         handlers = self.handlers
-        assert handlers is not None
+        faults = self.faults
+        assert handlers is not None and faults is not None
         raises = _raise_verdicts(handlers, self.world)
-        return {id(plans[index]) for index in self.faults.removals_that_wait(groups, raises)}
+        waiting, withheld = faults.edits_that_wait(deleted, touched, raises)
+        count = len(verdicts)
+        plans = {id(verdicts[index][0]) for index in waiting if index < count}
+        rewritten = {id(rewrites[index - count][0].statement) for index in waiting if index >= count}
+        return plans, rewritten, withheld
 
     def _installable(self) -> list[tuple[_Proposal, Node]]:
         """

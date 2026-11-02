@@ -960,8 +960,12 @@ class TestPs1RealWorldLarge(TestUnitBase):
         self.assertEqual(test, goal)
 
     def test_null_assignment_sample_with_a_trusted_eval(self):
+        """
+        The `trap { continue }` the sample writes above its payload stays: the payload it runs as
+        code may throw, and the `trap` resumes past an error that ends the script without it.
+        """
         data = self.download_sample('34f5eab91e26c1c2073740ed76af289fdd0df985385d3d198f5be7165d79745f')
-        self.assertEqual(data | self.load() | str, _NULL_ASSIGNMENT_GOAL)
+        self.assertEqual(data | self.load() | str, F'trap {{\n  continue\n}}\n{_NULL_ASSIGNMENT_GOAL}')
 
     def test_xor_encryption_sample(self):
         data = self.download_sample('3eee1bed425cadc4742c917ba31b4c9f638d7608e15f4a3dd09b90ba02e922d3')

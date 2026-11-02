@@ -482,7 +482,13 @@ class TestPs1ASoftFaultBeforeALiveTailInAnEmptyCatchIsKept(_Ps1FaultEscalation):
             }} catch {{ }}
         """)
 
+    @unittest.expectedFailure
     def test_a_command_discard_before_a_live_tail_with_no_stop_preference_is_removed(self):
+        """
+        Nothing asks `Get-ChildItem` to stop, so 5.1 reports its error and runs the next line, and
+        the line may go. The deobfuscator keeps it: no collected fact says the command cannot end
+        its statement with an error, which the `catch` would take before the next line runs.
+        """
         self._assertDeobfuscatesTo(F"""
             try {{
               $Null = (Get-ChildItem 'Z:\\nope')
@@ -896,13 +902,10 @@ class TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable(_Ps1FaultEscala
     the body never run and a raise among them ends nothing. It may go while the `trap` stands, and
     this is the shape a refusal keyed to a raise being written inside a `trap` body would break.
 
-    A `Write-Host` of a constant never fails on 5.1, but the analysis does not yet tell it from a
-    command that does, such as a name nothing defines, which fires the `trap`; so it reads the
-    `trap` as one that may run and keeps the raise. Knowing which commands cannot fail belongs to
-    the one answer to whether a line can fail, the step that closes this.
+    A `Write-Host` of a constant never fails on 5.1 where the script never asks it to stop on what
+    it writes, unlike a name nothing defines, which fires the `trap`.
     """
 
-    @unittest.expectedFailure
     def test_a_raising_cast_in_the_body_of_a_trap_no_raise_triggers_is_removed(self):
         self._assertDeobfuscatesTo(F"""
             trap {{
@@ -1615,19 +1618,14 @@ class TestPs1AWriteThatArmsNoStopLeavesTheTrapRemovable(_Ps1FaultEscalation):
         self._assertTheTrapUnderTheWriteIsRemoved('$ErrorActionPreference = 2')
 
 
-class TestPs1ATerminatingErrorReachedThroughACallIsInvisible(_Ps1FaultEscalation):
+class TestPs1ATerminatingErrorReachedThroughACallIsHandedToTheCaller(_Ps1FaultEscalation):
     """
     Measured on 5.1: a `throw` in a called function ends the script, and a `trap` in the calling
     body takes it and resumes — `function Raise { throw 'e' }` under a `Wrap` that traps writes
-    `in` and then `after`, and the same pair without the handler writes nothing at all.
-
-    What reaches the handler is the *call*, and `ends_the_script` reads only the subtree of what
-    reaches it, so the `throw` in the callee is behind a body boundary no graph here crosses.
-    Answering it needs the call graph, which `refinery.lib.scripts.ps1.analysis.faults` has none of
-    by design.
+    `in` and then `after`, and the same pair without the handler writes nothing at all. What
+    reaches the handler is the *call*, which raises what the called body hands back.
     """
 
-    @unittest.expectedFailure
     def test_a_trap_over_a_call_to_a_function_that_throws_is_kept(self):
         self._assertKept(F"""
             function Invoke-Raise {{
@@ -1757,13 +1755,13 @@ class TestPs1AStopBoundThroughDefaultParameterValuesMakesCommandsTerminating(_Ps
 
 class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
     """
-    Five shapes arm a `Stop` the removal gate does not read, so a `trap` that is load bearing on
+    Four shapes arm a `Stop` the removal gate does not read, so a `trap` that is load bearing on
     the 5.1 host is dropped. Each is measured on the host — the guarded raise ends the script
     without the handler and the follower runs with it — and each reaches the gate through a
     spelling it does not resolve: a splat table, a `-LiteralPath` the name authority reads no
-    subject from, a whole-table literal, an aliased copy, or a computed member name.
+    subject from, a whole-table literal, or an aliased copy.
 
-    The wide completion-side gate `a_stop_may_be_in_force` catches all five — every one names
+    The wide completion-side gate `a_stop_may_be_in_force` catches all four — every one names
     `ErrorActionPreference` or `PSDefaultParameterValues` as a string — so a value the arming would
     have established is not folded across the raise. What is not caught is the narrower removal of
     the handler, which is what these pin.
@@ -1809,7 +1807,13 @@ class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
             {_FOLLOWER}
         """)
 
-    @unittest.expectedFailure
+
+class TestPs1AComputedMemberCallOnTheDefaultTableMayArmAStop(_Ps1FaultEscalation):
+    """
+    A member call whose name the script computes may be any member of the table, `Add` among them,
+    which binds `Stop` into every command; the `trap` over a raise below it stays.
+    """
+
     def test_a_computed_member_mutation_of_the_default_table_keeps_the_trap(self):
         self._assertKept(F"""
             $n = 'Add'

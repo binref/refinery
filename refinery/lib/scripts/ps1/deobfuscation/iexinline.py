@@ -18,6 +18,7 @@ from refinery.lib.scripts.ps1.analysis.values import collect_byte_array
 from refinery.lib.scripts.ps1.ast import (
     extract_new_object,
     get_body,
+    get_command_name,
     is_scriptblock_create,
     normalize_dotnet_type_name,
     string_value,
@@ -79,9 +80,8 @@ def _try_extract_invoke_command_body(cmd: Ps1CommandInvocation) -> list | None:
     pass's. It is reported as nothing resolved, the same answer `_try_parse` gives for a string that
     parses to an empty script.
     """
-    if not isinstance(cmd.name, Ps1StringLiteral):
-        return None
-    if cmd.name.value.lower() not in _INVOKE_COMMAND_NAMES:
+    name = get_command_name(cmd)
+    if name is None or name.lower() not in _INVOKE_COMMAND_NAMES:
         return None
     scriptblock: Ps1ScriptBlock | None = None
     index = 0
@@ -508,9 +508,8 @@ class Ps1IexInlining(Transformer):
         if sb_arg is not None:
             code = _resolve_to_string(sb_arg, self._shadowed_at(node))
         else:
-            if not isinstance(node.name, Ps1StringLiteral):
-                return None
-            if node.name.value.lower() not in _IEX_NAMES:
+            name = get_command_name(node)
+            if name is None or name.lower() not in _IEX_NAMES:
                 return None
             val = _extract_iex_value(node)
             if val is None:
@@ -561,9 +560,8 @@ class Ps1IexInlining(Transformer):
     def _is_bare_iex(cmd) -> bool:
         if not isinstance(cmd, Ps1CommandInvocation):
             return False
-        if not isinstance(cmd.name, Ps1StringLiteral):
-            return False
-        if cmd.name.value.lower() not in _IEX_NAMES:
+        name = get_command_name(cmd)
+        if name is None or name.lower() not in _IEX_NAMES:
             return False
         if len(cmd.arguments) == 0:
             return True
@@ -576,9 +574,8 @@ class Ps1IexInlining(Transformer):
         cmd = stmt.expression
         if not isinstance(cmd, Ps1CommandInvocation):
             return None
-        if not isinstance(cmd.name, Ps1StringLiteral):
-            return None
-        if cmd.name.value.lower() not in _IEX_NAMES:
+        name = get_command_name(cmd)
+        if name is None or name.lower() not in _IEX_NAMES:
             return None
         val = _extract_iex_value(cmd)
         if val is None:

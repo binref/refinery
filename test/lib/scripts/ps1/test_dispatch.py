@@ -443,8 +443,19 @@ class _Reader:
     def __init__(self):
         self.nodes: dict[int, Node] = {}
 
-    def script(self, body) -> tuple[Statement, ...]:
+    def script(self, body, rewritten: bool = False) -> tuple[Statement, ...]:
+        """
+        The program *body* holds. In a *rewritten* script a preference line is read as the
+        statement it is: deleting what stood before it can move a line of the program to the top,
+        and one the header left there sets the preference the run already starts with.
+        """
         body = list(body)
+        if rewritten:
+            for index, node in enumerate(body[:2]):
+                if isinstance(node, Ps1ExpressionStatement) and _COPY.match(_SYNTH.convert(node).strip()):
+                    del body[index]
+                    break
+            return self.program(body)
         for line in (_PREFERENCE, _COPY):
             if body and isinstance(body[0], Ps1ExpressionStatement) and line.match(_SYNTH.convert(body[0]).strip()):
                 body.pop(0)
@@ -745,7 +756,7 @@ def disagreements(program: tuple[Statement, ...], preference: Preference, number
     output = Ps1Parser(source).parse()
     deobfuscate(output, trust_eval=False)
     try:
-        rewritten = _Reader().script(output.body)
+        rewritten = _Reader().script(output.body, rewritten=True)
     except Unreadable:
         found.add(Disagreement('output unreadable', number))
         return sorted(found, key=str)
@@ -830,10 +841,10 @@ class TestPs1TheDispatchModelWritesWhat51Writes(TestBase):
 
 
 #: How many places the evaluator lists, over every anchor, that the model sends no error to there.
-#: The evaluator reads every filter as one that may or may not match and both values of the flag a
-#: caller of a body may set, so it lists more than any one run reaches; a change that lists more
+#: The evaluator reads every filter as one that may or may not match and every value of the flag a
+#: call site of a body may set, so it lists more than any one run reaches; a change that lists more
 #: still has `unlisted` pass, and this is what it moves.
-OVERLISTED_OVER_THE_ANCHORS = 220
+OVERLISTED_OVER_THE_ANCHORS = 216
 
 
 class TestPs1TheEvaluatorListsWhereEveryAnchorSendsAnError(TestBase):
@@ -903,3 +914,46 @@ class TestPs1TheTailOfALineEndsWhereItsListHandsControlOn(TestBase):
     def test_the_last_line_of_a_subexpression_tested_by_an_if_goes_on_to_the_test(self):
         statement, tail = self._tail("if ($( 1; $null = [int]$s )) { Write-Host 'then' }; Write-Host 'after'")
         self.assertNotIn(statement, tail)
+
+
+#: Body programs of `test.lib.scripts.ps1.dispatch.BodyGenerator`, by seed and number, the analysis
+#: once contradicted the model on: one per seed and law of the census the error roadmap was measured
+#: against, and the five whose defects were named: a `trap` deletion and a `catch` lift landing in
+#: one batch (11, 33), a store read by a called function (11, 1980), a store before a `break` (11,
+#: 1606; 24, 1917), and a typed `trap` declining a `throw` under `SilentlyContinue` (12, 1110).
+ONCE_CONTRADICTED: dict[int, tuple[int, ...]] = {
+    1: (380, 618),
+    2: (60, 244, 1380),
+    3: (601, 857, 1958),
+    8: (80, 1468),
+    9: (131, 477),
+    10: (69, 419, 1163),
+    11: (32, 33, 64, 1606, 1980),
+    12: (223, 285, 1110),
+    13: (143, 585),
+    14: (1104, 1319, 1547),
+    15: (363, 456, 1339),
+    16: (269, 912),
+    17: (198, 203, 1416),
+    18: (78, 1156),
+    19: (158, 242),
+    20: (44, 381),
+    21: (141, 408, 473),
+    22: (200, 495),
+    23: (410, 950),
+    24: (110, 455, 1917),
+    25: (84, 346),
+    26: (149, 1631),
+    27: (531, 725, 1052),
+}
+
+
+class TestPs1TheBodyProgramsOnceContradictedAgreeWithTheModel(TestBase):
+
+    def test_every_body_program_once_contradicted_agrees_with_the_model(self):
+        for seed, numbers in ONCE_CONTRADICTED.items():
+            programs = list(BodyGenerator(seed).programs(max(numbers) + 1))
+            for number in numbers:
+                program, preference = programs[number]
+                with self.subTest(seed=seed, number=number):
+                    self.assertEqual(disagreements(program, preference, number), [])

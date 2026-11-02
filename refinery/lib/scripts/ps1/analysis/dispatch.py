@@ -46,7 +46,8 @@ from __future__ import annotations
 
 import enum
 
-from typing import AbstractSet, NamedTuple
+from functools import partial
+from typing import AbstractSet, Callable, Iterable, NamedTuple, Protocol, Sequence
 
 from refinery.lib.scripts import Block, Node, tree_root
 from refinery.lib.scripts.ps1.analysis.cfg import trap_disposition
@@ -70,6 +71,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExitStatement,
     Ps1ForEachLoop,
     Ps1ForLoop,
+    Ps1FunctionDefinition,
     Ps1IfStatement,
     Ps1InvokeMember,
     Ps1ReturnStatement,
@@ -109,6 +111,9 @@ ERROR_KINDS = (Ps1ErrorKind.STATEMENT, Ps1ErrorKind.THROWN, Ps1ErrorKind.MARKED,
 
 #: What a call that may run a body of the script may hand back: whatever that body may raise.
 HANDED_BACK = Ps1ErrorKind.CALLED | Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED
+
+#: Every kind of error at once: what a point whose operands cannot be named may raise.
+EVERY_KIND = Ps1ErrorKind.STATEMENT | HANDED_BACK
 
 
 class Ps1Preference(enum.Enum):
@@ -159,7 +164,8 @@ class Ps1Level(NamedTuple):
     the statements run, or `None` where that is whatever the caller of the body set: a `try` around
     a call passes them outward through every body the call runs. *called* is whether the list
     belongs to a script block, which a caller runs, rather than to the script, and *preferences*
-    holds the values the error preference may hold while the statements run.
+    holds the values the error preference may hold while the statements run. *guarding* reads the
+    values the outward flag may hold where the body holding the list was called.
     """
     kind: Ps1LevelKind
     owner: Node
@@ -169,13 +175,15 @@ class Ps1Level(NamedTuple):
     passes_on: bool | None
     called: bool
     preferences: frozenset[Ps1Preference]
+    guarding: Callable[[], tuple[bool, ...]] = lambda: (False,)
 
     def guards(self) -> tuple[bool, ...]:
         """
         The values the flag that passes errors outward may hold where the body this list belongs
-        to was called: either, for a script block, and unset for the script.
+        to was called: unset for the script; for a script block, set as well only where some call
+        that may run it stands where the flag is set.
         """
-        return (False, True) if self.called else (False,)
+        return self.guarding()
 
 
 class Ps1Fate(NamedTuple):
@@ -227,7 +235,7 @@ class Ps1Fate(NamedTuple):
             self.carried | other.carried,
             self.caught | other.caught,
             self.swallowed | other.swallowed,
-            self.trapped | other.trapped,
+            _union(self.trapped, other.trapped),
             self.acts or other.acts,
             self.offered_to_traps or other.offered_to_traps,
             self.ends_run or other.ends_run,
@@ -250,6 +258,18 @@ class Ps1Fate(NamedTuple):
 
 
 _NOWHERE = Ps1Fate()
+
+
+def _union(first: frozenset, second: frozenset) -> frozenset:
+    """
+    The union of two sets, the first itself where the second adds nothing, so that a fate joined
+    with one that adds no `trap` keeps the very set it had and a reader may key on it.
+    """
+    if not second or second is first:
+        return first
+    if not first:
+        return second
+    return first | second
 
 
 class _Jump(enum.Flag):
@@ -341,19 +361,29 @@ def _runs_code(node: Node) -> bool:
 class _Tree:
     """
     What every reading of one tree shares: the depth of each node, the `trap` set each list
-    declares, how each `trap` body ends, and the preferences the error preference may hold.
+    declares, how each `trap` body ends, the preferences the error preference may hold, and the
+    values the outward flag may hold where a body was called, which *guards* reads for the body
+    holding a list.
     """
 
     def __init__(
         self,
-        preferences: AbstractSet[Ps1Preference],
-        called_preferences: AbstractSet[Ps1Preference],
+        preferences: frozenset[Ps1Preference],
+        called_preferences: frozenset[Ps1Preference],
+        guards: Callable[[Node], tuple[bool, ...]],
     ):
-        self.preferences = frozenset(preferences) | {Ps1Preference.CONTINUE}
-        self.called = frozenset(called_preferences) | {Ps1Preference.CONTINUE}
+        self.preferences = preferences
+        self.called = called_preferences
+        self.guards = guards
         self._depths: dict[int, int] = {}
         self._selections: dict[int, Ps1TrapSelection | None] = {}
         self._dispositions: dict[int, Ps1TrapDisposition] = {}
+
+    def reading(self, preference: Ps1Preference, called_preference: Ps1Preference) -> _Tree:
+        """
+        This tree under one value of the error preference in the script and one in a called body.
+        """
+        return _Tree(frozenset((preference,)), frozenset((called_preference,)), self.guards)
 
     def depth_of(self, node: Node) -> int:
         depths = self._depths
@@ -383,6 +413,35 @@ class _Tree:
         return trap_disposition(trap, self._dispositions)
 
 
+def _unguarded() -> tuple[bool, ...]:
+    return (False,)
+
+
+class Ps1CallSites(Protocol):
+    """
+    The calls that may run each body of a script, which decide whether a caller may run it with the
+    outward flag set.
+    """
+
+    def bodies(self) -> Iterable[Node]:
+        """
+        Every script block of the script.
+        """
+        ...
+
+    def sites_running(self, body: Node) -> Sequence[Node] | None:
+        """
+        The calls naming *body* that may run it, or `None` where its callers cannot all be named.
+        """
+        ...
+
+    def unattributed_sites(self) -> Sequence[Node]:
+        """
+        The calls that run code nobody can read, each of which may run any function body.
+        """
+        ...
+
+
 class _Levels:
     """
     The statement lists of one tree as `Ps1Level` values. Where *moved* is a block and *around* a
@@ -397,11 +456,13 @@ class _Levels:
         moved: Block | None = None,
         around: Ps1Level | None = None,
         real: _Levels | None = None,
+        replaced: tuple[Node, Ps1TrapSelection | None] | None = None,
     ):
         self._tree = tree
         self._moved = moved
         self._around = around
         self._real = real
+        self._replaced = replaced
         self._levels: dict[int, Ps1Level] = {}
 
     def level_of(self, statement: Node) -> Ps1Level | None:
@@ -424,7 +485,8 @@ class _Levels:
                 if parent is None:
                     kind, holder = Ps1LevelKind.BODY, None
             real = self._real
-            if real is not None and not self._owns(parent):
+            replaced = self._replaced
+            if real is not None and not self._owns(parent) and (replaced is None or replaced[0] is not owner):
                 level = real.level(owner)
             else:
                 level = self._build(owner, kind, holder, parent)
@@ -442,7 +504,11 @@ class _Levels:
         parent: Ps1Level | None,
     ) -> Ps1Level:
         tree = self._tree
-        traps = tree.traps_of(owner)
+        replaced = self._replaced
+        if replaced is not None and replaced[0] is owner:
+            traps = replaced[1]
+        else:
+            traps = tree.traps_of(owner)
         called = parent.called if parent is not None else not _is_script(owner)
         passes_on: bool | None
         if traps is not None or kind in (Ps1LevelKind.TRY, Ps1LevelKind.CATCH, Ps1LevelKind.TRAP):
@@ -451,8 +517,14 @@ class _Levels:
             passes_on = parent.passes_on
         else:
             passes_on = None if called else False
+        if parent is not None:
+            guarding = parent.guarding
+        elif not called:
+            guarding = _unguarded
+        else:
+            guarding = partial(tree.guards, owner)
         preferences = tree.called if called else tree.preferences
-        return Ps1Level(kind, owner, parent, holder, traps, passes_on, called, preferences)
+        return Ps1Level(kind, owner, parent, holder, traps, passes_on, called, preferences, guarding)
 
 
 class _SetFate(NamedTuple):
@@ -465,13 +537,14 @@ class _SetFate(NamedTuple):
     carries_on: bool
 
 
-class _Evaluation:
+class Ps1Reading:
     """
     The rules of the module docstring applied over one reading of the lists, *levels*, with every
     answer kept for that reading.
     """
 
     def __init__(self, tree: _Tree, levels: _Levels):
+        self.tree = tree
         self._tree = tree
         self.levels = levels
         self._leaving: dict[tuple[int, Ps1ErrorKind, bool], Ps1Fate] = {}
@@ -672,7 +745,7 @@ class Ps1Lift:
 
     def __init__(
         self,
-        real: _Evaluation,
+        real: Ps1Reading,
         tree: _Tree,
         catch: Ps1Level,
         around: Ps1Level,
@@ -687,7 +760,7 @@ class Ps1Lift:
         self._statement = statement
         self._last = _last_statement(body)
         self.keeps_the_flag = around.passes_on is True
-        self._lifted: _Evaluation | None = None
+        self._lifted: Ps1Reading | None = None
 
     def member_alike(self, member: Node, kinds: Ps1ErrorKind) -> bool:
         """
@@ -715,7 +788,7 @@ class Ps1Lift:
         lifted = self._lifted
         if lifted is None:
             levels = _Levels(self._tree, self._body, self._around, self._real.levels)
-            lifted = self._lifted = _Evaluation(self._tree, levels)
+            lifted = self._lifted = Ps1Reading(self._tree, levels)
         depth = self._tree.depth_of(self._statement)
         for kind in ERROR_KINDS:
             if kind not in kinds:
@@ -740,17 +813,26 @@ class Ps1Dispatch:
 
     A script block is read as a body some caller may guard: an error its lists hand outward leaves
     it, and so may one its body would report, since a `try` around the call passes errors outward
-    through every body the call runs. The script is read as run on its own, which reports what its
-    body would report.
+    through every body the call runs. Which callers guard a body is read off the call sites *sites*
+    names for it; without *sites*, every caller may. The script is read as run on its own, which
+    reports what its body would report.
     """
 
     def __init__(
         self,
         preferences: AbstractSet[Ps1Preference],
         called_preferences: AbstractSet[Ps1Preference],
+        sites: Ps1CallSites | None = None,
     ):
-        self._tree = _Tree(preferences, called_preferences)
-        self._evaluation = _Evaluation(self._tree, _Levels(self._tree))
+        self._sites = sites
+        self._guarded: set[int] | None = None
+        self._readings: list[Ps1Reading] | None = None
+        self._tree = _Tree(
+            frozenset(preferences) | {Ps1Preference.CONTINUE},
+            frozenset(called_preferences) | {Ps1Preference.CONTINUE},
+            self._body_guards,
+        )
+        self._evaluation = Ps1Reading(self._tree, _Levels(self._tree))
         self._tails: dict[int, frozenset[Node]] = {}
         self._jumping: dict[int, bool] = {}
         self._jumps: dict[int, _Jump] = {}
@@ -824,13 +906,18 @@ class Ps1Dispatch:
         regions: list[Node] = [clause.body for clause in statement.catch_clauses if clause.body is not None]
         if statement.try_block is not None:
             regions.append(statement.try_block)
-        for region in regions:
-            leaving = self._leaving_jumps(region)
-            if leaving & ~_Jump.RUNS_CODE:
-                return True
-            if _Jump.RUNS_CODE in leaving and self._a_body_jumps_out(region):
-                return True
-        return False
+        return any(self.may_jump_out_of(region) for region in regions)
+
+    def may_jump_out_of(self, node: Node) -> bool:
+        """
+        Whether a jump may carry control out of *node* to somewhere other than what follows it: a
+        `return` or an `exit`, a `break` or `continue` nothing in *node* takes, or a call that may run
+        a body able to jump out of itself.
+        """
+        leaving = self._leaving_jumps(node)
+        if leaving & ~_Jump.RUNS_CODE:
+            return True
+        return _Jump.RUNS_CODE in leaving and self._a_body_jumps_out(node)
 
     def _leaving_jumps(self, node: Node) -> _Jump:
         """
@@ -887,6 +974,116 @@ class Ps1Dispatch:
                 or isinstance(inner, Ps1ScriptBlock) and bool(self._leaving_jumps(inner) & escaping)
                 for inner in root.walk()
             )
+        return found
+
+    @property
+    def evaluation(self) -> Ps1Reading:
+        """
+        The reading of the tree as it stands, under every value the error preference may hold.
+        """
+        return self._evaluation
+
+    def _body_guards(self, owner: Node) -> tuple[bool, ...]:
+        """
+        The values the outward flag may hold where the body holding the list *owner* was called.
+        Without call sites to read, every body may be called with the flag set.
+        """
+        if self._sites is None:
+            return (False, True)
+        block = owner if isinstance(owner, Ps1ScriptBlock) else owner.parent
+        guarded = self._guarded
+        if guarded is None:
+            guarded = self._guarded = self._guarded_bodies(self._sites)
+        return (False, True) if block is None or id(block) in guarded else (False,)
+
+    def _guarded_bodies(self, sites: Ps1CallSites) -> set[int]:
+        """
+        The bodies some call site may run with the outward flag set: one called from a site whose
+        list passes errors outward, from a site *sites* cannot name, or from a site whose list
+        leaves the flag as the caller of its own body set it, where that body is one of these. A
+        call *sites* cannot attribute is a site of every function body. One table for the tree, read
+        breadth-first rather than by recursion over the call chain.
+        """
+        levels = self._evaluation.levels
+        direct: set[int] = set()
+        inherits: dict[int, list[int]] = {}
+        every_function = -1
+
+        def read(key: int, callers: Sequence[Node]) -> None:
+            for site in callers:
+                statement = member_of(site)
+                level = None if statement is None else levels.level_of(statement)
+                if level is None or level.passes_on is True:
+                    direct.add(key)
+                    return
+                if level.passes_on is None:
+                    root = level
+                    while root.parent is not None:
+                        root = root.parent
+                    owner = root.owner
+                    caller = owner if isinstance(owner, Ps1ScriptBlock) else owner.parent
+                    inherits.setdefault(id(caller), []).append(key)
+
+        functions: list[int] = []
+        for body in sites.bodies():
+            if isinstance(body.parent, Ps1FunctionDefinition):
+                functions.append(id(body))
+            named = sites.sites_running(body)
+            if named is None:
+                direct.add(id(body))
+                continue
+            read(id(body), named)
+        read(every_function, sites.unattributed_sites())
+        guarded: set[int] = set()
+        stack = list(direct)
+        while stack:
+            key = stack.pop()
+            if key in guarded:
+                continue
+            guarded.add(key)
+            if key == every_function:
+                stack.extend(functions)
+                continue
+            stack.extend(inherits.get(key, ()))
+        guarded.discard(every_function)
+        return guarded
+
+    def level(self, owner: Node) -> Ps1Level:
+        """
+        The statement list *owner* holds.
+        """
+        return self._evaluation.levels.level(owner)
+
+    def without(self, reading: Ps1Reading, owner: Node, removed: AbstractSet[int]) -> Ps1Reading:
+        """
+        *reading* as though the `trap` statements of the list *owner* holds whose identities
+        *removed* names were not written.
+        """
+        tree = reading.tree
+        traps = tree.traps_of(owner)
+        kept = [] if traps is None else [trap for trap in traps.members if id(trap) not in removed]
+        selection = Ps1TrapSelection(kept) if kept else None
+        levels = _Levels(tree, real=reading.levels, replaced=(owner, selection))
+        return Ps1Reading(tree, levels)
+
+    def readings(self) -> list[Ps1Reading]:
+        """
+        One reading of the tree per pair of values the error preference may hold in the script and
+        in a called body, each under that pair alone. Comparing two readings joined over the values
+        would compare an error one value takes with one another value leaves.
+        """
+        found = self._readings
+        if found is None:
+            tree = self._tree
+            if len(tree.preferences) == 1 and len(tree.called) == 1:
+                found = [self._evaluation]
+            else:
+                found = []
+                for preference in sorted(tree.preferences, key=lambda p: p.name):
+                    for called in sorted(tree.called, key=lambda p: p.name):
+                        single = tree.reading(preference, called)
+                        found.append(Ps1Reading(single, _Levels(single)))
+            self._readings = found
         return found
 
     def lifted(self, clause: Ps1CatchClause) -> Ps1Lift | None:

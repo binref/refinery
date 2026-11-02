@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import enum
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterator
 
 from refinery.lib.scripts import Node
@@ -120,6 +120,9 @@ class Ps1NamedReference:
     #: leaves `$b` holding `b`. Which binding of the name the variable is depends on the scopes
     #: that stand around the reference when it runs.
     hands_out: bool = False
+    #: Whether the reference writes the variable with options of its own, as `New-Variable -Option
+    #: ReadOnly` does, which may make a later plain store to the name fail.
+    constrains: bool = False
 
 
 #: Commands whose first argument is the *name* of a variable, mapped to what they do to it. Resolved
@@ -139,8 +142,10 @@ _ITEM_COMMANDS: dict[str, Ps1NameRole] = {
     'clear-item': Ps1NameRole.WRITES,
     'get-childitem': Ps1NameRole.READS,
     'get-item': Ps1NameRole.READS,
+    'move-item': Ps1NameRole.UNBINDS,
     'new-item': Ps1NameRole.WRITES,
     'remove-item': Ps1NameRole.UNBINDS,
+    'rename-item': Ps1NameRole.UNBINDS,
     'set-item': Ps1NameRole.WRITES,
 }
 
@@ -266,6 +271,11 @@ def named_references(node: Node) -> list[Ps1NamedReference]:
     for command in resolved_command_names(node):
         found.extend(_subject_references(node, command))
     found.extend(_out_variable_references(node))
+    if bound_argument_value(node, 'option') is not None:
+        found = [
+            replace(reference, constrains=True) if reference.role is Ps1NameRole.WRITES else reference
+            for reference in found
+        ]
     return found
 
 
@@ -426,11 +436,35 @@ def _subject_value(
     argument list that would call it `Global`.
     """
     explicit = bound_argument_value(cmd, parameter)
+    if explicit is None and parameter == 'path':
+        explicit = bound_argument_value(cmd, 'literalpath')
     if explicit is not None:
         return explicit
     for value in free_positional_values(cmd, command):
         return value
+    if parameter == 'path':
+        return _piped_path(cmd)
     return None
+
+
+def _piped_path(cmd: Ps1CommandInvocation) -> Expression | None:
+    """
+    The path a literal written ahead of *cmd* in its pipeline hands it, as `'variable:x' |
+    Remove-Item` does, or `None` where no literal stands there.
+    """
+    element = cmd.parent
+    if not isinstance(element, Ps1PipelineElement):
+        return None
+    pipeline = element.parent
+    if not isinstance(pipeline, Ps1Pipeline):
+        return None
+    index = next((k for k, e in enumerate(pipeline.elements) if e is element), 0)
+    if index == 0:
+        return None
+    source = pipeline.elements[index - 1].expression
+    if source is None or string_value(source) is None:
+        return None
+    return source
 
 
 def _subject_name(cmd: Ps1CommandInvocation, command: str, parameter: str) -> str | None:
@@ -556,6 +590,9 @@ def _drive_path(written: str) -> tuple[str, str]:
     separator that roots it: `variable:\\x`, `variable:/x`, the provider-qualified `variable::x`
     and `variable:x` all address `$x`, and `variable:\\` is the whole drive as `variable:` is.
     """
+    provider, qualified, item = written.partition('::')
+    if qualified:
+        return provider.rpartition('\\')[2].lower(), item.lstrip('\\/')
     drive, _, rest = written.partition(':')
     return drive.lower(), rest.lstrip('\\/:')
 

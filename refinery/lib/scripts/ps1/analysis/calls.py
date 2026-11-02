@@ -23,6 +23,7 @@ from refinery.lib.scripts.ps1.analysis.values import (
     NOTHING,
     NULL,
     UNKNOWN,
+    Ps1Constant,
     Ps1Outcome,
     Ps1Throws,
     Ps1Typed,
@@ -32,10 +33,12 @@ from refinery.lib.scripts.ps1.analysis.values import (
 )
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import get_command_name
-from refinery.lib.scripts.ps1.data import CallFact, CallKind, call_facts, named_type, resolve_type
+from refinery.lib.scripts.ps1.data import CallFact, CallKind, abbreviated_parameter, call_facts, named_type, resolve_type
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
+    Ps1CommandArgument,
+    Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1InvokeMember,
     Ps1Pipeline,
@@ -60,7 +63,9 @@ def _matching_fact(facts: tuple[CallFact, ...], arguments: list[Ps1Outcome] | No
         if arguments is None or len(arguments) != len(covered):
             continue
         if all(
-            (named := type_of(argument.value)) is not None and named.generic_definition in types
+            not isinstance(types, str)
+            and (named := type_of(argument.value)) is not None
+            and named.generic_definition in types
             for argument, types in zip(arguments, covered)
         ):
             return fact
@@ -150,16 +155,47 @@ class Ps1CallReader:
         name = get_command_name(command)
         if name is None or not self._may_trust_command_name_at(name.lower(), command):
             return NOTHING
+        piped = False
         element = command.parent
         if isinstance(element, Ps1PipelineElement):
             pipeline = element.parent
-            if not isinstance(pipeline, Ps1Pipeline) or pipeline.elements[0] is not element:
+            if element.redirections or not isinstance(pipeline, Ps1Pipeline):
                 return NOTHING
-        arguments = None if command.arguments else []
-        fact = _matching_fact(call_facts(CallKind.COMMAND, None, name), arguments)
-        if fact is None or session_of(command).defaults:
+            piped = pipeline.elements[0] is not element
+        if session_of(command).defaults:
             return NOTHING
-        return self.recorded(fact, Ps1Outcome(Ps1Throws.NEVER, UNKNOWN), arguments or [])
+        tokens = self._tokens(command, name)
+        if tokens is None:
+            return NOTHING
+        informs = session_of(command).informs
+        for fact in call_facts(CallKind.COMMAND, None, name):
+            if piped and not fact.input:
+                continue
+            if informs and fact.name == 'write-host':
+                continue
+            values = _matching_tokens(fact, tokens)
+            if values is not None:
+                return self.recorded(fact, Ps1Outcome(Ps1Throws.NEVER, UNKNOWN), values)
+        return NOTHING
+
+    def _tokens(self, command: Ps1CommandInvocation, name: str) -> list[str | Ps1Outcome] | None:
+        tokens: list[str | Ps1Outcome] = []
+        for argument in command.arguments:
+            if not isinstance(argument, Ps1CommandArgument):
+                tokens.append(evaluate(argument, None, self))
+                continue
+            if argument.kind is Ps1CommandArgumentKind.POSITIONAL:
+                tokens.append(evaluate(argument.value, None, self))
+                continue
+            parameter = abbreviated_parameter(name, argument.name.rstrip(':'))
+            if parameter is None:
+                return None
+            tokens.append(parameter.lower())
+            if argument.kind is Ps1CommandArgumentKind.NAMED:
+                if argument.value is None:
+                    return None
+                tokens.append(evaluate(argument.value, None, self))
+        return tokens
 
     @staticmethod
     def recorded(fact: CallFact, receiver: Ps1Outcome, arguments: list[Ps1Outcome]) -> Ps1Outcome:
@@ -172,7 +208,34 @@ class Ps1CallReader:
             *(argument.throws for argument in arguments),
             Ps1Throws.MAYBE if fact.fails else Ps1Throws.NEVER,
         )
+        if fact.returns is None:
+            return Ps1Outcome(throws, UNKNOWN)
         return Ps1Outcome(throws, NULL if fact.returns == _VOID else Ps1Typed(fact.returns))
+
+
+def _matching_tokens(fact: CallFact, tokens: list[str | Ps1Outcome]) -> list[Ps1Outcome] | None:
+    covered = fact.arguments
+    if covered is None or len(covered) != len(tokens):
+        return None
+    values: list[Ps1Outcome] = []
+    bounded = False
+    for item, token in zip(covered, tokens):
+        if isinstance(item, str):
+            if token != item:
+                return None
+            bounded = item == 'first'
+            continue
+        if isinstance(token, str):
+            return None
+        named = type_of(token.value)
+        if named is None or named.generic_definition not in item:
+            return None
+        if bounded:
+            value = token.value
+            if not isinstance(value, Ps1Constant) or not isinstance(value.payload, int) or value.payload < 0:
+                return None
+        values.append(token)
+    return values
 
 
 def call_reader(world: Ps1WorldReach) -> Ps1CallReader:

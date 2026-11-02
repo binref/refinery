@@ -14,12 +14,11 @@ once over the whole script and held in a
 different thing, and no one of them may stand in for another:
 
 - whether it performs a side effect — `statement_effect`;
-- whether it may *throw* — `expression_cannot_fault`, the one gate every removal site goes through.
-  Its context-free half is `is_fault_free`, which grants what the value domain computes and what a
-  syntactic allow-list names and answers `False` for everything else; the other half is the single
-  fault the script rather than the expression decides, a read of a variable that was never set.
-  Purity is not this question: `is_side_effect_free` accepts `[Int]$x` and `$a / $b`, both of which
-  raise;
+- whether it may *throw* — `refinery.lib.scripts.ps1.analysis.raising`, the one answer every
+  removal site reads. Its context-free half is `is_fault_free`, which grants what the value domain
+  computes and what a syntactic allow-list names and answers `False` for everything else; the rest
+  is what the script rather than the expression decides. Purity is not this question:
+  `is_side_effect_free` accepts `[Int]$x` and `$a / $b`, both of which raise;
 - where the value it writes to the output stream is read — `output_sink` positionally, and
   `Ps1OutputFlow` through the call graph, which is the only one that can see past a function
   boundary.
@@ -35,32 +34,32 @@ import enum
 
 from typing import Callable, Iterator, NamedTuple, Sequence
 
-from refinery.lib.scripts import Block, Node, tree_root, tree_version
-from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, normal_reach_labels
+from refinery.lib.scripts import Block, Node, tree_root
+from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, Projection, flood_labels
 from refinery.lib.scripts.ps1 import data
 from refinery.lib.scripts.ps1.analysis.arguments import Ps1WrittenSlots, written_slots
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
-from refinery.lib.scripts.ps1.analysis.calls import call_reader
-from refinery.lib.scripts.ps1.analysis.cfg import Ps1TrapSet
 from refinery.lib.scripts.ps1.analysis.dispatch import Ps1ErrorKind
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import (
-    Ps1ErrorPaths,
     Ps1FaultReach,
-    Ps1SkipQuery,
     Ps1StepOverRegion,
     RaiseVerdicts,
-    raiser_of,
 )
 from refinery.lib.scripts.ps1.analysis.handlers import handler_acts
 from refinery.lib.scripts.ps1.analysis.identity import object_sources
 from refinery.lib.scripts.ps1.analysis.model import occurrence_role, scope_local_nodes
+from refinery.lib.scripts.ps1.analysis.raising import (
+    Ps1RaiseModel,
+    TreeStamp,
+    bound_default_may_throw,
+    lies_in_a_block_within,
+    point_raise_kinds,
+    statement_raise_kinds,
+)
 from refinery.lib.scripts.ps1.analysis.session import session_of
 from refinery.lib.scripts.ps1.analysis.values import (
-    UNKNOWN,
     candidate_types,
-    convert,
-    evaluate,
     is_fault_free,
 )
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
@@ -68,7 +67,6 @@ from refinery.lib.scripts.ps1.ast import (
     assignment_target_is_all_variables,
     assignment_target_variables,
     extract_new_object,
-    fault_operand,
     get_body,
     get_command_name,
     get_member_name,
@@ -78,7 +76,6 @@ from refinery.lib.scripts.ps1.ast import (
     is_null_discard,
     is_reference_cast,
     is_void_cast,
-    point_operands,
     resolve_command_name,
     unwrap_parens,
 )
@@ -1064,8 +1061,9 @@ class StatementEffect(enum.Enum):
     grow a branch to reach the verdict it already reaches. `Write-Host x` and `Get-Item x` are both
     `EFFECT`, and nothing here distinguishes them because nothing needs to.
 
-    Nor does any member say whether the statement can *throw*. That is `expression_cannot_fault`,
-    which a caller about to remove an `OUTPUT` statement has to ask separately: `[Int]'abc'` and
+    Nor does any member say whether the statement can *throw*. That is
+    `refinery.lib.scripts.ps1.analysis.raising`, which a caller about to remove an `OUTPUT`
+    statement has to ask separately: `[Int]'abc'` and
     `1/0` are both `OUTPUT`, and removing either resumes a script that had terminated.
     """
     EFFECT = 'effect'
@@ -1673,134 +1671,7 @@ def build_output_flow(graph: Ps1CallGraph) -> Ps1OutputFlow:
     ))
 
 
-def _is_bare_variable_read(node: Node) -> bool:
-    """
-    Whether *node* is an unqualified variable read and nothing else — the one expression shape whose
-    only way to raise is a setting of the script rather than a property of its operands.
-
-    Splatting is excluded because `@x` is not a read of the value at all, and every qualified
-    spelling is excluded because none of them shares the fact this rests on. `$global:x` and
-    `$script:x` read the same store and were measured not to raise, but `$using:x` is a different
-    construct outside the block that binds it; and a drive qualifier reads no store at all —
-    `${SomeDrive:path}` runs a provider, and what an arbitrary provider raises is not a question
-    this can answer for the drives it has never seen. One test covers them because the lexer spells
-    a drive as `Ps1ScopeModifier.DRIVE` like every other qualifier.
-
-    **Purity does not gain this gate and must not.** `is_side_effect_free` accepts a bare read
-    unconditionally, because reading a variable changes nothing whether or not the read raises. The
-    two questions are separate here, and a reader expecting them to be symmetric would be wrong.
-    """
-    return (
-        isinstance(node, Ps1Variable)
-        and not node.splatted
-        and node.scope is Ps1ScopeModifier.NONE
-    )
-
-
-def expression_cannot_fault(
-    operand: Node,
-    position: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach | None,
-) -> bool:
-    """
-    Whether evaluating *operand* cannot raise **where *position* stands** — the question a removal
-    site asks before it deletes an expression whose fault would have been observed.
-
-    `is_fault_free` is the context-free half and stays exactly that: it grants only what cannot
-    raise under any semantics, so a bare `$x` is not fault-free there and must not become so. What
-    is added here is the one fault the *script* decides rather than the expression. Reading a
-    variable that was never set yields `$null` under the default semantics and raises only where
-    strict mode is armed, so a script that never arms it cannot fault on such a read — and the
-    padding an obfuscator writes as `$junk | ForEach-Object { [void]$_ }` goes.
-
-    **Two models answer that, and neither half alone is enough.**
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.strict_mode_may_be_in_force` reads what
-    the script itself arms, wherever it is written;
-    `refinery.lib.scripts.ps1.analysis.worldflow.Ps1WorldReach.closed_at` says whether anything the
-    analysis cannot read may have run before *position*, and a payload it cannot read may arm strict
-    mode as easily as a spelled-out call does. A caller with no world therefore gets the
-    context-free answer alone, which is the fail-closed direction: a grant refused keeps a
-    statement, a grant made in error deletes one whose handler runs.
-
-    **The world half is a bound and not an answer.** What it reports is the type world's openers,
-    and a command that runs code no tree holds is not always one of them — `Set-PSDebug -Strict`
-    arms strict mode for the *global* scope, so any call this analysis cannot read through can arm
-    it without being a leak the world names. The bound it does give is the one that covers the
-    shapes an obfuscator writes, and everything it misses is stated with the entry-scope assumption
-    on `strict_mode_may_be_in_force` rather than left silent.
-
-    It is one function rather than a clause repeated at each caller because two removal sites
-    answering it differently is a contradiction and not a difference of opinion: the same `$x` in
-    the same script would be dropped as a discard and kept as a bare output.
-    """
-    if is_fault_free(operand):
-        return True
-    if world is None:
-        return False
-    if not evaluate(operand, calls=call_reader(world)).may_throw:
-        return True
-    return (
-        _is_bare_variable_read(operand)
-        and world.closed_at(position)
-        and not faults.strict_mode_may_be_in_force()
-    )
-
-
-def cleared_at(
-    position: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach | None,
-) -> Callable[[Node], bool]:
-    """
-    `expression_cannot_fault` at *position*, as the judgment a walk over shapes asks of each part
-    it would read as a raise; see
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.kinds_the_try_catches`.
-    """
-    return lambda operand: expression_cannot_fault(operand, position, faults, world)
-
-
-def point_raise_kinds(
-    point: Node,
-    position: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach | None,
-) -> Ps1ErrorKind:
-    """
-    The kinds of error a `try` catches that what the graphs evaluate at *point* may raise, judged
-    at *position*: the error of a `throw` where *point* is one, and those
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.kinds_the_try_catches` reads an
-    expression it evaluates as raising, with every part `expression_cannot_fault` clears read as
-    raising nothing. A point whose operands `refinery.lib.scripts.ps1.ast.point_operands`
-    cannot name may raise a statement-terminating error and one no list reports.
-    """
-    kinds = Ps1ErrorKind.THROWN if isinstance(point, Ps1ThrowStatement) else Ps1ErrorKind.NONE
-    operands = point_operands(point)
-    if operands is None:
-        return kinds | Ps1ErrorKind.STATEMENT | Ps1ErrorKind.MARKED
-    cleared = cleared_at(position, faults, world)
-    for operand in operands:
-        kinds |= faults.kinds_the_try_catches(operand, cleared)
-    return kinds
-
-
-def _lies_in_a_block_within(site: Node, stmt: Node) -> bool:
-    """
-    Whether *site* stands inside a script block that is itself written inside *stmt*. A script block
-    is the boundary asked about because it is what the graph builder gives a body of its own; a
-    `catch` or `trap` body written in *stmt* stays in the same graph and is judged there.
-    """
-    if site is stmt:
-        return False
-    cursor = site.parent
-    crossed = False
-    while cursor is not None and cursor is not stmt:
-        crossed = crossed or isinstance(cursor, Ps1ScriptBlock)
-        cursor = cursor.parent
-    return crossed and cursor is stmt
-
-
-def _leaves_a_block_of(site: Node, stmt: Node, faults: Ps1FaultReach) -> bool:
+def _leaves_a_block_of(site: Node, stmt: Node, faults: Ps1FaultReach, kinds: Ps1ErrorKind) -> bool:
     """
     Whether an error raised at *site* has no destination that deleting *stmt* could change: *site*
     stands inside a script block written within *stmt*, and no handler of that block settles the
@@ -1812,15 +1683,14 @@ def _leaves_a_block_of(site: Node, stmt: Node, faults: Ps1FaultReach) -> bool:
     Where the block is kept rather than run, the value holding it is built by evaluating *stmt*, so
     a script without *stmt* never builds the block and never reaches the point at all.
 
-    Without this, the fallback `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.observed_at`
-    takes for a body something may call — whether a handler that acts is written anywhere else in
-    this script — answers for every block an obfuscator writes inside a discarded pipeline, and a
-    single `try` written elsewhere in the file keeps all of them.
+    Without this, an error a function body hands to its caller is observed
+    (`refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.observed_at`), and that keeps the
+    definition writing the body although a script without the definition calls nothing.
     """
     return (
         site is not stmt
-        and _lies_in_a_block_within(site, stmt)
-        and faults.escapes_the_body(site, faults.kinds_a_point_may_raise(site))
+        and lies_in_a_block_within(site, stmt)
+        and faults.escapes_the_body(site, kinds)
     )
 
 
@@ -1841,23 +1711,24 @@ def fault_is_observed(
     and a gate that refuses only what a `catch` clause is written *beside* deletes the statement a
     handler one nesting level away was waiting for.
 
-    The first half is `expression_cannot_fault` over `fault_operand`, and the second is
+    The first half is what *raises* says a point raises
+    (`refinery.lib.scripts.ps1.analysis.raising.Ps1RaiseModel.kinds`), and the second is
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.observed_at`. Both are asked once per
     point the graphs evaluate inside *stmt*, because a construct is deleted whole and each of its
     parts raises where it stands; a construct the graphs place nothing for at all is refused, since
     a subtree nothing models is one nothing can clear. A point in the body of a `trap` nothing may
     fire runs on no path and is passed over
     (`refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.never_runs`), where *raises* says
-    what may fire it; without *raises*, every `trap` body is one that may run.
+    what may fire it.
 
-    *stmt* is the position every point is weighed at, rather than the point itself: *stmt* is what
-    the removal takes away, so what may have run before it is what decides whether the analysis can
-    see the semantics its parts run under. A point inside a script block has no position in the root
-    graph at all, and asking the world there refuses the shape this exists to clear.
+    A caller holding no raise model reads each point with
+    `refinery.lib.scripts.ps1.analysis.raising.point_raise_kinds` at *stmt*, and every `trap` body as
+    one that may run: *stmt* is what the removal takes away, so what may have run before it is what
+    decides whether the analysis can see the semantics its parts run under.
 
     **This is not the question asked before a handler is deleted.** A `trap` cannot raise, so
     nothing about its own position decides anything: what a removal changes is where the errors of
-    *other* statements go, and that is the transpose,
+    *other* statements go, and that is
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed`.
     Nor is it the question asked before a guarded body is emptied, which is
     `emptying_unhooks_a_handler` — a policy about what a listing should still show rather than a
@@ -1868,12 +1739,12 @@ def fault_is_observed(
         judged = True
         if raises is not None and faults.never_runs(site, raises):
             continue
-        operand = fault_operand(site)
-        if operand is not None and expression_cannot_fault(operand, stmt, faults, world):
+        kinds = _point_kinds(site, stmt, faults, world, raises)
+        if not kinds:
             continue
-        if _leaves_a_block_of(site, stmt, faults):
+        if _leaves_a_block_of(site, stmt, faults, kinds):
             continue
-        if faults.observed_at(site, faults.kinds_a_point_may_raise(site)):
+        if faults.observed_at(site, kinds):
             return True
     return not judged
 
@@ -1910,9 +1781,9 @@ def deletion_is_observable(
     The third is a read of the record the raise leaves behind. Windows PowerShell 5.1 files every
     terminating error in `$Error` whether or not a handler ran, so a later read of that record
     observes the raise even where no handler took it, and deleting the raiser empties a `$Error` the
-    original filled. This is paired the same way: *stmt* has to be able to leave a record —
-    `statement_can_raise`, the can-fault over-approximation the transpose also uses, so a raiser the
-    analysis proves cannot fault leaves none and stays removable — and a persistent-record read
+    original filled. This is paired the same way: *stmt* has to be able to leave a record — a point
+    of it may raise, so a raiser the analysis proves cannot fault leaves none and stays removable —
+    and a persistent-record read
     has to be reachable after it, which
     `refinery.lib.scripts.ps1.analysis.errorstate.Ps1ErrorStateReach` answers positionally.
     `error_state=None` skips the channel, the fail-open direction a caller with no such model
@@ -1927,20 +1798,56 @@ def deletion_is_observable(
     for point in faults.points_in(stmt):
         if (
             isinstance(point, Ps1ThrowStatement)
-            or _lies_in_a_block_within(point, stmt)
+            or lies_in_a_block_within(point, stmt)
             or (raises is not None and faults.never_runs(point, raises))
         ):
             continue
-        kinds = point_raise_kinds(point, stmt, faults, world)
+        kinds = _point_kinds(point, stmt, faults, world, raises)
         if kinds and faults.deleting_the_raise_resurrects_a_continuation(point, kinds):
             return True
     if (
         error_state is not None
-        and statement_can_raise(stmt, faults, world)
+        and _may_leave_a_record(stmt, faults, world, raises)
         and error_state.persistent_read_observed_after(stmt)
     ):
         return True
     return fault_is_observed(stmt, faults, world, raises)
+
+
+def _point_kinds(
+    point: Node,
+    stmt: Node,
+    faults: Ps1FaultReach,
+    world: Ps1WorldReach | None,
+    raises: RaiseVerdicts | None,
+) -> Ps1ErrorKind:
+    """
+    What *point*, a point of *stmt*, may raise: what *raises* says, or, for a caller holding no raise
+    model, `refinery.lib.scripts.ps1.analysis.raising.point_raise_kinds` judged at *stmt*.
+    """
+    if raises is None:
+        return point_raise_kinds(point, stmt, faults, world)
+    return raises.kinds(point)
+
+
+def _may_leave_a_record(
+    stmt: Node,
+    faults: Ps1FaultReach,
+    world: Ps1WorldReach | None,
+    raises: RaiseVerdicts | None,
+) -> bool:
+    """
+    Whether a point of *stmt* outside the script blocks written in it may raise, which leaves a
+    record in `$Error`; a statement the graphs place nothing of may.
+    """
+    if raises is None:
+        return bool(statement_raise_kinds(stmt, stmt, faults, world))
+    judged = False
+    for point in faults.points_in(stmt):
+        judged = True
+        if not lies_in_a_block_within(point, stmt) and raises.kinds(point):
+            return True
+    return not judged
 
 
 #: Commands that read a variable named by data rather than spelled, so one on a trap's continuation
@@ -2052,7 +1959,7 @@ class _ContinuationReads:
             for name, sites in self.by_name.items() if name in asked
         }
         sources[None] = [nodes[placed] for placed in self.dynamic_readers]
-        self._reach = normal_reach_labels(sources, forward=False)
+        self._reach = flood_labels(sources, forward=False, projection=Projection.FORWARD)
 
     def read_on(self, name: str, resumed: frozenset[CfgNode]) -> bool:
         """
@@ -2069,96 +1976,29 @@ class _ContinuationReads:
         return any(reach.reaches(None, node) or reach.reaches(name, node) for node in resumed)
 
 
-class _TreeStamp:
-    """
-    The tree version a set of verdicts was decided for. Once the tree moves, every verdict is
-    refused, the way `refinery.lib.scripts.ps1.analysis.worldflow.Ps1WorldReach` refuses once its
-    tree moves; each refusal is the answer that keeps the handler.
-    """
-
-    def __init__(self, root: Node):
-        self._root = root
-        self._version = tree_version(root)
-
-    def moved(self) -> bool:
-        return tree_version(self._root) != self._version
-
-
-class _RaiseVerdicts:
-    """
-    Whether something behind a handler may raise, and whether it may raise an error that ends the
-    run, read with `statement_can_raise` under one world (or none), and whether something behind a
-    `trap` may fire it, read with `point_may_fire_a_trap`; each kept per component of each graph's
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1ErrorPaths`, so that every handler guarding the
-    same statements is answered by one walk over them. Refused once the tree moves, as "may
-    raise".
-    """
-
-    def __init__(self, faults: Ps1FaultReach, world: Callable[[], Ps1WorldReach | None], stamp: _TreeStamp):
-        self._faults = faults
-        self._world = world
-        self._stamp = stamp
-        self._memos: dict[tuple[Ps1ErrorPaths, Callable[[CfgNode], bool]], dict[int, bool]] = {}
-
-    def _raises(self, node: CfgNode) -> bool:
-        raiser = raiser_of(node)
-        return raiser is not None and statement_can_raise(raiser, self._faults, self._world())
-
-    def _fires(self, node: CfgNode) -> bool:
-        raiser = raiser_of(node)
-        return raiser is not None and point_may_fire_a_trap(raiser, self._faults, self._world())
-
-    def _ends_the_run(self, node: CfgNode) -> bool:
-        raiser = raiser_of(node)
-        return (
-            raiser is not None
-            and self._faults.error_is_terminating(raiser)
-            and statement_can_raise(raiser, self._faults, self._world())
-        )
-
-    def _behind(self, paths: Ps1ErrorPaths, start: CfgNode, test: Callable[[CfgNode], bool]) -> bool:
-        if self._stamp.moved():
-            return True
-        return paths.behind(start, test, self._memos.setdefault((paths, test), {}))
-
-    def may_raise_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
-        return self._behind(paths, start, self._raises)
-
-    def may_end_the_run_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
-        return self._behind(paths, start, self._ends_the_run)
-
-    def may_fire_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
-        return self._behind(paths, start, self._fires)
-
-
 class _PastVerdicts:
     """
-    The questions about a point that read where its error goes with the raise read by
-    `point_raise_kinds` under one world, which clears what `expression_cannot_fault` clears: whether
-    an error raised inside a statement may be taken past it, whether a store may fail and leave the
-    value it overwrites in place, and the two questions the `catch` lift asks. Each point is
-    classified once, and every table is one per tree, refused once the tree moves in the direction
+    The questions about a point that read where its error goes with what the raise model of the
+    world reading says it raises: whether an error raised inside a statement may be taken past it,
+    whether a store may fail and leave the value it overwrites in place, and the two questions the
+    `catch` lift asks. Every table is one per tree, refused once the tree moves in the direction
     that keeps code.
     """
 
     def __init__(
         self,
         faults: Ps1FaultReach,
-        world: Callable[[], Ps1WorldReach],
-        stamp: _TreeStamp,
+        raises: Callable[[], Ps1RaiseModel],
+        stamp: TreeStamp,
     ):
         self._faults = faults
-        self._world = world
+        self._model = raises
         self._stamp = stamp
         self._memo: dict[int, float] = {}
-        self._kinds: dict[int, Ps1ErrorKind] = {}
         self._within: dict[int, Ps1ErrorKind] = {}
 
-    def _raises(self, element: Node) -> Ps1ErrorKind:
-        kinds = self._kinds.get(id(element))
-        if kinds is None:
-            kinds = self._kinds[id(element)] = point_raise_kinds(element, element, self._faults, self._world())
-        return kinds
+    def _raises(self, point: Node) -> Ps1ErrorKind:
+        return self._model().kinds(point)
 
     def raises_past(self, statement: Node) -> bool:
         if self._stamp.moved():
@@ -2262,66 +2102,52 @@ class _PastVerdicts:
 
 class _SkipVerdicts:
     """
-    Whether some soft raiser behind a resuming handler would, untrapped, run a statement a run can
-    see before reaching where the trap resumes, read with `_skipped_statement_is_observable` under
-    one world. It owns everything that judgment keeps: what each skipped statement writes, what the
-    stored bodies of the tree read, the continuation reads of each graph, one query per step-over
-    region, and the existential per component of each graph's error paths. The names a graph's
-    continuation index carries and the names a skipped statement is judged by are both read off
-    `_writes_at`, so the index holds every name a judgment can ask about. Refused once the tree
-    moves, as "observed".
+    Whether a statement one run executes and another skips does something a run can see, read with
+    `_skipped_statement_is_observable` under one world. It owns everything that judgment keeps: what
+    each skipped statement writes, what the stored bodies of the tree read, and the continuation
+    reads of each graph. The names a graph's continuation index carries and the names a skipped
+    statement is judged by are both read off `_writes_at`, so the index holds every name a judgment
+    can ask about. Refused once the tree moves, as "observed".
     """
 
-    def __init__(self, world: Callable[[], Ps1WorldReach], root: Node, stamp: _TreeStamp):
+    def __init__(self, world: Callable[[], Ps1WorldReach], root: Node, stamp: TreeStamp):
         self._world = world
         self._root = root
         self._stamp = stamp
         self._bodies: _BodyReads | None = None
         self._writes: dict[Node, _Writes] = {}
-        self._reads: dict[Ps1ErrorPaths, _ContinuationReads] = {}
-        self._queries: dict[Ps1StepOverRegion, Ps1SkipQuery] = {}
-        self._memos: dict[Ps1ErrorPaths, dict[int, bool]] = {}
+        self._reads: dict[int, _ContinuationReads] = {}
 
-    def skip_observed_behind(self, paths: Ps1ErrorPaths, start: CfgNode) -> bool:
+    def observers(
+        self,
+        graph: ControlFlowGraph,
+        regions: Sequence[Ps1StepOverRegion],
+    ) -> list[Callable[[CfgNode], bool]]:
+        """
+        For each of *regions* of *graph*, whether a statement of it does something a run can see,
+        a write read where the region rejoins the other run among it; one index of the reads of the
+        graph serves them all.
+        """
         if self._stamp.moved():
-            return True
-        memo = self._memos.setdefault(paths, {})
-        return paths.behind(start, lambda node: self._skips(paths, node), memo)
+            return [lambda member: True for _ in regions]
+        if self._bodies is None:
+            self._bodies = _reads_in_bodies(self._root)
+        reads = self._reads.get(id(graph))
+        if reads is None:
+            asked = _names_written_under(graph.owner, {graph.owner})
+            reads = self._reads[id(graph)] = _ContinuationReads(graph, self._bodies, asked)
+        world = self._world()
 
-    def _skips(self, paths: Ps1ErrorPaths, node: CfgNode) -> bool:
-        divergence = paths.divergence(node)
-        if divergence is None:
-            return False
-        return self._query(paths, paths.region(divergence.slot)).skips(node, divergence.step)
-
-    def landing_observed(self, paths: Ps1ErrorPaths, trap_set: Ps1TrapSet) -> bool:
-        if self._stamp.moved():
-            return True
-        landings = paths.landing_regions(trap_set)
-        if landings is None:
-            return True
-        for landing in landings:
-            query = self._query(paths, landing.region)
-            if any(query.reaches_observed(node) for step in landing.steps for node in step):
-                return True
-        return False
-
-    def _query(self, paths: Ps1ErrorPaths, region: Ps1StepOverRegion) -> Ps1SkipQuery:
-        query = self._queries.get(region)
-        if query is None:
-            reads = self._continuation_reads(paths)
-            resumed = region.resumed
-            world = self._world()
-
+        def observer(resumed: frozenset[CfgNode]) -> Callable[[CfgNode], bool]:
             def observed(member: CfgNode) -> bool:
                 element = member.element
                 if isinstance(element, Ps1TrapStatement):
                     return handler_acts(element)
                 return element is not None and _skipped_statement_is_observable(
                     element, resumed, world, reads, self._written(element))
+            return observed
 
-            query = self._queries[region] = region.query(observed)
-        return query
+        return [observer(region.resumed) for region in regions]
 
     def _written(self, element: Node) -> _Writes:
         writes = self._writes.get(element)
@@ -2329,67 +2155,55 @@ class _SkipVerdicts:
             writes = self._writes[element] = _skipped_writes(element)
         return writes
 
-    def _continuation_reads(self, paths: Ps1ErrorPaths) -> _ContinuationReads:
-        reads = self._reads.get(paths)
-        if reads is None:
-            if self._bodies is None:
-                self._bodies = _reads_in_bodies(self._root)
-            skipped = {
-                member.element
-                for region in paths.regions()
-                for member in region.members
-                if member.element is not None
-            }
-            reads = self._reads[paths] = _ContinuationReads(
-                paths.graph, self._bodies, _names_written_under(paths.graph.owner, skipped))
-        return reads
-
 
 class Ps1HandlerVerdicts:
     """
     The semantic half of where an error goes, for one version of one tree: whether deleting `trap`
-    statements changes what runs — whether what a set guards may raise, read without a world or
-    under the world, and whether what a resuming set skips, or runs before its errors would land, is
-    observable under the world — whether an error raised inside a statement may be taken past it,
-    which the store sweep asks, and the two questions the `catch` lift asks: the one clause a
-    certain throw lands in, and whether its body means the same standing in place of its `try`.
-    Held in a `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot, so it is rebuilt with
-    the fault model it reads, and handed to
+    statements changes what runs — what the points offered to a set raise, read without a world or
+    under the world, and whether what one run executes and the other skips is observable under the
+    world — whether an error raised inside a statement may be taken past it, which the store sweep
+    asks, and the two questions the `catch` lift asks: the one clause a certain throw lands in, and
+    whether its body means the same standing in place of its `try`. Held in a
+    `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot, so it is rebuilt with the fault
+    model it reads, and handed to
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed` through the
-    removal plan. Each answer is kept by the object that owns the test it was decided with, so no
-    caller can hand in a test and a memo that do not belong together. The world is taken from
-    *world* on the first verdict that reads it, so a pass that never weighs a handler under the
-    world never has one built.
+    removal plan. *raises* hands out the raise model of each reading of the world, built on the
+    first verdict that reads it, so a pass that never weighs a handler under the world never has
+    one built.
     """
 
-    def __init__(self, faults: Ps1FaultReach, world: Callable[[], Ps1WorldReach], root: Node):
+    def __init__(
+        self,
+        faults: Ps1FaultReach,
+        raises: Callable[[bool], Ps1RaiseModel],
+        root: Node,
+    ):
         root = tree_root(root)
-        stamp = _TreeStamp(root)
+        stamp = TreeStamp(root)
         self.faults = faults
-        self._world_of = world
-        self._world: Ps1WorldReach | None = None
-        self._raises = (
-            _RaiseVerdicts(faults, lambda: None, stamp),
-            _RaiseVerdicts(faults, lambda: self.world, stamp),
-        )
+        self._raises_of = raises
+        self._raises: dict[bool, Ps1RaiseModel] = {}
         self.skips = _SkipVerdicts(lambda: self.world, root, stamp)
-        self._past = _PastVerdicts(faults, lambda: self.world, stamp)
+        self._past = _PastVerdicts(faults, lambda: self.raises(True), stamp)
 
     @property
     def world(self) -> Ps1WorldReach:
         """
         The world the verdicts read, built on first use.
         """
-        world = self._world
+        world = self.raises(True).world
         if world is None:
-            world = self._world = self._world_of()
+            raise LookupError('the raise model of the world reading holds no world')
         return world
 
-    def raises(self, under_the_world: bool) -> _RaiseVerdicts:
+    def raises(self, under_the_world: bool) -> Ps1RaiseModel:
         """
-        The raise verdicts read under `world` when *under_the_world*, and without one otherwise.
+        The raise model read under `world` when *under_the_world*, and without one otherwise.
         """
-        return self._raises[under_the_world]
+        found = self._raises.get(under_the_world)
+        if found is None:
+            found = self._raises[under_the_world] = self._raises_of(under_the_world)
+        return found
 
     def raises_past(self, statement: Node) -> bool:
         """
@@ -2558,19 +2372,6 @@ def _is_plain_local(variable: Ps1Variable) -> bool:
     return variable.scope in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL) and not variable.drive
 
 
-def _within_a_stored_body(node: Node) -> bool:
-    """
-    Whether *node* stands inside a function body or a scriptblock the script stores rather than runs
-    where it is written — code a call may run at a point the straight-line reach never visits.
-    """
-    cursor = node.parent
-    while cursor is not None:
-        if isinstance(cursor, Ps1ScriptBlock):
-            return True
-        cursor = cursor.parent
-    return False
-
-
 def _placed_statement(node: Node, graph: ControlFlowGraph) -> int | None:
     """
     The id of the graph node standing for the statement *node* sits in, or `None` where the graph
@@ -2584,61 +2385,6 @@ def _placed_statement(node: Node, graph: ControlFlowGraph) -> int | None:
             return id(placed)
         cursor = cursor.parent
     return None
-
-
-def statement_can_raise(
-    stmt: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach | None = None,
-) -> bool:
-    """
-    Whether evaluating *stmt* may raise where it stands — the fault-possibility half of the
-    transpose, asked of a statement a `trap` guards to decide whether that guard is load bearing.
-
-    This is `fault_is_observed`'s first clause read on its own: a statement whose fault is one
-    expression that `expression_cannot_fault` clears cannot reach a handler, so a `trap` written
-    over nothing but such statements guards nothing and may go. Everything else may raise, which is
-    the direction that keeps a handler rather than dropping one — a command whose errors the model
-    does not read, a statement that is not one expression, a cast on the wrong operand.
-
-    It is built here rather than in `refinery.lib.scripts.ps1.analysis.faults` because the predicate
-    that decides it lives here, and it is injected into
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed` the way
-    `expression_cannot_fault` is asked forward: the fault module stays free of the semantic model
-    and takes the answer as a function. `world` widens the one bare-variable read
-    `expression_cannot_fault` clears under a closed world, and is left out where a caller has none,
-    which is the fail-closed direction — an unread world keeps the handler.
-    """
-    operand = fault_operand(stmt)
-    if operand is None:
-        return True
-    return not expression_cannot_fault(operand, stmt, faults, world)
-
-
-def point_may_fire_a_trap(
-    point: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach | None = None,
-) -> bool:
-    """
-    Whether evaluating the point *point* stands for may raise an error that fires a `trap` guarding
-    it: what the point evaluates (`refinery.lib.scripts.ps1.ast.point_operands`) is not cleared
-    by `expression_cannot_fault`, it is a `throw`, or the operands cannot be named. A function
-    definition evaluates nothing where it stands, since what its body raises arrives where it is
-    called, and a call is a command no clearing covers.
-
-    This reads a point where `statement_can_raise` reads a whole statement: a jump raises what its
-    value raises, and the point of an `if` what its first test does, its bodies being points of
-    their own.
-    """
-    if isinstance(point, Ps1FunctionDefinition):
-        return False
-    if isinstance(point, Ps1ThrowStatement):
-        return True
-    operands = point_operands(point)
-    if operands is None:
-        return True
-    return any(not expression_cannot_fault(operand, point, faults, world) for operand in operands)
 
 
 def emptying_unhooks_a_handler(block: Node) -> bool:
@@ -2706,34 +2452,6 @@ def pruning_erases_body(node, survivors: Sequence[Node]) -> bool:
     )
 
 
-def _bound_default_may_throw(parameter: Ps1ParameterDeclaration) -> bool:
-    """
-    Whether the conversion a type constraint runs over this parameter's default value can raise. A
-    default with no constraint is stored as it is written and a constraint with no default converts
-    nothing; only the two together reach a conversion, and it runs on every call that omits the
-    argument. Measured on 5.1, `[int] $x = 'abc'` throws it and `[int] $x = '42'` binds the Int32
-    42.
-
-    Not knowing is a throw, the direction `refinery.lib.scripts.ps1.analysis.values.Ps1Outcome`
-    already reads as safe: a default the value domain cannot evaluate, or a constraint naming a type
-    it does not model, is one this cannot prove converts, so its call is kept rather than dropped.
-    """
-    default = parameter.default_value
-    constraint = next(
-        (a for a in parameter.attributes if isinstance(a, Ps1TypeExpression)),
-        None,
-    )
-    if default is None or constraint is None:
-        return False
-    target = data.resolve_type(constraint.name)
-    if target is None:
-        return True
-    outcome = evaluate(default)
-    if outcome.may_throw or outcome.value is UNKNOWN:
-        return True
-    return convert(outcome.value, target).may_throw
-
-
 def _parameter_is_inert(
     parameter: Ps1ParameterDeclaration,
     world: Ps1WorldReach,
@@ -2757,7 +2475,7 @@ def _parameter_is_inert(
         return True
     return (
         is_side_effect_free(parameter.default_value, world)
-        and not _bound_default_may_throw(parameter)
+        and not bound_default_may_throw(parameter)
     )
 
 

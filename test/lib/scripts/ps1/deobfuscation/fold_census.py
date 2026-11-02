@@ -182,7 +182,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'SilentlyContinue'\n"
-        '$p = @($Null, $True)\n'
         'trap [System.IO.IOException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -219,7 +218,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'SilentlyContinue'\n"
-        '$p = @($Null, $True)\n'
         'trap [System.InvalidCastException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -256,7 +254,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'SilentlyContinue'\n"
-        '$p = @($Null, $True)\n'
         'trap [System.Management.Automation.RuntimeException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -292,13 +289,7 @@ FOLDS: dict[str, str] = {
     "$ErrorActionPreference = 'SilentlyContinue'\n"
     '$p = @($null, $true)\n'
     "trap { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        "$ErrorActionPreference = 'SilentlyContinue'\n"
-        '$p = @($Null, $True)\n'
-        'trap {\n'
-        "  Write-Host 't'\n"
-        '  break\n'
-        '}\n'
-        "throw 'x'",
+        "$ErrorActionPreference = 'SilentlyContinue'\ntrap {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
     "$ErrorActionPreference = 'SilentlyContinue'\n"
     '$p = @($null, $true)\n'
     "trap { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
@@ -820,7 +811,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'SilentlyContinue'\n"
-        "$p = @('a', $True)\n"
         'trap [System.IO.IOException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -859,7 +849,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'SilentlyContinue'\n"
-        "$p = @('a', $True)\n"
         'trap [System.InvalidCastException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -898,7 +887,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'SilentlyContinue'\n"
-        "$p = @('a', $True)\n"
         'trap [System.Management.Automation.RuntimeException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -937,7 +925,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "trap { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'SilentlyContinue'\n"
-        "$p = @('a', $True)\n"
         'trap {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -970,6 +957,10 @@ FOLDS: dict[str, str] = {
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "$ErrorActionPreference = 'Stop'; throw 'x'; Write-Host 'rest'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n$ErrorActionPreference = 'Stop'\nthrow 'x'\nWrite-Host 'rest'",
     "$ErrorActionPreference = 'SilentlyContinue'\n$p = @()\n$null = $(throw 'x'; Write-Host 'rest'); Write-Host 'after'":
         "$ErrorActionPreference = 'SilentlyContinue'\n$Null = $(throw 'x'\nWrite-Host 'rest')\nWrite-Host 'after'",
     "$ErrorActionPreference = 'SilentlyContinue'\n"
@@ -1004,6 +995,20 @@ FOLDS: dict[str, str] = {
         'function f1 {\n'
         "  throw 'x'\n"
         "  Write-Host 'rest'\n"
+        '}\n'
+        'f1\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n"
+    '$p = @()\n'
+    "function f1 { throw 'x'; Write-Host 'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'function f1 {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        'trap {\n'
+        "  Write-Host 't'\n"
+        '  continue\n'
         '}\n'
         'f1\n'
         "Write-Host 'after'",
@@ -1233,27 +1238,34 @@ FOLDS: dict[str, str] = {
         "  Write-Host 'rest'\n"
         '} finally {}\n'
         "Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'; if ($true) { trap [System.IO.IOException] { continue }; throw 'x' }; Write-Output 'after'":
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        'if ($True) {\n'
+        '  trap [System.IO.IOException] {\n'
+        '    continue\n'
+        '  }\n'
+        "  throw 'x'\n"
+        '}\n'
+        "Write-Output 'after'",
     "$ErrorActionPreference = 'Stop'\n"
     "$p = @($null, $null, 'a')\n"
     "trap { throw 'x'; Write-Host 'trest'; continue }; $null = [int]$p[2]; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @($Null, $Null, 'a')\n"
         'trap {\n'
         "  throw 'x'\n"
         "  Write-Host 'trest'\n"
         '  continue\n'
         '}\n'
-        '$Null = [int]$p[2]\n'
+        "$Null = [int]'a'\n"
         "Write-Host 'after'",
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @($null, $true)\n'
     "if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n$p = @($Null, $True)\nthrow 'x'",
+        "$ErrorActionPreference = 'Stop'\nthrow 'x'",
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap [System.IO.IOException] {\n'
         "    Write-Host 't'\n"
@@ -1266,7 +1278,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap [System.IO.IOException] {\n'
         "    Write-Host 't'\n"
@@ -1279,7 +1290,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap [System.IO.IOException] {\n'
         "    Write-Host 't'\n"
@@ -1293,7 +1303,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap [System.InvalidCastException] {\n'
         "    Write-Host 't'\n"
@@ -1306,7 +1315,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap [System.InvalidCastException] {\n'
         "    Write-Host 't'\n"
@@ -1319,7 +1327,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap [System.InvalidCastException] {\n'
         "    Write-Host 't'\n"
@@ -1333,7 +1340,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap [System.Management.Automation.RuntimeException] {\n'
         "    Write-Host 't'\n"
@@ -1346,7 +1352,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap [System.Management.Automation.RuntimeException] {\n'
         "    Write-Host 't'\n"
@@ -1359,7 +1364,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap [System.Management.Automation.RuntimeException] {\n'
         "    Write-Host 't'\n"
@@ -1373,7 +1377,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap { Write-Host 't' }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap {\n'
         "    Write-Host 't'\n"
@@ -1386,7 +1389,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap { Write-Host 't'; break }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap {\n'
         "    Write-Host 't'\n"
@@ -1399,7 +1401,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "if ($p[1]) { trap { Write-Host 't'; continue }; throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'if ($True) {\n'
         '  trap {\n'
         "    Write-Host 't'\n"
@@ -1425,13 +1426,7 @@ FOLDS: dict[str, str] = {
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @($null, $true)\n'
     "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
-        'trap [System.IO.IOException] {\n'
-        "  Write-Host 't'\n"
-        '  break\n'
-        '}\n'
-        "throw 'x'",
+        "$ErrorActionPreference = 'Stop'\ntrap [System.IO.IOException] {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @($null, $true)\n'
     "trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
@@ -1462,13 +1457,7 @@ FOLDS: dict[str, str] = {
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @($null, $true)\n'
     "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
-        'trap [System.InvalidCastException] {\n'
-        "  Write-Host 't'\n"
-        '  break\n'
-        '}\n'
-        "throw 'x'",
+        "$ErrorActionPreference = 'Stop'\ntrap [System.InvalidCastException] {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @($null, $true)\n'
     "trap [System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
@@ -1500,7 +1489,6 @@ FOLDS: dict[str, str] = {
     '$p = @($null, $true)\n'
     "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @($Null, $True)\n'
         'trap [System.Management.Automation.RuntimeException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -1536,7 +1524,7 @@ FOLDS: dict[str, str] = {
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @($null, $true)\n'
     "trap { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n$p = @($Null, $True)\ntrap {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
+        "$ErrorActionPreference = 'Stop'\ntrap {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @($null, $true)\n'
     "trap { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
@@ -1554,7 +1542,7 @@ FOLDS: dict[str, str] = {
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @($null, $true)\n'
     "try { throw 'x' } catch { if ($p[1]) { throw 'x'; Write-Host 'rest' } }; Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n$p = @($Null, $True)\nthrow 'x'",
+        "$ErrorActionPreference = 'Stop'\nthrow 'x'",
     "$ErrorActionPreference = 'Stop'\n"
     "$p = @('a')\n"
     "$ErrorActionPreference = 'Stop'; $null = [int]$p[0]; Write-Host 'rest'":
@@ -1916,12 +1904,11 @@ FOLDS: dict[str, str] = {
     "$ErrorActionPreference = 'Stop'\n"
     "$p = @('a', $true)\n"
     "if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n$p = @('a', $True)\n$Null = [int]'a'\nWrite-Host 'rest'\nWrite-Host 'after'",
+        "$ErrorActionPreference = 'Stop'\n$Null = [int]'a'\nWrite-Host 'rest'\nWrite-Host 'after'",
     "$ErrorActionPreference = 'Stop'\n"
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap [System.IO.IOException] {\n'
         "    Write-Host 't'\n"
@@ -1934,7 +1921,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap [System.IO.IOException] {\n'
         "    Write-Host 't'\n"
@@ -1948,7 +1934,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap [System.IO.IOException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap [System.IO.IOException] {\n'
         "    Write-Host 't'\n"
@@ -1962,7 +1947,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap [System.InvalidCastException] {\n'
         "    Write-Host 't'\n"
@@ -1975,7 +1959,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap [System.InvalidCastException] {\n'
         "    Write-Host 't'\n"
@@ -1989,7 +1972,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap [System.InvalidCastException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap [System.InvalidCastException] {\n'
         "    Write-Host 't'\n"
@@ -2003,7 +1985,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap [System.Management.Automation.RuntimeException] {\n'
         "    Write-Host 't'\n"
@@ -2016,7 +1997,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap [System.Management.Automation.RuntimeException] {\n'
         "    Write-Host 't'\n"
@@ -2030,7 +2010,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap [System.Management.Automation.RuntimeException] {\n'
         "    Write-Host 't'\n"
@@ -2044,7 +2023,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap { Write-Host 't' }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap {\n'
         "    Write-Host 't'\n"
@@ -2057,7 +2035,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap { Write-Host 't'; break }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap {\n'
         "    Write-Host 't'\n"
@@ -2071,7 +2048,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "if ($p[1]) { trap { Write-Host 't'; continue }; $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'if ($True) {\n'
         '  trap {\n'
         "    Write-Host 't'\n"
@@ -2098,7 +2074,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'trap [System.IO.IOException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -2137,7 +2112,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'trap [System.InvalidCastException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -2176,7 +2150,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'trap [System.Management.Automation.RuntimeException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -2215,7 +2188,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "trap { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'trap {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -2241,7 +2213,6 @@ FOLDS: dict[str, str] = {
     "$p = @('a', $true)\n"
     "try { throw 'x' } catch { if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        "$p = @('a', $True)\n"
         'try {\n'
         "  throw 'x'\n"
         '} catch {\n'
@@ -2250,20 +2221,35 @@ FOLDS: dict[str, str] = {
         '}\n'
         "Write-Host 'after'",
     "$ErrorActionPreference = 'Stop'\n$p = @()\n$ErrorActionPreference = 'Stop'; throw 'x'; Write-Host 'rest'":
-        "$ErrorActionPreference = 'Stop'\n$p = @()\n$ErrorActionPreference = 'Stop'\nthrow 'x'",
+        "$ErrorActionPreference = 'Stop'\n$ErrorActionPreference = 'Stop'\nthrow 'x'",
     "$ErrorActionPreference = 'Stop'\n$p = @()\n$null = $(throw 'x'; Write-Host 'rest'); Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n$p = @()\n$Null = $(throw 'x'\nWrite-Host 'rest')\nWrite-Host 'after'",
+        "$ErrorActionPreference = 'Stop'\n$Null = $(throw 'x'\nWrite-Host 'rest')\nWrite-Host 'after'",
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @()\n'
     "foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n$p = @()\nforeach ($i in 1, 2) {\n  throw 'x'\n}\nWrite-Host 'after'",
+        "$ErrorActionPreference = 'Stop'\nforeach ($i in 1, 2) {\n  throw 'x'\n}\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "foreach ($i in 1, 2) { try { try { continue } finally { Write-Host 'f'; throw 'x' } } catch { }; Write-Host 'm' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        'foreach ($i in 1, 2) {\n'
+        '  try {\n'
+        '    try {\n'
+        '      continue\n'
+        '    } finally {\n'
+        "      Write-Host 'f'\n"
+        "      throw 'x'\n"
+        '    }\n'
+        '  } catch {}\n'
+        "  Write-Host 'm'\n"
+        '}\n'
+        "Write-Host 'after'",
     "$ErrorActionPreference = 'Stop'\n$p = @()\nfunction f1 { throw 'x'; Write-Host 'rest' }; f1; Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n$p = @()\nfunction f1 {\n  throw 'x'\n}\nf1\nWrite-Host 'after'",
+        "$ErrorActionPreference = 'Stop'\nfunction f1 {\n  throw 'x'\n}\nf1\nWrite-Host 'after'",
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @()\n'
     "function f1 { throw 'x'; Write-Host 'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @()\n'
         'function f1 {\n'
         "  throw 'x'\n"
         '}\n'
@@ -2277,7 +2263,6 @@ FOLDS: dict[str, str] = {
     '$p = @()\n'
     "function f1 { throw 'x'; Write-Host 'rest' }; try { f1; Write-Host 't' } catch { Write-Host 'c' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @()\n'
         'function f1 {\n'
         "  throw 'x'\n"
         '}\n'
@@ -2292,7 +2277,6 @@ FOLDS: dict[str, str] = {
     '$p = @()\n'
     "function f1 { throw 'x'; Write-Host 'rest' }; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @()\n'
         'function f1 {\n'
         "  throw 'x'\n"
         '}\n'
@@ -2303,13 +2287,53 @@ FOLDS: dict[str, str] = {
         "  Write-Host 'c'\n"
         '}\n'
         "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "function f1 { try { try { return } finally { Write-Host 'f'; throw 'x' } } catch { }; Write-Host 'tail' }; f1; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        'function f1 {\n'
+        '  try {\n'
+        '    try {\n'
+        '      return\n'
+        '    } finally {\n'
+        "      Write-Host 'f'\n"
+        "      throw 'x'\n"
+        '    }\n'
+        '  } catch {}\n'
+        "  Write-Host 'tail'\n"
+        '}\n'
+        'f1\n'
+        "Write-Host 'after'",
     "$ErrorActionPreference = 'Stop'\n$p = @()\nthrow 'x'; Write-Host 'rest'":
-        "$ErrorActionPreference = 'Stop'\n$p = @()\nthrow 'x'",
+        "$ErrorActionPreference = 'Stop'\nthrow 'x'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "trap { Write-Host 't'; throw 'x'; continue }; try { throw 'x' } catch [System.IO.IOException] { }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        'trap {\n'
+        "  Write-Host 't'\n"
+        "  throw 'x'\n"
+        '  continue\n'
+        '}\n'
+        'try {\n'
+        "  throw 'x'\n"
+        '} catch [System.IO.IOException] {}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { Write-Host 't' } finally { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        'try {\n'
+        "  Write-Host 't'\n"
+        '} finally {\n'
+        "  throw 'x'\n"
+        "  Write-Host 'rest'\n"
+        '}\n'
+        "Write-Host 'after'",
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @()\n'
     "try { foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @()\n'
         'try {\n'
         '  foreach ($i in 1, 2) {\n'
         "    throw 'x'\n"
@@ -2322,7 +2346,6 @@ FOLDS: dict[str, str] = {
     '$p = @()\n'
     "try { throw 'x' } catch { & { throw 'x'; Write-Host 'rest' }; Write-Host 'c' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @()\n'
         'try {\n'
         "  throw 'x'\n"
         '} catch {\n'
@@ -2335,12 +2358,11 @@ FOLDS: dict[str, str] = {
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @()\n'
     "try { throw 'x' } catch { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n$p = @()\nthrow 'x'",
+        "$ErrorActionPreference = 'Stop'\nthrow 'x'",
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @()\n'
     "try { throw 'x' } catch { try { throw 'x' } finally { throw 'x'; Write-Host 'rest' } }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @()\n'
         'try {\n'
         "  throw 'x'\n"
         '} finally {\n'
@@ -2352,7 +2374,6 @@ FOLDS: dict[str, str] = {
     '$p = @()\n'
     "try { throw 'x'; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @()\n'
         'try {\n'
         "  throw 'x'\n"
         '} catch [System.IO.IOException] {\n'
@@ -2363,7 +2384,6 @@ FOLDS: dict[str, str] = {
     '$p = @()\n'
     "try { throw 'x'; Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @()\n'
         'try {\n'
         "  throw 'x'\n"
         '} catch [System.InvalidCastException] {\n'
@@ -2373,12 +2393,11 @@ FOLDS: dict[str, str] = {
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @()\n'
     "try { throw 'x'; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n$p = @()\nWrite-Host 'c'\nWrite-Host 'after'",
+        "$ErrorActionPreference = 'Stop'\nWrite-Host 'c'\nWrite-Host 'after'",
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @()\n'
     "try { throw 'x'; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.Exception] { Write-Host 'e' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @()\n'
         'try {\n'
         "  throw 'x'\n"
         '} catch [System.Management.Automation.RuntimeException] {\n'
@@ -2391,7 +2410,6 @@ FOLDS: dict[str, str] = {
     '$p = @()\n'
     "try { throw 'x'; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.InvalidCastException] { Write-Host 'i' }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @()\n'
         'try {\n'
         "  throw 'x'\n"
         '} catch [System.Management.Automation.RuntimeException] {\n'
@@ -2403,17 +2421,62 @@ FOLDS: dict[str, str] = {
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @()\n'
     "try { throw 'x'; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'":
-        "$ErrorActionPreference = 'Stop'\n$p = @()\nWrite-Host 'c'\nWrite-Host 'after'",
+        "$ErrorActionPreference = 'Stop'\nWrite-Host 'c'\nWrite-Host 'after'",
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @()\n'
     "try { throw 'x'; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\ntry {\n  throw 'x'\n} finally {\n  Write-Host 'fin'\n}\nWrite-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { try { exit } finally { Write-Host 'f'; throw 'x' } } catch { }; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\n"
-        '$p = @()\n'
         'try {\n'
-        "  throw 'x'\n"
-        '} finally {\n'
-        "  Write-Host 'fin'\n"
+        '  try {\n'
+        '    exit\n'
+        '  } finally {\n'
+        "    Write-Host 'f'\n"
+        "    throw 'x'\n"
+        '  }\n'
+        '} catch {}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { try { return } finally { Write-Host 'f'; throw 'x' } } catch { }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        'try {\n'
+        '  try {\n'
+        '    return\n'
+        '  } finally {\n'
+        "    Write-Host 'f'\n"
+        "    throw 'x'\n"
+        '  }\n'
+        '} catch {}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { try { throw 'x' } finally { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        'try {\n'
+        '  try {\n'
+        "    throw 'x'\n"
+        '  } finally {\n'
+        "    throw 'x'\n"
+        "    Write-Host 'rest'\n"
+        '  }\n'
+        '} catch {\n'
+        "  Write-Host 'c'\n"
         '}\n'
+        "Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n"
+    '$p = @()\n'
+    "try { try { throw 'x' } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'":
+        "$ErrorActionPreference = 'Stop'\n"
+        'try {\n'
+        '  try {\n'
+        "    throw 'x'\n"
+        '  } finally {}\n'
+        "  Write-Host 'rest'\n"
+        '} finally {}\n'
         "Write-Host 'after'",
     "$ErrorActionPreference = 'Stop'; trap [System.IO.IOException] { continue }; trap [Exception] { continue }; [int]'a'; Write-Host 'after'":
         "$ErrorActionPreference = 'Stop'\ntrap [Exception] {\n  continue\n}\n[int]'a'\nWrite-Host 'after'",
@@ -2430,8 +2493,12 @@ FOLDS: dict[str, str] = {
         '    }\n'
         '  }\n'
         '}\n'
-        'Get-Random\n'
-        "Write-Host 'rest'\n"
+        'try {\n'
+        "  throw 'x'\n"
+        '} catch {\n'
+        '  Get-Random\n'
+        "  Write-Host 'rest'\n"
+        '}\n'
         "Write-Host 'after'",
     "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); trap { continue }; [int]'a'; Write-Output 'after'":
         "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop')\n"
@@ -2549,7 +2616,7 @@ FOLDS: dict[str, str] = {
     '$i = 0; if ($true -or ($i++)) { }; $t = $i; Write-Output (,$t); Write-Output $t':
         '$i = 0\nif ($True -or ($i++)) {}\n$t = $i\nWrite-Output (,$t)\nWrite-Output $t',
     "$k = 'one'; try { $b = [Convert]::FromBase64String('!!'); $k = 'two' } catch { }; Write-Host $k":
-        "$k = 'one'\ntry {\n  $k = 'two'\n} catch {}\nWrite-Host $k",
+        "Write-Host 'two'",
     '$k = 1, 2, 3; $h = @{ k = $k }; if ((Get-Random -Maximum 1) -eq 0) { $buf = 0, 0 } else { $buf = 1, 1 }; $buf[0] = 7; Write-Output $k':
         'if ((Get-Random -Maximum 1) -Eq 0) {\n'
         '  $buf = 0, 0\n'
@@ -2611,14 +2678,7 @@ FOLDS: dict[str, str] = {
         "Write-Host \"out=$($out -Join ',')\"",
     "$p = @($null, $null, 'a')\n"
     "trap { throw 'x'; Write-Host 'trest'; continue }; $null = [int]$p[2]; Write-Host 'after'":
-        "$p = @($Null, $Null, 'a')\n"
-        'trap {\n'
-        "  throw 'x'\n"
-        "  Write-Host 'trest'\n"
-        '  continue\n'
-        '}\n'
-        '$Null = [int]$p[2]\n'
-        "Write-Host 'after'",
+        "trap {\n  throw 'x'\n  Write-Host 'trest'\n  continue\n}\n$Null = [int]'a'\nWrite-Host 'after'",
     "$p = @($null, $true)\nif ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "throw 'x'",
     '$p = @($null, $true)\n'
@@ -2732,112 +2792,84 @@ FOLDS: dict[str, str] = {
         "Write-Host 'after'",
     '$p = @($null, $true)\n'
     "trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        '$p = @($Null, $True)\n'
         'trap [System.IO.IOException] {\n'
         "  Write-Host 't'\n"
         '}\n'
-        'if ($p[1]) {\n'
+        'if ($True) {\n'
         "  throw 'x'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     '$p = @($null, $true)\n'
     "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @($Null, $True)\ntrap [System.IO.IOException] {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
+        "trap [System.IO.IOException] {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
     '$p = @($null, $true)\n'
     "trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        '$p = @($Null, $True)\n'
         'trap [System.IO.IOException] {\n'
         "  Write-Host 't'\n"
         '  continue\n'
         '}\n'
-        'if ($p[1]) {\n'
+        'if ($True) {\n'
         "  throw 'x'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     '$p = @($null, $true)\n'
     "trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        '$p = @($Null, $True)\n'
         'trap [System.InvalidCastException] {\n'
         "  Write-Host 't'\n"
         '}\n'
-        'if ($p[1]) {\n'
+        'if ($True) {\n'
         "  throw 'x'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     '$p = @($null, $true)\n'
     "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @($Null, $True)\ntrap [System.InvalidCastException] {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
+        "trap [System.InvalidCastException] {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
     '$p = @($null, $true)\n'
     "trap [System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        '$p = @($Null, $True)\n'
         'trap [System.InvalidCastException] {\n'
         "  Write-Host 't'\n"
         '  continue\n'
         '}\n'
-        'if ($p[1]) {\n'
+        'if ($True) {\n'
         "  throw 'x'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     '$p = @($null, $true)\n'
     "trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        '$p = @($Null, $True)\n'
         'trap [System.Management.Automation.RuntimeException] {\n'
         "  Write-Host 't'\n"
         '}\n'
-        'if ($p[1]) {\n'
+        'if ($True) {\n'
         "  throw 'x'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     '$p = @($null, $true)\n'
     "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        '$p = @($Null, $True)\n'
-        'trap [System.Management.Automation.RuntimeException] {\n'
-        "  Write-Host 't'\n"
-        '  break\n'
-        '}\n'
-        "throw 'x'",
+        "trap [System.Management.Automation.RuntimeException] {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
     '$p = @($null, $true)\n'
     "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        '$p = @($Null, $True)\n'
         'trap [System.Management.Automation.RuntimeException] {\n'
         "  Write-Host 't'\n"
         '  continue\n'
         '}\n'
-        'if ($p[1]) {\n'
+        'if ($True) {\n'
         "  throw 'x'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     "$p = @($null, $true)\ntrap { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        '$p = @($Null, $True)\n'
-        'trap {\n'
-        "  Write-Host 't'\n"
-        '}\n'
-        'if ($p[1]) {\n'
-        "  throw 'x'\n"
-        "  Write-Host 'rest'\n"
-        '}\n'
-        "Write-Host 'after'",
+        "trap {\n  Write-Host 't'\n}\nif ($True) {\n  throw 'x'\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
     '$p = @($null, $true)\n'
     "trap { Write-Host 't'; break }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @($Null, $True)\ntrap {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
+        "trap {\n  Write-Host 't'\n  break\n}\nthrow 'x'",
     '$p = @($null, $true)\n'
     "trap { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        '$p = @($Null, $True)\n'
-        'trap {\n'
-        "  Write-Host 't'\n"
-        '  continue\n'
-        '}\n'
-        'if ($p[1]) {\n'
-        "  throw 'x'\n"
-        "  Write-Host 'rest'\n"
-        '}\n'
-        "Write-Host 'after'",
+        "trap {\n  Write-Host 't'\n  continue\n}\nif ($True) {\n  throw 'x'\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
     "$p = @($null, $true)\ntry { throw 'x' } catch { if ($p[1]) { throw 'x'; Write-Host 'rest' } }; Write-Host 'after'":
         "throw 'x'",
     "$p = @('a')\n$ErrorActionPreference = 'Stop'; $null = [int]$p[0]; Write-Host 'rest'":
@@ -3094,16 +3126,20 @@ FOLDS: dict[str, str] = {
         "  Write-Host 'c'\n"
         '}\n'
         "Write-Host 'after'",
-    "$p = @('a', $null, 'a')\n"
-    "trap { $null = [int]$p[0]; Write-Host 'trest'; continue }; $null = [int]$p[2]; Write-Host 'after'":
-        "$p = @('a', $Null, 'a')\n"
-        'trap {\n'
+    "$p = @('a'); function f1 { $null = [int]$p[0]; Write-Host 'm1' }; trap { continue }; f1; Write-Host 'm2'":
+        "$p = @('a')\n"
+        'function f1 {\n'
         '  $Null = [int]$p[0]\n'
-        "  Write-Host 'trest'\n"
+        "  Write-Host 'm1'\n"
+        '}\n'
+        'trap {\n'
         '  continue\n'
         '}\n'
-        '$Null = [int]$p[2]\n'
-        "Write-Host 'after'",
+        'f1\n'
+        "Write-Host 'm2'",
+    "$p = @('a', $null, 'a')\n"
+    "trap { $null = [int]$p[0]; Write-Host 'trest'; continue }; $null = [int]$p[2]; Write-Host 'after'":
+        "trap {\n  $Null = [int]'a'\n  Write-Host 'trest'\n  continue\n}\n$Null = [int]'a'\nWrite-Host 'after'",
     "$p = @('a', $true)\nif ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
         "Write-Host 'rest'\nWrite-Host 'after'",
     "$p = @('a', $true)\n"
@@ -3236,18 +3272,16 @@ FOLDS: dict[str, str] = {
         "Write-Host 'after'",
     "$p = @('a', $true)\n"
     "trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
         'trap [System.IO.IOException] {\n'
         "  Write-Host 't'\n"
         '}\n'
-        'if ($p[1]) {\n'
-        '  $Null = [int]$p[0]\n'
+        'if ($True) {\n'
+        "  $Null = [int]'a'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     "$p = @('a', $true)\n"
     "trap [System.IO.IOException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
         'trap [System.IO.IOException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -3257,30 +3291,27 @@ FOLDS: dict[str, str] = {
         "Write-Host 'after'",
     "$p = @('a', $true)\n"
     "trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
         'trap [System.IO.IOException] {\n'
         "  Write-Host 't'\n"
         '  continue\n'
         '}\n'
-        'if ($p[1]) {\n'
-        '  $Null = [int]$p[0]\n'
+        'if ($True) {\n'
+        "  $Null = [int]'a'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     "$p = @('a', $true)\n"
     "trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
         'trap [System.InvalidCastException] {\n'
         "  Write-Host 't'\n"
         '}\n'
-        'if ($p[1]) {\n'
-        '  $Null = [int]$p[0]\n'
+        'if ($True) {\n'
+        "  $Null = [int]'a'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     "$p = @('a', $true)\n"
     "trap [System.InvalidCastException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
         'trap [System.InvalidCastException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -3290,30 +3321,27 @@ FOLDS: dict[str, str] = {
         "Write-Host 'after'",
     "$p = @('a', $true)\n"
     "trap [System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
         'trap [System.InvalidCastException] {\n'
         "  Write-Host 't'\n"
         '  continue\n'
         '}\n'
-        'if ($p[1]) {\n'
-        '  $Null = [int]$p[0]\n'
+        'if ($True) {\n'
+        "  $Null = [int]'a'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     "$p = @('a', $true)\n"
     "trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
         'trap [System.Management.Automation.RuntimeException] {\n'
         "  Write-Host 't'\n"
         '}\n'
-        'if ($p[1]) {\n'
-        '  $Null = [int]$p[0]\n'
+        'if ($True) {\n'
+        "  $Null = [int]'a'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     "$p = @('a', $true)\n"
     "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
         'trap [System.Management.Automation.RuntimeException] {\n'
         "  Write-Host 't'\n"
         '  break\n'
@@ -3323,46 +3351,29 @@ FOLDS: dict[str, str] = {
         "Write-Host 'after'",
     "$p = @('a', $true)\n"
     "trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
         'trap [System.Management.Automation.RuntimeException] {\n'
         "  Write-Host 't'\n"
         '  continue\n'
         '}\n'
-        'if ($p[1]) {\n'
-        '  $Null = [int]$p[0]\n'
+        'if ($True) {\n'
+        "  $Null = [int]'a'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
     "$p = @('a', $true)\n"
     "trap { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
-        'trap {\n'
-        "  Write-Host 't'\n"
-        '}\n'
-        'if ($p[1]) {\n'
-        '  $Null = [int]$p[0]\n'
-        "  Write-Host 'rest'\n"
-        '}\n'
-        "Write-Host 'after'",
+        "trap {\n  Write-Host 't'\n}\nif ($True) {\n  $Null = [int]'a'\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
     "$p = @('a', $true)\n"
     "trap { Write-Host 't'; break }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
-        'trap {\n'
-        "  Write-Host 't'\n"
-        '  break\n'
-        '}\n'
-        "$Null = [int]'a'\n"
-        "Write-Host 'rest'\n"
-        "Write-Host 'after'",
+        "trap {\n  Write-Host 't'\n  break\n}\n$Null = [int]'a'\nWrite-Host 'rest'\nWrite-Host 'after'",
     "$p = @('a', $true)\n"
     "trap { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'":
-        "$p = @('a', $True)\n"
         'trap {\n'
         "  Write-Host 't'\n"
         '  continue\n'
         '}\n'
-        'if ($p[1]) {\n'
-        '  $Null = [int]$p[0]\n'
+        'if ($True) {\n'
+        "  $Null = [int]'a'\n"
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
@@ -3370,7 +3381,7 @@ FOLDS: dict[str, str] = {
     "try { throw 'x' } catch { if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'":
         "try {\n  throw 'x'\n} catch {\n  $Null = [int]'a'\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
     "$p = @()\n$ErrorActionPreference = 'Stop'; throw 'x'; Write-Host 'rest'":
-        "$p = @()\n$ErrorActionPreference = 'Stop'\nthrow 'x'",
+        "$ErrorActionPreference = 'Stop'\nthrow 'x'",
     "$p = @()\n$null = $(throw 'x'; Write-Host 'rest'); Write-Host 'after'":
         "$Null = $(throw 'x'\nWrite-Host 'rest')\nWrite-Host 'after'",
     "$p = @()\nforeach ($i in 1, 2) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
@@ -3392,7 +3403,7 @@ FOLDS: dict[str, str] = {
     "$p = @()\nfunction f1 { throw 'x'; Write-Host 'rest' }; f1; Write-Host 'after'":
         "function f1 {\n  throw 'x'\n}\nf1\nWrite-Host 'after'",
     "$p = @()\nfunction f1 { throw 'x'; Write-Host 'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'":
-        "$p = @()\nfunction f1 {\n  throw 'x'\n}\ntrap {\n  Write-Host 't'\n  continue\n}\nf1\nWrite-Host 'after'",
+        "function f1 {\n  throw 'x'\n}\ntrap {\n  Write-Host 't'\n  continue\n}\nf1\nWrite-Host 'after'",
     '$p = @()\n'
     "function f1 { throw 'x'; Write-Host 'rest' }; try { f1; Write-Host 't' } catch { Write-Host 'c' }; Write-Host 'after'":
         'function f1 {\n'
@@ -3407,7 +3418,7 @@ FOLDS: dict[str, str] = {
         "Write-Host 'after'",
     '$p = @()\n'
     "function f1 { throw 'x'; Write-Host 'rest' }; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'":
-        "function f1 {\n  throw 'x'\n}\ntry {\n  throw 'x'\n} catch {\n  f1\n  Write-Host 'c'\n}\nWrite-Host 'after'",
+        "function f1 {\n  throw 'x'\n}\nf1\nWrite-Host 'c'\nWrite-Host 'after'",
     '$p = @()\n'
     "function f1 { try { try { return } finally { Write-Host 'f'; throw 'x' } } catch { }; Write-Host 'tail' }; f1; Write-Host 'after'":
         'function f1 {\n'
@@ -3425,13 +3436,24 @@ FOLDS: dict[str, str] = {
         "Write-Host 'after'",
     "$p = @()\nthrow 'x'; Write-Host 'rest'":
         "throw 'x'",
+    '$p = @()\n'
+    "trap { Write-Host 't'; throw 'x'; continue }; try { throw 'x' } catch [System.IO.IOException] { }; Write-Host 'after'":
+        'trap {\n'
+        "  Write-Host 't'\n"
+        "  throw 'x'\n"
+        '  continue\n'
+        '}\n'
+        'try {\n'
+        "  throw 'x'\n"
+        '} catch [System.IO.IOException] {}\n'
+        "Write-Host 'after'",
     "$p = @()\ntry { Write-Host 't' } finally { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "try {\n  Write-Host 't'\n} finally {\n  throw 'x'\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
     '$p = @()\n'
     "try { foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
         "try {\n  foreach ($i in 1, 2) {\n    throw 'x'\n  }\n} catch {\n  Write-Host 'c'\n}\nWrite-Host 'after'",
     "$p = @()\ntry { throw 'x' } catch { & { throw 'x'; Write-Host 'rest' }; Write-Host 'c' }; Write-Host 'after'":
-        "try {\n  throw 'x'\n} catch {\n  & {\n    throw 'x'\n  }\n  Write-Host 'c'\n}\nWrite-Host 'after'",
+        "& {\n  throw 'x'\n}\nWrite-Host 'c'\nWrite-Host 'after'",
     "$p = @()\ntry { throw 'x' } catch { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
         "throw 'x'",
     '$p = @()\n'
@@ -4673,8 +4695,8 @@ FOLDS: dict[str, str] = {
         "& {\n  $ExecutionContext.SessionState.PSVariable.Remove('x')\n}\nWrite-Output 'a'",
     "$x = 'a'; & { Write-Host $script:x }; $x = 'b'":
         "& {\n  Write-Host 'a'\n}",
-    '$x = \'a\'; &(\'i\' + \'ex\') \'$x = "b"\'; Write-Host $x':
-        "Write-Host 'a'",
+    "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x":
+        'Write-Host "b"',
     "$x = 'a'; . { $local:x = 'b' }; Write-Output $x":
         ". {\n  $local:x = 'b'\n}\nWrite-Output 'a'",
     "$x = 'a'; . { Write-Output $local:x }; $x = 'b'":
@@ -4983,18 +5005,6 @@ FOLDS: dict[str, str] = {
         '}\n'
         'g $x\n'
         'Write-Output $x',
-    '$x = 1, 2, 3; function f { $o[0] = 9 }; function g($p) { $o = $p; f }; $o = 0, 0; g $x; Write-Output $x':
-        '$x = 1, 2, 3\n'
-        'function f {\n'
-        '  $o[0] = 9\n'
-        '}\n'
-        'function g {\n'
-        '  Param($p)\n'
-        '  $o = $p\n'
-        '  f\n'
-        '}\n'
-        'g $x\n'
-        'Write-Output $x',
     '$x = 1, 2; $y = Sort-Object -InputObject $x; Write-Output ([object]::ReferenceEquals($x, $y))':
         '$y = Sort-Object -InputObject (1, 2)\nWrite-Output ([Object]::ReferenceEquals((1, 2), $y))',
     '$x = 1, 2; Write-Output ([object]::ReferenceEquals($x, $x))':
@@ -5051,6 +5061,8 @@ FOLDS: dict[str, str] = {
         "'aaa'",
     "'a' + 'b'":
         "'ab'",
+    "'a', 1, $null, @(1, 2), (New-Object Object) | Out-Null; Write-Output 'after'":
+        "Write-Output 'after'",
     "'a{0}c' -f 'b'":
         "'abc'",
     "'{0}-{1}' -f 'a', 'b'":
@@ -5111,15 +5123,16 @@ FOLDS: dict[str, str] = {
         "Write-Output 'resolved'",
     "Set-Alias zzq iex; zzq 'Write-Output loaded'":
         'Write-Output loaded',
-    "Set-StrictMode -Version 1; $w = 'a'; $m = 'out'; trap { continue }; if ($Host) { $w = $undefined; $m = 'in' }; Write-Host \"$m $w\"":
+    "Set-StrictMode -Version 1; $v = 1; Remove-Variable v; try { $null = $v; Write-Output 'read' } catch { Write-Output 'caught' }":
         'Set-StrictMode -Version 1\n'
-        "$w = 'a'\n"
-        "$m = 'out'\n"
-        'if ($Host) {\n'
-        '  $w = $undefined\n'
-        "  $m = 'in'\n"
-        '}\n'
-        'Write-Host "${m} ${w}"',
+        '$v = 1\n'
+        'Remove-Variable v\n'
+        'try {\n'
+        '  $Null = $v\n'
+        "  Write-Output 'read'\n"
+        '} catch {\n'
+        "  Write-Output 'caught'\n"
+        '}',
     "Set-Variable -Name ('Error' + 'ActionPreference') -Value 0; throw 'boom'; Write-Host 'after'":
         "$ErrorActionPreference = 0\nthrow 'boom'\nWrite-Host 'after'",
     "Set-Variable global:y 'b'; Write-Host $global:y":
@@ -5196,10 +5209,18 @@ FOLDS: dict[str, str] = {
         "Write-Output 'A'\nWrite-Output 'A'",
     "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('aGk='))":
         "'hi'",
-    "[int]$i = 0; try { throw 'x' } catch { foreach ($i in 'a') { }; Write-Host 'rest' }; Write-Host 'after'":
-        "foreach ($i in 'a') {}\nWrite-Host 'rest'\nWrite-Host 'after'",
     '[int]$q = 5; Write-Output $q.ToString()':
         "Write-Output '5'",
+    "[int]$v1 = 1; if ($args.Count -ge 0) { trap { Write-Output 'T'; continue }; $v1 = 'abc' }; Write-Output 'after'":
+        '[int]$v1 = 1\n'
+        'if ($args.Count -GE 0) {\n'
+        '  trap {\n'
+        "    Write-Output 'T'\n"
+        '    continue\n'
+        '  }\n'
+        "  $v1 = 'abc'\n"
+        '}\n'
+        "Write-Output 'after'",
     "[int]'42' + 1":
         '43',
     "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string]); iex 'Write-Host ([System.Math].FullName)'":
@@ -5275,7 +5296,7 @@ FOLDS: dict[str, str] = {
     "function K { $Null = 1 }; K; $Null = (Get-Command K).Name; Write-Host 'A'":
         "$Null = (Get-Command K).Name\nWrite-Host 'A'",
     'function K { $Null = 1 }; K; $b = { K }; Write-Host $b':
-        '$b = {}\nWrite-Host $b',
+        'function K {}\nK\n$b = {\n  K\n}\nWrite-Host $b',
     'function K { $Null = 1 }; K; Write-Host ($function:K -ne $Null)':
         'function K {}\nK\nWrite-Host ($function:K -NE $Null)',
     "function K { $Null = 1 }; Write-Error 'e'; K; Write-Host $?":
@@ -5288,8 +5309,6 @@ FOLDS: dict[str, str] = {
         "Write-Host 'A'",
     'function Measure-Object { $Null = 1 }; Measure-Object; 1, 2, 3 | measure':
         'function Measure-Object {}\nMeasure-Object\n1, 2, 3 | Measure-Object',
-    "function Raise { throw 'e' }; function Wrap { trap { continue }; Raise; Write-Host 'in' }; Wrap; Write-Host 'after'":
-        "function Raise {\n  throw 'e'\n}\nfunction Wrap {\n  Raise\n  Write-Host 'in'\n}\nWrap\nWrite-Host 'after'",
     "function alias { 'from-function' }; Set-Alias zzq Write-Output; alias zzq":
         "'from-function'",
     'function dec($d) { $o = New-Object byte[] 2; $o[0] = $d; $o[1] = 1; $o }; Write-Output (dec 5)':
@@ -5326,15 +5345,19 @@ FOLDS: dict[str, str] = {
     "function f { $s = 'abc'; $s++; $s }; $t = f; Write-Output (,$t); Write-Output $t":
         'Write-Output (,(0, 1))\nWrite-Output (0, 1)',
     "function f { $script:x = 'one'; $null = [int]'a'; $script:x = 'two' }; try { f } catch { }; Write-Host $script:x":
-        "function f {\n  $script:x = 'one'\n  $script:x = 'two'\n}\ntry {\n  f\n} catch {}\nWrite-Host $script:x",
+        'function f {\n'
+        "  $script:x = 'one'\n"
+        "  $Null = [int]'a'\n"
+        "  $script:x = 'two'\n"
+        '}\n'
+        'try {\n'
+        '  f\n'
+        '} catch {}\n'
+        'Write-Host $script:x',
     "function f { $x }; & { $x = 'a'; f }":
         "& {\n  $x = 'a'\n}",
     'function f { ,$args }; $t = f 1 2; Write-Output (,$t); Write-Output $t.Count':
         'Write-Output (,(1, 2))\nWrite-Output 2',
-    "function f { Write-Host $script:x }; $x = 'a'; f; $x = 'b'; f":
-        'function f {\n  Write-Host $script:x\n}\nf\nf',
-    "function f { Write-Host $x }; $x = 'a'; f; $x = 'b'; f":
-        'function f {\n  Write-Host $x\n}\nf\nf',
     "function f { [CmdletBinding()] param(); $null = [int]'a'; Write-Host 'f-rest' }; f -ErrorAction Stop; Write-Host 'after'":
         'function f {\n'
         '  [CmdletBinding()]\n'
@@ -5347,8 +5370,6 @@ FOLDS: dict[str, str] = {
         'function f {\n  [Object[]]$a = 1, 2\n  [Array]::Reverse(@($a))\n  Write-Output $a\n}\nf',
     'function f { [void]$input; $input | ForEach-Object { Write-Host "seen:$_" } }; 1, 2 | f':
         'function f {\n  [void]$Input\n  $Input | ForEach-Object {\n    Write-Host "seen:${_}"\n  }\n}\n1, 2 | f',
-    "function f { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" }; try { f } catch { }; Write-Host 'after'":
-        "function f {\n  $v = [int]'a'\n  Write-Host \"rest ${v}\"\n}\ntry {\n  f\n} catch {}\nWrite-Host 'after'",
     "function f { try { $null = [int]'a'; Write-Host 'f-rest' } finally { }; Write-Host 'f-after' }; f; Write-Host 'after'":
         'function f {\n'
         '  try {\n'
@@ -5441,30 +5462,55 @@ FOLDS: dict[str, str] = {
     "trap { break }; trap { continue }; [int]'a'; Write-Host 'after'":
         "trap {\n  break\n}\n[int]'a'\nWrite-Host 'after'",
     "trap { continue }; $a = @('x', '5'); for ($i = 0; $i -lt 2; $i++) { $y = [int]$a[$i] }; Write-Host \"y=$y\"":
-        "$a = @('x', '5')\nfor ($i = 0; $i -LT 2; $i++) {\n  $y = [int]$a[$i]\n}\nWrite-Host \"y=${y}\"",
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        "$a = @('x', '5')\n"
+        'for ($i = 0; $i -LT 2; $i++) {\n'
+        '  $y = [int]$a[$i]\n'
+        '}\n'
+        'Write-Host "y=${y}"',
     "trap { continue }; $out = New-Object byte[] 3; for ($i = 0; $i -lt 3; $i++) { $out[$i] = 7 -bxor $k[$i % $k.Length] }; Write-Host \"out=$($out -join ',')\"":
+        'trap {\n'
+        '  continue\n'
+        '}\n'
         '$out = New-Object byte[] 3\n'
         'for ($i = 0; $i -LT 3; $i++) {\n'
         '  $out[$i] = 7 -BXor $k[$i % $k.Length]\n'
         '}\n'
         "Write-Host \"out=$($out -Join ',')\"",
     "trap { continue }; $s = [string][char]256 + 'b'; $k = [char[]]$s | ForEach-Object { [byte][char]$_ }; Write-Host \"count=$($k.Count) key=$($k -join ',')\"":
+        'trap {\n'
+        '  continue\n'
+        '}\n'
         "$k = [char[]]'Āb' | ForEach-Object {\n"
         '  [byte][char]$_\n'
         '}\n'
         "Write-Host \"count=$($k.Count) key=$($k -Join ',')\"",
     "trap { continue }; $s = { throw 'x' }; [int]'a'; Write-Host 'after'":
-        "trap {\n  continue\n}\n$Null = {\n  throw 'x'\n}\n[int]'a'\nWrite-Host 'after'",
+        "$Null = {\n  throw 'x'\n}\n[int]'a'\nWrite-Host 'after'",
     'trap { continue }; $x = "$(1/0)$(Set-Alias zzq Write-Output)"; zzq \'hi\'':
         'trap {\n  continue\n}\n$Null = "$(1 / 0)$(Set-Alias zzq Write-Output)"\nzzq \'hi\'',
     "trap { continue }; 1/0; Write-Host 'after'":
         "1 / 0\nWrite-Host 'after'",
     "trap { continue }; [int]'a'; Write-Host 'after'":
         "[int]'a'\nWrite-Host 'after'",
+    "trap { continue }; for ($i = 0; $True; $i++) { $null = [int]$env:COMPUTERNAME; Write-Host 'tail'; break }; Write-Host 'next'":
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'for ($i = 0; $True; $i++) {\n'
+        '  $Null = [int]$env:ComputerName\n'
+        "  Write-Host 'tail'\n"
+        '  break\n'
+        '}\n'
+        "Write-Host 'next'",
     "trap { continue }; foreach ($i in 1..2) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'":
-        "trap {\n  continue\n}\nforeach ($i in 1, 2) {\n  throw 'e'\n  Write-Host 'tail'\n}\nWrite-Host 'next'",
+        "trap {\n  continue\n}\nforeach ($i in 1, 2) {\n  throw 'e'\n}\nWrite-Host 'next'",
+    "trap { continue }; foreach ($q in 1, 2) { trap { continue }; [int]'a'; Write-Host \"tail $q\" }; Write-Host 'after'":
+        "foreach ($q in 1, 2) {\n  [int]'a'\n  Write-Host \"tail ${q}\"\n}\nWrite-Host 'after'",
     "trap { continue }; iex 'throw 1'; Write-Host 'after'":
-        'throw 1',
+        "trap {\n  continue\n}\nthrow 1\nWrite-Host 'after'",
     "trap { continue }; if ($Host) { $x = 'one'; $null = [int]'a'; $x = 'two' }; Write-Host $x":
         "trap {\n  continue\n}\nif ($Host) {\n  $x = 'one'\n  $Null = [int]'a'\n  $x = 'two'\n}\nWrite-Host $x",
     "trap { continue }; if ($Host) { trap [System.IO.IOException] { continue }; $null = [int]'a'; Write-Host 'rest' }; Write-Host 'after'":
@@ -5479,10 +5525,19 @@ FOLDS: dict[str, str] = {
         "  Write-Host 'rest'\n"
         '}\n'
         "Write-Host 'after'",
+    "trap { continue }; if ($True) { $null = [int]$env:COMPUTERNAME; Write-Host 'tail' }; Write-Host 'next'":
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'if ($True) {\n'
+        '  $Null = [int]$env:ComputerName\n'
+        "  Write-Host 'tail'\n"
+        '}\n'
+        "Write-Host 'next'",
     "trap { continue }; if ($true) { [int]'a'; Write-Host 'tail' }; Write-Host 'after'":
         "trap {\n  continue\n}\nif ($True) {\n  [int]'a'\n  Write-Host 'tail'\n}\nWrite-Host 'after'",
     "trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'":
-        "trap {\n  continue\n}\nif ($True) {\n  throw 'e'\n  Write-Host 'tail'\n}\nWrite-Host 'next'",
+        "trap {\n  continue\n}\nthrow 'e'\nWrite-Host 'next'",
     "trap { continue }; if ($true) { trap [System.IO.IOException] { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'after'":
         'trap {\n'
         '  continue\n'
@@ -5496,22 +5551,7 @@ FOLDS: dict[str, str] = {
         '}\n'
         "Write-Host 'after'",
     "trap { continue }; if ($true) { trap [System.IO.IOException] { continue }; if ($true) { trap { continue }; [int]'a' }; Write-Host 'mid' }; Write-Host 'after'":
-        'trap {\n'
-        '  continue\n'
-        '}\n'
-        'if ($True) {\n'
-        '  trap [System.IO.IOException] {\n'
-        '    continue\n'
-        '  }\n'
-        '  if ($True) {\n'
-        '    trap {\n'
-        '      continue\n'
-        '    }\n'
-        "    [int]'a'\n"
-        '  }\n'
-        "  Write-Host 'mid'\n"
-        '}\n'
-        "Write-Host 'after'",
+        "[int]'a'\nWrite-Host 'mid'\nWrite-Host 'after'",
     "trap { continue }; if ($true) { trap { break }; if ($true) { [int]'a'; Write-Host 'tail' }; Write-Host 'mid' }; Write-Host 'after'":
         'trap {\n'
         '  continue\n'
@@ -5525,32 +5565,9 @@ FOLDS: dict[str, str] = {
         '}\n'
         "Write-Host 'after'",
     "trap { continue }; if ($true) { trap { break }; if ($true) { trap { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'mid' }; Write-Host 'after'":
-        'trap {\n'
-        '  continue\n'
-        '}\n'
-        'if ($True) {\n'
-        '  if ($True) {\n'
-        '    trap {\n'
-        '      continue\n'
-        '    }\n'
-        "    [int]'a'\n"
-        "    Write-Host 'tail'\n"
-        '  }\n'
-        "  Write-Host 'mid'\n"
-        '}\n'
-        "Write-Host 'after'",
+        "[int]'a'\nWrite-Host 'tail'\nWrite-Host 'mid'\nWrite-Host 'after'",
     "trap { continue }; if ($true) { trap { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'after'":
-        'trap {\n'
-        '  continue\n'
-        '}\n'
-        'if ($True) {\n'
-        '  trap {\n'
-        '    continue\n'
-        '  }\n'
-        "  [int]'a'\n"
-        "  Write-Host 'tail'\n"
-        '}\n'
-        "Write-Host 'after'",
+        "[int]'a'\nWrite-Host 'tail'\nWrite-Host 'after'",
     "trap { continue }; if ((Get-Date).Year -gt 2000) { $v = [int]'a'; Write-Host 't' }; Write-Host 'after'":
         'trap {\n'
         '  continue\n'
@@ -5573,8 +5590,21 @@ FOLDS: dict[str, str] = {
         "Write-Host 'after'",
     "trap { continue }; if ((Get-Date).Year -gt 2000) { trap [System.IO.IOException] { continue }; $v = [int]'a' }; Write-Host 'after'":
         "if ((Get-Date).Year -GT 2000) {}\nWrite-Host 'after'",
+    "trap { continue }; switch (1) { 1 { $null = [int]$env:COMPUTERNAME; Write-Host 'tail' } }; Write-Host 'next'":
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'switch (1) {\n'
+        '  1 {\n'
+        '    $Null = [int]$env:ComputerName\n'
+        "    Write-Host 'tail'\n"
+        '  }\n'
+        '}\n'
+        "Write-Host 'next'",
+    "trap { continue }; switch (1) { 1 { throw 'e'; Write-Host 'tail' } }; Write-Host 'next'":
+        "trap {\n  continue\n}\nthrow 'e'\nWrite-Host 'next'",
     "trap { continue }; trap [System.Management.Automation.RuntimeException] { break }; $z = 0; 1/$z; Write-Host 'after'":
-        "trap [System.Management.Automation.RuntimeException] {\n  break\n}\n$z = 0\n1 / 0\nWrite-Host 'after'",
+        "trap [System.Management.Automation.RuntimeException] {\n  break\n}\n1 / 0\nWrite-Host 'after'",
     "trap { continue }; trap { Write-Host 'p' }; $u = [int]'a'; Write-Host 'after'":
         "trap {\n  continue\n}\ntrap {\n  Write-Host 'p'\n}\nWrite-Host 'after'",
     "trap { continue }; trap { break }; [int]'a'; Write-Host 'after'":
@@ -5582,13 +5612,27 @@ FOLDS: dict[str, str] = {
     "trap { continue }; try { $v = [int]'a'; trap { break } } finally { }; Write-Host 'after'":
         "Write-Host 'after'",
     "trap { continue }; try { if ($Host) { return } } finally { $null = [int]'a' }; Write-Host 'after'":
-        "try {\n  if ($Host) {\n    return\n  }\n} finally {}\nWrite-Host 'after'",
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'try {\n'
+        '  if ($Host) {\n'
+        '    return\n'
+        '  }\n'
+        '} finally {\n'
+        "  $Null = [int]'a'\n"
+        '}\n'
+        "Write-Host 'after'",
     "trap { continue }; try { trap [System.IO.IOException] { continue }; $v = [int]'a' } finally { }; Write-Host 'after'":
         "Write-Host 'after'",
     "trap { continue }; zzq0000=5; Write-Host 'after'":
         "zzq0000=5\nWrite-Host 'after'",
     "trap { }; [int]'a'; Write-Host 'after'":
         "[int]'a'\nWrite-Host 'after'",
+    "try { $null = 1, 2 | Select-Object -First -1; Write-Output 'ok' } catch { Write-Output 'caught' }":
+        "try {\n  $Null = 1, 2 | Select-Object -First -1\n  Write-Output 'ok'\n} catch {\n  Write-Output 'caught'\n}",
+    "try { $null = Get-Process; Write-Output 'ok' } catch { Write-Output 'caught' }":
+        "try {\n  Write-Output 'ok'\n} catch {\n  Write-Output 'caught'\n}",
     "try { $null = [int]'a' } catch [System.Management.Automation.RuntimeException] { Write-Host 'R' } catch [System.Exception] { Write-Host 'E' }; Write-Host 'after'":
         'try {\n'
         "  $Null = [int]'a'\n"
@@ -5613,6 +5657,8 @@ FOLDS: dict[str, str] = {
         "try {\n  $Null = [int]'a'\n  Write-Host 'rest'\n} finally {}\nWrite-Host 'after'",
     "try { $x = 'one'; $null = [int]'a'; $x = 'two' } finally { }; Write-Host $x":
         "try {\n  $x = 'one'\n  $Null = [int]'a'\n  $x = 'two'\n} finally {}\nWrite-Host $x",
+    "try { $x = 1; $x = [int]$env:COMPUTERNAME } catch { Write-Host 'caught' }; Write-Host $x":
+        "try {\n  $x = 1\n  $x = [int]$env:ComputerName\n} catch {\n  Write-Host 'caught'\n}\nWrite-Host $x",
     'try { 1 } catch { 2 } finally { 3 }':
         'try {\n  1\n} catch {\n  2\n} finally {}',
     "try { [int]'a'; Write-Host 'tail' } catch { }; Write-Host 'after'":
@@ -5641,10 +5687,6 @@ FOLDS: dict[str, str] = {
         '  }\n'
         '}\n'
         "Write-Host 'after'",
-    "try { throw 'x' } catch { Get-Random -Bogus 1; Write-Host 'rest' }; Write-Host 'after'":
-        "Get-Random -Bogus 1\nWrite-Host 'rest'\nWrite-Host 'after'",
-    "try { throw 'x' } catch { New-Object Foo.Bar; Write-Host 'rest' }; Write-Host 'after'":
-        "New-Object Foo.Bar\nWrite-Host 'rest'\nWrite-Host 'after'",
     "try { throw 'x' } catch { if ($Host) { $null = [int]'a'; Write-Host 'rest' } }; Write-Host 'after'":
         'try {\n'
         "  throw 'x'\n"

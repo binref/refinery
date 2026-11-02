@@ -285,7 +285,7 @@ class TestPs1AStatementInAFunctionAGuardedTryBlockCalls(TestPs1):
         """)
 
     def test_a_quiet_concatenation_in_a_function_the_try_block_calls_is_removed(self):
-        self._assertRemoved(F"""
+        self._assertDeobfuscatesTo(F"""
             function Invoke-Thing {{
               {_QUIET_CONCATENATION}
             }}
@@ -295,7 +295,13 @@ class TestPs1AStatementInAFunctionAGuardedTryBlockCalls(TestPs1):
             }} catch {{
               {_HANDLER}
             }}
-        """, _QUIET_CONCATENATION)
+        """, F"""
+            try {{
+              {_ANCHOR}
+            }} catch {{
+              {_HANDLER}
+            }}
+        """)
 
 
 class TestPs1AnEmptyCatchSwallowsSoTheRaisingStatementIsRemovable(TestPs1):
@@ -960,9 +966,7 @@ class TestPs1AFunctionBodyIsNotWeighedAtItsDefinitionsPosition(TestPs1):
               {_HANDLER}
             }}
         """, F"""
-            function Zzqf {{}}
             try {{
-              Zzqf
               {_ANCHOR}
             }} catch {{
               {_HANDLER}

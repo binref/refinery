@@ -212,13 +212,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The same rule spelled with the other operator: 5.1 never evaluates the right operand of '
         '`-or` when the left one is true. Held apart from the `-and` entry because the two are '
         'separate spellings and a fix that reaches one need not reach the other.',
-    "function f { Write-Host $x }; $x = 'a'; f; $x = 'b'; f":
-        'Both stores are removed and both calls print nothing where the snippet prints `a` and '
-        '`b`. The body reads `$x` when it is called, but the dead-store sweep reads a statement '
-        'for the names it spells: it takes the first store for overwritten with no read between, '
-        'and the last for read by nothing after it.',
-    "function f { Write-Host $script:x }; $x = 'a'; f; $x = 'b'; f":
-        'The same sweep and the same two removals, through the qualified spelling in the body.',
     "$x = 'a'; 1 | ForEach-Object { $local:x = 'b' }; Write-Output $x":
         'The read is folded to `a`. `ForEach-Object` runs its block in its caller\'s scope, so '
         '`$local:x` there is the caller\'s `$x` and the snippet writes `b`; the model gives the '
@@ -239,34 +232,17 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 'a'; $c = '$script:x = \"b\"'; function f { iex $c }; f; Write-Host $x":
         'The read is folded to `a` across a call that rewrites it: the string carries a write to '
         '`$x`, so the snippet prints `b`.',
-    "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x":
-        'The same write, reached through a computed command name, and here the call itself is '
-        'deleted as well.',
     '$x = 1, 2, 3; $y = $($x); [Array]::Reverse($x); Write-Output $y':
         'The read is folded to the reversal. A subexpression collects a fresh array rather than '
         'handing the object over, so the two names hold two arrays and the snippet writes `1 2 3`. '
         '`Ps1Simplifications` rewrites `$($x)` to `$x` before the alias relation is built, minting '
         'a share the script does not have, so the defect is in that pass rather than in the '
         'aliasing.',
-    "trap { continue }; iex 'throw 1'; Write-Host 'after'":
-        'The handler is removed, and the removal is self-inflicting: a command that runs a string '
-        'is read as raising nothing, so the `trap` goes in one round, and a later round then '
-        'inlines the string and materialises the very `throw` the first round answered False for. '
-        'What is left is `throw 1` and nothing else.',
-    "function Raise { throw 'e' }; function Wrap { trap { continue }; Raise; Write-Host 'in' "
-    "}; Wrap; Write-Host 'after'":
-        'The handler is removed. What reaches it is the *call*, whose subtree carries no `throw`, '
-        'and the callee is a body of its own; answering this needs the call graph, which the '
-        'fault model deliberately has none of.',
     "function K { $Null = 1 }; K; $Null = (Get-Command K).Name; Write-Host 'A'":
         'The definition is removed although `Get-Command` names it literally. A literal name that '
         'matches nothing writes a `CommandNotFoundException` to the error stream whatever is done '
         'with the result, so the output writes an error record the snippet does not. A pattern '
         'that matches nothing writes none, which is the neighbouring `*vnMT*` row.',
-    'function K { $Null = 1 }; K; $b = { K }; Write-Host $b':
-        'The call inside the stored block is removed along with the definition, but a `ScriptBlock` '
-        'renders as its own source text, so the block the snippet writes out is no longer the block '
-        'it wrote.',
     "$env:B = 'function K { Write-Host P }'; Invoke-Expression $env:B; function K { 42 }; "
     "$x = K; Write-Output $x; $env:C = 'K'; Invoke-Expression $env:C":
         'The `function` definition shadows one an `Invoke-Expression` above it bound under the same '
@@ -387,26 +363,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     '$_ = 5; switch (1) { default { Write-Output $_ } }':
         'The `switch` over a constant is folded to its clause, which then reads the `$_` the '
         'script stored and writes `5` where the snippet writes `1`.',
-    "trap { continue }; $s = [string][char]256 + 'b'; $k = [char[]]$s | ForEach-Object { [byte][char]$_ }; "
-    "Write-Host \"count=$($k.Count) key=$($k -join ',')\"":
-        'The handler is removed. The character above 255 fails inside the `ForEach-Object` block '
-        'and the `trap` resumes past the whole pipeline, so the snippet writes `count=0 key=`; the '
-        'output reports the one failing input, goes on with the next and writes `count=1 key=98`. '
-        'The fault model reads the raise as belonging to the block, not to the statement.',
-    "trap { continue }; $a = @('x', '5'); for ($i = 0; $i -lt 2; $i++) { $y = [int]$a[$i] }; Write-Host \"y=$y\"":
-        'The handler is removed. The first failed cast resumes past the whole loop, so `$y` is '
-        'never set and the snippet writes `y=`; the output steps over the failure, the second run '
-        'sets `$y`, and it writes `y=5`. The later runs of the raiser are not counted as skipped.',
-    "Set-StrictMode -Version 1; $w = 'a'; $m = 'out'; trap { continue }; "
-    "if ($Host) { $w = $undefined; $m = 'in' }; Write-Host \"$m $w\"":
-        'The handler is removed. Under strict mode the read of the unset variable fails and the '
-        '`trap` resumes past the `if`, so the snippet writes `out a`; the output writes the error '
-        'and `in a`. What the `trap` skips is read only off casts, operators, method calls and '
-        'commands, so the failing read is never found to skip anything.',
-    "function f { trap { continue }; $v = [int]'a'; Write-Host \"rest $v\" }; try { f } catch { }; Write-Host 'after'":
-        'The handler is removed. It resumes inside the function, so the snippet writes `rest ` and '
-        '`after`; without it the error leaves the function for the `try` around the call, and the '
-        'output writes only `after`.',
     "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string]); "
     "iex 'Write-Host ([System.Math].FullName)'":
         'The text is run in the script. 5.1 resolves a type name when the code spelling it is '
@@ -425,10 +381,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'function it is handed to, so the failing cast ends the call and the snippet writes the '
         'error and `after`; the output writes `f-rest` and `after`. Which bodies a call runs '
         'under a preference is the interprocedural milestone (cluster 1f).',
-    "function f { $script:x = 'one'; $null = [int]'a'; $script:x = 'two' }; try { f } catch { }; Write-Host $script:x":
-        'The failing cast is removed from the function. An error in a function a `try` body calls '
-        'leaves the function and ends the call, so the snippet writes `one`; the output writes '
-        '`two`. Which bodies run under a handler is the interprocedural milestone (cluster 1f).',
     "Write-Host ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SGVs!bG8=')))":
         'The decode is folded to `Hello`. `[Convert]::FromBase64String` rejects a text holding a '
         'character outside the base64 alphabet, so the snippet writes the error alone; the '
@@ -437,26 +389,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The call is folded away and the store after it is reached. `[Convert]::FromBase64String` '
         'rejects `!!`, so the `catch` is taken and the snippet writes `one`; the output writes '
         '`two`.',
-    "try { throw 'x' } catch { New-Object Foo.Bar; Write-Host 'rest' }; Write-Host 'after'":
-        'The `catch` body is lifted out of the `try` that always throws. `New-Object` ends its '
-        'statement with an error for a type that does not exist, which leaves the `catch` body, so '
-        'the snippet writes the error and `after`; the output writes `rest` as well. No command is '
-        'read as able to fail; the one answer to whether a line can fail answers it.',
-    "try { throw 'x' } catch { Get-Random -Bogus 1; Write-Host 'rest' }; Write-Host 'after'":
-        'The `catch` body is lifted out of the `try` that always throws. A parameter the command '
-        'does not have ends its statement with an error, which leaves the `catch` body, so the '
-        'snippet writes the error and `after`; the output writes `rest` as well. No command is '
-        'read as able to fail; the one answer to whether a line can fail answers it.',
-    "[int]$i = 0; try { throw 'x' } catch { foreach ($i in 'a') { }; Write-Host 'rest' }; Write-Host 'after'":
-        'The `catch` body is lifted out of the `try` that always throws, and the constraint on '
-        '`$i` is dropped as a dead store. `foreach` stores `a` through the constraint, which fails '
-        'and leaves the `catch` body, so the snippet writes the error and `after`; the output writes '
-        '`rest` and `after`. No obfuscator enumerates into a variable whose type it constrained.',
-    "trap { continue }; try { if ($Host) { return } } finally { $null = [int]'a' }; Write-Host 'after'":
-        "The `trap` and the failing cast are removed. The cast's error takes the place of the "
-        '`return` and the `trap` resumes after the `try`, so the snippet writes `after`; the '
-        'output returns and writes nothing. The `trap` removal reads where errors land off the '
-        'graph; phase E2 of the error roadmap moves it onto the dispatch evaluator.',
 }
 
 
@@ -4104,6 +4036,32 @@ CALL_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
             'ERROR\tMinGreaterThanOrEqualMax,Microsoft.PowerShell.Commands.GetRandomCommand\tSystem.ArgumentException',
             'OUT\tSystem.Boolean\tTrue',
         ),
+    "'a', 1, $null, @(1, 2), (New-Object Object) | Out-Null; Write-Output 'after'":
+        (
+            'OUT\tSystem.String\tafter',
+        ),
+    "try { $null = Get-Process; Write-Output 'ok' } catch { Write-Output 'caught' }":
+        (
+            'OUT\tSystem.String\tok',
+        ),
+    'foreach ($n in 0, 1, 2147483647) { Write-Output $n.GetType().FullName; $t = 1, 2, 3 | Select-Object -First $n; Write-Output (,$t) }':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\t\t<null>',
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t1',
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Object[]\t1 2 3',
+        ),
+    "foreach ($a in 'a', 1) { Write-Output $a.GetType().FullName; Write-Host $a }; Write-Host; Write-Output 'after'":
+        (
+            'OUT\tSystem.String\tSystem.String',
+            'INFO\ta',
+            'OUT\tSystem.String\tSystem.Int32',
+            'INFO\t1',
+            'INFO\t',
+            'OUT\tSystem.String\tafter',
+        ),
 }
 
 #: The rows of `corpus.CALLS` and `corpus.TYPES` each fact of
@@ -4128,6 +4086,18 @@ CALL_FACT_WITNESSES: dict[tuple[str, str], tuple[str, ...]] = {
     ('', 'get-random'): (
         '$types = foreach ($i in 1..2000) { (Get-Random).GetType().FullName }; Write-Output ($types | Sort-Object -Unique)',
         '$t = (Get-Random).GetHashCode(); Write-Output $t.GetType().FullName',
+    ),
+    ('', 'out-null'): (
+        "'a', 1, $null, @(1, 2), (New-Object Object) | Out-Null; Write-Output 'after'",
+    ),
+    ('', 'get-process'): (
+        "try { $null = Get-Process; Write-Output 'ok' } catch { Write-Output 'caught' }",
+    ),
+    ('', 'select-object'): (
+        'foreach ($n in 0, 1, 2147483647) { Write-Output $n.GetType().FullName; $t = 1, 2, 3 | Select-Object -First $n; Write-Output (,$t) }',
+    ),
+    ('', 'write-host'): (
+        "foreach ($a in 'a', 1) { Write-Output $a.GetType().FullName; Write-Host $a }; Write-Host; Write-Output 'after'",
     ),
 }
 
@@ -4868,8 +4838,8 @@ class TestPs1EveryCallFactRestsOnMeasuredRows(TestBase):
                 for row in CALL_FACT_WITNESSES[self._key(fact)]:
                     with self.subTest(row):
                         transcript = {**CALL_TRANSCRIPTS, **TYPE_TRANSCRIPTS}[row]
-                        self.assertEqual([line for line in transcript if not line.startswith('OUT')], [])
-                        if str(fact.returns) != 'System.Void':
+                        self.assertEqual([line for line in transcript if line.startswith(('ERROR', 'THROW'))], [])
+                        if fact.returns is not None and str(fact.returns) != 'System.Void':
                             self.assertTrue(any(str(fact.returns) in line for line in transcript))
 
     def test_every_type_a_call_that_cannot_fail_is_handed_was_measured(self):
@@ -4882,7 +4852,11 @@ class TestPs1EveryCallFactRestsOnMeasuredRows(TestBase):
             for fact in facts:
                 if fact.fails:
                     continue
-                handed = {str(type_name) for covered in fact.arguments or () for type_name in covered}
+                handed = {
+                    str(type_name)
+                    for covered in fact.arguments or () if not isinstance(covered, str)
+                    for type_name in covered
+                }
                 if fact.kind is data.CallKind.INSTANCE and fact.owner is not None:
                     handed.add(str(fact.owner))
                 written = {

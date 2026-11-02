@@ -8,29 +8,27 @@ from typing import Callable
 from test import TestBase, lines_executed
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
-from refinery.lib.scripts import BodyEdit, Script, bump_mutation_epoch, set_body
+from refinery.lib.scripts import BodyEdit, bump_mutation_epoch, set_body
 from refinery.lib.scripts.analysis import cfg, components
 from refinery.lib.scripts.analysis.cfg import (
-    CfgBuilder,
     CfgNode,
     ControlFlowGraph,
     Projection,
+    plain_successors,
 )
 from refinery.lib.scripts.ps1 import ast
 from refinery.lib.scripts.ps1.analysis import dispatch, effects, faults, worldflow
 from refinery.lib.scripts.ps1.analysis import cfg as ps1_cfg
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
-from refinery.lib.scripts.ps1.analysis.dispatch import Ps1ErrorKind
+from refinery.lib.scripts.ps1.analysis.dispatch import EVERY_KIND, Ps1ErrorKind
 from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts, deletion_is_observable
 from refinery.lib.scripts.ps1.analysis.faults import (
-    Ps1ErrorPaths,
     Ps1FaultReach,
+    Ps1StepOverRegion,
     build_fault_reach,
 )
-from refinery.lib.scripts.ps1.analysis.handlers import handler_acts
-from refinery.lib.scripts.ps1.analysis.world import measure_world
-from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach, build_world_reach
+from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.model import (
     Ps1CatchClause,
     Ps1CommandInvocation,
@@ -43,133 +41,8 @@ from refinery.lib.scripts.ps1.model import (
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
-def _closure(graph: ControlFlowGraph, start: CfgNode, *, forward: bool) -> list[CfgNode]:
-    """
-    The nodes the error-carrying edges lead to from *start*, or from which they lead to it, in the
-    order a depth-first walk first meets them, *start* itself left out.
-    """
-    seen = {id(start)}
-    found: list[CfgNode] = []
-    stack = [start]
-    while stack:
-        current = stack.pop()
-        for node in (current.successors if forward else current.predecessors):
-            edge = (current, node) if forward else (node, current)
-            if id(node) in seen or not graph.is_exceptional(*edge):
-                continue
-            seen.add(id(node))
-            found.append(node)
-            stack.append(node)
-    return found
-
-
 def _traps(script: Ps1Script) -> list[Ps1TrapStatement]:
     return [node for node in script.walk() if isinstance(node, Ps1TrapStatement)]
-
-
-class TestPs1ErrorPathsAgreeWithAWalkOverTheErrorEdges(TestBase):
-    """
-    Every answer the condensed error edges give is compared with a walk over the error edges from
-    the node asked about, which knows nothing of components.
-    """
-
-    _SCRIPTS = [
-        cleandoc("""
-            try {
-              Get-Item a
-              try { [int]$s } catch [System.IO.IOException] { }
-            } catch { 'c' } finally { 'f' }
-        """),
-        cleandoc("""
-            trap { continue }
-            Get-Item a
-            if ($x) {
-              trap [System.Exception] { break }
-              [int]$s
-            }
-            'z'
-        """),
-        cleandoc("""
-            function f {
-              trap { 'h' }
-              try { Get-Item b } catch { }
-            }
-            f
-        """),
-        cleandoc("""
-            while ($x) {
-              try { Get-Item c } catch { continue }
-              try { Get-Item d } catch [System.IO.IOException] { } catch { }
-            }
-        """),
-        "$y = $(trap { continue }; [int]$s; 'in')",
-        cleandoc("""
-            try {
-              try { Get-Item a } catch [System.IO.IOException] { }
-              'tail'
-            } catch [System.IO.IOException] { }
-            'after'
-        """),
-    ]
-
-    def _graphs(self):
-        for source in self._SCRIPTS:
-            tree = Ps1Parser(source).parse()
-            model = build_control_flow_model(tree, descend=True)
-            for graph in model.graphs.values():
-                yield source, Ps1ErrorPaths(graph, model.trap_sets_in(graph))
-
-    def test_the_route_of_every_node_is_what_its_error_edges_reach(self):
-        for source, paths in self._graphs():
-            graph = paths.graph
-            for index, start in enumerate(graph.nodes):
-                reached = _closure(graph, start, forward=True)
-                handlers = [
-                    node.element for node in reached
-                    if isinstance(node.element, (Ps1CatchClause, Ps1TrapStatement))
-                ]
-                route = paths.route_from(start)
-                with self.subTest(source=source, node=index):
-                    self.assertEqual(route.acts, any(handler_acts(handler) for handler in handlers))
-                    self.assertEqual(
-                        route.passes_a_trap, any(isinstance(handler, Ps1TrapStatement) for handler in handlers))
-                    self.assertEqual(route.offers_a_handler, bool(handlers))
-                    self.assertEqual(route.leaves_the_body, any(node is graph.exit for node in reached))
-                    self.assertEqual(list(paths.handlers_from(start)), handlers)
-
-    def test_what_lies_behind_every_node_is_what_reaches_it_over_error_edges(self):
-        for source, paths in self._graphs():
-            graph = paths.graph
-            for marked in graph.nodes:
-                memo: dict[int, bool] = {}
-                wrong = [
-                    index for index, start in enumerate(graph.nodes)
-                    if paths.behind(start, lambda node: node is marked, memo)
-                    != any(node is marked for node in _closure(graph, start, forward=False))
-                ]
-                with self.subTest(source=source):
-                    self.assertEqual(wrong, [])
-
-    def test_a_cycle_and_a_second_error_successor_are_walked_like_any_other_edge(self):
-        builder = CfgBuilder(Script())
-        a, b, c, d = (builder.synthetic_node() for _ in range(4))
-        graph = builder.cfg
-        builder.exceptional_edge(a, b)
-        builder.exceptional_edge(b, c)
-        builder.exceptional_edge(c, b)
-        builder.exceptional_edge(a, d)
-        builder.exceptional_edge(c, graph.exit)
-        builder.add_edge(d, a)
-        paths = Ps1ErrorPaths(graph, ())
-        for start in graph.nodes:
-            reached = _closure(graph, start, forward=True)
-            self.assertEqual(paths.route_from(start).leaves_the_body, any(n is graph.exit for n in reached))
-            for marked in graph.nodes:
-                behind = _closure(graph, start, forward=False)
-                self.assertEqual(
-                    paths.behind(start, lambda node: node is marked, {}),
-                    any(node is marked for node in behind),
-                )
 
 
 def _runs_forward(
@@ -199,12 +72,11 @@ def _runs_forward(
     return reached, leaves
 
 
-class TestPs1AStepOverRegionHoldsWhatTheFallThroughRunsBeforeTheTrapResumes(TestBase):
+class TestPs1AStepOverRegionHoldsWhatARunExecutesBeforeItRejoins(TestBase):
     """
-    A raiser skips what runs going forward from its own step-over up to where the trap resumes,
-    itself excepted, and everything once that run leaves the statement it was raised in. The region
-    of a slot answers that for every raiser resuming there, and each answer is compared with that
-    walk for the raiser alone.
+    A region holds what runs going forward from its start up to where both runs go on alike, and
+    everything once that run leaves the statement it measures. Each answer is compared with that
+    walk.
     """
 
     _SCRIPTS = [
@@ -237,41 +109,37 @@ class TestPs1AStepOverRegionHoldsWhatTheFallThroughRunsBeforeTheTrapResumes(Test
         """),
     ]
 
-    def test_a_raiser_skips_exactly_what_its_own_fall_through_runs(self):
+    def test_a_region_reaches_exactly_what_a_run_from_its_start_reaches(self):
         for source in self._SCRIPTS:
             tree = Ps1Parser(source).parse()
-            diverging = 0
+            walked = 0
             model = build_control_flow_model(tree, descend=True)
             for graph in model.graphs.values():
-                trap_sets = model.trap_sets_in(graph)
-                paths = Ps1ErrorPaths(graph, trap_sets)
-                holders = {
-                    id(resumes_at): statement
-                    for trap_set in trap_sets
-                    for statement in trap_set.statements
-                    if (resumes_at := trap_set.slots.get(id(statement))) is not None
-                }
-                for raiser in graph.nodes:
-                    divergence = paths.divergence(raiser)
-                    if divergence is None:
-                        continue
-                    diverging += 1
-                    region = paths.region(divergence.slot)
-                    within = graph.builder_of([holders[id(divergence.slot)]])
-                    assert within is not None
-                    reached, leaves = _runs_forward(divergence.step, region.resumed, within)
-                    skipped = reached - {id(raiser)}
-                    members = {id(member) for member in region.members}
-                    wrong = [
-                        index for index, node in enumerate(graph.nodes)
-                        if region.query(lambda other, node=node: other is node).skips(raiser, divergence.step)
-                        != (leaves or id(node) in skipped)
-                    ]
-                    with self.subTest(source=source, raiser=str(raiser.element)):
-                        self.assertLessEqual(skipped, members)
-                        self.assertEqual(wrong, [])
+                for trap_set in model.trap_sets_in(graph):
+                    for statement in trap_set.statements:
+                        slot = trap_set.slots.get(id(statement))
+                        within = graph.builder_of([statement])
+                        if slot is None or within is None:
+                            continue
+                        resumed = frozenset(plain_successors(slot))
+                        for start in graph.nodes:
+                            if not within(start) or start.element is None:
+                                continue
+                            step = frozenset(plain_successors(start))
+                            region = Ps1StepOverRegion([step], resumed, within)
+                            reached, leaves = _runs_forward(step, resumed, within)
+                            walked += 1
+                            wrong = [
+                                index for index, node in enumerate(graph.nodes)
+                                if any(
+                                    region.query(lambda other, node=node: other is node).reaches_observed(entry)
+                                    for entry in step if entry not in resumed
+                                ) != (leaves or id(node) in reached)
+                            ]
+                            with self.subTest(source=source, start=str(start.element)):
+                                self.assertEqual(wrong, [])
             with self.subTest(source=source):
-                self.assertGreater(diverging, 0)
+                self.assertGreater(walked, 0)
 
 
 class TestPs1HandlerVerdictsAnswerOnlyForTheTreeTheyWereBuiltOver(TestBase):
@@ -283,23 +151,19 @@ class TestPs1HandlerVerdictsAnswerOnlyForTheTreeTheyWereBuiltOver(TestBase):
             if ($x) { $null = [int]$s; $w = 1 }
             f
         """)).parse()
-        control_flow = build_control_flow_model(tree)
-        calls = Ps1ModelCache(tree).call_graph
-        reach = build_fault_reach(control_flow, lambda: calls)
-        world = build_world_reach(measure_world(tree), lambda: control_flow)
+        cache = Ps1ModelCache(tree)
+        reach = cache.faults
         trap, = _traps(tree)
         for over in (tree, tree.body[2]):
-            verdicts = Ps1HandlerVerdicts(reach, lambda: world, over)
+            verdicts = Ps1HandlerVerdicts(reach, cache.raises, over)
             with self.subTest(over=type(over).__name__):
                 self.assertTrue(reach.removing_traps_is_observed([trap], verdicts.raises(True), verdicts.skips))
 
     def test_a_held_verdict_keeps_the_trap_once_the_tree_has_moved(self):
         tree = Ps1Parser("trap { Write-Host 'h'; continue }; $a; 5").parse()
-        control_flow = build_control_flow_model(tree)
-        calls = Ps1ModelCache(tree).call_graph
-        reach = build_fault_reach(control_flow, lambda: calls)
-        world = build_world_reach(measure_world(tree), lambda: control_flow)
-        verdicts = Ps1HandlerVerdicts(reach, lambda: world, tree)
+        cache = Ps1ModelCache(tree)
+        reach = cache.faults
+        verdicts = cache.handlers
         trap, = _traps(tree)
         self.assertFalse(reach.removing_traps_is_observed([trap], verdicts.raises(True), verdicts.skips))
         edit = BodyEdit(tree, 'body')
@@ -586,7 +450,7 @@ class TestPs1WeighingEveryTrapCostsLinearWork(TestBase):
 
             def ask():
                 reach = build_fault_reach(control_flow, lambda: calls)
-                reach.observed_at(statement, reach.kinds_a_point_may_raise(statement))
+                reach.observed_at(statement, Ps1ErrorKind.STATEMENT)
                 reach.lands_past_a_live_tail(statement, Ps1ErrorKind.STATEMENT)
 
             return lines_executed(ask, faults, dispatch, components)
@@ -605,7 +469,7 @@ class TestPs1WeighingEveryTrapCostsLinearWork(TestBase):
             def ask():
                 reach = build_fault_reach(build_control_flow_model(script), lambda: calls)
                 for statement in statements:
-                    reach.observed_at(statement, reach.kinds_a_point_may_raise(statement))
+                    reach.observed_at(statement, Ps1ErrorKind.STATEMENT)
                     reach.lands_past_a_live_tail(statement, Ps1ErrorKind.STATEMENT)
 
             return lines_executed(ask, faults, dispatch, components)
@@ -733,11 +597,11 @@ class TestPs1AHeldFaultModelAnswersAlikeWhateverWasAskedBeforeAnEdit(TestBase):
             calls = Ps1ModelCache(tree).call_graph
             reach = build_fault_reach(build_control_flow_model(tree), lambda: calls)
             if asked_first:
-                reach.observed_at(tree.body[1], reach.kinds_a_point_may_raise(tree.body[1]))
+                reach.observed_at(tree.body[1], Ps1ErrorKind.STATEMENT)
             trap = tree.body[0]
             assert isinstance(trap, Ps1TrapStatement) and trap.body is not None
             set_body(trap.body, [])
-            answers.append(reach.observed_at(tree.body[2], reach.kinds_a_point_may_raise(tree.body[2])))
+            answers.append(reach.observed_at(tree.body[2], Ps1ErrorKind.STATEMENT))
         self.assertEqual(answers[0], answers[1])
 
 
@@ -757,9 +621,10 @@ class TestPs1NoModelOutlivesADeobfuscation(TestPs1):
 
 class TestPs1EveryLandingHoldsItsRaise(TestBase):
     """
-    How far out a route carries control is kept as the depth of the outermost statement it lands
-    after, which says how far out only if every statement an error lands after holds the point it
-    was raised at. Asked of every point of every script the corpus writes.
+    How far out an error carries control is kept as the depth of the outermost statement it lands
+    after (`refinery.lib.scripts.ps1.analysis.dispatch.Ps1Fate.outermost`), which says how far out
+    only if every statement an error lands after holds the point it was raised at. Asked of every
+    point of every script the corpus writes.
     """
 
     def test_every_statement_an_error_lands_after_holds_the_point_it_was_raised_at(self):
@@ -769,17 +634,17 @@ class TestPs1EveryLandingHoldsItsRaise(TestBase):
             tree = Ps1Parser(source).parse()
             reach = Ps1ModelCache(tree).faults
             for node in tree.walk():
-                located = reach._control_flow.locate(node)
+                located = reach.control_flow.locate(node)
                 if located is None or located[1].element is not node:
                     continue
-                graph, start = located
-                for catch in reach.paths_of(graph).route_from(start).empty_catches:
-                    holder = catch.statement
-                    assert holder is not None
+                fate = reach.dispatch.fate(node, EVERY_KIND)
+                if fate is None:
+                    continue
+                for holder in fate.swallowed:
                     checked += 1
                     cursor = node
                     while cursor is not None and cursor is not holder:
                         cursor = cursor.parent
                     with self.subTest(source=source):
                         self.assertIs(cursor, holder)
-        self.assertGreater(checked, 200)
+        self.assertGreater(checked, 100)

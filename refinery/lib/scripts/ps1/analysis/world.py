@@ -37,11 +37,13 @@ from refinery.lib.scripts import Node, tree_version
 from refinery.lib.scripts.ps1.analysis.aliasdef import extract_alias_definition
 from refinery.lib.scripts.ps1.ast import (
     assignment_target_variables,
+    command_name_literal,
     get_member_name,
     is_execution_context_invoke,
     is_opaque_dispatch,
-    is_scriptblock_create,
     is_scriptblock_invoke,
+    may_create_a_scriptblock,
+    member_may_be,
     normalize_command_name,
     normalize_dotnet_type_name,
     resolve_command_name,
@@ -66,10 +68,10 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ScopeModifier,
     Ps1Script,
     Ps1ScriptBlock,
-    Ps1StringLiteral,
     Ps1TypeExpression,
     Ps1Variable,
 )
+from refinery.lib.scripts.ps1.data import type_members
 from refinery.lib.scripts.ps1.options import eval_is_trusted
 
 
@@ -955,14 +957,14 @@ def _opens_world(node, redefined: tuple[_IdentityRedefinition, ...]) -> WorldRol
     if isinstance(node, Ps1CommandInvocation):
         return _command_opens_world(node)
     if isinstance(node, Ps1InvokeMember):
+        if _is_type_accelerator_mutation(node) or _is_psobject_member_mutation(node):
+            return WorldRole.MUTATION
         if (
-            is_scriptblock_create(node)
+            may_create_a_scriptblock(node)
             or is_scriptblock_invoke(node)
             or is_execution_context_invoke(node)
         ):
             return WorldRole.LEAK
-        if _is_type_accelerator_mutation(node) or _is_psobject_member_mutation(node):
-            return WorldRole.MUTATION
         if _installs_a_command_lookup_hook(node):
             return WorldRole.IDENTITY
         return WorldRole.NONE
@@ -992,21 +994,45 @@ def _installs_a_command_lookup_hook(node: Node) -> bool:
     setter, on whatever object it is reached through: after that no command name is sure to run what
     the metadata says, and the block that decides it is in plain sight. A member name this cannot
     read may name a hook, so an assignment to one is read as storing one, and so is a call of one
-    with the single argument a setter takes.
+    with the single argument a setter takes, unless the member is reached on a type literal whose
+    static surface carries no hook.
     """
     if isinstance(node, Ps1AssignmentExpression):
         target = node.target
         if not isinstance(target, Ps1MemberAccess):
             return False
         member = get_member_name(target.member)
-        return member is None or member.lower() in _COMMAND_LOOKUP_HOOKS
+        if member is None:
+            return _may_reach_a_hook(target)
+        return member.lower() in _COMMAND_LOOKUP_HOOKS
     if isinstance(node, Ps1InvokeMember):
         member = get_member_name(node.member)
         if member is None:
-            return len(node.arguments) == 1
+            return len(node.arguments) == 1 and _may_reach_a_hook(node)
         member = member.lower()
         return member.startswith('set_') and member[4:] in _COMMAND_LOOKUP_HOOKS
     return False
+
+
+def _may_reach_a_hook(node: Ps1MemberAccess | Ps1InvokeMember) -> bool:
+    """
+    Whether a member of *node*'s receiver whose name cannot be read may be a hook of the command
+    lookup. A type literal reaches only the static members of its type, so it reaches a hook only
+    where the collected type carries a static hook property it can write; any other receiver, and a
+    type that is not collected, may reach one.
+    """
+    receiver = node.object
+    if node.access is not Ps1AccessKind.STATIC or not isinstance(receiver, Ps1TypeExpression):
+        return True
+    members = type_members(receiver.name)
+    if members is None:
+        return True
+    return any(
+        name.lower() in _COMMAND_LOOKUP_HOOKS
+        and record.get('static')
+        and record.get('writable')
+        for name, record in members.items()
+    )
 
 
 def _command_opens_world(cmd: Ps1CommandInvocation) -> WorldRole:
@@ -1040,11 +1066,12 @@ def runs_another_script_file(cmd: Ps1CommandInvocation) -> bool:
     A dot-sourced inline block (`.{ ... }`) runs only its visible body, which the walk covers, and
     `. $x` is already opaque dispatch.
     """
-    if not isinstance(cmd.name, Ps1StringLiteral):
+    name = command_name_literal(cmd)
+    if name is None:
         return False
     return (
         cmd.invocation_operator == '.'
-        or cmd.name.value.lower().endswith(_SCRIPT_FILE_SUFFIX)
+        or name.value.lower().endswith(_SCRIPT_FILE_SUFFIX)
     )
 
 
@@ -1100,7 +1127,7 @@ def runs_code_in_the_calling_scope(cmd: Ps1CommandInvocation, resolved: str | No
     with the same test that excludes it there — its body stands in the tree, so whatever it binds is
     read like any other statement.
     """
-    if isinstance(cmd.name, Ps1StringLiteral) and cmd.invocation_operator == '.':
+    if command_name_literal(cmd) is not None and cmd.invocation_operator == '.':
         return True
     if resolved is None:
         return False
@@ -1162,9 +1189,11 @@ def _is_type_accelerator_mutation(node: Ps1InvokeMember) -> bool:
         node.access is Ps1AccessKind.STATIC
         and isinstance(obj, Ps1TypeExpression)
         and 'typeaccelerators' in normalize_dotnet_type_name(obj.name)
-        and isinstance(node.member, str)
-        and node.member.lower() in ('add', 'remove')
+        and member_may_be(node.member, _MEMBER_MUTATORS)
     )
+
+
+_MEMBER_MUTATORS = frozenset({'add', 'remove'})
 
 
 def _is_psobject_member_mutation(node: Ps1InvokeMember) -> bool:
@@ -1175,16 +1204,14 @@ def _is_psobject_member_mutation(node: Ps1InvokeMember) -> bool:
     """
     if node.access is not Ps1AccessKind.INSTANCE:
         return False
-    if not (isinstance(node.member, str) and node.member.lower() in ('add', 'remove')):
+    if not member_may_be(node.member, _MEMBER_MUTATORS):
         return False
     members = node.object
     if not isinstance(members, Ps1MemberAccess):
         return False
-    members_name = get_member_name(members.member)
-    if members_name is None or members_name.lower() != 'members':
+    if not member_may_be(members.member, frozenset({'members'})):
         return False
     psobject = members.object
     if not isinstance(psobject, Ps1MemberAccess):
         return False
-    psobject_name = get_member_name(psobject.member)
-    return psobject_name is not None and psobject_name.lower() == 'psobject'
+    return member_may_be(psobject.member, frozenset({'psobject'}))

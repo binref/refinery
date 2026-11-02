@@ -193,7 +193,8 @@ class Ps1ObservedWrite(enum.Enum):
 class Ps1VariableFlow:
     """
     Which write each variable read of one script observes, over that script's semantic, control-flow
-    and block models. Build it through `build_variable_flow`.
+    and block models. Build it through `build_variable_flow`. *can_fail* says whether a statement
+    may fail where it stands, judged over the same tree version; without it, every statement may.
     """
 
     def __init__(
@@ -203,6 +204,7 @@ class Ps1VariableFlow:
         dominators: DominatorModel,
         blocks: Ps1BlockModel,
         cycles: CycleModel,
+        can_fail: Callable[[Node], bool] | None = None,
     ):
         self.semantic = semantic
         self.flow = flow
@@ -221,6 +223,7 @@ class Ps1VariableFlow:
         self._deferred_writes: dict[tuple[str, int], bool] = {}
         self._alias_holds: dict[tuple[int, int], bool] = {}
         self._placements: dict[int, tuple[ControlFlowGraph, dict[int, CfgNode]]] = {}
+        self._can_fail = can_fail
 
     def reaching_definition(self, read: Ps1Variable) -> Ps1Variable | None:
         """
@@ -550,7 +553,7 @@ class Ps1VariableFlow:
             if at is not use:
                 if (
                     self.dominators.dominates_node(graph, at, use, Projection.MAY)
-                    and self._observes_completed_store(graph, at, use)
+                    and self._observes_completed_store(graph, at, use, grant=False)
                 ):
                     return True
             elif self._runs_before(graph, use, read, write.node):
@@ -1040,6 +1043,7 @@ class Ps1VariableFlow:
         graph: ControlFlowGraph,
         definition: CfgNode,
         use: CfgNode,
+        grant: bool = True,
     ) -> bool:
         """
         Whether *use* is reached from *definition* only on runs where the statement holding the
@@ -1055,7 +1059,15 @@ class Ps1VariableFlow:
         use the throwing path also reaches has to be refused however it is spelled. Once control has
         left the statement normally the store is done, so only the first edge out of *definition*
         decides which walk a node belongs to.
+
+        Where *grant* holds, a statement the flow was told cannot fail completes on every run that
+        reaches it, so every use it reaches observes the store; a caller asking whether a use may
+        see the store at all, rather than whether it certainly does, asks without it.
         """
+        can_fail = self._can_fail
+        element = definition.element
+        if grant and can_fail is not None and element is not None and not can_fail(element):
+            return True
         completed, thrown = graph.exit_reach(definition)
         return id(use) in completed and id(use) not in thrown
 
@@ -1151,8 +1163,9 @@ def build_variable_flow(
     dominators: DominatorModel,
     blocks: Ps1BlockModel,
     cycles: CycleModel,
+    can_fail: Callable[[Node], bool] | None = None,
 ) -> Ps1VariableFlow:
     """
-    Build the `Ps1VariableFlow` of one script.
+    Build the `Ps1VariableFlow` of one script; see `Ps1VariableFlow` for *can_fail*.
     """
-    return Ps1VariableFlow(semantic, flow, dominators, blocks, cycles)
+    return Ps1VariableFlow(semantic, flow, dominators, blocks, cycles, can_fail)

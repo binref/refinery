@@ -391,14 +391,10 @@ class TestPs1TheSuccessFlagAtTheTopOfARerunningBlockIsNotAFreshStart(_Ps1Automat
     def test_the_success_flag_at_the_top_of_a_process_block_is_kept(self):
         self._assertKept(F'process {{ if ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }} }}')
 
-    @unittest.expectedFailure
     def test_a_success_flag_writer_observed_only_across_a_process_reentry_is_kept(self):
         """
         The trailing raise fails the statement, so 5.1 carries `$?`=`$false` into the next pipeline
-        input's top-of-`process` read, which takes the `else` branch there. The control-flow graph
-        sequences `process` once and draws no per-input back-edge, so the removal veto does not see
-        that read reach the raise and drops it as junk — the same unmodeled-reentry fail-open the
-        persistent channel has. Retire this once the graph models the `process` re-entry.
+        input's top-of-`process` read, which takes the `else` branch there.
         """
         self._assertKept(
             F'process {{ if ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}\n{_FAULTS} }}')

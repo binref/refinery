@@ -811,7 +811,6 @@ class TestPs1Corruptions(_Ps1Ledger):
         self.assertNotIn(
             'a', _printed_values(tree), 'the read was folded across a call that may rewrite it')
 
-    @unittest.expectedFailure
     def test_computed_invoke_expression_name_may_write_the_callers_variable(self):
         """
         `$x = 'a'; &('i' + 'ex') $c; Write-Host $x` reaches `Invoke-Expression` through a computed
@@ -2154,9 +2153,8 @@ class TestPs1AStoreIsReadByEveryCallStandingAfterIt(_Ps1Ledger):
     call reads the store standing before it. Measured on 5.1 in `corpus.BEHAVIOURS`, both scripts
     print `a` and then `b`.
 
-    The dead-store sweep reads a statement for the names it spells, and a call spells none of the
-    names its body reads: it takes `$x = 'a'` for overwritten by `$x = 'b'` with no read between
-    them, and removes it.
+    A call spells none of the names its body reads, so the dead-store sweep reads a call that may run
+    a body as reading every name a body reads.
     """
 
     def _assertBothStoresReachTheCalls(self, source: str) -> None:
@@ -2167,12 +2165,10 @@ class TestPs1AStoreIsReadByEveryCallStandingAfterIt(_Ps1Ledger):
                 F'nothing left in the output can give $x the value {printed!r}',
             )
 
-    @unittest.expectedFailure
     def test_a_store_between_two_calls_is_read_by_the_first(self):
         self._assertBothStoresReachTheCalls(
             "function f { Write-Host $x }; $x = 'a'; f; $x = 'b'; f")
 
-    @unittest.expectedFailure
     def test_a_store_between_two_calls_is_read_through_the_script_qualifier(self):
         self._assertBothStoresReachTheCalls(
             "function f { Write-Host $script:x }; $x = 'a'; f; $x = 'b'; f")

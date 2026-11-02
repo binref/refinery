@@ -153,14 +153,27 @@ def get_param_block(node) -> Ps1ParamBlock | None:
     return node.param_block
 
 
+def command_name_literal(cmd: Ps1CommandInvocation) -> Ps1StringLiteral | None:
+    """
+    The string literal a command is invoked under, read through the parentheses and the subexpression
+    of one statement around it, or `None` when the name is computed (`& $cmd`, an expandable string)
+    and therefore not statically known. A wrapper around a literal computes nothing: `& ('f1')` and
+    `& $('f1')` look up `f1` as `& 'f1'` does, and constant folding leaves that shape behind when it
+    folds `& ('f' + '1')`.
+    """
+    name = cmd.name
+    if name is None:
+        return None
+    name = unwrap_parens(name)
+    return name if isinstance(name, Ps1StringLiteral) else None
+
+
 def get_command_name(cmd: Ps1CommandInvocation) -> str | None:
     """
-    The literal name a command is invoked under, or `None` when the name is computed (`& $cmd`, an
-    expandable string) and therefore not statically known.
+    The value of `command_name_literal`, or `None` where it has none.
     """
-    if isinstance(cmd.name, Ps1StringLiteral):
-        return cmd.name.value
-    return None
+    literal = command_name_literal(cmd)
+    return None if literal is None else literal.value
 
 
 def has_wildcard(name: str) -> bool:
@@ -313,9 +326,8 @@ def extract_new_object(cmd: Ps1CommandInvocation) -> tuple[str, list[Expression]
     hand every caller a shape that leaves part of the call unexamined — that is how a purity check
     came to clear a `New-Object` whose trailing argument runs a command.
     """
-    if not isinstance(cmd.name, Ps1StringLiteral):
-        return None
-    if cmd.name.value.lower() != 'new-object':
+    name = get_command_name(cmd)
+    if name is None or name.lower() != 'new-object':
         return None
     positional: list[Expression] = []
     for arg in cmd.arguments:
@@ -462,7 +474,28 @@ def is_opaque_dispatch(cmd: Ps1CommandInvocation) -> bool:
     inline-scriptblock exclusion is why this is not `get_command_name(cmd) is None`, which would
     also flag `&{ ... }`.
     """
-    return not isinstance(cmd.name, (Ps1StringLiteral, Ps1ScriptBlock))
+    return command_name_literal(cmd) is None and not isinstance(cmd.name, Ps1ScriptBlock)
+
+
+def member_may_be(member: str | Expression, names: frozenset[str]) -> bool:
+    """
+    Whether the member *member* names may be one of the lowercased *names*: it reads as one of them,
+    or it cannot be read at all and so may be any of them.
+    """
+    name = get_member_name(member)
+    return name is None or name.lower() in names
+
+
+def _is_scriptblock_type_call(expr: Expression) -> TypeGuard[Ps1InvokeMember]:
+    return (
+        isinstance(expr, Ps1InvokeMember)
+        and expr.access is Ps1AccessKind.STATIC
+        and isinstance(expr.object, Ps1TypeExpression)
+        and is_type(expr.object.name, 'System.Management.Automation.ScriptBlock')
+    )
+
+
+_SCRIPTBLOCK_CREATE = frozenset({'create'})
 
 
 def is_scriptblock_create(expr: Expression) -> bool:
@@ -471,14 +504,18 @@ def is_scriptblock_create(expr: Expression) -> bool:
     runnable scriptblock. The argument count is not checked — any such call is recognized — so a
     caller that needs the single argument checks the arity itself.
     """
-    return (
-        isinstance(expr, Ps1InvokeMember)
-        and expr.access is Ps1AccessKind.STATIC
-        and isinstance(expr.object, Ps1TypeExpression)
-        and is_type(expr.object.name, 'System.Management.Automation.ScriptBlock')
-        and isinstance(expr.member, str)
-        and expr.member.lower() == 'create'
-    )
+    if not _is_scriptblock_type_call(expr):
+        return False
+    name = get_member_name(expr.member)
+    return name is not None and name.lower() in _SCRIPTBLOCK_CREATE
+
+
+def may_create_a_scriptblock(expr: Expression) -> bool:
+    """
+    Whether `expr` may be a `[scriptblock]::Create(...)` call: `is_scriptblock_create`, or a static
+    call on the type whose member name cannot be read, `[scriptblock]::($m)($s)`.
+    """
+    return _is_scriptblock_type_call(expr) and member_may_be(expr.member, _SCRIPTBLOCK_CREATE)
 
 
 _SCRIPTBLOCK_INVOKE_METHODS = frozenset({
@@ -492,16 +529,16 @@ _SCRIPTBLOCK_INVOKE_METHODS = frozenset({
 
 def is_scriptblock_invoke(expr: Expression) -> bool:
     """
-    Whether `expr` runs code a receiver carries rather than a fixed .NET method: `$sb.Invoke(...)`,
+    Whether `expr` may run code a receiver carries rather than a fixed .NET method: `$sb.Invoke(...)`,
     `.InvokeReturnAsIs`, `.InvokeWithContext`, or the intrinsic `.ForEach`/`.Where`, which each take
-    and run a scriptblock. The receiver is not typed, so any instance call by one of these names
-    counts; a false positive on an unrelated `.Where` only keeps a statement, never deletes one.
+    and run a scriptblock, or an instance call whose member name cannot be read and so may be any of
+    them. The receiver is not typed, so any instance call by one of these names counts; a false
+    positive on an unrelated `.Where` only keeps a statement, never deletes one.
     """
     return (
         isinstance(expr, Ps1InvokeMember)
         and expr.access is Ps1AccessKind.INSTANCE
-        and isinstance(expr.member, str)
-        and expr.member.lower() in _SCRIPTBLOCK_INVOKE_METHODS
+        and member_may_be(expr.member, _SCRIPTBLOCK_INVOKE_METHODS)
     )
 
 
@@ -522,8 +559,7 @@ def is_execution_context_invoke(expr: Expression) -> bool:
     middle = expr.object
     if not isinstance(middle, Ps1MemberAccess):
         return False
-    inner = get_member_name(middle.member)
-    if inner is None or inner.lower() != 'invokecommand':
+    if not member_may_be(middle.member, frozenset({'invokecommand'})):
         return False
     receiver = middle.object
     while isinstance(receiver, Ps1MemberAccess):

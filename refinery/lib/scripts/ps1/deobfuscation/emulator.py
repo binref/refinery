@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     _Value: TypeAlias = 'str | int | float | bool | list | None | _MatchTable'
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
-from refinery.lib.scripts.ps1.analysis.cache import Ps1UnseenReads, model_cache
+from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
 from refinery.lib.scripts.ps1.analysis.effects import (
     MATCH_OPERATORS,
@@ -25,6 +25,7 @@ from refinery.lib.scripts.ps1.analysis.effects import (
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.model import (
+    Ps1NameSet,
     Ps1SemanticModel,
     occurrence_role,
 )
@@ -138,7 +139,7 @@ _MAX_INTERPRETER_STRING_LEN = 1_000_000
 _MAX_INTERPRETER_DEPTH = 64
 
 #: What a script may read unseen before the cache of one run has said otherwise: nothing.
-_NOTHING_UNSEEN = Ps1UnseenReads(False, frozenset())
+_NOTHING_UNSEEN = Ps1NameSet(False, frozenset())
 
 #: The operators whose *left* operand a `Boolean` may not be. 5.1 dispatches an operator to a method
 #: on the left operand's type and `Boolean` carries none of these three, so `$true * 2` is
@@ -902,9 +903,10 @@ class _Ps1Interpreter:
         return None if takes_output_away(node) else value
 
     def _eval_command_value(self, node: Ps1CommandInvocation) -> _Value:
-        if not isinstance(node.name, Ps1StringLiteral):
+        name = get_command_name(node)
+        if name is None:
             raise _Ps1InterpreterError
-        name = node.name.value.lower()
+        name = name.lower()
         builtin = name.replace('-', '')
         if builtin in ('iex', 'invokeexpression'):
             return self._eval_iex(node)

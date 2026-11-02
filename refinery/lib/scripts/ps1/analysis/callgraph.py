@@ -15,6 +15,8 @@ value it produces is the effect layer's question, asked through here rather than
 """
 from __future__ import annotations
 
+import re
+
 from typing import TYPE_CHECKING, Mapping, NamedTuple, Sequence
 
 if TYPE_CHECKING:
@@ -29,25 +31,38 @@ from refinery.lib.scripts.ps1.analysis.world import (
 from refinery.lib.scripts.ps1.ast import (
     assignment_target_variables,
     get_command_name,
+    get_member_name,
     get_param_block,
+    has_wildcard,
     implicit_get_retry,
     is_execution_context_invoke,
     is_opaque_dispatch,
-    is_scriptblock_create,
     is_scriptblock_invoke,
+    may_create_a_scriptblock,
+    member_may_be,
     normalize_command_name,
     resolve_command_name,
+    string_value,
 )
 from refinery.lib.scripts.ps1.data import KNOWN_CMDLETS
 from refinery.lib.scripts.ps1.model import (
+    Ps1AccessKind,
     Ps1AssignmentExpression,
+    Ps1CommandArgument,
     Ps1CommandInvocation,
     Ps1FunctionDefinition,
+    Ps1HereString,
     Ps1InvokeMember,
+    Ps1MemberAccess,
     Ps1MethodMember,
+    Ps1ParenExpression,
+    Ps1Pipeline,
+    Ps1PipelineElement,
     Ps1ScopeModifier,
     Ps1Script,
     Ps1ScriptBlock,
+    Ps1StringLiteral,
+    Ps1Variable,
 )
 from refinery.lib.scripts.ps1.options import eval_is_trusted
 
@@ -157,14 +172,48 @@ class Ps1CallGraph:
         definitions: Mapping[str, Sequence[Ps1FunctionDefinition]],
         keyword_definitions: Mapping[str, Sequence[Ps1ScriptBlock]],
         call_sites: Mapping[str, Sequence[Ps1CallSite]],
+        unattributed_sites: Sequence[Node],
         readable: bool,
         exports: bool,
+        handed_out: frozenset[str] = frozenset(),
+        hands_out_every: bool = False,
     ):
         self._definitions = dict(definitions)
         self._keyword_definitions = dict(keyword_definitions)
         self._call_sites = dict(call_sites)
+        self._unattributed_sites = tuple(unattributed_sites)
         self._readable = readable
         self._exports = exports
+        self._handed_out = handed_out
+        self._hands_out_every = hands_out_every
+
+    def hands_out(self, name: str) -> bool:
+        """
+        Whether the script may reach the body of the function *name* other than by calling it by
+        name: it reads `$function:K`, writes a path into the `function:` drive, asks `Get-Command`
+        for it, looks a command up through `$ExecutionContext` or `$PSCmdlet`, reads
+        `$MyInvocation` inside it, or does any of these where the name cannot be read. A body handed
+        out this way may run wherever something runs a block, so no list of call sites is the list of
+        places it runs.
+        """
+        return self._hands_out_every or normalize_command_name(name) in self._handed_out
+
+    def named_callers(self, body: Node) -> list[Node] | None:
+        """
+        The calls naming the function whose body *body* is, or `None` where those are not all the
+        calls that may run it beside `unattributed_sites`: *body* is no function's, this graph
+        cannot be read, the function is a class method or has no name, or the script hands it out.
+        """
+        parent = body.parent
+        if (
+            not self._readable
+            or not isinstance(parent, Ps1FunctionDefinition)
+            or _is_class_method(parent)
+            or not parent.name
+            or self.hands_out(parent.name)
+        ):
+            return None
+        return [site.invocation for site in self.call_sites(parent.name)]
 
     @property
     def is_readable(self) -> bool:
@@ -233,7 +282,7 @@ class Ps1CallGraph:
         if isinstance(node, Ps1InvokeMember):
             return (
                 is_scriptblock_invoke(node)
-                or is_scriptblock_create(node)
+                or may_create_a_scriptblock(node)
                 or is_execution_context_invoke(node)
             )
         if not isinstance(node, Ps1CommandInvocation):
@@ -273,6 +322,18 @@ class Ps1CallGraph:
         return self._call_sites.get(normalize_command_name(name), ())
 
     @property
+    def unattributed_sites(self) -> Sequence[Node]:
+        """
+        Every node standing in this tree that runs code this analysis cannot read — a dispatch
+        whose target the source does not spell (`& $f`), a string run as code (`iex $c`), a block
+        made or run from one — in source order, under either reading of such code: it may call any
+        function this script defines, and a later step may spell the very call it makes (`$f = 'f1';
+        & $f`, `iex 'f1'`), so a reader asking where a body may run reads these beside the sites
+        that name it.
+        """
+        return self._unattributed_sites
+
+    @property
     def defined_names(self) -> Sequence[str]:
         """
         Every key this script defines a function under, in source order of the first definition.
@@ -288,9 +349,10 @@ class Ps1CallGraph:
         An unreadable graph answers with every name it saw, defined or called, since a name reached
         from outside is reached by a path this cannot trace.
         """
-        if not self._readable:
+        if not self._readable or self._hands_out_every:
             return frozenset(self._definitions) | frozenset(self._call_sites)
         calls_from: dict[str | None, set[str]] = {}
+        calls_from[None] = set(self._handed_out)
         for name, sites in self._call_sites.items():
             for site in sites:
                 calls_from.setdefault(site.caller, set()).add(name)
@@ -340,6 +402,125 @@ def names_used_before_defined(
                 unreached.add(key)
                 break
     return frozenset(unreached)
+
+
+def calls_after_a_definition(
+    graph: Ps1CallGraph,
+    dominance: DominatorModel,
+) -> frozenset[int]:
+    """
+    The identities of the call sites a definition of the name they call certainly ran before: in
+    the same body, or, for a call in a function body, before every statement outside any function
+    body through which that body may first be entered. A helper defined at the top and called from
+    functions the script calls later is one; a call from another function that runs before the
+    definition is not. A body whose callers cannot all be listed (an unreadable graph, a function
+    handed out as a value, a class method, a call nested in a block), or that a cycle of calls
+    reaches, is entered from nowhere this can name. **Strict** dominance, for the reason
+    `names_used_before_defined` gives.
+    """
+    entries = _BodyEntries(graph)
+    found: set[int] = set()
+    for key in graph.defined_names:
+        definitions = graph.definitions(key)
+        for site in graph.call_sites(key):
+            call = site.invocation
+            if any(_runs_before(definition, call, dominance, entries) for definition in definitions):
+                found.add(id(call))
+    return frozenset(found)
+
+
+def _runs_before(
+    definition: Ps1FunctionDefinition,
+    call: Node,
+    dominance: DominatorModel,
+    entries: _BodyEntries,
+) -> bool:
+    if dominance.locate_pair(definition, call) is not None:
+        return dominance.strictly_dominates(definition, call)
+    body = _enclosing_block(call)
+    if body is None:
+        return False
+    first = entries.of(body)
+    return bool(first) and all(
+        dominance.locate_pair(definition, entry) is not None
+        and dominance.strictly_dominates(definition, entry)
+        for entry in first
+    )
+
+
+def _enclosing_block(node: Node) -> Ps1ScriptBlock | None:
+    cursor = node.parent
+    while cursor is not None and not isinstance(cursor, Ps1ScriptBlock):
+        cursor = cursor.parent
+    return cursor
+
+
+class _BodyEntries:
+    """
+    For a function body, the call sites outside every function body through which a run may first
+    enter it, or `None` where a caller cannot be listed. Computed once per body without
+    recursion; a body on a cycle of calls has no entry list this keeps, so neither has any body that
+    a cycle reaches.
+    """
+
+    def __init__(self, graph: Ps1CallGraph):
+        self._graph = graph
+        self._memo: dict[int, frozenset[Node] | None] = {}
+
+    def _sites(self, body: Ps1ScriptBlock) -> list[Node] | None:
+        named = self._graph.named_callers(body)
+        return None if named is None else [*named, *self._graph.unattributed_sites]
+
+    def of(self, body: Ps1ScriptBlock) -> frozenset[Node] | None:
+        memo = self._memo
+        if id(body) in memo:
+            return memo[id(body)]
+        active: set[int] = set()
+        stack: list[tuple[Ps1ScriptBlock, list[Node], set[Node] | None]] = []
+
+        def push(block: Ps1ScriptBlock) -> bool:
+            sites = self._sites(block)
+            if sites is None:
+                memo[id(block)] = None
+                return False
+            active.add(id(block))
+            stack.append((block, list(sites), set()))
+            return True
+
+        if not push(body):
+            return None
+        while stack:
+            block, pending, found = stack[-1]
+            if found is not None and pending:
+                site = pending.pop()
+                holder = _enclosing_block(site)
+                if holder is None:
+                    found.add(site)
+                    continue
+                if id(holder) in memo:
+                    inner = memo[id(holder)]
+                    if inner is None:
+                        stack[-1] = (block, pending, None)
+                    else:
+                        found.update(inner)
+                    continue
+                if id(holder) in active:
+                    stack[-1] = (block, pending, None)
+                    continue
+                if not push(holder):
+                    stack[-1] = (block, pending, None)
+                continue
+            stack.pop()
+            active.discard(id(block))
+            result = None if found is None else frozenset(found)
+            memo[id(block)] = result
+            if stack:
+                outer, outer_pending, outer_found = stack[-1]
+                if result is None:
+                    stack[-1] = (outer, outer_pending, None)
+                elif outer_found is not None:
+                    outer_found.update(result)
+        return memo.get(id(body))
 
 
 def _collides_with_a_definition(
@@ -436,11 +617,21 @@ def build_call_graph(
     definitions: dict[str, list[Ps1FunctionDefinition]] = {}
     keyword_definitions: dict[str, list[Ps1ScriptBlock]] = {}
     call_sites: dict[str, list[Ps1CallSite]] = {}
+    unattributed_sites: list[Node] = []
     qualified: list[str] = []
     retried: dict[str, list[str]] = {}
     readable = world.command_table_closed
     exports = False
+    handed_out: set[str] = set()
+    hands_out_every = False
     for node in root.walk_in_order():
+        if isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember)) and runs_code_it_cannot_read(node):
+            unattributed_sites.append(node)
+        handing = _functions_handed_out(node)
+        if handing is None:
+            hands_out_every = True
+        else:
+            handed_out.update(handing)
         if isinstance(node, Ps1FunctionDefinition):
             if not _is_class_method(node):
                 definitions.setdefault(normalize_command_name(node.name), []).append(node)
@@ -474,4 +665,106 @@ def build_call_graph(
             qualified.extend(names)
     if _collides_with_a_definition(qualified, definitions):
         readable = False
-    return Ps1CallGraph(definitions, keyword_definitions, call_sites, readable, exports)
+    return Ps1CallGraph(
+        definitions,
+        keyword_definitions,
+        call_sites,
+        unattributed_sites,
+        readable,
+        exports,
+        frozenset(handed_out),
+        hands_out_every,
+    )
+
+
+_COMMAND_LOOKUPS = frozenset({
+    'getcmdlet',
+    'getcmdletbytypename',
+    'getcmdlets',
+    'getcommand',
+    'getcommandname',
+    'getcommands',
+})
+
+
+def _functions_handed_out(node: Node) -> tuple[str, ...] | None:
+    """
+    The keys of the functions *node* may hand out as a value rather than call, or `None` where it
+    may hand out any of them: a `$function:K` occurrence; a string that names a path into
+    the `function:` drive; `Get-Command`; a command lookup through `$ExecutionContext` or
+    `$PSCmdlet`; `$MyInvocation` read inside a function body, which hands out that function. An item
+    command whose path cannot be read is the residual the world model documents for the same
+    commands: refusing on it would refuse every script that copies or deletes a file by variable.
+    """
+    if isinstance(node, Ps1Variable):
+        if node.scope is Ps1ScopeModifier.FUNCTION:
+            return (normalize_command_name(node.name),)
+        if node.scope is Ps1ScopeModifier.NONE and node.name.lower() == 'myinvocation':
+            cursor = node.parent
+            while cursor is not None:
+                if isinstance(cursor, Ps1FunctionDefinition):
+                    return (normalize_command_name(cursor.name),)
+                cursor = cursor.parent
+        return ()
+    if isinstance(node, (Ps1StringLiteral, Ps1HereString)):
+        return _function_paths_in(node.value)
+    if isinstance(node, Ps1CommandInvocation):
+        if resolve_command_name(node) == 'get-command' and not _only_a_member_is_read(node):
+            names: list[str] = []
+            for argument in node.arguments:
+                value = argument.value if isinstance(argument, Ps1CommandArgument) else argument
+                if isinstance(argument, Ps1CommandArgument) and value is None:
+                    continue
+                text = string_value(value)
+                if text is None or has_wildcard(text):
+                    return None
+                names.append(normalize_command_name(text))
+            return tuple(names) if names else None
+        return ()
+    if isinstance(node, Ps1InvokeMember) and node.access is Ps1AccessKind.INSTANCE:
+        if not member_may_be(node.member, _COMMAND_LOOKUPS):
+            return ()
+        receiver = node.object
+        while isinstance(receiver, Ps1MemberAccess):
+            receiver = receiver.object
+        if isinstance(receiver, Ps1Variable) and receiver.name.lower() in ('executioncontext', 'pscmdlet'):
+            return None
+    return ()
+
+
+def _only_a_member_is_read(command: Ps1CommandInvocation) -> bool:
+    """
+    Whether what *command* writes out is used only for one member other than the block it carries,
+    where it stands, as `(Get-Command K).Name` uses it: nothing that runs the body leaves.
+    """
+    cursor: Node = command
+    parent = cursor.parent
+    if isinstance(parent, Ps1PipelineElement) and not parent.redirections:
+        pipeline = parent.parent
+        if not isinstance(pipeline, Ps1Pipeline) or len(pipeline.elements) != 1:
+            return False
+        cursor, parent = pipeline, pipeline.parent
+    while isinstance(parent, Ps1ParenExpression):
+        cursor, parent = parent, parent.parent
+    if not isinstance(parent, Ps1MemberAccess) or parent.object is not cursor:
+        return False
+    name = get_member_name(parent.member)
+    return name is not None and name.lower() != 'scriptblock'
+
+
+def _function_paths_in(text: str) -> tuple[str, ...] | None:
+    """
+    The keys of the functions the paths into the `function:` drive in *text* name, or `None` where
+    one of them names no single function.
+    """
+    lowered = text.lower()
+    found: list[str] = []
+    start = lowered.find('function:')
+    while start >= 0:
+        rest = lowered[start + len('function:'):].lstrip(':\\/')
+        name = re.split(r'[\s\'"`;,|)}\]]', rest, maxsplit=1)[0]
+        if not name or has_wildcard(name):
+            return None
+        found.append(normalize_command_name(name))
+        start = lowered.find('function:', start + 1)
+    return tuple(found)

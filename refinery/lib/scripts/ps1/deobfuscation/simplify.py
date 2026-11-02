@@ -7,9 +7,7 @@ from refinery.lib.scripts import Node, Transformer, set_value
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
-from refinery.lib.scripts.ps1.analysis.effects import expression_cannot_fault
-from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
-from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
+from refinery.lib.scripts.ps1.analysis.raising import Ps1RaiseModel
 from refinery.lib.scripts.ps1.analysis.separator import coerced_text_at
 from refinery.lib.scripts.ps1.ast import get_command_name, has_wildcard
 from refinery.lib.scripts.ps1.data import (
@@ -65,8 +63,7 @@ class Ps1Simplifications(Transformer):
         super().__init__()
         self._commands: Ps1CommandModel | None = None
         self._flow: Ps1VariableFlow | None = None
-        self._faults: Ps1FaultReach | None = None
-        self._world: Ps1WorldReach | None = None
+        self._raises: Ps1RaiseModel | None = None
         self._entry = False
 
     def visit(self, node: Node):
@@ -81,15 +78,13 @@ class Ps1Simplifications(Transformer):
             cache = model_cache(self, node)
             self._commands = cache.commands
             self._flow = cache.variable_flow
-            self._faults = cache.faults
-            self._world = cache.world_reach
+            self._raises = cache.raises(True)
             return super().visit(node)
         finally:
             self._entry = False
             self._commands = None
             self._flow = None
-            self._faults = None
-            self._world = None
+            self._raises = None
 
     def visit_Ps1Variable(self, node: Ps1Variable):
         self.generic_visit(node)
@@ -158,8 +153,8 @@ class Ps1Simplifications(Transformer):
         return None
 
     def _cannot_fault(self, inner: Node, position: Node) -> bool:
-        faults = self._faults
-        return faults is not None and expression_cannot_fault(inner, position, faults, self._world)
+        raises = self._raises
+        return raises is not None and raises.cannot_fault(inner, position)
 
     def visit_Ps1ExpandableString(self, node: Ps1ExpandableString):
         """

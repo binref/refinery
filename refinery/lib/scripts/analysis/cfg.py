@@ -419,8 +419,7 @@ def plain_predecessors(node: CfgNode) -> list[CfgNode]:
 class LabelledReach(Generic[_Label]):
     """
     Which of several labelled sets of sources reach each node, for every label at once: the answer
-    `flood_labels` and `normal_reach_labels` give where a caller would otherwise walk the same graph
-    once per label.
+    `flood_labels` gives where a caller would otherwise walk the same graph once per label.
 
     A label reaches a node exactly when the walk of the same name, seeded with that label's sources
     alone, would include the node; each source reaches itself. A label that was never named reaches
@@ -502,20 +501,6 @@ def flood_labels(
     return LabelledReach(bits, walks)
 
 
-def normal_reach_labels(
-    sources: Mapping[_Label, Iterable[CfgNode]], *, forward: bool,
-) -> LabelledReach[_Label]:
-    """
-    `normal_reach` without a barrier for every label of *sources* in one walk, in either direction:
-    forward, a label reaches what its sources lead to over `CfgEdge.NORMAL` edges; backward, it
-    reaches every node that leads to one of its sources over such edges, which is the question
-    whether something a node's continuation runs is one of the label's sources.
-    """
-    bits, seeds = _seed_labels(sources)
-    adjacent = plain_successors if forward else plain_predecessors
-    return LabelledReach(bits, [_label_walk(seeds, adjacent)] if seeds else [])
-
-
 class ControlFlowGraph:
     """
     The control-flow graph of one function or script body. `entry` and `exit` are synthetic; every
@@ -553,6 +538,17 @@ class ControlFlowGraph:
         if (found := self._completions.get(id(statement))) is None or found[0] is not statement:
             return None
         return found[1]
+
+    def built_for(self, statement: Node) -> list[CfgNode] | None:
+        """
+        The nodes built for *statement*, a member of a statement sequence this graph was built
+        from: its own node, those of every construct nested in it, and the synthetic joins and
+        resumption slots its build drew; `None` where it is any other element.
+        """
+        if (found := self._spans.get(id(statement))) is None or found[0] is not statement:
+            return None
+        span = found[1]
+        return self.nodes[span.start:span.stop]
 
     def builder_of(self, statements: Iterable[Node]) -> Callable[[CfgNode], bool] | None:
         """
@@ -869,6 +865,7 @@ class _Target:
     is_continuable: bool
     is_breakable: bool
     continues: list[CfgNode] = field(default_factory=list)
+    finalizers: int = 0
 
 
 @dataclass(eq=False)
@@ -964,8 +961,27 @@ class CfgBuilder:
         self.cfg = ControlFlowGraph(owner)
         self._handlers: list[CfgNode] = []
         self._targets: list[_Target] = []
+        self._finalizers: list[CfgNode] = []
         self._resumptions: list[Resumption] = []
         self._pending_labels: frozenset[str] = frozenset()
+
+    def _open_target(self, target: _Target) -> None:
+        """
+        Make *target* the innermost jump destination, remembering how many finalizers stand open
+        outside it: a jump to it runs every finalizer opened since.
+        """
+        target.finalizers = len(self._finalizers)
+        self._targets.append(target)
+
+    def _cross_finalizers(self, node: CfgNode, target: _Target | None) -> None:
+        """
+        Join the jump *node* to the entry of every finalizer it leaves on its way to *target*, or
+        on its way out of the body where *target* is `None`: the finalizer runs before control
+        arrives there.
+        """
+        crossed = self._finalizers if target is None else self._finalizers[target.finalizers:]
+        for entry in crossed:
+            self.add_edge(node, entry)
 
     def build(self) -> ControlFlowGraph:
         frontier = [self.cfg.entry]
@@ -1347,7 +1363,7 @@ class CfgBuilder:
         head = self.node(element)
         self.link(frontier, head)
         target = _Target(self.take_labels(), [], head, is_continuable=True, is_breakable=True)
-        self._targets.append(target)
+        self._open_target(target)
         body_exits = self._branch(body, head)
         self._targets.pop()
         self.link(body_exits, head)
@@ -1375,7 +1391,7 @@ class CfgBuilder:
         head = self.node(element)
         self.link(frontier, head)
         loop = _Target(self.take_labels(), [], head, is_continuable=True, is_breakable=True)
-        self._targets.append(loop)
+        self._open_target(loop)
         entry = head
         if target is not None:
             entry = self.node(target)
@@ -1394,7 +1410,7 @@ class CfgBuilder:
         """
         test = self.node(element)
         target = _Target(self.take_labels(), [], test, is_continuable=True, is_breakable=True)
-        self._targets.append(target)
+        self._open_target(target)
         entry, body_exits = self._capture_body(body, frontier)
         self._targets.pop()
         self.link(body_exits, test)
@@ -1425,7 +1441,7 @@ class CfgBuilder:
             body_frontier = list(frontier)
         step = self.node(update) if update is not None else None
         target = _Target(labels, [], step or head, is_continuable=True, is_breakable=True)
-        self._targets.append(target)
+        self._open_target(target)
         entry, body_exits = self._capture_body(body, body_frontier)
         self._targets.pop()
         latch = body_exits
@@ -1505,7 +1521,7 @@ class CfgBuilder:
             is_continuable=iterated,
             is_breakable=True,
         )
-        self._targets.append(target)
+        self._open_target(target)
         carried: list[CfgNode] = []
         completed: list[CfgNode] = []
         for arm in arms:
@@ -1568,6 +1584,8 @@ class CfgBuilder:
         entries = [self.detached_node(handler) for handler, _ in handlers]
         finalizer_entry = self.detached_node(finalizer) if finalizer is not None else None
         guard = entries[0] if entries else finalizer_entry
+        if finalizer_entry is not None:
+            self._finalizers.append(finalizer_entry)
         if guard is not None:
             self._handlers.append(guard)
         block_exits = self.statement(block, frontier) if block is not None else list(frontier)
@@ -1586,6 +1604,8 @@ class CfgBuilder:
                 self.statement(body, [entry]) if body is not None else [entry])
         if clause_guard is not None:
             self._handlers.pop()
+        if finalizer_entry is not None:
+            self._finalizers.pop()
         self.close_handler_set(entries, escapes=escapes, outward=self.escape())
         if finalizer_entry is not None and finalizer is not None:
             self.link(normal_exits, finalizer_entry)
@@ -1612,7 +1632,7 @@ class CfgBuilder:
             self.park_label(*labels)
             return self.statement(body, frontier) if body is not None else list(frontier)
         target = _Target(frozenset(labels), [], None, is_continuable=False, is_breakable=False)
-        self._targets.append(target)
+        self._open_target(target)
         exits = self.statement(body, frontier) if body is not None else list(frontier)
         self._targets.pop()
         return exits + target.breaks
@@ -1627,6 +1647,7 @@ class CfgBuilder:
         node = self.node(element)
         self.link(frontier, node)
         target = self._break_target(label)
+        self._cross_finalizers(node, target)
         if target is not None:
             target.breaks.append(node)
         else:
@@ -1642,6 +1663,7 @@ class CfgBuilder:
         node = self.node(element)
         self.link(frontier, node)
         target = self._continue_target(label)
+        self._cross_finalizers(node, target)
         if target is None:
             self.add_edge(node, self.cfg.exit)
         elif target.continue_to is not None:
@@ -1666,6 +1688,7 @@ class CfgBuilder:
         if exceptional:
             self.exceptional_edge(node, self.unwinding())
         else:
+            self._cross_finalizers(node, None)
             self.add_edge(node, self.cfg.exit)
         return []
 

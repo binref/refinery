@@ -308,6 +308,28 @@ class TestControlFlowGraph(TestBase):
                 assert cleanup is not None
                 self.assertIn(id(cleanup), self._reachable(cfg))
 
+    def test_a_jump_reaches_the_finally_it_leaves(self):
+        for source, kind in [
+            ('function f() { try { return a; } finally { c; } }', JsReturnStatement),
+            ('for (;;) { try { break; } finally { c; } }', JsBreakStatement),
+            ('for (;;) { try { continue; } finally { c; } }', JsContinueStatement),
+        ]:
+            with self.subTest(source):
+                ast = JsParser(source).parse()
+                cleanup = self._first(ast, JsExpressionStatement)
+                jump = self._first(ast, kind)
+                cfg = next(graph for graph in build_control_flow(ast).values() if graph.node_of(jump) is not None)
+                start = cfg.node_of(jump)
+                assert start is not None
+                reached: set[int] = set()
+                pending = list(start.successors)
+                while pending:
+                    node = pending.pop()
+                    if id(node) not in reached:
+                        reached.add(id(node))
+                        pending.extend(node.successors)
+                self.assertIn(id(cfg.node_of(cleanup)), reached)
+
     def test_a_continue_naming_the_outer_of_two_labels_of_a_loop_continues_it(self):
         ast, cfg = self._cfg('a: b: do { continue a; } while (x); y;')
         after = cfg.node_of(self._first(ast, JsExpressionStatement))

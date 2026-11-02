@@ -4,6 +4,7 @@ from test import TestBase
 
 from refinery.lib.scripts.ps1.analysis.callgraph import build_call_graph
 from refinery.lib.scripts.ps1.analysis.world import Ps1TypeWorld, build_closed_world
+from refinery.lib.scripts.ps1.options import Ps1DeobfuscationOptions
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 #: A world with nothing shadowed and nothing imported, so that `is_readable` answers on the rows
@@ -176,3 +177,68 @@ class TestPs1CallGraphReadabilityAnswersOverAMeasuredWorld(TestBase):
         graph = self._graph("function Zqhelper { 'P' }\nImport-Module .\\m.psm1")
         self.assertFalse(graph.is_readable)
         self.assertIn('zqhelper', graph.reachable_names())
+
+
+class TestPs1ACallUnderAConstantNameInParenthesesCallsThatName(TestBase):
+    """
+    `& ('f1')` and `& $('f1')` look `f1` up as `& 'f1'` does, which is what constant folding leaves
+    of `& ('f' + '1')`.
+    """
+
+    def test_a_parenthesised_constant_name_is_a_call_site_of_the_function(self):
+        for call in ("& ('f1')", "& $('f1')", ". ('f1')"):
+            with self.subTest(call=call):
+                graph = build_call_graph(Ps1Parser(F"function f1 {{ 'a' }}\n{call}").parse(), _CLOSED_WORLD)
+                self.assertEqual(len(graph.call_sites('f1')), 1)
+
+
+class TestPs1ACallTheGraphCannotAttributeIsListed(TestBase):
+    """
+    A call that runs code this analysis cannot read may run any function of the script, and a later
+    step may spell the call it makes, so it is listed whether or not code supplied as data is
+    trusted.
+    """
+
+    def test_every_call_running_unreadable_code_is_listed_under_either_reading(self):
+        for call in ('& $n', 'iex $c', '$ExecutionContext.InvokeCommand.InvokeScript($s)'):
+            for trust_eval in (False, True):
+                with self.subTest(call=call, trust_eval=trust_eval):
+                    root = Ps1Parser(F"function f1 {{ 'a' }}\n{call}").parse()
+                    graph = build_call_graph(root, build_closed_world(root), Ps1DeobfuscationOptions(trust_eval=trust_eval))
+                    self.assertEqual(len(graph.unattributed_sites), 1)
+
+    def test_a_call_naming_a_function_is_not_listed(self):
+        root = Ps1Parser("function f1 { 'a' }\nf1").parse()
+        self.assertEqual(len(build_call_graph(root, build_closed_world(root)).unattributed_sites), 0)
+
+
+class TestPs1AFunctionTheScriptHandsOutIsReachedWithoutACall(TestBase):
+    """
+    A function read as a value, looked up, or naming itself through `$MyInvocation` may run where
+    no call names it, so it is reachable and has callers no list holds.
+    """
+
+    @staticmethod
+    def _graph(source: str):
+        return build_call_graph(Ps1Parser(source).parse(), _CLOSED_WORLD)
+
+    def test_each_way_of_handing_a_function_out_hands_it_out(self):
+        for use in (
+            '$b = $function:f1',
+            '$b = (Get-Command f1).ScriptBlock',
+            "$b = (Get-Item 'function:f1').ScriptBlock",
+            "function f1 { $MyInvocation.MyCommand.ScriptBlock }",
+        ):
+            with self.subTest(use=use):
+                graph = self._graph(F"function f1 {{ 'a' }}\n{use}")
+                self.assertTrue(graph.hands_out('f1'))
+                self.assertIn('f1', graph.reachable_names())
+
+    def test_a_lookup_that_cannot_name_the_function_hands_out_every_function(self):
+        for use in ('Get-Command', 'Get-Command f*', "Get-ChildItem 'function:'"):
+            with self.subTest(use=use):
+                self.assertTrue(self._graph(F"function f1 {{ 'a' }}\n{use}").hands_out('f1'))
+
+    def test_reading_only_the_name_of_a_lookup_hands_nothing_out(self):
+        self.assertFalse(self._graph("function f1 { 'a' }\n(Get-Command f1).Name").hands_out('f1'))
+

@@ -470,7 +470,7 @@ class TestPs1RemovalDoesNotEmptyAProtectedTryBody(TestPs1):
         result = self._apply(cleandoc("""
             try {
               $x = 1
-              $x = 2
+              $x = [int]$env:COMPUTERNAME
             } catch {
               Write-Host 'caught'
             }
@@ -532,10 +532,6 @@ class TestPs1RemovalDoesNotEmptyAProtectedTryBody(TestPs1):
         """), Ps1FunctionEvaluator)
         self.assertEqual(result, cleandoc("""
             try {
-              function D {
-                Param([String]$s)
-                return $s
-              }
               Write-Host ('x')
             } catch {
               Write-Host 'err'
@@ -605,8 +601,24 @@ class TestPs1RemovalDoesNotEmptyAProtectedTryBody(TestPs1):
 
 
 class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
+    def test_a_breaking_trap_inside_a_protected_try_body_goes_where_it_hands_on_what_the_body_would(self):
+        """
+        `trap { break }` hands the cast's error to the `catch`, which the `try` body does without it,
+        so it changes nothing; the cast certainly fails, so the `try` runs its `catch` and no more.
+        """
+        result = self._apply(cleandoc("""
+            try {
+              trap { break }
+              [int]'abc'
+              Write-Host 'x'
+            } catch {
+              Write-Host 'caught'
+            }
+        """), Ps1DeadCodeElimination)
+        self.assertEqual(result, "Write-Host 'caught'")
+
     def test_a_trap_inside_a_protected_try_body_is_kept(self):
-        for body in ['trap { continue }', 'trap { }', 'trap { break }']:
+        for body in ['trap { continue }', 'trap { }']:
             with self.subTest(body=body):
                 result = self._apply(cleandoc(F"""
                     try {{
@@ -619,10 +631,11 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
                 """), Ps1DeadCodeElimination)
                 self.assertIn('trap', result)
 
-    def test_a_resuming_trap_under_another_resuming_trap_is_kept_where_its_block_goes_on(self):
+    def test_two_resuming_traps_over_a_failing_call_go_together(self):
         """
-        The inner `trap` resumes inside the `if` body, so a failing call still writes `tail`; with
-        it gone the outer `trap` resumes after the `if`, and `tail` is skipped.
+        The inner `trap` resumes inside the `if` body, so the failing call still writes `tail`;
+        with it gone the outer `trap` would resume after the `if` and skip `tail`. With both gone,
+        the error is reported and the run goes on to `tail` as well, so the two go together.
         """
         result = self._deobfuscate_iterative(cleandoc("""
             trap {
@@ -637,9 +650,13 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
             }
             Write-Host 'next'
         """))
-        script = Ps1Parser(result).parse()
-        guarded = next(node for node in script.walk() if isinstance(node, Ps1IfStatement))
-        self.assertTrue(any(isinstance(node, Ps1TrapStatement) for node in guarded.walk()))
+        self.assertEqual(result, cleandoc("""
+            if ((Get-Random) -GT 5) {
+              $Null = $o.M()
+              Write-Host 'tail'
+            }
+            Write-Host 'next'
+        """))
 
     def test_a_resuming_trap_is_kept_where_an_empty_catch_around_its_loop_would_end_the_loop(self):
         """
@@ -734,8 +751,8 @@ class TestPs1TheDeadCodePassDeletesTrapsAs51HandsThemErrors(TestPs1):
             Write-Host 'after'
         """))
 
-    def test_an_inner_resuming_set_stays_under_an_outer_one(self):
-        self._assertUnchanged(cleandoc("""
+    def test_an_inner_resuming_set_goes_with_the_outer_one(self):
+        self.assertEqual(self._apply(cleandoc("""
             trap {
               continue
             }
@@ -747,9 +764,13 @@ class TestPs1TheDeadCodePassDeletesTrapsAs51HandsThemErrors(TestPs1):
               Write-Host 'tail'
             }
             Write-Host 'after'
-        """), Ps1DeadCodeElimination)
+        """), Ps1DeadCodeElimination), cleandoc("""
+            [int]'a'
+            Write-Host 'tail'
+            Write-Host 'after'
+        """))
 
-    def test_a_breaking_set_between_two_resuming_ones_goes_and_the_innermost_stays(self):
+    def test_a_breaking_set_between_two_resuming_ones_goes_with_them(self):
         self.assertEqual(self._apply(cleandoc("""
             trap { continue }
             if ($true) {
@@ -763,19 +784,9 @@ class TestPs1TheDeadCodePassDeletesTrapsAs51HandsThemErrors(TestPs1):
             }
             Write-Host 'after'
         """), Ps1DeadCodeElimination), cleandoc("""
-            trap {
-              continue
-            }
-            if ($true) {
-              if ($true) {
-                trap {
-                  continue
-                }
-                [int]'a'
-                Write-Host 'tail'
-              }
-              Write-Host 'mid'
-            }
+            [int]'a'
+            Write-Host 'tail'
+            Write-Host 'mid'
             Write-Host 'after'
         """))
 
@@ -945,7 +956,7 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
               continue
             }
             if ($True) {
-              throw 'e'
+              $null = [int]$env:COMPUTERNAME
               Write-Host 'tail'
             }
             Write-Host 'next'
@@ -958,7 +969,7 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
             }
             switch (1) {
               1 {
-                throw 'e'
+                $null = [int]$env:COMPUTERNAME
                 Write-Host 'tail'
               }
             }
@@ -971,7 +982,7 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
               continue
             }
             for ($i = 0; $True; $i++) {
-              throw 'e'
+              $null = [int]$env:COMPUTERNAME
               Write-Host 'tail'
               break
             }
@@ -1038,7 +1049,8 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
         The floor under it, differing in the one word that decides the question: a `trap` that
         rethrows ends the script where the raise stands, so nothing after it runs at either level
         and moving the statements past it changes nothing. What is left behind is unreachable in
-        the input too, and the same visit deletes it, as no handler body encloses it.
+        the input too, and the same visit deletes it, as no handler body encloses it. The `trap`
+        goes as well: the error it takes ends the script with it or without it.
         """
         result = self._apply(cleandoc("""
             trap {
@@ -1050,12 +1062,7 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
             }
             Write-Host 'next'
         """), Ps1DeadCodeElimination)
-        self.assertEqual(result, cleandoc("""
-            trap {
-              break
-            }
-            throw 'e'
-        """))
+        self.assertEqual(result, "throw 'e'")
 
     def test_the_same_switch_under_a_trap_that_does_not_resume_is_resolved(self):
         result = self._apply(cleandoc("""
@@ -1070,12 +1077,7 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
             }
             Write-Host 'next'
         """), Ps1DeadCodeElimination)
-        self.assertEqual(result, cleandoc("""
-            trap {
-              break
-            }
-            throw 'e'
-        """))
+        self.assertEqual(result, "throw 'e'")
 
     def test_the_same_for_under_a_trap_that_does_not_resume_is_resolved(self):
         result = self._apply(cleandoc("""
@@ -1108,12 +1110,7 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
             }
             Write-Host 'next'
         """), Ps1DeadCodeElimination)
-        self.assertEqual(result, cleandoc("""
-            trap {
-              break
-            }
-            throw 'e'
-        """))
+        self.assertEqual(result, "throw 'e'")
 
 
 class TestPs1ACallThatWritesNothingGoesOnlyWhereNothingObservesIt(TestPs1):

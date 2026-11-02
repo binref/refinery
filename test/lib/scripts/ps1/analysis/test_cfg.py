@@ -17,9 +17,7 @@ from refinery.lib.scripts.analysis.cfg import (
     Projection,
     flood,
     flood_labels,
-    normal_reach,
     plain_successors,
-    normal_reach_labels,
     reachable_forward_from_any,
     reachable_forward_labels,
     reachable_from_any,
@@ -39,8 +37,10 @@ from refinery.lib.scripts.ps1.ast import get_body
 from refinery.lib.scripts.ps1.model import (
     Ps1BreakStatement,
     Ps1ContinueStatement,
+    Ps1ExitStatement,
     Ps1FunctionDefinition,
     Ps1IfStatement,
+    Ps1ReturnStatement,
     Ps1Script,
     Ps1ScriptBlock,
     Ps1TrapStatement,
@@ -388,7 +388,7 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         `continue` inside a trap resumes at the statement after the one that threw, so the guarded
         body is reachable from it — it is not a loop back-jump and does not leave the body.
         """
-        tree, graph = self._tree_and_graph("trap { continue }\n'a'\n'b'")
+        tree, graph = self._tree_and_graph("trap { 'h'; continue }\n'a'\n'b'")
         jump = self._node_for(graph, Ps1ContinueStatement)
         reached = self._forward(jump)
         self.assertIn(id(graph.node_of(tree.body[1])), reached)
@@ -497,9 +497,9 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         runs the statements written after the raise.
         """
         for source in [
-            "while ($c) { trap { continue }\n'a'\n'b' }",
-            "foreach ($i in $x) { trap { continue }\n'a'\n'b' }",
-            "switch ($x) { 1 { trap { continue }\n'a'\n'b' } }",
+            "while ($c) { trap { 'h'; continue }\n'a'\n'b' }",
+            "foreach ($i in $x) { trap { 'h'; continue }\n'a'\n'b' }",
+            "switch ($x) { 1 { trap { 'h'; continue }\n'a'\n'b' } }",
         ]:
             with self.subTest(source):
                 tree, graph = self._tree_and_graph(source)
@@ -677,8 +677,8 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         # Written that way, a script nested sixty-four deep costs 12867 edges where the shape itself
         # holds 960, and doubling the depth quadruples the count — the same failure class the hub was
         # built to prevent, reached through nesting rather than through the size of one block. Both
-        # halves are named against the innermost level alone, so the cost per level is a constant and
-        # the count below is exactly proportional to the depth.
+        # halves are named against the innermost level alone, so the cost per level is a constant;
+        # the innermost set holds no nested `trap` and acts nowhere, so it draws no hub edge.
         def nested(depth: int) -> str:
             source = "trap { continue }; 'x'; 'y'"
             for _ in range(depth - 1):
@@ -687,7 +687,7 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
 
         self.assertEqual(
             {depth: self._edge_count(nested(depth)) for depth in (2, 8, 32, 64)},
-            {2: 30, 8: 120, 32: 480, 64: 960},
+            {2: 29, 8: 119, 32: 479, 64: 959},
         )
 
     def test_dynamicparam_runs_before_the_begin_block(self):
@@ -1100,12 +1100,24 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
         ]
 
     def test_a_guarded_statement_resumes_below_itself_and_not_above(self):
-        tree, graph = self._tree_and_graph("trap { continue }\n'one'\n'two'\n'three'")
+        tree, graph = self._tree_and_graph("trap { 'h'; continue }\n'one'\n'two'\n'three'")
         one, two, three = (self._required_node(graph, tree.body[k]) for k in (1, 2, 3))
         forward = reachable_forward_from_any(graph, [two])
         self.assertIn(id(three), forward)
         self.assertNotIn(id(one), forward)
         self.assertIn(id(one), reachable_from_any([two]))
+
+    def test_a_set_that_acts_nowhere_resumes_along_the_forward_edges_alone(self):
+        """
+        Where no member of the set acts and the block holds no nested `trap`, what a resumption
+        through the hub adds is a path back to statements above the one that raised, which runs
+        nothing that resuming forward does not; the set draws no hub, and a guarded statement reaches
+        only what stands below it.
+        """
+        tree, graph = self._tree_and_graph("trap { continue }\n'one'\n'two'\n'three'")
+        one, two, three = (self._required_node(graph, tree.body[k]) for k in (1, 2, 3))
+        self.assertIn(id(three), reachable_forward_from_any(graph, [two]))
+        self.assertNotIn(id(one), reachable_from_any([two]))
 
     def test_a_terminator_reaches_the_statement_resumption_lands_on(self):
         """
@@ -1450,22 +1462,6 @@ class TestPs1ALabelledWalkAnswersEveryLabelAsItsOwnWalkWould(TestBase):
             with self.subTest(script=script):
                 self.assertEqual(wrong, [])
 
-    def test_a_labelled_plain_reach_answers_every_label_as_its_own_plain_reach(self):
-        for script, graph, labels in self._labelled_graphs():
-            onward = normal_reach_labels(labels, forward=True)
-            backward = normal_reach_labels(labels, forward=False)
-            wrong = []
-            for label, sources in labels.items():
-                reached = normal_reach(sources)
-                for index, node in enumerate(graph.nodes):
-                    if onward.reaches(label, node) != (id(node) in reached):
-                        wrong.append(('forward', label, index))
-                    leads = any(id(source) in normal_reach([node]) for source in sources)
-                    if backward.reaches(label, node) != leads:
-                        wrong.append(('backward', label, index))
-            with self.subTest(script=script):
-                self.assertEqual(wrong, [])
-
     def test_a_label_seeded_in_a_handler_body_reaches_the_block_the_handler_resumes_into(self):
         tree = Ps1Parser(cleandoc("""
             trap { 'handled'; continue }
@@ -1680,3 +1676,68 @@ class TestPs1AnErrorNothingTakesIsReportedPastItsStatement(_Ps1ControlFlowGraphs
                 assert trap_set is not None and isinstance(trap_set.outward, Ps1ReportNode)
                 self.assertIs(trap_set.outward.carries_on_after, tree.body[holder])
                 self.assertTrue(any(node is trap_set.outward for node in trap_set.graph.nodes))
+
+
+class TestPs1AJumpRunsTheFinallyItLeaves(_Ps1ControlFlowGraphs):
+    """
+    A `return`, `exit`, `break` or `continue` that leaves a `try` runs its `finally` body before
+    control arrives where the jump goes, and runs no `finally` it does not leave.
+    """
+
+    def _finally_entries(self, graph: ControlFlowGraph, tree: Ps1Script) -> list[CfgNode]:
+        return [
+            self._required_node(graph, node.finally_block.body[0])
+            for node in tree.walk_in_order()
+            if isinstance(node, Ps1TryCatchFinally) and node.finally_block is not None
+        ]
+
+    def _reached_from(self, graph: ControlFlowGraph, kind: type) -> set[int]:
+        return self._forward(self._node_for(graph, kind))
+
+    def test_a_jump_reaches_the_finally_it_leaves(self):
+        for source, kind in (
+            ("try { return } finally { 'f' }", Ps1ReturnStatement),
+            ("try { exit } finally { 'f' }", Ps1ExitStatement),
+            ("foreach ($i in 1, 2) { try { break } finally { 'f' } }", Ps1BreakStatement),
+            ("foreach ($i in 1, 2) { try { continue } finally { 'f' } }", Ps1ContinueStatement),
+        ):
+            with self.subTest(source=source):
+                tree, graph = self._tree_and_graph(source)
+                entry, = self._finally_entries(graph, tree)
+                self.assertIn(id(entry), self._reached_from(graph, kind))
+
+    def test_a_break_does_not_run_a_finally_around_the_loop_it_leaves(self):
+        tree, graph = self._tree_and_graph(
+            "try { foreach ($i in 1, 2) { break } } finally { 'outer' }")
+        outer, = self._finally_entries(graph, tree)
+        jump = self._node_for(graph, Ps1BreakStatement)
+        self.assertNotIn(outer, jump.successors)
+
+
+class TestPs1AProcessBlockRunsOncePerInput(_Ps1ControlFlowGraphs):
+    """
+    A `process` block, and the body of a `filter`, runs once per object the pipeline hands the
+    function, which may be none: `end` is reached without it, and it may run again after itself.
+    """
+
+    def test_end_is_reached_without_running_process(self):
+        tree = Ps1Parser("function f { begin { 'b' } process { 'p' } end { 'e' } }").parse()
+        definition = next(node for node in tree.walk() if isinstance(node, Ps1FunctionDefinition))
+        code = definition.body
+        assert code is not None and code.process_block is not None and code.end_block is not None
+        assert code.begin_block is not None
+        graph = build_ps1_control_flow(tree)[id(code)]
+        begin = self._required_node(graph, code.begin_block.body[0])
+        process = self._required_node(graph, code.process_block.body[0])
+        end = self._required_node(graph, code.end_block.body[0])
+        self.assertIn(id(end), self._reached_without(begin, process))
+        self.assertTrue(any(id(process) in self._forward(successor) for successor in process.successors))
+
+    def test_the_body_of_a_filter_may_run_again_after_itself(self):
+        tree = Ps1Parser("filter f { 'p' }").parse()
+        definition = next(node for node in tree.walk() if isinstance(node, Ps1FunctionDefinition))
+        assert definition.body is not None
+        graph = build_ps1_control_flow(tree)[id(definition.body)]
+        statement = self._required_node(graph, definition.body.body[0])
+        self.assertTrue(any(id(statement) in self._forward(successor) for successor in statement.successors))
+

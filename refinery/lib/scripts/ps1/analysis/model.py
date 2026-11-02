@@ -55,6 +55,7 @@ from refinery.lib.scripts.ps1.analysis.naming import (
 )
 from refinery.lib.scripts.ps1.ast import (
     assignment_of,
+    assignment_target_variables,
     binding_key,
     is_reference_cast,
     stored_value,
@@ -83,6 +84,18 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
 )
+
+
+@dataclass(frozen=True)
+class Ps1NameSet:
+    """
+    Some variable names of a script: every name, or the ones in `names`. Ask it with `in`.
+    """
+    every_name: bool
+    names: frozenset[str]
+
+    def __contains__(self, key: str) -> bool:
+        return self.every_name or key in self.names
 
 
 @enum.unique
@@ -850,6 +863,9 @@ class Ps1SemanticModel:
         self._one_object: dict[int, tuple[Binding, ...]] | None = None
         self._reads_unreadable_names = False
         self._handed_out: set[str] = set()
+        self._addresses_unreadable_names = False
+        self._removed: set[str] = set()
+        self._constrained: set[str] = set()
         self._doubts_every_scope = False
         self._populate(self.root_scope)
         if self._doubts_every_scope:
@@ -1052,6 +1068,26 @@ class Ps1SemanticModel:
         return frozenset(self._handed_out)
 
     @property
+    def variables_removed(self) -> Ps1NameSet:
+        """
+        The names a statement of the script may remove: a command or a call that unbinds the name,
+        and a variable it hands out, which may be removed through the handle wherever it has gone.
+        Every name, where the script addresses a variable whose name nobody can read. A read of a
+        name here is not certainly preceded by a store even where one was written before it.
+        """
+        return Ps1NameSet(self._addresses_unreadable_names, frozenset(self._removed))
+
+    @property
+    def variables_constrained(self) -> Ps1NameSet:
+        """
+        The names a statement of the script may constrain, so that a later plain store to them may
+        fail: a store into a typed or attributed target, a parameter, a variable handed out, and a
+        variable command that writes the name with options of its own. Every name, where the script
+        addresses a variable whose name nobody can read.
+        """
+        return Ps1NameSet(self._addresses_unreadable_names, frozenset(self._constrained))
+
+    @property
     def writes_unreadable_names(self) -> bool:
         """
         Whether any scope here carries a write whose name nobody can read — every scope's
@@ -1070,10 +1106,38 @@ class Ps1SemanticModel:
                 self._populate(child)
                 continue
             self._node_scope[id(node)] = scope
-            if isinstance(node, Ps1Variable) and declares_binding(node):
-                self._declare(node, scope)
+            if isinstance(node, Ps1AssignmentExpression):
+                if not isinstance(node.target, Ps1Variable):
+                    self._constrained.update(
+                        variable.name.lower() for variable in assignment_target_variables(node.target))
+            elif isinstance(node, Ps1ParameterDeclaration):
+                if node.variable is not None:
+                    self._constrained.add(node.variable.name.lower())
             elif isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember, Ps1Variable)):
-                self._declare_named(node, scope)
+                unreadable = unreadable_name_target(node)
+                references = named_references(node)
+                self._note_removals_and_constraints(unreadable, references)
+                if isinstance(node, Ps1Variable) and declares_binding(node):
+                    self._declare(node, scope)
+                else:
+                    self._declare_named(node, scope, unreadable, references)
+
+    def _note_removals_and_constraints(
+        self,
+        unreadable: Ps1NameTarget | None,
+        references: list[Ps1NamedReference],
+    ):
+        """
+        Record the names a node may remove or constrain, given where it writes a name nobody can
+        read and the names it addresses; see `variables_removed` and `variables_constrained`.
+        """
+        if unreadable is not None:
+            self._addresses_unreadable_names = True
+        for reference in references:
+            if reference.role is Ps1NameRole.UNBINDS or reference.hands_out:
+                self._removed.add(reference.key)
+            if reference.hands_out or reference.constrains:
+                self._constrained.add(reference.key)
 
     @staticmethod
     def _scriptblock_kind(node: Ps1ScriptBlock) -> ScopeKind:
@@ -1089,7 +1153,13 @@ class Ps1SemanticModel:
         if key not in scope.bindings:
             scope.bindings[key] = Binding(name=key, scope=scope)
 
-    def _declare_named(self, node: Node, current: Scope):
+    def _declare_named(
+        self,
+        node: Node,
+        current: Scope,
+        unreadable: Ps1NameTarget | None,
+        references: list[Ps1NamedReference],
+    ):
         """
         Create the bindings a command or a call of the session state addresses by string, and record
         a name it addresses that cannot be read, a read of one, and a variable it hands out.
@@ -1106,12 +1176,11 @@ class Ps1SemanticModel:
         place against the reads it may reach — one aimed at the script scope, or at a scope the
         lexical chain cannot name — is a fact about the scope as a whole.
         """
-        unreadable = unreadable_name_target(node)
         if unreadable is not None and unreadable is not Ps1NameTarget.LOCAL:
             self._doubt(unreadable, current)
         if reads_unreadable_name(node):
             self._reads_unreadable_names = True
-        for reference in named_references(node):
+        for reference in references:
             if reference.hands_out:
                 self._handed_out.add(reference.key)
             if reference.role is Ps1NameRole.READS:

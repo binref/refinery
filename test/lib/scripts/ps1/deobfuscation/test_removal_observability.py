@@ -153,7 +153,6 @@ class TestPs1AStoredBlockRendersTheStatementsInIt(TestPs1):
     call: deleting it changes what the block renders as.
     """
 
-    @unittest.expectedFailure
     def test_a_call_inside_a_block_the_script_writes_out_is_kept(self):
         self._assertKept(F"""
             function K {{ }}
@@ -570,7 +569,6 @@ class TestPs1ANoiseBarewordIsKeptWhereTheRecordItLeavesIsRead(TestPs1):
             } catch {}
             Invoke-Expression $zzqc
         """, """
-            $zzqc = '$Error.Count'
             try {
               zzqq0 =5
             } catch {}
@@ -616,7 +614,6 @@ class TestPs1ANoiseBarewordIsKeptWhereTheRecordItLeavesIsRead(TestPs1):
             try {
               zzqq0 =5
             } catch {}
-            $zzqc = '$Error.Count'
             $Error.Count
         """)
 
@@ -1223,17 +1220,13 @@ class TestPs1ACommandThatFailsInACatchBodyLeavesIt(TestPs1):
     """
     Measured on 5.1: a command that ends its statement with an error fails a `catch` body the way a
     cast does, so the rest of the body is skipped and the `catch` is not run in place of its `try`.
-    Whether a line can fail is answered for casts, operators and the calls the facts cover, never
-    for a command; the one answer to whether a line can fail, which the error roadmap builds,
-    answers it for commands too.
+    A command no collected fact clears may fail.
     """
 
-    @unittest.expectedFailure
     def test_a_command_naming_a_type_that_does_not_exist_keeps_its_catch_body_in_place(self):
         self.assertIn('catch {', self._deobfuscate(
             "try { throw 'x' } catch { New-Object Foo.Bar; Write-Host 'rest' }; Write-Host 'after'"))
 
-    @unittest.expectedFailure
     def test_a_command_handed_a_parameter_it_does_not_have_keeps_its_catch_body_in_place(self):
         self.assertIn('catch {', self._deobfuscate(
             "try { throw 'x' } catch { Get-Random -Bogus 1; Write-Host 'rest' }; Write-Host 'after'"))
@@ -1244,9 +1237,8 @@ class TestPs1AnErrorInABodyACatchOrTryBodyRunsLeavesThatBody(TestPs1):
     Measured on 5.1: an error raised in a script block or a function that a `try` or `catch` body
     runs is not reported inside it: it leaves the block and skips the rest of the body that ran it,
     exactly as an error raised in that body does. Where the body that ran it is written, a call that
-    may run another body is read as raising what that body hands back. Inside the called body the
-    removal passes still read the error as stepping over wherever no handler that acts is written
-    elsewhere, which only the call sites of the body can settle.
+    may run another body is read as raising what that body hands back, and inside the called body
+    whether the error leaves it is read off the calls that may run it.
     """
 
     def test_a_failing_line_in_a_block_a_catch_body_runs_is_kept(self):
@@ -1256,10 +1248,9 @@ class TestPs1AnErrorInABodyACatchOrTryBodyRunsLeavesThatBody(TestPs1):
         self.assertIn("[int]'a'", self._deobfuscate(
             "$x = 'one'; try { throw 'q' } catch { $x = 'two'; & { $null = [int]'a' }; $x = 'three' }; Write-Host $x"))
 
-    @unittest.expectedFailure
     def test_a_failing_line_in_a_function_a_try_body_calls_is_kept(self):
         """
-        5.1 writes `one`; the output writes `two`.
+        5.1 writes `one`.
         """
         self.assertIn("[int]'a'", self._deobfuscate(
             "function f { $script:x = 'one'; $null = [int]'a'; $script:x = 'two' }; "
@@ -1360,12 +1351,10 @@ class TestPs1AnErrorThatLeavesAFunctionCalledUnderAHandlerEndsTheFunction(TestPs
     """
     Measured on 5.1: an error the handlers of a function do not take, where a `try` guards the
     call, leaves the function and ends the call statement, so the rest of the function does not run
-    even where the `catch` is empty. The removal passes read such an error as reported and stepped
-    over unless a handler that acts is written somewhere else, so they delete the function's own
-    `trap`, and the rest of the function no longer runs.
+    even where the `catch` is empty. The function's own `trap` takes the error first, so it decides
+    whether the rest of the function runs.
     """
 
-    @unittest.expectedFailure
     def test_a_trap_in_a_function_called_in_a_try_with_an_empty_catch_is_kept(self):
         """
         5.1 writes `rest ` and `after`; without the `trap` only `after`.
@@ -1389,12 +1378,10 @@ class TestPs1AnErrorThatLeavesAFunctionCalledUnderAHandlerEndsTheFunction(TestPs
 class TestPs1AReadStrictModeFailsIsSkippedPastByTheTrapAroundIt(TestPs1):
     """
     Under strict mode, reading a variable that was never set is a statement-terminating error that
-    a `trap` takes. Whether something may raise into a `trap` is asked with a reading that counts it,
-    but what the `trap` skips is measured only from casts, operators, method calls and commands, so
-    the read is never found to skip anything and the `trap` is deleted.
+    a `trap` takes; without the `trap` the error is reported and the statement holding the read
+    runs on.
     """
 
-    @unittest.expectedFailure
     def test_a_trap_that_resumes_past_a_read_strict_mode_fails_is_kept(self):
         """
         5.1 writes `out a`: the `trap` resumes past the `if`. Without it the error is written and
@@ -1568,9 +1555,9 @@ class TestPs1AnAdvancedFunctionToldToStopRunsUnderStop(TestPs1):
 
 class TestPs1RemovingATrapReadsWhereItsErrorsLand(TestPs1):
     """
-    Measured on 5.1, each `trap` below decides what runs: without it an error lands elsewhere. The
-    `trap` removal still reads where errors land off the graph rather than off the dispatch
-    evaluator, which phase E2 of the error roadmap moves it onto.
+    Measured on 5.1, each `trap` below decides what runs: without it an error lands elsewhere. A
+    run that goes on forever on one side is compared as though it ended there, which the loop below
+    pins.
     """
 
     @unittest.expectedFailure
@@ -1582,11 +1569,10 @@ class TestPs1RemovingATrapReadsWhereItsErrorsLand(TestPs1):
         self.assertIn('trap', self._deobfuscate(
             "$s = 'a'; trap { continue }; while ($Host) { $null = [int]$s }; Write-Host 'after'"))
 
-    @unittest.expectedFailure
     def test_a_trap_that_takes_an_error_replacing_a_return_is_kept(self):
         """
         5.1 writes `after`: the cast's error takes the place of the `return` and the `trap` resumes
-        after the `try`. The output dropped the `trap` and the cast, and returns.
+        after the `try`. Without the `trap`, the error ends the script.
         """
         self.assertIn('trap', self._deobfuscate(
             "trap { continue }; try { if ($Host) { return } } finally { $null = [int]'a' }; Write-Host 'after'"))

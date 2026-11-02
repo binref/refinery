@@ -325,13 +325,12 @@ class TestPs1AMemberIsNotSpelledFromAStoreThatMayNotHaveCompleted(TestPs1):
         """))
 
 
-class TestPs1NoMemberIsSpelledInsideATrapBody(TestPs1):
+class TestPs1AMemberInsideATrapBodyIsSpelledOnlyAfterACertainWrite(TestPs1):
     """
-    The hole `refinery.lib.scripts.ps1.analysis.variable_types` carries, seen from the pass that
-    spells members: no read inside a `trap` body is typed, so none of them is spelled. For the write
-    standing below the trap that is 5.1's answer, since a throw from above it leaves the name
-    `$null`; for a write that cannot throw it is not, and the same read written outside the trap
-    does resolve. What is pinned is the refusal rather than the completed-store rule.
+    A read inside a `trap` body is typed only by a write that certainly completed before the body
+    runs. For the write standing below the trap there is none, since a throw from above it leaves
+    the name `$null`; a write that cannot throw completes wherever it stands, so the read inside the
+    trap is spelled as the same read outside it is.
     """
 
     def test_a_write_standing_below_the_trap_does_not_spell_a_member_inside_it(self):
@@ -342,13 +341,18 @@ class TestPs1NoMemberIsSpelledInsideATrapBody(TestPs1):
             $q = New-Object Net.WebClient
         """), Ps1TypeSystemSimplifications)
 
-    def test_a_write_that_cannot_throw_does_not_spell_one_inside_the_trap_either(self):
-        self._assertUnchanged(cleandoc("""
+    def test_a_write_that_cannot_throw_spells_the_member_inside_the_trap_as_well(self):
+        self.assertEqual(self._apply(cleandoc("""
             $q = 'abc'
             trap {
               $q.substring(0, 1)
             }
-        """), Ps1TypeSystemSimplifications)
+        """), Ps1TypeSystemSimplifications), cleandoc("""
+            $q = 'abc'
+            trap {
+              $q.Substring(0, 1)
+            }
+        """))
         self.assertEqual(self._apply(cleandoc("""
             $q = 'abc'
             $q.substring(0, 1)

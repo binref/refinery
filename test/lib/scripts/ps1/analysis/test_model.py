@@ -931,3 +931,31 @@ class TestPs1AChainOfAliasesCostsAboutWhatItsLengthCosts(TestBase):
         long = self._cost(self._LONG)
         short = self._cost(self._SHORT)
         self.assertLess(processor_time_ratio(long, short), self._BUDGET)
+
+
+class TestPs1TheModelReadsWhichNamesTheScriptMayRemoveOrConstrain(TestBase):
+    """
+    A name may be removed by a command that unbinds it, and through a variable handed out; it may
+    be constrained by a typed or attributed store, a parameter, a variable command written with
+    options, and through a variable handed out. A name nobody can read may be any name.
+    """
+
+    @staticmethod
+    def _model(source: str):
+        return build_semantic_model(Ps1Parser(source).parse())
+
+    def test_the_names_a_script_may_remove(self):
+        removed = self._model('Remove-Variable a; Remove-Item variable:b; $v = Get-Variable c; $d = 1').variables_removed
+        self.assertEqual([name in removed for name in 'abcd'], [True, True, True, False])
+
+    def test_the_names_a_script_may_constrain(self):
+        constrained = self._model(
+            '[int]$a = 1; New-Variable b 1 -Option ReadOnly; function f { param($c) }; $v = Get-Variable d; $e = 1'
+        ).variables_constrained
+        self.assertEqual([name in constrained for name in 'abcde'], [True, True, True, True, False])
+
+    def test_a_name_nobody_can_read_may_be_every_name(self):
+        model = self._model('Remove-Variable $n')
+        self.assertIn('x', model.variables_removed)
+        self.assertIn('x', model.variables_constrained)
+

@@ -4,7 +4,7 @@ Inline constant variable references in PowerShell scripts.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterator
+from typing import Callable, Iterator
 
 from refinery.lib.scripts import (
     Expression,
@@ -12,7 +12,7 @@ from refinery.lib.scripts import (
     Transformer,
     _clone_node,
 )
-from refinery.lib.scripts.ps1.analysis.cache import Ps1UnseenReads, model_cache
+from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
@@ -20,6 +20,7 @@ from refinery.lib.scripts.ps1.analysis.model import (
     NARROWER_QUALIFIERS,
     VARIABLE_QUALIFIERS,
     Binding,
+    Ps1NameSet,
     binding_key,
     is_assignment_write_target,
     is_mutated_in_place,
@@ -772,7 +773,9 @@ class Ps1ConstantInlining(Transformer):
         with no binding at all and would otherwise install a constant where `$x[0] = 'z'` names a
         place rather than a value.
         """
+        pending: list[tuple[Callable[[], bool], Ps1Variable, Node]] = []
         for node in list(_walk_outer_scope(root)):
+            edit = None
             if isinstance(node, Ps1IndexExpression):
                 var = node.object
                 if not isinstance(var, Ps1Variable):
@@ -783,13 +786,19 @@ class Ps1ConstantInlining(Transformer):
                 state.handled.add(id(var))
                 key = _candidate_key(var)
                 if key is not None and is_substitutable_position(var):
-                    self._substitute_index_reference(node, var, key, state)
+                    edit = self._substitute_index_reference(node, var, key, state)
             elif isinstance(node, Ps1Variable):
                 if id(node) in state.handled or not is_substitutable_position(node):
                     continue
                 key = _candidate_key(node)
                 if key is not None and key not in state.blocked:
-                    self._substitute_variable_reference(node, key, state)
+                    edit = self._substitute_variable_reference(node, key, state)
+            if edit is not None:
+                pending.append(edit)
+        for apply, var, replacement in pending:
+            if apply():
+                self.mark_changed()
+                state.installed(var, replacement)
 
     def _substitute_index_reference(
         self,
@@ -797,53 +806,46 @@ class Ps1ConstantInlining(Transformer):
         var: Ps1Variable,
         key: str,
         state: _Inlining,
-    ) -> None:
+    ) -> tuple[Callable[[], bool], Ps1Variable, Node] | None:
         const_value = state.value_at(var, key)
         if const_value is None or not state.objects.a_copy_may_stand_for(var, const_value):
-            return
+            return None
         idx = integer_of(read(node.index))
         if idx is None:
             if key in state.blocked or not isinstance(const_value, Ps1StringLiteral):
-                return
-            replacement = _clone_constant(const_value)
-            if substitute_field(node, 'object', replacement):
-                self.mark_changed()
-                state.installed(var, replacement)
-            return
+                return None
+            whole = _clone_constant(const_value)
+            return (lambda: substitute_field(node, 'object', whole)), var, whole
         if isinstance(const_value, Ps1StringLiteral):
             text = const_value.value
             if not 0 <= idx < len(text):
-                return
+                return None
             replacement = make_string_literal(text[idx])
         else:
             array = _get_array_literal(const_value)
             if array is None or not 0 <= idx < len(array.elements):
-                return
+                return None
             replacement = _clone_constant(array.elements[idx])
-        if substitute(node, replacement):
-            self.mark_changed()
-            state.installed(var, replacement)
+        return (lambda: substitute(node, replacement)), var, replacement
 
     def _substitute_variable_reference(
         self,
         node: Ps1Variable,
         key: str,
         state: _Inlining,
-    ) -> None:
+    ) -> tuple[Callable[[], bool], Ps1Variable, Node] | None:
         const_value = state.value_at(node, key)
         if const_value is None or not _survives_this_position(const_value, node):
-            return
+            return None
         if not state.objects.a_copy_may_stand_for(node, const_value):
-            return
+            return None
         if isinstance(node.parent, Ps1ExpandableString):
             replacement = _interpolated(const_value, node, state.flow)
         else:
             replacement = _clone_constant(const_value)
         if replacement is None:
-            return
-        if substitute(node, replacement):
-            self.mark_changed()
-            state.installed(node, replacement)
+            return None
+        return (lambda: substitute(node, replacement)), node, replacement
 
     def _remove_dead_assignments(
         self,
@@ -851,7 +853,7 @@ class Ps1ConstantInlining(Transformer):
         state: _Inlining,
         faults: Ps1FaultReach,
         error_state: Ps1ErrorStateReach,
-        unseen: Ps1UnseenReads,
+        unseen: Ps1NameSet,
     ):
         """
         Delete the constant writes of every binding whose value nothing observes any more.

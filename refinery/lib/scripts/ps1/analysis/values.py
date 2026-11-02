@@ -2290,6 +2290,8 @@ def _evaluated(
         return _evaluated_binary(node, type_of_variable, calls)
     if isinstance(node, Ps1UnaryExpression):
         return _evaluated_unary(node, type_of_variable, calls)
+    if isinstance(node, Ps1Pipeline) and calls is not None:
+        return _evaluated_pipeline(node, type_of_variable, calls)
     if isinstance(node, Ps1TypeExpression) or not isinstance(node, Expression):
         return NOTHING
     if calls is not None and isinstance(node, (Ps1InvokeMember, Ps1CommandInvocation)):
@@ -2298,6 +2300,27 @@ def _evaluated(
             return called
     named = resolve_expression_type(node, type_of_variable)
     return NOTHING if named is None else Ps1Outcome(MAYBE, Ps1Typed(named))
+
+
+def _evaluated_pipeline(
+    node: Ps1Pipeline,
+    type_of_variable: Ps1VariableTyping | None,
+    calls: Ps1Calls,
+) -> Ps1Outcome:
+    if not node.elements:
+        return NOTHING
+    throws = NEVER
+    value: Ps1Fact = UNKNOWN
+    for index, element in enumerate(node.elements):
+        expression = element.expression
+        if element.redirections or expression is None:
+            return NOTHING
+        if index and not isinstance(expression, Ps1CommandInvocation):
+            return NOTHING
+        outcome = evaluate(expression, type_of_variable, calls)
+        throws = throw_join(throws, outcome.throws)
+        value = outcome.value
+    return Ps1Outcome(throws, value)
 
 
 def _evaluated_cast(

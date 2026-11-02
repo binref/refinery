@@ -6,14 +6,13 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from refinery.lib.scripts import Node, Transformer
-from refinery.lib.scripts.ps1.analysis.cache import Ps1UnseenReads, model_cache
+from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
 from refinery.lib.scripts.ps1.analysis.effects import (
     OutputSink,
     Ps1HandlerVerdicts,
     StatementEffect,
     body_is_inert,
-    expression_cannot_fault,
     is_side_effect_free,
     opens_a_redirection_target,
     output_path,
@@ -21,8 +20,8 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     statement_effect,
     unconsumed_statement,
 )
-from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
-from refinery.lib.scripts.ps1.analysis.model import Binding, Ps1SemanticModel, Scope
+from refinery.lib.scripts.ps1.analysis.model import Binding, Ps1NameSet, Ps1SemanticModel, Scope
+from refinery.lib.scripts.ps1.analysis.raising import Ps1RaiseModel
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
     assignment_of,
@@ -41,9 +40,11 @@ from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlans
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AssignmentExpression,
+    Ps1CommandInvocation,
     Ps1ExpressionStatement,
     Ps1ForLoop,
     Ps1FunctionDefinition,
+    Ps1InvokeMember,
     Ps1ScopeModifier,
     Ps1Script,
     Ps1UnaryExpression,
@@ -52,11 +53,7 @@ from refinery.lib.scripts.ps1.model import (
 from refinery.lib.scripts.ps1.options import bare_output_is_preserved, env_stores_are_preserved
 
 
-def _writes_only_what_cannot_fault(
-    stmt: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach,
-) -> bool:
+def _writes_only_what_cannot_fault(stmt: Node, raises: Ps1RaiseModel) -> bool:
     """
     Whether a statement writes a value to the output stream and can do nothing else — not even
     raise. `refinery.lib.scripts.ps1.analysis.effects.StatementEffect.OUTPUT` says the first half
@@ -64,14 +61,14 @@ def _writes_only_what_cannot_fault(
     asks the fault question here.
 
     It is the same question `refinery.lib.scripts.ps1.analysis.effects.fault_is_observed` asks of a
-    `DISCARD`, and it goes through the same gate *over the same operand* for that reason: a bare
+    `DISCARD`, and it goes through the same model *over the same operand* for that reason: a bare
     `$x` answered fault-free at one of the two sites and not at the other would be deleted as a
     discard and kept as an output in one script, and so would one the two sites disagreed about
     which expression to weigh. `refinery.lib.scripts.ps1.ast.fault_operand` is that
     one reading, and it answers `None` for a statement that is not one expression.
     """
     operand = fault_operand(stmt)
-    return operand is not None and expression_cannot_fault(operand, stmt, faults, world)
+    return operand is not None and raises.cannot_fault(operand, stmt)
 
 
 class _MutationEdit(NamedTuple):
@@ -125,7 +122,7 @@ class Ps1UnusedVariableRemoval(Transformer):
 
         A binding is dead because its every read sits inside a right-hand side that is going away,
         so liveness is *restrictive* in the survivor set and has to be asked of what the batch will
-        actually do (`refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan.accepted`). Two
+        actually do (`refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlans.accepted`). Two
         things keep a right-hand side standing and neither is visible before the edits are planned: a
         value that does something survives as `$Null = <value>`, and a statement the fault veto
         declines to delete survives whole. Planning up front costs nothing — registering a
@@ -179,6 +176,28 @@ class Ps1UnusedVariableRemoval(Transformer):
         for key, edit in planned.items():
             if key not in keep:
                 plans.withdraw(edit.statement)
+        landing = {id(statement) for statement in plans.accepted}
+        for binding in candidates:
+            going: set[int] = set()
+            stays = False
+            for write in binding.writes:
+                mutation = self._mutation_of(write.node) if isinstance(write.node, Ps1Variable) else None
+                edit = None if mutation is None else planned.get(id(mutation))
+                if edit is not None and id(mutation) in keep and id(edit.statement) in landing:
+                    going.add(id(mutation))
+                else:
+                    stays = True
+            if not stays:
+                continue
+            for write in binding.writes:
+                mutation = self._mutation_of(write.node) if isinstance(write.node, Ps1Variable) else None
+                if (
+                    mutation is not None
+                    and id(mutation) in going
+                    and isinstance(mutation, Ps1AssignmentExpression)
+                    and not isinstance(mutation.target, Ps1Variable)
+                ):
+                    plans.withdraw(planned[id(mutation)].statement)
         if not removable:
             plans.abandon()
             return None
@@ -450,7 +469,7 @@ class Ps1JunkStatementRemoval(Transformer):
             if path.sink is OutputSink.CAPTURED:
                 continue
             removable = self._removable_in_body(
-                parent, flow.resolved(path), path.guarded, called, cache.world_reach, cache.faults)
+                parent, flow.resolved(path), path.guarded, called, cache.world_reach, cache.raises(True))
             for statement in body:
                 if statement in removable:
                     plans.propose_in(parent, statement)
@@ -558,7 +577,7 @@ class Ps1JunkStatementRemoval(Transformer):
         for key in graph.defined_names:
             if key in unreached:
                 continue
-            if key in function_reads:
+            if key in function_reads or graph.hands_out(key):
                 continue
             definitions = graph.definitions(key)
             if not all(body_is_inert(d.body, world) for d in definitions):
@@ -632,7 +651,7 @@ class Ps1JunkStatementRemoval(Transformer):
         guarded: bool,
         called: frozenset[str],
         world: Ps1WorldReach,
-        faults: Ps1FaultReach,
+        raises: Ps1RaiseModel,
     ) -> set[Node]:
         """
         What this pass would drop from the statement list `parent` owns, where `sink` is the
@@ -655,7 +674,7 @@ class Ps1JunkStatementRemoval(Transformer):
         - the body runs on the normal path and not only on a fault, which is `guarded` read the other
           way round. A `trap` or `catch` body's value is console output exactly when the handler
           fires; deleting it as noise drops what the script prints when it recovers from an error;
-        - evaluating it cannot raise, which is `expression_cannot_fault`. `[Int]'abc'` and `1/0`
+        - evaluating it cannot raise, which is the raise model's to say. `[Int]'abc'` and `1/0`
           are `OUTPUT` like `42` is, and both terminate the script where they stand, so deleting one
           resumes execution that had stopped — and does it across a function boundary, where the
           `try` veto in `Ps1RemovalPlan` cannot see.
@@ -684,7 +703,7 @@ class Ps1JunkStatementRemoval(Transformer):
             if effect is StatementEffect.DISCARD:
                 removable.add(stmt)
             elif effect is StatementEffect.OUTPUT and strip_bare_output:
-                if _writes_only_what_cannot_fault(stmt, faults, world):
+                if _writes_only_what_cannot_fault(stmt, raises):
                     removable.add(stmt)
         if not removable:
             return set()
@@ -737,17 +756,28 @@ class Ps1DeadStoreElimination(Transformer):
         model = cache.model
         world = cache.world_reach
         plans = Ps1RemovalPlans(cache.faults, world, cache.error_state, cache.handlers)
+        from refinery.lib.scripts.ps1.analysis.effects import _reads_in_bodies
+        self._body_names = _reads_in_bodies(node).names
+        self._calls = cache.call_graph
+        self._error_dispatch = cache.faults.dispatch
         for owner in list(node.walk()):
             self._propose_dead_stores(owner, model, world, unseen, plans, cache.handlers)
         if plans.commit():
             self.mark_changed()
+
+    def _runs_a_body(self, stmt: Node) -> bool:
+        calls = self._calls
+        return any(
+            isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember)) and calls.may_run_a_body(node)
+            for node in stmt.walk()
+        )
 
     def _propose_dead_stores(
         self,
         node: Node,
         model: Ps1SemanticModel,
         world: Ps1WorldReach,
-        unseen: Ps1UnseenReads,
+        unseen: Ps1NameSet,
         plans: Ps1RemovalPlans,
         handlers: Ps1HandlerVerdicts,
     ) -> None:
@@ -758,10 +788,16 @@ class Ps1DeadStoreElimination(Transformer):
         pending: dict[str, list[Ps1ExpressionStatement]] = {}
         dead: list[Ps1ExpressionStatement] = []
         has_read: set[str] = set()
+        leaving_ends_the_run = isinstance(node, Ps1Script)
         for stmt in body:
-            if pending and handlers.raises_past(stmt):
+            if pending and (
+                handlers.raises_past(stmt)
+                or not leaving_ends_the_run and self._error_dispatch.may_jump_out_of(stmt)
+            ):
                 pending.clear()
             reads, kills, writes = self._classify_statement(stmt, scope, model)
+            if pending and self._runs_a_body(stmt):
+                reads = reads | (self._body_names & pending.keys())
             for var, point in kills.items():
                 if var in pending and not handlers.fails_and_carries_on(point):
                     dead.extend(pending.pop(var))

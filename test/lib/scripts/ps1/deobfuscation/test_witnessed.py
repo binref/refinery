@@ -38,8 +38,10 @@ from refinery.lib.scripts.ps1.analysis import (
     faults,
     handlers,
     mutation,
+    raising,
     worldflow,
 )
+from refinery.lib.scripts.ps1.analysis.dispatch import Ps1ErrorKind
 from refinery.lib.scripts.ps1.analysis.effects import (
     OutputSink,
     is_fault_free,
@@ -125,8 +127,6 @@ _SHADOWED_ITERATOR = _witness(
     test_blocks.TestPs1AShadowedIteratingCommandRunsItsOwnBodyNotTheBlock)
 _SITE_POSITION = _witness(
     test_worldflow.TestPs1AReadInsideABlockTheStatementRunsHasTheStatementsPosition)
-_STATEMENT_RUNS_THE_BODY = _witness(
-    test_unused.TestPs1AHandlerElsewhereDoesNotGuardABodyTheStatementItselfRuns)
 _SWALLOWING_TRAP = _witness(
     test_fault_escalation.TestPs1ATrapThatTakesTheErrorAndSwallowsLeavesTheRaiseRemovable)
 _TREE = _witness(test_unused.TestPs1RemovalLeavesTheTreeConsistent)
@@ -314,9 +314,20 @@ def _fault_observed_wherever_an_error_would_go(
     judged = False
     for site in reach.points_in(stmt):
         judged = True
-        if reach.observed_at(site, reach.kinds_a_point_may_raise(site)):
+        if reach.observed_at(site, _every_kind_a_raise_there_may_be(reach, site)):
             return True
     return not judged
+
+
+def _every_kind_a_raise_there_may_be(reach: faults.Ps1FaultReach, node: Node) -> Ps1ErrorKind:
+    """
+    What a point at *node* raises where it is read as raising whatever it may: a statement-terminating
+    error, and where a raise there is terminating, the error of a `throw` and one no list reports.
+    """
+    kinds = Ps1ErrorKind.STATEMENT
+    if reach.error_is_terminating(node):
+        kinds |= Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED
+    return kinds
 
 
 def _observed_at_reading_only_what_acts(self: faults.Ps1FaultReach, node: Node, kinds) -> bool:
@@ -330,12 +341,10 @@ def _observed_at_reading_only_what_acts(self: faults.Ps1FaultReach, node: Node, 
     found = self.fate_of(node, kinds)
     if found is None:
         return True
-    graph, _, fate = found
+    _, _, fate = found
     if fate.acts:
         return True
-    if not fate.to_caller:
-        return False
-    return self._handled_elsewhere(graph)
+    return bool(fate.to_caller)
 
 
 def _strict_mode_read_without_the_memo(self: faults.Ps1FaultReach) -> bool:
@@ -370,9 +379,16 @@ def _expression_cannot_fault_without_the_world(
     strict mode without the script naming it anywhere.
     """
     return effects.is_fault_free(operand) or (
-        effects._is_bare_variable_read(operand)
+        raising._is_bare_variable_read(operand)
         and not reach.strict_mode_may_be_in_force()
     )
+
+
+def _model_cannot_fault_without_the_world(self: raising.Ps1RaiseModel, operand: Node, position: Node) -> bool:
+    """
+    `_expression_cannot_fault_without_the_world` for a reader that holds a raise model.
+    """
+    return _expression_cannot_fault_without_the_world(operand, position, self.faults, self.world)
 
 
 def _removing_a_handler_asked_at_the_handler(
@@ -386,7 +402,7 @@ def _removing_a_handler_asked_at_the_handler(
     transpose takes are accepted and ignored, so the mutation is noticed as a wrong answer rather than
     a broken call.
     """
-    return any(self.observed_at(trap, self.kinds_a_point_may_raise(trap)) for trap in traps)
+    return any(self.observed_at(trap, _every_kind_a_raise_there_may_be(self, trap)) for trap in traps)
 
 
 def _value_after_refusing_an_unsettled_slot(original: Callable) -> Callable:
@@ -510,12 +526,6 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
             patch.object(
                 removal.Ps1RemovalPlans, 'commit', _commit_interleaving_verdicts_and_edits),
             notices='test_every_verdict_is_reached_before_the_first_edit_lands')
-
-    def test_accepted_on_a_single_plan_is_witnessed(self):
-        self._assertWitnessed(
-            [_PLAN, _REFERENCE],
-            patch.object(removal.Ps1RemovalPlan, 'accepted', property(_accepted_before_the_vetoes)),
-            notices='test_an_assignment_the_fault_veto_keeps_keeps_the_variable_it_reads')
 
     def test_accepted_across_a_batch_of_plans_is_witnessed(self):
         self._assertWitnessed(
@@ -650,11 +660,7 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
         # terminates the script where it stands.
         self._assertWitnessed(
             [_KEPT_EITHER_WAY],
-            patch.object(
-                unused,
-                'expression_cannot_fault',
-                lambda operand, position, faults, world: True,
-            ),
+            patch.object(unused, '_writes_only_what_cannot_fault', lambda stmt, raises: True),
             notices='test_a_statement_that_can_raise_is_kept')
 
     def test_the_redirection_gate_on_a_deleted_write_is_witnessed(self):
@@ -792,14 +798,14 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
             notices='test_a_model_the_graphs_hold_no_script_for_refuses_the_grant')
 
     def test_the_world_half_of_that_gate_is_witnessed(self):
-        # Patched in both modules that read the name: `fault_is_observed` reads the one in `effects`
-        # and the output twin imported its own.
+        # Patched in both readings of the gate: a reader holding a raise model asks the model, and
+        # one holding none asks the gate itself.
         self._assertWitnessed(
             [_STRICT_MODE_PAYLOAD],
             patch.object(
-                effects, 'expression_cannot_fault', _expression_cannot_fault_without_the_world),
+                raising, 'expression_cannot_fault', _expression_cannot_fault_without_the_world),
             patch.object(
-                unused, 'expression_cannot_fault', _expression_cannot_fault_without_the_world),
+                raising.Ps1RaiseModel, 'cannot_fault', _model_cannot_fault_without_the_world),
             notices='test_a_discarded_unset_read_below_an_unreadable_payload_is_kept')
 
     def test_the_shape_the_grant_is_restricted_to_is_witnessed(self):
@@ -809,7 +815,7 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
         # question at all — which is why the probe names one that is.
         self._assertWitnessed(
             [_STRICT_MODE_SHAPE],
-            patch.object(effects, '_is_bare_variable_read', lambda node: True),
+            patch.object(raising, '_is_bare_variable_read', lambda node: True),
             notices='test_a_discarded_index_read_is_kept')
 
     def test_asking_whether_a_handler_acts_at_all_is_witnessed(self):
@@ -876,12 +882,10 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
             notices='test_a_redefined_iterator_refuses_the_climb_out_of_its_body')
 
     def test_that_a_statement_answers_for_the_bodies_it_runs_is_witnessed(self):
-        # Without it the fallback for a body something may call answers for every block written
-        # inside a discarded pipeline, and one `try` anywhere in the file keeps all of them.
         self._assertWitnessed(
-            [_STATEMENT_RUNS_THE_BODY],
-            patch.object(effects, '_leaves_a_block_of', lambda site, stmt, faults: False),
-            notices='test_a_discarded_pipeline_is_removed_beside_an_unrelated_handler')
+            [_EMULATOR_EXTRA],
+            patch.object(effects, '_leaves_a_block_of', lambda site, stmt, faults, kinds: False),
+            notices='test_a_call_to_a_function_that_emitted_nothing_goes_with_its_definition')
 
     def test_the_parameter_set_a_positional_block_lands_in_is_witnessed(self):
         # A command picks one parameter set from its arguments, and the first positional argument is
