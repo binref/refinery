@@ -3,7 +3,7 @@ Which scope holds a name, for the three shapes `refinery.lib.scripts.js.analysis
 wrongly: the parameter list of a function that carries an expression, the block a function is
 declared in, and the top level of a classic script, whose `this` is the global object.
 
-The defects themselves are entries of `test.lib.scripts.js.test_release_blockers`. What is here is
+The defects themselves were entries of `test.lib.scripts.js.test_unfixed_defects`. What is here is
 the other half of each of them, which a fix is answerable for just as much: the programs the model
 already answers correctly and must go on answering, and the reductions a correct answer costs. A
 scope that is split apart, a value that stops being folded, and a declaration that stops being
@@ -403,7 +403,7 @@ A_PARAMETER_DEFAULT_READING_PAST_THE_BODY = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAParameterDefaultReadsPastTheBody(TestBase):
     """
-    Retired from `test.lib.scripts.js.test_release_blockers` and kept as the regression it retired.
+    Retired from the JavaScript defect ledger and kept as the regression it retired.
 
     A function whose parameters carry an expression evaluates them in a parameter scope of its own
     whose parent is the scope enclosing the function, so a default never reads what the body
@@ -589,7 +589,7 @@ A_TOP_LEVEL_THIS_REACHING_THE_GLOBAL_OBJECT = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestATopLevelThisNamesTheGlobalObject(TestBase):
     """
-    Retired from `test.lib.scripts.js.test_release_blockers` and kept as the regression it retired.
+    Retired from the JavaScript defect ledger and kept as the regression it retired.
 
     At the top level of a classic script `this` is the global object, and a top-level `var` or
     function declaration is a property of that object, so `this.q` is a read of `q` and nothing
@@ -768,7 +768,7 @@ A_FUNCTION_DECLARED_INSIDE_A_BLOCK = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAFunctionDeclaredInsideABlockIsDeclaredInsideIt(TestBase):
     """
-    Retired from `test.lib.scripts.js.test_release_blockers` and kept as the regression it retired.
+    Retired from the JavaScript defect ledger and kept as the regression it retired.
 
     A function declared inside a plain block is a lexical binding of that block, and what reaches
     the enclosing variable scope is decided by the mode. Strict code puts nothing there: a call
@@ -820,7 +820,7 @@ A_DECLARATION_A_DEAD_BLOCK_HOLDS = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestADeclarationADeadBlockHoldsIsStillDeclared(TestBase):
     """
-    Retired from `test.lib.scripts.js.test_release_blockers` and kept as the regression it retired.
+    Retired from the JavaScript defect ledger and kept as the regression it retired.
 
     Removing a branch no condition takes removes the statements it ran, and a declaration is not
     only a statement: a `var` and the `var` half of a sloppy function declaration name something

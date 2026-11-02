@@ -3,7 +3,7 @@ Converting a function to a string answers the source it was written with. The pa
 span of every function it reads, and the value domain hands that text back for `String(fn)`, for a
 concatenation, and for the join an array performs on its elements; the length of one is the length
 of that text. A function a transform built instead carries no span and is written back the way the
-synthesizer would write it. Retired from `test.lib.scripts.js.test_release_blockers`.
+synthesizer would write it. Retired from the JavaScript defect ledger.
 """
 from __future__ import annotations
 

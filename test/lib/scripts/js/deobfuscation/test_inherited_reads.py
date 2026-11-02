@@ -15,7 +15,7 @@ and such a position is not one the receiver answers for: `1 in [1, , 3]` is `fal
 That is the one thing a program can say to tell a hole from an element, so a representation holding
 the two alike answers every one of those questions for the wrong array.
 
-These were pinned as release blockers and are kept as the regression they retired into. Answering
+These were pinned in the defect ledger and are kept as the regression they retired into. Answering
 such a read from the chain rather than from the receiver has a price, since a program the tool
 cannot read to the end is a program that may have written the chain, and the last class here pins
 what that costs.
@@ -584,8 +584,7 @@ class TestAKeyTheProgramDeletedIsInNothing(TestBase):
     a write to a prototype only ever adds a name, so a name the language already put there is there
     afterwards too — which is true of a write and false of a `delete`.
 
-    Retired from `test.lib.scripts.js.test_release_blockers` and kept as the regression it retired
-    into.
+    Retired from the JavaScript defect ledger and kept as the regression it retired into.
     """
 
     def test_a_key_the_program_deleted_is_in_nothing(self):
@@ -639,8 +638,7 @@ class TestANamespaceKeyTheChainAnswersIsNotAVariable(TestBase):
     `test_a_key_the_namespace_holds_is_flattened` is the other side of it: where the literal owns
     the key, the chain never answers and the flattening is right.
 
-    Retired from `test.lib.scripts.js.test_release_blockers` and kept as the regression it retired
-    into.
+    Retired from the JavaScript defect ledger and kept as the regression it retired into.
     """
 
     def test_a_key_the_chain_answers_is_not_flattened(self):
@@ -718,8 +716,7 @@ class TestATopLevelKeyTheProgramDeletedIsInNothing(TestBase):
     that a name the tables list is there whatever the file wrote. A `delete` is what that reasoning
     did not cover, and both answers now ask.
 
-    Retired from `test.lib.scripts.js.test_release_blockers` and kept as the regression it retired
-    into.
+    Retired from the JavaScript defect ledger and kept as the regression it retired into.
     """
 
     def test_a_key_the_program_deleted_is_in_nothing(self):
@@ -810,8 +807,7 @@ class TestAForInWalkReachesTheNamesTheChainWasGiven(TestBase):
     file did, which the effect model is what knows. The walk is refused where a chain root was
     written.
 
-    Retired from `test.lib.scripts.js.test_release_blockers` and kept as the regression it retired
-    into.
+    Retired from the JavaScript defect ledger and kept as the regression it retired into.
     """
 
     def test_a_name_written_onto_the_chain_is_walked(self):
@@ -886,8 +882,7 @@ class TestAPrototypeWrittenWithoutNamingItsOwnerIsStillWritten(TestBase):
     `refinery.lib.scripts.js.deobfuscation.protospelling` writes each spelling out as the name it
     reaches, which is what puts the write in front of every check that was already looking for one.
 
-    Retired from `test.lib.scripts.js.test_release_blockers` and kept as the regression it retired
-    into.
+    Retired from the JavaScript defect ledger and kept as the regression it retired into.
     """
 
     def test_a_prototype_written_through_a_literal_answers_the_read(self):

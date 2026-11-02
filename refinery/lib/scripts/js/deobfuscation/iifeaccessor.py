@@ -21,10 +21,14 @@ This is a common obfuscator pattern where a string-decoding accessor is built on
 variable through the result of an IIFE that closes over a constant lookup table and a few scalar
 parameters. `refinery.lib.scripts.js.deobfuscation.evaluator.JsFunctionEvaluator` only registers
 `refinery.lib.scripts.js.model.JsFunctionDeclaration` nodes in its scope tree, so call sites like
-`X(0x3a2)` are otherwise never folded. The rewrite is only applied when the captured closure
-variables are read-only inside the returned function; under that condition the hoisting is
-semantically equivalent because the closure values are re-initialised to identical literals on every
-call. After the rewrite, the function evaluator folds each call site to its computed string literal.
+`X(0x3a2)` are otherwise never folded. The rewrite is only applied when the returned function
+assigns no captured variable and only reads through a captured list or object
+(`_closed_over_containers_stay_unchanged`); under that condition building the captured values
+afresh at every call computes what the one build the IIFE ran did. A list or object held by a
+captured one and handed out by a read is not covered: the code receiving it may change it or compare
+it, and the promotion makes it a fresh one at every call
+(`test_unfixed_defects.TestAnAccessorBuiltOverValuesItClosesOverIsPromotedOnlyWhereThatHolds`).
+After the rewrite, the function evaluator folds each call site to its computed string literal.
 
 The declaration has to stand at the top level of a function, a module or a script, exported or
 not, where a function declaration names the scope the declarator named. In a block it would name
@@ -40,6 +44,7 @@ from refinery.lib.scripts import (
     _clone_node,
     _replace_in_parent,
 )
+from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES, hoists_its_functions
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
@@ -213,6 +218,43 @@ def _is_safe_to_promote(
     return True
 
 
+def _holds_only_primitives(literal: JsArrayExpression | JsObjectExpression) -> bool:
+    if isinstance(literal, JsArrayExpression):
+        values = literal.elements
+    else:
+        values = [prop.value for prop in literal.properties if isinstance(prop, JsProperty)]
+    return not any(isinstance(value, (JsArrayExpression, JsObjectExpression)) for value in values)
+
+
+def _closed_over_containers_stay_unchanged(
+    cache: ModelCache,
+    closure_decls: list[JsVariableDeclaration],
+) -> bool:
+    """
+    Whether every list or object the closure builds is only read through: never written into,
+    given to a method that may change it, or handed out
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`). The
+    IIFE builds such a value once, so what one call writes into it, and its identity, reach the next
+    call, which the promoted declaration starts from a fresh value instead. A call on a value the
+    container holds is vouched for where every such value is a primitive, which no call can change.
+    """
+    for statement in closure_decls:
+        for declarator in statement.declarations:
+            if not isinstance(declarator, JsVariableDeclarator):
+                return False
+            literal = declarator.init
+            if not isinstance(literal, (JsArrayExpression, JsObjectExpression)):
+                continue
+            if not isinstance(name := declarator.id, JsIdentifier):
+                return False
+            if (binding := cache.model.binding_of(name)) is None:
+                return False
+            inert = frozenset() if _holds_only_primitives(literal) else None
+            if not cache.effects.binding_is_immutable_container(binding, inert_methods=inert):
+                return False
+    return True
+
+
 class JsIIFEAccessorPromoter(ScriptLevelTransformer):
     """
     Detect accessor variables built from an IIFE that closes over literal lookup tables, and
@@ -221,6 +263,12 @@ class JsIIFEAccessorPromoter(ScriptLevelTransformer):
     """
 
     def _process_script(self, node: JsScript) -> None:
+        """
+        Every accessor is decided against the tree the pass entered on and promoted afterwards, so
+        no decision reads models of a tree an earlier promotion already changed.
+        """
+        cache = model_cache(self, node)
+        promotions: list[_Pattern] = []
         for declarator in list(node.walk()):
             if not isinstance(declarator, JsVariableDeclarator):
                 continue
@@ -230,6 +278,10 @@ class JsIIFEAccessorPromoter(ScriptLevelTransformer):
             closure_names = _closure_names(pattern.closure_decls)
             if not _is_safe_to_promote(pattern.inner_func, closure_names):
                 continue
+            if not _closed_over_containers_stay_unchanged(cache, pattern.closure_decls):
+                continue
+            promotions.append(pattern)
+        for pattern in promotions:
             self._promote(pattern)
 
     def _promote(self, pattern: _Pattern) -> None:

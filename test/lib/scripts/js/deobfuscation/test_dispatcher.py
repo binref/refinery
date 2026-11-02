@@ -765,8 +765,7 @@ class TestADispatcherPayloadHoleIsTheChainsToAnswer(TestBase):
     prototype left alone is `test_dispatcher_sparse_payload_preserves_arity` and prints
     `firstundefinedthird`, which is what the refusal here must not cost.
 
-    Retired from `test.lib.scripts.js.test_release_blockers` and kept as the regression it retired
-    into.
+    Retired from the JavaScript defect ledger and kept as the regression it retired into.
     """
 
     def test_a_payload_position_no_element_was_written_in_finds_what_the_chain_holds(self):

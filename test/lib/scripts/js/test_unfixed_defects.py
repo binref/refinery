@@ -1,16 +1,6 @@
 """
 A ledger of JavaScript defects that are known, understood, and not yet fixed.
 
-The ones a release is held for are not here: `test.lib.scripts.js.test_release_blockers` holds
-those, under the same rules, so that the question of whether the tool is fit to ship has one file
-for an answer. An entry belongs there rather than here when a program an engine runs comes back
-behaving differently over a shape real input plausibly holds. A behavior change only a shape
-constructed for the defect reaches stays here whatever it costs, with the judgment of its
-unlikelihood written on the entry that carries it; so does one that refuses to reduce
-something, reduces it to something uglier, or mishandles a file no engine runs. Which
-file an entry sits in says what it costs and never how well it is understood, so an entry moves
-across when that is reassessed.
-
 Every ledger entry states what a correct implementation would do, never what the code does today,
 and is marked `unittest.expectedFailure`. An entry that starts passing is therefore reported as an
 unexpected success, which fails the suite: an entry leaves this file when its defect is fixed and
@@ -31,6 +21,12 @@ An entry is quantified over the rows its defect is about, and where those rows b
 some law elsewhere is stated over, they stay in that corpus and are imported here. The module
 holding them is named in the docstring of the entry that pins them, and a row rejoins the law the
 day the marker comes off.
+
+An entry whose programs are spellings of one root is pinned by one test over all of them. An entry
+whose programs have roots a fix may reach separately is pinned by one test per program instead,
+installed by `test.lib.scripts.js.ledger.one_expected_failure_per_program` and named for the shape
+that program holds: a fix that reaches some of the shapes and not the others is then reported as a
+fix rather than as nothing at all, which one test over the whole family cannot do.
 """
 from __future__ import annotations
 
@@ -1160,9 +1156,8 @@ class TestAWalkAWrittenChainStillDecidesIsStillWalked(TestBase):
     programs here write one and the walk is still the language's to decide, so each comes back with
     the loop standing where the names could have been folded in its place.
 
-    The refusal is correct and the cost is recall, which is why this is a ledger entry rather than a
-    release blocker. Closing it needs the per-name question: whether *this* key is enumerable on the
-    chain, and whether the receiver's own slot shadows it. `EffectModel.chain_roots_unwritten` is
+    The refusal is correct and the cost is recall. Closing it needs the per-name question: whether
+    *this* key is enumerable on the chain, and whether the receiver's own slot shadows it. `EffectModel.chain_roots_unwritten` is
     the whole-chain question the walk asks today, and
     `refinery.lib.scripts.js.deobfuscation.interpreter.JsInterpreter._exec_for_in` says as much.
     """
@@ -1245,10 +1240,6 @@ class TestTheStaticStringReadsEveryConcatenationTheFoldCollapses(TestBase):
     The two readers sit in two layers, and the syntax model cannot evaluate a unary operator
     without the value domain, which imports it. The fix is one reading of the primitive an
     expression spells without a name, at the language level, that both build on.
-
-    Off the release gate: it needs a key an analysis asks about, such as `constructor` or
-    `defineProperty`, spelled as a concatenation with a unary operator, which a program has to be
-    written for.
     """
 
     def test_the_fold_collapses_each_concatenation_to_its_string(self):
@@ -1294,10 +1285,6 @@ class TestABuiltinThatConvertsNoArgumentFoldsOverAnyObject(TestBase):
     `indexOf` compares it by identity, so none of them converts it, and refusing them costs the fold
     and nothing else. The fix asks where a value is converted rather than where it is handed over,
     which also closes `TestAnArrayMethodConvertingAnElementConsultsTheChainThatConvertsIt`.
-
-    Off the release gate: the object has to own a key named like a conversion method, or be handed
-    over after the program replaced a conversion on its prototype chain, which a program has to be
-    written for.
     """
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -1341,10 +1328,6 @@ class TestAnArrayMethodConvertingAnElementConsultsTheChainThatConvertsIt(TestBas
     call costs a scan of the array per call, which a rotation loop pays once per element; the fix
     asks where an element is converted. `TestABuiltinConvertingAFunctionRunsItsOwnToString` is the
     same defect for a function element.
-
-    Off the release gate: the shape needs an object inside an array an array method converts,
-    together with a replaced `Object.prototype` conversion method, which a program has to be written
-    for.
     """
 
 
@@ -1908,10 +1891,6 @@ class TestAPrototypeReachedThroughABindingIsStillWritten(TestBase):
     The same is true of the callee: `g` is `Object.getPrototypeOf` and the file said so. A
     parameter holds what the calls of its function hand it, which the model answers where it sees
     every call.
-
-    Off the release gate deliberately: the one prototype write real obfuscation spells is the
-    literal `X.prototype.m = f`, which is read; a write that reaches the prototype through
-    a binding has so far had to be constructed to be seen.
     """
 
     @unittest.expectedFailure
@@ -1972,10 +1951,6 @@ class TestAPrototypeHandedToAWriterIsStillWritten(TestBase):
     the real samples do: `test.units.scripting.test_djs` measures two of them coming back unreduced.
     So the escape has to be *followed* rather than assumed, which is the interprocedural precision
     this is deferred to — a callee whose writes are enumerable is a callee whose escape is not one.
-
-    Off the release gate deliberately, with the entry above: prototype pollution through a
-    writer is exploit vocabulary rather than dropper vocabulary, and no sample family
-    observed so far hands its prototype to a call and reads the pollution back.
     """
 
     @unittest.expectedFailure
@@ -3020,54 +2995,6 @@ class TestAnUnreadableKeyMayRebindAWrapperThroughTheGlobalObject(TestBase):
         self.assertEqual(folded(source), '1;')
 
 
-#: An accessor an IIFE answers, over a closure the answered function writes through a member of or
-#: reads the identity of, mapped to what Node prints for it. Measured against
-#: `refinery.lib.scripts.js.deobfuscation.iifeaccessor._is_safe_to_promote` answering False, which
-#: leaves both programs standing whole.
-A_CLOSURE_THE_PROMOTED_ACCESSOR_STOPS_SHARING = {
-    'var acc = (function () {\n'
-    '  var t = [0];\n'
-    '  return function (i) { t[0] = t[0] + i; return t[0]; };\n'
-    '})();\n'
-    'console.log(acc(1), acc(1));\n': '1 2\n',
-    'var acc = (function () {\n'
-    "  var t = ['a'];\n"
-    '  return function () { return t; };\n'
-    '})();\n'
-    'console.log(acc() === acc());\n': 'true\n',
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAPromotedClosureIsStillOneObjectAcrossCalls(TestBase):
-    """
-    An IIFE answering a function is inlined by moving what the IIFE declared into the answered
-    function's body, which builds those declarations afresh on every call. That is equivalent only
-    where nothing carries a value or an identity from one call to the next, and `_is_safe_to_promote`
-    asks it of a closure name written through a bare identifier and of nothing else: a closure
-    written through a member keeps no count, and one whose identity is compared is a different object
-    each time it is answered.
-
-    Off the release gate deliberately: the accessor closures real obfuscators emit are
-    memo-caches, whose rebuilt state recomputes the same values, so a promotion changes
-    their speed and nothing an engine reports; state a program can watch accumulating
-    across calls has had to be constructed.
-    """
-
-    @unittest.expectedFailure
-    def test_a_closure_the_accessor_keeps_writing_or_comparing_is_not_promoted(self):
-        """
-        Node prints `1 2` for the first program of `A_CLOSURE_THE_PROMOTED_ACCESSOR_STOPS_SHARING`
-        and `true` for the second. The deobfuscation folds them to `console.log(1, 1);` and
-        `console.log(['a'] === ['a']);`, which print `1 1` and `false`.
-        """
-        rows = A_CLOSURE_THE_PROMOTED_ACCESSOR_STOPS_SHARING
-        self.assertEqual(
-            {source: before_and_after(source) for source in rows},
-            each_program_still_prints(rows),
-        )
-
-
 #: The programs of the same name in the file-kind tests, read as classic scripts.
 A_DIRECT_EVAL_IN_A_DEFAULT_DECLARING_A_NAME = as_classic_scripts(
     the_file_kind.A_DIRECT_EVAL_IN_A_DEFAULT_DECLARING_A_NAME
@@ -3089,9 +3016,6 @@ class TestADirectEvalInADefaultDeclaresWhereItRuns(TestBase):
     not the parameter scope but the reach of a direct `eval`:
     `TestAParameterDefaultReadsPastTheBody` is about which scope a default reads from, and this one
     is about a scope whose contents no reading of the text gives.
-
-    Off the release gate deliberately: no real file runs an `eval` in a parameter default to
-    mint a binding, so the shape is this entry's own.
     """
 
 
@@ -3214,10 +3138,6 @@ class TestANameTheFileInstallsOnTheGlobalObjectHoldsIt(TestBase):
     The second row is the shape that made this worth having: `var w = window || {}` is how a file
     meant for a browser and for something else names the object once. It is read correctly wherever
     `window` is the host's own name, and wrongly only where the file installs that name itself.
-
-    Off the release gate deliberately: a browser file relies on the host's own `window`,
-    which is read correctly, and installing the alias oneself is a shape only cross-host
-    shims come near.
     """
 
 
@@ -3498,11 +3418,6 @@ class TestAReceiverACallSuppliesMayBeHandedOn(TestBase):
     self-defending wrapper passes its own `this` to a call, and a run that took that for the global
     object leaves `test_obfuscated_fizzbuzz_01` at twenty times its deobfuscated size. Closing this
     needs the receiver a call supplies, which nothing answers today.
-
-    Off the release gate deliberately: the spellings real files hand the object on with — a
-    UMD factory's top-level `this`, `(function (g) {...})(this)`, a `.call(this)`
-    wrapper — are all top-level and admitted already, and a bare-called function
-    forwarding its own `this` has so far had to be constructed.
     """
 
 
@@ -3908,12 +3823,93 @@ class TestAPackedAccessAWithObjectSuppliesStillGoesThroughTheProxy(TestBase):
     spelled a global the site resolves. A correct implementation declines the substitution for an
     access inside a dynamically-scoped region, or asks which properties the `with` object can
     carry.
+    """
 
-    Off the release gate deliberately: the packed code this pipeline reads carries its `with`
-    objects for the scope confusion they buy, and they rebind the machinery names the packed code
-    itself spells, never the accessor targets the substitution splices. Holding the landing to the
-    question above declines the flagship pack rather than a diverging one, and the `with` object
-    that supplies an accessor target's name has so far had to be constructed to reach.
+
+#: Classic scripts storing into a name a browser window defines as an attribute of the global
+#: object, mapped to the behavior a window gives them: a load handler the window calls once the
+#: script has run, and a `DOMString` attribute, which keeps what is stored into it as a string.
+A_STORE_TO_A_NAME_A_WINDOW_INTERCEPTS = {
+    'a load handler stored at the top': Program(
+        a_program("""
+            onload = function () { console.log('loaded'); };
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a load handler stored at the top, read for a browser': Program(
+        a_program("""
+            onload = function () { console.log('loaded'); };
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+        HostEnvironment.browser,
+    ),
+    'a load handler stored on the window, read for a browser': Program(
+        a_program("""
+            window.onload = function () { console.log('loaded'); };
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+        HostEnvironment.browser,
+    ),
+    'a load handler stored by a function the script calls': Program(
+        a_program("""
+            function install() { onload = function () { console.log('loaded'); }; }
+            install();
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a load handler stored into a var by a function the script calls': Program(
+        a_program("""
+            var onload;
+            function install() { onload = function () { console.log('loaded'); }; }
+            install();
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a number stored into the var name and read back': Program(
+        a_program("""
+            var name;
+            function f(n) {
+              name = n;
+              return name + 1;
+            }
+            console.log(f(5));
+            """),
+        prints('51', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a number stored into the var status and compared': Program(
+        a_program("""
+            var status;
+            function f(n) {
+              status = n;
+              return status === n;
+            }
+            console.log(f(404));
+            """),
+        prints('false', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_STORE_TO_A_NAME_A_WINDOW_INTERCEPTS)
+class TestAStoreToANameAWindowInterceptsIsKept(TestBase):
+    """
+    A browser window defines some names on the global object before a script runs: `onload` holds
+    the handler the window calls once the script has run, and `name` and `status` keep what is
+    stored into them as a string. A store into such a name, into the same name as a member of
+    `window`, or into a file-level `var` of it, which is that same property, is read by the window
+    or converted on the way in. The deobfuscation reads it as a store into a variable of the script:
+    a handler nothing in the script calls is deleted, also where the host is a browser, which reads
+    a store through `window` as one into the name, and a `var` of such a name is moved into the
+    function using it, where it is a plain local that keeps a number. Scripts installing a load
+    handler are common among the ones run in a browser.
     """
 
 
@@ -5368,6 +5364,71 @@ class TestAScriptKeptForItsValueEndsOnTheValueOfItsLastStore(TestBase):
                 )
 
 
+#: Programs reading or writing a variable in the initializer of an instance field, and changing or
+#: reading the variable between the class statement and the construction, mapped to the behavior an
+#: engine gives them.
+A_VARIABLE_READ_BY_A_FIELD_WHEN_AN_INSTANCE_IS_CONSTRUCTED = {
+    'a var reassigned after the class': Program(
+        a_program("""
+            function f() { var x = 1; class A { v = x; } x = 2; return new A().v; }
+            console.log(f());
+            """),
+        prints('2'),
+    ),
+    'a let assigned after the class': Program(
+        a_program("""
+            function f() { let x; class A { v = x; } x = 2; return new A().v; }
+            console.log(f());
+            """),
+        prints('2'),
+    ),
+    'a file-level var a field of a class its function returns reads': Program(
+        a_program("""
+            var x;
+            function f(n) {
+              x = n;
+              console.log(x);
+              return class { y = x; };
+            }
+            var C = f(1);
+            f(2);
+            console.log(new C().y);
+            """),
+        prints('1', '2', '2'),
+        Reading.COMMONJS,
+    ),
+    'a var a field writes and a function reads across a construction': Program(
+        a_program("""
+            var x = 1;
+            class C { y = (x = 2); }
+            function h() { var t = x; new C(); return t; }
+            console.log(h());
+            """),
+        prints('1'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_VARIABLE_READ_BY_A_FIELD_WHEN_AN_INSTANCE_IS_CONSTRUCTED)
+class TestAFieldReadsAVariableWhenAnInstanceIsConstructed(TestBase):
+    """
+    The initializer of an instance field runs each time an instance is constructed, as the body of a
+    function the class calls then would. The control-flow graph of the function holding the class
+    places it at the class statement instead, so the read in the field is taken to happen before
+    `x = 2`: the dead-store removal drops that store as one nothing reads, and constant inlining
+    writes the earlier value into the field. A class whose fields read state the program sets after
+    declaring the class is a shape real input plausibly holds.
+
+    The same placement hides the field from the questions asked about the function around it. A
+    file-level `var` the function writes and a field reads is moved into the function, so each
+    class it returns keeps the value of the run that made it rather than the last one stored. And a
+    write in a field is not seen at `new C()`, so a value read before the construction is taken to
+    hold after it.
+    """
+
+
 #: Programs reading an alias of a built-in in the initializer of an instance field and replacing
 #: the alias between the class statement and the construction, mapped to what Node prints.
 AN_ALIAS_A_FIELD_READS_REPLACED_BEFORE_CONSTRUCTION = {
@@ -5388,11 +5449,10 @@ AN_ALIAS_A_FIELD_READS_REPLACED_BEFORE_CONSTRUCTION = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAnAliasAFieldReadsIsTheOneInPlaceWhenAnInstanceIsConstructed(TestBase):
     """
-    The root of
-    `test.lib.scripts.js.test_release_blockers.TestAFieldReadsAVariableWhenAnInstanceIsConstructed`
-    with an alias of `Function` for the variable: constant inlining takes the read in the field to
-    happen at the class statement and writes `Function` into it, though an `eval` replaces the
-    alias before the construction.
+    The root of `TestAFieldReadsAVariableWhenAnInstanceIsConstructed` with an alias of `Function`
+    for the variable: constant inlining takes the read in the field to happen at the class
+    statement and writes `Function` into it, though an `eval` replaces the alias before the
+    construction.
     """
 
     @wontfix(
@@ -5871,14 +5931,6 @@ class TestAFileRequiredThroughAnotherNameIsALoad(TestBase):
 #: Programs whose accessor a function called where it is written builds over values it closes over,
 #: mapped to the behavior Node gives each as a CommonJS file.
 AN_ACCESSOR_BUILT_OVER_VALUES_IT_CLOSES_OVER = {
-    'the accessor writes into the array it closes over': Program(
-        a_program("""
-            var X = function () { var a = [0]; return function () { a[0]++; return a[0]; }; }();
-            console.log(X(), X(), X());
-            """),
-        prints('1 2 3'),
-        Reading.COMMONJS,
-    ),
     'the name is read before the accessor is built': Program(
         a_program("""
             console.log(typeof X);
@@ -5888,20 +5940,13 @@ AN_ACCESSOR_BUILT_OVER_VALUES_IT_CLOSES_OVER = {
         prints('undefined', '1'),
         Reading.COMMONJS,
     ),
-    'the accessor returns the array it closes over': Program(
+    'the accessor hands out a list the list it closes over holds': Program(
         a_program("""
-            var X = function () { var a = [1, 2]; return function () { return a; }; }();
-            console.log(X() === X());
+            var X = function () { var a = [[1], [2]]; return function (i) { return a[i]; }; }();
+            X(0).push(5);
+            console.log(X(0).length);
             """),
-        prints('true'),
-        Reading.COMMONJS,
-    ),
-    'the accessor stores into an object it closes over': Program(
-        a_program("""
-            var X = function () { var c = {}; return function (k) { c[k] = (c[k] || 0) + 1; return c[k]; }; }();
-            console.log(X("a"), X("a"));
-            """),
-        prints('1 2'),
+        prints('2'),
         Reading.COMMONJS,
     ),
 }
@@ -5913,10 +5958,11 @@ class TestAnAccessorBuiltOverValuesItClosesOverIsPromotedOnlyWhereThatHolds(Test
     """
     `refinery.lib.scripts.js.deobfuscation.iifeaccessor` rewrites `var X = function () { var a =
     [...]; return function (...) {...}; }()` into a function declaration that builds the closed-over
-    values inside itself, without asking the model whether that keeps what the program computes. A
-    write into the closed-over array then runs on a fresh array at every call, a returned array is a
-    new one each call, and the declaration is hoisted above reads that saw `undefined`. The rewrite
-    holds only for values no call writes, hands out, or is read before the build.
+    values inside itself. It declines where a call writes into a closed-over list or object or hands
+    one out, but a list or object such a value holds and a read hands out is a new one at every call
+    all the same, so a change the caller makes to it is gone by the next call. And the declaration
+    is hoisted above reads that saw `undefined`. The rewrite holds only for values no call writes,
+    hands out, or is read before the build.
     """
 
 
@@ -6034,9 +6080,6 @@ class TestAnAnonymousFunctionStoredOnANamespaceKeepsItsEmptyName(TestBase):
     into variables, so a function stored on one is named after its key, and a read of its `name`
     tells the two apart. A correct pass writes the value where no binding names it, as
     `(0, function () {})`, or keeps the namespace where an anonymous definition is stored to it.
-    Off the release gate: the obfuscators store the functions they take apart this way, and their
-    names come back as the program gave them; only a program reading the name of a function it
-    left anonymous sees it.
     """
 
     @unittest.expectedFailure
@@ -6472,15 +6515,15 @@ A_FUNCTION_CALLED_AGAIN_FROM_A_FIELD_OF_A_CLASS_IT_CONSTRUCTS = {
 class TestAFunctionCalledAgainFromAFieldOfAClassItConstructsIsSeenToRunAgain(TestBase):
     """
     The initializer of an instance field runs at each construction, and the models place it at the
-    class statement (the release blocker `TestAFieldReadsAVariableWhenAnInstanceIsConstructed` of
-    `test.lib.scripts.js.test_release_blockers`), so a call in it is not seen where `new` runs it.
+    class statement (`TestAFieldReadsAVariableWhenAnInstanceIsConstructed`), so a call in it is not
+    seen where `new` runs it.
     A function that calls itself again through such a field keeps the file-level `var` it reads
     moved into it.
     """
 
     @wontfix(
         'no program re-enters a function through a field initializer of a class it constructs; '
-        'the release blocker for field initializers covers the placement this rests on'
+        'the entry for field initializers covers the placement this rests on'
     )
     def test_the_deobfuscation_prints_what_the_program_prints(self):
         for label, row in A_FUNCTION_CALLED_AGAIN_FROM_A_FIELD_OF_A_CLASS_IT_CONSTRUCTS.items():

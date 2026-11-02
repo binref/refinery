@@ -563,7 +563,7 @@ class TestAFileThatStopsInsideAConstructIsNotAProgram(TestBase):
     `Unexpected end of input` and accepts `export {};`, `var a; export { a };`, `export function
     f() {}` and `export default function () {}`, so what it refuses is the cut and not the keyword.
 
-    This was an entry of `test.lib.scripts.js.test_release_blockers` until the parser began
+    This was an entry of the JavaScript defect ledger until the parser began
     recording the repair, and it stays as the regression test that entry became.
     """
 

@@ -1,11 +1,8 @@
 """
-The instruments the two JavaScript defect ledgers are written with.
-
-`test.lib.scripts.js.test_release_blockers` holds the defects a release is held for and
-`test.lib.scripts.js.test_unfixed_defects` holds the rest, so an entry moves from one file to the
-other when what it costs is reassessed rather than when it is understood differently. Both are
-written against the same few questions, which live here so that neither file can answer one of them
-its own way and read as disagreeing with the other about a defect they both pin.
+The instruments the JavaScript defect ledger `test.lib.scripts.js.test_unfixed_defects` and the
+entries other modules hold beside it are written with. Every entry is written against the same few
+questions, which live here so that no module can answer one of them its own way and read as
+disagreeing with another about a defect they both pin.
 
 Nothing here executes anything from the sample corpus: `before_and_after` runs Node, and every
 program it is ever given is one an entry wrote out by hand.
@@ -279,10 +276,14 @@ def deobfuscated_host_behavior(
 
 #: The attributes of a browser window the entries observe, installed on the global object before a
 #: script runs as the HTML standard declares them: `name` and `status` are `DOMString` attributes,
-#: whose setter stores the value converted to a string, and `onload` is an event handler attribute,
-#: which holds a function stored into it and `null` in place of anything else.
+#: whose setter stores the value converted to a string, `onload` is an event handler attribute,
+#: which holds a function stored into it and `null` in place of anything else, and `window` is the
+#: global object itself.
 WINDOW_ATTRIBUTES = a_program("""
     (function () {
+      Object.defineProperty(globalThis, 'window', {
+        get: function () { return globalThis; }
+      });
       var name = '';
       var status = '';
       var onload = null;

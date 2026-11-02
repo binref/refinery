@@ -5,6 +5,7 @@ import unittest
 
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import before_and_after
 
 from refinery.lib.scripts.js.deobfuscation.iifeaccessor import JsIIFEAccessorPromoter
 from refinery.lib.scripts.js.parser import JsParser
@@ -517,4 +518,112 @@ class TestAnAccessorAnIIFEBuildsInABlockIsNotPromoted(TestJsDeobfuscator):
                 """
             ),
             self._promote(source),
+        )
+
+
+#: An accessor whose closure builds a list or an object that a call writes into or hands out, mapped
+#: to what Node prints for the program. The IIFE builds the value once, so what one call leaves in
+#: it, and its identity, reach the next call.
+_AN_ACCESSOR_WHOSE_CLOSED_OVER_VALUE_OUTLIVES_A_CALL: dict[str, str] = {
+    'var acc = (function () { var t = [0]; return function (i) { t[0] = t[0] + i; return t[0]; }; })();'
+    ' console.log(acc(1), acc(1));': '1 2\n',
+    "var acc = (function () { var t = ['a']; return function () { return t; }; })();"
+    ' console.log(acc() === acc());': 'true\n',
+    'var X = function () { var a = [0]; return function () { a[0]++; return a[0]; }; }();'
+    ' console.log(X(), X(), X());': '1 2 3\n',
+    'var X = function () { var a = [1, 2]; return function () { return a; }; }();'
+    ' console.log(X() === X());': 'true\n',
+    'var X = function () { var c = {}; return function (k) { c[k] = (c[k] || 0) + 1; return c[k]; }; }();'
+    " console.log(X('a'), X('a'));": '1 2\n',
+    "var log = (function () { var buf = []; return function (m) { buf.push(m); return buf.length; }; })();"
+    " console.log(log('a'), log('b'));": '1 2\n',
+    "var seen = (function () { var cache = {}; return function (k) { if (cache[k]) return 'old';"
+    " cache[k] = 1; return 'new'; }; })(); console.log(seen('x'), seen('x'));": 'new old\n',
+    'var next = (function () { var s = { n: 0 }; return function () { s.n++; return s.n; }; })();'
+    ' console.log(next(), next());': '1 2\n',
+    'var items = (function () { var list = []; return function () { return list; }; })();'
+    ' items().push(1); items().push(2); console.log(items().length);': '2\n',
+}
+
+
+#: An accessor whose closure builds a list or an object it only reads through, mapped to the text
+#: the promotion writes and to what Node prints for the program. A method called on a string the
+#: list holds changes no list, and neither does a method of an array that only reads it.
+_AN_ACCESSOR_THAT_ONLY_READS_WHAT_IT_CLOSES_OVER: dict[str, tuple[str, str]] = {
+    "var X = function () { var t = ['abc', 'de']; return function (i) {"
+    " return t[i].split('').reverse().join(''); }; }(); console.log(X(0));": (
+        inspect.cleandoc(
+            """
+            function X(i) {
+              var t = ['abc', 'de'];
+              return t[i].split('').reverse().join('');
+            }
+            console.log(X(0));
+            """
+        ), 'cba\n'),
+    "var X = function () { var t = ['x', 'y']; return function (c) { return t.indexOf(c); }; }();"
+    " console.log(X('y'));": (
+        inspect.cleandoc(
+            """
+            function X(c) {
+              var t = ['x', 'y'];
+              return t.indexOf(c);
+            }
+            console.log(X('y'));
+            """
+        ), '1\n'),
+    "var X = function () { var o = { a: 'p', b: 'q' }; return function (k) { return o[k]; }; }();"
+    " console.log(X('b'));": (
+        inspect.cleandoc(
+            """
+            function X(k) {
+              var o = { a: 'p', b: 'q' };
+              return o[k];
+            }
+            console.log(X('b'));
+            """
+        ), 'q\n'),
+}
+
+
+class TestAnAccessorWhoseClosedOverValueOutlivesACallIsNotPromoted(TestJsDeobfuscator):
+    """
+    Retired from the JavaScript defect ledger and kept as the regression it retired. The promotion
+    builds the closed-over values inside the declaration it writes, once per call, which computes
+    what the IIFE did only where no call writes into a list or object it closes over or hands one
+    out.
+    """
+
+    def _promote(self, source: str) -> str:
+        return self._run_transformer(source, JsIIFEAccessorPromoter)
+
+    def _canonical(self, source: str) -> str:
+        return JsSynthesizer().convert(JsParser(source).parse())
+
+    def test_the_promotion_leaves_each_of_those_accessors_as_it_found_it(self):
+        rows = _AN_ACCESSOR_WHOSE_CLOSED_OVER_VALUE_OUTLIVES_A_CALL
+        written = {source: self._canonical(source) for source in rows}
+        self.assertEqual({source: self._promote(text) for source, text in written.items()}, written)
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_the_same_before_and_after_the_deobfuscation(self):
+        rows = _AN_ACCESSOR_WHOSE_CLOSED_OVER_VALUE_OUTLIVES_A_CALL
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            {source: ((printed, None), (printed, None)) for source, printed in rows.items()},
+        )
+
+    def test_an_accessor_that_only_reads_what_it_closes_over_is_still_promoted(self):
+        rows = _AN_ACCESSOR_THAT_ONLY_READS_WHAT_IT_CLOSES_OVER
+        self.assertEqual(
+            {source: self._promote(source) for source in rows},
+            {source: promoted for source, (promoted, _) in rows.items()},
+        )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_the_same_before_and_after_a_promotion_it_makes(self):
+        rows = _AN_ACCESSOR_THAT_ONLY_READS_WHAT_IT_CLOSES_OVER
+        self.assertEqual(
+            {source: (behavior(source), behavior(self._promote(source))) for source in rows},
+            {source: ((printed, None), (printed, None)) for source, (_, printed) in rows.items()},
         )
