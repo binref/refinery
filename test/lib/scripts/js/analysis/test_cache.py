@@ -651,6 +651,17 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         self.assertEqual(self._builds(self._constructor_names(10))[:2], self._builds(self._constructor_names(80))[:2])
 
     @a_property_of_the_pin_itself
+    def test_a_number_fold_completing_a_key_read_as_naming_nothing_renews_the_models(self):
+        """
+        The models read the key of a store on the global object they cannot read as naming no
+        global. The fold of `1 + 1` completes the key `a2`, so the models are renewed; a key no
+        fold completes leaves them held.
+        """
+        completed = self._builds("window['a' + (1 + 1)] = 5;")[0]
+        never = self._builds("window['a' + g()] = 5;")[0]
+        self.assertGreater(completed, never)
+
+    @a_property_of_the_pin_itself
     def test_folds_spelling_caller_in_an_array_do_not_multiply_model_builds(self):
         self.assertEqual(self._builds(self._caller_strings(10))[:2], self._builds(self._caller_strings(80))[:2])
 

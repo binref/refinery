@@ -2550,6 +2550,7 @@ def _is_reflective_member(
         return True
     return (
         'constructor' not in trusted
+        and key_may_be(member, _CONSTRUCTOR)
         and _prototype_surface_escapes(member)
         and key_is(member, _CONSTRUCTOR, assumptions)
     )

@@ -282,7 +282,11 @@ def _denotes_function_intrinsic(
         return False
     if isinstance(expr, JsMemberExpression):
         return _denotes_function_constructor(
-            expr, read_effect, resolved_member, builtin_function, assumptions=model.assumed_keys
+            expr,
+            read_effect,
+            resolved_member,
+            builtin_function,
+            assumptions=model.assumed_keys,
         )
     return False
 

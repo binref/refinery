@@ -269,12 +269,13 @@ def concatenation_spells(concatenations: list[JsBinaryExpression], name: str) ->
     return False
 
 
-def spelled_upward(node: Node, text: str) -> Iterator[tuple[Node, str]]:
+def spelled_upward(node: Node, text: str, string: bool) -> Iterator[tuple[Node, str]]:
     """
-    *node*, which reads as the string *text*, with *text*, and then each parenthesis around it and
+    *node*, which reads as the key *text*, with *text*, and then each parenthesis around it and
     each `+` concatenation holding it, with the string that one reads as, climbing while the
-    concatenation reads as a string. Each string is built from the one below it and the other
-    operand, so the climb costs its length.
+    concatenation reads as a string. *string* says whether *node* evaluates to a string; a number,
+    a boolean or `null` only makes a string with an operand that is one. Each string is built from
+    the one below it and the other operand, so the climb costs its length.
     """
     cursor = node
     yield cursor, text
@@ -285,6 +286,9 @@ def spelled_upward(node: Node, text: str) -> Iterator[tuple[Node, str]]:
             yield cursor, text
         if not isinstance(parent, JsBinaryExpression) or parent.operator != '+':
             return
+        if not string and static_string(parent.right if parent.left is cursor else parent.left) is None:
+            return
+        string = True
         if parent.left is cursor:
             spelled = static_concatenation(parent, text, static_string(parent.right))
         else:

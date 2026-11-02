@@ -65,7 +65,7 @@ from refinery.lib.scripts.js.deobfuscation.interpreter import (
     RegisteredBuiltin,
     registered_builtin,
 )
-from refinery.lib.scripts.js.keys import spelled_upward
+from refinery.lib.scripts.js.keys import expression_key, spelled_upward
 from refinery.lib.scripts.js.model import (
     LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrayExpression,
@@ -148,25 +148,24 @@ def _is_the_object_of_an_in(node: Node) -> bool:
     )
 
 
-def _shows_the_models_a_string(held: ModelCache, replaced: Node, replacement: Node, value: str) -> bool:
+def _shows_the_models_a_name(held: ModelCache, replaced: Node, value: str, string: bool) -> bool:
     """
-    Whether *replacement*, written in place of *replaced* and reading as the string *value*, shows
-    the held models a fact they do not record: an answer assumed that *replaced*, or a parenthesis
-    or a concatenation the string completes, is none of the names a reader looked for, and the
-    string written there is one of them
+    Whether a value whose key is *value*, a string where *string* says so and otherwise a number,
+    a boolean or `null`, written in place of *replaced*, shows the held models a fact they do not
+    record: an answer assumed that *replaced*, or a parenthesis or a concatenation the value
+    completes, is none of the names a reader looked for, and the key read there is one of them
     (`refinery.lib.scripts.js.keys.KeyAssumptions.revealed_by`); or a string on that climb spells a
     name whose readers look at every string and still answer no
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.strings_still_unseen`). The climb builds
-    each string from the one below it (`refinery.lib.scripts.js.keys.spelled_upward`).
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.strings_still_unseen`). The climb starts
+    at *replaced*, which still stands in the tree, and builds each string from the one below it
+    (`refinery.lib.scripts.js.keys.spelled_upward`).
     """
     model = held.model
     assumed = model.assumed_keys
     unseen = model.strings_still_unseen()
-    if assumed.revealed_by(replaced, value):
-        return True
     return any(
         text in unseen or assumed.revealed_by(node, text)
-        for node, text in spelled_upward(replacement, value)
+        for node, text in spelled_upward(replaced, value, string)
     )
 
 
@@ -204,18 +203,20 @@ class JsSimplifications(PinnedTransformer):
     def visit(self, node: Node) -> Node | None:
         """
         Visit *node*, and make a renewal due where the replacement a fold returns for it reads as a
-        string *node* did not read as, and that string shows the held models a fact
-        (`_shows_the_models_a_string`). Every fold returns its replacement through here, so a key
+        key *node* did not read as, a string, a number, a boolean or `null`, and that key shows the
+        held models a fact (`_shows_the_models_a_name`). Every fold returns its replacement through here, so a key
         that `String.fromCharCode`, a `join`, a sequence or a conditional collapses to is seen as
         surely as one an operator computes. The dispatch of `refinery.lib.scripts.Visitor.visit` is
         written out rather than called, so that a deep tree costs this pass no more stack than it
         costs any other transform.
 
-        Such a replacement, and any replacement returned while a renewal is due, is written in its
-        place at once: the check climbs from where it stands, and the walk of
+        The check climbs from *node*, which still stands in the tree. A replacement returned while a
+        renewal is due is written in its place at once: the walk of
         `refinery.lib.scripts.Transformer.generic_visit` writes the items of a list only once it has
         visited all of them, so the renewal the next item's decision makes would otherwise build
-        models of the tree the fold has not changed yet, and count itself done.
+        models of the tree the fold has not changed yet, and count itself done. Every other
+        replacement is left to the walk, since writing one in place scans the fields of its parent,
+        and a list of folded items would pay its square.
         """
         kind = type(node)
         handler = self._dispatch.get(kind)
@@ -224,13 +225,13 @@ class JsSimplifications(PinnedTransformer):
         replacement = handler(node)
         if replacement is None:
             return None
+        if not self._renewal_due:
+            value = expression_key(replacement)
+            if value is not None and expression_key(node) != value:
+                string = static_string(replacement) is not None
+                self._renewal_due = _shows_the_models_a_name(self.held_models(), node, value, string)
         if self._renewal_due:
             _replace_in_parent(node, replacement)
-            return replacement
-        value = static_string(replacement)
-        if value is not None and static_string(node) != value:
-            _replace_in_parent(node, replacement)
-            self._renewal_due = _shows_the_models_a_string(self.held_models(), node, replacement, value)
         return replacement
 
     @property

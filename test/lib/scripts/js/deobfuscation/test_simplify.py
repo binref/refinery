@@ -3,7 +3,9 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase
+import refinery.lib.scripts as scripts
+
+from test import TestBase, lines_executed
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import a_program, before_and_after, each_program_still_prints
@@ -2338,3 +2340,19 @@ class TestAFoldWritesNoListLongerThanTheCap(TestJsDeobfuscator):
         for source in self._programs(MAX_RESULT_ARRAY_LEN + 1):
             with self.subTest(source=source[-24:]):
                 self.assertEqual(self._simplify(source), JsSynthesizer().convert(JsParser(source).parse()))
+
+
+class TestFoldingTheItemsOfAListCostsTheirNumber(TestBase):
+    """
+    The work of the pass on a list whose every item folds to a string grows with the number of
+    items: a fold that shows the models nothing leaves writing its replacement to the walk.
+    """
+
+    @staticmethod
+    def _work(count: int) -> int:
+        items = ', '.join('String.fromCharCode(120, 121)' for _ in range(count))
+        script = JsParser(F'f([{items}]);').parse()
+        return lines_executed(lambda: JsSimplifications().visit(script), scripts)
+
+    def test_the_work_grows_linearly_with_the_number_of_folded_items(self):
+        self.assertWorkGrowsLinearly(self._work, 100)

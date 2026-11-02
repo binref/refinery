@@ -273,6 +273,13 @@ like `_SPEC_GLOBAL_INTRINSICS`, but resting on that host assumption rather than 
 _GLOBAL_DATA_PROPERTIES = _SPEC_GLOBAL_INTRINSICS | _HOST_GLOBAL_INTRINSICS
 
 _POISON_PILL_PROPERTIES = frozenset({'caller', 'arguments', '__proto__'})
+"""
+Property names whose read is never treated as getter-free even off an otherwise trusted base. `caller`
+and `arguments` are the poison-pill accessors on strict and built-in functions — reading one may throw a
+`TypeError` — and `__proto__` is an `Object.prototype` accessor rather than an own data slot. A read of
+one carries a possible throw or accessor call, so it is not the plain field read the getter-safe base
+rule would otherwise clear.
+"""
 
 _EXPORTS = frozenset({'exports'})
 _PROTO = frozenset({'__proto__'})
@@ -288,13 +295,6 @@ _PURE_METHODS_OF = {
 """
 The methods of `refinery.lib.scripts.js.analysis.intrinsics.PURE_INTRINSIC_METHODS`, by the root
 that holds them.
-"""
-"""
-Property names whose read is never treated as getter-free even off an otherwise trusted base. `caller`
-and `arguments` are the poison-pill accessors on strict and built-in functions — reading one may throw a
-`TypeError` — and `__proto__` is an `Object.prototype` accessor rather than an own data slot. A read of
-one carries a possible throw or accessor call, so it is not the plain field read the getter-safe base
-rule would otherwise clear.
 """
 
 
@@ -930,8 +930,16 @@ def side_effect_free(
     `refinery.lib.scripts.js.keys.UNHELD` where no model holds it.
     """
     return _SideEffectScan(
-        defunct, call_pure, read_effect, member_safe, call_established, call_pure_discarded,
-        coercions_may_write, store_unobserved, call_converts, assumptions=assumptions,
+        defunct,
+        call_pure,
+        read_effect,
+        member_safe,
+        call_established,
+        call_pure_discarded,
+        coercions_may_write,
+        store_unobserved,
+        call_converts,
+        assumptions=assumptions,
     ).free(node, discarded)
 
 
@@ -2120,7 +2128,7 @@ class EffectModel:
         `constructor[Symbol.species]` off the receiver, and `__proto__` replaces the prototype the
         `constructor` lookup walks.
 
-        A key that is not a literal counts, because it may name either one. That conservatism is affordable
+        A key not known counts, because it may name either one. That conservatism is affordable
         here and would not be in a whole-program rule: the question is asked about the handful of references
         to one binding, so an ordinary `s[i] = v` element write on a *different* binding is untouched. It is
         also the direction that survives constant folding — a fold turns `a['const' + 'ructor']` into
@@ -2286,8 +2294,8 @@ class EffectModel:
             base = callee.object
             return (
                 isinstance(base, JsIdentifier)
-                and self._is_global_intrinsic(base)
                 and key_is(callee, _PURE_METHODS_OF.get(base.name, frozenset()), NO_IS_STRICTER)
+                and self._is_global_intrinsic(base)
             )
         return (
             isinstance(callee, JsIdentifier)
@@ -2815,12 +2823,13 @@ class EffectModel:
         if not self.binding_is_immutable_container(binding) or self.model.reflection_can_reach(binding):
             return FunctionUse.TOUCHED
         use = FunctionUse.IN_PLACE
+        names = frozenset({key})
         for read in binding.reads:
             member = enclosing_operator(read)
             if not isinstance(member, JsMemberExpression) or strip_parens(member.object) is not read:
                 use = max(use, FunctionUse.TOUCHED)
                 continue
-            if key_may_be(member, frozenset({key})):
+            if key_may_be(member, names):
                 use = max(use, self._function_read_use(member, 0))
         return use
 
@@ -3167,9 +3176,9 @@ class EffectModel:
         """
         if not self.global_pristine or member.computed or member.object is None:
             return False
-        if not self._base_is_global_object(member.object):
+        if not key_is(member, _GLOBAL_DATA_PROPERTIES, NO_IS_STRICTER):
             return False
-        return key_is(member, _GLOBAL_DATA_PROPERTIES, NO_IS_STRICTER)
+        return self._base_is_global_object(member.object)
 
     def _base_is_global_object(self, node: Node) -> bool:
         """
@@ -3598,19 +3607,19 @@ class AnchoredTrust:
         if key_is(method, _CALL, NO_IS_STRICTER):
             return (
                 len(call.arguments) == 1
-                and self._constructs_the_date(call.arguments[0])
                 and isinstance(receiver, JsMemberExpression)
+                and key_is(receiver, _GET_TIME, NO_IS_STRICTER)
                 and isinstance(owner := strip_parens(receiver.object), JsMemberExpression)
+                and key_is(owner, _PROTOTYPE, NO_IS_STRICTER)
+                and self._constructs_the_date(call.arguments[0])
                 and self.intrinsic(owner.object) == 'Date'
                 and self.prototype(JsFunctionExpression)
-                and key_is(receiver, _GET_TIME, NO_IS_STRICTER)
-                and key_is(owner, _PROTOTYPE, NO_IS_STRICTER)
             )
         if call.arguments:
             return False
-        if self.intrinsic(receiver) == 'Date':
-            return key_is(method, _NOW, NO_IS_STRICTER)
-        return self._constructs_the_date(receiver) and key_is(method, _GET_TIME, NO_IS_STRICTER)
+        if key_is(method, _NOW, NO_IS_STRICTER):
+            return self.intrinsic(receiver) == 'Date'
+        return key_is(method, _GET_TIME, NO_IS_STRICTER) and self._constructs_the_date(receiver)
 
     def _constructs_the_date(self, node: Node | None) -> bool:
         """
