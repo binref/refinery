@@ -74,8 +74,8 @@ class TestTheUniversalEnvironmentIsTheLanguageFloor(TestBase):
 
 class TestTheUniversalHostCallsEveryHandlerAPinnedHostCalls(TestBase):
     """
-    The default `universal` environment covers every host, so a function a script stores where
-    any one of them calls it is called there too.
+    The default `universal` environment covers every host a pin names, so a function a script
+    stores where any one of them calls it is called there too.
     """
 
     def test_every_handler_a_pinned_host_calls_is_called_without_a_pin(self):

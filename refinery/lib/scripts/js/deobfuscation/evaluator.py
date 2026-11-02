@@ -208,9 +208,10 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         `with`-body call still needs the binding. This mirrors the reflection gate the unused-code
         remover applies, so both transforms keep the same functions.
 
-        A function the caller declared to be a host entrypoint is likewise never removable: a host calls
-        it by name from outside the file, so no reference here can prove it dead. Both transforms consult
-        the same declaration, or they would disagree about which functions survive.
+        A function a host reaches by name is likewise never removable, one the caller declared a
+        host entrypoint or one the host calls as an event handler: the host calls it from outside
+        the file, so no reference here can prove it dead. Both transforms consult the same
+        predicate, or they would disagree about which functions survive.
 
         An exported binding is never removable for the same reason the other removal sweeps keep it:
         an importer reads its value across the module boundary once the module has run, so no
@@ -234,8 +235,8 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
     def _is_host_entrypoint(self, model: SemanticModel, binding: Binding) -> bool:
         """
-        Whether *binding* names a function the caller declared a host invokes, and is one a host could
-        actually reach — a top-level declaration under the script execution model.
+        Whether *binding* names a function a host invokes by name, and is one a host could actually
+        reach — a top-level declaration under the script execution model.
         """
         return model.reached_from_outside(binding)
 

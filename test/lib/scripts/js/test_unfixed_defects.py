@@ -3869,6 +3869,37 @@ class TestAStoreAWindowKeepsAsAStringIsReadAsAString(TestBase):
     """
 
 
+class TestAHandlerTheListedHostsDoNotCallIsKept(TestBase):
+    """
+    The host data lists the event handlers a desktop Chromium window and a dedicated worker call.
+    A service worker calls `onfetch`, a shared worker calls `onconnect`, and a Chromium window on a
+    touch device calls `ontouchstart`, so a function stored there runs with no call in the file. The
+    deobfuscation deletes the store as one nothing reads. The lists need the handlers of those
+    scopes and of the other browsers.
+    """
+
+    @unittest.expectedFailure
+    def test_a_fetch_handler_of_a_service_worker_is_kept_without_a_pin(self):
+        source = a_program("""
+            onfetch = function (event) { console.log(event.request.url); };
+            """)
+        self.assertIn('event.request.url', folded(source))
+
+    @unittest.expectedFailure
+    def test_a_connect_handler_of_a_shared_worker_is_kept_without_a_pin(self):
+        source = a_program("""
+            onconnect = function (event) { console.log(event.ports.length); };
+            """)
+        self.assertIn('event.ports.length', folded(source))
+
+    @unittest.expectedFailure
+    def test_a_touch_handler_stored_on_the_window_is_kept_for_a_browser(self):
+        source = a_program("""
+            window.ontouchstart = function (event) { console.log(event.touches.length); };
+            """)
+        self.assertIn('event.touches.length', folded(source, environment=HostEnvironment.browser))
+
+
 #: A classic script that declares a name the global object holds as a read-only property and stores
 #: a value in it, mapped to what the host prints: the store is ignored in sloppy code, and the name
 #: still reads what the global object holds.

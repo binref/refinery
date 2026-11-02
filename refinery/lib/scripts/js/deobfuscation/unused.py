@@ -905,11 +905,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         candidate (one is script-scope, the other strictly function-local), so the batch stays
         mutually consistent.
 
-        Relocation takes the name out of the global scope, so a binding the analyst declared a host
-        reaches by name is left where it stands. The localizer's own eligibility rule keeps a
-        realistic entrypoint out of reach already — a host-observed global holds a value across load
-        and is not overwritten before every read of it — so this is the invariant made structural
-        rather than a case that fires today.
+        Relocation takes the name out of the global scope, so a binding a host reaches by name is
+        left where it stands (`_named_host_entrypoint`): a function that stores the load handler in
+        a script-level `var onload` writes the property the window calls, which the same store into
+        a local of that function never does.
         """
         relocations: dict[int, tuple[JsBlockStatement, list[str]]] = {}
         declarators: list[JsVariableDeclarator] = []
@@ -1032,9 +1031,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     def _named_host_entrypoint(self, binding: Binding) -> bool:
         """
-        Whether *binding* is one the caller declared a host reaches by name. This answers the same
-        question reflection does — could code outside the recorded references reach this binding — for the
-        case the model cannot see at all, a caller living outside the file.
+        Whether a host reaches *binding* by name: the caller declared it one, or the host calls it
+        as an event handler. This answers the same question reflection does — could code outside
+        the recorded references reach this binding — for the case the model cannot see at all, a
+        caller living outside the file.
         """
         return self.model.reached_from_outside(binding)
 
@@ -1176,12 +1176,12 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     def _host_entrypoints(self, functions: dict[str, JsFunctionDeclaration]) -> frozenset[str]:
         """
         Which of *functions* a host invokes (`_named_host_entrypoint`): those the caller declared a
-        host invokes by name, and every function of a file that holds nothing but function
-        declarations, a library that code outside it calls. Naming one seeds it as a reachability
-        root, so everything it calls is reachable through it and survives too, which is the point,
-        since an entrypoint is usually the root of the whole program. The binding is taken from each
-        declaration's own identifier rather than looked up by name, so a same-named function in a
-        nested body is judged on its own merits.
+        host invokes by name or the host calls as event handlers, and every function of a file that
+        holds nothing but function declarations, a library that code outside it calls. Naming one
+        seeds it as a reachability root, so everything it calls is reachable through it and
+        survives too, which is the point, since an entrypoint is usually the root of the whole
+        program. The binding is taken from each declaration's own identifier rather than looked up
+        by name, so a same-named function in a nested body is judged on its own merits.
         """
         names: set[str] = set()
         for name, func in functions.items():

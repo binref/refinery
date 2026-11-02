@@ -2,9 +2,9 @@
 A function a script stores where the host calls it from outside the file: an event handler of the
 global object, such as the `onload` a browser window calls once the script has run, or a name the
 analyst declared a host reaches. No call of it shows in the file, so the store is never dead
-(`refinery.lib.scripts.js.options.is_host_entrypoint`). Each program is written by hand, and each
-row says what Node prints for it run as a classic script in the window `test.lib.scripts.js.ledger`
-sets up.
+(`refinery.lib.scripts.js.analysis.model.SemanticModel.host_reaches_global`). Each program is
+written by hand, and each row says what Node prints for it run as a classic script in the window
+`test.lib.scripts.js.ledger` sets up.
 """
 from __future__ import annotations
 
@@ -71,6 +71,53 @@ class TestALoadHandlerTheWindowCallsIsKept(TestBase):
 
     def test_each_program_still_prints_it_after_the_deobfuscation(self):
         for label, row in A_LOAD_HANDLER_A_WINDOW_CALLS.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
+#: Classic scripts running a function body that declares a load handler of its own, mapped to what
+#: a browser window prints for each: the declaration is local to that body, so the window never
+#: calls it.
+A_LOAD_HANDLER_LOCAL_TO_A_FUNCTION_BODY: dict[str, Program] = {
+    'a function called once declaring a load handler': Program(
+        a_program("""
+            function install() {
+              var onload = function () { console.log('loaded'); };
+              onload();
+            }
+            install();
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a Function body declaring a load handler': Program(
+        a_program("""
+            new Function("var onload = function () { console.log('loaded'); }; onload();")();
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a Function body declaring a load handler, read for a browser': Program(
+        a_program("""
+            new Function("var onload = function () { console.log('loaded'); }; onload();")();
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+        HostEnvironment.browser,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestALoadHandlerLocalToAFunctionBodyIsNotSplicedOntoTheWindow(TestBase):
+
+    def test_a_window_prints_what_each_row_pins(self):
+        for label, row in A_LOAD_HANDLER_LOCAL_TO_A_FUNCTION_BODY.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    def test_each_program_still_prints_it_after_the_deobfuscation(self):
+        for label, row in A_LOAD_HANDLER_LOCAL_TO_A_FUNCTION_BODY.items():
             with self.subTest(label=label):
                 self.assertEqual(row.read(), row.required())
 

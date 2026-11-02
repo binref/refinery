@@ -35,7 +35,7 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     Statement,
 )
-from refinery.lib.scripts.js.options import is_host_entrypoint, preserves_script_return
+from refinery.lib.scripts.js.options import preserves_script_return
 from refinery.lib.scripts.js.strict import declares_use_strict
 
 
@@ -76,10 +76,10 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         `eval` that resolves in the wrapper's scope rather than the script's — and the arguments
         of the call must be droppable, since the call evaluates them and nothing reads them. The
         declaration gate holds the move itself: every binding the body declares lands in the
-        script's own scope without capturing or colliding, no opaque surface stands anywhere
-        that could re-invoke the wrapper by name once it is gone, and none of the landed names
-        is one the analyst declared a host reaches — a name the script declares shadows what the
-        host put there, which a binding inside the wrapper never did.
+        script's own scope without capturing or colliding, and none of them under a name a host
+        reaches (`refinery.lib.scripts.js.analysis.model.SemanticModel.declaration_may_land`),
+        and no opaque surface stands anywhere that could re-invoke the wrapper by name once it is
+        gone.
         """
         model = cache.model
         if (
@@ -143,11 +143,6 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         if wrapper_scope is None:
             return False
         if not inlined_declarations_safe(wrapper_scope, model, model.root_scope):
-            return False
-        if not model.file_kind.scopes_declarations_to_the_file and any(
-            is_host_entrypoint(self.options, name)
-            for name in wrapper_scope.bindings
-        ):
             return False
         statements = sanitize_inlined_body(list(body.body))
         if statements is None:

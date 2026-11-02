@@ -3824,7 +3824,19 @@ class SemanticModel:
         to find. At the top of a CommonJS file a `let` of a parameter's name makes Node refuse the
         file as CommonJS, and a `var` of it starts out holding what the host passed rather than
         `undefined`.
+
+        None lands at the top of a script under a name a host reaches (`host_reaches_global`)
+        either: there a `var` is the property of the global object the host calls, and a `let`
+        shadows it, where the declaration it came from bound a name of its own body. A `Function`
+        body declaring `var onload` and spliced at the top would install a load handler the window
+        then calls once more.
         """
+        if (
+            scope is self.root_scope
+            and not self.file_kind.scopes_declarations_to_the_file
+            and any(self.host_reaches_global(name) for name in names)
+        ):
+            return False
         for name in names:
             binding = scope.bindings.get(name)
             if binding is not None and binding.supplied_by_host:
@@ -3939,10 +3951,13 @@ class SemanticModel:
 
     def host_reaches_global(self, name: str) -> bool:
         """
-        Whether a host reaches the property *name* of the global object from outside the file
-        (*host_entrypoint*): it calls the event handler stored there, or the analyst declared the
-        name one it reaches.
+        Whether a host reaches the property *name* of the global object from outside the file: the
+        host *environment* calls the event handler stored there
+        (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.calls_handler`), or the
+        analyst declared the name one it reaches (*host_entrypoint*).
         """
+        if self.environment.calls_handler(name):
+            return True
         return self._host_entrypoint is not None and self._host_entrypoint(name)
 
     def named_by_the_host(self, binding: Binding) -> bool:
@@ -6356,9 +6371,9 @@ def build_semantic_model(
     `refinery.lib.scripts.js.options.file_kind` decides for a run; text that runs as global code,
     such as the payload of a `Function` construction, is a script. *exports_read_outside* says
     whether code that loads the file may read what it exports; see
-    `SemanticModel.module_exports_unread`. *host_entrypoint* says whether a host reaches a property
-    of the global object; see `SemanticModel.host_reaches_global`. The default describes a file no
-    host calls into.
+    `SemanticModel.module_exports_unread`. *host_entrypoint* says whether the analyst declared a
+    name one a host reaches; see `SemanticModel.host_reaches_global`. The default declares none, and
+    a host then reaches only the event handlers *environment* calls.
     """
     return SemanticModel(
         root,
