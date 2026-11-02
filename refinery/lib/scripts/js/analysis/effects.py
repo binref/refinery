@@ -78,7 +78,6 @@ from refinery.lib.scripts.js.analysis.model import (
     ContainerRole,
     Role,
     SemanticModel,
-    _property_key_name,
     arguments_reads_only_elements,
     container_reference_role,
     element_positions,
@@ -89,6 +88,14 @@ from refinery.lib.scripts.js.analysis.model import (
     is_plain_store_target,
     own_arguments_binding,
     reference_role,
+)
+from refinery.lib.scripts.js.keys import (
+    NO_IS_STRICTER,
+    KeyAssumptions,
+    accessor_install_method,
+    key_is,
+    key_may_be,
+    key_text,
 )
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -125,10 +132,8 @@ from refinery.lib.scripts.js.model import (
     JsUpdateExpression,
     JsVariableDeclarator,
     JsYieldExpression,
-    accessor_install_method,
     is_generator_function,
     object_member_access_runs_accessor,
-    static_property_key,
     strip_parens,
     value_is_discarded,
     wraps_return,
@@ -268,6 +273,22 @@ like `_SPEC_GLOBAL_INTRINSICS`, but resting on that host assumption rather than 
 _GLOBAL_DATA_PROPERTIES = _SPEC_GLOBAL_INTRINSICS | _HOST_GLOBAL_INTRINSICS
 
 _POISON_PILL_PROPERTIES = frozenset({'caller', 'arguments', '__proto__'})
+
+_EXPORTS = frozenset({'exports'})
+_PROTO = frozenset({'__proto__'})
+_CALL = frozenset({'call'})
+_NOW = frozenset({'now'})
+_GET_TIME = frozenset({'getTime'})
+_PROTOTYPE = frozenset({'prototype'})
+
+_PURE_METHODS_OF = {
+    root: frozenset(name.partition('.')[2] for name in PURE_INTRINSIC_METHODS if name.partition('.')[0] == root)
+    for root in PURE_INTRINSIC_ROOTS
+}
+"""
+The methods of `refinery.lib.scripts.js.analysis.intrinsics.PURE_INTRINSIC_METHODS`, by the root
+that holds them.
+"""
 """
 Property names whose read is never treated as getter-free even off an otherwise trusted base. `caller`
 and `arguments` are the poison-pill accessors on strict and built-in functions — reading one may throw a
@@ -277,16 +298,14 @@ rule would otherwise clear.
 """
 
 
-def _is_poison_pill_property(member: JsMemberExpression) -> bool:
+def _is_poison_pill_property(member: JsMemberExpression, assumptions: KeyAssumptions) -> bool:
     """
     Whether *member* reads a poison-pill property (`.caller`, `.arguments`, `.__proto__`) by name, in
-    either the dotted (`f.caller`) or the string-computed (`f['caller']`) form. A computed access whose
-    key is not a string literal (`f[k]`) names no fixed property and does not count.
+    the dotted (`f.caller`) or a computed form (`f['caller']`). A computed access whose key is not
+    known (`f[k]`) names no fixed property and does not count; *assumptions* records it
+    (`refinery.lib.scripts.js.keys.key_is`).
     """
-    prop = member.property
-    if member.computed:
-        return isinstance(prop, JsStringLiteral) and prop.value in _POISON_PILL_PROPERTIES
-    return isinstance(prop, JsIdentifier) and prop.name in _POISON_PILL_PROPERTIES
+    return key_is(member, _POISON_PILL_PROPERTIES, assumptions)
 
 
 _FUNCTION_KEYS_READ_IN_PLACE = frozenset({'call', 'apply', 'toString', 'name', 'length'})
@@ -723,7 +742,10 @@ class _SideEffectScan:
         coercions_may_write: bool = False,
         store_unobserved: Callable[[JsMemberExpression], bool] | None = None,
         call_converts: _CallPredicate | None = None,
+        *,
+        assumptions: KeyAssumptions,
     ):
+        self.assumptions = assumptions
         self.defunct = defunct
         self.call_pure = call_pure
         self.read_effect = read_effect
@@ -760,7 +782,7 @@ class _SideEffectScan:
                 return False
             if node.property is not None and not self.free(node.property):
                 return False
-            if _is_poison_pill_property(node):
+            if _is_poison_pill_property(node, self.assumptions):
                 return self.member_safe is not None and self.member_safe(node)
             if _is_safe_property_base(node.object, self.defunct):
                 return True
@@ -860,6 +882,8 @@ def side_effect_free(
     coercions_may_write: bool = False,
     store_unobserved: Callable[[JsMemberExpression], bool] | None = None,
     call_converts: _CallPredicate | None = None,
+    *,
+    assumptions: KeyAssumptions,
 ) -> bool:
     """
     Conservative check for whether evaluating an expression can be dropped or reordered with no
@@ -901,11 +925,13 @@ def side_effect_free(
     moving a property value to its use — keeps the conversion where it runs and answers for it with its
     own gates, which is why the flag is opt-in rather than the rule. A call *call_converts* names
     hands its arguments to a callee that converts them, so it is held to arguments that cannot be
-    objects in the same way.
+    objects in the same way. A key the check reads as naming no poison-pill property without
+    reading it is recorded in *assumptions*: the record of the model holding the answer, or
+    `refinery.lib.scripts.js.keys.UNHELD` where no model holds it.
     """
     return _SideEffectScan(
         defunct, call_pure, read_effect, member_safe, call_established, call_pure_discarded,
-        coercions_may_write, store_unobserved, call_converts,
+        coercions_may_write, store_unobserved, call_converts, assumptions=assumptions,
     ).free(node, discarded)
 
 
@@ -924,7 +950,7 @@ def _method_call_is_inert(reference: Node, methods: frozenset[str] | None) -> bo
         return False
     if not is_invocation_target(member):
         return True
-    return static_property_key(member) in methods
+    return key_is(member, methods, NO_IS_STRICTER)
 
 
 def _method_call_reads_an_array(reference: Node) -> bool:
@@ -937,7 +963,7 @@ def _method_call_reads_an_array(reference: Node) -> bool:
         return False
     if not is_invocation_target(member):
         return False
-    return static_property_key(member) in _ARRAY_READING_METHODS
+    return key_is(member, _ARRAY_READING_METHODS, NO_IS_STRICTER)
 
 
 def _result_goes_nowhere(node: Node) -> bool:
@@ -1051,10 +1077,11 @@ class EffectModel:
         refusals: UnfollowedWriteRefusals | None = None,
     ):
         self.model = model
+        self.assumed_keys = model.assumed_keys
         self._dominance = dominance
         self._dead_zone_safe_cache: dict[int, bool] = {}
         self.intrinsics_pristine = _intrinsics_pristine(model)
-        self.global_pristine = _global_pristine(model)
+        self.global_pristine = _global_pristine(model, self.assumed_keys)
         if intrinsic_writes is None:
             intrinsic_writes = build_intrinsic_writes(model)
         self.intrinsic_writes = intrinsic_writes
@@ -1344,6 +1371,7 @@ class EffectModel:
             coercions_may_write,
             self.store_unobserved,
             self.calls_a_pure_intrinsic,
+            assumptions=self.assumed_keys,
         )
 
     def throwing_read_effect(
@@ -1994,10 +2022,12 @@ class EffectModel:
         reading as an ES module, where the name may be absent, the read of `module` keeps its own
         throw.
         """
-        if static_property_key(member) != 'exports' or not is_plain_store_target(member):
+        if not is_plain_store_target(member):
             return False
         base = strip_parens(member.object)
         if not isinstance(base, JsIdentifier) or base.name != 'module':
+            return False
+        if not key_is(member, _EXPORTS, NO_IS_STRICTER):
             return False
         binding = self.model.resolve(base)
         if binding is None or binding is not self.model.root_scope.bindings.get('module'):
@@ -2102,14 +2132,7 @@ class EffectModel:
                 continue
             if not is_member_write_target(parent):
                 continue
-            prop = parent.property
-            if not parent.computed:
-                if isinstance(prop, JsIdentifier) and prop.name in SPECIES_KEYS:
-                    return True
-            elif isinstance(prop, JsStringLiteral):
-                if prop.value in SPECIES_KEYS:
-                    return True
-            elif not isinstance(prop, JsNumericLiteral):
+            if key_may_be(parent, SPECIES_KEYS):
                 return True
         return False
 
@@ -2158,8 +2181,7 @@ class EffectModel:
     ) -> _FreshKind:
         callee = strip_parens(call.callee)
         if isinstance(callee, JsMemberExpression) and not callee.computed:
-            prop = callee.property
-            if not isinstance(prop, JsIdentifier) or prop.name not in _FRESH_ARRAY_RESULT_METHODS:
+            if not key_is(callee, _FRESH_ARRAY_RESULT_METHODS, NO_IS_STRICTER):
                 return _FreshKind.NOT_FRESH
             if not self.trusted_prototype(list):
                 return _FreshKind.NOT_FRESH
@@ -2261,12 +2283,11 @@ class EffectModel:
         """
         callee = call.tag if isinstance(call, JsTaggedTemplateExpression) else call.callee
         if isinstance(callee, JsMemberExpression) and not callee.computed:
-            base, prop = callee.object, callee.property
+            base = callee.object
             return (
                 isinstance(base, JsIdentifier)
-                and isinstance(prop, JsIdentifier)
-                and F'{base.name}.{prop.name}' in PURE_INTRINSIC_METHODS
                 and self._is_global_intrinsic(base)
+                and key_is(callee, _PURE_METHODS_OF.get(base.name, frozenset()), NO_IS_STRICTER)
             )
         return (
             isinstance(callee, JsIdentifier)
@@ -2777,7 +2798,7 @@ class EffectModel:
         parent = enclosing_operator(function)
         if not isinstance(parent, JsProperty) or strip_parens(parent.value) is not function:
             return None
-        key = _property_key_name(parent)
+        key = key_text(parent)
         holder = parent.parent
         if parent.kind is not JsPropertyKind.INIT or key is None or not isinstance(holder, JsObjectExpression):
             return FunctionUse.TOUCHED
@@ -2799,8 +2820,7 @@ class EffectModel:
             if not isinstance(member, JsMemberExpression) or strip_parens(member.object) is not read:
                 use = max(use, FunctionUse.TOUCHED)
                 continue
-            taken = static_property_key(member)
-            if taken is None or taken == key:
+            if key_may_be(member, frozenset({key})):
                 use = max(use, self._function_read_use(member, 0))
         return use
 
@@ -2843,7 +2863,7 @@ class EffectModel:
         callee = strip_parens(call.callee)
         if callee is read:
             return FunctionUse.IN_PLACE
-        if isinstance(callee, JsMemberExpression) and callee.computed and static_property_key(callee) is None:
+        if isinstance(callee, JsMemberExpression) and key_text(callee) is None:
             return FunctionUse.CONVERSION
         installer = self.conversion_installs.installer_of_call(call)
         if installer is not None:
@@ -2874,14 +2894,14 @@ class EffectModel:
             if self.conversion_installs.spells_member_key(member.property, member.computed) is False:
                 return FunctionUse.TOUCHED
             return FunctionUse.CONVERSION
-        key = static_property_key(member)
+        key = key_text(member)
         call = enclosing_operator(member)
         if isinstance(call, JsCallExpression) and strip_parens(call.callee) is member:
             if key is None:
                 return FunctionUse.CONVERSION
-            if key in RECEIVER_INSTALL_METHODS:
+            if key_is(member, RECEIVER_INSTALL_METHODS, NO_IS_STRICTER):
                 return self._install_use(call, key, -1)
-        if key in _FUNCTION_KEYS_READ_IN_PLACE:
+        if key_is(member, _FUNCTION_KEYS_READ_IN_PLACE, NO_IS_STRICTER):
             return FunctionUse.IN_PLACE
         return FunctionUse.TOUCHED
 
@@ -3145,12 +3165,11 @@ class EffectModel:
         object, sound only under the `global_pristine` precondition. This mirrors the intrinsic-call trust
         of `_resolve_callee`, lifted from methods to global data-property reads.
         """
-        if not self.global_pristine or member.computed:
+        if not self.global_pristine or member.computed or member.object is None:
             return False
-        prop = member.property
-        if not isinstance(prop, JsIdentifier) or prop.name not in _GLOBAL_DATA_PROPERTIES:
+        if not self._base_is_global_object(member.object):
             return False
-        return member.object is not None and self._base_is_global_object(member.object)
+        return key_is(member, _GLOBAL_DATA_PROPERTIES, NO_IS_STRICTER)
 
     def _base_is_global_object(self, node: Node) -> bool:
         """
@@ -3212,10 +3231,7 @@ class EffectModel:
         (`established`), since a hoisted `var` reads `undefined` before its initializer runs and
         `undefined.constructor` throws.
         """
-        if member.computed:
-            return False
-        prop = member.property
-        if not isinstance(prop, JsIdentifier) or _is_poison_pill_property(member):
+        if member.computed or key_text(member) is None or _is_poison_pill_property(member, self.assumed_keys):
             return False
         base = member.object
         if not isinstance(base, JsIdentifier):
@@ -3246,8 +3262,7 @@ class EffectModel:
         """
         if not self.global_pristine or member.computed:
             return None
-        prop = member.property
-        if not isinstance(prop, JsIdentifier) or prop.name not in _GLOBAL_DATA_PROPERTIES:
+        if not key_is(member, _GLOBAL_DATA_PROPERTIES, NO_IS_STRICTER):
             return None
         base = member.object
         if not isinstance(base, JsIdentifier) or base.name in GLOBAL_OBJECT_ALIASES:
@@ -3355,7 +3370,7 @@ class EffectModel:
         `is_side_effect_free` share. With *region*, the chain question on the base is asked of the tree an
         edit deleting the nodes of *region* leaves standing — see `getter_free_read_dropped_with`.
         """
-        if _is_poison_pill_property(member):
+        if _is_poison_pill_property(member, self.assumed_keys):
             return False
         if member.object is not None and self._base_getter_safe(member.object, region):
             return True
@@ -3462,7 +3477,7 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
     return True
 
 
-def _writes_the_global_prototype(model: SemanticModel, member: JsMemberExpression) -> bool:
+def _writes_the_global_prototype(model: SemanticModel, member: JsMemberExpression, assumptions: KeyAssumptions) -> bool:
     """
     Whether *member* assigns to `__proto__` on a base that may be the global object
     (`globalThis.__proto__ = p`), replacing the global object's prototype with one that may carry
@@ -3473,12 +3488,12 @@ def _writes_the_global_prototype(model: SemanticModel, member: JsMemberExpressio
     """
     return (
         is_member_write_target(member)
-        and static_property_key(member) == '__proto__'
         and model.may_be_the_global_object(member.object)
+        and key_is(member, _PROTO, assumptions)
     )
 
 
-def _global_pristine(model: SemanticModel) -> bool:
+def _global_pristine(model: SemanticModel, assumptions: KeyAssumptions) -> bool:
     """
     Whether a property read on the global object is free of user getters: the program exposes no
     reflective surface through which an accessor could be installed at runtime, and installs none
@@ -3491,20 +3506,19 @@ def _global_pristine(model: SemanticModel) -> bool:
     a consumer had already relied on it.
 
     A key whose value is *not* statically known — `Object[k]` — is deliberately not treated as an install.
-    It would deny this trust to nearly every dynamic call, and it buys nothing: a variable key is resolved
-    by substitution in a different pass, never within the one that consumes this answer. The global
-    object carrying one — `globalThis[k] = v` — is the one computed key that *is* an install for this
-    question: it may give the read property a new value or setter, so `has_opaque_global_write`
-    refuses here.
+    It would deny this trust to nearly every dynamic call; *assumptions* records it instead, and a fold
+    that reveals an installer there renews the models. The global object carrying one —
+    `globalThis[k] = v` — is the one computed key that *is* an install for this question: it may give
+    the read property a new value or setter, so `has_opaque_global_write` refuses here.
     """
     if model.has_reflection_surface() or model.has_opaque_global_write():
         return False
     for node in model.root.walk():
         if not isinstance(node, JsMemberExpression):
             continue
-        if accessor_install_method(node) is not None:
+        if accessor_install_method(node, assumptions) is not None:
             return False
-        if _writes_the_global_prototype(model, node):
+        if _writes_the_global_prototype(model, node, assumptions):
             return False
     return True
 
@@ -3580,24 +3594,23 @@ class AnchoredTrust:
         method = strip_parens(call.callee)
         if not isinstance(method, JsMemberExpression) or method.optional:
             return False
-        key = static_property_key(method)
         receiver = strip_parens(method.object)
-        if key == 'call':
+        if key_is(method, _CALL, NO_IS_STRICTER):
             return (
                 len(call.arguments) == 1
                 and self._constructs_the_date(call.arguments[0])
                 and isinstance(receiver, JsMemberExpression)
-                and static_property_key(receiver) == 'getTime'
                 and isinstance(owner := strip_parens(receiver.object), JsMemberExpression)
-                and static_property_key(owner) == 'prototype'
                 and self.intrinsic(owner.object) == 'Date'
                 and self.prototype(JsFunctionExpression)
+                and key_is(receiver, _GET_TIME, NO_IS_STRICTER)
+                and key_is(owner, _PROTOTYPE, NO_IS_STRICTER)
             )
         if call.arguments:
             return False
-        if key == 'now':
-            return self.intrinsic(receiver) == 'Date'
-        return key == 'getTime' and self._constructs_the_date(receiver)
+        if self.intrinsic(receiver) == 'Date':
+            return key_is(method, _NOW, NO_IS_STRICTER)
+        return self._constructs_the_date(receiver) and key_is(method, _GET_TIME, NO_IS_STRICTER)
 
     def _constructs_the_date(self, node: Node | None) -> bool:
         """

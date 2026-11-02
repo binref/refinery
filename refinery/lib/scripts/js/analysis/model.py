@@ -41,7 +41,19 @@ from refinery.lib.scripts.js.analysis.environment import (
     node_require_runs_no_code,
 )
 from refinery.lib.scripts.js.builtins import OBJECT_PROTOTYPE_MEMBERS
-from refinery.lib.scripts.js.keys import accessor_installs
+from refinery.lib.scripts.js.keys import (
+    NO_IS_STRICTER,
+    KeyAssumptions,
+    accessor_installs,
+    concatenation_spells,
+    expression_key,
+    key_is,
+    key_may_be,
+    key_named,
+    key_spells,
+    key_text,
+    string_spells,
+)
 from refinery.lib.scripts.js.lexer import is_identifier_name
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
@@ -115,13 +127,10 @@ from refinery.lib.scripts.js.model import (
     JsWithStatement,
     file_ended_inside,
     names_a_property,
-    static_concatenation,
-    static_property_key,
-    static_string,
     strip_parens,
     value_is_discarded,
 )
-from refinery.lib.scripts.js.numbers import canonical_array_index, exact_integer
+from refinery.lib.scripts.js.numbers import canonical_array_index
 from refinery.lib.scripts.js.strict import (
     has_parameter_expressions,
     strict_mode_at,
@@ -182,6 +191,18 @@ prototype-yielding key hands out the surface a write would displace the dispatch
 `__defineGetter__`/`__defineSetter__` pair installs on its receiver when invoked anywhere along
 the chain.
 """
+
+_EXPORTS = frozenset({'exports'})
+_LENGTH = frozenset({'length'})
+_APPLY = frozenset({'apply'})
+_CALL = frozenset({'call'})
+_CALL_OR_APPLY = _CALL | _APPLY
+_CONSTRUCTOR = frozenset({'constructor'})
+_FUNCTION = frozenset({'Function'})
+_NAME = frozenset({'name'})
+_REQUIRE = frozenset({'require'})
+_NEW_TARGET_KEYS_READ_IN_PLACE = frozenset({'prototype', 'name'})
+_TRUSTED_SURFACE_KEYS = frozenset({'Function', 'constructor'})
 
 _PATTERN_CONTAINERS = (
     JsArrayExpression,
@@ -794,8 +815,8 @@ def _tests_or_replaces_the_exports(reference: Node) -> bool:
     return (
         isinstance(parent, JsMemberExpression)
         and strip_parens(parent.object) is reference
-        and static_property_key(parent) == 'exports'
         and is_plain_store_target(parent)
+        and key_is(parent, _EXPORTS, NO_IS_STRICTER)
     )
 
 
@@ -1026,17 +1047,16 @@ def _read_forwards_no_alias(node: Node) -> bool:
     return False
 
 
-def _member_reaches_dispatch_surface(member: JsMemberExpression) -> bool:
+def _member_reaches_dispatch_surface(member: JsMemberExpression, assumptions: KeyAssumptions) -> bool:
     """
     Whether *member* lets text touch a prototype surface that intrinsic dispatch walks: a
-    `getPrototypeOf`/`setPrototypeOf` member on sight, or a prototype-yielding key whose value is
-    written through or flows onward. The per-access half of `_dispatch_surface_reachable`, which
-    says why each form counts.
+    `getPrototypeOf`/`setPrototypeOf` member on sight, or a key that may yield the prototype, a key
+    not known among them, whose value is written through or flows onward. The per-access half of
+    `_dispatch_surface_reachable`, which says why each form counts.
     """
-    key = static_property_key(member)
-    if key in _PROTOTYPE_REFLECTING_CALLEES:
+    if key_is(member, _PROTOTYPE_REFLECTING_CALLEES, assumptions):
         return True
-    if key not in _PROTOTYPE_YIELDING_KEYS:
+    if not key_may_be(member, _PROTOTYPE_YIELDING_KEYS):
         return False
     return _prototype_surface_escapes(member)
 
@@ -1054,12 +1074,9 @@ def _function_reaches_its_prototype(read: Node) -> bool:
     access = _enclosing_member_access(read)
     if access is None:
         return True
-    key = static_property_key(access)
-    if key is None:
-        return True
-    if key not in _PROTOTYPE_KEEPING_KEYS:
+    if not key_may_be(access, _PROTOTYPE_KEEPING_KEYS):
         return False
-    return _prototype_surface_escapes(access)
+    return key_text(access) is None or _prototype_surface_escapes(access)
 
 
 def _prototype_surface_escapes(access: JsMemberExpression) -> bool:
@@ -1081,8 +1098,7 @@ def _prototype_surface_escapes(access: JsMemberExpression) -> bool:
             if is_member_write_target(cursor):
                 return False
             return not _read_forwards_no_alias(cursor)
-        key = static_property_key(outer)
-        if key is None or key in _PROTOTYPE_KEEPING_KEYS:
+        if key_may_be(outer, _PROTOTYPE_KEEPING_KEYS):
             cursor = outer
             continue
         return is_member_write_target(outer)
@@ -1676,9 +1692,9 @@ def arguments_name_their_function(function: Node) -> bool:
             and strip_parens(parent.object) is node
             and not is_member_write_target(parent)
         ):
-            if parent.computed and isinstance(strip_parens(parent.property), JsNumericLiteral):
+            if parent.computed and _names_an_index(parent):
                 continue
-            if static_property_key(parent) == 'length':
+            if key_is(parent, _LENGTH, NO_IS_STRICTER):
                 continue
         if (
             isinstance(parent, JsCallExpression)
@@ -1686,7 +1702,7 @@ def arguments_name_their_function(function: Node) -> bool:
             and strip_parens(parent.arguments[1]) is node
         ):
             callee = strip_parens(parent.callee)
-            if isinstance(callee, JsMemberExpression) and static_property_key(callee) == 'apply':
+            if isinstance(callee, JsMemberExpression) and key_is(callee, _APPLY, NO_IS_STRICTER):
                 continue
         return True
     return False
@@ -1711,7 +1727,7 @@ def references_new_target(root: Node) -> bool:
     return False
 
 
-def _constructs_unseen(node: Node) -> bool:
+def _constructs_unseen(node: Node, assumptions: KeyAssumptions) -> bool:
     """
     Whether *node* constructs a function without naming it, in the sense of
     `SemanticModel.constructions_may_be_hidden`: a `new` of a `constructor` property, which an
@@ -1728,13 +1744,13 @@ def _constructs_unseen(node: Node) -> bool:
         return not (
             isinstance(parent, JsMemberExpression)
             and strip_parens(parent.object) is node
-            and static_property_key(parent) in ('prototype', 'name')
             and not is_member_write_target(parent)
+            and key_is(parent, _NEW_TARGET_KEYS_READ_IN_PLACE, NO_IS_STRICTER)
         )
-    if static_property_key(node) != 'constructor':
-        return False
     parent = enclosing_operator(node)
-    return isinstance(parent, JsNewExpression) and strip_parens(parent.callee) is node
+    if not isinstance(parent, JsNewExpression) or strip_parens(parent.callee) is not node:
+        return False
+    return key_is(node, _CONSTRUCTOR, assumptions)
 
 
 _TESTED_FORMS = (
@@ -1776,7 +1792,7 @@ def _constructor_read_is_harmless(node: Node) -> bool:
     if isinstance(parent, JsNewExpression) and strip_parens(parent.callee) is node:
         return True
     if isinstance(parent, JsMemberExpression) and strip_parens(parent.object) is node:
-        return static_property_key(parent) == 'name' and not is_member_write_target(parent)
+        return not is_member_write_target(parent) and key_is(parent, _NAME, NO_IS_STRICTER)
     if isinstance(parent, JsBinaryExpression) and parent.operator == 'instanceof':
         return True
     return read_is_only_tested(node)
@@ -1790,42 +1806,15 @@ def _lets_a_constructor_escape(node: Node) -> bool:
     or a destructuring property that may take one.
     """
     if isinstance(node, (JsStringLiteral, JsTemplateLiteral)):
-        return static_string(node) == 'constructor'
+        return string_spells(node, 'constructor')
     if isinstance(node, JsMemberExpression):
         return (
-            static_property_key(node) == 'constructor'
+            key_spells(node, 'constructor')
             and not is_member_write_target(node)
             and not _constructor_read_is_harmless(node)
         )
     if isinstance(node, JsProperty) and isinstance(node.parent, JsObjectPattern):
-        return node.computed or _property_key_name(node) in (None, 'constructor')
-    return False
-
-
-def _concatenation_spells(concatenations: list[JsBinaryExpression], text: str) -> bool:
-    """
-    Whether one of the `+` concatenations, each listed before those it holds, or a part of one,
-    spells *text* from constants, as `static_string` reads it (`static_concatenation`). They are
-    read from the inside out, each once, and a string longer than *text* is kept only as long as it
-    takes to stay longer, so a chain of concatenations costs its length rather than its square.
-    """
-    limit = len(text) + 1
-    spelled: dict[Node, str | None] = {}
-
-    def part(node: Node | None) -> str | None:
-        node = strip_parens(node)
-        if isinstance(node, JsBinaryExpression) and node.operator == '+':
-            return spelled.get(node)
-        return static_string(node)
-
-    for concatenation in reversed(concatenations):
-        value = static_concatenation(concatenation, part(concatenation.left), part(concatenation.right))
-        if value is None:
-            spelled[concatenation] = None
-            continue
-        value = spelled[concatenation] = value[:limit]
-        if value == text:
-            return True
+        return key_may_be(node, _CONSTRUCTOR)
     return False
 
 
@@ -1881,9 +1870,7 @@ def opaque_global_write(member: JsMemberExpression, may_be_global: Callable[[Nod
     `Object.defineProperties(globalThis, d)` does for any.
     """
     if is_member_write_target(member):
-        if not member.computed or isinstance(member.property, JsStringLiteral):
-            return False
-        return may_be_global(member.object)
+        return key_text(member) is None and may_be_global(member.object)
     call = _call_of(member)
     if not isinstance(call, JsCallExpression):
         return False
@@ -1918,16 +1905,13 @@ def _invocation(read: Node) -> tuple[ShownCall, bool] | None:
     method = _enclosing_member_access(read)
     if method is None:
         return None
-    key = static_property_key(method)
-    if key != 'call' and key != 'apply':
-        return None
     call = _call_of(method)
-    if not isinstance(call, JsCallExpression):
+    if not isinstance(call, JsCallExpression) or not key_is(method, _CALL_OR_APPLY, NO_IS_STRICTER):
         return None
     arguments = call.arguments
     if arguments and isinstance(strip_parens(arguments[0]), JsSpreadElement):
         return ShownCall(call, None), True
-    if key == 'call':
+    if key_is(method, _CALL, NO_IS_STRICTER):
         return ShownCall(call, arguments[1:]), True
     if len(arguments) < 2:
         return ShownCall(call, []), True
@@ -2131,45 +2115,6 @@ def may_be_global_object_base(node: Node | None) -> bool:
     return is_global_object_base(base)
 
 
-def member_property_name(member: JsMemberExpression) -> str | None:
-    """
-    The statically known property name a member access designates: the property identifier of a dot
-    access (`o.g`) or the value of a string-literal computed access (`o['g']`). A non-literal computed
-    key (`o[expr]`) has no static name and yields `None`. The base is not inspected — a caller that
-    needs the base to be a global-object alias checks that separately.
-    """
-    prop = member.property
-    if member.computed:
-        return prop.value if isinstance(prop, JsStringLiteral) else None
-    return prop.name if isinstance(prop, JsIdentifier) else None
-
-
-def _property_key_name(prop: JsProperty) -> str | None:
-    """
-    The name the object-pattern property *prop* reads, when it is statically known: a string-literal
-    key (`{['eval']: e}` names `eval` as surely as `{eval: e}` does), or a plain non-computed
-    identifier key. A computed identifier key (`{[k]: e}`) names the value the variable holds, not
-    the text it spells, and a computed non-literal names nothing static, so both answer `None`.
-    """
-    key = prop.key
-    if isinstance(key, JsStringLiteral):
-        return key.value
-    if isinstance(key, JsIdentifier) and not prop.computed:
-        return key.name
-    return None
-
-
-def _property_key_is_dynamic(prop: JsProperty) -> bool:
-    """
-    Whether the object-pattern property *prop* reads a key only the runtime resolves — a computed
-    key that is not a string literal (`{[k]: e}`, `{['ev' + 'al']: e}`). Off the global object such a
-    read designates an unknown global, the destructuring counterpart of the computed member access
-    `_is_reflective_member` treats as a surface: the key could resolve to `eval` or `Function`, so a
-    caller proving a destructuring names no reflective intrinsic cannot clear it.
-    """
-    return prop.computed and not isinstance(prop.key, JsStringLiteral)
-
-
 class _PatternExposure(NamedTuple):
     """
     What reflective intrinsics an object destructuring pattern could bind, decided from the
@@ -2200,12 +2145,11 @@ def _pattern_reflective_exposure(pattern: JsObjectPattern) -> _PatternExposure:
         if isinstance(prop, JsRestElement):
             rest = True
         elif isinstance(prop, JsProperty):
-            if _property_key_is_dynamic(prop):
+            name = key_text(prop)
+            if name is None:
                 dynamic_key = True
-            else:
-                name = _property_key_name(prop)
-                if name is not None and name in REFLECTIVE_INTRINSICS:
-                    named.append(name)
+            elif key_may_be(prop, REFLECTIVE_INTRINSICS):
+                named.append(name)
     return _PatternExposure(tuple(named), dynamic_key, rest)
 
 
@@ -2337,7 +2281,7 @@ def arguments_reads_only_elements(binding: Binding) -> bool:
             return False
         if is_member_write_target(member):
             return False
-        if not member.computed and member_property_name(member) != 'length':
+        if not member.computed and not key_may_be(member, _LENGTH):
             return False
     return True
 
@@ -2538,22 +2482,24 @@ def element_positions(member: JsMemberExpression) -> range | None:
     element; a key that is statically known and is not, such as `length` or `callee`, designates
     the empty range.
 
-    The key is read through `exact_integer` and `canonical_array_index` rather than through `int`,
-    which raises on the infinities a Number literal may denote and accepts the non-ASCII digits a
-    property key may spell.
+    The key is read through `canonical_array_index` rather than through `int`, which accepts the
+    non-ASCII digits a property key may spell.
     """
-    prop = member.property
-    if not member.computed:
-        return range(0)
-    if isinstance(prop, JsNumericLiteral):
-        index = exact_integer(prop.value)
-    elif isinstance(prop, JsStringLiteral) and prop.value is not None:
-        index = canonical_array_index(prop.value)
-    else:
+    key = key_text(member)
+    if key is None:
         return None
+    index = canonical_array_index(key)
     if index is None or index < 0:
         return range(0)
     return range(index, index + 1)
+
+
+def _names_an_index(member: JsMemberExpression) -> bool:
+    """
+    Whether the key of *member* certainly names an array index.
+    """
+    positions = element_positions(member)
+    return positions is not None and len(positions) > 0
 
 
 def _is_a_named_global_object_base(node: Node | None) -> bool:
@@ -2567,7 +2513,11 @@ def _is_a_named_global_object_base(node: Node | None) -> bool:
     return not isinstance(base, JsThisExpression) and is_global_object_base(base)
 
 
-def _is_reflective_member(member: JsMemberExpression) -> bool:
+def _is_reflective_member(
+    member: JsMemberExpression,
+    assumptions: KeyAssumptions,
+    trusted: frozenset[str],
+) -> bool:
     """
     Whether a member access is a reflective surface — one through which code obtains the
     `eval`/`Function` intrinsic or reads an unknown global by a runtime-computed name. A
@@ -2586,22 +2536,23 @@ def _is_reflective_member(member: JsMemberExpression) -> bool:
     of it compiles strings the way the named intrinsic does. One only invoked in place or feeding a
     further non-surface read is left uncounted (`_prototype_surface_escapes`), the measured shape
     of the obfuscator's own defense payloads, which invoke `.constructor(...)` on values this
-    detector cannot type.
+    detector cannot type. A key in *trusted*, which the model takes for no surface
+    (`SemanticModel.trust_eval`), counts for none.
     """
-    prop = member.property
-    if member.computed:
-        if isinstance(prop, JsStringLiteral):
-            if prop.value in REFLECTIVE_INTRINSICS:
-                return True
-            return prop.value == 'constructor' and _prototype_surface_escapes(member)
-        if not is_global_object_base(member.object):
-            return False
-        return not is_simple_assignment_target(member)
-    if not isinstance(prop, JsIdentifier):
-        return False
-    if prop.name in REFLECTIVE_INTRINSICS:
+    if (
+        key_text(member) is None
+        and member.computed
+        and is_global_object_base(member.object)
+        and not is_simple_assignment_target(member)
+    ):
         return True
-    return prop.name == 'constructor' and _prototype_surface_escapes(member)
+    if key_is(member, REFLECTIVE_INTRINSICS - trusted, assumptions):
+        return True
+    return (
+        'constructor' not in trusted
+        and _prototype_surface_escapes(member)
+        and key_is(member, _CONSTRUCTOR, assumptions)
+    )
 
 
 def is_direct_eval_call(node: Node) -> bool:
@@ -2621,7 +2572,7 @@ def is_direct_eval_call(node: Node) -> bool:
     return isinstance(callee, JsIdentifier) and callee.name == 'eval'
 
 
-def timer_callee_name(callee: Node | None) -> str | None:
+def timer_callee_name(callee: Node | None, assumptions: KeyAssumptions) -> str | None:
     """
     The timer/`execScript` function *callee* names, or `None` when it is not one. A bare identifier
     names the timer directly (`setTimeout(...)`); a member access on a global-object alias
@@ -2641,19 +2592,18 @@ def timer_callee_name(callee: Node | None) -> str | None:
     if isinstance(callee, JsIdentifier):
         return callee.name if callee.name in STRING_EVAL_NAMES else None
     if isinstance(callee, JsMemberExpression) and _is_a_named_global_object_base(callee.object):
-        name = member_property_name(callee)
-        return name if name in STRING_EVAL_NAMES else None
+        return key_text(callee) if key_is(callee, STRING_EVAL_NAMES, assumptions) else None
     return None
 
 
-def _is_string_timer(call: JsCallExpression) -> bool:
+def _is_string_timer(call: JsCallExpression, assumptions: KeyAssumptions) -> bool:
     """
     Whether *call* is a timer/`execScript` invocation whose first argument is not a function literal,
     so it may evaluate a string of code. The callee may name the timer directly (`setTimeout(...)`) or
     through a global-object alias (`window.setTimeout(...)`), both of which reach the same evaluating
     global (see `timer_callee_name`).
     """
-    if timer_callee_name(call.callee) is None:
+    if timer_callee_name(call.callee, assumptions) is None:
         return False
     if not call.arguments:
         return False
@@ -2677,6 +2627,7 @@ class SemanticModel:
         host_entrypoint: Callable[[str], bool] | None = None,
     ):
         self.root = root
+        self.assumed_keys = KeyAssumptions()
         self.environment = environment
         self.trust_eval = trust_eval
         self.file_kind = file_kind
@@ -2955,7 +2906,7 @@ class SemanticModel:
                 continue
             if self.lookup(base.name, self._node_scope.get(base)) is not None:
                 continue
-            name = static_property_key(target)
+            name = key_named(target, self.assumed_keys)
             if name is not None:
                 deleted.add(name)
         return frozenset(deleted)
@@ -3497,7 +3448,7 @@ class SemanticModel:
                 or self._function_observes_its_this(value, set(), 0)
             ):
                 return None
-            if (key := _property_key_name(prop)) is not None:
+            if (key := key_text(prop)) is not None:
                 keys.add(key)
             else:
                 every_key_spelled = False
@@ -3508,7 +3459,7 @@ class SemanticModel:
             if access is None:
                 nodes.append(read)
                 continue
-            key = static_property_key(access)
+            key = key_text(access)
             spelled, known = ({key}, True) if key is not None else self._keys_a_call_spells(access)
             foreign = spelled - keys
             if foreign and (every_key_spelled or foreign & OBJECT_PROTOTYPE_MEMBERS):
@@ -3530,7 +3481,7 @@ class SemanticModel:
         if not access.computed or not isinstance(key, JsIdentifier):
             return set(), False
         values, complete = self.values_through_calls(self.resolve(key))
-        spelled = [static_string(value) for value in values]
+        spelled = [expression_key(value) for value in values]
         known = complete and bool(spelled) and None not in spelled
         return {string for string in spelled if string is not None}, known
 
@@ -3973,9 +3924,9 @@ class SemanticModel:
         Whether *node* may read the `caller` of a function, in the sense of `spells_caller`.
         """
         if isinstance(node, (JsStringLiteral, JsTemplateLiteral)):
-            return static_string(node) == 'caller'
+            return string_spells(node, 'caller')
         if isinstance(node, JsMemberExpression) and node.computed:
-            return static_property_key(node) == 'caller'
+            return key_spells(node, 'caller')
         if not isinstance(node, JsIdentifier) or node.name != 'caller':
             return False
         parent = node.parent
@@ -4090,7 +4041,7 @@ class SemanticModel:
         """
         if self._constructions_hidden is None:
             self._constructions_hidden = self.constructors_may_escape() or any(
-                _constructs_unseen(node) for node in self.root.walk()
+                _constructs_unseen(node, self.assumed_keys) for node in self.root.walk()
             )
         return self._constructions_hidden
 
@@ -4139,8 +4090,22 @@ class SemanticModel:
                 elif _lets_a_constructor_escape(node):
                     escapes = True
                     break
-            self._constructors_escape = escapes or _concatenation_spells(concatenations, 'constructor')
+            self._constructors_escape = escapes or concatenation_spells(concatenations, 'constructor')
         return self._constructors_escape
+
+    def strings_still_unseen(self) -> frozenset[str]:
+        """
+        The names of `refinery.lib.scripts.js.keys.STRINGS_READ_ANYWHERE` whose readers answer no
+        for this program, so that a string spelling one anywhere would change an answer: one
+        spelling `constructor` lets a constructor escape (`constructors_may_escape`), and one
+        spelling `caller` may read the function that called another (`spells_caller`).
+        """
+        unseen: set[str] = set()
+        if not self.constructors_may_escape():
+            unseen.add('constructor')
+        if not self.spells_caller():
+            unseen.add('caller')
+        return frozenset(unseen)
 
     def has_opaque_global_write(self) -> bool:
         """
@@ -4574,7 +4539,10 @@ class SemanticModel:
             return False
         if self.dynamic_references(module):
             return False
-        if not all(_tests_or_replaces_the_exports(reference) for reference in self.references(module)):
+        if not all(
+            _tests_or_replaces_the_exports(reference)
+            for reference in self.references(module)
+        ):
             return False
         arguments = bindings.get('arguments')
         if arguments is not None and arguments.supplied_by_host and any(True for _ in self.references(arguments)):
@@ -4788,8 +4756,8 @@ class SemanticModel:
             if (
                 not isinstance(base, JsIdentifier)
                 or base.name != 'module'
-                or static_property_key(node) != 'require'
                 or not self._may_hold_what_the_host_passed(base)
+                or not key_is(node, _REQUIRE, self.assumed_keys)
             ):
                 return None
         elif node.name != 'require' or not self.is_reference(node) or not self._may_hold_what_the_host_passed(node):
@@ -4833,9 +4801,7 @@ class SemanticModel:
         stores a property and reads nothing, and is left to `has_opaque_global_write` as on the
         spelled base.
         """
-        if not member.computed or isinstance(member.property, JsStringLiteral):
-            return False
-        if is_simple_assignment_target(member):
+        if key_text(member) is not None or is_simple_assignment_target(member):
             return False
         return self.names_the_global_object(strip_parens(member.object))
 
@@ -4875,11 +4841,14 @@ class SemanticModel:
                 ):
                     sites.append(node)
             elif isinstance(node, JsMemberExpression):
-                surface = _is_reflective_member(node) or self._computed_read_aliases_a_global(node)
+                surface = (
+                    _is_reflective_member(node, self.assumed_keys, self._trusted_surface_keys())
+                    or self._computed_read_aliases_a_global(node)
+                )
                 if surface and not self._surface_is_trusted(node):
                     sites.append(node)
             elif isinstance(node, JsCallExpression):
-                if _is_string_timer(node) and not self._surface_is_trusted(node):
+                if not self._surface_is_trusted(node) and _is_string_timer(node, self.assumed_keys):
                     sites.append(node)
             elif isinstance(node, (JsVariableDeclarator, JsAssignmentExpression)):
                 if (
@@ -4889,6 +4858,13 @@ class SemanticModel:
                     sites.append(node)
         self._opaque_surface_sites = sites
         self._reflection_surface = saw_with or bool(sites)
+
+    def _trusted_surface_keys(self) -> frozenset[str]:
+        """
+        The keys of a member read the model takes for no reflective surface
+        (`_surface_is_trusted`).
+        """
+        return _TRUSTED_SURFACE_KEYS if self.trust_eval else frozenset()
 
     def _surface_is_trusted(self, node: Node) -> bool:
         """
@@ -4915,8 +4891,7 @@ class SemanticModel:
                 return True
             return node.name == 'eval' and self._is_the_callee_of_a_direct_eval_call(node)
         if isinstance(node, JsMemberExpression):
-            name = member_property_name(node)
-            return name == 'Function' or name == 'constructor'
+            return key_is(node, _TRUSTED_SURFACE_KEYS, NO_IS_STRICTER)
         if isinstance(node, (JsVariableDeclarator, JsAssignmentExpression)):
             pattern = node.id if isinstance(node, JsVariableDeclarator) else node.left
             if not isinstance(pattern, JsObjectPattern):
@@ -5225,12 +5200,9 @@ class SemanticModel:
         base = strip_parens(member.object)
         if not base_is_the_global_object(base):
             return None
-        name = member_property_name(member)
-        if name is None:
-            return None
         if crosses_dynamic_scope(self._node_scope.get(member)):
             return None
-        return name
+        return key_named(member, self.assumed_keys)
 
     def _base_is_the_global_object(self, base: Node | None) -> bool:
         """
@@ -5731,7 +5703,7 @@ class SemanticModel:
         callee = strip_parens(parent.callee)
         if not isinstance(callee, JsMemberExpression):
             return None
-        if member_property_name(callee) not in ('apply', 'call'):
+        if not key_is(callee, _CALL_OR_APPLY, self.assumed_keys):
             return None
         if not parent.arguments or strip_parens(parent.arguments[0]) is not node:
             return None
@@ -5810,8 +5782,7 @@ class SemanticModel:
                 return True
             access = _enclosing_member_access(reference)
             while access is not None:
-                key = static_property_key(access)
-                if key is None or key in _DISPLACING_CHAIN_KEYS:
+                if key_may_be(access, _DISPLACING_CHAIN_KEYS):
                     return True
                 access = _enclosing_member_access(access)
         return False
@@ -5856,9 +5827,8 @@ class SemanticModel:
         to fold. The `Function` intrinsic, read by its name, under a key naming it, or destructured,
         counts where it reaches its prototype (`_function_reaches_its_prototype`): the trusting
         model takes what it runs for inert and does not count its read as a reflection surface,
-        but a write through its prototype is no code it runs. Keys are read statically
-        (`static_property_key`), so a computed key no fold collapses stays unrecognized — the
-        documented residual of every static key reading in this model.
+        but a write through its prototype is no code it runs. A key is read by
+        `refinery.lib.scripts.js.keys.key_is`, which records one it cannot read.
         """
         if self._dispatch_surface_reached is None:
             self._dispatch_surface_reached = any(
@@ -5872,12 +5842,12 @@ class SemanticModel:
         the sense of `_dispatch_surface_reachable`.
         """
         if isinstance(node, JsMemberExpression):
-            if _member_reaches_dispatch_surface(node):
+            if _member_reaches_dispatch_surface(node, self.assumed_keys):
                 return True
             return (
-                member_property_name(node) == 'Function'
-                and not is_member_write_target(node)
+                not is_member_write_target(node)
                 and _function_reaches_its_prototype(node)
+                and key_is(node, _FUNCTION, self.assumed_keys)
             )
         if isinstance(node, JsIdentifier):
             return (

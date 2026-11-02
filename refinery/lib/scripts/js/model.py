@@ -1054,17 +1054,6 @@ def static_property_key(node: JsMemberExpression) -> str | None:
     return prop.name if isinstance(prop, JsIdentifier) else None
 
 
-def accessor_install_method(node: JsMemberExpression) -> str | None:
-    """
-    The accessor-install method *node* names, through a dotted property or a computed key whose
-    string value is statically known, or `None`. Matching the dotted form alone is what let
-    `Object['defineProperty']` slip past both callers, and a fold rewriting that key to a dot
-    would then reveal the install only after the fact was consumed.
-    """
-    name = static_property_key(node)
-    return name if name in ACCESSOR_INSTALL_METHODS else None
-
-
 def _object_has_own_accessor(obj: JsObjectExpression) -> bool:
     """
     Whether the object literal *obj* declares an own getter or setter (`{ get k(){...} }`,

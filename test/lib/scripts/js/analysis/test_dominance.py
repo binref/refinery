@@ -5,7 +5,8 @@ from test import TestBase
 from refinery.lib.scripts.analysis.cfg import Projection
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.environment import FileKind
-from refinery.lib.scripts.js.analysis.model import build_semantic_model, member_property_name
+from refinery.lib.scripts.js.analysis.model import build_semantic_model
+from refinery.lib.scripts.js.keys import key_text
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsCallExpression,
@@ -653,7 +654,7 @@ class TestDominance(TestBase):
         ordered = [
             dom.runs_before_all(install, [
                 access for access in accesses
-                if member_property_name(access) == F'f{k}' and not access.is_descendant_of(install)
+                if key_text(access) == F'f{k}' and not access.is_descendant_of(install)
             ])
             for k, install in enumerate(ast.body[1:count + 1])
         ]

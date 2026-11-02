@@ -45,6 +45,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     value_landing,
     walk_scope,
 )
+from refinery.lib.scripts.js.keys import UNHELD
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
@@ -202,7 +203,7 @@ def _copy_is_inert(value: Node, landing: Landing | None, *, handed: bool) -> boo
     if landing is None or landing is Landing.ELSEWHERE:
         return True
     if landing is Landing.CALLEE:
-        return timer_callee_name(value) is None
+        return timer_callee_name(value, UNHELD) is None
     if landing is Landing.KEY:
         return False
     if landing is Landing.ARGUMENT and handed:

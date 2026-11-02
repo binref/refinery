@@ -615,10 +615,44 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         """
         return '\n'.join('f(String.fromCharCode(118, 97, 108, 117, 101, 79, 102));' for _ in range(count))
 
-    @unittest.expectedFailure
     @a_property_of_the_pin_itself
     def test_folds_spelling_a_key_the_models_read_do_not_multiply_model_builds(self):
         self.assertEqual(self._builds(self._revealing(10))[:2], self._builds(self._revealing(80))[:2])
+
+    @staticmethod
+    def _constructor_keys(count: int) -> str:
+        """
+        A script with *count* folds that each spell `constructor` as the key of a read.
+        """
+        key = 'String.fromCharCode(99, 111, 110, 115, 116, 114, 117, 99, 116, 111, 114)'
+        return '\n'.join(F'f(o{i}[{key}]);' for i in range(count))
+
+    @staticmethod
+    def _caller_strings(count: int) -> str:
+        """
+        A script with *count* folds that each spell `caller` in an array.
+        """
+        return '\n'.join('f([String.fromCharCode(99, 97, 108, 108, 101, 114)]);' for _ in range(count))
+
+    @a_property_of_the_pin_itself
+    def test_folds_spelling_constructor_as_a_key_do_not_multiply_model_builds(self):
+        self.assertEqual(self._builds(self._constructor_keys(10))[:2], self._builds(self._constructor_keys(80))[:2])
+
+    @staticmethod
+    def _constructor_names(count: int) -> str:
+        """
+        A script with *count* folds that each write the name of a constructor in place of a read
+        of it, where the name is neither written through nor handed on.
+        """
+        return '\n'.join("f(''.constructor.name);" for _ in range(count))
+
+    @a_property_of_the_pin_itself
+    def test_constructor_names_no_write_reaches_do_not_multiply_model_builds(self):
+        self.assertEqual(self._builds(self._constructor_names(10))[:2], self._builds(self._constructor_names(80))[:2])
+
+    @a_property_of_the_pin_itself
+    def test_folds_spelling_caller_in_an_array_do_not_multiply_model_builds(self):
+        self.assertEqual(self._builds(self._caller_strings(10))[:2], self._builds(self._caller_strings(80))[:2])
 
     @a_property_of_the_pin_itself
     def test_gated_folds_build_each_model_once(self):

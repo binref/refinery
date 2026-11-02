@@ -26,7 +26,6 @@ from refinery.lib.scripts.js.analysis.model import (
     BindingKind,
     ReferenceNode,
     Role,
-    _property_key_name,
     constructed_class,
     element_positions,
     enclosing_operator,
@@ -35,6 +34,7 @@ from refinery.lib.scripts.js.analysis.model import (
     receiver_owner,
     reference_role,
 )
+from refinery.lib.scripts.js.keys import SETTLED_TREE, expression_key, key_is, key_text
 from refinery.lib.scripts.js.model import (
     CONVERSION_INSTALL_METHODS,
     RECEIVER_INSTALL_METHODS,
@@ -69,8 +69,6 @@ from refinery.lib.scripts.js.model import (
     JsThisExpression,
     JsUnaryExpression,
     JsUpdateExpression,
-    static_property_key,
-    static_string,
     strip_parens,
 )
 
@@ -85,6 +83,14 @@ The keys a write installs a conversion under: an own `toString` or `valueOf`, or
 through `__proto__`. `Symbol.toPrimitive` is no string; a member read named `toPrimitive` stands
 for it whatever its object.
 """
+
+_TO_PRIMITIVE = frozenset({'toPrimitive'})
+_CALL_OR_APPLY = frozenset({'call', 'apply'})
+_PROTOTYPE = frozenset({'prototype'})
+_SET = frozenset({'set'})
+_REFLECT = frozenset({'Reflect'})
+_BIND = frozenset({'bind'})
+_GET_OWN_PROPERTY_DESCRIPTOR = frozenset({'getOwnPropertyDescriptor'})
 
 NON_FUNCTION_BUILDERS = frozenset({
     'Array',
@@ -258,7 +264,7 @@ def _destructured_key(binding: Binding) -> str | None:
     if isinstance(parent, JsAssignmentPattern):
         parent = parent.parent
     if isinstance(parent, JsProperty) and isinstance(parent.parent, JsObjectPattern):
-        return _property_key_name(parent)
+        return key_text(parent)
     return None
 
 
@@ -390,7 +396,7 @@ class ConversionInstalls:
         """
         if computed:
             return self.spells_key(key)
-        name = key.name if isinstance(key, JsIdentifier) else static_string(key)
+        name = key.name if isinstance(key, JsIdentifier) else expression_key(key)
         return name in CONVERSION_KEYS
 
     def spells_key(self, node: Node | None) -> bool | None:
@@ -421,16 +427,13 @@ class ConversionInstalls:
         if node is None:
             yield None
             return
-        text = static_string(node)
+        text = expression_key(node)
         if text is not None:
             yield text in CONVERSION_KEYS
-        elif isinstance(node, (JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
-            yield False
         elif isinstance(node, JsMemberExpression):
-            key = static_property_key(node)
-            if key == 'toPrimitive':
+            if key_is(node, _TO_PRIMITIVE, SETTLED_TREE):
                 yield True
-            elif key is not None and self._effects.trusted_intrinsic(node.object) == 'Symbol':
+            elif key_text(node) is not None and self._effects.trusted_intrinsic(node.object) == 'Symbol':
                 yield False
             else:
                 yield self._argument_read(node)
@@ -604,12 +607,12 @@ class ConversionInstalls:
             if (
                 isinstance(node, JsCallExpression)
                 and isinstance(callee, JsMemberExpression)
-                and static_property_key(callee) in ('call', 'apply')
+                and key_is(callee, _CALL_OR_APPLY, SETTLED_TREE)
                 and self._effects.trusted_intrinsic(callee.object) in NON_FUNCTION_BUILDERS
             ):
                 return False
             return self._effects.trusted_intrinsic(node.callee) not in NON_FUNCTION_BUILDERS
-        if isinstance(node, JsMemberExpression) and static_property_key(node) == 'prototype':
+        if isinstance(node, JsMemberExpression) and key_is(node, _PROTOTYPE, SETTLED_TREE):
             return not self._prototype_is_fresh(node, depth)
         if not isinstance(node, JsIdentifier):
             return True
@@ -745,7 +748,7 @@ class ConversionInstalls:
             if (
                 isinstance(parent, JsMemberExpression)
                 and strip_parens(parent.object) is read
-                and static_property_key(parent) == 'prototype'
+                and key_is(parent, _PROTOTYPE, SETTLED_TREE)
             ):
                 continue
             if (
@@ -794,8 +797,8 @@ class ConversionInstalls:
             if (
                 isinstance(outer, JsMemberExpression)
                 and strip_parens(outer.object) is read
-                and static_property_key(outer) == 'prototype'
                 and is_member_write_target(outer)
+                and key_is(outer, _PROTOTYPE, SETTLED_TREE)
             ):
                 return False
         return True
@@ -813,10 +816,9 @@ class ConversionInstalls:
         """
         The installer the member read *member* names, or `None`.
         """
-        key = static_property_key(member)
-        if key in CONVERSION_INSTALL_METHODS:
-            return key
-        if key == 'set' and self._is_global_reflect(member.object):
+        if key_is(member, CONVERSION_INSTALL_METHODS, SETTLED_TREE):
+            return key_text(member)
+        if self._is_global_reflect(member.object) and key_is(member, _SET, SETTLED_TREE):
             return 'Reflect.set'
         return None
 
@@ -878,11 +880,11 @@ class ConversionInstalls:
                     continue
                 alias = self._installer_alias(node)
             elif isinstance(node, JsProperty) and isinstance(node.parent, JsObjectPattern):
-                key = _property_key_name(node)
-                if key == 'Reflect':
+                if key_is(node, _REFLECT, SETTLED_TREE):
                     escape = True
                     continue
-                if key is None or key not in CONVERSION_INSTALL_METHODS:
+                key = key_text(node)
+                if key is None or not key_is(node, CONVERSION_INSTALL_METHODS, SETTLED_TREE):
                     continue
                 alias = self._pattern_alias(node)
             else:
@@ -921,10 +923,9 @@ class ConversionInstalls:
             callee = strip_parens(value.callee)
             if not isinstance(callee, JsMemberExpression):
                 return False
-            method = static_property_key(callee)
-            if method == 'bind':
+            if key_is(callee, _BIND, SETTLED_TREE):
                 return self._copies_under(callee.object, key, depth)
-            if method == 'getOwnPropertyDescriptor' and len(value.arguments) > 1:
+            if len(value.arguments) > 1 and key_is(callee, _GET_OWN_PROPERTY_DESCRIPTOR, SETTLED_TREE):
                 other = strip_parens(value.arguments[1])
                 return isinstance(other, JsIdentifier) and self._model.resolve(other) is key
             return False
@@ -976,7 +977,7 @@ class ConversionInstalls:
         return not (
             isinstance(parent, JsMemberExpression)
             and strip_parens(parent.object) is node
-            and static_property_key(parent) is not None
+            and key_text(parent) is not None
         )
 
     def _scan(self) -> frozenset[Node] | None:
@@ -1000,7 +1001,7 @@ class ConversionInstalls:
                         sites.append(node.object)
                     elif spelled is None and self._is_copy_write(node):
                         copies.append(node.object)
-                elif static_property_key(node) == 'Reflect' and not read_is_only_tested(node):
+                elif not read_is_only_tested(node) and key_is(node, _REFLECT, SETTLED_TREE):
                     return None
             elif isinstance(node, JsCallExpression):
                 if self._collect_install_sites(node, sites, copies):

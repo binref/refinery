@@ -251,13 +251,14 @@ def _reachable_functions(
 
     A function whose only references in *body* are property-write statements (`funcName.prop =
     ...`) whose value and computed key *removable* lets go unevaluated, with neither the function
-    nor its properties read anywhere else in *body*, is write-only. Those statements do not make it reachable: it is reachable only where the body of
-    another reachable function names it, as a reachable `f` returning `W.extra` names `W`, and
-    once it is, the names its statements hold are reachable too. Two write-only functions that
-    only name each other stay unreachable. A name in *entrypoints* is never write-only: code
-    outside *body* reaches it, and what it reads of it is not in *body* to see. Returns a
-    `(set, dict)` pair: the set of reachable function names and a dict mapping each unreachable
-    write-only function name to the statements that are its only references.
+    nor its properties read anywhere else in *body*, is write-only. Those statements do not make
+    it reachable: it is reachable only where the body of another reachable function names it, as
+    a reachable `f` returning `W.extra` names `W`, and once it is, the names its statements hold
+    are reachable too. Two write-only functions that only name each other stay unreachable. A name
+    in *entrypoints* is never write-only: code outside *body* reaches it, and what it reads of it
+    is not in *body* to see. Returns a `(set, dict)` pair: the set of reachable function names and
+    a dict mapping each unreachable write-only function name to the statements that are its only
+    references.
     """
     referenced: set[str] = set()
     named: list[tuple[Statement, set[str]]] = []

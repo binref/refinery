@@ -65,6 +65,7 @@ from refinery.lib.scripts.js.deobfuscation.interpreter import (
     RegisteredBuiltin,
     registered_builtin,
 )
+from refinery.lib.scripts.js.keys import spelled_upward
 from refinery.lib.scripts.js.model import (
     LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrayExpression,
@@ -92,7 +93,6 @@ from refinery.lib.scripts.js.model import (
     JsUnaryExpression,
     callee_form_sensitive,
     object_member_access_runs_accessor,
-    static_concatenation,
     static_property_key,
     static_string,
     strip_parens,
@@ -124,37 +124,6 @@ _MIRRORED_COMPARISONS = {
     '>=' : '<=',
 }
 
-REVEALING_STRINGS = frozenset({
-    'Function',
-    'Reflect',
-    '__defineGetter__',
-    '__defineSetter__',
-    '__proto__',
-    'arguments',
-    'assign',
-    'callee',
-    'caller',
-    'constructor',
-    'defineProperties',
-    'defineProperty',
-    'eval',
-    'getPrototypeOf',
-    'prototype',
-    'setPrototypeOf',
-    'toPrimitive',
-    'toString',
-    'valueOf',
-})
-"""
-The strings the semantic and effect models look for in a key or a string literal and read as the
-presence of something only where they find one: an install, a reflective name, a read reaching a
-prototype, a conversion key. A key they cannot read is none of them to those readers, so a fold
-that turns code spelling no string into one spelling such a string shows the models a fact the
-models it holds do not record. The names whose escape the scan watches
-(`refinery.lib.scripts.js.analysis.intrinsics.ESCAPE_WATCHED_ROOTS`) are read the same way, but
-only as a computed key, where the scan reads `g['Date']` as the global it names.
-"""
-
 
 def _respells(literal: Expression, node: Node) -> bool:
     """
@@ -179,45 +148,26 @@ def _is_the_object_of_an_in(node: Node) -> bool:
     )
 
 
-def _spells_a_revealing_string(replaced: Node, value: str) -> bool:
+def _shows_the_models_a_string(held: ModelCache, replaced: Node, replacement: Node, value: str) -> bool:
     """
-    Whether the string *value*, written in place of *replaced*, spells one of `REVEALING_STRINGS`
-    as `refinery.lib.scripts.js.model.static_string` reads it, alone or with the concatenations it
-    completes, or spells a name whose escape the scan watches where it is a computed key
-    (`_names_a_key`). A concatenation holding a piece that reads as no string reads as
-    none, and so does every concatenation holding it, so the climb stops at the first.
-
-    Code that already reads as *value* leaves every reading around it as it was. A string a fold
-    completed since the models were last renewed made a renewal due when its last piece was
-    written, so writing the whole of it in place of its pieces shows them nothing.
+    Whether *replacement*, written in place of *replaced* and reading as the string *value*, shows
+    the held models a fact they do not record: an answer assumed that *replaced*, or a parenthesis
+    or a concatenation the string completes, is none of the names a reader looked for, and the
+    string written there is one of them
+    (`refinery.lib.scripts.js.keys.KeyAssumptions.revealed_by`); or a string on that climb spells a
+    name whose readers look at every string and still answer no
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.strings_still_unseen`). The climb builds
+    each string from the one below it (`refinery.lib.scripts.js.keys.spelled_upward`).
     """
-    if static_string(replaced) == value:
-        return False
-    cursor: Node = replaced
-    spelled: str | None = value
-    while spelled is not None:
-        if spelled in REVEALING_STRINGS:
-            return True
-        parent = cursor.parent
-        while isinstance(parent, JsParenthesizedExpression):
-            cursor, parent = parent, parent.parent
-        if spelled in ESCAPE_WATCHED_ROOTS and _names_a_key(parent, cursor):
-            return True
-        if not isinstance(parent, JsBinaryExpression) or parent.operator != '+':
-            return False
-        if parent.left is cursor:
-            spelled = static_concatenation(parent, spelled, static_string(parent.right))
-        else:
-            spelled = static_concatenation(parent, static_string(parent.left), spelled)
-        cursor = parent
-    return False
-
-
-def _names_a_key(parent: Node | None, key: Node) -> bool:
-    """
-    Whether *key* is the computed key of the member access *parent*.
-    """
-    return isinstance(parent, JsMemberExpression) and parent.computed and parent.property is key
+    model = held.model
+    assumed = model.assumed_keys
+    unseen = model.strings_still_unseen()
+    if assumed.revealed_by(replaced, value):
+        return True
+    return any(
+        text in unseen or assumed.revealed_by(node, text)
+        for node, text in spelled_upward(replacement, value)
+    )
 
 
 class JsSimplifications(PinnedTransformer):
@@ -254,15 +204,17 @@ class JsSimplifications(PinnedTransformer):
     def visit(self, node: Node) -> Node | None:
         """
         Visit *node*, and make a renewal due where the replacement a fold returns for it reads as a
-        string that shows the models a fact (`_spells_a_revealing_string`). Every fold returns its
-        replacement through here, so a key that `String.fromCharCode`, a `join`, a sequence or a
-        conditional collapses to is seen as surely as one an operator computes. The dispatch of
-        `refinery.lib.scripts.Visitor.visit` is written out rather than called, so that a deep tree
-        costs this pass no more stack than it costs any other transform.
+        string *node* did not read as, and that string shows the held models a fact
+        (`_shows_the_models_a_string`). Every fold returns its replacement through here, so a key
+        that `String.fromCharCode`, a `join`, a sequence or a conditional collapses to is seen as
+        surely as one an operator computes. The dispatch of `refinery.lib.scripts.Visitor.visit` is
+        written out rather than called, so that a deep tree costs this pass no more stack than it
+        costs any other transform.
 
-        A replacement returned while a renewal is due is written in its place at once. The walk of
+        Such a replacement, and any replacement returned while a renewal is due, is written in its
+        place at once: the check climbs from where it stands, and the walk of
         `refinery.lib.scripts.Transformer.generic_visit` writes the items of a list only once it has
-        visited all of them, and the renewal the next item's decision makes would otherwise build
+        visited all of them, so the renewal the next item's decision makes would otherwise build
         models of the tree the fold has not changed yet, and count itself done.
         """
         kind = type(node)
@@ -270,12 +222,15 @@ class JsSimplifications(PinnedTransformer):
         if handler is None:
             handler = self._dispatch[kind] = getattr(self, F'visit_{kind.__name__}', self.generic_visit)
         replacement = handler(node)
-        if replacement is not None and not self._renewal_due:
-            value = static_string(replacement)
-            if value is not None and _spells_a_revealing_string(node, value):
-                self._renewal_due = True
-        if replacement is not None and self._renewal_due:
+        if replacement is None:
+            return None
+        if self._renewal_due:
             _replace_in_parent(node, replacement)
+            return replacement
+        value = static_string(replacement)
+        if value is not None and static_string(node) != value:
+            _replace_in_parent(node, replacement)
+            self._renewal_due = _shows_the_models_a_string(self.held_models(), node, replacement, value)
         return replacement
 
     @property
@@ -360,11 +315,12 @@ class JsSimplifications(PinnedTransformer):
         reads such a value away, or collapses a key it was read under to a name the scan does not
         count, leaves fewer of them, never more.
 
-        Two edits do show the models a fact the held ones lack: a string written where code spelled
-        none, when it reads as a name a reader looks for (`REVEALING_STRINGS`), which any fold
-        collapsing a key may write (`visit`); and the name of a constructor written where a read
-        reached it, which the scan then follows. Such a fold renews the models before the next
-        decision (`cache`).
+        Two edits do show the models a fact the held ones lack: a string written where an answer
+        assumed a key it could not read is none of the names its reader looked for, or a string
+        spelling a name whose readers look at every string, which any fold collapsing a key may
+        write (`visit`); and the name of a constructor written where the scan then records a write
+        or a hand-off through it. Such a fold renews the models before the next decision
+        (`cache`).
 
         The same argument covers the freshness the effect model reports for a container base. A binding is
         judged fresh only when this pass owns every value it takes, and the pass adds no value to any binding;
@@ -680,7 +636,8 @@ class JsSimplifications(PinnedTransformer):
         reason a read whose `constructor` is read in turn keeps its spelling:
         `[].constructor.constructor` names `Function` to every reader of the text, and
         `Array.constructor` only to one that evaluates `Array`. The scan follows writes and
-        hand-offs through the name, so writing it makes a renewal due.
+        hand-offs through the name, so writing it makes a renewal due where the scan records one
+        there (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.records_a_read`).
         """
         if not function.is_constructor or function.name == 'Function':
             return None
@@ -698,7 +655,9 @@ class JsSimplifications(PinnedTransformer):
         name = JsIdentifier(name=function.name)
         if _respells(name, node):
             return None
-        self._renewal_due = True
+        watched = frozenset({function.name}) & ESCAPE_WATCHED_ROOTS
+        if watched and self.held_models().intrinsic_writes.records_a_read(node, watched):
+            self._renewal_due = True
         return name
 
     def _denoted_primitive(self, node: Node | None) -> tuple[bool, Value]:

@@ -58,8 +58,14 @@ from refinery.lib.scripts.js.analysis.model import (
     _pattern_reflective_exposure,
     enclosing_function,
     is_unread_source,
-    member_property_name,
     opaque_global_write,
+)
+from refinery.lib.scripts.js.keys import (
+    NO_IS_STRICTER,
+    KeyAssumptions,
+    key_is,
+    key_spells,
+    key_text,
 )
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
@@ -74,9 +80,9 @@ from refinery.lib.scripts.js.model import (
     JsObjectPattern,
     JsParenthesizedExpression,
     JsProperty,
-    JsStringLiteral,
     JsVariableDeclarator,
     JsWithStatement,
+    file_ended_inside,
     strip_parens,
     wraps_return,
 )
@@ -86,16 +92,24 @@ from refinery.lib.scripts.js.model import (
 #: before walking it.
 _CONSTRUCTOR_ALIAS_LIMIT = 8
 
-def _static_member_key(member: JsMemberExpression) -> str | None:
+_EVAL = frozenset({'eval'})
+
+
+def _key_is_known(member: JsMemberExpression) -> bool:
     """
-    The key a member access statically spells: the property identifier of a dot access, or the
-    value of a terminated string-literal computed access. `None` for any other computed key — one
-    only the runtime resolves.
+    Whether the key of *member* is statically known (`refinery.lib.scripts.js.keys.key_text`) and no
+    literal the file ended inside.
     """
-    prop = member.property
-    if member.computed:
-        return prop.value if isinstance(prop, JsStringLiteral) and prop.terminated else None
-    return prop.name if isinstance(prop, JsIdentifier) else None
+    key = member.property
+    return key is not None and not file_ended_inside(key) and key_text(member) is not None
+
+
+def _spells_constructor(member: JsMemberExpression) -> bool:
+    """
+    Whether *member* certainly reads `constructor` (`refinery.lib.scripts.js.keys.key_spells`) under a
+    key that is no literal the file ended inside.
+    """
+    return _key_is_known(member) and key_spells(member, 'constructor')
 
 
 def denotes_function_intrinsic(
@@ -210,7 +224,7 @@ def _denotes_function_intrinsic(
     def resolved_member(member: JsMemberExpression) -> bool | None:
         if model.scope_of(member) is None:
             return None
-        if _static_member_key(member) is None:
+        if not _key_is_known(member):
             if member.computed:
                 key = eval_string(member.property) if eval_string is not None else None
                 if key != 'constructor':
@@ -267,7 +281,9 @@ def _denotes_function_intrinsic(
     if effects.global_key_written('Function', 'constructor'):
         return False
     if isinstance(expr, JsMemberExpression):
-        return _denotes_function_constructor(expr, read_effect, resolved_member, builtin_function)
+        return _denotes_function_constructor(
+            expr, read_effect, resolved_member, builtin_function, assumptions=model.assumed_keys
+        )
     return False
 
 
@@ -276,6 +292,8 @@ def _denotes_function_constructor(
     read_effect: Callable[[Node], bool] | None = None,
     resolved_member: Callable[[JsMemberExpression], bool | None] | None = None,
     builtin_function: Callable[[Node], bool] | None = None,
+    *,
+    assumptions: KeyAssumptions,
 ) -> bool | None:
     """
     Whether *expr* evaluates to the `Function` intrinsic, reached by `.constructor` navigation from
@@ -302,16 +320,16 @@ def _denotes_function_constructor(
     for exactly those questions, keeping this predicate model-free. A base that is a function the
     language installs, `[].at`, is one only *builtin_function* can recognize, for the same reason.
     """
-    if _static_member_key(expr) != 'constructor':
+    if not _spells_constructor(expr):
         return resolved_member is not None and resolved_member(expr)
     base = strip_parens(expr.object)
     if base is None:
         return False
     if isinstance(base, FUNCTION_NODES):
         return not wraps_return(base)
-    if isinstance(base, JsMemberExpression) and _static_member_key(base) == 'constructor':
+    if isinstance(base, JsMemberExpression) and _spells_constructor(base):
         inner = base.object
-        return inner is not None and side_effect_free(inner, read_effect=read_effect)
+        return inner is not None and side_effect_free(inner, read_effect=read_effect, assumptions=assumptions)
     if builtin_function is not None and builtin_function(base):
         return True
     return resolved_member is not None and resolved_member(expr)
@@ -755,8 +773,7 @@ class TamperingModel:
             return [site]
         through_constructions = True
         if isinstance(site, JsMemberExpression):
-            key = member_property_name(site)
-            through_constructions = key != 'eval'
+            through_constructions = not key_is(site, _EVAL, NO_IS_STRICTER)
         elif isinstance(site, JsIdentifier):
             through_constructions = site.name != 'eval'
         elif isinstance(site, (JsVariableDeclarator, JsAssignmentExpression)):

@@ -31,18 +31,8 @@ import unittest
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 
-from refinery.lib.scripts.js.analysis.conversions import CONVERSION_KEYS, RECEIVER_INSTALL_METHODS
 from refinery.lib.scripts.js.analysis.effects import build_effects
-from refinery.lib.scripts.js.analysis.intrinsics import _SURFACE_KEYS, SPECIES_KEYS
-from refinery.lib.scripts.js.analysis.model import (
-    _DISPLACING_CHAIN_KEYS,
-    _PROTOTYPE_KEEPING_KEYS,
-    _PROTOTYPE_REFLECTING_CALLEES,
-    REFLECTIVE_INTRINSICS,
-    build_semantic_model,
-)
-from refinery.lib.scripts.js.deobfuscation.simplify import REVEALING_STRINGS
-from refinery.lib.scripts.js.model import ACCESSOR_INSTALL_METHODS, CONVERSION_INSTALL_METHODS
+from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.units.scripting.djs import djs
 
@@ -413,22 +403,3 @@ class TestTheGuardOfTheFolds(TestBase):
             with self.subTest(source=source):
                 self.assertFalse(self._followed(source))
 
-
-class TestTheStringsAFoldRenewsTheModelsFor(TestBase):
-
-    def test_every_name_a_reader_looks_for_is_one(self):
-        for names in (
-            ACCESSOR_INSTALL_METHODS,
-            CONVERSION_INSTALL_METHODS,
-            CONVERSION_KEYS,
-            RECEIVER_INSTALL_METHODS,
-            REFLECTIVE_INTRINSICS,
-            SPECIES_KEYS,
-            _SURFACE_KEYS,
-            _PROTOTYPE_KEEPING_KEYS,
-            _PROTOTYPE_REFLECTING_CALLEES,
-            _DISPLACING_CHAIN_KEYS,
-            frozenset({'caller', 'toPrimitive', 'Reflect'}),
-        ):
-            with self.subTest(names=sorted(names)):
-                self.assertLessEqual(names, REVEALING_STRINGS)

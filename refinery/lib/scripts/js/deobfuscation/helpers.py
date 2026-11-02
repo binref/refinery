@@ -74,8 +74,10 @@ from refinery.lib.scripts.js.builtins import (
     PROTOTYPE_FUNCTIONS,
     PROTOTYPE_METHODS,
 )
+from refinery.lib.scripts.js.keys import UNHELD, key_text
 from refinery.lib.scripts.js.lexer import is_identifier_name
 from refinery.lib.scripts.js.model import (
+    ACCESSOR_INSTALL_METHODS,
     LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrayExpression,
     JsArrowFunctionExpression,
@@ -124,7 +126,6 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
     JsVarKind,
     JsWhileStatement,
-    accessor_install_method,
     callee_form_sensitive,
     strip_parens,
     wraps_return,
@@ -2143,7 +2144,11 @@ def is_safe_iife_inline(
     effectful_indices = [
         i for i, arg in enumerate(call_args)
         if not side_effect_free(
-            arg, call_pure=call_pure, read_effect=read_effect, call_established=call_established,
+            arg,
+            call_pure=call_pure,
+            read_effect=read_effect,
+            call_established=call_established,
+            assumptions=UNHELD,
         )
     ]
     if not effectful_indices:
@@ -2948,8 +2953,8 @@ def _call_landing(call: JsCallExpression | JsNewExpression, part: Node) -> Landi
     callee = strip_parens(call.callee)
     if not isinstance(call, JsCallExpression) or not isinstance(callee, JsMemberExpression):
         return Landing.ARGUMENT
-    method = accessor_install_method(callee)
-    if method is None:
+    method = key_text(callee)
+    if method not in ACCESSOR_INSTALL_METHODS:
         return Landing.ARGUMENT
     if method.startswith('__define'):
         return Landing.KEY if arguments[0] is part else Landing.ARGUMENT

@@ -26,7 +26,6 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     SemanticModel,
     _governing_target,
-    _property_key_name,
     enclosing_function,
     is_invocation_target,
     is_member_write_target,
@@ -37,7 +36,7 @@ from refinery.lib.scripts.js.builtins import (
     PROTOTYPE_CHAIN_PROPERTIES,
     RECEIVER_WRITING_METHODS,
 )
-from refinery.lib.scripts.js.keys import accessor_installs, key_may_be, key_text
+from refinery.lib.scripts.js.keys import accessor_installs, key_is, key_may_be, key_text
 from refinery.lib.scripts.js.model import (
     ACCESSOR_INSTALL_METHODS,
     LOGICAL_ASSIGNMENT_OPERATORS,
@@ -65,8 +64,6 @@ from refinery.lib.scripts.js.model import (
     JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclarator,
-    static_property_key,
-    static_string,
     strip_parens,
 )
 
@@ -248,6 +245,8 @@ store into their receiver, and the accessor installers.
 
 _PROTOTYPE_READERS = frozenset({'getPrototypeOf'})
 
+_PROTOTYPE_KEY = frozenset({'prototype'})
+
 _CONSTRUCTOR_KEY = frozenset({'constructor'})
 
 
@@ -346,7 +345,7 @@ class _BuiltinReach:
         if isinstance(node, JsMemberExpression):
             if key_may_be(node, BUILTIN_MEMBER_NAMES):
                 return True, []
-            if key_text(node) == 'prototype' and node.object is not None:
+            if key_may_be(node, _PROTOTYPE_KEY) and node.object is not None:
                 return False, [node.object]
             return False, []
         if isinstance(node, JsCallExpression):
@@ -465,10 +464,8 @@ def _destructured_under_a_builtin_key(target: Node) -> bool:
     cursor = target
     while cursor is not outermost and cursor.parent is not None:
         cursor = cursor.parent
-        if isinstance(cursor, JsProperty):
-            key = _property_key_name(cursor)
-            if key is None or key in BUILTIN_MEMBER_NAMES:
-                return True
+        if isinstance(cursor, JsProperty) and key_may_be(cursor, BUILTIN_MEMBER_NAMES):
+            return True
     return False
 
 
@@ -550,6 +547,14 @@ class IntrinsicWrites(NamedTuple):
             if not _is_member_object(leaf) and model.may_be_the_global_object(leaf):
                 return True
         return False
+
+    def records_a_read(self, node: Node, names: frozenset[str]) -> bool:
+        """
+        Whether the scan records the watched *names* read at *node*: what *node* evaluates to is
+        written through or escapes (`_records_a_watched_read`), the test the scan applies to a
+        property read naming one of them.
+        """
+        return _records_a_watched_read(self.aliases.model, self.aliases, node, names)
 
     def denotes_a_watched_root(self, binding: Binding) -> bool:
         """
@@ -768,11 +773,14 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
                     record_escape(watched)
             continue
         if isinstance(node, JsMemberExpression):
-            key = static_property_key(node)
-            watched = frozenset() if key is None else frozenset({key}) & ESCAPE_WATCHED_ROOTS
-            if not watched:
+            if not key_may_be(node, ESCAPE_WATCHED_ROOTS):
                 continue
-            if _written_through(node) or _value_escapes(model, aliases, node, watched):
+            key = key_text(node)
+            watched = ESCAPE_WATCHED_ROOTS if key is None else frozenset({key})
+            if (
+                _records_a_watched_read(model, aliases, node, watched)
+                and key_is(node, ESCAPE_WATCHED_ROOTS, model.assumed_keys)
+            ):
                 record_escape(watched)
             continue
         if isinstance(node, JsCallExpression):
@@ -784,7 +792,7 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
             continue
         for member in _written_members(_write_target(node)):
             for base in _member_chain_roots(member):
-                record(aliases.names_denoted_by(base), static_property_key(member))
+                record(aliases.names_denoted_by(base), key_text(member))
             written_global = model.may_name_a_global(member)
             if written_global is not None:
                 record(frozenset({written_global}), None)
@@ -794,6 +802,19 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
         aliases,
         followable,
     )
+
+
+def _records_a_watched_read(
+    model: SemanticModel,
+    aliases: _IntrinsicAliases,
+    node: Node,
+    names: frozenset[str],
+) -> bool:
+    """
+    Whether what *node* evaluates to, which may be one of the watched *names*, is written through
+    (`_written_through`) or escapes (`_value_escapes`).
+    """
+    return _written_through(node) or _value_escapes(model, aliases, node, names)
 
 
 def _written_members(target: Node | None) -> Iterator[JsMemberExpression]:
@@ -1027,20 +1048,10 @@ def _forwarded_value(node: Node) -> Node | None:
 def _reaches_intrinsic_surface(member: JsMemberExpression) -> bool:
     """
     Whether reading *member*'s key off an intrinsic can yield an object sharing that intrinsic's
-    mutable surface. A computed key whose string value is not statically known may be any of them,
-    so it counts.
-
-    This is a *may* analysis, opposite in direction to the use
-    `refinery.lib.scripts.js.model.accessor_install_method` makes of
-    `refinery.lib.scripts.js.model.static_string`: there an unknown key names no method, because
-    only a key a fold can collapse can reveal an install mid-pass; here an unknown key reaches
-    everything, because a missed reach is a name that keeps its trust while the program patches it.
+    mutable surface. A key not known may be any of them, so it counts: a missed reach is a name
+    that keeps its trust while the program patches it.
     """
-    prop = member.property
-    if member.computed:
-        value = static_string(prop)
-        return value is None or value in _SURFACE_KEYS
-    return isinstance(prop, JsIdentifier) and prop.name in _SURFACE_KEYS
+    return key_may_be(member, _SURFACE_KEYS)
 
 
 def _names_bound_to(

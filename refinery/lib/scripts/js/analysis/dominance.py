@@ -70,8 +70,8 @@ from refinery.lib.scripts.js.analysis.model import (
     is_invocation_target,
     is_member_write_target,
     is_simple_assignment_target,
-    member_property_name,
 )
+from refinery.lib.scripts.js.keys import key_may_be, key_text
 from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -111,14 +111,16 @@ class _HandOver:
     exported: bool
 
 
+_PROTO = frozenset({'__proto__'})
+
+
 def _may_name_the_prototype(access: JsMemberExpression) -> bool:
     """
     Whether *access* may read or write the prototype of the object it accesses, or the constructor
     whose `prototype` that is: its key is one of
     `refinery.lib.scripts.js.analysis.intrinsics.SPECIES_KEYS`, or not statically known.
     """
-    name = member_property_name(access)
-    return name is None or name in SPECIES_KEYS
+    return key_may_be(access, SPECIES_KEYS)
 
 
 def _may_hand_out_the_prototype(access: JsMemberExpression) -> bool:
@@ -657,8 +659,8 @@ class DominanceModel(DominatorModel):
         target = strip_parens(parent.left)
         if not isinstance(target, JsMemberExpression) or not isinstance(target.object, JsIdentifier):
             return None
-        key = member_property_name(target)
-        if key is None or key == '__proto__':
+        key = key_text(target)
+        if key is None or key_may_be(target, _PROTO):
             return None
         binding = self.model.resolve(target.object)
         if binding is None:
@@ -751,7 +753,7 @@ class DominanceModel(DominatorModel):
                 points.append(access)
             if is_simple_assignment_target(access):
                 continue
-            if (key := member_property_name(access)) is None:
+            if (key := key_text(access)) is None:
                 unnamed.append(access)
             else:
                 reads.setdefault(key, []).append(access)

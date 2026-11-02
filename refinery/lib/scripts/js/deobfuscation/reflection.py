@@ -70,6 +70,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 )
 from refinery.lib.scripts.js.deobfuscation.nameproxy import NameProxy, Reading
 from refinery.lib.scripts.js.deobfuscation.strict_divergence import diverges_under_strict
+from refinery.lib.scripts.js.keys import UNHELD
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     SCRIPT_CONTEXT,
@@ -298,7 +299,7 @@ def _extract_indirect_eval_code(
     if isinstance(callee, JsSequenceExpression):
         exprs = callee.expressions
         if len(exprs) >= 2 and free_global_name(exprs[-1]) == 'eval':
-            if all(side_effect_free(e, read_effect=read_effect) for e in exprs[:-1]):
+            if all(side_effect_free(e, read_effect=read_effect, assumptions=UNHELD) for e in exprs[:-1]):
                 return string_value(node.arguments[0]) or eval_string(node.arguments[0])
     if alias_name(node.callee) == 'eval':
         if base_droppable is None or not base_droppable(node.callee):

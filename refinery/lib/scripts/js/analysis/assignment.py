@@ -56,8 +56,8 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     enclosing_operator,
     is_invocation_target,
-    member_property_name,
 )
+from refinery.lib.scripts.js.keys import key_text
 from refinery.lib.scripts.js.model import (
     LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrayExpression,
@@ -206,7 +206,7 @@ class DefiniteAssignmentModel:
                     continue
                 name = self.model.global_alias_member_name(target)
                 if name is None:
-                    name = member_property_name(target)
+                    name = key_text(target)
                 if name is not None:
                     named = self._by_name.get(name)
                     if named is not None:

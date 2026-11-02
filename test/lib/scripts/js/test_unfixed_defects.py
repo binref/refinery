@@ -6876,7 +6876,6 @@ class TestABuiltInABaseConstructorReturnsIsTheReceiverOfTheDerivedOne(TestBase):
 #: A program building a function through `constructor` read twice under a key the run reads only
 #: after the construction is scanned, or never, mapped to what Node prints for it.
 A_FUNCTION_BUILT_UNDER_A_KEY_THE_RUN_READS_LATE = {
-    "var F = []['constr' + 'uctor']['constr' + 'uctor']; F('Math.floor = function () { return 7; }')(); console.log(Math.floor(1.5));": '7\n',
     "function k() { return 'constr' + 'uctor'; } var F = [][k()][k()]; F('Math.floor = function () { return 7; }')(); console.log(Math.floor(1.5));": '7\n',
     "var k = ['constructor'][Math.random() < 2 ? 0 : 1]; var F = [][k][k]; F('Math.floor = function () { return 7; }')(); console.log(Math.floor(1.5));": '7\n',
 }
@@ -6888,9 +6887,8 @@ class TestAFunctionBuiltUnderAKeyTheRunReadsLateRunsItsCode(TestBase):
     `[].constructor.constructor` is `Function`, and the function it builds replaces `Math.floor`
     before the program calls it. The strict model counts a construction through a key it cannot read
     (`refinery.lib.scripts.js.analysis.intrinsics._constructs_through_an_unread_key`), but it folds
-    `Math.floor(1.5)` to 1 on a model built before a later pass reads the key, or where the key is
-    never read and the reader looking for `constructor` counts it as some other key. A correct
-    reader counts a key it cannot read as `constructor`.
+    `Math.floor(1.5)` to 1 where the key is never read and the reader looking for `constructor`
+    counts it as some other key. A correct reader counts a key it cannot read as `constructor`.
     """
 
     def test_node_prints_what_each_row_records(self):
