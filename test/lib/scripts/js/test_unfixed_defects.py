@@ -5940,15 +5940,6 @@ AN_ACCESSOR_BUILT_OVER_VALUES_IT_CLOSES_OVER = {
         prints('undefined', '1'),
         Reading.COMMONJS,
     ),
-    'the accessor hands out a list the list it closes over holds': Program(
-        a_program("""
-            var X = function () { var a = [[1], [2]]; return function (i) { return a[i]; }; }();
-            X(0).push(5);
-            console.log(X(0).length);
-            """),
-        prints('2'),
-        Reading.COMMONJS,
-    ),
 }
 
 
@@ -5958,11 +5949,8 @@ class TestAnAccessorBuiltOverValuesItClosesOverIsPromotedOnlyWhereThatHolds(Test
     """
     `refinery.lib.scripts.js.deobfuscation.iifeaccessor` rewrites `var X = function () { var a =
     [...]; return function (...) {...}; }()` into a function declaration that builds the closed-over
-    values inside itself. It declines where a call writes into a closed-over list or object or hands
-    one out, but a list or object such a value holds and a read hands out is a new one at every call
-    all the same, so a change the caller makes to it is gone by the next call. And the declaration
-    is hoisted above reads that saw `undefined`. The rewrite holds only for values no call writes,
-    hands out, or is read before the build.
+    values inside itself. The declaration is hoisted above reads that saw `undefined` where the
+    variable stood, so a read before the build sees the function.
     """
 
 

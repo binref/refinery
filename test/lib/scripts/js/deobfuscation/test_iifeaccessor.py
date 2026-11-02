@@ -17,27 +17,18 @@ class TestIIFEAccessorPromoter(TestJsDeobfuscator):
     def _promote(self, source: str) -> str:
         return self._run_transformer(source, JsIIFEAccessorPromoter)
 
-    def test_promotes_simple_accessor(self):
+    def test_does_not_promote_when_an_inner_list_is_handed_out(self):
         source = inspect.cleandoc(
             """
-            var get = function () {
-                var data = [[72, 105], [66, 121, 101]];
-                return function (i) { return data[i]; };
+            var get = function() {
+              var data = [[72, 105], [66, 121, 101]];
+              return function(i) {
+                return data[i];
+              };
             }();
             """
         )
-        result = self._promote(source)
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                function get(i) {
-                  var data = [[72, 105], [66, 121, 101]];
-                  return data[i];
-                }
-                """
-            ),
-            result,
-        )
+        self.assertEqual(source, self._promote(source))
 
     def test_fold_xor_accessor_pattern_end_to_end(self):
         source = inspect.cleandoc(
@@ -212,7 +203,7 @@ class TestIIFEAccessorPromoter(TestJsDeobfuscator):
         source = inspect.cleandoc(
             """
             var get = function () {
-                var data = [[72, 105]];
+                var data = [72, 105];
                 return function (i) { 'use strict'; return data[i]; };
             }();
             """
@@ -222,7 +213,7 @@ class TestIIFEAccessorPromoter(TestJsDeobfuscator):
                 """
                 function get(i) {
                   'use strict';
-                  var data = [[72, 105]];
+                  var data = [72, 105];
                   return data[i];
                 }
                 """
@@ -238,7 +229,7 @@ class TestIIFEAccessorPromoter(TestJsDeobfuscator):
         source = inspect.cleandoc(
             """
             var get = function () {
-                var data = [[72, 105]];
+                var data = [72, 105];
                 return function (i) { 'use strict'; 'other'; return data[i]; };
             }();
             """
@@ -249,7 +240,7 @@ class TestIIFEAccessorPromoter(TestJsDeobfuscator):
                 function get(i) {
                   'use strict';
                   'other';
-                  var data = [[72, 105]];
+                  var data = [72, 105];
                   return data[i];
                 }
                 """
@@ -261,7 +252,7 @@ class TestIIFEAccessorPromoter(TestJsDeobfuscator):
         source = inspect.cleandoc(
             """
             var get = function () {
-                var data = [[72, 105]];
+                var data = [72, 105];
                 return function (i) { return data[i]; };
             }();
             """
@@ -270,7 +261,7 @@ class TestIIFEAccessorPromoter(TestJsDeobfuscator):
             inspect.cleandoc(
                 """
                 function get(i) {
-                  var data = [[72, 105]];
+                  var data = [72, 105];
                   return data[i];
                 }
                 """
@@ -521,9 +512,9 @@ class TestAnAccessorAnIIFEBuildsInABlockIsNotPromoted(TestJsDeobfuscator):
         )
 
 
-#: An accessor whose closure builds a list or an object that a call writes into or hands out, mapped
-#: to what Node prints for the program. The IIFE builds the value once, so what one call leaves in
-#: it, and its identity, reach the next call.
+#: An accessor whose closure builds a list or an object that a call writes into or hands out, or one
+#: holding a list or an object a read hands out, mapped to what Node prints for the program. The
+#: IIFE builds each of them once, so what one call leaves in it, and its identity, reach the next.
 _AN_ACCESSOR_WHOSE_CLOSED_OVER_VALUE_OUTLIVES_A_CALL: dict[str, str] = {
     'var acc = (function () { var t = [0]; return function (i) { t[0] = t[0] + i; return t[0]; }; })();'
     ' console.log(acc(1), acc(1));': '1 2\n',
@@ -543,12 +534,21 @@ _AN_ACCESSOR_WHOSE_CLOSED_OVER_VALUE_OUTLIVES_A_CALL: dict[str, str] = {
     ' console.log(next(), next());': '1 2\n',
     'var items = (function () { var list = []; return function () { return list; }; })();'
     ' items().push(1); items().push(2); console.log(items().length);': '2\n',
+    'var X = function () { var a = [[1], [2]]; return function (i) { return a[i]; }; }();'
+    ' X(0).push(5); console.log(X(0).length);': '2\n',
+    'var X = function () { var d = [[1], [2]]; return function (i) { var a = d[i]; return a; }; }();'
+    ' X(0).push(5); console.log(X(0).length);': '2\n',
+    'var X = function () { var d = [[1], [2]]; return function (i) { var a = d[i]; a.push(9); return a.length; }; }();'
+    ' console.log(X(0), X(0));': '2 3\n',
+    "var X = function () { var cfg = { list: ['a', 'b'] }; return function () { return cfg.list; }; }();"
+    " X().push('c'); console.log(X().length);": '3\n',
 }
 
 
 #: An accessor whose closure builds a list or an object it only reads through, mapped to the text
 #: the promotion writes and to what Node prints for the program. A method called on a string the
-#: list holds changes no list, and neither does a method of an array that only reads it.
+#: list holds changes no list, neither does a method of an array that only reads it, and a read
+#: through an inner list down to a number hands no list out.
 _AN_ACCESSOR_THAT_ONLY_READS_WHAT_IT_CLOSES_OVER: dict[str, tuple[str, str]] = {
     "var X = function () { var t = ['abc', 'de']; return function (i) {"
     " return t[i].split('').reverse().join(''); }; }(); console.log(X(0));": (
@@ -583,6 +583,17 @@ _AN_ACCESSOR_THAT_ONLY_READS_WHAT_IT_CLOSES_OVER: dict[str, tuple[str, str]] = {
             console.log(X('b'));
             """
         ), 'q\n'),
+    'var X = function () { var t = [[1, 2], [3]]; return function (i, j) { return t[i][j]; }; }();'
+    ' console.log(X(0, 1));': (
+        inspect.cleandoc(
+            """
+            function X(i, j) {
+              var t = [[1, 2], [3]];
+              return t[i][j];
+            }
+            console.log(X(0, 1));
+            """
+        ), '2\n'),
 }
 
 
@@ -591,7 +602,7 @@ class TestAnAccessorWhoseClosedOverValueOutlivesACallIsNotPromoted(TestJsDeobfus
     Retired from the JavaScript defect ledger and kept as the regression it retired. The promotion
     builds the closed-over values inside the declaration it writes, once per call, which computes
     what the IIFE did only where no call writes into a list or object it closes over or hands one
-    out.
+    out, nor hands out a list or object such a value holds.
     """
 
     def _promote(self, source: str) -> str:

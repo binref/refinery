@@ -22,13 +22,11 @@ variable through the result of an IIFE that closes over a constant lookup table 
 parameters. `refinery.lib.scripts.js.deobfuscation.evaluator.JsFunctionEvaluator` only registers
 `refinery.lib.scripts.js.model.JsFunctionDeclaration` nodes in its scope tree, so call sites like
 `X(0x3a2)` are otherwise never folded. The rewrite is only applied when the returned function
-assigns no captured variable and only reads through a captured list or object
-(`_closed_over_containers_stay_unchanged`); under that condition building the captured values
-afresh at every call computes what the one build the IIFE ran did. A list or object held by a
-captured one and handed out by a read is not covered: the code receiving it may change it or compare
-it, and the promotion makes it a fresh one at every call
-(`test_unfixed_defects.TestAnAccessorBuiltOverValuesItClosesOverIsPromotedOnlyWhereThatHolds`).
-After the rewrite, the function evaluator folds each call site to its computed string literal.
+assigns no captured variable and only reads through a captured list or object, and no list or
+object such a read answers leaves the call (`_closed_over_containers_stay_unchanged`); under that
+condition building the captured values afresh at every call computes what the one build the IIFE
+ran did. After the rewrite, the function evaluator folds each call site to its computed string
+literal.
 
 The declaration has to stand at the top level of a function, a module or a script, exported or
 not, where a function declaration names the scope the declarator named. In a block it would name
@@ -37,7 +35,7 @@ is where a `var`, a `let` or a `const` there puts its name.
 """
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Iterable, Iterator, NamedTuple
 
 from refinery.lib.scripts import (
     Node,
@@ -45,7 +43,14 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
-from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES, hoists_its_functions
+from refinery.lib.scripts.js.analysis.model import (
+    FUNCTION_NODES,
+    Binding,
+    ContainerRole,
+    container_reference_role,
+    enclosing_operator,
+    hoists_its_functions,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     extract_identifier_params,
@@ -54,6 +59,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     walk_receiver_scope,
     walk_scope,
 )
+from refinery.lib.scripts.js.keys import key_text
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
@@ -64,6 +70,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsMemberExpression,
     JsObjectExpression,
     JsProperty,
     JsReturnStatement,
@@ -73,6 +80,7 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
     is_async_function,
     is_generator_function,
+    object_sets_prototype,
     strip_parens,
     wraps_return,
 )
@@ -218,12 +226,109 @@ def _is_safe_to_promote(
     return True
 
 
-def _holds_only_primitives(literal: JsArrayExpression | JsObjectExpression) -> bool:
+_Container = JsArrayExpression | JsObjectExpression
+
+
+def _containers(values: Iterable[Node]) -> list[_Container]:
+    return [value for value in values if isinstance(value, (JsArrayExpression, JsObjectExpression))]
+
+
+def _held_values(literal: _Container) -> list[Node]:
     if isinstance(literal, JsArrayExpression):
-        values = literal.elements
-    else:
-        values = [prop.value for prop in literal.properties if isinstance(prop, JsProperty)]
-    return not any(isinstance(value, (JsArrayExpression, JsObjectExpression)) for value in values)
+        return [element for element in literal.elements if element is not None]
+    return [
+        prop.value for prop in literal.properties
+        if isinstance(prop, JsProperty) and prop.value is not None
+    ]
+
+
+def _containers_within(literal: _Container) -> Iterator[_Container]:
+    yield literal
+    for held in _containers(_held_values(literal)):
+        yield from _containers_within(held)
+
+
+def _values_read_under(literal: _Container, key: str | None) -> list[Node]:
+    """
+    The values the closure built that a read of *key* off *literal* may answer: the one it holds
+    under that key, or every one it holds where the key has no text. A key the literal does not hold
+    answers a primitive or a value of the language, such as `length` or a method of a prototype,
+    which no call of the accessor builds.
+    """
+    if key is None:
+        return _held_values(literal)
+    if isinstance(literal, JsArrayExpression):
+        if not key.isascii() or not key.isdigit() or str(int(key)) != key:
+            return []
+        index = int(key)
+        elements = literal.elements
+        if index >= len(elements) or (element := elements[index]) is None:
+            return []
+        return [element]
+    return [
+        prop.value for prop in literal.properties
+        if isinstance(prop, JsProperty) and prop.value is not None and key_text(prop) in (key, None)
+    ]
+
+
+def _read_values_stay_in_the_call(cache: ModelCache, binding: Binding, held: list[_Container]) -> bool:
+    """
+    Whether no list or object the closure built leaves a call through a read of *binding*, which
+    holds one of *held*. Every reference reads through the binding or only tests it, and a read that
+    may answer such a list or object is only tested, read through in turn, or the value of a
+    variable that is itself only read through (`_stored_where_it_is_only_read_through`).
+    """
+    if binding.dynamic_refs:
+        return False
+    for reference in cache.model.references(binding):
+        role = container_reference_role(reference)
+        if role is ContainerRole.VERDICT_READ:
+            continue
+        if role is not ContainerRole.MEMBER_READ:
+            return False
+        read: Node = reference
+        values: list[Node] = list(held)
+        while (
+            isinstance(member := enclosing_operator(read), JsMemberExpression)
+            and strip_parens(member.object) is read
+        ):
+            key = key_text(member)
+            values = [value for container in _containers(values) for value in _values_read_under(container, key)]
+            read = member
+        if not (answered := _containers(values)):
+            continue
+        if not isinstance(read, JsMemberExpression):
+            return False
+        if container_reference_role(read) is ContainerRole.VERDICT_READ:
+            continue
+        if not _stored_where_it_is_only_read_through(cache, read, answered):
+            return False
+    return True
+
+
+def _stored_where_it_is_only_read_through(
+    cache: ModelCache,
+    read: JsMemberExpression,
+    answered: list[_Container],
+) -> bool:
+    """
+    Whether *read*, which may answer one of the lists or objects *answered*, initializes a variable
+    nothing else writes and that is only read through
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`), with no
+    list or object its own reads answer leaving the call either.
+    """
+    declarator = enclosing_operator(read)
+    if not isinstance(declarator, JsVariableDeclarator) or strip_parens(declarator.init) is not read:
+        return False
+    if not isinstance(name := declarator.id, JsIdentifier):
+        return False
+    variable = cache.model.binding_of(name)
+    return (
+        variable is not None
+        and not variable.writes
+        and cache.effects.binding_is_immutable_container(variable)
+        and _read_values_stay_in_the_call(cache, variable, answered)
+    )
 
 
 def _closed_over_containers_stay_unchanged(
@@ -231,12 +336,16 @@ def _closed_over_containers_stay_unchanged(
     closure_decls: list[JsVariableDeclaration],
 ) -> bool:
     """
-    Whether every list or object the closure builds is only read through: never written into,
-    given to a method that may change it, or handed out
-    (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`). The
-    IIFE builds such a value once, so what one call writes into it, and its identity, reach the next
-    call, which the promoted declaration starts from a fresh value instead. A call on a value the
-    container holds is vouched for where every such value is a primitive, which no call can change.
+    Whether every list or object the closure builds stays as it was and inside each call. The IIFE
+    builds such a value once, so what one call writes into it, and its identity, reach the next
+    call, which the promoted declaration starts from a fresh value instead. The list or object a
+    captured variable holds is only read through: never written into, given to a method that may
+    change it, or handed out
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`). A call
+    on a value it holds is vouched for where every such value is a primitive, which no call can
+    change. A list or object it holds is one the closure built as well, so no read may hand one out
+    (`_read_values_stay_in_the_call`); an object literal setting its prototype is declined, because a
+    read of a key it does not hold may then answer a value the prototype holds.
     """
     for statement in closure_decls:
         for declarator in statement.declarations:
@@ -249,8 +358,18 @@ def _closed_over_containers_stay_unchanged(
                 return False
             if (binding := cache.model.binding_of(name)) is None:
                 return False
-            inert = frozenset() if _holds_only_primitives(literal) else None
+            nested = bool(_containers(_held_values(literal)))
+            inert = None if nested else frozenset()
             if not cache.effects.binding_is_immutable_container(binding, inert_methods=inert):
+                return False
+            if not nested:
+                continue
+            if any(
+                isinstance(container, JsObjectExpression) and object_sets_prototype(container)
+                for container in _containers_within(literal)
+            ):
+                return False
+            if not _read_values_stay_in_the_call(cache, binding, [literal]):
                 return False
     return True
 
