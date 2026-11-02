@@ -60,7 +60,9 @@ class DeobfuscationOptions:
     `run`, a Windows Script Host handler, a browser event target. Such a function has no caller inside
     the file, so reachability computed over the file alone judges it dead and removes it, together with
     everything only it reached. Which names a host calls is not knowable from the file, so the analyst
-    supplies them; each is matched case-sensitively, because JavaScript identifiers are.
+    supplies them; each is matched case-sensitively, because JavaScript identifiers are. The event
+    handlers the host *environment* calls, such as the `onload` of a browser window, need no pattern
+    (`is_host_entrypoint`).
 
     *environment* pins the host the input is assumed to run in, which decides whether a bare read of a
     name the program never declares resolves or throws a `ReferenceError`. The default `universal`
@@ -200,9 +202,12 @@ def file_kind(options: object | None, root: JsScript) -> FileKind:
 
 def is_host_entrypoint(options: object | None, name: str) -> bool:
     """
-    Whether *name* is a top-level function the analyst declared a host calls by name, so removing it
-    would delete code that is reachable from outside the file. Any value that is not a
-    `DeobfuscationOptions` names no entrypoints, which is the behavior of every caller that supplies
-    none: reachability is then decided by the file alone, as before.
+    Whether a host calls what the global name *name* holds, so removing it would delete code that
+    is reachable from outside the file: the host *options* pin calls it as an event handler
+    (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.calls_handler`), or the analyst
+    declared it an entrypoint. Any value that is not a `DeobfuscationOptions` declares none, and its
+    host is the one `host_environment` defaults to.
     """
+    if host_environment(options).calls_handler(name):
+        return True
     return isinstance(options, DeobfuscationOptions) and options.names_entrypoint(name)

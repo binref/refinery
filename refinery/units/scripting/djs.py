@@ -20,7 +20,8 @@ class djs(IterativeDeobfuscator):
     not change the output. By default the input is assumed to run as a classic global script; pass
     the module switch when it runs as an ES or CommonJS module instead, or the CommonJS switch when
     it is known to run as the latter. Name any entrypoint a host calls into, or dead-code removal
-    will discard it as unreachable.
+    will discard it as unreachable. The event handlers the host calls, such as the onload handler of
+    a browser window, are kept without being named.
     """
 
     def __init__(

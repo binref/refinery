@@ -72,6 +72,19 @@ class TestTheUniversalEnvironmentIsTheLanguageFloor(TestBase):
                     self.assertFalse(environment.withholds_on_delete(name))
 
 
+class TestTheUniversalHostCallsEveryHandlerAPinnedHostCalls(TestBase):
+    """
+    The default `universal` environment covers every host, so a function a script stores where
+    any one of them calls it is called there too.
+    """
+
+    def test_every_handler_a_pinned_host_calls_is_called_without_a_pin(self):
+        for environment in HostEnvironment:
+            for name in _SPECS[environment].handlers:
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertTrue(HostEnvironment.universal.calls_handler(name))
+
+
 class TestABareGlobalReadIsJudgedAgainstThePinnedHost(TestBase):
     """
     A bare read of a name the program never declares reaches the host's global object, and whether it
@@ -265,3 +278,9 @@ class TestNodeAgreesWithTheEnvironment(TestBase):
         out, error = behavior('console.log(JSON.stringify([' + ', '.join(F'typeof {name}' for name in names) + ']));')
         self.assertIsNone(error)
         self.assertEqual(dict(zip(names, json.loads(out))), {name: 'undefined' for name in names})
+
+    def test_node_defines_no_handler_another_host_calls(self):
+        names = sorted(_SPECS[HostEnvironment.universal].handlers)
+        out, error = behavior(F'console.log(JSON.stringify({json.dumps(names)}.filter(name => name in globalThis)));')
+        self.assertIsNone(error)
+        self.assertEqual(json.loads(out), [])

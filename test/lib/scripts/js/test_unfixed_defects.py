@@ -3826,50 +3826,10 @@ class TestAPackedAccessAWithObjectSuppliesStillGoesThroughTheProxy(TestBase):
     """
 
 
-#: Classic scripts storing into a name a browser window defines as an attribute of the global
-#: object, mapped to the behavior a window gives them: a load handler the window calls once the
-#: script has run, and a `DOMString` attribute, which keeps what is stored into it as a string.
-A_STORE_TO_A_NAME_A_WINDOW_INTERCEPTS = {
-    'a load handler stored at the top': Program(
-        a_program("""
-            onload = function () { console.log('loaded'); };
-            """),
-        prints('loaded', 'onload=undefined'),
-        Reading.WINDOW,
-    ),
-    'a load handler stored at the top, read for a browser': Program(
-        a_program("""
-            onload = function () { console.log('loaded'); };
-            """),
-        prints('loaded', 'onload=undefined'),
-        Reading.WINDOW,
-        HostEnvironment.browser,
-    ),
-    'a load handler stored on the window, read for a browser': Program(
-        a_program("""
-            window.onload = function () { console.log('loaded'); };
-            """),
-        prints('loaded', 'onload=undefined'),
-        Reading.WINDOW,
-        HostEnvironment.browser,
-    ),
-    'a load handler stored by a function the script calls': Program(
-        a_program("""
-            function install() { onload = function () { console.log('loaded'); }; }
-            install();
-            """),
-        prints('loaded', 'onload=undefined'),
-        Reading.WINDOW,
-    ),
-    'a load handler stored into a var by a function the script calls': Program(
-        a_program("""
-            var onload;
-            function install() { onload = function () { console.log('loaded'); }; }
-            install();
-            """),
-        prints('loaded', 'onload=undefined'),
-        Reading.WINDOW,
-    ),
+#: Classic scripts storing into a name a browser window defines as a `DOMString` attribute of the
+#: global object, which keeps what is stored into it as a string, mapped to the behavior a window
+#: gives them.
+A_STORE_A_WINDOW_KEEPS_AS_A_STRING = {
     'a number stored into the var name and read back': Program(
         a_program("""
             var name;
@@ -3898,18 +3858,14 @@ A_STORE_TO_A_NAME_A_WINDOW_INTERCEPTS = {
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_STORE_TO_A_NAME_A_WINDOW_INTERCEPTS)
-class TestAStoreToANameAWindowInterceptsIsKept(TestBase):
+@one_expected_failure_per_program(A_STORE_A_WINDOW_KEEPS_AS_A_STRING)
+class TestAStoreAWindowKeepsAsAStringIsReadAsAString(TestBase):
     """
-    A browser window defines some names on the global object before a script runs: `onload` holds
-    the handler the window calls once the script has run, and `name` and `status` keep what is
-    stored into them as a string. A store into such a name, into the same name as a member of
-    `window`, or into a file-level `var` of it, which is that same property, is read by the window
-    or converted on the way in. The deobfuscation reads it as a store into a variable of the script:
-    a handler nothing in the script calls is deleted, also where the host is a browser, which reads
-    a store through `window` as one into the name, and a `var` of such a name is moved into the
-    function using it, where it is a plain local that keeps a number. Scripts installing a load
-    handler are common among the ones run in a browser.
+    A browser window defines some names on the global object before a script runs, and `name` and
+    `status` keep what is stored into them as a string. A file-level `var` of such a name is that
+    same property, so what it holds is converted on the way in. The deobfuscation reads it as a
+    variable of the script and moves it into the function using it, where it is a plain local that
+    keeps a number.
     """
 
 

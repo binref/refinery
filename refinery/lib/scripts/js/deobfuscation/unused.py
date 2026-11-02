@@ -1482,6 +1482,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         onto the global object through `__proto__` — so the write is observable and cannot be
         dropped though its property is never read.
 
+        A property a host reaches from outside the file is never dead, whatever the file reads of
+        it: the window calls the handler a script stores in `window.onload`
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.host_reaches_global`).
+
         Under `preserve_script_return`, a name whose store can reach the script's completion is
         spared though its property is dead: the store's value is the value the script yields, which
         dropping the store would change (`reaches_script_completion`).
@@ -1527,6 +1531,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         dead: set[str] = set()
         for name, stmts in write_stmts.items():
             if name in alias_reads or name in bare_refs:
+                continue
+            if self.model.host_reaches_global(name):
                 continue
             if preserves_script_return(self.options) and any(
                 reaches_script_completion(stmt, parent) for stmt in stmts

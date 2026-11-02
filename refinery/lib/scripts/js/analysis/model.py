@@ -3937,17 +3937,25 @@ class SemanticModel:
             return isinstance(parent, JsMemberExpression)
         return node not in self._binding_of and self.resolve(node) is None
 
+    def host_reaches_global(self, name: str) -> bool:
+        """
+        Whether a host reaches the property *name* of the global object from outside the file
+        (*host_entrypoint*): it calls the event handler stored there, or the analyst declared the
+        name one it reaches.
+        """
+        return self._host_entrypoint is not None and self._host_entrypoint(name)
+
     def named_by_the_host(self, binding: Binding) -> bool:
         """
-        Whether a host may reach *binding* by name: the analyst declared the name one it reaches
-        (*host_entrypoint*), and the binding is a property of the global object
+        Whether a host may reach *binding* by name: it reaches the property of the global object
+        under that name (`host_reaches_global`), and the binding is that property
         (`reaches_global_object`), itself or through a `var` Annex B copies it into. The name alone
         does not decide it: a nested binding, a `let`, or anything a module scopes to the file never
         becomes a property of the global object. A declared object is reached as much as a declared
         function, and the host may call a method installed on it whenever the script hands it
         control.
         """
-        if self._host_entrypoint is None or not self._host_entrypoint(binding.name):
+        if not self.host_reaches_global(binding.name):
             return False
         if any(self.reaches_global_object(copy.var) for copy in binding.copies_made):
             return True
@@ -6348,8 +6356,8 @@ def build_semantic_model(
     `refinery.lib.scripts.js.options.file_kind` decides for a run; text that runs as global code,
     such as the payload of a `Function` construction, is a script. *exports_read_outside* says
     whether code that loads the file may read what it exports; see
-    `SemanticModel.module_exports_unread`. *host_entrypoint* says whether the analyst declared a
-    name one a host reaches; see `SemanticModel.named_by_the_host`. The default describes a file no
+    `SemanticModel.module_exports_unread`. *host_entrypoint* says whether a host reaches a property
+    of the global object; see `SemanticModel.host_reaches_global`. The default describes a file no
     host calls into.
     """
     return SemanticModel(

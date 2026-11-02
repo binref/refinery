@@ -534,6 +534,155 @@ asserted absent — which would fold `typeof requestAnimationFrame` to `'undefin
 yields `'function'`.
 """
 
+_WINDOW_EVENT_HANDLERS = frozenset({
+    'onabort',
+    'onafterprint',
+    'onanimationcancel',
+    'onanimationend',
+    'onanimationiteration',
+    'onanimationstart',
+    'onappinstalled',
+    'onauxclick',
+    'onbeforeinput',
+    'onbeforeinstallprompt',
+    'onbeforematch',
+    'onbeforeprint',
+    'onbeforetoggle',
+    'onbeforeunload',
+    'onbeforexrselect',
+    'onblur',
+    'oncancel',
+    'oncanplay',
+    'oncanplaythrough',
+    'onchange',
+    'onclick',
+    'onclose',
+    'oncommand',
+    'oncontentvisibilityautostatechange',
+    'oncontextlost',
+    'oncontextmenu',
+    'oncontextrestored',
+    'oncuechange',
+    'ondblclick',
+    'ondevicemotion',
+    'ondeviceorientation',
+    'ondeviceorientationabsolute',
+    'ondrag',
+    'ondragend',
+    'ondragenter',
+    'ondragleave',
+    'ondragover',
+    'ondragstart',
+    'ondrop',
+    'ondurationchange',
+    'onemptied',
+    'onended',
+    'onerror',
+    'onfocus',
+    'onformdata',
+    'ongamepadconnected',
+    'ongamepaddisconnected',
+    'ongotpointercapture',
+    'onhashchange',
+    'oninput',
+    'oninvalid',
+    'onkeydown',
+    'onkeypress',
+    'onkeyup',
+    'onlanguagechange',
+    'onload',
+    'onloadeddata',
+    'onloadedmetadata',
+    'onloadstart',
+    'onlostpointercapture',
+    'onmessage',
+    'onmessageerror',
+    'onmousedown',
+    'onmouseenter',
+    'onmouseleave',
+    'onmousemove',
+    'onmouseout',
+    'onmouseover',
+    'onmouseup',
+    'onmousewheel',
+    'onoffline',
+    'ononline',
+    'onpagehide',
+    'onpagereveal',
+    'onpageshow',
+    'onpageswap',
+    'onpause',
+    'onplay',
+    'onplaying',
+    'onpointercancel',
+    'onpointerdown',
+    'onpointerenter',
+    'onpointerleave',
+    'onpointermove',
+    'onpointerout',
+    'onpointerover',
+    'onpointerrawupdate',
+    'onpointerup',
+    'onpopstate',
+    'onprogress',
+    'onratechange',
+    'onrejectionhandled',
+    'onreset',
+    'onresize',
+    'onscroll',
+    'onscrollend',
+    'onscrollsnapchange',
+    'onscrollsnapchanging',
+    'onsearch',
+    'onsecuritypolicyviolation',
+    'onseeked',
+    'onseeking',
+    'onselect',
+    'onselectionchange',
+    'onselectstart',
+    'onslotchange',
+    'onstalled',
+    'onstorage',
+    'onsubmit',
+    'onsuspend',
+    'ontimeupdate',
+    'ontoggle',
+    'ontransitioncancel',
+    'ontransitionend',
+    'ontransitionrun',
+    'ontransitionstart',
+    'onunhandledrejection',
+    'onunload',
+    'onvolumechange',
+    'onwaiting',
+    'onwebkitanimationend',
+    'onwebkitanimationiteration',
+    'onwebkitanimationstart',
+    'onwebkittransitionend',
+    'onwheel',
+})
+"""
+The event handler attributes of a browser window: properties of the global object whose value the
+window calls when the event they name fires, so a function a script stores in one runs with no call
+in the file. The set is every name starting with `on` on a window of a current Chromium browser and
+its prototype chain. A name only another browser defines is missing, which keeps a store into it
+dead.
+"""
+
+_WORKER_EVENT_HANDLERS = frozenset({
+    'onerror',
+    'onlanguagechange',
+    'onmessage',
+    'onmessageerror',
+    'onrejectionhandled',
+    'onrtctransform',
+    'onunhandledrejection',
+})
+"""
+The event handler attributes of a dedicated worker global scope, in the sense of
+`_WINDOW_EVENT_HANDLERS`, read out of the same browser.
+"""
+
 
 class JsEngine(enum.Enum):
     """
@@ -604,12 +753,14 @@ class _EnvironmentSpec:
     host-conditional global is a configurable, deletable property of the global object, so a program
     that deletes one makes a later bare read of it throw; a language-mandated name is treated as present
     regardless, preserving the sound default's behavior exactly where the host adds nothing.
-    *engine* is the engine every engine the host covers is, where there is one.
+    *engine* is the engine every engine the host covers is, where there is one. *handlers* are the
+    properties of the global object whose value the host calls.
     """
     provided: frozenset[str]
     mandated: frozenset[str]
     absent: frozenset[str] = frozenset()
     engine: JsEngine | None = None
+    handlers: frozenset[str] = frozenset()
 
     def provides(self, name: str) -> bool:
         return name in self.provided
@@ -711,6 +862,16 @@ class HostEnvironment(enum.Enum):
         """
         return self.engine is not None or (owner, key) not in ENGINE_FUNCTIONS
 
+    def calls_handler(self, name: str) -> bool:
+        """
+        Whether some host this one covers calls the function a script stores in the property *name*
+        of the global object, an event handler attribute such as the `onload` of a browser window.
+        The host calls it with no call in the file, so a store there is never dead. The default
+        `universal` covers browser windows and workers, so their handlers are called there too, also
+        in a Windows Script Host, where the name is an ordinary global.
+        """
+        return name in _SPECS[self].handlers
+
     @property
     def engine(self) -> JsEngine | None:
         """
@@ -786,7 +947,11 @@ the program's own and stays.
 
 
 _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {
-    HostEnvironment.universal: _EnvironmentSpec(GUARANTEED_GLOBALS, GUARANTEED_GLOBALS),
+    HostEnvironment.universal: _EnvironmentSpec(
+        GUARANTEED_GLOBALS,
+        GUARANTEED_GLOBALS,
+        handlers=_WINDOW_EVENT_HANDLERS | _WORKER_EVENT_HANDLERS,
+    ),
     HostEnvironment.node: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _NODE_GLOBALS,
         GUARANTEED_GLOBALS,
@@ -794,7 +959,15 @@ _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {
         engine=JsEngine.v8,
     ),
     HostEnvironment.browser: _EnvironmentSpec(
-        GUARANTEED_GLOBALS | _BROWSER_GLOBALS, GUARANTEED_GLOBALS, _BROWSER_ABSENT),
+        GUARANTEED_GLOBALS | _BROWSER_GLOBALS,
+        GUARANTEED_GLOBALS,
+        _BROWSER_ABSENT,
+        handlers=_WINDOW_EVENT_HANDLERS,
+    ),
     HostEnvironment.worker: _EnvironmentSpec(
-        GUARANTEED_GLOBALS | _WORKER_GLOBALS, GUARANTEED_GLOBALS, _WORKER_ABSENT),
+        GUARANTEED_GLOBALS | _WORKER_GLOBALS,
+        GUARANTEED_GLOBALS,
+        _WORKER_ABSENT,
+        handlers=_WORKER_EVENT_HANDLERS,
+    ),
 }
