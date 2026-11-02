@@ -37,7 +37,9 @@ from refinery.lib.scripts.js.builtins import (
     PROTOTYPE_CHAIN_PROPERTIES,
     RECEIVER_WRITING_METHODS,
 )
+from refinery.lib.scripts.js.keys import accessor_installs, key_may_be, key_text
 from refinery.lib.scripts.js.model import (
+    ACCESSOR_INSTALL_METHODS,
     LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -63,8 +65,6 @@ from refinery.lib.scripts.js.model import (
     JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclarator,
-    _primitive_literal_text,
-    accessor_install_method,
     static_property_key,
     static_string,
     strip_parens,
@@ -240,6 +240,16 @@ answers every key of one handed off, or of one read as a property (`g.Object`) a
 written through, while `IntrinsicWrites.names` still lists it as unwritten.
 """
 
+_WRITING_METHODS = RECEIVER_WRITING_METHODS | ACCESSOR_INSTALL_METHODS
+"""
+The methods that write the object they are read off: the methods of the built-in prototypes that
+store into their receiver, and the accessor installers.
+"""
+
+_PROTOTYPE_READERS = frozenset({'getPrototypeOf'})
+
+_CONSTRUCTOR_KEY = frozenset({'constructor'})
+
 
 class _BuiltinReach:
     """
@@ -257,7 +267,7 @@ class _BuiltinReach:
       (`refinery.lib.scripts.js.builtins.BUILTIN_MEMBER_NAMES`): each may hand out a prototype or a
       function the language installed;
     - `prototype` read off an unattributed value;
-    - a call of a method named `getPrototypeOf`;
+    - a call of a method whose key may be `getPrototypeOf` (`refinery.lib.scripts.js.keys.key_may_be`);
     - a name of a binding that a declarator or an assignment stores an unattributed value into, or
       that a destructuring takes under a key the first arm counts;
     - an operand handed on unchanged by a logical operator, a conditional, a sequence or a plain
@@ -334,15 +344,14 @@ class _BuiltinReach:
             binding = self.model.resolve(node)
             return False, [] if binding is None else [binding]
         if isinstance(node, JsMemberExpression):
-            key = _certain_key(node)
-            if key is None or key in BUILTIN_MEMBER_NAMES:
+            if key_may_be(node, BUILTIN_MEMBER_NAMES):
                 return True, []
-            if key == 'prototype' and node.object is not None:
+            if key_text(node) == 'prototype' and node.object is not None:
                 return False, [node.object]
             return False, []
         if isinstance(node, JsCallExpression):
             callee = strip_parens(node.callee)
-            reads_a_prototype = isinstance(callee, JsMemberExpression) and static_property_key(callee) == 'getPrototypeOf'
+            reads_a_prototype = isinstance(callee, JsMemberExpression) and key_may_be(callee, _PROTOTYPE_READERS)
             return reads_a_prototype, []
         sources: Sequence[Node | None] = ()
         if isinstance(node, JsLogicalExpression):
@@ -384,16 +393,13 @@ class _BuiltinReach:
     def trips_at(self, node: Node) -> bool:
         """
         Whether *node* writes a built-in object in a way the scan does not follow: it writes through
-        an unattributed value, calls a method that writes its receiver
-        (`refinery.lib.scripts.js.builtins.RECEIVER_WRITING_METHODS`) on a value that may be a
-        built-in object, or is an unattributed value and hands it off. The scan reads no call as a
-        write, so `Array.prototype.push(5)`, which stores an element every array then inherits,
-        counts here although it names its owner. A method under a key not known is read as the
-        scan reads every call, as one that writes nothing; a key a fold collapses to one of those
-        methods renews the models
-        (`refinery.lib.scripts.js.deobfuscation.simplify.REVEALING_STRINGS`). A name an assignment
-        stores into hands no value anywhere; what a logical assignment evaluates to, which may be
-        the name's old value, is asked of the assignment.
+        an unattributed value, calls a method that may write its receiver
+        (`refinery.lib.scripts.js.builtins.RECEIVER_WRITING_METHODS`, or a key not known) on a
+        value that may be a built-in object, or is an unattributed value and hands it off. The scan
+        reads no call as a write, so `Array.prototype.push(5)`, which stores an element every array
+        then inherits, counts here although it names its owner. A name an assignment stores into
+        hands no value anywhere; what a logical assignment evaluates to, which may be the name's old
+        value, is asked of the assignment.
         """
         for member in _written_members(_write_target(node)):
             if member.object is not None and self.unattributed(member.object):
@@ -401,7 +407,7 @@ class _BuiltinReach:
         if isinstance(node, JsCallExpression):
             callee = strip_parens(node.callee)
             if isinstance(callee, JsMemberExpression) and callee.object is not None:
-                if _certain_key(callee) in RECEIVER_WRITING_METHODS and self._may_be_a_builtin(callee.object):
+                if key_may_be(callee, RECEIVER_WRITING_METHODS) and self._may_be_a_builtin(callee.object):
                     return True
         if isinstance(node, JsIdentifier) and reference_role(node) is not Role.READ:
             return False
@@ -466,17 +472,6 @@ def _destructured_under_a_builtin_key(target: Node) -> bool:
     return False
 
 
-def _certain_key(member: JsMemberExpression) -> str | None:
-    """
-    The key *member* certainly reads: a name, a string (`static_property_key`), or the string a
-    number, boolean or `null` literal converts to (`_primitive_literal_text`); `None` for any other
-    key.
-    """
-    if member.computed and (text := _primitive_literal_text(member.property)) is not None:
-        return text
-    return static_property_key(member)
-
-
 def _constructs_through_an_unread_key(model: SemanticModel, node: Node) -> bool:
     """
     Whether, under the model that suspects code it cannot read, *node* calls or constructs through a
@@ -487,10 +482,7 @@ def _constructs_through_an_unread_key(model: SemanticModel, node: Node) -> bool:
     if model.trust_eval or not isinstance(node, (JsCallExpression, JsNewExpression)):
         return False
     callee = strip_parens(node.callee)
-    if not isinstance(callee, JsMemberExpression):
-        return False
-    key = _certain_key(callee)
-    return key is None or key == 'constructor'
+    return isinstance(callee, JsMemberExpression) and key_may_be(callee, _CONSTRUCTOR_KEY)
 
 
 class IntrinsicWrites(NamedTuple):
@@ -671,6 +663,24 @@ class WriteSpeculation:
         return writes._replace(followable=True)
 
 
+class UnfollowedWriteRefusals:
+    """
+    The record one deobfuscation run keeps of whether a question was answered no because the scan
+    does not follow every write on a built-in object (`IntrinsicWrites.followable`), on any tree of
+    the run. Only such an answer can refuse a fold, so a run whose last tree is not followed runs
+    again under a `WriteSpeculation` only where one was given.
+    """
+
+    def __init__(self):
+        self.refused = False
+
+    def note(self) -> None:
+        """
+        Record that a question was answered no because the scan does not follow every write.
+        """
+        self.refused = True
+
+
 def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
     """
     The set of global names the program does anything with beyond reading them, and the property
@@ -766,11 +776,11 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
                 record_escape(watched)
             continue
         if isinstance(node, JsCallExpression):
-            for base in _accessor_install_targets(node):
-                record(aliases.names_denoted_by(base), _installed_key(node))
-            install_key = _installed_key(node)
-            if install_key is not None and _install_reaches_the_global_object(model, node):
-                record(frozenset({install_key}), None)
+            for install in accessor_installs(node):
+                for base in _denoted_roots(install.target):
+                    record(aliases.names_denoted_by(base), install.key)
+                if install.key is not None and model.may_be_the_global_object(install.target):
+                    record(frozenset({install.key}), None)
             continue
         for member in _written_members(_write_target(node)):
             for base in _member_chain_roots(member):
@@ -801,49 +811,6 @@ def _written_members(target: Node | None) -> Iterator[JsMemberExpression]:
         for node in cursor.walk():
             if isinstance(node, JsMemberExpression):
                 yield node
-
-
-def _installed_key(call: JsCallExpression) -> str | None:
-    """
-    The property name the descriptor install *call* names, or `None` where it names more than one or
-    none this analysis can read. `Object.defineProperty(o, 'k', d)` and `o.__defineGetter__('k', f)`
-    both name it in the argument before the descriptor; `defineProperties` names a whole object of
-    them, which is not one key and is reported as unbounded. The method is read through
-    `refinery.lib.scripts.js.model.accessor_install_method`, so a computed key a fold will collapse
-    — `Object['define' + 'Property']` — already names the install here, which keeps the answer from
-    changing as the pipeline respells the call.
-    """
-    callee = strip_parens(call.callee)
-    if not isinstance(callee, JsMemberExpression):
-        return None
-    method = accessor_install_method(callee)
-    if method == 'defineProperty':
-        return static_string(call.arguments[1]) if len(call.arguments) > 1 else None
-    if method in ('__defineGetter__', '__defineSetter__'):
-        return static_string(call.arguments[0]) if call.arguments else None
-    return None
-
-
-def _install_reaches_the_global_object(model: SemanticModel, call: JsCallExpression) -> bool:
-    """
-    Whether the descriptor install *call* installs on the global object: its receiver form
-    (`globalThis.__defineGetter__`) or its argument form (`Object.defineProperty(globalThis, …)`)
-    names the object the installed key then becomes a global under.
-    `refinery.lib.scripts.js.analysis.model.SemanticModel.may_be_the_global_object` is the reading,
-    so a local holding the object installs on it too; a receiver that is any other object installs
-    on that object and records nothing here. The method is read through
-    `refinery.lib.scripts.js.model.accessor_install_method` for the same reason `_installed_key`
-    reads it there.
-    """
-    callee = strip_parens(call.callee)
-    if not isinstance(callee, JsMemberExpression):
-        return False
-    method = accessor_install_method(callee)
-    if method in ('__defineGetter__', '__defineSetter__'):
-        return model.may_be_the_global_object(callee.object)
-    if method == 'defineProperty' and call.arguments:
-        return model.may_be_the_global_object(call.arguments[0])
-    return False
 
 
 def _value_escapes(
@@ -991,16 +958,12 @@ def _written_through(value: Node) -> bool:
 
 def _invokes_a_write(member: JsMemberExpression) -> bool:
     """
-    Whether *member* is invoked as an accessor install
-    (`refinery.lib.scripts.js.model.accessor_install_method`) or as a method that writes the object
+    Whether *member* is invoked under a key that may be an accessor installer
+    (`refinery.lib.scripts.js.model.ACCESSOR_INSTALL_METHODS`) or a method that writes the object
     it is read off (`refinery.lib.scripts.js.builtins.RECEIVER_WRITING_METHODS`):
     `globalThis.Array.prototype.push(5)` stores an element every array then inherits.
     """
-    if not is_invocation_target(member):
-        return False
-    if accessor_install_method(member) is not None:
-        return True
-    return _certain_key(member) in RECEIVER_WRITING_METHODS
+    return is_invocation_target(member) and key_may_be(member, _WRITING_METHODS)
 
 
 def _names_a_member_property(node: JsIdentifier) -> bool:
@@ -1348,31 +1311,6 @@ def _binding_value_roots(binding: Binding) -> Iterator[JsIdentifier]:
         parent = getattr(reference, 'parent', None)
         if isinstance(parent, JsAssignmentExpression) and parent.left is reference:
             yield from _denoted_roots(parent.right)
-
-
-def _accessor_install_targets(call: JsCallExpression) -> Iterator[JsIdentifier]:
-    """
-    The names whose properties *call* may install an accessor or data descriptor on. An
-    `Object.defineProperty(Math, ...)` replaces a method without ever writing `Math` syntactically,
-    so a scan for assignments alone would leave the name looking untouched. The receiver form
-    (`o.__defineGetter__(...)`) attributes to the receiver instead of an argument.
-
-    Every name the target *may* denote is yielded, because a caller collecting writes needs an
-    over-approximation: a missed name is a name that keeps its trust while the program patches it.
-    That is the opposite of `refinery.lib.scripts.js.analysis.effects.EffectModel.intrinsic_of`,
-    which must certify what a node *does* denote and so takes only the left of `A || B`; here both
-    operands are yielded, since either may survive.
-    """
-    callee = strip_parens(call.callee)
-    if not isinstance(callee, JsMemberExpression):
-        return
-    method = accessor_install_method(callee)
-    if method is None:
-        return
-    if method.startswith('__define'):
-        yield from _denoted_roots(callee.object)
-    elif call.arguments:
-        yield from _denoted_roots(call.arguments[0])
 
 
 def denoting_leaves(node: Node | None, depth: int = 0) -> Iterator[Node]:

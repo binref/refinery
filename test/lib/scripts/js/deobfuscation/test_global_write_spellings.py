@@ -14,7 +14,7 @@ The five fixes share one vocabulary rather than five spellings of their own: the
 base is read through `may_be_the_global_object` (the spelled names, a file-given alias, or the
 receiver a call supplies), the hand-over is judged by the observation gate that already owns the
 global object handed to a call, the destructuring is judged as the value-read of the intrinsic it
-is, and the install is judged by the key `_installed_key` already parses. Each refusing row has a
+is, and the install is judged by the key `refinery.lib.scripts.js.keys.accessor_installs` reads. Each refusing row has a
 fold twin — the same program through a receiver or object that is not the global — so the refusal
 cannot widen on its own.
 

@@ -25,6 +25,9 @@ import unittest
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
+from refinery.lib.scripts.js.deobfuscation import deobfuscate
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.pipeline import PipelineObserver
 from refinery.units.scripting.djs import djs
 
 _K = "('constr' + ([] + []) + 'uctor')"
@@ -137,3 +140,36 @@ class TestTheSecondRunKeepsNoFoldTheWriteDisproves(TestBase):
             for strict, environment in _EVERY_MODE:
                 with self.subTest(source=source, strict=strict, environment=environment):
                     self.assertEqual(behavior(_deobfuscated(source, strict, environment)), (prints, None))
+
+
+class _PassCounter(PipelineObserver):
+    """
+    Counts every transformer invocation of a run, the second run's included.
+    """
+
+    def __init__(self):
+        self.passes = 0
+
+    def before(self, group: str, transformer: type, ast) -> None:
+        self.passes += 1
+
+    def fork(self) -> PipelineObserver:
+        return self
+
+
+class TestASecondRunNoFoldCanUseIsNotRun(TestBase):
+    """
+    The two programs differ in a hand-off under a key the scan cannot read, which no fold of either
+    program asks about, so a second run started only where a fold was refused for that question
+    invokes the passes equally often for both.
+    """
+
+    @staticmethod
+    def _passes(source: str) -> int:
+        counter = _PassCounter()
+        deobfuscate(JsParser(source).parse(), observer=counter)
+        return counter.passes
+
+    def test_a_hand_off_no_fold_can_decide_costs_no_passes(self):
+        head = "var k = Math.random() < 2 ? 'a' : 'b';"
+        self.assertEqual(self._passes(F'{head} h([][k]);'), self._passes(F'{head} h([]);'))

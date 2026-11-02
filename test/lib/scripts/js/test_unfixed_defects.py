@@ -111,11 +111,9 @@ from test.lib.scripts.js.test_parser_recovery import (
 
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
-from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.model import static_string
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
-from refinery.lib.scripts.pipeline import PipelineObserver
 from refinery.units.scripting.djs import djs
 
 
@@ -4300,47 +4298,6 @@ class TestTheGlobalObjectInAPropertyADefaultOrAPatternIsWrittenThrough(TestBase)
         )
 
 
-#: Programs that install a key on every object through a method whose name an object holds, and read
-#: that key off an object of their own, mapped to what Node prints: the reading object declared
-#: before the one holding the name, and declared in a function nested in its scope. An obfuscator
-#: stores the names a program spells in such objects, and the program itself is arbitrary.
-A_KEY_ANOTHER_OBJECT_READS_AFTER_A_COPY_INSTALLED_IT = {
-    a_program("""
-        var B = {x: 1};
-        var A = {k: "defineProperty"};
-        Object[A.k](Object.prototype, "q", {value: 1});
-        console.log(B.q);
-        """): '1\n',
-    a_program("""
-        var A = {k: "defineProperty"};
-        Object[A.k](Object.prototype, "q", {value: 1});
-        function t() { var B = {y: 1}; return B.q; }
-        console.log(t());
-        """): '1\n',
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAKeyAnotherObjectReadsAfterACopyInstalledItIsFound(TestBase):
-    """
-    Object folding decides one object at a time, and reads a key an object lacks as absent where
-    the models see no install of it. The install `Object[A.k](...)` becomes readable once the copy
-    of `"defineProperty"` is made, so an object decided before `A`, declared earlier or in a nested
-    function, reads the key as absent.
-
-    The rule that closes it: the pass decides the keys objects inherit after it made the copies of
-    every object, on models renewed after them.
-    """
-
-    @unittest.expectedFailure
-    def test_the_key_is_found(self):
-        rows = A_KEY_ANOTHER_OBJECT_READS_AFTER_A_COPY_INSTALLED_IT
-        self.assertEqual(
-            {source: before_and_after(source) for source in rows},
-            each_program_still_prints(rows),
-        )
-
-
 #: Classic scripts that read a top-level object through the global object with a value of that
 #: object, mapped to what a host running them prints: the object's own key names it, and the object
 #: holds the global object the program reads it through.
@@ -6689,6 +6646,16 @@ THE_GLOBAL_OBJECT_RETURNED_BY_A_FUNCTION_AND_HANDED_ON = {
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
+    'an accessor installed on the receiver a function returns': Program(
+        a_program("""
+            var G = (function () { return this; })();
+            G.__defineGetter__('escape', function () { return function () { return 'X'; }; });
+            console.log(escape('a b'));
+            """),
+        prints('X'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
 }
 
 
@@ -6701,8 +6668,9 @@ class TestTheGlobalObjectReturnedByAFunctionIsTheGlobalObject(TestBase):
     call returns is none of them, so the object `getG()` returns, handed to `t`, is no hand-over of
     the global object, and the write `t` makes through it under the key `'String'` is no opaque
     global write. Node prints `B`; the deobfuscation folds `String.fromCharCode(65)` to `'A'` before
-    the call of `getG` is inlined to `globalThis`. A value has to be the global object wherever a
-    function returning it is called.
+    the call of `getG` is inlined to `globalThis`. In the same way the getter installed on `G`
+    replaces the global `escape`, and the deobfuscation folds `escape('a b')`. A value has to be the
+    global object wherever a function returning it is called.
     """
 
 
@@ -6905,40 +6873,6 @@ class TestABuiltInABaseConstructorReturnsIsTheReceiverOfTheDerivedOne(TestBase):
         )
 
 
-#: A program calling a method of `Array.prototype` under a key the run reads only after the call is
-#: scanned, mapped to what Node prints for it.
-A_METHOD_CALLED_UNDER_A_KEY_THE_RUN_READS_LATE = {
-    "var k = ['push'][0]; Array.prototype[k](5); console.log([][0]);": '5\n',
-    "var o = {k: 'push'}; Array.prototype[o.k](5); console.log([][0]);": '5\n',
-    "function k() { return 'push'; } Array.prototype[k()](5); console.log([][0]);": '5\n',
-    "var P = Array.prototype; P[['push']](5); console.log([][0]);": '5\n',
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAMethodCalledUnderAKeyTheRunReadsLateWritesItsReceiver(TestBase):
-    """
-    `Array.prototype.push(5)` stores 5 at index 0 of the prototype every array reads through, so
-    `[][0]` is 5. The write scan reads a call under a key it cannot read as a call that writes
-    nothing, and the trusting model folds `[][0]` to `undefined` before a later pass reads the key as
-    `push`, or never reads `['push']` as a key at all. A correct scan counts a call under a key it
-    cannot read as one that may write its receiver.
-    """
-
-    def test_node_prints_what_each_row_records(self):
-        for source, output in A_METHOD_CALLED_UNDER_A_KEY_THE_RUN_READS_LATE.items():
-            with self.subTest(source=source):
-                self.assertEqual(behavior(source), (output, None))
-
-    @unittest.expectedFailure
-    def test_the_trusting_deobfuscation_prints_what_the_program_prints(self):
-        rows = A_METHOD_CALLED_UNDER_A_KEY_THE_RUN_READS_LATE
-        self.assertEqual(
-            {source: behavior(source.encode('utf8') | djs() | str) for source in rows},
-            {source: (output, None) for source, output in rows.items()},
-        )
-
-
 #: A program building a function through `constructor` read twice under a key the run reads only
 #: after the construction is scanned, or never, mapped to what Node prints for it.
 A_FUNCTION_BUILT_UNDER_A_KEY_THE_RUN_READS_LATE = {
@@ -7081,36 +7015,101 @@ class TestOneReadNoFoldDecidesKeepsTheSecondRunFromTheOthers(TestBase):
         self.assertEqual(source.encode('utf8') | djs() | str, "console.log('b', 'abc'[{}]);")
 
 
-class _PassCounter(PipelineObserver):
+
+#: Programs writing a built-in through a constructor or a prototype read off a literal, then running
+#: what they wrote, mapped to what Node prints for them.
+A_BUILT_IN_WRITTEN_THROUGH_WHAT_A_LITERAL_READS = {
+    "var S = ''.constructor; S.fromCharCode = function () { return 'X'; }; console.log(String.fromCharCode(65));": 'X\n',
+    "''.constructor.fromCharCode = function () { return 'X'; }; console.log(String.fromCharCode(65));": 'X\n',
+    "var S = [].constructor; S.isArray = function () { return 'X'; }; console.log(Array.isArray([]));": 'X\n',
+    "var N = (0).constructor; N.parseInt = function () { return 'X'; }; console.log(Number.parseInt('5'));": 'X\n',
+    "var k = ['__proto__'][0]; [][k].join = function () { return 'X'; }; console.log(['a', 'b'].join('-'));": 'X\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABuiltInWrittenThroughWhatALiteralReadsIsSeen(TestBase):
     """
-    Counts every transformer invocation of a run, the second run's included.
+    A method called on a literal, or on a constructor named in the text, is folded where the program
+    writes that built-in under no name the scan records. A constructor or a prototype read off a
+    literal writes it under no name: the scan counts such a write as one it does not follow, but
+    these folds do not ask that question, so each program prints `X` and its deobfuscation prints
+    what the built-in returns. Asking it at every such fold keeps a real sample from decoding.
     """
 
-    def __init__(self):
-        self.passes = 0
+    @wontfix(
+        'no obfuscated file writes a built-in through a constructor or a prototype it reads off a '
+        'literal and then calls what it wrote; the shapes are made up for the defect'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_BUILT_IN_WRITTEN_THROUGH_WHAT_A_LITERAL_READS
+        self.assertEqual(
+            {source: behavior(source.encode('utf8') | djs() | str) for source in rows},
+            {source: (output, None) for source, output in rows.items()},
+        )
 
-    def before(self, group: str, transformer: type, ast) -> None:
-        self.passes += 1
 
-    def fork(self) -> PipelineObserver:
-        return self
+#: Programs replacing a method of `JSON` or `Object` through a call the scan does not read as a
+#: write, mapped to what Node prints for them.
+A_METHOD_REPLACED_BY_A_CALL_THE_SCAN_DOES_NOT_READ_AS_A_WRITE = {
+    "Object.assign(JSON, {parse: function () { return 'X'; }}); console.log(JSON.parse('1'));": 'X\n',
+    "var k = ['set'][0]; Reflect[k](JSON, 'parse', function () { return 'X'; }); console.log(JSON.parse('1'));": 'X\n',
+    "[JSON].forEach(function (o) { o.parse = function () { return 'X'; }; }); console.log(JSON.parse('1'));": 'X\n',
+    "function patch(o) { o.keys = function () { return 'X'; }; } patch(Object); console.log(Object.keys({a: 1}));": 'X\n',
+}
 
 
-class TestASecondRunNoFoldCanUseIsNotRun(TestBase):
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAMethodReplacedByACallTheScanDoesNotReadAsAWriteIsSeen(TestBase):
     """
-    A hand-off under a key the scan cannot read starts the second run, and the unit repeats it in
-    its next round on the same tree, although no fold of the program asks whether the scan follows
-    every write. The two programs differ in a hand-off no fold can decide, so a run that starts the
-    second run only where a fold was refused for that question invokes the passes equally often.
+    The scan records an escape only for the names a fold trusts by name, and reads no copy, no
+    reflective store and no callback as a write: `JSON` handed to `Object.assign`, `Reflect.set` or
+    an array a callback walks, and `Object` handed to a function that writes it, keep their methods
+    trusted. Each program prints `X`, and its deobfuscation prints what the built-in method returns.
     """
 
-    @staticmethod
-    def _passes(source: str) -> int:
-        counter = _PassCounter()
-        deobfuscate(JsParser(source).parse(), observer=counter)
-        return counter.passes
+    @wontfix(
+        'no obfuscated file replaces a method of JSON or Object through a copy, a reflective store, '
+        'a callback or a helper and then calls it; the shapes are made up for the defect'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_METHOD_REPLACED_BY_A_CALL_THE_SCAN_DOES_NOT_READ_AS_A_WRITE
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
 
-    @unittest.expectedFailure
-    def test_a_hand_off_no_fold_can_decide_costs_no_passes(self):
-        head = "var k = Math.random() < 2 ? 'a' : 'b';"
-        self.assertEqual(self._passes(F'{head} h([][k]);'), self._passes(F'{head} h([]);'))
+
+#: Programs whose store on a function nothing reads has an effect of its own, mapped to what Node
+#: makes of them.
+A_STORE_ON_A_FUNCTION_NOTHING_READS_WITH_AN_EFFECT = {
+    "'use strict'; function f() {} f.name = 'x'; console.log(1);": ('', 'TypeError'),
+    "'use strict'; function f() {} f.length = 3; console.log(1);": ('', 'TypeError'),
+    "Object.defineProperty(Function.prototype, 'x', {set: function (v) { console.log('set', v); }}); function f() {} f.x = 1;": (
+        'set 1\n',
+        None,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAStoreOnAFunctionNothingReadsKeepsItsEffect(TestBase):
+    """
+    A function only its property stores name is removed with them where the value and the key of
+    each store can go unevaluated. The store itself may throw, writing a key strict code may not
+    write on a function, or run a setter the program installed on `Function.prototype`; the
+    deobfuscation removes it with the function, so the program throws or prints `set 1` and its
+    deobfuscation does neither.
+    """
+
+    @wontfix(
+        'no program writes a read-only key of a function in strict code, which throws, or installs '
+        'a setter on Function.prototype for a function nothing reads; the shapes are made up for '
+        'the defect'
+    )
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        rows = A_STORE_ON_A_FUNCTION_NOTHING_READS_WITH_AN_EFFECT
+        self.assertEqual(
+            {source: behavior(source.encode('utf8') | djs() | str) for source in rows},
+            rows,
+        )

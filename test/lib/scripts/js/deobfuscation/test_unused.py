@@ -19,6 +19,7 @@ from refinery.lib.scripts.js.deobfuscation.unused import (
 from refinery.lib.scripts.js.model import JsAssignmentExpression
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
+from refinery.units.scripting.djs import djs
 
 
 class TestUnusedCodeRemoval(TestJsDeobfuscator):
@@ -3237,6 +3238,60 @@ class TestAFunctionAnotherFunctionReadsIsKept(TestJsDeobfuscator):
             """
         )
         self.assertEqual('console.log(2);', self._remove_unused(source))
+
+
+#: Programs writing a property of a function nothing reads, where evaluating the value written or
+#: its key has an effect, mapped to what Node prints for each.
+A_WRITE_TO_A_FUNCTION_NOTHING_READS_WITH_AN_EFFECT = {
+    inspect.cleandoc("""
+        function f() {}
+        f.x = console.log(1);
+    """): '1\n',
+    inspect.cleandoc("""
+        function f() {}
+        f[console.log(2)] = 1;
+    """): '2\n',
+}
+
+
+class TestAWriteToAFunctionNothingReadsKeepsItsEffect(TestJsDeobfuscator):
+
+    def _remove_unused(self, source: str) -> str:
+        return self._run_transformer(source, JsUnusedCodeRemoval)
+
+    def test_the_function_and_the_write_are_kept(self):
+        rows = A_WRITE_TO_A_FUNCTION_NOTHING_READS_WITH_AN_EFFECT
+        self.assertEqual(
+            {source: self._remove_unused(source) for source in rows},
+            {source: source for source in rows},
+        )
+
+    def test_writes_without_an_effect_are_removed_with_the_function(self):
+        source = inspect.cleandoc(
+            """
+            function f() {}
+            f.x = 1;
+            f.y = function () {
+              return 2;
+            };
+            console.log(3);
+            """
+        )
+        self.assertEqual('console.log(3);', self._remove_unused(source))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAWriteToAFunctionNothingReads(TestJsDeobfuscator):
+
+    def test_each_deobfuscation_prints_what_the_program_prints(self):
+        for source, prints in A_WRITE_TO_A_FUNCTION_NOTHING_READS_WITH_AN_EFFECT.items():
+            for strict in (False, True):
+                with self.subTest(source=source, strict=strict):
+                    deobfuscated = source.encode('utf8') | djs(strict=strict) | str
+                    self.assertEqual(
+                        (behavior(source), behavior(deobfuscated)),
+                        ((prints, None), (prints, None)),
+                    )
 
 
 #: Programs whose top level only writes a property of a function another function reads, mapped

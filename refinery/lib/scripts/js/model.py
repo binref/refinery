@@ -967,6 +967,12 @@ ACCESSOR_INSTALL_METHODS = frozenset({
     '__defineSetter__',
 })
 
+RECEIVER_INSTALL_METHODS = frozenset({'__defineGetter__', '__defineSetter__'})
+"""
+The installers that install on their receiver. Every other one of `CONVERSION_INSTALL_METHODS`
+installs on its first argument.
+"""
+
 CONVERSION_INSTALL_METHODS = ACCESSOR_INSTALL_METHODS | frozenset({
     'assign',
     'setPrototypeOf',

@@ -9,7 +9,7 @@ from refinery.lib.scripts import _clone_node, restore, tree_version
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.environment import ASSUMED_CLOCK, ClockWindow, HostEnvironment
-from refinery.lib.scripts.js.analysis.intrinsics import SpeculationRefuted
+from refinery.lib.scripts.js.analysis.intrinsics import SpeculationRefuted, UnfollowedWriteRefusals
 from refinery.lib.scripts.js.deobfuscation.antidbg import JsRemoveSelfDefending
 from refinery.lib.scripts.js.deobfuscation.argwrap import JsAssignmentsAsFunctionArgs
 from refinery.lib.scripts.js.deobfuscation.b91strings import (
@@ -152,12 +152,14 @@ def deobfuscate(
 
     A run that ends on a tree whose write scan does not follow every write
     (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.followable`) has refused every
-    fold that reads a built-in's chain, among them the folds that would read the hand-off away. The
-    pipeline then runs to settlement again on that tree, over the same models, assuming that every
-    write the scan does not follow writes nothing, and keeps the result only where the assumption
-    was discharged (`refinery.lib.scripts.js.analysis.intrinsics.WriteSpeculation`); everywhere
-    else the tree is restored. No tree is settled for that run before it reaches a fixpoint of its
-    own, since it may decode keys the run before it could not.
+    fold that reads a built-in's chain, among them the folds that would read the hand-off away.
+    Where it refused one on any of its trees
+    (`refinery.lib.scripts.js.analysis.intrinsics.UnfollowedWriteRefusals`), the pipeline then runs
+    to settlement again on that tree, over the same models, assuming that every write the scan does
+    not follow writes nothing, and keeps the result only where the assumption was discharged
+    (`refinery.lib.scripts.js.analysis.intrinsics.WriteSpeculation`); everywhere else the tree is
+    restored. No tree is settled for that run before it reaches a fixpoint of its own, since it may
+    decode keys the run before it could not.
     """
     options = DeobfuscationOptions(
         execution=execution,
@@ -169,11 +171,12 @@ def deobfuscate(
         clock=clock,
     )
     settlement = ConversionSettlement()
-    models = ModelCache(ast, options, settlement)
+    refusals = UnfollowedWriteRefusals()
+    models = ModelCache(ast, options, settlement, refusals)
     JsLZStringDecoder.read_input(models)
     run = _Run(ast, max_steps, models, options, settlement)
     steps = run.to_settlement(0, observer)
-    if models.intrinsic_writes.followable:
+    if models.intrinsic_writes.followable or not refusals.refused:
         return steps
     return run.assuming_followed_writes(steps, observer)
 

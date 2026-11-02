@@ -40,7 +40,7 @@ This transformer performs seven phases:
 """
 from __future__ import annotations
 
-from typing import Iterable, Iterator, NamedTuple
+from typing import Callable, Iterable, Iterator, NamedTuple
 
 from refinery.lib.scripts import ListRemoval, Node, _replace_in_parent, set_child, tree_root
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
@@ -234,7 +234,8 @@ def _the_global_object_escapes(model: SemanticModel, root: Node) -> bool:
 def _reachable_functions(
     body: list[Statement],
     functions: dict[str, JsFunctionDeclaration],
-    entrypoints: frozenset[str] = frozenset(),
+    entrypoints: frozenset[str],
+    removable: Callable[[Node], bool],
 ) -> tuple[set[str], dict[str, list[Statement]]]:
     """
     Compute the set of function names transitively reachable from non-function statements in
@@ -249,8 +250,8 @@ def _reachable_functions(
     entrypoint is typically the root of the whole program.
 
     A function whose only references in *body* are property-write statements (`funcName.prop =
-    ...`), with neither the function nor its properties read anywhere else in *body*, is
-    write-only. Those statements do not make it reachable: it is reachable only where the body of
+    ...`) whose value and computed key *removable* lets go unevaluated, with neither the function
+    nor its properties read anywhere else in *body*, is write-only. Those statements do not make it reachable: it is reachable only where the body of
     another reachable function names it, as a reachable `f` returning `W.extra` names `W`, and
     once it is, the names its statements hold are reachable too. Two write-only functions that
     only name each other stay unreachable. A name in *entrypoints* is never write-only: code
@@ -268,7 +269,7 @@ def _reachable_functions(
         referenced |= names
     write_only: dict[str, list[Statement]] = {}
     for name in (referenced & functions.keys()) - entrypoints:
-        stmts = _classify_property_write_only(body, name)
+        stmts = _classify_property_write_only(body, name, removable)
         if stmts is not None:
             write_only[name] = stmts
     written = {id(stmt) for stmts in write_only.values() for stmt in stmts}
@@ -290,12 +291,13 @@ def _reachable_functions(
 
 
 def _classify_property_write_only(
-    body: list[Statement], func_name: str,
+    body: list[Statement], func_name: str, removable: Callable[[Node], bool],
 ) -> list[Statement] | None:
     """
     Check if ALL non-function-declaration references to `func_name` in `body` are property-write
-    statements (`funcName.prop = ...`) with no reads of the function or its properties elsewhere.
-    Returns the list of write-only statements if so, or `None` if the function has live usage.
+    statements (`funcName.prop = ...`, `_is_pure_property_write`) with no reads of the function or
+    its properties elsewhere. Returns the list of write-only statements if so, or `None` if the
+    function has live usage.
     """
     write_stmts: list[Statement] = []
     for stmt in body:
@@ -304,7 +306,7 @@ def _classify_property_write_only(
         names_in_stmt = collect_identifier_names(stmt)
         if func_name not in names_in_stmt:
             continue
-        if not _is_pure_property_write(stmt, func_name):
+        if not _is_pure_property_write(stmt, func_name, removable):
             return None
         write_stmts.append(stmt)
     if not write_stmts:
@@ -319,10 +321,11 @@ def _classify_property_write_only(
     return write_stmts
 
 
-def _is_pure_property_write(stmt: Statement, func_name: str) -> bool:
+def _is_pure_property_write(stmt: Statement, func_name: str, removable: Callable[[Node], bool]) -> bool:
     """
     Return True if `stmt` is an expression statement of the form `funcName.prop = expr` where
-    `func_name` does not appear in the RHS.
+    `func_name` does not appear in the RHS, and where evaluating the RHS and a computed key can be
+    dropped (*removable*): `f.x = alert(1)` stays with its function.
     """
     if not isinstance(stmt, JsExpressionStatement):
         return False
@@ -336,7 +339,9 @@ def _is_pure_property_write(stmt: Statement, func_name: str) -> bool:
         return False
     if expr.right is not None and func_name in collect_identifier_names(expr.right):
         return False
-    return True
+    if expr.right is not None and not removable(expr.right):
+        return False
+    return not lhs.computed or lhs.property is None or removable(lhs.property)
 
 
 def _has_property_read(stmt: Statement, func_name: str) -> bool:
@@ -1099,7 +1104,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return set()
         roots = self._host_entrypoints(functions)
         roots |= self._referenced_outside(body, functions)
-        reachable, write_only_stmts = _reachable_functions(body, functions, roots)
+        reachable, write_only_stmts = _reachable_functions(body, functions, roots, self._is_removable)
         kept_by_reflection = {
             name for name, func in functions.items()
             if isinstance(func.id, JsIdentifier)

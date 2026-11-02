@@ -57,9 +57,9 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     _pattern_reflective_exposure,
     enclosing_function,
-    is_member_write_target,
     is_unread_source,
     member_property_name,
+    opaque_global_write,
 )
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
@@ -710,13 +710,7 @@ class TamperingModel:
         sites: list[Node] = []
         root = self.model.root
         for member in root.walk():
-            if not isinstance(member, JsMemberExpression):
-                continue
-            if not member.computed or isinstance(member.property, JsStringLiteral):
-                continue
-            if not is_member_write_target(member):
-                continue
-            if self._may_be_global_object(member.object):
+            if isinstance(member, JsMemberExpression) and opaque_global_write(member, self._may_be_global_object):
                 sites.append(member)
         for node in root.walk():
             if not isinstance(node, (JsCallExpression, JsNewExpression)):

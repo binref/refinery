@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import unittest
 
+import refinery.lib.scripts as scripts
+import refinery.lib.scripts.js.deobfuscation.protospelling as protospelling
+
+from test import TestBase, lines_executed
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
+from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.deobfuscation.protospelling import JsPrototypeSpellingNormalization
+from refinery.lib.scripts.js.parser import JsParser
 
 #: Expressions that reach an intrinsic prototype without naming it, mapped to the statement each is
 #: written back out as. The three object spellings name `Object.prototype` and the array one names
@@ -314,3 +320,21 @@ class TestAWriteThisPassSpellsOutIsAskedAboutByTheNextGate(TestJsDeobfuscator):
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+class TestThePassWalksTheTreeOnce(TestBase):
+    """
+    The work of the pass, with the models it reads already built, grows with the nodes it visits
+    however deeply they are nested.
+    """
+
+    @staticmethod
+    def _work(depth: int) -> int:
+        ast = JsParser('f(' * depth + '[].__proto__' + ')' * depth + ';').parse()
+        transformer = JsPrototypeSpellingNormalization()
+        models = model_cache(transformer, ast)
+        models.effects
+        return lines_executed(lambda: transformer.visit(ast), scripts, protospelling)
+
+    def test_the_work_grows_linearly_with_the_depth_of_nesting(self):
+        self.assertWorkGrowsLinearly(self._work, 50)

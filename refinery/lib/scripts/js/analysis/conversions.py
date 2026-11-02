@@ -37,6 +37,7 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.model import (
     CONVERSION_INSTALL_METHODS,
+    RECEIVER_INSTALL_METHODS,
     JsArrayExpression,
     JsArrayPattern,
     JsAssignmentExpression,
@@ -83,12 +84,6 @@ CONVERSION_KEYS = frozenset({'toString', 'valueOf', '__proto__'})
 The keys a write installs a conversion under: an own `toString` or `valueOf`, or a new prototype
 through `__proto__`. `Symbol.toPrimitive` is no string; a member read named `toPrimitive` stands
 for it whatever its object.
-"""
-
-RECEIVER_INSTALL_METHODS = frozenset({'__defineGetter__', '__defineSetter__'})
-"""
-The methods of `refinery.lib.scripts.js.model.CONVERSION_INSTALL_METHODS` that install on their
-receiver. Every other one installs on its first argument, and `Reflect.set` also on its fourth.
 """
 
 NON_FUNCTION_BUILDERS = frozenset({

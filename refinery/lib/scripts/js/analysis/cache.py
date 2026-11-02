@@ -27,6 +27,7 @@ from refinery.lib.scripts.js.analysis.effects import AnchoredTrust, EffectModel,
 from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.intrinsics import (
     IntrinsicWrites,
+    UnfollowedWriteRefusals,
     WriteSpeculation,
     build_intrinsic_writes,
 )
@@ -77,8 +78,11 @@ class ModelCache(ModelCacheBase):
     (`refinery.lib.scripts.js.analysis.conversions.ConversionSettlement`). Only
     `refinery.lib.scripts.js.deobfuscation.deobfuscate` creates one; a cache built anywhere else
     holds none, and its effect models then refuse what they would only answer on a tree a run has
-    settled. A run that assumes that every write the scan does not follow writes nothing runs inside
-    `speculating`, which hands every build of the scan to the record of that assumption.
+    settled. It hands the run's record of folds refused because the scan does not follow every
+    write, *refusals*, to them the same way
+    (`refinery.lib.scripts.js.analysis.intrinsics.UnfollowedWriteRefusals`). A run that assumes
+    that every write the scan does not follow writes nothing runs inside `speculating`, which hands
+    every build of the scan to the record of that assumption.
     """
 
     _SLOTS = (
@@ -140,8 +144,10 @@ class ModelCache(ModelCacheBase):
         root: Node,
         options: object | None = None,
         settlement: ConversionSettlement | None = None,
+        refusals: UnfollowedWriteRefusals | None = None,
     ):
         self.settlement = settlement
+        self.refusals = refusals
         self._speculation: WriteSpeculation | None = None
         super().__init__(root, options)
         self.file_kind = file_kind(self.options, self.root)
@@ -204,6 +210,7 @@ class ModelCache(ModelCacheBase):
             self.dominance,
             self.intrinsic_writes,
             self.settlement,
+            self.refusals,
         ))
 
     @property

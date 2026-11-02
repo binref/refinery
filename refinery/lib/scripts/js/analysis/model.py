@@ -41,6 +41,8 @@ from refinery.lib.scripts.js.analysis.environment import (
     node_require_runs_no_code,
 )
 from refinery.lib.scripts.js.builtins import OBJECT_PROTOTYPE_MEMBERS
+from refinery.lib.scripts.js.keys import accessor_installs
+from refinery.lib.scripts.js.lexer import is_identifier_name
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     JsArrayExpression,
@@ -119,13 +121,12 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
     value_is_discarded,
 )
-from refinery.lib.scripts.js.lexer import is_identifier_name
 from refinery.lib.scripts.js.numbers import canonical_array_index, exact_integer
-from refinery.lib.scripts.js.token import RESERVED_WORD_NAMES
 from refinery.lib.scripts.js.strict import (
     has_parameter_expressions,
     strict_mode_at,
 )
+from refinery.lib.scripts.js.token import RESERVED_WORD_NAMES
 
 # A class static block hoists its own `var`/function declarations, so it bounds the hoist walk like a
 # function body. It is deliberately absent from FUNCTION_NODES so the effect model stays transparent to
@@ -1868,6 +1869,28 @@ def _call_of(node: Node) -> JsCallExpression | JsNewExpression | None:
     if isinstance(call, (JsCallExpression, JsNewExpression)) and strip_parens(call.callee) is node:
         return call
     return None
+
+
+def opaque_global_write(member: JsMemberExpression, may_be_global: Callable[[Node | None], bool]) -> bool:
+    """
+    Whether *member* stores a property under a key only the runtime resolves on a value that
+    *may_be_global* says may be the global object: a store under a computed key other than a
+    string literal (`window[expr] = x`), or a call of *member* that installs on such a value under
+    a key it does not bound (`refinery.lib.scripts.js.keys.accessor_installs`), as
+    `globalThis.__defineGetter__(k, f)` does for a `k` the text does not spell and
+    `Object.defineProperties(globalThis, d)` does for any.
+    """
+    if is_member_write_target(member):
+        if not member.computed or isinstance(member.property, JsStringLiteral):
+            return False
+        return may_be_global(member.object)
+    call = _call_of(member)
+    if not isinstance(call, JsCallExpression):
+        return False
+    return any(
+        install.key is None and may_be_global(install.target)
+        for install in accessor_installs(call)
+    )
 
 
 class ShownCall(NamedTuple):
@@ -4122,8 +4145,9 @@ class SemanticModel:
     def has_opaque_global_write(self) -> bool:
         """
         Whether the program stores a property on the global object under a key only the runtime
-        resolves (`window[expr] = x`), so an intrinsic or a script-scope name may hold something
-        else than what the text spells once the program runs. The read-naming question
+        resolves (`window[expr] = x`), or installs one there under such a key
+        (`opaque_global_write`), so an intrinsic or a script-scope name may hold something else
+        than what the text spells once the program runs. The read-naming question
         `has_reflection_surface` answers is unaffected by such a write — storing a property names
         nothing and runs nothing — but the *replacement* questions are not: a written key may be
         `Math`, `String`, or the name a top-level `var` carries, so a consumer that trusts an
@@ -4154,7 +4178,8 @@ class SemanticModel:
     def _compute_opaque_global_write_sites(self) -> None:
         sites = [
             member for member in self.root.walk()
-            if isinstance(member, JsMemberExpression) and self._is_opaque_global_write(member)
+            if isinstance(member, JsMemberExpression)
+            and opaque_global_write(member, self.may_be_the_global_object)
         ]
         self._opaque_global_write_sites = sites
         self._opaque_global_write_sites_known = True
@@ -4199,13 +4224,6 @@ class SemanticModel:
                 return None
             return self.opaque_global_write_sites()
         return None
-
-    def _is_opaque_global_write(self, member: JsMemberExpression) -> bool:
-        if not member.computed or isinstance(member.property, JsStringLiteral):
-            return False
-        if not is_member_write_target(member):
-            return False
-        return self.may_be_the_global_object(member.object)
 
     def _named_by_global_code(self, binding: Binding) -> bool:
         """

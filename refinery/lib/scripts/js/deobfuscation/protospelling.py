@@ -69,16 +69,17 @@ class JsPrototypeSpellingNormalization(ScriptLevelTransformer):
         asks about — so a held model would answer that gate from a program state its own rewrites
         have already left behind, and clear a rewrite the current facts refuse.
 
-        A candidate an earlier rewrite has taken out of the tree is passed over. Its holder is no
-        longer reachable from the script, so replacing it would write into a subtree the output
-        does not contain and report a change nothing can observe.
+        The walk visits each node once, in the order of `refinery.lib.scripts.Node.walk`, and does
+        not enter a candidate it rewrote: what the candidate held is no longer reachable from the
+        script, so a rewrite there would write into a subtree the output does not contain.
         """
         cache = model_cache(self, node)
-        for candidate in list(node.walk()):
-            if not candidate.is_descendant_of(node):
-                continue
+        pending = list(node.children())
+        while pending:
+            candidate = pending.pop()
             owner = self._owner_whose_prototype_is_named(candidate, cache.model, cache.effects)
             if owner is None:
+                pending.extend(candidate.children())
                 continue
             _replace_in_parent(candidate, _a_prototype_of(owner))
             self.mark_changed()

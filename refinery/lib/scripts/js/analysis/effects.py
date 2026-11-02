@@ -63,6 +63,7 @@ from refinery.lib.scripts.js.analysis.intrinsics import (
     PURE_INTRINSIC_ROOTS,
     SPECIES_KEYS,
     IntrinsicWrites,
+    UnfollowedWriteRefusals,
     _GlobalObject,
     build_intrinsic_writes,
     unambiguous_callee,
@@ -1047,6 +1048,7 @@ class EffectModel:
         dominance: DominanceModel | None = None,
         intrinsic_writes: IntrinsicWrites | None = None,
         settlement: ConversionSettlement | None = None,
+        refusals: UnfollowedWriteRefusals | None = None,
     ):
         self.model = model
         self._dominance = dominance
@@ -1066,6 +1068,7 @@ class EffectModel:
         self._keeps_closures_cache: dict[Node, bool] = {}
         self._some_mutator_cache: dict[int, bool] = {}
         self._settlement = settlement
+        self._refusals = refusals
         self._function_use_cache: dict[tuple[Node, frozenset[Node]], FunctionUse] = {}
         self._name_use_cache: dict[tuple[Binding, int, frozenset[Node]], FunctionUse] = {}
         self._functions: list[Node] = self._collect_functions()
@@ -2480,9 +2483,13 @@ class EffectModel:
         see (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.followable`). A fold that
         reads a built-in's chain or converts an object without spelling the owner of either asks
         this beside `read_chain_intact`: `[].constructor.prototype.join = f` replaces the join of
-        every array while writing `Array` by no name.
+        every array while writing `Array` by no name. A no is noted on the run's record
+        (`refinery.lib.scripts.js.analysis.intrinsics.UnfollowedWriteRefusals`).
         """
-        return self.intrinsic_writes.followable
+        followed = self.intrinsic_writes.followable
+        if not followed and self._refusals is not None:
+            self._refusals.note()
+        return followed
 
     def builtin_function_text(self, function: BuiltinFunction) -> str | None:
         """
@@ -3643,6 +3650,7 @@ def build_effects(
     dominance: DominanceModel | None = None,
     intrinsic_writes: IntrinsicWrites | None = None,
     settlement: ConversionSettlement | None = None,
+    refusals: UnfollowedWriteRefusals | None = None,
 ) -> EffectModel:
     """
     Build the `EffectModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`,
@@ -3652,6 +3660,7 @@ def build_effects(
     effect and ordering layers read one scan of what the program writes on the intrinsics; a `None`
     builds it here. *settlement* is the record of the deobfuscation run the model serves, which
     `EffectModel.function_conversion_untouched` reads; without one that question refuses wherever
-    it would wait for the run to settle.
+    it would wait for the run to settle. *refusals* is that run's record of the questions
+    `EffectModel.builtin_writes_followed` answered no.
     """
-    return EffectModel(model, dominance, intrinsic_writes, settlement)
+    return EffectModel(model, dominance, intrinsic_writes, settlement, refusals)

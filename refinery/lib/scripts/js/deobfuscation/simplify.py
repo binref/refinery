@@ -35,7 +35,7 @@ from refinery.lib.scripts.js.analysis.model import (
     reference_role,
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
-from refinery.lib.scripts.js.builtins import OBJECT_PROTOTYPE_MEMBERS, RECEIVER_WRITING_METHODS
+from refinery.lib.scripts.js.builtins import OBJECT_PROTOTYPE_MEMBERS
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_MEMBERS,
     MAX_RESULT_ARRAY_LEN,
@@ -150,12 +150,9 @@ The strings the semantic and effect models look for in a key or a string literal
 presence of something only where they find one: an install, a reflective name, a read reaching a
 prototype, a conversion key. A key they cannot read is none of them to those readers, so a fold
 that turns code spelling no string into one spelling such a string shows the models a fact the
-models it holds do not record. The methods that write their receiver
-(`refinery.lib.scripts.js.builtins.RECEIVER_WRITING_METHODS`) are read the same way, but only as
-the key of a method a call runs, which is where the write scan looks for them, and so are the
-names whose escape the scan watches
-(`refinery.lib.scripts.js.analysis.intrinsics.ESCAPE_WATCHED_ROOTS`), but only as a computed key,
-where the scan reads `g['Date']` as the global it names.
+models it holds do not record. The names whose escape the scan watches
+(`refinery.lib.scripts.js.analysis.intrinsics.ESCAPE_WATCHED_ROOTS`) are read the same way, but
+only as a computed key, where the scan reads `g['Date']` as the global it names.
 """
 
 
@@ -186,9 +183,8 @@ def _spells_a_revealing_string(replaced: Node, value: str) -> bool:
     """
     Whether the string *value*, written in place of *replaced*, spells one of `REVEALING_STRINGS`
     as `refinery.lib.scripts.js.model.static_string` reads it, alone or with the concatenations it
-    completes, spells a method that writes its receiver where it names the method a call runs
-    (`_names_a_called_method`), or spells a name whose escape the scan watches where it is a
-    computed key (`_names_a_key`). A concatenation holding a piece that reads as no string reads as
+    completes, or spells a name whose escape the scan watches where it is a computed key
+    (`_names_a_key`). A concatenation holding a piece that reads as no string reads as
     none, and so does every concatenation holding it, so the climb stops at the first.
 
     Code that already reads as *value* leaves every reading around it as it was. A string a fold
@@ -205,8 +201,6 @@ def _spells_a_revealing_string(replaced: Node, value: str) -> bool:
         parent = cursor.parent
         while isinstance(parent, JsParenthesizedExpression):
             cursor, parent = parent, parent.parent
-        if spelled in RECEIVER_WRITING_METHODS and _names_a_called_method(parent, cursor):
-            return True
         if spelled in ESCAPE_WATCHED_ROOTS and _names_a_key(parent, cursor):
             return True
         if not isinstance(parent, JsBinaryExpression) or parent.operator != '+':
@@ -224,18 +218,6 @@ def _names_a_key(parent: Node | None, key: Node) -> bool:
     Whether *key* is the computed key of the member access *parent*.
     """
     return isinstance(parent, JsMemberExpression) and parent.computed and parent.property is key
-
-
-def _names_a_called_method(parent: Node | None, key: Node) -> bool:
-    """
-    Whether *key* is the computed key of the member access *parent*, which a call invokes.
-    """
-    if not isinstance(parent, JsMemberExpression) or not _names_a_key(parent, key):
-        return False
-    call = parent.parent
-    while isinstance(call, JsParenthesizedExpression):
-        call = call.parent
-    return isinstance(call, JsCallExpression) and strip_parens(call.callee) is parent
 
 
 class JsSimplifications(PinnedTransformer):
