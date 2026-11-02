@@ -482,13 +482,14 @@ def _build_if(
     condition: Expression,
     true_body: list[Statement],
     false_body: list[Statement],
-) -> Ps1IfStatement | None:
+) -> Ps1IfStatement:
     """
-    Build an if/else statement. Returns `None` if both bodies are empty. Omits the else block if the
-    false body is empty; negates the condition if only the true body is empty.
+    Build an if/else statement. Omits the else block if the false body is empty; negates the
+    condition if only the true body is empty. Where both are empty, the statement still evaluates
+    its condition, which may write or fail, so it is kept with an empty body.
     """
     if not true_body and not false_body:
-        return None
+        return Ps1IfStatement(clauses=[(condition, Block(body=[]))])
     if not true_body:
         return Ps1IfStatement(
             clauses=[(_negate_condition(condition), Block(body=false_body))],
@@ -962,9 +963,7 @@ def _try_unroll_loop(
                     return None
                 true_arm_body, true_next = true_arm_result
                 false_arm_body, false_next = false_arm_result
-                if_stmt = _build_if(t.condition, true_arm_body, false_arm_body)
-                if if_stmt is not None:
-                    iteration_stmts.append(if_stmt)
+                iteration_stmts.append(_build_if(t.condition, true_arm_body, false_arm_body))
                 for key in set(env.keys()) | set(true_env.keys()) | set(false_env.keys()):
                     tv = true_env.get(key)
                     fv = false_env.get(key)
@@ -1059,9 +1058,7 @@ def _recover_structure(
                 false_stmts, false_next = false_result
                 true_stmts = list(transition.true_prefix) + true_stmts
                 false_stmts = list(transition.false_prefix) + false_stmts
-                if_stmt = _build_if(transition.condition, true_stmts, false_stmts)
-                if if_stmt is not None:
-                    result.append(if_stmt)
+                result.append(_build_if(transition.condition, true_stmts, false_stmts))
                 current = _merge_next_state(true_next, false_next)
                 continue
         return (result, None)
@@ -1126,9 +1123,7 @@ def _recover_structure(
                 if_false, _ = if_false_result
                 true_body = list(cond_trans.true_prefix) + if_true
                 false_body = list(cond_trans.false_prefix) + if_false
-                if_stmt = _build_if(cond_trans.condition, true_body, false_body)
-                if if_stmt is not None:
-                    body_stmts.append(if_stmt)
+                body_stmts.append(_build_if(cond_trans.condition, true_body, false_body))
                 while_stmt = Ps1WhileLoop(
                     condition=loop_cond,
                     body=Block(body=body_stmts),
