@@ -841,6 +841,7 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$x = 'a'; 1 | ForEach-Object { $local:x = 'b' }; Write-Output $x",
             "$x = 'a'; function f { $ExecutionContext.SessionState.PSVariable.Remove('x') }; f; Write-Output $x",
             "$x = 'a'; function f { Remove-Item variable:x }; f; Write-Output $x",
+            "$x = 'a'; try { try { throw 'x' } finally { $x = 'b' } } catch { Write-Host $x }",
             '$x = 1, 2, 3; $a = 0, 0; $a[0] = $x; Write-Output $a[0]',
             '$x = 1, 2, 3; $a, $b = $x, 9; Write-Output $a',
             '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b',

@@ -735,6 +735,17 @@ class Ps1DeadStoreElimination(Transformer):
 
     5.1 reports the failed cast and writes `port 80`.
 
+    A store pending in a body other than the script's stays live where the run may leave the body
+    before the overwrite: by a jump, or by an error the body hands to whatever called it. The
+    variable may be the caller's, as it is in a block run with `.`, and the caller reads the value
+    the body last stored. In
+
+        $x = 0
+        try { . { $x = 1; $null = [int]$Host.Name; $x = 2 } } catch { }
+        Write-Host $x
+
+    5.1 writes `1`.
+
     A name the script may read where no occurrence of it stands can be read between a store and
     the overwrite this pass treats as a kill — see
     `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache.names_may_be_read_unseen` — so no store
@@ -793,6 +804,7 @@ class Ps1DeadStoreElimination(Transformer):
             if pending and (
                 handlers.raises_past(stmt)
                 or not leaving_ends_the_run and self._error_dispatch.may_jump_out_of(stmt)
+                or not leaving_ends_the_run and handlers.raises_out_of_the_body(stmt)
             ):
                 pending.clear()
             reads, kills, writes = self._classify_statement(stmt, scope, model)

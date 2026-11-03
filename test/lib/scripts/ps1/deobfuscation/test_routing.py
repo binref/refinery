@@ -188,3 +188,27 @@ class TestPs1ASpliceUnderATrapThatCarriesOnKeepsAnErrorFromCarryingOnInsideIt(Te
         ):
             with self.subTest(source):
                 self.assertIn("Write-Host $($x = 'v'", self._deobfuscate(source))
+
+
+class TestPs1AStoreBeforeAnErrorThatLeavesItsBodyStays(TestPs1):
+    """
+    An error a body hands to whatever ran it ends the body there, as a jump out of it does, and a
+    caller that ran it with `.` reads the value the body stored last.
+    """
+
+    def test_a_store_in_a_dot_sourced_block_before_an_error_that_leaves_it_stays(self):
+        output = self._deobfuscate(cleandoc("""
+            $x = 0
+            try { . { $x = 1; $null = [int]$Host.Name; $x = 2 } } catch { }
+            Write-Host $x
+        """))
+        self.assertIn('$x = 1', output)
+
+    def test_a_store_in_a_dot_sourced_function_before_an_error_that_leaves_it_stays(self):
+        output = self._deobfuscate(cleandoc("""
+            function f { $x = 1; $null = [int]$Host.Name; $x = 2 }
+            $x = 0
+            try { . f } catch { }
+            Write-Host $x
+        """), trust_eval=True)
+        self.assertIn('$x = 1', output)

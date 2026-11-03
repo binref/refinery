@@ -972,6 +972,15 @@ BEHAVIOURS: tuple[str, ...] = (
     "trap { continue }; switch (1) { 1 { $null = [int]$env:COMPUTERNAME; Write-Host 'tail' } }; Write-Host 'next'",
     "try { $x = 1; $x = [int]$env:COMPUTERNAME } catch { Write-Host 'caught' }; Write-Host $x",
     "$p = @('a'); function f1 { $null = [int]$p[0]; Write-Host 'm1' }; trap { continue }; f1; Write-Host 'm2'",
+    "$x = 'a'; foreach ($i in 1, 2) { try { break } finally { $x = 'b' }; return }; Write-Host $x",
+    "$x = 'a'; try { try { throw 'x' } finally { $x = 'b' } } catch { Write-Host $x }",
+    "$ErrorActionPreference = 'Stop'; $x = 'a'; try { trap { }; $x = 'b'; $null = [int]'z'; $x = 'c' } catch { Write-Host 'caught' }; Write-Host $x",
+    "$x = 0; try { . { $x = 1; $null = [int]$Host.Name; $x = 2 } } catch { }; Write-Host $x",
+    "trap { continue }; iex 'throw \"e\"; Write-Host \"tail\"'; Write-Host 'next'",
+    "trap { continue }; iex '$null = [int]$Host.Name; Write-Host \"tail\"'; Write-Host 'next'",
+    "[int]$i = 0; try { throw 'x' } catch { foreach ($i in 'a') { }; $y = 'r' }; Write-Host $y",
+    "$b = 0; foreach ($i in 1) { $b = 1 }; while ($b -ne 2) { switch ($b) { 0 { Write-Host 'zero'; $b = 2 } 1 { Write-Host 'one'; $b = 2 } } }",
+    "$s = 0; while ($s -ne -1) { switch ($s) { 0 { Write-Host 'a'; $s = -1 } default { break } } }; Write-Host $s",
 )
 
 

@@ -782,6 +782,30 @@ class Ps1FaultReach:
             return True
         return lowest < self.dispatch.depth_of(statement)
 
+    def raises_out_of_the_body(
+        self,
+        statement: Node,
+        raises: Callable[[Node], Ps1ErrorKind],
+        memo: dict[int, bool],
+    ) -> bool:
+        """
+        Whether an error raised at a point inside *statement* may leave the body it stands in for
+        whatever called that body (`refinery.lib.scripts.ps1.analysis.dispatch.Ps1Fate.to_caller`),
+        or stands where the dispatch places it nowhere. *raises* and *memo* are what `raises_past`
+        takes, and the table is filled the same way, once for the tree from the leaves up.
+        """
+        table = memo
+        if not table:
+            root = self._script
+            if root is not None:
+                for node in reversed(list(root.walk())):
+                    found = False
+                    if self.control_flow.node_of(node) is not None and (kinds := raises(node)):
+                        fate = self.dispatch.fate(node, kinds)
+                        found = fate is None or bool(fate.to_caller)
+                    table[id(node)] = found or any(table.get(id(child), False) for child in node.children())
+        return table.get(id(statement), True)
+
     def kinds_the_try_catches(
         self,
         operand: Node,

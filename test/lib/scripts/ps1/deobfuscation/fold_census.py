@@ -5750,4 +5750,77 @@ FOLDS: dict[str, str] = {
         '',
     'while ($a) { continue }':
         '',
+    "$x = 'a'; try { try { throw 'x' } finally { $x = 'b' } } catch { Write-Host $x }":
+        'try {\n'
+        '  try {\n'
+        "    throw 'x'\n"
+        '  } finally {}\n'
+        '} catch {\n'
+        "  Write-Host 'b'\n"
+        '}',
+    "$ErrorActionPreference = 'Stop'; $x = 'a'; try { trap { }; $x = 'b'; $null = [int]'z'; $x = 'c' } catch { Write-Host 'caught' }; Write-Host $x":
+        "$ErrorActionPreference = 'Stop'\n"
+        "$x = 'a'\n"
+        'try {\n'
+        '  trap {}\n'
+        "  $x = 'b'\n"
+        "  $Null = [int]'z'\n"
+        "  $x = 'c'\n"
+        '} catch {\n'
+        "  Write-Host 'caught'\n"
+        '}\n'
+        'Write-Host $x',
+    '$x = 0; try { . { $x = 1; $null = [int]$Host.Name; $x = 2 } } catch { }; Write-Host $x':
+        '$x = 0\n'
+        'try {\n'
+        '  . {\n'
+        '    $x = 1\n'
+        '    $Null = [int]$Host.Name\n'
+        '    $x = 2\n'
+        '  }\n'
+        '} catch {}\n'
+        'Write-Host $x',
+    'trap { continue }; iex \'throw "e"; Write-Host "tail"\'; Write-Host \'next\'':
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'Invoke-Expression \'throw "e"; Write-Host "tail"\'\n'
+        "Write-Host 'next'",
+    'trap { continue }; iex \'$null = [int]$Host.Name; Write-Host "tail"\'; Write-Host \'next\'':
+        'trap {\n'
+        '  continue\n'
+        '}\n'
+        'Invoke-Expression \'$null = [int]$Host.Name; Write-Host "tail"\'\n'
+        "Write-Host 'next'",
+    "$b = 0; foreach ($i in 1) { $b = 1 }; while ($b -ne 2) { switch ($b) { 0 { Write-Host 'zero'; $b = 2 } 1 { Write-Host 'one'; $b = 2 } } }":
+        '$b = 0\n'
+        'foreach ($i in 1) {\n'
+        '  $b = 1\n'
+        '}\n'
+        'while ($b -NE 2) {\n'
+        '  switch ($b) {\n'
+        '    0 {\n'
+        "      Write-Host 'zero'\n"
+        '      $b = 2\n'
+        '    }\n'
+        '    1 {\n'
+        "      Write-Host 'one'\n"
+        '      $b = 2\n'
+        '    }\n'
+        '  }\n'
+        '}',
+    "$s = 0; while ($s -ne -1) { switch ($s) { 0 { Write-Host 'a'; $s = -1 } default { break } } }; Write-Host $s":
+        '$s = 0\n'
+        'while ($s -NE -1) {\n'
+        '  switch ($s) {\n'
+        '    0 {\n'
+        "      Write-Host 'a'\n"
+        '      $s = -1\n'
+        '    }\n'
+        '    default {\n'
+        '      break\n'
+        '    }\n'
+        '  }\n'
+        '}\n'
+        'Write-Host $s',
 }

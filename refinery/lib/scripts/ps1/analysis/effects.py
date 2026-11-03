@@ -1951,6 +1951,7 @@ class _PastVerdicts:
         self._model = raises
         self._stamp = stamp
         self._memo: dict[int, float] = {}
+        self._leaving: dict[int, bool] = {}
         self._within: dict[int, Ps1ErrorKind] = {}
 
     def _raises(self, point: Node) -> Ps1ErrorKind:
@@ -1960,6 +1961,11 @@ class _PastVerdicts:
         if self._stamp.moved():
             return True
         return self._faults.raises_past(statement, self._raises, self._memo)
+
+    def raises_out_of_the_body(self, statement: Node) -> bool:
+        if self._stamp.moved():
+            return True
+        return self._faults.raises_out_of_the_body(statement, self._raises, self._leaving)
 
     def certain_handler(self, raiser: Node) -> Ps1CatchClause | None:
         """
@@ -2117,8 +2123,8 @@ class Ps1HandlerVerdicts:
     The semantic half of where an error goes, for one version of one tree: whether deleting `trap`
     statements changes what runs — what the points offered to a set raise, read without a world or
     under the world, and whether what one run executes and the other skips is observable under the
-    world — whether an error raised inside a statement may be taken past it, which the store sweep
-    asks, and the two questions the `catch` lift asks: the one clause a certain throw lands in, and
+    world — whether an error raised inside a statement may be taken past it or out of its body,
+    which the store sweep asks, and the two questions the `catch` lift asks: the one clause a certain throw lands in, and
     whether its body means the same standing in place of its `try`. Held in a
     `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot, so it is rebuilt with the fault
     model it reads, and handed to
@@ -2166,6 +2172,13 @@ class Ps1HandlerVerdicts:
         Whether an error raised inside *statement* may be taken past it, under `world`.
         """
         return self._past.raises_past(statement)
+
+    def raises_out_of_the_body(self, statement: Node) -> bool:
+        """
+        Whether an error raised inside *statement* may leave the body it stands in for whatever
+        called it, under `world`.
+        """
+        return self._past.raises_out_of_the_body(statement)
 
     def certain_handler(self, raiser: Node) -> Ps1CatchClause | None:
         """
