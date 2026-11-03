@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import unittest
+
 from inspect import cleandoc
 
-from test import lines_executed
+from test import lines_executed, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib import scripts
@@ -458,6 +460,43 @@ class TestPs1AScriptThatRunsNothingKeepsWhatItPrints(TestPs1):
             }
         """)
 
+    def test_a_value_a_script_block_prints_where_it_stands_is_kept(self):
+        self._assertKept("""
+            & { 'a' }
+        """)
+        self._assertKept("""
+            'a'
+            . { $x = 1 }
+        """)
+        self._assertDeobfuscatesTo("""
+            & { $Null = 1; 'a'; 'b' }
+        """, """
+            & {
+              'a'
+              'b'
+            }
+        """)
+
+    @unittest.expectedFailure
+    def test_a_value_beside_a_store_into_an_array_the_script_built_is_kept(self):
+        """
+        An element store into an array the script built runs no code of its own, but it is read
+        as one that may, because a member or index store can run a setter.
+        """
+        self._assertKept("""
+            $a = 1, 2
+            $a[0] = 5
+            'x'
+        """)
+
+    @wontfix('no obfuscator runs a command in the script block that is the condition of a switch')
+    def test_a_command_in_a_switch_condition_runs_and_the_script_loses_its_bare_values(self):
+        self.assertNotIn("'x'", self._deobfuscate(cleandoc("""
+            switch (1) {
+              { Start-Process calc; $true } { 'x' }
+            }
+        """)).splitlines())
+
     def test_junk_beside_the_only_value_still_goes(self):
         self._assertDeobfuscatesTo("""
             $Null = 1
@@ -513,6 +552,20 @@ class TestPs1AFileThatOnlyDefinesKeepsWhatItDefines(TestPs1):
             $Null = 1
         """, """
             $config = 'a'
+        """)
+
+    @unittest.expectedFailure
+    def test_a_library_that_stores_into_a_table_it_built_keeps_its_functions(self):
+        """
+        A key store into a table the script built runs no code of its own, but it is read as one
+        that may, because a member or index store can run a setter, so the file is read as a script.
+        """
+        self._assertKept("""
+            $Config = @{}
+            $Config.Path = 'C:\\x'
+            function Get-ConfigPath {
+              $Config.Path
+            }
         """)
 
     def test_a_library_beside_a_trap_keeps_its_variable(self):

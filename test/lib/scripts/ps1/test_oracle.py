@@ -367,10 +367,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The left operand is replaced by a copy, so the join writes `1,2,3` where the snippet '
         'writes `9,2,3`: the right operand stores through the table after the left one named '
         'the array, and a change is ordered against the whole statement.',
-    "function f { $x }; & { $x = 'a'; f }":
-        'The call and the function are removed, so nothing is written where the snippet writes '
-        '`a`: the body is read as writing an unset `$x`, where it reads the one of the block '
-        'that calls it.',
     '$_ = 5; switch (1) { default { Write-Output $_ } }':
         'The `switch` over a constant is folded to its clause, which then reads the `$_` the '
         'script stored and writes `5` where the snippet writes `1`.',

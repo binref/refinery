@@ -715,16 +715,6 @@ class Ps1RemovalPlans:
             return []
         return [proposal.statement for proposal in plan._allowed()]
 
-    def survivors(self, parent: Node, attr: str = 'body') -> list[Statement]:
-        """
-        The pre-veto survivors of one of the lists this batch touches, or its current contents when
-        no edit was registered against it. Same contract as `Ps1RemovalPlan.survivors`.
-        """
-        plan = self._plans.get((id(parent), attr))
-        if plan is None:
-            return list(getattr(parent, attr, None) or [])
-        return plan.survivors
-
     @property
     def accepted(self) -> list[Statement]:
         """

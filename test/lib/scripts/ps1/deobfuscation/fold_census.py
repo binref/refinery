@@ -5350,8 +5350,6 @@ FOLDS: dict[str, str] = {
         '  f\n'
         '} catch {}\n'
         'Write-Host $script:x',
-    "function f { $x }; & { $x = 'a'; f }":
-        "& {\n  $x = 'a'\n}",
     'function f { ,$args }; $t = f 1 2; Write-Output (,$t); Write-Output $t.Count':
         'Write-Output (,(1, 2))\nWrite-Output 2',
     "function f { [CmdletBinding()] param(); $null = [int]'a'; Write-Host 'f-rest' }; f -ErrorAction Stop; Write-Host 'after'":

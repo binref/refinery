@@ -3468,11 +3468,9 @@ class TestPs1ABodyReadsTheNameItsCallerBinds(_Ps1Ledger):
     the value it runs for as `$_`, whatever the script stored there. Measured on 5.1 in
     `corpus.BEHAVIOURS`, the first script writes `a` and the second `1`.
 
-    The call is removed together with the function, whose body is read as writing an unset `$x`,
-    and the `switch` over a constant is folded to its clause with `$_` left reading the script's.
+    The `switch` over a constant is folded to its clause with `$_` left reading the script's.
     """
 
-    @unittest.expectedFailure
     def test_a_function_called_from_a_block_writes_the_block_s_variable(self):
         tree = self._deobfuscated_tree("function f { $x }; & { $x = 'a'; f }")
         written = [

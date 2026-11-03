@@ -1445,6 +1445,24 @@ class TestPs1WhatAScriptAddsToARun(Ps1EffectsTest):
             ("if ($x) { if ($y) { while ($z) { 'deep' } } }", Contribution.PRINTS),
         )
 
+    def test_a_script_block_run_where_it_stands_adds_what_its_body_adds(self):
+        self._assert_contributions(
+            ("& { 'a' }", Contribution.PRINTS),
+            ('. { $x = 1 }', Contribution.NOTHING),
+            ('& { Start-Process calc }', Contribution.ACTS),
+            ("& { end { 'a' } }", Contribution.PRINTS),
+            ('& { param($p = (Start-Process calc)) }', Contribution.ACTS),
+            ("& { & { 'a' } }", Contribution.PRINTS),
+            ('& { exit }', Contribution.ENDS),
+            ("& { 'a' } > out.txt", Contribution.ACTS),
+        )
+
+    def test_a_return_leaves_the_script_block_and_not_the_run(self):
+        self._assert_contributions(
+            ("& { return 'a' }", Contribution.PRINTS),
+            ('. { return }', Contribution.NOTHING),
+        )
+
     def test_a_switch_over_a_file_reads_the_file(self):
         self._assert_contributions(
             ("switch -file x.txt { 'a' { 1 } }", Contribution.ACTS),

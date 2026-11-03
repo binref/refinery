@@ -118,8 +118,12 @@ class Ps1UnusedVariableRemoval(Transformer):
 
     A file that only defines, stores and discards is a library, and the pass makes no removals
     there either: a variable it never reads is there for the caller that dot-sources it, as
-    `$Version` is in `$Version = '1.0'; function Invoke-Thing { Write-Host $Version }`. See
-    `refinery.lib.scripts.ps1.analysis.effects.is_a_library`.
+    `$Version` is in this file:
+
+        $Version = '1.0'
+        function Invoke-Thing { Write-Host $Version }
+
+    See `refinery.lib.scripts.ps1.analysis.effects.is_a_library`.
     """
 
     def visit(self, node: Node):
@@ -142,8 +146,6 @@ class Ps1UnusedVariableRemoval(Transformer):
             return None
         model = cache.model
         world = cache.world_reach
-        if isinstance(node, Ps1Script) and is_a_library(node, world):
-            return None
         candidates: dict[Binding, list[Node]] = {}
         for binding in model.script_scope.bindings.values():
             if binding.read_through_using or binding.name in _PS1_SKIP_VARIABLES:
@@ -154,6 +156,8 @@ class Ps1UnusedVariableRemoval(Transformer):
             if mutations:
                 candidates[binding] = mutations
         if not candidates:
+            return None
+        if isinstance(node, Ps1Script) and is_a_library(node, world):
             return None
         plans = Ps1RemovalPlans(handlers=cache.handlers, under_the_world=True, error_state=cache.error_state)
         planned: dict[int, _MutationEdit] = {}
@@ -662,9 +666,7 @@ class Ps1JunkStatementRemoval(Transformer):
         """
         What this pass would drop from the statement list `parent` owns, where `sink` is the
         *resolved* destination of what that body writes and `guarded` says that body runs only on a
-        fault. Both set-level guards are answered here, against the **pre-veto** survivors, which is
-        the polarity they require — see
-        `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan`.
+        fault.
 
         A `DISCARD` emits nothing wherever the body's output goes, so nothing about the output makes
         one worth keeping and a body of them turns a junk function inert. It is not by itself a

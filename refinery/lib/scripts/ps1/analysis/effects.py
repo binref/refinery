@@ -38,6 +38,7 @@ from refinery.lib.scripts import Block, Node, tree_root
 from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, Projection, flood_labels
 from refinery.lib.scripts.ps1 import data
 from refinery.lib.scripts.ps1.analysis.arguments import Ps1WrittenSlots, written_slots
+from refinery.lib.scripts.ps1.analysis.blocks import classify_block
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
 from refinery.lib.scripts.ps1.analysis.dispatch import Ps1ErrorKind
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
@@ -90,6 +91,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CastExpression,
     Ps1CatchClause,
     Ps1ClassDefinition,
+    Ps1Code,
     Ps1CommandArgument,
     Ps1CommandInvocation,
     Ps1DataSection,
@@ -2435,23 +2437,28 @@ def contribution(statement: Node, world: Ps1WorldReach) -> Contribution:
     literal does nothing until it is called, so `$sb = { Start-Process x }` adds nothing either.
 
     A compound statement adds what its conditions and the bodies it runs on its normal path add.
-    The body of a `catch` clause or a `trap` runs only on a fault and is not read, which errs
-    towards finding nothing: in `trap { Start-Process y; continue }; [int]'abc'; 'a'` nothing runs.
+    So does a script block that a statement runs where it stands, as `& { ... }` and `. { ... }`
+    do; a `return` in it leaves the block and not the run. The body of a `catch` clause or a
+    `trap` runs only on a fault and is not read, which errs towards finding nothing. Nothing runs
+    in this script:
+
+        trap { Start-Process y; continue }
+        [int]'abc'
+        'a'
     """
     total = Contribution.NOTHING
-    pending = [statement]
+    pending: list[tuple[Node, bool]] = [(statement, False)]
     while pending:
-        node = pending.pop()
+        node, in_a_block = pending.pop()
         parts = _normal_path_parts(node)
         if parts is None:
-            total |= _own_contribution(node, world)
+            total |= _own_contribution(node, world, in_a_block)
             continue
-        evaluated, bodies = parts
-        if any(_expression_acts(expression, world) for expression in evaluated):
+        if any(_expression_acts(expression, world) for expression in parts.evaluated):
             total |= Contribution.ACTS
-        for body in bodies:
-            if body is not None:
-                pending.extend(body.body)
+        in_a_block = in_a_block or parts.runs_a_block
+        for owner in parts.owners:
+            pending.extend((inner, in_a_block) for inner in get_body(owner) or ())
     return total
 
 
@@ -2461,13 +2468,11 @@ def script_contribution(script: Ps1Script, world: Ps1WorldReach) -> Contribution
     `refinery.lib.scripts.ps1.ast.get_statement_owners`, and `Contribution.ACTS` where the default
     of one of its parameters does something when it is evaluated.
     """
+    parts = _code_parts(script)
     total = Contribution.NOTHING
-    block = get_param_block(script)
-    if block is not None and any(
-        _expression_acts(parameter.default_value, world) for parameter in block.parameters
-    ):
+    if any(_expression_acts(expression, world) for expression in parts.evaluated):
         total |= Contribution.ACTS
-    for owner in get_statement_owners(script):
+    for owner in parts.owners:
         for statement in get_body(owner) or ():
             total |= contribution(statement, world)
     return total
@@ -2493,39 +2498,86 @@ def is_a_library(script: Ps1Script, world: Ps1WorldReach) -> bool:
     return not script_contribution(script, world) & Contribution.BEYOND_A_LIBRARY
 
 
-def _normal_path_parts(
-    statement: Node,
-) -> tuple[list[Node | None], list[Block | None]] | None:
+class _NormalPath(NamedTuple):
     """
-    The expressions a compound statement evaluates and the bodies it runs on its normal path, or
-    `None` when `statement` is not a compound statement. A `switch -file` is not one here: it reads
-    a file, which acts.
+    What a statement runs on its normal path besides itself: the expressions it evaluates, the
+    nodes whose statement lists it runs, read through `get_body`, and whether those lists are the
+    body of a script block it runs, where `return` leaves the block rather than the run.
     """
+    evaluated: list[Node | None]
+    owners: list[Node | None]
+    runs_a_block: bool = False
+
+
+def _code_parts(code: Ps1Code) -> _NormalPath:
+    """
+    What running `code`, a script or a script block called without arguments, evaluates: the
+    defaults of its parameters, and every statement list it owns.
+    """
+    block = get_param_block(code)
+    defaults: list[Node | None] = []
+    if block is not None:
+        defaults.extend(parameter.default_value for parameter in block.parameters)
+    return _NormalPath(defaults, list(get_statement_owners(code)), isinstance(code, Ps1ScriptBlock))
+
+
+def _normal_path_parts(statement: Node) -> _NormalPath | None:
+    """
+    The parts of a compound statement, or of a statement that runs a script block where it stands,
+    or `None` when `statement` is neither. A `switch -file` is not compound here: it reads a file,
+    which acts.
+    """
+    block = _block_run_in_place(statement)
+    if block is not None:
+        return _code_parts(block)
     if isinstance(statement, Ps1IfStatement):
-        return (
+        return _NormalPath(
             [condition for condition, _ in statement.clauses],
             [*(block for _, block in statement.clauses), statement.else_block],
         )
     if isinstance(statement, (Ps1WhileLoop, Ps1DoLoop)):
-        return [statement.condition], [statement.body]
+        return _NormalPath([statement.condition], [statement.body])
     if isinstance(statement, Ps1ForLoop):
-        return [statement.initializer, statement.condition, statement.iterator], [statement.body]
+        return _NormalPath(
+            [statement.initializer, statement.condition, statement.iterator], [statement.body])
     if isinstance(statement, Ps1ForEachLoop):
-        return [statement.iterable], [statement.body]
+        return _NormalPath([statement.iterable], [statement.body])
     if isinstance(statement, Ps1SwitchStatement) and not statement.file:
-        return (
+        return _NormalPath(
             [statement.value, *(condition for condition, _ in statement.clauses)],
             [block for _, block in statement.clauses],
         )
     if isinstance(statement, Ps1TryCatchFinally):
-        return [], [statement.try_block, statement.finally_block]
+        return _NormalPath([], [statement.try_block, statement.finally_block])
     return None
 
 
-def _own_contribution(statement: Node, world: Ps1WorldReach) -> Contribution:
+def _block_run_in_place(statement: Node) -> Ps1ScriptBlock | None:
     """
-    What a statement that is not compound adds by `contribution`. A statement of a kind not named
-    here acts.
+    The script block that `statement` runs where it stands and with nothing else, as `& { ... }`
+    and `. { ... }` do as a statement of their own with no argument and no redirection, or `None`.
+    Where the block runs is the block model's answer,
+    `refinery.lib.scripts.ps1.analysis.blocks.classify_block`.
+    """
+    if not isinstance(statement, Ps1ExpressionStatement):
+        return None
+    command = statement.expression
+    if (
+        not isinstance(command, Ps1CommandInvocation)
+        or command.arguments
+        or command.redirections
+    ):
+        return None
+    block = command.name
+    if not isinstance(block, Ps1ScriptBlock) or classify_block(block).site is not command:
+        return None
+    return block
+
+
+def _own_contribution(statement: Node, world: Ps1WorldReach, in_a_block: bool) -> Contribution:
+    """
+    What a statement that is not compound adds by `contribution`, where `in_a_block` says that it
+    sits in a script block run where it stands. A statement of a kind not named here acts.
     """
     if isinstance(statement, (
         Ps1ClassDefinition,
@@ -2539,10 +2591,11 @@ def _own_contribution(statement: Node, world: Ps1WorldReach) -> Contribution:
     if isinstance(statement, Ps1ThrowStatement):
         return Contribution.ACTS
     if isinstance(statement, Ps1Exit):
-        total = Contribution.ENDS
+        returns = isinstance(statement, Ps1ReturnStatement)
+        total = Contribution.NOTHING if returns and in_a_block else Contribution.ENDS
         if _expression_acts(statement.pipeline, world):
             total |= Contribution.ACTS
-        if isinstance(statement, Ps1ReturnStatement) and statement.pipeline is not None:
+        if returns and statement.pipeline is not None:
             total |= Contribution.PRINTS
         return total
     if not isinstance(statement, Ps1ExpressionStatement):
