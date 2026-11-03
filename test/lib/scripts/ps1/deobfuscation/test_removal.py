@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import unittest
-
 from inspect import cleandoc
 
 from test import lines_executed
@@ -12,6 +10,7 @@ from refinery.lib.scripts import set_child_list, tree_root, tree_version
 from refinery.lib.scripts.analysis import cfg as generic_cfg
 from refinery.lib.scripts.ps1.analysis import cfg as ps1_cfg
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
+from refinery.lib.scripts.pipeline import DeobfuscationTimeout
 from refinery.lib.scripts.ps1.deobfuscation import (
     Ps1ConstantInlining,
     Ps1ControlFlowDeflattening,
@@ -20,6 +19,7 @@ from refinery.lib.scripts.ps1.deobfuscation import (
     Ps1FunctionEvaluator,
     Ps1JunkStatementRemoval,
     Ps1UnusedVariableRemoval,
+    deobfuscate,
 )
 from refinery.lib.scripts.ps1.deobfuscation import removal
 from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan, Ps1RemovalPlans
@@ -319,12 +319,20 @@ class TestPs1IterativeRemoval(TestPs1):
         self.assertIn('appdata', result.lower())
 
 
-class TestPs1AScriptIsNeverPrunedToNothing(TestPs1):
+class TestPs1AScriptThatRunsNothingKeepsWhatItPrints(TestPs1):
     """
-    A script that is nothing but a bare value still emits that value, so the root body may not be
-    emptied. A `trap` left standing beside the value is machinery for the statements around it
-    rather than one of them, and a body holding nothing else runs nothing at all.
+    A script in which nothing runs once its junk is gone prints, defines and stores, and what it
+    prints is then the whole of what it does: its bare values stay under the stripping model, while
+    the junk beside them still goes. A `trap` left standing beside the value is machinery for the
+    statements around it and runs nothing.
     """
+
+    _PADDING = cleandoc("""
+        function u { $Error }
+        try {
+          0042Dsk=86
+        } catch {}
+    """)
 
     def _content_beside_the_traps(self, source: str) -> str:
         script = Ps1Parser(self._deobfuscate_iterative(source)).parse()
@@ -390,21 +398,149 @@ class TestPs1AScriptIsNeverPrunedToNothing(TestPs1):
                     result = self._deobfuscate_iterative(cleandoc(source), trust_eval=trust_eval)
                     self.assertIn("'a'", result.splitlines())
 
-    @unittest.expectedFailure
     def test_the_only_value_a_script_emits_survives_padding_that_goes_in_a_later_round(self):
-        """
-        The junk pass strips the value because the padding still stands beside it, and the dead-code
-        pass removes the padding in the next round, once the uncalled function that reads `$Error`
-        is gone. The fix is for the junk pass to count as content only what no later pass deletes as
-        noise.
-        """
-        self.assertEqual(self._deobfuscate_iterative(cleandoc("""
-            function u { $Error }
-            try {
-              0042Dsk=86
-            } catch {}
+        self._assertDeobfuscatesTo(F"{self._PADDING}\n'a'", "'a'")
+
+    def test_the_only_value_a_script_emits_survives_padding_at_every_step_budget(self):
+        for budget in range(1, 12):
+            with self.subTest(budget=budget):
+                ast = Ps1Parser(F"{self._PADDING}\n'a'").parse()
+                try:
+                    deobfuscate(ast, max_steps=budget)
+                except DeobfuscationTimeout:
+                    pass
+                self.assertIn("'a'", Ps1Synthesizer().convert(ast).splitlines())
+
+    def test_a_value_ahead_of_an_exit_is_kept(self):
+        self._assertKept("""
             'a'
-        """)), "'a'")
+            exit
+        """)
+        self._assertDeobfuscatesTo(F"{self._PADDING}\n'a'\nexit", """
+            'a'
+            exit
+        """)
+
+    def test_a_value_beside_a_class_definition_is_kept(self):
+        self._assertKept("""
+            class C {}
+            'a'
+        """)
+
+    def test_a_value_beside_a_discard_that_may_fail_is_kept(self):
+        for source in (
+            """
+                $ErrorActionPreference = 'Stop'
+                $Null = [int]$args[0]
+                'done'
+            """,
+            """
+                trap { exit 1 }
+                $Null = [int]$args[0]
+                'done'
+            """,
+        ):
+            with self.subTest(source):
+                self.assertIn("'done'", self._deobfuscate(cleandoc(source)).splitlines())
+
+    def test_the_only_value_an_end_block_emits_survives_padding(self):
+        self._assertDeobfuscatesTo("""
+            end {
+              function u { $Error }
+              try {
+                0042Dsk=86
+              } catch {}
+              'a'
+            }
+        """, """
+            end {
+              'a'
+            }
+        """)
+
+    def test_junk_beside_the_only_value_still_goes(self):
+        self._assertDeobfuscatesTo("""
+            $Null = 1
+            'a'
+        """, """
+            'a'
+        """)
+
+    def test_a_script_that_runs_something_still_loses_its_bare_values(self):
+        self._assertDeobfuscatesTo("""
+            Write-Host 'x'
+            'a'
+        """, """
+            Write-Host 'x'
+        """)
+
+
+class TestPs1AFileThatOnlyDefinesKeepsWhatItDefines(TestPs1):
+    """
+    A file that only defines, stores and discards is a library: a function it never calls and a
+    variable it never reads are there for whoever dot-sources it. A file that prints or ends its own
+    run is a script, and loses both.
+    """
+
+    def test_a_variable_a_function_of_the_library_reads_is_kept(self):
+        self._assertKept("""
+            $Version = '1.0'
+            function Invoke-Thing {
+              Write-Host $Version
+            }
+        """)
+
+    def test_uncalled_functions_and_an_unread_variable_are_kept(self):
+        self._assertKept("""
+            function A {
+              Write-Host 1
+            }
+            function B {
+              Write-Host 2
+            }
+            $Version = '1.0'
+        """)
+
+    def test_a_function_that_does_nothing_is_kept(self):
+        self._assertKept("""
+            function Initialize {}
+            $Version = '1.0'
+        """)
+
+    def test_junk_in_a_library_still_goes(self):
+        self._assertDeobfuscatesTo("""
+            $config = 'a'
+            $Null = 1
+        """, """
+            $config = 'a'
+        """)
+
+    def test_a_library_beside_a_trap_keeps_its_variable(self):
+        self.assertIn("$config = 'a'", self._deobfuscate(cleandoc("""
+            trap { break }
+            $config = 'a'
+        """)).splitlines())
+
+    def test_a_file_that_prints_is_a_script(self):
+        self._assertDeobfuscatesTo("""
+            function f {
+              Write-Host 1
+            }
+            'a'
+        """, """
+            'a'
+        """)
+
+    def test_a_file_that_ends_its_own_run_is_a_script(self):
+        self._assertDeobfuscatesTo("""
+            $p = 1
+            function f {
+              Write-Host 1
+            }
+            return
+        """, """
+            return
+        """)
 
 
 class TestPs1RemovalReportsWhatItDid(TestPs1):

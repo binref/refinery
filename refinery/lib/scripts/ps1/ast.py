@@ -153,6 +153,16 @@ def get_param_block(node) -> Ps1ParamBlock | None:
     return node.param_block
 
 
+def get_statement_owners(node: Ps1Code) -> list[Ps1Code | Block]:
+    """
+    `node` and each block in `get_named_blocks`: every node owning a statement list that `node` runs
+    at its own top level, which `get_body` reads off each of them. The parser fills either the body
+    or the named blocks, so a question about what stands at the top of a script or a function asks
+    all of these.
+    """
+    return [node, *get_named_blocks(node)]
+
+
 def command_name_literal(cmd: Ps1CommandInvocation) -> Ps1StringLiteral | None:
     """
     The string literal a command is invoked under, read through the parentheses and the subexpression

@@ -227,12 +227,6 @@ def _resolved_reaching_the_host_always(self: effects.Ps1OutputFlow, path) -> Out
     return OutputSink.HOST
 
 
-def _leaves_anything_counting_its_own_residue(original: Callable) -> staticmethod:
-    def mutated(plans, node, installed):
-        return original(plans, node, set())
-    return staticmethod(mutated)
-
-
 def _iterating_command_ignoring_the_shadow_set(original: Callable) -> Callable:
     def mutated(cmd, shadowed=frozenset()):
         return original(cmd, frozenset())
@@ -558,13 +552,10 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
             patch.object(unused, 'assignment_target_is_all_variables', lambda target: True),
             notices='test_a_target_slot_that_is_not_a_variable_keeps_the_whole_statement_alive')
 
-    def test_the_erasure_guard_discounting_its_own_residue_is_witnessed(self):
+    def test_the_library_decision_is_witnessed(self):
         self._assertWitnessed(
             [_UNUSED, _EMULATOR, _INTEGRATION],
-            patch.object(
-                unused.Ps1UnusedVariableRemoval, '_leaves_anything',
-                _leaves_anything_counting_its_own_residue(
-                    unused.Ps1UnusedVariableRemoval._leaves_anything)),
+            patch.object(unused, 'is_a_library', lambda script, world: False),
             notices='test_a_script_reduced_to_this_passs_own_discards_is_left_alone')
 
     def test_carrying_only_fault_free_statements_out_of_a_try_is_witnessed(self):

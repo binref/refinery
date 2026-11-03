@@ -75,8 +75,8 @@ class TestPs1UnusedVariableRemoval(TestPs1):
 
     def test_a_script_reduced_to_this_passs_own_discards_is_left_alone(self):
         # Every store here is dead and every value acts, so the batch would leave a script of
-        # nothing but `$Null = ...` husks. Those are this pass's own residue and not evidence the
-        # script still says something, so the batch is abandoned and the stores stand as written.
+        # nothing but `$Null = ...` husks. A file of nothing but stores is a library, though, and
+        # its variables are there for whoever dot-sources it, so the stores stand as written.
         for source in (
             '$x = Start-Process calc',
             "$x = Start-Process calc\n$y = Remove-Item C:\\z",

@@ -128,13 +128,6 @@ DEFECTS: dict[str, str] = {
 #: `BEHAVIOUR_DEFECTS`. Both tables are checked against the measured set in both directions, so a
 #: divergence that stops happening and a new one that starts both fail.
 BEHAVIOUR_DIVERGENCES: dict[str, str] = {
-    "try { zzq0000=5; 'tail' } catch {}; 'next'":
-        'Nothing is carried out of the `try` any more: the drop claims the bareword raised, and a '
-        'raise abandons the rest of its block. What runs first at script scope is the strip, which '
-        'takes both bare values, and a body left holding the bareword alone then dissolves — so '
-        'the snippet writes `next` and the default writes nothing. `ps1 -k` emits the input '
-        'unchanged. The carry itself is measured where the value has a consumer that the strip '
-        'leaves alone, which is its function-scope spelling in the corpus.',
     "$Null = [Int]'abc'; Write-Host 'A'":
         'The cast is removed. 5.1 reports the failed conversion, steps over it and runs `A`, so the '
         'only difference is the error record the removal drops; the error stream, like the success '

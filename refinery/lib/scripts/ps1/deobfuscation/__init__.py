@@ -3,8 +3,13 @@ PowerShell AST deobfuscation transforms.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+from functools import partial
+
+from refinery.lib.scripts import _clone_node, restore
 from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup
 from refinery.lib.scripts.ps1.analysis import Ps1ModelCache
+from refinery.lib.scripts.ps1.analysis.effects import runs_something
 from refinery.lib.scripts.ps1.deobfuscation.aliases import Ps1AliasInlining
 from refinery.lib.scripts.ps1.deobfuscation.constants import (
     Ps1ConstantInlining,
@@ -140,6 +145,16 @@ def deobfuscate(
     any pass, and instead changes what the analysis every pass reads believes about code it cannot
     see. See `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions` for what each costs and
     the assumption it rests on.
+
+    A script in which nothing runs keeps what it prints, whatever `preserve_bare_output` says: its
+    console output is then the whole of what it does.
+    `refinery.lib.scripts.ps1.analysis.effects.runs_something` decides this of the script at two
+    points. After the first phase, a script in which nothing runs gets a second phase that keeps
+    console output. Otherwise the second phase strips, and if nothing runs in its result, the tree
+    is put back as the first phase left it and the second phase runs again, keeping console
+    output. Only the run that is kept is counted in the result, while the discarded one spends its
+    share of `max_steps`. A stripping run that raises, a timeout included, puts the tree back as the
+    first phase left it before the error propagates, so its partial result is never the output.
     """
     options = Ps1DeobfuscationOptions(
         preserve_bare_output=preserve_bare_output,
@@ -153,13 +168,41 @@ def deobfuscate(
     steps = _phase1.run(ast, max_steps=max_steps, models=cache, options=options)
     if not remove_junk:
         return steps
+    return _remove_junk(ast, cache, options, steps, max_steps)
+
+
+def _remove_junk(
+    ast: Ps1Script,
+    cache: Ps1ModelCache,
+    options: Ps1DeobfuscationOptions,
+    steps: int,
+    max_steps: int,
+) -> int:
+    """
+    The second phase of `deobfuscate`, run on what the first left after *steps* steps, and the
+    total step count of both phases. A run with other options than *cache* was built under gets a
+    cache of its own, so that no model is read under a configuration its run did not ask for.
+    """
     # Carry the phase-1 step count into phase 2 so a single `max_steps` budget is enforced across
     # both phases. Splitting the budget instead lets a phase-1 result of exactly `max_steps` leave a
     # remaining budget of 0, which the pipeline would read as "unlimited" and run phase 2 unbounded.
-    return _phase2.run(
-        ast,
-        max_steps=max_steps,
-        initial_steps=steps,
-        models=cache,
-        options=options,
-    )
+    run = partial(_phase2.run, ast, max_steps=max_steps)
+    if options.preserve_bare_output:
+        return run(initial_steps=steps, models=cache, options=options)
+    printer = replace(options, preserve_bare_output=True)
+    if not runs_something(ast, cache.world_reach):
+        return run(initial_steps=steps, models=Ps1ModelCache(ast, printer), options=printer)
+    try:
+        snapshot = _clone_node(ast)
+    except RecursionError:
+        return run(initial_steps=steps, models=cache, options=options)
+    try:
+        stripped = run(initial_steps=steps, models=cache, options=options)
+    except BaseException:
+        restore(ast, snapshot)
+        raise
+    if runs_something(ast, cache.world_reach):
+        return stripped
+    restore(ast, snapshot)
+    printed = run(initial_steps=stripped, models=Ps1ModelCache(ast, printer), options=printer)
+    return steps + printed - stripped

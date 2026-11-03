@@ -13,10 +13,10 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     Ps1HandlerVerdicts,
     StatementEffect,
     body_is_inert,
+    is_a_library,
     is_side_effect_free,
     opens_a_redirection_target,
     output_path,
-    pruning_erases_body,
     reads_in_bodies,
     statement_effect,
     unconsumed_statement,
@@ -30,6 +30,7 @@ from refinery.lib.scripts.ps1.ast import (
     assignment_target_variables,
     fault_operand,
     get_body,
+    get_statement_owners,
     normalize_command_name,
 )
 from refinery.lib.scripts.ps1.deobfuscation.constants import (
@@ -114,6 +115,11 @@ class Ps1UnusedVariableRemoval(Transformer):
     runs code supplied as data — an `Invoke-Expression`, a dispatched scriptblock, a dot-sourced
     file — may read every name, so the pass makes no removals there. The trusting model —
     `refinery.lib.scripts.ps1.options.eval_is_trusted` — closes that world and restores full removal.
+
+    A file that only defines, stores and discards is a library, and the pass makes no removals
+    there either: a variable it never reads is there for the caller that dot-sources it, as
+    `$Version` is in `$Version = '1.0'; function Invoke-Thing { Write-Host $Version }`. See
+    `refinery.lib.scripts.ps1.analysis.effects.is_a_library`.
     """
 
     def visit(self, node: Node):
@@ -136,6 +142,8 @@ class Ps1UnusedVariableRemoval(Transformer):
             return None
         model = cache.model
         world = cache.world_reach
+        if isinstance(node, Ps1Script) and is_a_library(node, world):
+            return None
         candidates: dict[Binding, list[Node]] = {}
         for binding in model.script_scope.bindings.values():
             if binding.read_through_using or binding.name in _PS1_SKIP_VARIABLES:
@@ -149,7 +157,6 @@ class Ps1UnusedVariableRemoval(Transformer):
             return None
         plans = Ps1RemovalPlans(handlers=cache.handlers, under_the_world=True, error_state=cache.error_state)
         planned: dict[int, _MutationEdit] = {}
-        installed: set[int] = set()
         claimed: set[int] = set()
         for mutations in candidates.values():
             for mutation in mutations:
@@ -164,8 +171,6 @@ class Ps1UnusedVariableRemoval(Transformer):
                 if plans.propose(edit.statement, replacement):
                     claimed.add(id(edit.statement))
                     planned[id(mutation)] = edit
-                    if replacement is not None:
-                        installed.update(id(stmt) for stmt in replacement)
         accepted = {id(statement) for statement in plans.accepted}
         dissolving = {
             key for key, edit in planned.items()
@@ -202,33 +207,8 @@ class Ps1UnusedVariableRemoval(Transformer):
         if not removable:
             plans.abandon()
             return None
-        if get_body(node) is not None and not self._leaves_anything(plans, node, installed):
-            plans.abandon()
-            return None
         if plans.commit():
             self.mark_changed()
-
-    @staticmethod
-    def _leaves_anything(plans: Ps1RemovalPlans, node: Node, installed: set[int]) -> bool:
-        """
-        Whether the script still says something of its own once this batch lands.
-
-        A pass may not reduce a whole script to nothing, for the reason `_remove_inert_functions`
-        spells out: what is left would be a module whose callers the walk never read, and the
-        definitions that would prove it live are exactly what is out of reach. Definitions are
-        therefore not survivors here.
-
-        Neither is a `$Null = <value>` discard this pass is installing. It preserves a side effect
-        and it is genuinely observable, but it is **this pass's own residue**, and a guard against
-        erasure that counts its own output as proof it erased nothing answers itself. A script
-        reduced to nothing but discards has had everything it said deleted; that the deletions left
-        husks behind is not evidence to the contrary.
-        """
-        surviving = plans.survivors(node)
-        return any(
-            not isinstance(stmt, Ps1FunctionDefinition) and id(stmt) not in installed
-            for stmt in surviving
-        )
 
     def _removable_mutations(self, binding: Binding) -> list[Node]:
         """
@@ -429,10 +409,26 @@ class Ps1UnusedVariableRemoval(Transformer):
         return _MutationEdit(stmt, keep_value)
 
 
+def _top_level_owners(node: Node) -> set[int]:
+    """
+    The identities of the nodes owning the statement lists at the top of `node` when it is a
+    script, by `refinery.lib.scripts.ps1.ast.get_statement_owners`, and no identity otherwise.
+    Owners and not lists, because a removal installs a new list in place of the one it edits.
+    """
+    if not isinstance(node, Ps1Script):
+        return set()
+    return {id(owner) for owner in get_statement_owners(node)}
+
+
 class Ps1JunkStatementRemoval(Transformer):
     """
     Remove standalone expression statements that produce no observable side effects (junk/noise
     injected for anti-analysis) and function definitions that are never called.
+
+    A file that only defines, stores and discards is a library, and its definitions are its point:
+    one it never calls is there for the caller that dot-sources it, and one that does nothing may
+    be a stub that caller relies on. Both stay there. See
+    `refinery.lib.scripts.ps1.analysis.effects.is_a_library`.
     """
 
     def visit(self, node: Node):
@@ -452,7 +448,17 @@ class Ps1JunkStatementRemoval(Transformer):
         """
         cache = model_cache(self, node)
         flow = cache.output_flow
-        called = cache.call_graph.reachable_names()
+        world = cache.world_reach
+        library = isinstance(node, Ps1Script) and is_a_library(node, world)
+        top = _top_level_owners(node)
+        # `called` is every call site standing in this tree, which is only the whole story while the
+        # tree is the whole script. When the world is open, a dot-sourced file, an imported module
+        # or an `iex` holds call sites the walk never read, so a definition with none here is not
+        # unreachable — it is reachable from somewhere unreadable. A library is the same case seen
+        # from the other side: its callers sit in a file this tree does not hold.
+        called = None
+        if world.closed_for_the_whole_run and not library:
+            called = cache.call_graph.reachable_names()
         # A name used before it is defined denotes, at that use, whatever bound it earlier rather
         # than the body written below — nothing, at script scope, where the bare word raises a
         # non-terminating CommandNotFoundException and the run carries on to the body below. Such a
@@ -470,7 +476,13 @@ class Ps1JunkStatementRemoval(Transformer):
             if path.sink is OutputSink.CAPTURED:
                 continue
             removable = self._removable_in_body(
-                parent, flow.resolved(path), path.guarded, called, cache.world_reach, cache.raises(True))
+                parent,
+                flow.resolved(path),
+                path.guarded,
+                called if id(parent) in top else None,
+                world,
+                cache.raises(True),
+            )
             for statement in body:
                 if statement in removable:
                     plans.propose_in(parent, statement)
@@ -479,7 +491,7 @@ class Ps1JunkStatementRemoval(Transformer):
         # A fresh world after the commit, not the one the loop read: the commit advanced the tree
         # version, so a held world would answer `False` for every function this walk still has to
         # weigh. The cache rebuilds it only because a removal landed.
-        self._remove_inert_functions(node, cache.call_graph, cache.world_reach, unreached)
+        self._remove_inert_functions(node, cache.call_graph, cache.world_reach, unreached, library)
 
     @staticmethod
     def _within_unreached_function(node: Node, unreached: frozenset[str]) -> bool:
@@ -505,6 +517,7 @@ class Ps1JunkStatementRemoval(Transformer):
         graph: Ps1CallGraph,
         world: Ps1WorldReach,
         unreached: frozenset[str],
+        library: bool,
     ):
         """
         Remove top-level functions whose body carries no observable output or side effect together
@@ -530,17 +543,13 @@ class Ps1JunkStatementRemoval(Transformer):
         list: taking the reverse order `Node.walk` yields would delete from the back and make every
         scan traverse the whole body.
 
-        Removals are collected before any is applied so that `pruning_erases_body` sees the whole
-        set at once. A script of nothing but inert definitions is inert by every measure this pass
-        has and still may not be emptied — it is a module whose functions are dot-sourced from a
-        caller the walk never read, and the call sites that would prove them live are exactly what
-        is out of reach. The same invariant governs `_removable_in_body`, so both removal sites hold
-        it.
+        A definition is top-level when it stands in the body of the script or in one of its named
+        blocks, which run in the script's scope just the same.
 
-        Only the definitions are weighed against that invariant, because only they are what a
-        dot-sourcing caller would come for. A script holding a call site of its own is not the
-        module the guard protects — it uses the function here — so `function j { $Null = 1 }` beside
-        a bare `j` reduces to nothing, while the same definition standing alone survives.
+        A library keeps a definition that does nothing and that nothing calls, because a caller the
+        walk never read may come for it; `library` says whether the script is one. A script holding
+        a call site of its own uses the function here, so `function j { $Null = 1 }` beside a bare
+        `j` reduces to nothing either way.
 
         `deletion_is_observable` is applied for the same reason it is applied when a body is pruned:
         emptying a `try` body beside a handler that does something is what makes the handler read as
@@ -555,8 +564,6 @@ class Ps1JunkStatementRemoval(Transformer):
         reaches.
         The withdrawals are read back to a fixpoint rather than applied once, so a group broken by
         another group's withdrawal is caught too; it terminates because the batch only shrinks.
-        `pruning_erases_body` is asked *before* any of this, against the full set, because it is
-        permissive in the survivors and a withdrawal is a veto by another name.
 
         A call site that runs sets `$?`, so removing one is observable to a later read of that
         variable even where the call's own output is not — the exposure
@@ -575,7 +582,7 @@ class Ps1JunkStatementRemoval(Transformer):
         reads_success = commands.reads_command_success()
         function_reads = commands.function_drive_reads()
         groups: dict[str, list[Node]] = {}
-        removable_definitions: set[Node] = set()
+        top = _top_level_owners(node)
         for key in graph.defined_names:
             if key in unreached:
                 continue
@@ -586,7 +593,7 @@ class Ps1JunkStatementRemoval(Transformer):
                 continue
             if not all(body_is_inert(body, world) for body in graph.keyword_definitions(key)):
                 continue
-            removable_here = [d for d in definitions if d.parent is node]
+            removable_here = [d for d in definitions if id(d.parent) in top]
             if not removable_here:
                 continue
             call_statements = self._inert_call_statements(graph, key)
@@ -594,14 +601,11 @@ class Ps1JunkStatementRemoval(Transformer):
                 continue
             if call_statements and reads_success:
                 continue
+            if not call_statements and library:
+                continue
             groups[key] = [*call_statements, *removable_here]
-            removable_definitions.update(removable_here)
         if not groups:
             return
-        if get_body(node) is not None:
-            survivors = self._survivors(get_body(node), removable_definitions)
-            if pruning_erases_body(node, survivors):
-                return
         plans = Ps1RemovalPlans(handlers=cache.handlers, under_the_world=True, error_state=cache.error_state)
         for group in groups.values():
             for statement in group:
@@ -651,7 +655,7 @@ class Ps1JunkStatementRemoval(Transformer):
         parent: Node,
         sink: OutputSink,
         guarded: bool,
-        called: frozenset[str],
+        called: frozenset[str] | None,
         world: Ps1WorldReach,
         raises: Ps1RaiseModel,
     ) -> set[Node]:
@@ -680,6 +684,11 @@ class Ps1JunkStatementRemoval(Transformer):
           are `OUTPUT` like `42` is, and both terminate the script where they stand, so deleting one
           resumes execution that had stopped — and does it across a function boundary, where the
           `try` veto in `Ps1RemovalPlan` cannot see.
+
+        A definition goes when `called` holds the names some call in the tree reaches and its name
+        is not one of them. `called` is `None` where no definition in this body goes for want of a
+        call: the body is not at the top of the script, the world is open, or the script is a
+        library.
         """
         body = get_body(parent)
         removable: set[Node] = set()
@@ -690,15 +699,7 @@ class Ps1JunkStatementRemoval(Transformer):
         )
         for stmt in body:
             if isinstance(stmt, Ps1FunctionDefinition):
-                # `called` is every call site standing in this tree, which is only the whole story
-                # while the tree is the whole script. When the world is open, a dot-sourced file, an
-                # imported module or an `iex` holds call sites the walk never read, so a definition
-                # with none here is not unreachable — it is reachable from somewhere unreadable.
-                if (
-                    isinstance(parent, Ps1Script)
-                    and world.closed_for_the_whole_run
-                    and normalize_command_name(stmt.name) not in called
-                ):
+                if called is not None and normalize_command_name(stmt.name) not in called:
                     removable.add(stmt)
                 continue
             effect = statement_effect(stmt, world)
@@ -707,15 +708,7 @@ class Ps1JunkStatementRemoval(Transformer):
             elif effect is StatementEffect.OUTPUT and strip_bare_output:
                 if _writes_only_what_cannot_fault(stmt, raises):
                     removable.add(stmt)
-        if not removable:
-            return set()
-        if pruning_erases_body(parent, self._survivors(body, removable)):
-            return set()
         return removable
-
-    @staticmethod
-    def _survivors(body: list, removable: set[Node]) -> list[Node]:
-        return [stmt for stmt in body if stmt not in removable]
 
 
 class Ps1DeadStoreElimination(Transformer):

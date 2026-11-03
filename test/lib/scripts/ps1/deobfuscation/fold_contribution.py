@@ -6,6 +6,12 @@ this records why. A row is `lost` for a pass when neutering that pass stops the 
 at all, and `changed` when the row is still rewritten but to something else. A row can be lost for
 more than one pass, because the two may each be necessary.
 
+A row is `added` for a pass when neutering it makes the row rewritten where it was not, so the pass
+is what keeps the row as written. That may mean the passes are fighting, so each such row is here
+with the reason it is not. There is one, the padded `try` the dead-code pass removes. With the
+pass, the padding goes, nothing is left that runs, and the script keeps what it prints. Without
+it, the padding is something that runs, so the stripping model takes the printed values away.
+
 The rows are held rather than counted: a count moves when a fold is lost and moves back when an
 unrelated one is gained, so a pass that swaps what it contributes reads as no change. Here each row
 is named, and a swap is a diff.
@@ -25,6 +31,8 @@ class Contribution(typing.NamedTuple):
     lost: tuple[str, ...]
     #: Rows that are still rewritten without the pass, but to something else.
     changed: tuple[str, ...]
+    #: Rows that are rewritten only without the pass.
+    added: tuple[str, ...] = ()
 
 
 CONTRIBUTION: dict[str, Contribution] = {
@@ -461,6 +469,7 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; [int]'a'; Write-Output 'after'",
             "Write-Host 'a'; return; Write-Host 'b'",
             "function f { try { 'tail' } catch {} }; Write-Host (f)",
+            "switch ('b') { 'a' { 'first' } 'b' { 'second' } }",
             "throw 'e'; Write-Host 'after'",
             'trap [E] { 1 }',
             "trap { break }; trap { continue }; [int]'a'; Write-Host 'after'",
@@ -716,11 +725,9 @@ CONTRIBUTION: dict[str, Contribution] = {
             "& { foreach ($i in 1..2) { try { throw 'x' } catch { Write-Host 'a'; $null = [int]'b'; trap { break } }; trap { continue } } }",
             "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string]); iex 'try { throw ''x'' } catch { $k = [System.Math]::Sqrt(36); Write-Host ''rest'' }; Write-Host ''after'''",
             'do { 1 } while ($a)',
-            'for ($i = 0; $i -lt 2; $i++) { 1 }',
             'if ($a) { 1 }',
             'if ($a) { 1 } elseif ($b) { 2 } else { 3 }',
             "if ($true) { 'yes' } else { 'no' }",
-            "switch ('b') { 'a' { 'first' } 'b' { 'second' } }",
             "trap { continue }; $s = { throw 'x' }; [int]'a'; Write-Host 'after'",
             "trap { continue }; foreach ($i in 1..2) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'",
             "trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'",
@@ -735,10 +742,12 @@ CONTRIBUTION: dict[str, Contribution] = {
             "trap { continue }; try { trap [System.IO.IOException] { continue }; $v = [int]'a' } finally { }; Write-Host 'after'",
             "try { throw 'x' } catch { if ($false) { } elseif ([int]'a') { }; Write-Host 'rest' }; Write-Host 'after'",
             "try { zzq0000=5 } catch {}; 'next'",
-            "try { zzq0000=5; 'tail' } catch {}; 'next'",
             'while ($a) { 1 }',
             'while ($a) { break }',
             'while ($a) { continue }',
+        ),
+        added=(
+            "try { zzq0000=5; 'tail' } catch {}; 'next'",
         ),
     ),
     'Ps1ControlFlowDeflattening': Contribution(
@@ -842,6 +851,7 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$x = 'a'; function f { $ExecutionContext.SessionState.PSVariable.Remove('x') }; f; Write-Output $x",
             "$x = 'a'; function f { Remove-Item variable:x }; f; Write-Output $x",
             "$x = 'a'; try { try { throw 'x' } finally { $x = 'b' } } catch { Write-Host $x }",
+            "$x = 'hello'; $x",
             '$x = 1, 2, 3; $a = 0, 0; $a[0] = $x; Write-Output $a[0]',
             '$x = 1, 2, 3; $a, $b = $x, 9; Write-Output $a',
             '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b',
@@ -1659,7 +1669,6 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$x = 'a'; Write-Host $x; $c = @('Write-Host $x')[(Get-Random -Maximum 1)]; iex $c",
             "$x = 'a'; Write-Output (Get-Variable x -OutVariable v).Value; Write-Output $v.Name",
             "$x = 'a'; function f { iex $c }; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; f; Write-Output $x",
-            "$x = 'hello'; $x",
             '$x = 1, 2, 3; $a = $null; $a = $a + $x; $a[0] = 9; Write-Output $x[0]',
             '$x = 1, 2, 3; $a, $b = ,$x; Write-Output ([object]::ReferenceEquals($x, $a))',
             '$x = 1, 2, 3; $b = $null; $b += $x; Write-Output ([object]::ReferenceEquals($x, $b))',

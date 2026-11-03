@@ -41,12 +41,13 @@ class TestPs1FoldCensus(unittest.TestCase):
     def test_every_fold_the_corpus_takes_is_the_one_recorded(self):
         self.assertEqual(census(), FOLDS)
 
-    def test_a_neutered_pass_takes_away_the_folds_recorded_for_it_and_adds_none(self):
+    def test_a_neutered_pass_moves_only_the_folds_recorded_for_it(self):
         """
         The census can only be trusted to catch a lost fold if a lost fold moves it. The rows
         themselves are pinned, so that a pass which drops one fold and picks up another has to say
-        which. Neutering a pass may only take folds away: one that *adds* a fold when it is disabled
-        means the passes are fighting, and the census would record whichever won the race.
+        which. A fold that appears only when a pass is disabled may mean the passes are fighting,
+        and the census would then record whichever won the race, so every such fold is recorded
+        with the reason it is not one.
         """
         baseline = census()
         for transformer in _folds:
@@ -59,8 +60,11 @@ class TestPs1FoldCensus(unittest.TestCase):
                         row for row in set(baseline) & set(without)
                         if baseline[row] != without[row]
                     )),
+                    added=tuple(sorted(set(without) - set(baseline))),
                 )
+                recorded = CONTRIBUTION[transformer.__name__]
                 with self.subTest(law='the folds it takes away are the recorded ones'):
-                    self.assertEqual(measured, CONTRIBUTION[transformer.__name__])
-                with self.subTest(law='it adds no fold'):
-                    self.assertEqual(sorted(set(without) - set(baseline)), [])
+                    self.assertEqual(measured.lost, recorded.lost)
+                    self.assertEqual(measured.changed, recorded.changed)
+                with self.subTest(law='the folds it adds are the recorded ones'):
+                    self.assertEqual(measured.added, recorded.added)

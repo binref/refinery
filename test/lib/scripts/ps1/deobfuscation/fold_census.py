@@ -5245,9 +5245,7 @@ FOLDS: dict[str, str] = {
     'echo a < b':
         'Write-Output a < b',
     'for ($i = 0; $i -lt 2; $i++) { 1 }':
-        '$i = 2',
-    'foreach ($i in $a) { 1 }':
-        'foreach ($i in $a) {}',
+        'for ($i = 0; $i -LT 2; $i++) {\n  1\n}',
     "foreach ($i in 1, 2) { try { $null = [int]'a'; Write-Host \"rest $i\" } finally { }; Write-Host \"next $i\" }; Write-Host 'after'":
         'foreach ($i in 1, 2) {\n'
         '  try {\n'
@@ -5439,8 +5437,6 @@ FOLDS: dict[str, str] = {
         "Write-Host 'after'",
     "if ($true) { trap { continue }; Write-Host 'in'; throw 'e' }; Write-Host 'after'":
         "if ($True) {\n  trap {\n    continue\n  }\n  Write-Host 'in'\n  throw 'e'\n}\nWrite-Host 'after'",
-    'switch ($a) { 1 { "x" } default { "y" } }':
-        'switch ($a) {\n  1 {}\n  default {}\n}',
     "switch ('b') { 'a' { 'first' } 'b' { 'second' } }":
         "'second'",
     "throw 'e'; Write-Host 'after'":
@@ -5655,8 +5651,6 @@ FOLDS: dict[str, str] = {
         "try {\n  $x = 'one'\n  $Null = [int]'a'\n  $x = 'two'\n} finally {}\nWrite-Host $x",
     "try { $x = 1; $x = [int]$env:COMPUTERNAME } catch { Write-Host 'caught' }; Write-Host $x":
         "try {\n  $x = 1\n  $x = [int]$env:ComputerName\n} catch {\n  Write-Host 'caught'\n}\nWrite-Host $x",
-    'try { 1 } catch { 2 } finally { 3 }':
-        'try {\n  1\n} catch {\n  2\n} finally {}',
     "try { [int]'a'; Write-Host 'tail' } catch { }; Write-Host 'after'":
         "Write-Host 'after'",
     "try { [void]$undefzz; Write-Host 'quiet' } catch { Write-Host 'caught' }":
@@ -5740,8 +5734,6 @@ FOLDS: dict[str, str] = {
         "try {\n  try {\n    throw 'x'\n  } finally {\n    $Null = [int]'a'\n  }\n} finally {}\nWrite-Host 'after'",
     "try { zzq0000=5 } catch {}; 'next'":
         "'next'",
-    "try { zzq0000=5; 'tail' } catch {}; 'next'":
-        '',
     "try { zzqq0 =5 } catch {}; Write-Host 'after'":
         "Write-Host 'after'",
     'while ($a) { 1 }':

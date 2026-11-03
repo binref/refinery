@@ -4,19 +4,22 @@ from inspect import cleandoc
 
 from test import TestBase
 
-from refinery.lib.scripts import Statement, _remove_from_parent
+from refinery.lib.scripts import Statement
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.effects import (
+    Contribution,
     OutputSink,
     StatementEffect,
     _reflection_read_is_pure,
     body_is_inert,
+    is_a_library,
     is_fault_free,
     is_side_effect_free,
     output_path,
     output_sink,
-    pruning_erases_body,
+    runs_something,
+    script_contribution,
     statement_effect,
     unconsumed_statement,
 )
@@ -1195,18 +1198,6 @@ _PROPAGATING_BODIES = cleandoc(
     """
 )
 
-#: The same constructs plus every boundary, for the guards that weigh a body without asking who
-#: reads it.
-_EVERY_KIND_OF_BODY = F"""{_PROPAGATING_BODIES}
-function f {{ 15 }}
-filter g {{ 16 }}
-class C {{ [Int] m() {{ return 17 }} }}
-$cb = {{ 18 }}
-$y = $( 19 )
-$z = @( 20 )
-data d {{ 21 }}"""
-
-
 class TestPs1OutputSink(Ps1EffectsTest):
 
     @staticmethod
@@ -1359,61 +1350,172 @@ class TestPs1OutputSink(Ps1EffectsTest):
             self.assertGreater(walked, 10)
 
 
-class TestPs1EmitSafety(Ps1EffectsTest):
+class TestPs1WhatAScriptAddsToARun(Ps1EffectsTest):
 
-    def test_only_the_script_root_may_not_be_emptied(self):
-        script = self._parse(_EVERY_KIND_OF_BODY)
-        owners = [node for node in script.walk() if get_body(node) is not None]
-        guarded = [node for node in owners if pruning_erases_body(node, [])]
-        self.assertEqual(guarded, [script])
+    @classmethod
+    def _contribution(cls, source: str) -> Contribution:
+        script = cls._parse(source)
+        return script_contribution(script, Ps1ModelCache(script).world_reach)
 
-    def test_a_surviving_statement_never_trips_the_erasure_guard(self):
-        script = self._parse(_EVERY_KIND_OF_BODY)
-        survivors = list(self._parse('Write-Host hi').body)
-        for node in script.walk():
-            if get_body(node) is None:
-                continue
-            with self.subTest(repr(node)):
-                self.assertFalse(pruning_erases_body(node, survivors))
+    def _assert_contributions(self, *cases: tuple[str, Contribution]):
+        for source, expected in cases:
+            with self.subTest(source):
+                self.assertEqual(self._contribution(source), expected)
 
-    def test_the_erasure_guard_reads_only_the_sequence_it_is_given(self):
-        # A caller may hold statements hoisted out of a block it just pruned, whose `parent` still
-        # points at the block they came from, or statements not parented into any body yet. The
-        # verdict has to be the same either way.
+    def test_commands_calls_and_throws_act(self):
+        self._assert_contributions(
+            ('Start-Process calc', Contribution.ACTS),
+            ("Write-Verbose 'debug'", Contribution.ACTS),
+            ('function f { 1 }\nf', Contribution.ACTS),
+            ("throw 'x'", Contribution.ACTS),
+            ('throw', Contribution.ACTS),
+            ('$Null = Start-Process calc', Contribution.ACTS),
+            ('[Void](Start-Process calc)', Contribution.ACTS),
+        )
+
+    def test_a_store_of_a_value_that_does_something_stores_a_run(self):
+        self._assert_contributions(
+            ('$x = Start-Process calc', Contribution.STORES_A_RUN),
+            ('$x = $y = Start-Process calc', Contribution.STORES_A_RUN),
+            ('$a, $b = Start-Process calc', Contribution.STORES_A_RUN),
+        )
+
+    def test_bare_values_print(self):
+        self._assert_contributions(
+            ("'a'", Contribution.PRINTS),
+            ("'a' + 'b'", Contribution.PRINTS),
+            ("return 'a'", Contribution.PRINTS | Contribution.ENDS),
+        )
+
+    def test_exit_and_return_end_the_run(self):
+        self._assert_contributions(
+            ('exit', Contribution.ENDS),
+            ('exit 1', Contribution.ENDS),
+            ('return', Contribution.ENDS),
+            ('exit (Start-Process calc)', Contribution.ENDS | Contribution.ACTS),
+        )
+
+    def test_definitions_add_nothing(self):
+        self._assert_contributions(
+            ('function f { Start-Process calc }', Contribution.NOTHING),
+            ('filter f { Start-Process calc }', Contribution.NOTHING),
+            ('class C { [void] m() { Start-Process calc } }', Contribution.NOTHING),
+            ('enum E { A; B }', Contribution.NOTHING),
+            ('using namespace System', Contribution.NOTHING),
+            ('trap { Start-Process calc; continue }', Contribution.NOTHING),
+            ("data { 'a' }", Contribution.NOTHING),
+        )
+
+    def test_jumps_add_nothing(self):
+        self._assert_contributions(
+            ('break', Contribution.NOTHING),
+            ('continue', Contribution.NOTHING),
+        )
+
+    def test_stores_and_discards_of_values_that_do_nothing_add_nothing(self):
+        self._assert_contributions(
+            ("$x = 'a'", Contribution.NOTHING),
+            ("$ErrorActionPreference = 'Stop'", Contribution.NOTHING),
+            ('$x++', Contribution.NOTHING),
+            ('--$x', Contribution.NOTHING),
+            ('$Null = 1', Contribution.NOTHING),
+            ('[Void]1', Contribution.NOTHING),
+            ("'a' | Out-Null", Contribution.NOTHING),
+        )
+
+    def test_a_script_block_does_nothing_until_it_is_called(self):
+        self._assert_contributions(
+            ('$sb = { Start-Process calc }', Contribution.NOTHING),
+            ('$Null = { Start-Process calc }', Contribution.NOTHING),
+            ('$sb = { Start-Process calc }\n& $sb', Contribution.ACTS),
+        )
+
+    def test_a_compound_statement_adds_what_its_conditions_and_bodies_add(self):
+        self._assert_contributions(
+            ("if ($x) { 'a' } else { $y = 1 }", Contribution.PRINTS),
+            ("if (Start-Process calc) { 'a' }", Contribution.ACTS | Contribution.PRINTS),
+            ('while ($i -lt 3) { $i++ }', Contribution.NOTHING),
+            ("do { 'a' } while ($false)", Contribution.PRINTS),
+            ('for ($i = 0; $i -lt 2; $i++) { Start-Process calc }', Contribution.ACTS),
+            ('for ($i = 0; (Start-Process calc); $i++) { }', Contribution.ACTS),
+            ("foreach ($i in 1..3) { 'a' }", Contribution.PRINTS),
+            ('foreach ($i in (Start-Process calc)) { }', Contribution.ACTS),
+            ("switch ($a) { 1 { 'x' } default { return } }", Contribution.PRINTS | Contribution.ENDS),
+            ("switch ((Start-Process calc)) { 1 { 'x' } }", Contribution.ACTS | Contribution.PRINTS),
+            ("if ($x) { if ($y) { while ($z) { 'deep' } } }", Contribution.PRINTS),
+        )
+
+    def test_a_switch_over_a_file_reads_the_file(self):
+        self._assert_contributions(
+            ("switch -file x.txt { 'a' { 1 } }", Contribution.ACTS),
+        )
+
+    def test_a_try_adds_its_try_and_finally_bodies_but_not_its_handlers(self):
+        self._assert_contributions(
+            ("try { 'a' } catch { Start-Process calc }", Contribution.PRINTS),
+            ('try { } finally { Start-Process calc }', Contribution.ACTS),
+            ("try { exit } catch { 'b' } finally { $x = 1 }", Contribution.ENDS),
+        )
+
+    def test_named_blocks_add_what_they_hold(self):
+        self._assert_contributions(
+            ('begin { $x = 1 } end { Start-Process calc }', Contribution.ACTS),
+            ("end { 'a' }", Contribution.PRINTS),
+            ('process { function f { 1 } }', Contribution.NOTHING),
+        )
+
+    def test_a_parameter_default_that_does_something_acts(self):
+        self._assert_contributions(
+            ('param($p = (Start-Process calc))', Contribution.ACTS),
+            ("param($p = 1)\n'a'", Contribution.PRINTS),
+        )
+
+    def test_a_script_adds_the_union_of_its_statements(self):
+        self._assert_contributions(
+            ("function f { 1 }\n$x = 'a'\n'b'\nexit", Contribution.PRINTS | Contribution.ENDS),
+            ("Start-Process calc\n'b'", Contribution.ACTS | Contribution.PRINTS),
+            ('', Contribution.NOTHING),
+        )
+
+
+class TestPs1WhatAScriptIs(Ps1EffectsTest):
+
+    @classmethod
+    def _decide(cls, source: str) -> tuple[bool, bool]:
+        script = cls._parse(source)
+        world = Ps1ModelCache(script).world_reach
+        return runs_something(script, world), is_a_library(script, world)
+
+    def test_a_script_that_runs_something_is_not_a_library(self):
         for source in (
-            'function f { Write-Host hi; 42 }',
-            'function f { function g { Write-Host hi } }',
-            'function f { }',
-            '&{ if ($true) { Write-Host hi }; 42 }',
+            "Start-Process calc\nfunction f { 'a' }",
+            'function f { 1 }\nf',
+            "throw 'x'",
         ):
             with self.subTest(source):
-                script = self._parse(source)
-                block = self._first(source, Ps1ScriptBlock)
-                survivors = list(block.body)
-                before = pruning_erases_body(script, survivors)
-                for statement in survivors:
-                    _remove_from_parent(statement)
-                self.assertEqual(before, pruning_erases_body(script, survivors))
+                self.assertEqual(self._decide(source), (True, False))
 
-    def test_the_erasure_guard_answers_per_candidate_set(self):
-        # `[Void]1; 42` at script root. One shared guard, two candidate sets, two answers: dropping
-        # only the discard leaves `42` standing, and dropping everything the junk pass would take
-        # leaves nothing, which it must decline. Pinned so that unifying the passes is a decision.
-        script = self._parse('[Void]1\n42')
-        discards = {
-            statement for statement in script.body
-            if self._effect(statement) is StatementEffect.DISCARD
-        }
-        junk = {
-            statement for statement in script.body
-            if self._effect(statement) is not StatementEffect.EFFECT
-        }
-        self.assertEqual(len(discards), 1)
-        self.assertEqual(len(junk), 2)
-        self.assertFalse(pruning_erases_body(
-            script, [s for s in script.body if s not in discards]))
-        self.assertTrue(pruning_erases_body(
-            script, [s for s in script.body if s not in junk]))
+    def test_a_file_that_only_defines_and_stores_is_a_library_whatever_it_stores(self):
+        for source in (
+            "$Version = '1.0'\nfunction Invoke-Thing { Write-Host $Version }",
+            'function A { Write-Host 1 }\nfunction B { Write-Host 2 }',
+            '',
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._decide(source), (False, True))
+        self.assertEqual(self._decide('$p = Start-Process calc\nfunction f { $p }'), (True, True))
+
+    def test_a_file_that_prints_or_ends_its_run_is_not_a_library(self):
+        for source in (
+            "function f { Write-Host 1 }\n'a'",
+            '$p = 1\nfunction f { Write-Host 1 }\nreturn',
+            "class C {}\n'a'",
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._decide(source), (False, False))
+
+
+class TestPs1EmitSafety(Ps1EffectsTest):
 
     def test_a_sink_that_licenses_deletion_does_not_follow_an_alias(self):
         # The `ForEach-Object` discard sink *deletes*, so it matches the written spelling and clears

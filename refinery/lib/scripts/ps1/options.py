@@ -14,7 +14,8 @@ from dataclasses import dataclass
 class Ps1DeobfuscationOptions:
     """
     Options that steer PowerShell deobfuscation. Each is the caller's answer to a question the file
-    itself cannot settle, which is why neither is derived.
+    itself cannot settle, so none of them is read off the file. Where the file does settle a part of
+    one, the model the caller picked gives that part up, as the stripping model below does.
 
     *preserve_bare_output* selects what a statement that only writes a value to the success output
     stream is worth.
@@ -25,7 +26,9 @@ class Ps1DeobfuscationOptions:
       text on a console nobody is watching, and what is bought is the removal of the junk an
       obfuscator pads a script with. The proof rests on one assumption no file can settle: that the
       input is a standalone script and not a library some other file imports, whose functions are
-      then called from call sites this analysis never sees.
+      then called from call sites this analysis never sees. A script in which nothing runs keeps
+      its console output under this model too, because that output is then the whole of what it
+      does; see `refinery.lib.scripts.ps1.deobfuscation.deobfuscate`.
 
     - Preserving model (`preserve_bare_output=True`): no such statement is ever deleted. This is the
       answer for a script whose printed output *is* the artifact, and for a `.psm1` or any other
@@ -33,7 +36,9 @@ class Ps1DeobfuscationOptions:
 
     Neither model touches a statement whose value is captured, whose evaluation does anything, or
     that this analysis cannot read; those are kept under both, and the switch is not what protects
-    them.
+    them. Nor does either remove a definition or a variable from a file that only defines, stores
+    and discards: such a file is a library whatever the caller says, and a function it never calls
+    is there for a caller elsewhere; see `refinery.lib.scripts.ps1.analysis.effects.is_a_library`.
 
     *trust_eval* selects what code this analysis cannot read is assumed to do to the .NET type
     system and the command table — the two things

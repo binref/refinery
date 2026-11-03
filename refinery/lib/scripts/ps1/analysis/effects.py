@@ -63,12 +63,14 @@ from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
     assignment_target_is_all_variables,
     assignment_target_variables,
+    command_name_literal,
     extract_new_object,
     get_body,
     get_command_name,
     get_member_name,
     get_named_blocks,
     get_param_block,
+    get_statement_owners,
     is_builtin_variable,
     is_null_discard,
     is_reference_cast,
@@ -87,10 +89,13 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,
     Ps1CatchClause,
+    Ps1ClassDefinition,
     Ps1CommandArgument,
     Ps1CommandInvocation,
     Ps1DataSection,
     Ps1DoLoop,
+    Ps1EnumDefinition,
+    Ps1Exit,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1FileRedirection,
@@ -103,6 +108,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
+    Ps1Jump,
     Ps1MemberAccess,
     Ps1MergingRedirection,
     Ps1ParamBlock,
@@ -2391,34 +2397,218 @@ _BODY_BEARING_STATEMENTS = (
 )
 
 
-def pruning_erases_body(node, survivors: Sequence[Node]) -> bool:
+class Contribution(enum.Flag):
     """
-    Whether pruning the body that `node` owns down to `survivors` would erase it: nothing would
-    survive, and this body must not become empty. Only the script root qualifies — a script that is
-    nothing but function definitions is a module whose functions may be dot-sourced, and a script
-    that is nothing but `42` still emits `42` — so emptying it would delete real code. Every other
-    body may legitimately prune to nothing; that is what turns an injected junk function inert.
+    What a statement at the top of a script adds to a run on its normal path, as `contribution`
+    reads it. The union over a script's top-level statements answers two questions about the file,
+    and they are the reason the flags are cut where they are:
 
-    The node decides this and not its `OutputSink`, deliberately. A `trap` or an `if` body at script
-    level is `HOST` like the root is, and refusing to empty those is a different and wider rule than
-    the one meant here.
+    - whether anything in it runs, `runs_something`: where nothing does, what the script prints is
+      the whole of what it does;
+    - whether it is a library, `is_a_library`: a file that only defines, stores and discards is
+      there to be dot-sourced or imported, and what it defines is its point.
 
-    `survivors` is the surviving statement set itself and never a node to walk up from. A caller may
-    hold freshly synthesized statements that are not parented into a body yet, and statements
-    hoisted out of a pruned block still point at the block they came from; answering this kind of
-    question by walking `parent` would misjudge a hoisted return value as belonging to the pruned
-    block.
+    The members:
 
-    **A `trap` left standing is not something that survived**, for the reason
-    `refinery.lib.scripts.ps1.deobfuscation.unused.Ps1JunkStatementRemoval` does not count a
-    definition: it is machinery for the statements around it rather than one of them, and a body
-    holding nothing else runs nothing at all. Counting one would let `trap { break }` beside a bare
-    `'a'` erase the whole script in two steps: `'a'` dropped because the `trap` reads as a survivor,
-    then the `trap` dropped because nothing raises into it any more.
+    - `ACTS`: it does something, such as a command, a call, a `throw`, or a condition whose
+      evaluation does something;
+    - `STORES_A_RUN`: it stores a value whose evaluation does something. A library may compute what
+      it stores, so this runs something without making the file more than a library;
+    - `PRINTS`: it writes a value to the output, such as a bare value or `return` with one;
+    - `ENDS`: it ends the run, which `exit` and `return` do;
+    - `NOTHING`: it adds none of these.
     """
-    return isinstance(node, Ps1Script) and not any(
-        not isinstance(statement, Ps1TrapStatement) for statement in survivors
+    NOTHING = 0
+    ACTS = enum.auto()
+    STORES_A_RUN = enum.auto()
+    PRINTS = enum.auto()
+    ENDS = enum.auto()
+    RUNS = ACTS | STORES_A_RUN
+    BEYOND_A_LIBRARY = ACTS | PRINTS | ENDS
+
+
+def contribution(statement: Node, world: Ps1WorldReach) -> Contribution:
+    """
+    What `statement` adds to a run on its normal path; see `Contribution`. These add nothing: a
+    function, class or enum definition, a `using`, a `trap`, a `break` or `continue`, a data
+    section, and a store or discard of a value whose evaluation does nothing. A script block
+    literal does nothing until it is called, so `$sb = { Start-Process x }` adds nothing either.
+
+    A compound statement adds what its conditions and the bodies it runs on its normal path add.
+    The body of a `catch` clause or a `trap` runs only on a fault and is not read, which errs
+    towards finding nothing: in `trap { Start-Process y; continue }; [int]'abc'; 'a'` nothing runs.
+    """
+    total = Contribution.NOTHING
+    pending = [statement]
+    while pending:
+        node = pending.pop()
+        parts = _normal_path_parts(node)
+        if parts is None:
+            total |= _own_contribution(node, world)
+            continue
+        evaluated, bodies = parts
+        if any(_expression_acts(expression, world) for expression in evaluated):
+            total |= Contribution.ACTS
+        for body in bodies:
+            if body is not None:
+                pending.extend(body.body)
+    return total
+
+
+def script_contribution(script: Ps1Script, world: Ps1WorldReach) -> Contribution:
+    """
+    What `script` adds to a run: the union of `contribution` over the statements of every owner in
+    `refinery.lib.scripts.ps1.ast.get_statement_owners`, and `Contribution.ACTS` where the default
+    of one of its parameters does something when it is evaluated.
+    """
+    total = Contribution.NOTHING
+    block = get_param_block(script)
+    if block is not None and any(
+        _expression_acts(parameter.default_value, world) for parameter in block.parameters
+    ):
+        total |= Contribution.ACTS
+    for owner in get_statement_owners(script):
+        for statement in get_body(owner) or ():
+            total |= contribution(statement, world)
+    return total
+
+
+def runs_something(script: Ps1Script, world: Ps1WorldReach) -> bool:
+    """
+    Whether something in `script` runs, by `script_contribution`. A script in which nothing runs
+    prints, defines and stores, and what it prints is then the whole of what it does.
+    """
+    return bool(script_contribution(script, world) & Contribution.RUNS)
+
+
+def is_a_library(script: Ps1Script, world: Ps1WorldReach) -> bool:
+    """
+    Whether `script` only defines, stores and discards, by `script_contribution`. Such a file is a
+    library: what it defines is there for a caller this tree does not hold, so a definition it
+    never calls is not dead, and neither is a variable it never reads.
+
+    The cleanup passes ask this of the tree they are about to edit. What they remove from a library
+    leaves it a library, so the answer holds for the whole edit.
+    """
+    return not script_contribution(script, world) & Contribution.BEYOND_A_LIBRARY
+
+
+def _normal_path_parts(
+    statement: Node,
+) -> tuple[list[Node | None], list[Block | None]] | None:
+    """
+    The expressions a compound statement evaluates and the bodies it runs on its normal path, or
+    `None` when `statement` is not a compound statement. A `switch -file` is not one here: it reads
+    a file, which acts.
+    """
+    if isinstance(statement, Ps1IfStatement):
+        return (
+            [condition for condition, _ in statement.clauses],
+            [*(block for _, block in statement.clauses), statement.else_block],
+        )
+    if isinstance(statement, (Ps1WhileLoop, Ps1DoLoop)):
+        return [statement.condition], [statement.body]
+    if isinstance(statement, Ps1ForLoop):
+        return [statement.initializer, statement.condition, statement.iterator], [statement.body]
+    if isinstance(statement, Ps1ForEachLoop):
+        return [statement.iterable], [statement.body]
+    if isinstance(statement, Ps1SwitchStatement) and not statement.file:
+        return (
+            [statement.value, *(condition for condition, _ in statement.clauses)],
+            [block for _, block in statement.clauses],
+        )
+    if isinstance(statement, Ps1TryCatchFinally):
+        return [], [statement.try_block, statement.finally_block]
+    return None
+
+
+def _own_contribution(statement: Node, world: Ps1WorldReach) -> Contribution:
+    """
+    What a statement that is not compound adds by `contribution`. A statement of a kind not named
+    here acts.
+    """
+    if isinstance(statement, (
+        Ps1ClassDefinition,
+        Ps1DataSection,
+        Ps1EnumDefinition,
+        Ps1FunctionDefinition,
+        Ps1Jump,
+        Ps1TrapStatement,
+    )):
+        return Contribution.NOTHING
+    if isinstance(statement, Ps1ThrowStatement):
+        return Contribution.ACTS
+    if isinstance(statement, Ps1Exit):
+        total = Contribution.ENDS
+        if _expression_acts(statement.pipeline, world):
+            total |= Contribution.ACTS
+        if isinstance(statement, Ps1ReturnStatement) and statement.pipeline is not None:
+            total |= Contribution.PRINTS
+        return total
+    if not isinstance(statement, Ps1ExpressionStatement):
+        return Contribution.ACTS
+    expression = statement.expression
+    if expression is None or _is_using(expression):
+        return Contribution.NOTHING
+    if _is_store(expression):
+        if _expression_acts(expression, world):
+            return Contribution.STORES_A_RUN
+        return Contribution.NOTHING
+    if is_null_discard(expression):
+        discarded = expression.value
+    elif is_void_cast(expression):
+        discarded = expression.operand
+    else:
+        effect = statement_effect(statement, world)
+        if effect is StatementEffect.EFFECT:
+            return Contribution.ACTS
+        if effect is StatementEffect.OUTPUT:
+            return Contribution.PRINTS
+        return Contribution.NOTHING
+    return Contribution.ACTS if _expression_acts(discarded, world) else Contribution.NOTHING
+
+
+def _expression_acts(expression: Node | None, world: Ps1WorldReach) -> bool:
+    """
+    Whether evaluating `expression` does something. A store does what its value does, and a script
+    block literal does nothing until it is called.
+    """
+    while isinstance(expression, Ps1AssignmentExpression) and _is_store(expression):
+        expression = expression.value
+    if expression is None or _is_store(expression):
+        return False
+    if isinstance(unwrap_parens(expression), Ps1ScriptBlock):
+        return False
+    return not is_side_effect_free(expression, world)
+
+
+def _is_store(expression: Node) -> bool:
+    """
+    Whether `expression` puts a value into variables and does nothing else to put it there: an
+    assignment whose every target is a variable, or `++` and `--` on a variable. The `$Null = ...`
+    discard is not a store.
+    """
+    if isinstance(expression, Ps1AssignmentExpression):
+        return (
+            not is_null_discard(expression)
+            and assignment_target_is_all_variables(expression.target)
+        )
+    return (
+        isinstance(expression, Ps1UnaryExpression)
+        and expression.operator in ('++', '--')
+        and expression.operand is not None
+        and isinstance(unwrap_parens(expression.operand), Ps1Variable)
     )
+
+
+def _is_using(expression: Node) -> bool:
+    """
+    Whether `expression` is a `using` statement, which the parser reads as a command of that name.
+    """
+    if not isinstance(expression, Ps1CommandInvocation):
+        return False
+    name = command_name_literal(expression)
+    return name is not None and name.value.lower() == 'using'
 
 
 def _parameter_is_inert(
