@@ -47,6 +47,7 @@ from refinery.lib.scripts.analysis.cfg import (
     build_control_flow,
 )
 from refinery.lib.scripts.ps1.analysis.dispatch import (
+    EVERY_KIND,
     Ps1CallSites,
     Ps1Dispatch,
     Ps1ErrorKind,
@@ -61,11 +62,10 @@ from refinery.lib.scripts.ps1.analysis.handlers import (
     swallows_every_error,
 )
 from refinery.lib.scripts.ps1.analysis.session import session_of
-from refinery.lib.scripts.ps1.analysis.values import is_fault_free
+from refinery.lib.scripts.ps1.analysis.values import point_is_fault_free
 from refinery.lib.scripts.ps1.ast import (
     STATEMENT_LIST_EXPRESSIONS,
     get_named_blocks,
-    point_operands,
     string_value,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -412,14 +412,13 @@ class _Builder(CfgBuilder):
         """
         Whether the point *element* stands for may raise an error, read off the point alone: the
         head of a `foreach` may, since its loop variable may carry a type that rejects the value,
-        and any other point may unless it evaluates nothing, as a `break` does, or only what
-        `refinery.lib.scripts.ps1.analysis.values.is_fault_free` clears. A `throw` is routed by a
-        rule of its own.
+        and any other point may unless
+        `refinery.lib.scripts.ps1.analysis.values.point_is_fault_free` clears it. A `throw` is
+        routed by a rule of its own.
         """
         if isinstance(element, Ps1ForEachLoop):
             return True
-        operands = point_operands(element)
-        return operands is None or not all(is_fault_free(operand) for operand in operands)
+        return not point_is_fault_free(element)
 
     def lets_past(self, trap_set: Ps1TrapSet) -> bool:
         """
@@ -864,17 +863,24 @@ class _RoutingBuilder(_Builder):
     def reenter(self, trap_set: Ps1TrapSet, bodies: Sequence[CfgNode]) -> None:
         """
         Where a `trap` of *trap_set* may run from inside a `try` statement of its block, every point
-        of its body that may fail, and every `throw` there, joins the set: see
-        `refinery.lib.scripts.ps1.analysis.dispatch.Ps1Dispatch.traps_run_inside_a_try`.
+        of its body that may fail, and every `throw` there, joins the set where the evaluator offers
+        its error to the set again: see
+        `refinery.lib.scripts.ps1.analysis.dispatch.Ps1Dispatch.traps_run_inside_a_try`. A point a
+        `catch` inside the body takes every error of is not one of them.
         """
-        if not self._dispatch.traps_run_inside_a_try(trap_set.owner):
+        dispatch = self._dispatch
+        if not dispatch.traps_run_inside_a_try(trap_set.owner):
             return
         entry = trap_set.chain[0]
+        members = frozenset(trap_set.members)
         for node in bodies:
             element = node.element
             if element is None:
                 continue
-            if isinstance(element, Ps1ThrowStatement) or self.may_fail(element):
+            if not isinstance(element, Ps1ThrowStatement) and not self.may_fail(element):
+                continue
+            fate = dispatch.fate_under_any_caller(element, EVERY_KIND)
+            if fate is None or not members.isdisjoint(fate.trapped):
                 self.exceptional_edge(node, entry)
 
 
@@ -902,8 +908,8 @@ def build_ps1_control_flow(
     dispatch: Ps1Dispatch | None = None,
 ) -> dict[int, ControlFlowGraph]:
     """
-    One control-flow graph per script block — see `FUNCTION_NODES` — and one for the script itself,
-    drawn from *dispatch*, or from the `dispatch_for` *root* where none is given.
+    One control-flow graph per script block — see `FUNCTION_NODES` — and one for the script
+    itself, drawn from *dispatch*, or from the `dispatch_for` *root* where none is given.
 
     With *descend* set, a statement carrying a `STATEMENT_LIST_EXPRESSIONS` construct is modelled at
     sub-statement granularity rather than as one atomic node — the finer graph the fault reader needs

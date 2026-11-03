@@ -51,7 +51,7 @@ import typing
 from typing import Callable, TypeAlias, TypeVar
 from weakref import WeakKeyDictionary
 
-from refinery.lib.scripts import Node, _clone_node, mutation_epoch
+from refinery.lib.scripts import Block, Node, _clone_node, mutation_epoch
 from refinery.lib.scripts.ps1.analysis.blocks import binds_the_pipeline_variable
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
@@ -60,6 +60,7 @@ from refinery.lib.scripts.ps1.ast import (
     get_command_name,
     get_member_name,
     is_builtin_variable,
+    point_operands,
     unwrap_parens,
 )
 from refinery.lib.scripts.ps1.data import (
@@ -94,6 +95,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpandableHereString,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
+    Ps1FunctionDefinition,
     Ps1HashLiteral,
     Ps1HereString,
     Ps1IntegerLiteral,
@@ -2106,6 +2108,19 @@ def is_fault_free(node) -> bool:
             return isinstance(stmt, Ps1ExpressionStatement) and is_fault_free(stmt.expression)
         return len(node.body) == 0
     return False
+
+
+def point_is_fault_free(point: Node) -> bool:
+    """
+    Whether what the control-flow graphs evaluate at *point* provably cannot raise, read off the
+    point alone: a function definition and a block evaluate nothing where they stand, and every
+    other point raises nothing only where it evaluates operands
+    (`refinery.lib.scripts.ps1.ast.point_operands`) that are each `is_fault_free`.
+    """
+    if isinstance(point, (Ps1FunctionDefinition, Block)):
+        return True
+    operands = point_operands(point)
+    return operands is not None and all(is_fault_free(operand) for operand in operands)
 
 
 def _hash_literal_is_fault_free(node: Ps1HashLiteral) -> bool:

@@ -4,10 +4,10 @@ What a point of a PowerShell script may raise: the one answer to whether a line 
 `Ps1RaiseModel` answers it for one version of one tree under one reading of the world: without one,
 and under the flow-sensitive world of `refinery.lib.scripts.ps1.analysis.worldflow`, which is the
 reading every pass that holds a world asks. Every reader of a point in the tree reads
-`Ps1RaiseModel.kinds`: the trap removal, the removal veto, the store sweep, the `catch` lift, and the
-grant the variable flow makes for a store that cannot fail. A line not in the tree yet is judged by
-`statement_raise_kinds` with the model of the tree it is about to join, and a line spliced where no
-model is held by `may_raise_where_spliced`.
+`Ps1RaiseModel.kinds`: the trap removal, the removal veto, the store sweep, the `catch` lift, and
+the grant the variable flow makes for a store that cannot fail. A line not in the tree yet is judged
+by `statement_raise_kinds` with the model of the tree it is about to join, and a line spliced where
+no model is held by `may_raise_where_spliced`.
 
 What a point raises is read off what it evaluates (`refinery.lib.scripts.ps1.ast.point_operands`):
 an operand the clearing rules clear raises nothing, and every other one raises what
@@ -30,7 +30,13 @@ from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandMo
 from refinery.lib.scripts.ps1.analysis.dispatch import EVERY_KIND, HANDED_BACK, Ps1ErrorKind
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.model import Ps1NameSet
-from refinery.lib.scripts.ps1.analysis.values import UNKNOWN, convert, evaluate, is_fault_free
+from refinery.lib.scripts.ps1.analysis.values import (
+    UNKNOWN,
+    convert,
+    evaluate,
+    is_fault_free,
+    point_is_fault_free,
+)
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import get_command_name, point_operands
 from refinery.lib.scripts.ps1.data import PS1_AUTOMATIC_VARIABLES, PS1_KNOWN_VARIABLES
@@ -197,16 +203,16 @@ def may_raise_where_spliced(statement: Node) -> bool:
     """
     Whether *statement*, a line about to be spliced into a statement list, may raise there, read off
     the line alone where no raise model is held: a `throw` may, and so may a compound line, which
-    holds tests and bodies of its own or runs a block, and a line evaluating an operand
-    `refinery.lib.scripts.ps1.analysis.values.is_fault_free` does not clear. With a model of the
-    tree the line joins, `statement_raise_kinds` answers the same question more precisely.
+    holds tests and bodies of its own or runs a block, and any other line that
+    `refinery.lib.scripts.ps1.analysis.values.point_is_fault_free` does not clear, which a function
+    definition never is. With a model of the tree the line joins, `statement_raise_kinds` answers
+    the same question more precisely.
     """
     if isinstance(statement, Ps1ThrowStatement):
         return True
     if not isinstance(statement, (Ps1ExpressionStatement, Ps1Exit, Ps1Jump, Ps1FunctionDefinition)):
         return True
-    operands = point_operands(statement)
-    return operands is None or not all(is_fault_free(operand) for operand in operands)
+    return not point_is_fault_free(statement)
 
 
 def lies_in_a_block_within(site: Node, stmt: Node) -> bool:

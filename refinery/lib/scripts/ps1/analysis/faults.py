@@ -791,7 +791,9 @@ class Ps1FaultReach:
         """
         Whether an error raised at a point inside *statement* may leave the body it stands in for
         whatever called that body (`refinery.lib.scripts.ps1.analysis.dispatch.Ps1Fate.to_caller`),
-        or stands where the dispatch places it nowhere. *raises* and *memo* are what `raises_past`
+        or stands where the dispatch places it nowhere. A point of a script block written inside
+        *statement* stands in that block's body, and an error leaving it arrives where something
+        runs the block, which is a point of its own. *raises* and *memo* are what `raises_past`
         takes, and the table is filled the same way, once for the tree from the leaves up.
         """
         table = memo
@@ -803,7 +805,11 @@ class Ps1FaultReach:
                     if self.control_flow.node_of(node) is not None and (kinds := raises(node)):
                         fate = self.dispatch.fate(node, kinds)
                         found = fate is None or bool(fate.to_caller)
-                    table[id(node)] = found or any(table.get(id(child), False) for child in node.children())
+                    table[id(node)] = found or any(
+                        table.get(id(child), False)
+                        for child in node.children()
+                        if not isinstance(child, Ps1ScriptBlock)
+                    )
         return table.get(id(statement), True)
 
     def kinds_the_try_catches(

@@ -209,6 +209,18 @@ class TestPs1RemovalPlan(TestPs1):
         self.assertFalse(plans.commit())
         self.assertEqual(len(script.body), 2)
 
+    def test_withdrawing_one_edit_of_a_group_keeps_the_other_standing(self):
+        script = self._script("""
+            'a'
+            'b'
+        """)
+        first, second = script.body
+        plan = Ps1RemovalPlan(script, **_models(script))
+        self.assertTrue(plan.propose_together([(first, None), (second, None)]))
+        plan.withdraw(first)
+        self.assertFalse(plan.commit())
+        self.assertEqual(script.body, [first, second])
+
     def test_a_statement_filed_a_second_time_is_withdrawn_from_both(self):
         script = self._script("""
             'a'

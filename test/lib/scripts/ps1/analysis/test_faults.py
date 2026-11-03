@@ -27,6 +27,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CatchClause,
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
+    Ps1FunctionDefinition,
     Ps1IfStatement,
     Ps1Script,
     Ps1ScriptBlock,
@@ -1879,6 +1880,18 @@ class TestPs1WhetherAnErrorLeavesTheBodyItWasRaisedIn(TestBase):
         )
         self.assertFalse(faults.escapes_the_body(point, Ps1ErrorKind.STATEMENT))
         self.assertTrue(_observed(faults, point))
+
+
+class TestPs1AnErrorOfAFunctionDefinedInABodyLeavesOnlyWhereTheFunctionRuns(TestBase):
+
+    def test_a_function_definition_raises_nothing_out_of_the_body_and_a_call_to_it_may(self):
+        tree = _parse("function f { function g { throw 'e' }; g }")
+        outer = tree.body[0]
+        assert isinstance(outer, Ps1FunctionDefinition) and outer.body is not None
+        definition, call = outer.body.body
+        handlers = Ps1ModelCache(tree).handlers
+        self.assertFalse(handlers.raises_out_of_the_body(definition))
+        self.assertTrue(handlers.raises_out_of_the_body(call))
 
 
 class TestPs1ARaiseEscapesATrapBodyThatRunsOnlyWhereItsBlockMayFireTheTrap(TestBase):

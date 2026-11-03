@@ -92,13 +92,13 @@ def raisers_a_splice_moves(statements: Sequence[Node], replacement: Sequence[Sta
 
 def _install(parent: Node, attr: str, edits: Sequence[_Proposal]) -> tuple[bool, list[Node]]:
     """
-    Apply *edits* to the list `parent.<attr>` as one edit, reporting whether the list moved and which
-    nodes it now holds because of it, without repairing them: see `_restore` for why a batch
+    Apply *edits* to the list `parent.<attr>` as one edit, reporting whether the list moved and
+    which nodes it now holds because of it, without repairing them: see `_restore` for why a batch
     repairs once every edit of it has landed.
 
     What landed is decided per splice rather than taken from *edits*, because the two are not the
-    same set. `BodyEdit` ignores a splice for a node its list does not hold — the class describes an
-    edit to one list and nothing else — so a replacement can be allowed and still never be
+    same set. `BodyEdit` ignores a splice for a node its list does not hold — the class describes
+    an edit to one list and nothing else — so a replacement can be allowed and still never be
     installed. Repairing that one would hand it the children it is still not holding, which is the
     corruption `Ps1RemovalPlan.propose` undoes at registration, reintroduced by the repair.
 
@@ -395,10 +395,11 @@ class Ps1RemovalPlan:
         """
         Drop a registered proposal, leaving `statement` where it stands. A pass that shrinks its own
         batch after reading `Ps1RemovalPlans.accepted` uses this. Nothing needs putting back, because
-        `propose` never let the replacement take anything in the first place.
+        `propose` never let the replacement take anything in the first place. A group filed with
+        `propose_together` that holds `statement` keeps every other member standing as well, as a
+        veto on it would.
         """
         self._proposals.pop(id(statement), None)
-        self._groups = [group for group in self._groups if not any(member is statement for member in group)]
         self._verdict = None
 
     def abandon(self) -> None:
@@ -735,10 +736,10 @@ class Ps1RemovalPlans:
         example: it concludes a function is dead from the call sites going away, so a vetoed caller
         it never heard about leaves the emitted script calling a function it does not define. Such a
         guard asks this, drops what it now forbids with `withdraw`, and asks again; the loop
-        terminates because the batch only shrinks — except for a group a withdrawal breaks, against a
-        protected body, or where withdrawing an edit that the batch holds another list back for
-        releases that list (see `_decide`), where a withdrawal can grow this set, so a pass that
-        loops on `accepted` owes its own termination argument.
+        terminates because the batch only shrinks — except against a protected body, or where
+        withdrawing an edit that the batch holds another list back for releases that list (see
+        `_decide`), where a withdrawal can grow this set, so a pass that loops on `accepted` owes
+        its own termination argument.
 
         This must not edit the tree: installing a replacement's claim would decide a batch the guard
         asking has not decided. A caller reads membership as exact — *this is going away* — so a

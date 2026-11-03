@@ -2124,10 +2124,10 @@ class Ps1HandlerVerdicts:
     statements changes what runs — what the points offered to a set raise, read without a world or
     under the world, and whether what one run executes and the other skips is observable under the
     world — whether an error raised inside a statement may be taken past it or out of its body,
-    which the store sweep asks, and the two questions the `catch` lift asks: the one clause a certain throw lands in, and
-    whether its body means the same standing in place of its `try`. Held in a
-    `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot, so it is rebuilt with the fault
-    model it reads, and handed to
+    which the store sweep asks, and the two questions the `catch` lift asks: the one clause a
+    certain throw lands in, and whether its body means the same standing in place of its `try`.
+    Held in a `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot, so it is rebuilt with
+    the fault model it reads, and handed to
     `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed` through the
     removal plan. *raises* hands out the raise model of each reading of the world, built on the
     first verdict that reads it, so a pass that never weighs a handler under the world never has

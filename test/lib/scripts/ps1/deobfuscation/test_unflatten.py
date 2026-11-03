@@ -490,6 +490,65 @@ class TestPs1DeflatteningStartsFromTheValueTheLoopReads(TestPs1):
             Write-Host $s
         """)
 
+    def test_a_machine_whose_state_a_function_called_after_it_reads_is_left_flattened(self):
+        self._assertLeftFlattened("""
+            function show { Write-Host $s }
+            $s = 0
+            while ($s -ne 2) {
+              switch ($s) {
+                0 { Write-Host 'a'; $s = 1 }
+                1 { Write-Host 'b'; $s = 2 }
+              }
+            }
+            show
+        """)
+
+    def test_a_seed_a_function_called_in_between_may_overwrite_is_not_the_one_the_machine_starts_from(self):
+        self._assertLeftFlattened("""
+            function bump { $script:s = 1 }
+            $s = 0
+            bump
+            while ($s -ne 2) {
+              switch ($s) {
+                0 { Write-Host 'a'; $s = 1 }
+                1 { Write-Host 'b'; $s = 2 }
+              }
+            }
+        """)
+
+    def test_a_machine_whose_state_the_next_pass_of_a_loop_reads_before_the_seed_is_left_flattened(self):
+        self._assertLeftFlattened("""
+            foreach ($k in 1, 2) {
+              Write-Host $s
+              $s = 0
+              while ($s -ne 2) {
+                switch ($s) {
+                  0 { Write-Host 'a'; $s = 1 }
+                  1 { Write-Host 'b'; $s = 2 }
+                }
+              }
+            }
+        """)
+
+    def test_two_machines_sharing_their_state_in_the_body_of_a_loop_are_both_dissolved(self):
+        output = self._deobfuscate(cleandoc("""
+            foreach ($k in 1, 2) {
+              $s = 1
+              while ($s -ne 0) {
+                switch ($s) {
+                  1 { Write-Host 'a'; $s = 0 }
+                }
+              }
+              $s = 1
+              while ($s -ne 0) {
+                switch ($s) {
+                  1 { Write-Host 'b'; $s = 0 }
+                }
+              }
+            }
+        """))
+        self.assertNotIn('switch', output)
+
     def test_two_machines_with_seeds_of_their_own_are_both_dissolved(self):
         self.assertEqual(self._deobfuscate(cleandoc("""
             $s = 1

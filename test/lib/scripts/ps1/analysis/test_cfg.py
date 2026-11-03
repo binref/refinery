@@ -1738,6 +1738,19 @@ class TestPs1TheGraphRoutesAnErrorWhereTheEvaluatorSendsIt(_Ps1ControlFlowGraphs
                 reached = self._reached_by_an_error_at(graph, trap.body.body[0])
                 self.assertEqual(self._required_node(graph, trap) in reached, again)
 
+    def test_an_error_a_catch_inside_a_trap_body_takes_does_not_run_the_trap_again(self):
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { try { $null = [int]$s } catch { } finally { 'f' } }
+            try { throw 'x' } catch [System.IO.IOException] { }
+        """))
+        trap = tree.body[0]
+        construct = next(node for node in trap.walk() if isinstance(node, Ps1TryCatchFinally))
+        assert construct.try_block is not None and construct.finally_block is not None
+        entry = self._required_node(graph, trap)
+        for element in (construct.try_block.body[0], construct.finally_block):
+            with self.subTest(element=type(element).__name__):
+                self.assertNotIn(entry, self._reached_by_an_error_at(graph, element))
+
 
 class TestPs1AJumpRunsTheFinallyItLeaves(_Ps1ControlFlowGraphs):
     """

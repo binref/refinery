@@ -12,8 +12,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Generator, NamedTuple
 
-from refinery.lib.scripts import Block, Node, Statement, Transformer
-from refinery.lib.scripts.ps1.analysis.cache import model_cache
+from refinery.lib.scripts import Block, Node, Statement, Transformer, tree_root
+from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
+from refinery.lib.scripts.ps1.analysis.effects import Ps1BodyReads, reads_in_bodies
 from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references, reads_unreadable_name
 from refinery.lib.scripts.ps1.analysis.opaque import runs_unreadable_code, writes_nobody_can_attribute
 from refinery.lib.scripts.ps1.analysis.values import integer_of, read
@@ -33,6 +34,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ParenExpression,
     Ps1RealLiteral,
     Ps1ScopeModifier,
+    Ps1Script,
     Ps1StringLiteral,
     Ps1SwitchStatement,
     Ps1UnaryExpression,
@@ -44,6 +46,7 @@ _MAX_STATES = 500
 _MAX_UNROLL_ITERATIONS = 500
 
 if TYPE_CHECKING:
+    from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
     _VarKey = tuple[str, Ps1ScopeModifier]
     _StateKey = int | float | str
 
@@ -350,6 +353,7 @@ def _find_state_init(
     loop_index: int,
     var_name: str,
     var_scope: Ps1ScopeModifier,
+    calls: Ps1CallGraph,
 ) -> tuple[int, _StateKey] | None:
     """
     Scan backwards from the while loop to the statement that seeds the state variable with a
@@ -361,23 +365,24 @@ def _find_state_init(
         value = _is_state_assignment(body[i], var_name, var_scope)
         if value is not None:
             return (i, value)
-        if _may_write_the_state(body[i], var_name):
+        if _may_write_the_state(body[i], var_name, calls):
             return None
     return None
 
 
-def _may_write_the_state(statement: Node, var_name: str) -> bool:
+def _may_write_the_state(statement: Node, var_name: str, calls: Ps1CallGraph) -> bool:
     """
     Whether running *statement* may store into the state variable *var_name*: a variable of that
     name stands in it under any scope, a command in it writes the name it spells
-    (`refinery.lib.scripts.ps1.analysis.naming.named_references`), or something in it writes where
+    (`refinery.lib.scripts.ps1.analysis.naming.named_references`), something in it writes where
     no reading of the source names the target
-    (`refinery.lib.scripts.ps1.analysis.opaque.writes_nobody_can_attribute`).
+    (`refinery.lib.scripts.ps1.analysis.opaque.writes_nobody_can_attribute`), or something in it
+    may run a body of the script (`Ps1CallGraph.may_run_a_body`), which may write any name.
     """
     for node in statement.walk():
         if isinstance(node, Ps1Variable) and binding_key(node) == var_name:
             return True
-        if writes_nobody_can_attribute(node):
+        if writes_nobody_can_attribute(node) or calls.may_run_a_body(node):
             return True
         if any(
             reference.key == var_name and reference.role is not Ps1NameRole.READS
@@ -387,31 +392,59 @@ def _may_write_the_state(statement: Node, var_name: str) -> bool:
     return False
 
 
-class _LaterReads:
+class _StateReads:
     """
-    Which variables the statements of one body may read after a given statement, read once for the
-    body: a statement may read a variable of a name that stands in it under any scope or that a
-    command in it names, and every variable where it reads a name no reading of the source spells
-    or runs code nobody reads.
+    Which statements of one body may read which variables, read once for the body: a statement may
+    read a variable of a name that stands in it under any scope or that a command in it names;
+    where something in it may run a body of the script (`Ps1CallGraph.may_run_a_body`), a variable
+    a function or a stored script block reads (*bodies*); and every variable where it reads a name
+    no reading of the source spells or runs code nobody reads.
     """
 
-    def __init__(self, body: list[Statement]):
+    def __init__(self, body: list[Statement], calls: Ps1CallGraph, bodies: Ps1BodyReads):
+        self._first: dict[str, int] = {}
         self._last: dict[str, int] = {}
-        self._last_unreadable = -1
+        self._every: list[int] = []
+        self._running: list[int] = []
+        self._read_in_bodies = bodies.names
         for index, statement in enumerate(body):
+            every = running = False
             for node in statement.walk():
                 if isinstance(node, Ps1Variable):
-                    self._last[binding_key(node)] = index
-                if reads_unreadable_name(node) or runs_unreadable_code(node):
-                    self._last_unreadable = index
+                    self._mark(binding_key(node), index)
                 for reference in named_references(node):
-                    self._last[reference.key] = index
+                    self._mark(reference.key, index)
+                if reads_unreadable_name(node) or runs_unreadable_code(node):
+                    every = True
+                elif calls.may_run_a_body(node):
+                    running = True
+            if every or running and bodies.dynamic:
+                self._every.append(index)
+            elif running:
+                self._running.append(index)
+
+    def _mark(self, name: str, index: int) -> None:
+        self._first.setdefault(name, index)
+        self._last[name] = index
+
+    def _runs_a_reader(self, var_name: str) -> list[int]:
+        return self._running if var_name in self._read_in_bodies else []
 
     def after(self, index: int, var_name: str) -> bool:
         """
         Whether a statement after the one at *index* may read *var_name*.
         """
-        return self._last_unreadable > index or self._last.get(var_name, -1) > index
+        later = [self._last.get(var_name, -1), *self._every[-1:], *self._runs_a_reader(var_name)[-1:]]
+        return max(later) > index
+
+    def first(self, var_name: str) -> int | None:
+        """
+        The index of the first statement that may read *var_name*, or `None` where none may.
+        """
+        found = [*self._every[:1], *self._runs_a_reader(var_name)[:1]]
+        if (mentioned := self._first.get(var_name)) is not None:
+            found.append(mentioned)
+        return min(found, default=None)
 
 
 def _strip_trailing_break(stmts: list[Statement]) -> list[Statement]:
@@ -1304,10 +1337,13 @@ class Ps1ControlFlowDeflattening(Transformer):
         together: a vetoed half would leave the machine partly dissolved. A machine claiming a
         seed another machine of the batch claims is left for the next run, and so is one whose
         state variable a later statement may read, since the recovered statements store nothing
-        into it.
+        into it. A body other than the script's own may run again, and there a statement before the
+        seed may read the state the machine left on the run before, unless a constant store into the
+        variable comes first.
         """
+        cache: Ps1ModelCache | None = None
         plan: Ps1RemovalPlan | None = None
-        later: _LaterReads | None = None
+        reads: _StateReads | None = None
         i = 0
         while i < len(body):
             stmt = body[i]
@@ -1318,17 +1354,30 @@ class Ps1ControlFlowDeflattening(Transformer):
             if match is None:
                 i += 1
                 continue
-            init = _find_state_init(body, i, match.state_var_name, match.state_var_scope)
+            if cache is None:
+                cache = model_cache(self, parent)
+            name = match.state_var_name
+            scope = match.state_var_scope
+            init = _find_state_init(body, i, name, scope, cache.call_graph)
             if init is None:
                 i += 1
                 continue
             init_index, entry_state = init
-            if later is None:
-                later = _LaterReads(body)
-            if later.after(i, match.state_var_name):
+            if reads is None:
+                reads = _StateReads(body, cache.call_graph, reads_in_bodies(tree_root(parent)))
+            if reads.after(i, name):
                 i += 1
                 continue
-            is_exit = _make_exit_check(match.condition, match.state_var_name)
+            first = reads.first(name)
+            if (
+                not isinstance(parent, Ps1Script)
+                and first is not None
+                and first < init_index
+                and _is_state_assignment(body[first], name, scope) is None
+            ):
+                i += 1
+                continue
+            is_exit = _make_exit_check(match.condition, name)
             machine = _extract_state_machine(match, is_exit)
             if machine is None:
                 i += 1
@@ -1336,21 +1385,17 @@ class Ps1ControlFlowDeflattening(Transformer):
             if entry_state not in machine:
                 i += 1
                 continue
-            if not _exit_condition_is_total(match.condition, match.state_var_name, machine):
+            if not _exit_condition_is_total(match.condition, name, machine):
                 i += 1
                 continue
             recovered = _recover_structure(machine, entry_state, is_exit)
             if recovered is None:
                 i += 1
                 continue
-            recovered = [
-                s for s in recovered
-                if _is_state_assignment(s, match.state_var_name, match.state_var_scope) is None
-            ]
+            recovered = [s for s in recovered if _is_state_assignment(s, name, scope) is None]
             # Statements that sit between the state initialization and the dispatcher loop are
             # unrelated and stay where they are; only the loop and its `$state = ...` seed move.
             if plan is None:
-                cache = model_cache(self, parent)
                 plan = Ps1RemovalPlan(
                     parent,
                     handlers=cache.handlers,

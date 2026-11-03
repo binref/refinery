@@ -547,11 +547,12 @@ class Ps1JunkStatementRemoval(Transformer):
         unreachable, so both removal sites answer it the same way.
 
         A definition and the calls to it are one edit, and they routinely land in *different* plans,
-        so no single plan's `all_or_nothing` can hold them together. The batch is therefore planned
-        whole and then asked what it would accept: a name any part of which is declined is withdrawn
-        entirely, because half the edit is not a smaller edit. Deleting `function j` while a veto
-        keeps `try { j }` leaves the script calling a function it no longer defines, and deleting
-        the call while the definition is kept leaves a definition the emitted script never reaches.
+        so no single plan's `propose_together` can hold them together. The batch is therefore
+        planned whole and then asked what it would accept: a name any part of which is declined is
+        withdrawn entirely, because half the edit is not a smaller edit. Deleting `function j` while
+        a veto keeps `try { j }` leaves the script calling a function it no longer defines, and
+        deleting the call while the definition is kept leaves a definition the emitted script never
+        reaches.
         The withdrawals are read back to a fixpoint rather than applied once, so a group broken by
         another group's withdrawal is caught too; it terminates because the batch only shrinks.
         `pruning_erases_body` is asked *before* any of this, against the full set, because it is

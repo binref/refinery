@@ -179,6 +179,10 @@ class TestPs1ASpliceUnderATrapThatCarriesOnKeepsAnErrorFromCarryingOnInsideIt(Te
         output = self._deobfuscate("trap { continue }; iex \"'head'; throw 'e'\"; Write-Host 'next'")
         self.assertNotIn('Invoke-Expression', output)
 
+    def test_a_payload_whose_line_before_the_last_defines_a_function_is_inlined(self):
+        output = self._deobfuscate("trap { continue }; iex 'function g { Write-Host 1 }; g'")
+        self.assertNotIn('Invoke-Expression', output)
+
     def test_a_store_in_a_subexpression_under_a_resuming_trap_stays_inside_it(self):
         for source in (
             "[int]$x = 0; trap { continue }; Write-Host $($x = 'v'; 'r'); Write-Host $x",

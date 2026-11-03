@@ -665,9 +665,8 @@ class Ps1ConstantInlining(Transformer):
 
     def visit(self, node: Node):
         # Captured once rather than re-read per reference: every substitution below marks the pass
-        # changed, which drops the cache, so a per-site lookup would rebuild the control-flow graphs
-        # of the whole script once per inlined variable. Nothing this pass adds or removes is a
-        # statement, so the graphs it would rebuild are the graphs it already has.
+        # changed, which drops the cache, so a per-site lookup would rebuild the models of the whole
+        # script once per inlined variable.
         cache = model_cache(self, node)
         objects = cache.object_flow
         table = _ConstantTable(node)
