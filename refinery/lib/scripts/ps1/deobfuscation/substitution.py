@@ -11,12 +11,12 @@ list, the whole of one — rather than for the passes that reach them, because t
 thing they differ in. `substituted` is named for none of them: a pass that decides by returning a
 replacement from `visit_X` never touches a slot, because
 `refinery.lib.scripts.Transformer.generic_visit` installs the answer for it, so what it asks for is
-a verdict rather than an edit. `substitute_statement` is the exception in that it edits nothing
-itself: a statement list is a body, a body is edited as a batch, and
-`refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan` is that batch. It is here so that a
-pass substituting inside a body has an owner to ask rather than a `refinery.lib.scripts.BodyEdit` to
-build, and it refuses an empty replacement: whether a statement may go is the other module's
-question, and answering it here would be a route around every guard that module holds.
+a verdict rather than an edit. `substitute_statement` lands its edit through
+`refinery.lib.scripts.ps1.deobfuscation.removal.land`, the route every edit of a statement list
+takes, so that a pass substituting inside a body has an owner to ask rather than a
+`refinery.lib.scripts.BodyEdit` to build, and it refuses an empty replacement: whether a statement
+may go is the other module's question, and answering it here would be a route around every guard
+that module holds.
 
 The two owners divide by what the pass is claiming, and the division is what makes the rule below
 sound. A substitution claims the value is unchanged, so everything the original did still has to
@@ -37,7 +37,7 @@ from refinery.lib.scripts import (
     set_child,
     set_child_list,
 )
-from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan
+from refinery.lib.scripts.ps1.deobfuscation.removal import land, raisers_a_splice_moves, rescopes_a_handler
 
 #: What every entry point below accepts on either side of a substitution: a node, nothing, or a
 #: list of either. A pass that splits one statement into several has a list on one side and a single
@@ -211,11 +211,19 @@ def substitute_statement(
     The rule is asked of the statement against the whole replacement list and not against any one
     entry of it, because a pass that splits one statement into several routinely puts the redirected
     part in a different entry than the value.
+
+    Two more refusals are the ones a replacement filed with a removal plan meets: a `trap` carried
+    into the list would guard statements it did not guard
+    (`refinery.lib.scripts.ps1.deobfuscation.removal.rescopes_a_handler`), and a spliced line that
+    may raise would carry the run on inside the splice where the list's `trap` set carried it past
+    the whole statement (`refinery.lib.scripts.ps1.deobfuscation.removal.raisers_a_splice_moves`).
+    No model is read for either, so a pass may substitute statement after statement at the cost of
+    the lines it splices.
     """
     if not replacement:
         raise ValueError('an empty replacement is a removal; open a Ps1RemovalPlan for it')
     if not may_substitute(statement, replacement, moved):
         return _release(statement)
-    plan = Ps1RemovalPlan(container, faults=None)
-    plan.propose(statement, replacement)
-    return plan.commit()
+    if rescopes_a_handler(replacement) or raisers_a_splice_moves(getattr(container, 'body', None) or (), replacement):
+        return _release(statement)
+    return land(container, 'body', statement, replacement)

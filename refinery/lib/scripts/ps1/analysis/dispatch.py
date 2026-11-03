@@ -55,6 +55,7 @@ from refinery.lib.scripts import Block, Node, tree_root
 from refinery.lib.scripts.ps1.analysis.handlers import (
     Ps1TrapDisposition,
     Ps1TrapSelection,
+    carries_on,
     declared_traps,
     handler_acts,
     settled,
@@ -649,17 +650,16 @@ class Ps1Reading:
     def _take(self, level: Ps1Level, traps: Ps1TrapSelection, guarded: bool) -> _SetFate:
         tree = self._tree
         fate = Ps1Fate(offered_to_traps=True)
-        stops = Ps1Preference.STOP in level.preferences
-        carries_on = False
+        resumes = False
         for trap in traps.selectable:
             acting = handler_acts(trap)
             depth = tree.depth_of(trap.parent) if acting and trap.parent is not None else float('inf')
             fate = fate.joined(Ps1Fate(trapped=frozenset((trap,)), acts=acting, outermost=depth))
-            if Ps1TrapDisposition.RESUMES in settled(tree.disposition(trap), stops):
-                carries_on = True
+            if carries_on(tree.disposition(trap)):
+                resumes = True
         if self.lets_past(level, traps):
             fate = fate.joined(self.leaving(level, Ps1ErrorKind.MARKED, guarded))
-        return _SetFate(fate, carries_on)
+        return _SetFate(fate, resumes)
 
     def lets_past(self, level: Ps1Level, traps: Ps1TrapSelection) -> bool:
         """

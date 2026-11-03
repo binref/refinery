@@ -9,13 +9,13 @@ from typing import Callable, Iterator
 from refinery.lib.scripts import (
     Expression,
     Node,
+    Statement,
     Transformer,
     _clone_node,
 )
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
-from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.model import (
     NARROWER_QUALIFIERS,
     VARIABLE_QUALIFIERS,
@@ -669,15 +669,14 @@ class Ps1ConstantInlining(Transformer):
         # of the whole script once per inlined variable. Nothing this pass adds or removes is a
         # statement, so the graphs it would rebuild are the graphs it already has.
         cache = model_cache(self, node)
-        objects, faults = cache.object_flow, cache.faults
+        objects = cache.object_flow
         table = _ConstantTable(node)
         if not table:
             return None
         unseen = cache.names_may_be_read_unseen
-        error_state = cache.error_state
         state = _Inlining(table, objects, self._blocked_by_expansion(node, table))
         self._substitute(node, state)
-        self._remove_dead_assignments(table, state, faults, error_state, unseen)
+        self._remove_dead_assignments(node, table, state, unseen)
         return None
 
     def _blocked_by_expansion(self, root: Node, table: _ConstantTable) -> set[str]:
@@ -849,10 +848,9 @@ class Ps1ConstantInlining(Transformer):
 
     def _remove_dead_assignments(
         self,
+        root: Node,
         table: _ConstantTable,
         state: _Inlining,
-        faults: Ps1FaultReach,
-        error_state: Ps1ErrorStateReach,
         unseen: Ps1NameSet,
     ):
         """
@@ -882,8 +880,12 @@ class Ps1ConstantInlining(Transformer):
         reads holds — see
         `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache.names_may_be_read_unseen` — so its
         writes stay: measured, `$x = 'a'; Write-Host $x; iex $c` runs a payload that reads `$x`.
+
+        The deletions are judged against the tree the substitutions left, so the models are read for
+        it, once, and only where a deletion is proposed at all: the ones read before substituting
+        speak for a tree that has moved since.
         """
-        plans = Ps1RemovalPlans(faults, error_state=error_state)
+        removable: list[Statement] = []
         for binding, replacements in state.record:
             if binding.name in unseen:
                 continue
@@ -902,7 +904,13 @@ class Ps1ConstantInlining(Transformer):
                     continue
                 statement = self._find_removable_statement(assignment)
                 if statement is not None:
-                    plans.propose(statement)
+                    removable.append(statement)
+        if not removable:
+            return
+        cache = model_cache(self, root)
+        plans = Ps1RemovalPlans(handlers=cache.handlers, under_the_world=False, error_state=cache.error_state)
+        for statement in removable:
+            plans.propose(statement)
         if plans.commit():
             self.mark_changed()
 

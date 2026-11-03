@@ -5,10 +5,11 @@ import unittest.mock
 
 from inspect import cleandoc
 
+from test import lines_executed
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.analysis import cache
-from refinery.lib.scripts.ps1.deobfuscation import Ps1ControlFlowDeflattening
+from refinery.lib.scripts.ps1.deobfuscation import Ps1ControlFlowDeflattening, removal, unflatten
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -347,9 +348,9 @@ class TestPs1DeflatteningDoesNotRebuildTheModelPerMachine(TestPs1):
     once per machine it dissolves. What a walk over a script costs is a property of the script, not
     of how many of its statements turn out to be removable.
 
-    The machines in a body are siblings, and dissolving one leaves the handlers around another where
-    they were, so the pass reads the fault model once per body and reuses it for every machine there.
-    The count is then a property of the script and does not carry the machine count.
+    The machines in a body are dissolved as one batch, decided against the body as it stands, so the
+    pass reads the models once per body for every machine there. The count is then a property of
+    the script and does not carry the machine count.
 
     The build is `refinery.lib.scripts.ps1.analysis.cache.build_control_flow_model`, which is what
     the cache calls, counted here rather than timed so the measurement is the same on every
@@ -409,3 +410,105 @@ class TestPs1DeflatteningDoesNotRebuildTheModelPerMachine(TestPs1):
 
     def test_the_models_built_are_the_same_for_two_machines_and_for_eight(self):
         self.assertEqual(self._models_built(self._MANY), self._models_built(self._FEW))
+
+    def test_the_work_of_dissolving_every_machine_of_a_body_grows_linearly(self):
+        def work(count: int) -> int:
+            script = Ps1Parser(self._machines(count)).parse()
+            return lines_executed(lambda: Ps1ControlFlowDeflattening().visit(script), unflatten, removal)
+
+        self.assertWorkGrowsLinearly(work, 10)
+
+
+class TestPs1DeflatteningStartsFromTheValueTheLoopReads(TestPs1):
+    """
+    A machine is dissolved from the seed its loop starts from, and the statements it is recovered
+    into store nothing into the state variable. A seed another statement may overwrite before the
+    loop, and a state a later statement may read, leave the machine as it is written.
+    """
+
+    def _assertLeftFlattened(self, code: str):
+        code = cleandoc(code)
+        self.assertEqual(self._apply(code, Ps1ControlFlowDeflattening), self._apply(code))
+
+    def test_a_seed_a_loop_in_between_overwrites_is_not_the_one_the_machine_starts_from(self):
+        self._assertLeftFlattened("""
+            $b = 0
+            foreach ($i in 1) { $b = 1 }
+            while ($b -ne 2) {
+              switch ($b) {
+                0 { Write-Host 'zero'; $b = 2 }
+                1 { Write-Host 'one'; $b = 2 }
+              }
+            }
+        """)
+
+    def test_a_seed_a_counting_loop_in_between_advances_is_not_the_one_the_machine_starts_from(self):
+        self._assertLeftFlattened("""
+            $s = 1
+            while ($s -lt 3) { $s++ }
+            while ($s -ne 0) {
+              switch ($s) {
+                1 { Write-Host 'one'; $s = 0 }
+                3 { Write-Host 'three'; $s = 0 }
+              }
+            }
+        """)
+
+    def test_a_later_machine_does_not_start_from_the_seed_of_an_earlier_one(self):
+        for exit_test, entry, last, second_test in (
+            ('$s -ne 0', '1', '0', '$s -ne 0'),
+            ('$s -gt 0', '1', '0', '$s -gt 0'),
+            ('$s -ne -1', '1', '-1', '$s -gt 0'),
+            ('$s -ne 9', '1', '9', '$s -ne 0'),
+        ):
+            with self.subTest(exit_test=exit_test, second_test=second_test):
+                self._assertLeftFlattened(F"""
+                    $s = {entry}
+                    while ({exit_test}) {{
+                      switch ($s) {{
+                        1 {{ Write-Host 'a'; $s = 2 }}
+                        2 {{ Write-Host 'b'; $s = {last} }}
+                      }}
+                    }}
+                    while ({second_test}) {{
+                      switch ($s) {{
+                        1 {{ Write-Host 'c'; $s = 0 }}
+                      }}
+                    }}
+                    Write-Host 'end'
+                """)
+
+    def test_a_machine_whose_state_a_later_statement_reads_is_left_flattened(self):
+        self._assertLeftFlattened("""
+            $s = 0
+            while ($s -NE -1) {
+              switch ($s) {
+                0 { Write-Host 'a'; $s = -1 }
+                default { break }
+              }
+            }
+            Write-Host $s
+        """)
+
+    def test_two_machines_with_seeds_of_their_own_are_both_dissolved(self):
+        self.assertEqual(self._deobfuscate(cleandoc("""
+            $s = 1
+            while ($s -ne 0) {
+              switch ($s) {
+                1 { Write-Host 'a'; $s = 2 }
+                2 { Write-Host 'b'; $s = 0 }
+              }
+            }
+            $s = 1
+            while ($s -ne 0) {
+              switch ($s) {
+                1 { Write-Host 'c'; $s = 0 }
+              }
+            }
+            Write-Host 'end'
+        """)), cleandoc("""
+            Write-Host 'a'
+            Write-Host 'b'
+            Write-Host 'c'
+            Write-Host 'end'
+        """))

@@ -503,9 +503,9 @@ class Ps1DeadCodeElimination(Transformer):
         """
         cache = model_cache(self, node)
         plans = Ps1RemovalPlans(
-            cache.faults,
-            error_state=cache.error_state,
             handlers=cache.handlers,
+            under_the_world=False,
+            error_state=cache.error_state,
             removals_may_fault=False,
         )
         pending: list[Node] = [node]

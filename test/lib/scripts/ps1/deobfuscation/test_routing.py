@@ -146,3 +146,45 @@ class TestPs1AnErrorGoesWhereTheEvaluatorSendsIt(TestPs1):
             Write-Host $y
         """))
         self.assertNotIn("Write-Host 'r'", output)
+
+
+class TestPs1ASpliceUnderATrapThatCarriesOnKeepsAnErrorFromCarryingOnInsideIt(TestPs1):
+    """
+    A `trap` set that carries the run on resumes after the statement that raised. Inlining a payload
+    puts its lines in that statement's place, and an error in one of them would carry the run on at
+    the next line of the payload, which 5.1 never runs.
+    """
+
+    def test_a_payload_whose_line_before_the_last_may_fail_is_not_run_line_by_line(self):
+        for payload in (
+            'throw "e"; Write-Host "tail"',
+            '$null = [int]$Host.Name; Write-Host "tail"',
+            'if ($true) { throw "e" }; Write-Host "tail"',
+            'if ($true) { $null = [int]$Host.Name }; Write-Host "tail"',
+            '& { throw "e" }; Write-Host "tail"',
+            'try { throw "e" } finally { }; Write-Host "tail"',
+            'foreach ($i in 1) { throw "e" }; Write-Host "tail"',
+            'switch (1) { 1 { throw "e" } }; Write-Host "tail"',
+            'while ($true) { throw "e" }; Write-Host "tail"',
+            'function g { throw "e" }; g; Write-Host "tail"',
+            '$null = $(throw "e"); Write-Host "tail"',
+            '. { throw "e" }; Write-Host "tail"',
+        ):
+            for handler in ('continue', "Write-Host 'trapped'"):
+                source = F"trap {{ {handler} }}; iex '{payload}'; Write-Host 'next'"
+                with self.subTest(source):
+                    self.assertNotIn('Write-Host "tail"', self._deobfuscate(source).splitlines())
+
+    def test_a_payload_whose_only_line_that_may_fail_is_its_last_is_inlined(self):
+        output = self._deobfuscate("trap { continue }; iex \"'head'; throw 'e'\"; Write-Host 'next'")
+        self.assertNotIn('Invoke-Expression', output)
+
+    def test_a_store_in_a_subexpression_under_a_resuming_trap_stays_inside_it(self):
+        for source in (
+            "[int]$x = 0; trap { continue }; Write-Host $($x = 'v'; 'r'); Write-Host $x",
+            "trap { continue }; Write-Host $($x = 'v'; 'r'); Write-Host $x",
+            "trap { continue }; Write-Host $($x = 'v'; $y = 'w'; 'r'); Write-Host $x $y",
+            "function f { param([int]$x) trap { continue }; Write-Host $($x = 'v'; 'r'); Write-Host $x }; f 1",
+        ):
+            with self.subTest(source):
+                self.assertIn("Write-Host $($x = 'v'", self._deobfuscate(source))

@@ -22,8 +22,6 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     opens_a_redirection_target,
     takes_output_away,
 )
-from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
-from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.model import (
     Ps1NameSet,
     Ps1SemanticModel,
@@ -79,7 +77,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     stands_where_only_a_command_may,
     switch_matches,
 )
-from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan
+from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan, Ps1RemovalPlans
 from refinery.lib.scripts.ps1.deobfuscation.substitution import (
     carried_redirections,
     substitute_list,
@@ -2261,19 +2259,33 @@ class Ps1FunctionEvaluator(Transformer):
         )
 
     def _remove_resolved_definitions(self, root):
-        # Read once for the whole sweep and not per definition. Each removal that lands advances the
-        # tree version, so a per-definition read rebuilds every control-flow graph in the script
-        # once per function deleted — measured at 2.9x on two hundred of them, which is the shape an
-        # obfuscator that emits one function per operation produces. Reusing it is sound because
-        # what it is asked is where an error raised *inside the next definition* would go, and
-        # deleting a definition changes no routing but its own: a body's graph is built from that
-        # body alone. Where the deleted definition held the only acting handler the reused model
-        # keeps refusing, which is the conservative direction.
+        """
+        Delete the definitions whose every call this pass resolved, then the calls to the ones that
+        emitted nothing, each as one batch decided against one tree
+        (`refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlans`): a script emitting one
+        function per operation is judged with one build of the models however many it holds.
+
+        A function whose callers are all being deleted goes with them, read off what the batch
+        accepts after each proposal and not off what it was asked: a removal can be declined — a
+        definition holding a payload is kept whatever the call graph says — and closing over the
+        proposals would delete what a kept definition still calls, manufacturing a call to a
+        function that is no longer defined. The calls are judged with the models of the tree the
+        definitions left: beside its definition, a call runs a body the raise model cannot clear.
+        """
         cache = model_cache(self, root)
-        faults = cache.faults
-        error_state = cache.error_state
-        removed: set[str] = set()
+        plans = Ps1RemovalPlans(handlers=cache.handlers, under_the_world=False, error_state=cache.error_state)
+        proposed: dict[str, Ps1FunctionDefinition] = {}
         dead_functions: set[str] = set()
+
+        def propose(key: str, funcdef: Ps1FunctionDefinition) -> None:
+            if isinstance(funcdef.parent, (Ps1Script, Block)):
+                plans.propose_in(funcdef.parent, funcdef)
+                proposed[key] = funcdef
+
+        def accepted() -> set[str]:
+            landing = {id(statement) for statement in plans.accepted}
+            return {key for key, funcdef in proposed.items() if id(funcdef) in landing}
+
         for key, funcdef in self._functions.items():
             call_count = self._call_counts.get(key, 0)
             if call_count == 0:
@@ -2282,10 +2294,10 @@ class Ps1FunctionEvaluator(Transformer):
             failed = self._failed_counts.get(key, 0)
             if (replaced + failed) < call_count:
                 continue
-            if self._remove_funcdef(funcdef, faults, error_state):
-                removed.add(key)
+            propose(key, funcdef)
             if failed > 0:
                 dead_functions.add(key)
+        removed = accepted()
         for key, funcdef in self._functions.items():
             if key in removed:
                 continue
@@ -2294,37 +2306,14 @@ class Ps1FunctionEvaluator(Transformer):
                 continue
             if not callers.issubset(removed):
                 continue
-            # A removal can be declined — a definition holding a payload is kept whatever the call
-            # graph says — and recording it as removed anyway would let the closure delete what it
-            # still calls, manufacturing a call to a function that is no longer defined.
-            if self._remove_funcdef(funcdef, faults, error_state):
-                removed.add(key)
+            propose(key, funcdef)
+            removed = accepted()
+        if plans.commit():
+            self.mark_changed()
         if dead_functions:
-            self._remove_dead_calls(root, dead_functions, faults, error_state)
+            self._remove_dead_calls(root, dead_functions)
 
-    def _remove_funcdef(
-        self,
-        funcdef: Ps1FunctionDefinition,
-        faults: Ps1FaultReach,
-        error_state: Ps1ErrorStateReach,
-    ) -> bool:
-        parent = funcdef.parent
-        if not isinstance(parent, (Ps1Script, Block)):
-            return False
-        plan = Ps1RemovalPlan(parent, faults=faults, error_state=error_state)
-        plan.propose(funcdef)
-        if not plan.commit():
-            return False
-        self.mark_changed()
-        return True
-
-    def _remove_dead_calls(
-        self,
-        root,
-        dead_functions: set[str],
-        faults: Ps1FaultReach,
-        error_state: Ps1ErrorStateReach,
-    ):
+    def _remove_dead_calls(self, root, dead_functions: set[str]):
         """
         Delete the calls to functions this pass has just deleted, from `root`'s own body.
 
@@ -2343,7 +2332,8 @@ class Ps1FunctionEvaluator(Transformer):
         if not isinstance(root, (Ps1Script, Block)):
             return
         held = {id(statement) for statement in root.body}
-        plan = Ps1RemovalPlan(root, faults=faults, error_state=error_state)
+        cache = model_cache(self, root)
+        plan = Ps1RemovalPlan(root, handlers=cache.handlers, under_the_world=False, error_state=cache.error_state)
         for cmd in root.walk():
             if not isinstance(cmd, Ps1CommandInvocation):
                 continue

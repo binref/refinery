@@ -115,7 +115,7 @@ class Ps1AliasInlining(Transformer):
                 return False
             if not cache.commands.binding_only_definition(definition):
                 return False
-        plans = Ps1RemovalPlans(cache.faults, error_state=cache.error_state, handlers=cache.handlers)
+        plans = Ps1RemovalPlans(handlers=cache.handlers, under_the_world=False, error_state=cache.error_state)
         for definition in definitions:
             statement = standalone_command_statement(definition.node)
             if statement is None or carried_redirections(statement) or not plans.propose(statement):

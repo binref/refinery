@@ -6,10 +6,9 @@ error becomes once a `trap` body has run, and whether running a handler is somet
 The control-flow builder `refinery.lib.scripts.ps1.analysis.cfg` wires its handler edges from these
 answers and the dispatch evaluator `refinery.lib.scripts.ps1.analysis.dispatch` follows every error
 by them, so neither holds a reading of its own; the builder asks the evaluator where an error goes
-outward of a `trap` set or a `throw`. How a `trap` body ends
-is the one fact that takes a walk over control flow rather than over the tree, and it is a fact of
-the body alone: `refinery.lib.scripts.ps1.analysis.cfg.trap_disposition` builds the body on its own
-to read it.
+outward of a `trap` set or a `throw`. How a `trap` body ends is the one fact that takes a walk over
+control flow rather than over the tree, and it is a fact of the body alone:
+`refinery.lib.scripts.ps1.analysis.cfg.trap_disposition` builds the body on its own to read it.
 """
 from __future__ import annotations
 
@@ -150,6 +149,15 @@ def settled(disposition: Ps1TrapDisposition, stops: bool) -> Ps1TrapDisposition:
     if stops:
         disposition |= Ps1TrapDisposition.RETHROWS
     return disposition
+
+
+def carries_on(disposition: Ps1TrapDisposition) -> bool:
+    """
+    Whether a `trap` whose body ends as *disposition* carries the run on after the statement that
+    raised: it resumes with `continue`, or runs off its end, which `settled` reads as resuming under
+    every value of the error preference.
+    """
+    return Ps1TrapDisposition.RESUMES in settled(disposition, False)
 
 
 class Ps1TrapSelection:

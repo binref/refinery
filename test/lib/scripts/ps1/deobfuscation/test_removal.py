@@ -12,8 +12,6 @@ from refinery.lib.scripts import set_child_list, tree_root, tree_version
 from refinery.lib.scripts.analysis import cfg as generic_cfg
 from refinery.lib.scripts.ps1.analysis import cfg as ps1_cfg
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
-from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
-from refinery.lib.scripts.ps1.analysis.faults import build_fault_reach
 from refinery.lib.scripts.ps1.deobfuscation import (
     Ps1ConstantInlining,
     Ps1ControlFlowDeflattening,
@@ -38,16 +36,14 @@ from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
 
-def _faults(node):
+def _models(node) -> dict:
     """
-    The fault model over whatever tree *node* belongs to, which is what a plan is opened with
-    outside a pass. A test builds one per plan rather than sharing: every plan here is reached
-    before its own edit lands, so a model built at that point answers about the tree the verdict is
-    about.
+    The models a plan is opened with outside a pass, over whatever tree *node* belongs to. A test
+    builds them per plan rather than sharing: every plan here is reached before its own edit lands,
+    so models built at that point answer about the tree the verdict is about.
     """
-    root = tree_root(node)
-    calls = Ps1ModelCache(root).call_graph
-    return build_fault_reach(build_control_flow_model(root), lambda: calls)
+    cache = Ps1ModelCache(tree_root(node))
+    return dict(handlers=cache.handlers, under_the_world=False, error_state=cache.error_state)
 
 
 class TestPs1RemovalPlan(TestPs1):
@@ -63,7 +59,7 @@ class TestPs1RemovalPlan(TestPs1):
             'c'
         """)
         before = tree_version(script)
-        plan = Ps1RemovalPlan(script, faults=_faults(script))
+        plan = Ps1RemovalPlan(script, **_models(script))
         for stmt in list(script.body)[:2]:
             plan.propose(stmt)
         self.assertTrue(plan.commit())
@@ -80,7 +76,7 @@ class TestPs1RemovalPlan(TestPs1):
             }
         """)
         block = script.body[0].try_block
-        plan = Ps1RemovalPlan(block, faults=_faults(block))
+        plan = Ps1RemovalPlan(block, **_models(block))
         for stmt in list(block.body):
             plan.propose(stmt)
         self.assertEqual(plan.survivors, [])
@@ -98,7 +94,7 @@ class TestPs1RemovalPlan(TestPs1):
         block = script.body[0].try_block
         original = block.body[0]
         replacement = self._script("'b'").body[0]
-        plan = Ps1RemovalPlan(block, faults=_faults(block))
+        plan = Ps1RemovalPlan(block, **_models(block))
         plan.propose(original, [replacement])
         self.assertTrue(plan.commit())
         self.assertIs(block.body[0], replacement)
@@ -106,7 +102,7 @@ class TestPs1RemovalPlan(TestPs1):
     def test_a_plan_over_a_body_with_no_proposals_leaves_the_tree_alone(self):
         script = self._script("'a'")
         before = tree_version(script)
-        self.assertFalse(Ps1RemovalPlan(script, faults=_faults(script)).commit())
+        self.assertFalse(Ps1RemovalPlan(script, **_models(script)).commit())
         self.assertEqual(tree_version(script), before)
 
     def test_plans_group_by_the_body_each_statement_sits_in(self):
@@ -118,7 +114,7 @@ class TestPs1RemovalPlan(TestPs1):
             }
         """)
         definition = script.body[1]
-        plans = Ps1RemovalPlans(_faults(script))
+        plans = Ps1RemovalPlans(**_models(script))
         self.assertTrue(plans.propose(script.body[0]))
         self.assertTrue(plans.propose(definition.body.body[0]))
         plans.commit()
@@ -127,7 +123,7 @@ class TestPs1RemovalPlan(TestPs1):
 
     def test_a_statement_in_no_list_is_declined(self):
         script = self._script('if ($x) { 1 }')
-        plans = Ps1RemovalPlans(_faults(script))
+        plans = Ps1RemovalPlans(**_models(script))
         self.assertFalse(plans.propose(script.body[0].clauses[0][1]))
 
     def test_a_declined_proposal_gives_back_what_its_replacement_took(self):
@@ -135,7 +131,7 @@ class TestPs1RemovalPlan(TestPs1):
         condition = script.body[0].clauses[0][0]
         adopted = condition.value
         replacement = Ps1ExpressionStatement(expression=Ps1ParenExpression(expression=adopted))
-        plans = Ps1RemovalPlans(_faults(script))
+        plans = Ps1RemovalPlans(**_models(script))
         self.assertFalse(plans.propose(condition, [replacement]))
         self.assertIs(adopted.parent, condition)
 
@@ -144,7 +140,7 @@ class TestPs1RemovalPlan(TestPs1):
         original = script.body[0]
         adopted = original.expression
         replacement = Ps1ExpressionStatement(expression=Ps1ParenExpression(expression=adopted))
-        plan = Ps1RemovalPlan(script, faults=_faults(script))
+        plan = Ps1RemovalPlan(script, **_models(script))
         plan.propose(original, [replacement])
         self.assertIs(adopted.parent, original)
         self.assertTrue(plan.commit())
@@ -157,7 +153,7 @@ class TestPs1RemovalPlan(TestPs1):
         adopted = statement.expression
         discarded = Ps1ExpressionStatement(expression=Ps1ParenExpression(expression=adopted))
         self.assertIs(adopted.parent, discarded.expression)
-        plan = Ps1RemovalPlan(script, faults=_faults(script))
+        plan = Ps1RemovalPlan(script, **_models(script))
         plan.propose(statement, [])
         self.assertIs(adopted.parent, statement)
 
@@ -167,7 +163,7 @@ class TestPs1RemovalPlan(TestPs1):
         adopted = statement.expression
         replacement = Ps1ExpressionStatement(expression=Ps1ParenExpression(expression=adopted))
         other = self._script("'x'")
-        plan = Ps1RemovalPlan(other, faults=_faults(other))
+        plan = Ps1RemovalPlan(other, **_models(other))
         plan.propose(statement, [replacement])
         self.assertFalse(plan.commit())
         self.assertEqual(script.body, [statement])
@@ -186,7 +182,7 @@ class TestPs1RemovalPlan(TestPs1):
         installed = Ps1ExpressionStatement(
             expression=Ps1ParenExpression(expression=landing.expression))
         stranded = Ps1ExpressionStatement(expression=Ps1ParenExpression(expression=borrowed))
-        plan = Ps1RemovalPlan(script, faults=_faults(script))
+        plan = Ps1RemovalPlan(script, **_models(script))
         plan.propose(landing, [installed])
         plan.propose(missing, [stranded])
         self.assertTrue(plan.commit())
@@ -201,9 +197,11 @@ class TestPs1RemovalPlan(TestPs1):
             'b'
         """)
         statement = script.body[0]
-        plans = Ps1RemovalPlans(_faults(script))
+        plans = Ps1RemovalPlans(**_models(script), removals_may_fault=False)
         plans.propose(statement)
         # Out of the tree and back, so a withdrawal that rediscovers the owning list finds nothing.
+        # The models then speak for a tree that has moved, and a veto reading them would refuse the
+        # removal whether or not it was withdrawn, so the plan removes what cannot fault.
         set_child_list(script, 'body', [script.body[1]])
         plans.withdraw(statement)
         set_child_list(script, 'body', [statement, *script.body])
@@ -217,7 +215,7 @@ class TestPs1RemovalPlan(TestPs1):
             'b'
         """)
         statement = script.body[0]
-        plans = Ps1RemovalPlans(_faults(script))
+        plans = Ps1RemovalPlans(**_models(script))
         plans.propose_in(script, statement)
         plans.propose_in(self._script("'x'"), statement)
         plans.withdraw(statement)
@@ -236,7 +234,7 @@ class TestPs1RemovalPlan(TestPs1):
         guard = script.body[0]
         protected = guard.try_block.body[0]
         handled = guard.catch_clauses[0].body.body[0]
-        plans = Ps1RemovalPlans(_faults(script))
+        plans = Ps1RemovalPlans(**_models(script))
         plans.propose(handled)
         plans.propose(protected)
         accepted = plans.accepted
@@ -251,7 +249,7 @@ class TestPs1RemovalPlan(TestPs1):
             'b'
         """)
         keep, drop = script.body
-        plan = Ps1RemovalPlan(script, faults=_faults(script))
+        plan = Ps1RemovalPlan(script, **_models(script))
         plan.propose(keep)
         plan.propose(drop)
         plan.withdraw(keep)
@@ -266,7 +264,7 @@ class TestPs1RemovalPlan(TestPs1):
         adopted = original.expression
         replacement = Ps1ExpressionStatement(expression=Ps1ParenExpression(expression=adopted))
         self.assertIsNot(adopted.parent, original)
-        plan = Ps1RemovalPlan(script, faults=_faults(script))
+        plan = Ps1RemovalPlan(script, **_models(script))
         plan.propose(original, [replacement])
         plan.abandon()
         self.assertFalse(plan.commit())
@@ -1207,7 +1205,7 @@ class TestPs1RemovalPlansFindEachListOncePerBatch(TestPs1):
     def test_the_work_of_removing_every_statement_of_a_body_grows_linearly(self):
         def work(length: int) -> int:
             script = Ps1Parser('\n'.join(F"'s{index}'" for index in range(length))).parse()
-            plans = Ps1RemovalPlans(_faults(script))
+            plans = Ps1RemovalPlans(**_models(script))
             statements = list(script.body)
 
             def remove_all():
@@ -1224,7 +1222,7 @@ class TestPs1RemovalPlansFindEachListOncePerBatch(TestPs1):
             raisers = [F'$v{index} = [int]$s{index}; Write-Host {index}' for index in range(length)]
             script = Ps1Parser('\n'.join(['trap { continue }'] * length + raisers)).parse()
             cache = Ps1ModelCache(script)
-            plans = Ps1RemovalPlans(cache.faults, handlers=cache.handlers)
+            plans = Ps1RemovalPlans(handlers=cache.handlers, under_the_world=False, error_state=cache.error_state)
             statements = list(script.body)
 
             def remove_all():
@@ -1288,9 +1286,9 @@ class TestPs1RemovalPlansLandOnlyEditsThatStillHoldTogether(TestPs1):
     def _batch_that_removes_handlers(script) -> Ps1RemovalPlans:
         cache = Ps1ModelCache(script)
         return Ps1RemovalPlans(
-            cache.faults,
-            error_state=cache.error_state,
             handlers=cache.handlers,
+            under_the_world=False,
+            error_state=cache.error_state,
             removals_may_fault=False,
         )
 
@@ -1312,7 +1310,7 @@ class TestPs1RemovalPlansLandOnlyEditsThatStillHoldTogether(TestPs1):
         assert isinstance(outer, Ps1IfStatement)
         block = outer.clauses[0][1]
         inner = block.body[1]
-        plans = Ps1RemovalPlans(_faults(script))
+        plans = Ps1RemovalPlans(**_models(script))
         plans.propose_in(script, outer, list(block.body))
         plans.propose_in(block, inner)
         self.assertEqual([id(statement) for statement in plans.accepted], [id(outer)])
@@ -1481,37 +1479,30 @@ class TestPs1RemovalPlansLandOnlyEditsThatStillHoldTogether(TestPs1):
         """))
 
 
-class TestPs1ARemovalPlanTakesHandlerVerdictsOnlyOverItsOwnModels(TestPs1):
+class TestPs1ARemovalPlanJudgesWithTheModelsOfItsVerdicts(TestPs1):
 
-    def test_verdicts_built_over_another_fault_model_are_refused(self):
-        script = Ps1Parser(cleandoc("""
-            trap { continue }
-            'a'
-        """)).parse()
+    def test_a_plan_cannot_be_opened_without_verdicts(self):
+        script = Ps1Parser("trap { continue }; 'a'").parse()
+        with self.assertRaises(TypeError):
+            Ps1RemovalPlan(script)  # type: ignore
+        with self.assertRaises(TypeError):
+            Ps1RemovalPlans()  # type: ignore
+
+    def test_a_plan_reads_the_fault_model_and_the_raise_model_of_its_verdicts(self):
+        script = Ps1Parser("trap { continue }; 'a'").parse()
         cache = Ps1ModelCache(script)
-        with self.assertRaises(ValueError):
-            Ps1RemovalPlan(script, faults=_faults(script), handlers=cache.handlers)
+        for under_the_world in (False, True):
+            with self.subTest(under_the_world=under_the_world):
+                plan = Ps1RemovalPlan(
+                    script,
+                    handlers=cache.handlers,
+                    under_the_world=under_the_world,
+                    error_state=cache.error_state,
+                )
+                self.assertIs(plan.faults, cache.handlers.faults)
+                self.assertIs(plan.raises, cache.handlers.raises(under_the_world))
 
-    def test_verdicts_built_over_another_world_are_refused(self):
-        script = Ps1Parser(cleandoc("""
-            trap { continue }
-            'a'
-        """)).parse()
-        cache = Ps1ModelCache(script)
-        other = Ps1ModelCache(script)
-        with self.assertRaises(ValueError):
-            Ps1RemovalPlan(script, faults=cache.faults, world=other.world_reach, handlers=cache.handlers)
-
-    def test_verdicts_built_over_the_same_models_are_taken(self):
-        script = Ps1Parser(cleandoc("""
-            trap { continue }
-            'a'
-        """)).parse()
-        cache = Ps1ModelCache(script)
-        plan = Ps1RemovalPlan(script, faults=cache.faults, world=cache.world_reach, handlers=cache.handlers)
-        self.assertIs(plan.handlers, cache.handlers)
-
-    def test_a_batch_and_a_single_plan_given_verdicts_both_remove_a_trap_nothing_needs(self):
+    def test_a_batch_and_a_single_plan_both_remove_a_trap_nothing_needs(self):
         for kind in ('plan', 'batch'):
             script = Ps1Parser(cleandoc("""
                 trap { continue }
@@ -1521,22 +1512,12 @@ class TestPs1ARemovalPlanTakesHandlerVerdictsOnlyOverItsOwnModels(TestPs1):
             cache = Ps1ModelCache(script)
             trap = script.body[0]
             if kind == 'plan':
-                plan = Ps1RemovalPlan(script, faults=cache.faults, handlers=cache.handlers)
+                plan = Ps1RemovalPlan(script, handlers=cache.handlers, under_the_world=False, error_state=cache.error_state)
                 plan.propose(trap)
                 plan.commit()
             else:
-                plans = Ps1RemovalPlans(cache.faults, handlers=cache.handlers)
+                plans = Ps1RemovalPlans(handlers=cache.handlers, under_the_world=False, error_state=cache.error_state)
                 plans.propose(trap)
                 plans.commit()
             with self.subTest(kind=kind):
                 self.assertNotIn(trap, script.body)
-
-    def test_a_plan_without_verdicts_removes_no_trap(self):
-        script = Ps1Parser(cleandoc("""
-            trap { continue }
-            'a'
-        """)).parse()
-        plan = Ps1RemovalPlan(script, faults=_faults(script))
-        plan.propose(script.body[0])
-        self.assertFalse(plan.commit())
-        self.assertIsInstance(script.body[0], Ps1TrapStatement)

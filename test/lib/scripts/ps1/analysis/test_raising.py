@@ -195,7 +195,7 @@ class TestPs1AStatementAPassBuildsIsJudgedByEverythingItEvaluates(TestBase):
         test = _statement(tree, 0)
         assert isinstance(test, Expression)
         built = Ps1IfStatement(clauses=[(test, Block(body=[line]))])
-        self.assertTrue(statement_raise_kinds(built, replaced, model.faults, model.world, model))
+        self.assertTrue(statement_raise_kinds(built, replaced, model))
 
 
 class TestPs1ARaiseModelAnswersOnlyForTheTreeItWasBuiltFor(TestBase):
@@ -206,7 +206,7 @@ class TestPs1ARaiseModelAnswersOnlyForTheTreeItWasBuiltFor(TestBase):
             $x = 'b'
         """)
         line = tree.body[1]
-        before = statement_raise_kinds(line, line, model.faults, model.world, model)
+        before = statement_raise_kinds(line, line, model)
         _remove_from_parent(tree.body[0])
-        after = statement_raise_kinds(line, line, model.faults, model.world, model)
+        after = statement_raise_kinds(line, line, model)
         self.assertEqual((before, after), (Ps1ErrorKind.NONE, EVERY_KIND))

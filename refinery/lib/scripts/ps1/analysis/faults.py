@@ -30,7 +30,6 @@ from typing import AbstractSet, Callable, Iterator, NamedTuple, Protocol, Sequen
 
 from refinery.lib.scripts import Node, tree_root, tree_version
 from refinery.lib.scripts.analysis.cfg import (
-    CfgEdge,
     CfgNode,
     ControlFlowGraph,
     Projection,
@@ -76,7 +75,6 @@ from refinery.lib.scripts.ps1.ast import (
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1CatchClause,
-    Ps1CommandArgument,
     Ps1CommandInvocation,
     Ps1FunctionDefinition,
     Ps1IntegerLiteral,
@@ -254,17 +252,6 @@ def _enclosing_trap_body(node: Node, memo: dict[int, Ps1TrapStatement | None]) -
     for step in climbed:
         memo[id(step)] = found
     return found
-
-
-def _resumption_slot(graph: ControlFlowGraph, node: CfgNode) -> CfgNode | None:
-    """
-    The slot a resuming handler carries *node*'s error to — the `CfgEdge.RESUMPTION_FORWARD`
-    successor — or `None` where nothing resumes this node.
-    """
-    for successor in node.successors:
-        if graph.edge_kind(node, successor) & CfgEdge.RESUMPTION_FORWARD:
-            return successor
-    return None
 
 
 class Ps1StepOverRegion:
@@ -558,7 +545,6 @@ class Ps1FaultReach:
         self._strict_v2: bool | None = None
         self._dispatch = dispatch
         self._trap_bodies: dict[int, Ps1TrapStatement | None] = {}
-        self._hands_back: dict[int, bool] = {}
         self._kept_for: int | None = None
         self._unattributed_holders_found: tuple[frozenset[int] | None] | None = None
         self._offered: _OfferedScan | None = None
@@ -727,37 +713,6 @@ class Ps1FaultReach:
             return True
         return bool(fate.to_caller)
 
-    def guarded_by_a_resuming_trap(self, node: Node) -> bool:
-        """
-        Whether a `trap` set that *resumes* guards *node* — one that, after taking a terminating
-        error, carries execution on at the statement after the one that raised, rather than
-        re-raising it (`trap { break }`) or letting it leave the body.
-
-        The control-flow builder draws a `RESUMPTION_FORWARD` edge out of a guarded statement only
-        where its block's trap set resumes — a `trap { continue }`, or a trap whose body runs off its
-        end — and draws none for a re-raising set, so the mere existence of that edge answers the
-        question. This is why a splice into such a body is load bearing: the edge lands on the next
-        statement of the block, and splicing more statements after a raiser moves what that next
-        statement is.
-
-        Read off the descended graph the reader already holds. A `for` loop and a `try` are keyed to
-        no node of their own — the builder gives each of their parts a node and names the statement
-        after none of them — so `locate` places the construct itself nowhere, where an `if`, a
-        `switch` and a `while` are each keyed to their head. The resumption of the block still reaches
-        those parts: every point the construct owns that sits at the block's level draws the same edge
-        to the same slot, so where the construct itself is placed nowhere, a point inside it that
-        resumes answers for it. A construct the graph places nothing of, parts included, is guarded by
-        nothing here.
-        """
-        located = self.control_flow.locate(node)
-        if located is not None:
-            return _resumption_slot(*located) is not None
-        for inner in self.points_in(node):
-            placed = self.control_flow.locate(inner)
-            if placed is not None and _resumption_slot(*placed) is not None:
-                return True
-        return False
-
     def lands_past_a_live_tail(self, node: Node, kinds: Ps1ErrorKind) -> bool:
         """
         Whether an error of *kinds* raised at *node* may carry the run on somewhere a run on which
@@ -856,44 +811,6 @@ class Ps1FaultReach:
             kinds |= Ps1ErrorKind.MARKED
         return kinds | handed_back(operand)
 
-    def hands_back_a_body_error(self, node: Node) -> bool:
-        """
-        Whether evaluating *node* may run a body of the script, or code the script does not spell,
-        whose error then arrives where *node* stands: a command or a call there may run one
-        (`refinery.lib.scripts.ps1.analysis.callgraph.Ps1CallGraph.may_run_a_body`), or a command
-        there is handed a script block it may run. A script block written as a value runs only where
-        something runs it, so what it holds is not read here. What a reader without the bodies'
-        summaries reads as handing back every kind a body can.
-
-        Kept for every node the walk passes, because every point of a nest of `$( )` asks it of an
-        operand holding all the points below: asked afresh, the nest costs the square of its depth.
-        """
-        self._forget_a_moved_tree()
-        memo = self._hands_back
-        found = memo.get(id(node))
-        if found is not None:
-            return found
-        calls = self.call_graph
-        stack: list[tuple[Node, bool]] = [(node, False)]
-        while stack:
-            current, expanded = stack.pop()
-            if id(current) in memo:
-                continue
-            children = current.children()
-            if not expanded:
-                stack.append((current, True))
-                stack.extend(
-                    (child, False) for child in children
-                    if not isinstance(child, Ps1ScriptBlock) and id(child) not in memo
-                )
-                continue
-            runs = isinstance(current, (Ps1CommandInvocation, Ps1InvokeMember)) and calls.may_run_a_body(current)
-            handed = isinstance(current, (Ps1CommandInvocation, Ps1CommandArgument))
-            memo[id(current)] = runs or any(
-                handed if isinstance(child, Ps1ScriptBlock) else memo[id(child)] for child in children
-            )
-        return memo[id(node)]
-
     def never_runs(self, node: Node, raises: RaiseVerdicts) -> bool:
         """
         Whether *node* stands in the body of a `trap` no point of the script may fire, so that no run
@@ -929,7 +846,7 @@ class Ps1FaultReach:
         """
         Whether a live continuation runs only because a raise of *kinds* at *node* pre-empts it, so
         deleting the raise starts that continuation. The one position predicate the removal veto
-        pairs with its raise half, `refinery.lib.scripts.ps1.analysis.effects.point_raise_kinds`.
+        pairs with its raise half, `refinery.lib.scripts.ps1.analysis.raising.point_raise_kinds`.
         Two mechanisms resurrect a continuation and both are the same observable: the run carries
         on somewhere else (`lands_past_a_live_tail`), and a `trap` body raise ends the scope the
         tail would otherwise have kept running in (`escapes_a_trap_body`).
@@ -1049,7 +966,6 @@ class Ps1FaultReach:
         version = None if root is None else tree_version(tree_root(root))
         if version != self._kept_for:
             self._trap_bodies.clear()
-            self._hands_back.clear()
             self._offered = None
             self._shared_queries.clear()
             self._carry_ons.clear()

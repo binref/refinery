@@ -5555,10 +5555,8 @@ FOLDS: dict[str, str] = {
         '  continue\n'
         '}\n'
         'if ($True) {\n'
-        '  if ($True) {\n'
-        "    [int]'a'\n"
-        "    Write-Host 'tail'\n"
-        '  }\n'
+        "  [int]'a'\n"
+        "  Write-Host 'tail'\n"
         "  Write-Host 'mid'\n"
         '}\n'
         "Write-Host 'after'",

@@ -17,7 +17,7 @@ from refinery.lib.scripts.analysis.cfg import (
     plain_successors,
 )
 from refinery.lib.scripts.ps1 import ast
-from refinery.lib.scripts.ps1.analysis import dispatch, effects, faults, worldflow
+from refinery.lib.scripts.ps1.analysis import dispatch, effects, faults, raising, worldflow
 from refinery.lib.scripts.ps1.analysis import cfg as ps1_cfg
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
@@ -28,6 +28,7 @@ from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1StepOverRegion,
     build_fault_reach,
 )
+from refinery.lib.scripts.ps1.analysis.raising import point_raise_kinds
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.model import (
     Ps1CatchClause,
@@ -520,7 +521,7 @@ class TestPs1WeighingEveryTrapCostsLinearWork(TestBase):
 
             def ask():
                 for statement in statements:
-                    deletion_is_observable(statement, cache.faults, cache.world_reach, cache.error_state, raises)
+                    deletion_is_observable(statement, raises, cache.error_state)
 
             return lines_executed(ask, faults, dispatch, effects, components)
 
@@ -530,16 +531,15 @@ class TestPs1WeighingEveryTrapCostsLinearWork(TestBase):
         def work(size: int) -> int:
             script = Ps1Parser('$null = $( ' * size + 'f' + ' )' * size).parse()
             statement = script.body[0]
-            control_flow = build_control_flow_model(script)
-            calls = Ps1ModelCache(script).call_graph
-            points = list(build_fault_reach(control_flow, lambda: calls).points_in(statement))
+            cache = Ps1ModelCache(script)
+            points = list(cache.faults.points_in(statement))
 
             def ask():
-                reach = build_fault_reach(control_flow, lambda: calls)
+                model = cache.handlers.raises(False)
                 for point in points:
-                    effects.point_raise_kinds(point, statement, reach, None)
+                    point_raise_kinds(point, statement, model)
 
-            return lines_executed(ask, faults)
+            return lines_executed(ask, faults, raising)
 
         self.assertWorkGrowsLinearly(work, 5)
 

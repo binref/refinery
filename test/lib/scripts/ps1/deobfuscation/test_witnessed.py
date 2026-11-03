@@ -277,12 +277,7 @@ def _try_body_survivors_relaxing(*, fault_freedom: bool, abandonment: bool) -> C
     return mutated
 
 
-def _fault_observed_where_the_clause_is_written(
-    stmt: Node,
-    reach: faults.Ps1FaultReach,
-    world=None,
-    raises=None,
-) -> bool:
+def _fault_observed_where_the_clause_is_written(stmt: Node, raises: raising.Ps1RaiseModel) -> bool:
     """
     The reading the routing walk superseded: a deletion is refused where the statement stands
     *directly* in the `try` block of a construct one of whose `catch` clauses has a body. One
@@ -299,18 +294,14 @@ def _fault_observed_where_the_clause_is_written(
     )
 
 
-def _fault_observed_wherever_an_error_would_go(
-    stmt: Node,
-    reach: faults.Ps1FaultReach,
-    world=None,
-    raises=None,
-) -> bool:
+def _fault_observed_wherever_an_error_would_go(stmt: Node, raises: raising.Ps1RaiseModel) -> bool:
     """
     The guard with its first half dropped: every point inside *stmt* is asked where an error raised
     there would go, and no point is asked whether it can raise one, so every statement is judged as
     though it might. This refuses more than the guard does, so what notices it is a test asserting
     that something is still deleted.
     """
+    reach = raises.faults
     judged = False
     for site in reach.points_in(stmt):
         judged = True

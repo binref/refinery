@@ -750,7 +750,7 @@ def disagreements(program: tuple[Statement, ...], preference: Preference, number
         if not _observable(read, statement, preference):
             continue
         if isinstance(statement, Fail):
-            if not deletion_is_observable(node, faults, cache.world_reach, cache.error_state, handlers.raises(True)):
+            if not deletion_is_observable(node, handlers.raises(True), cache.error_state):
                 found.add(Disagreement('deletion veto', number))
         elif isinstance(node, Ps1TrapStatement):
             if faults.removable_traps([node], handlers.raises(True), handlers.skips):

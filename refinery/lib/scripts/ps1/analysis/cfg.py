@@ -35,8 +35,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Callable, Sequence
+from weakref import WeakKeyDictionary
 
-from refinery.lib.scripts import Block, Node
+from refinery.lib.scripts import Block, Node, tree_root, tree_version
 from refinery.lib.scripts.analysis.cfg import (
     ArmFlow,
     CfgBuilder,
@@ -54,6 +55,7 @@ from refinery.lib.scripts.ps1.analysis.dispatch import (
 from refinery.lib.scripts.ps1.analysis.handlers import (
     Ps1TrapDisposition,
     Ps1TrapSelection,
+    carries_on,
     declared_traps,
     handler_acts,
     swallows_every_error,
@@ -881,16 +883,15 @@ def dispatch_for(root: Node, sites: Ps1CallSites | None = None) -> Ps1Dispatch:
     The dispatch of the script *root* stands in, under the error preferences its session may hold:
     `Stop` where the script writes it to the preference anywhere, a value that silences an error
     where it may set one, and in a called body also where a call may hand one in. How the body of a
-    `trap` ends is read off the body built on its own (`trap_disposition`), and the dispatch keeps
-    each answer. *sites* names the calls that may run each body; without it, every body may be
-    called with errors passed outward.
+    `trap` ends is read through `trap_dispositions`. *sites* names the calls that may run each body;
+    without it, every body may be called with errors passed outward.
     """
     session = session_of(root)
     called = session.silenced or session.silenced_by_a_call
     return Ps1Dispatch(
         preferences_of(session.stops, session.silenced),
         preferences_of(session.stops, called),
-        partial(trap_disposition, memo={}),
+        trap_dispositions(root),
         sites,
     )
 
@@ -945,6 +946,36 @@ def trap_disposition(trap: Ps1TrapStatement, memo: dict[int, Ps1TrapDisposition]
         builder = _Builder(trap, partial(trap_disposition, memo=memo), descend=True)
         found = memo[id(trap)] = builder.disposition_of(trap)
     return found
+
+
+def trap_dispositions(node: Node) -> Callable[[Ps1TrapStatement], Ps1TrapDisposition]:
+    """
+    How the body of each `trap` of the tree *node* stands in ends (`trap_disposition`), each read
+    once for as long as the tree stays as it is: the answers are dropped once it moves, the way
+    `refinery.lib.scripts.ps1.analysis.session.session_of` keeps a session.
+    """
+    root = tree_root(node)
+    version = tree_version(root)
+    found = _DISPOSITIONS.get(root)
+    if found is None or found[0] != version:
+        found = _DISPOSITIONS[root] = version, partial(trap_disposition, memo={})
+    return found[1]
+
+
+_DISPOSITIONS: WeakKeyDictionary[Node, tuple[int, Callable[[Ps1TrapStatement], Ps1TrapDisposition]]] = WeakKeyDictionary()
+
+
+def list_may_carry_on(statements: Sequence[Node]) -> bool:
+    """
+    Whether the list *statements* declares a `trap` set that may carry the run on after one of its
+    statements: a member 5.1 may select `carries_on`. Read without the error preference, which
+    never takes a resumption away; the dispatch evaluator reads the same rule for every set.
+    """
+    traps = declared_traps(statements)
+    if not traps:
+        return False
+    dispositions = trap_dispositions(traps[0])
+    return any(carries_on(dispositions(trap)) for trap in Ps1TrapSelection(traps).selectable)
 
 
 class Ps1ControlFlowModel(ControlFlowModel):

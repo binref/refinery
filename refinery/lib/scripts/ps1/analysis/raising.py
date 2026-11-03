@@ -2,11 +2,12 @@
 What a point of a PowerShell script may raise: the one answer to whether a line can fail, and how.
 
 `Ps1RaiseModel` answers it for one version of one tree under one reading of the world: without one,
-for a caller that holds none, and under the flow-sensitive world of
-`refinery.lib.scripts.ps1.analysis.worldflow`, which is the reading every pass that holds a world
-asks. Every reader of a point in the tree reads `Ps1RaiseModel.kinds`: the trap removal, the removal
-veto, the store sweep, the `catch` lift, and the grant the variable flow makes for a store that
-cannot fail.
+and under the flow-sensitive world of `refinery.lib.scripts.ps1.analysis.worldflow`, which is the
+reading every pass that holds a world asks. Every reader of a point in the tree reads
+`Ps1RaiseModel.kinds`: the trap removal, the removal veto, the store sweep, the `catch` lift, and the
+grant the variable flow makes for a store that cannot fail. A line not in the tree yet is judged by
+`statement_raise_kinds` with the model of the tree it is about to join, and a line spliced where no
+model is held by `may_raise_where_spliced`.
 
 What a point raises is read off what it evaluates (`refinery.lib.scripts.ps1.ast.point_operands`):
 an operand the clearing rules clear raises nothing, and every other one raises what
@@ -155,13 +156,7 @@ def _stores_without_fault(target: Node | None, constrained: Ps1NameSet) -> bool:
     return not (name in PS1_AUTOMATIC_VARIABLES or name in PS1_KNOWN_VARIABLES or name in constrained)
 
 
-def point_raise_kinds(
-    point: Node,
-    position: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach | None,
-    model: Ps1RaiseModel | None = None,
-) -> Ps1ErrorKind:
+def point_raise_kinds(point: Node, position: Node, model: Ps1RaiseModel) -> Ps1ErrorKind:
     """
     The kinds of error a `try` catches that what the graphs evaluate at *point* may raise, judged
     at *position*: the error of a `throw` where *point* is one, and those
@@ -173,9 +168,7 @@ def point_raise_kinds(
 
     *model* supplies what the bodies an operand runs hand back, and the clearing rules that read
     the script's name sets and its certain stores; one built for a tree that has moved since may
-    raise every kind. Without it, a body may hand back every kind a body can, every operand that is
-    not cleared raises a statement-terminating error besides, and only `expression_cannot_fault`
-    clears: the reading of a caller that holds no raise model.
+    raise every kind.
     """
     if isinstance(point, (Ps1FunctionDefinition, Block)):
         return Ps1ErrorKind.NONE
@@ -183,20 +176,6 @@ def point_raise_kinds(
     operands = point_operands(point)
     if operands is None:
         return kinds | EVERY_KIND
-    if model is None:
-        if isinstance(point, Ps1ForEachLoop):
-            kinds |= Ps1ErrorKind.STATEMENT
-
-        def cleared(operand: Node) -> bool:
-            return expression_cannot_fault(operand, position, faults, world)
-
-        def handed_back(operand: Node) -> Ps1ErrorKind:
-            return HANDED_BACK if faults.hands_back_a_body_error(operand) else Ps1ErrorKind.NONE
-
-        for operand in operands:
-            if not cleared(operand):
-                kinds |= faults.kinds_the_try_catches(operand, cleared, handed_back) | Ps1ErrorKind.STATEMENT
-        return kinds
     if model.moved():
         return EVERY_KIND
     if isinstance(point, Ps1ForEachLoop) and not _stores_without_fault(point.variable, model.constrained()):
@@ -208,10 +187,26 @@ def point_raise_kinds(
     for operand in operands:
         if cleared_by_the_model(operand):
             continue
-        kinds |= faults.kinds_the_try_catches(operand, cleared_by_the_model, model.handed_back)
+        kinds |= model.faults.kinds_the_try_catches(operand, cleared_by_the_model, model.handed_back)
         if not model.raises_only_what_its_bodies_hand_back(operand):
             kinds |= Ps1ErrorKind.STATEMENT
     return kinds
+
+
+def may_raise_where_spliced(statement: Node) -> bool:
+    """
+    Whether *statement*, a line about to be spliced into a statement list, may raise there, read off
+    the line alone where no raise model is held: a `throw` may, and so may a compound line, which
+    holds tests and bodies of its own or runs a block, and a line evaluating an operand
+    `refinery.lib.scripts.ps1.analysis.values.is_fault_free` does not clear. With a model of the
+    tree the line joins, `statement_raise_kinds` answers the same question more precisely.
+    """
+    if isinstance(statement, Ps1ThrowStatement):
+        return True
+    if not isinstance(statement, (Ps1ExpressionStatement, Ps1Exit, Ps1Jump, Ps1FunctionDefinition)):
+        return True
+    operands = point_operands(statement)
+    return operands is None or not all(is_fault_free(operand) for operand in operands)
 
 
 def lies_in_a_block_within(site: Node, stmt: Node) -> bool:
@@ -230,13 +225,7 @@ def lies_in_a_block_within(site: Node, stmt: Node) -> bool:
     return crossed and cursor is stmt
 
 
-def statement_raise_kinds(
-    stmt: Node,
-    position: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach | None,
-    model: Ps1RaiseModel | None = None,
-) -> Ps1ErrorKind:
+def statement_raise_kinds(stmt: Node, position: Node, model: Ps1RaiseModel) -> Ps1ErrorKind:
     """
     Every kind of error a point of *stmt* may raise, judged at *position*: the question asked of a
     statement that is not in the tree yet, at the statement it would replace. A statement the graphs
@@ -249,19 +238,20 @@ def statement_raise_kinds(
     so judging it by the parts it reuses from the tree leaves those tests out: it may raise every
     kind.
     """
+    faults = model.faults
     if not faults.control_flow.built_from(stmt):
         if not isinstance(stmt, (Ps1ExpressionStatement, Ps1Exit, Ps1Jump, Ps1FunctionDefinition)):
             return EVERY_KIND
-        return point_raise_kinds(stmt, position, faults, world, model)
+        return point_raise_kinds(stmt, position, model)
     kinds = Ps1ErrorKind.NONE
     judged = False
     for point in faults.points_in(stmt):
         if lies_in_a_block_within(point, stmt):
             continue
         judged = True
-        kinds |= point_raise_kinds(point, position, faults, world, model)
+        kinds |= point_raise_kinds(point, position, model)
     if not judged:
-        return point_raise_kinds(stmt, position, faults, world, model)
+        return point_raise_kinds(stmt, position, model)
     return kinds
 
 
@@ -347,6 +337,8 @@ class Ps1RaiseModel:
     `bodies_run_by`. Every model it reads is handed in at construction and belongs to the tree
     version it was built for; once that tree moves (`moved`), `kinds` answers every kind and so does
     `point_raise_kinds` handed the model, and the model is discarded with the cache that built it.
+    *faults* and *world* are read by every question about a point, and are the models a caller
+    judging a line against this one reads them through.
     A model a question may not need is handed in as the function the cache answers it with, so that
     a reading which never asks about a call or a name never builds the models that answer one.
 
@@ -409,7 +401,7 @@ class Ps1RaiseModel:
             return EVERY_KIND
         found = self._kinds.get(id(point))
         if found is None:
-            found = self._kinds[id(point)] = point_raise_kinds(point, point, self.faults, self.world, self)
+            found = self._kinds[id(point)] = point_raise_kinds(point, point, self)
         return found
 
     def moved(self) -> bool:

@@ -6,7 +6,7 @@ from inspect import cleandoc
 
 from test import TestBase, wontfix
 
-from refinery.lib.scripts import Node, Statement, set_body, set_child
+from refinery.lib.scripts import Node, Statement, set_body
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.cfg import Ps1ControlFlowModel, build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.effects import Ps1HandlerVerdicts
@@ -23,7 +23,6 @@ from refinery.lib.scripts.ps1.analysis.raising import Ps1RaiseModel
 from refinery.lib.scripts.ps1.ast import get_body, resolve_command_name
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
-    Ps1AssignmentExpression,
     Ps1CastExpression,
     Ps1CatchClause,
     Ps1CommandInvocation,
@@ -1190,63 +1189,6 @@ class TestPs1ATrapRemovalWaitsOnlyForATrapRemovedFromABlockAroundIt(TestBase):
         self.assertEqual(self._waiting(tree, reach, [self._traps(tree)]), set())
 
 
-class TestPs1AResumingTrapIsTheOnlyKindThatGuardsASplicePoint(TestBase):
-    """
-    A `trap { continue }` resumes the block it guards at the statement after the one that threw, and
-    the control-flow builder records that as a resumption edge; a `trap { break }` re-raises and
-    draws none. `guarded_by_a_resuming_trap` reads that edge, so it is the discriminator a splice
-    into the block is judged by — a splice that moves the resumption target is refused only where the
-    guard resumes. A `for` and a `try` are keyed to no node of their own, so the guard is read off a
-    point inside them; the answer is the same as for the constructs that carry a node.
-    """
-
-    def test_a_continue_trap_guards_the_statements_it_resumes_over(self):
-        tree, reach = _model("""
-            trap { continue }
-            $x = 1
-        """)
-        self.assertTrue(reach.guarded_by_a_resuming_trap(tree.body[1]))
-
-    def test_a_break_trap_guards_nothing_it_resumes_over(self):
-        tree, reach = _model("""
-            trap { break }
-            $x = 1
-        """)
-        self.assertFalse(reach.guarded_by_a_resuming_trap(tree.body[1]))
-
-    def test_a_statement_under_no_trap_is_guarded_by_no_resumption(self):
-        tree, reach = _model('$x = 1')
-        self.assertFalse(reach.guarded_by_a_resuming_trap(tree.body[0]))
-
-    def test_a_for_loop_keyed_to_no_node_is_guarded_by_the_resuming_block_around_it(self):
-        tree, reach = _model("""
-            trap { continue }
-            for ($i = 0; $i -lt 2; $i++) { $x = 1 }
-        """)
-        self.assertTrue(reach.guarded_by_a_resuming_trap(tree.body[1]))
-
-    def test_a_try_keyed_to_no_node_is_guarded_by_the_resuming_block_around_it(self):
-        tree, reach = _model("""
-            trap { continue }
-            try { $x = 1 } catch { }
-        """)
-        self.assertTrue(reach.guarded_by_a_resuming_trap(tree.body[1]))
-
-    def test_a_for_loop_under_a_break_trap_is_guarded_by_no_resumption(self):
-        tree, reach = _model("""
-            trap { break }
-            for ($i = 0; $i -lt 2; $i++) { $x = 1 }
-        """)
-        self.assertFalse(reach.guarded_by_a_resuming_trap(tree.body[1]))
-
-    def test_a_try_under_a_break_trap_is_guarded_by_no_resumption(self):
-        tree, reach = _model("""
-            trap { break }
-            try { $x = 1 } catch { }
-        """)
-        self.assertFalse(reach.guarded_by_a_resuming_trap(tree.body[1]))
-
-
 class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase):
     """
     A statement-terminating error inside `$( )` or `@( )` steps over to the next statement within
@@ -1937,21 +1879,6 @@ class TestPs1WhetherAnErrorLeavesTheBodyItWasRaisedIn(TestBase):
         )
         self.assertFalse(faults.escapes_the_body(point, Ps1ErrorKind.STATEMENT))
         self.assertTrue(_observed(faults, point))
-
-
-class TestPs1TheFaultReaderAnswersForTheTreeAsItIsWhenAsked(TestBase):
-
-    def test_a_store_edited_to_run_a_script_block_hands_back_its_error(self):
-        tree, faults = _model("$v = 'a'")
-        statement = tree.body[0]
-        self.assertFalse(faults.hands_back_a_body_error(statement))
-        store = next(node for node in tree.walk() if isinstance(node, Ps1AssignmentExpression))
-        call = next(
-            node for node in Ps1Parser("& { [int]'a' }").parse().walk()
-            if isinstance(node, Ps1CommandInvocation)
-        )
-        set_child(store, 'value', call)
-        self.assertTrue(faults.hands_back_a_body_error(statement))
 
 
 class TestPs1ARaiseEscapesATrapBodyThatRunsOnlyWhereItsBlockMayFireTheTrap(TestBase):

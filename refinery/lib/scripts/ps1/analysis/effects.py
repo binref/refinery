@@ -44,7 +44,6 @@ from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1FaultReach,
     Ps1StepOverRegion,
-    RaiseVerdicts,
 )
 from refinery.lib.scripts.ps1.analysis.handlers import handler_acts
 from refinery.lib.scripts.ps1.analysis.identity import object_sources
@@ -54,8 +53,6 @@ from refinery.lib.scripts.ps1.analysis.raising import (
     TreeStamp,
     bound_default_may_throw,
     lies_in_a_block_within,
-    point_raise_kinds,
-    statement_raise_kinds,
 )
 from refinery.lib.scripts.ps1.analysis.session import session_of
 from refinery.lib.scripts.ps1.analysis.values import (
@@ -1694,12 +1691,7 @@ def _leaves_a_block_of(site: Node, stmt: Node, faults: Ps1FaultReach, kinds: Ps1
     )
 
 
-def fault_is_observed(
-    stmt: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach | None = None,
-    raises: RaiseVerdicts | None = None,
-) -> bool:
+def fault_is_observed(stmt: Node, raises: Ps1RaiseModel) -> bool:
     """
     Whether deleting *stmt* may change which handler runs.
 
@@ -1713,18 +1705,13 @@ def fault_is_observed(
 
     The first half is what *raises* says a point raises
     (`refinery.lib.scripts.ps1.analysis.raising.Ps1RaiseModel.kinds`), and the second is
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.observed_at`. Both are asked once per
-    point the graphs evaluate inside *stmt*, because a construct is deleted whole and each of its
-    parts raises where it stands; a construct the graphs place nothing for at all is refused, since
-    a subtree nothing models is one nothing can clear. A point in the body of a `trap` nothing may
-    fire runs on no path and is passed over
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.observed_at`, over the fault model
+    *raises* reads. Both are asked once per point the graphs evaluate inside *stmt*, because a
+    construct is deleted whole and each of its parts raises where it stands; a construct the graphs
+    place nothing for at all is refused, since a subtree nothing models is one nothing can clear. A
+    point in the body of a `trap` nothing may fire runs on no path and is passed over
     (`refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.never_runs`), where *raises* says
     what may fire it.
-
-    A caller holding no raise model reads each point with
-    `refinery.lib.scripts.ps1.analysis.raising.point_raise_kinds` at *stmt*, and every `trap` body as
-    one that may run: *stmt* is what the removal takes away, so what may have run before it is what
-    decides whether the analysis can see the semantics its parts run under.
 
     **This is not the question asked before a handler is deleted.** A `trap` cannot raise, so
     nothing about its own position decides anything: what a removal changes is where the errors of
@@ -1734,12 +1721,13 @@ def fault_is_observed(
     `emptying_unhooks_a_handler` — a policy about what a listing should still show rather than a
     claim about what runs.
     """
+    faults = raises.faults
     judged = False
     for site in faults.points_in(stmt):
         judged = True
-        if raises is not None and faults.never_runs(site, raises):
+        if faults.never_runs(site, raises):
             continue
-        kinds = _point_kinds(site, stmt, faults, world, raises)
+        kinds = raises.kinds(site)
         if not kinds:
             continue
         if _leaves_a_block_of(site, stmt, faults, kinds):
@@ -1749,13 +1737,7 @@ def fault_is_observed(
     return not judged
 
 
-def deletion_is_observable(
-    stmt: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach | None = None,
-    error_state: Ps1ErrorStateReach | None = None,
-    raises: RaiseVerdicts | None = None,
-) -> bool:
+def deletion_is_observable(stmt: Node, raises: Ps1RaiseModel, error_state: Ps1ErrorStateReach) -> bool:
     """
     Whether deleting *stmt* may change what the script does — the removal veto. Three ways it can,
     and a removal site has to refuse on any.
@@ -1769,7 +1751,7 @@ def deletion_is_observable(
     scope that would otherwise run on past it, and an error nothing takes inside a `try` or `catch`
     body is reported past the whole statement.
     `Ps1FaultReach.deleting_the_raise_resurrects_a_continuation` is the position half and
-    `point_raise_kinds` the raise half, paired at every point the graphs place inside
+    *raises* the raise half, paired at every point the graphs place inside
     *stmt*, because a construct is deleted whole and each of its parts raises where it stands: the
     test of an `if` and a statement inside an `@( )` are points of their own. A point inside a
     script block written in *stmt* is not one of them, for the reason `_leaves_a_block_of` gives:
@@ -1785,9 +1767,8 @@ def deletion_is_observable(
     of it may raise, so a raiser the analysis proves cannot fault leaves none and stays removable —
     and a persistent-record read
     has to be reachable after it, which
-    `refinery.lib.scripts.ps1.analysis.errorstate.Ps1ErrorStateReach` answers positionally.
-    `error_state=None` skips the channel, the fail-open direction a caller with no such model
-    takes, consistent with `world=None`.
+    `refinery.lib.scripts.ps1.analysis.errorstate.Ps1ErrorStateReach` answers positionally, as
+    *error_state*.
 
     All three clauses are raise-keyed: this function answers *raise and handler* observability. `$?`
     resets on every statement rather than persisting a raise, so its reset rule is not a fourth
@@ -1795,53 +1776,28 @@ def deletion_is_observable(
     `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan._vetoed`, over the same
     `Ps1ErrorStateReach` model through `success_flag_write_observed`.
     """
+    faults = raises.faults
     for point in faults.points_in(stmt):
         if (
             isinstance(point, Ps1ThrowStatement)
             or lies_in_a_block_within(point, stmt)
-            or (raises is not None and faults.never_runs(point, raises))
+            or faults.never_runs(point, raises)
         ):
             continue
-        kinds = _point_kinds(point, stmt, faults, world, raises)
+        kinds = raises.kinds(point)
         if kinds and faults.deleting_the_raise_resurrects_a_continuation(point, kinds):
             return True
-    if (
-        error_state is not None
-        and _may_leave_a_record(stmt, faults, world, raises)
-        and error_state.persistent_read_observed_after(stmt)
-    ):
+    if _may_leave_a_record(stmt, raises) and error_state.persistent_read_observed_after(stmt):
         return True
-    return fault_is_observed(stmt, faults, world, raises)
+    return fault_is_observed(stmt, raises)
 
 
-def _point_kinds(
-    point: Node,
-    stmt: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach | None,
-    raises: RaiseVerdicts | None,
-) -> Ps1ErrorKind:
-    """
-    What *point*, a point of *stmt*, may raise: what *raises* says, or, for a caller holding no raise
-    model, `refinery.lib.scripts.ps1.analysis.raising.point_raise_kinds` judged at *stmt*.
-    """
-    if raises is None:
-        return point_raise_kinds(point, stmt, faults, world)
-    return raises.kinds(point)
-
-
-def _may_leave_a_record(
-    stmt: Node,
-    faults: Ps1FaultReach,
-    world: Ps1WorldReach | None,
-    raises: RaiseVerdicts | None,
-) -> bool:
+def _may_leave_a_record(stmt: Node, raises: Ps1RaiseModel) -> bool:
     """
     Whether a point of *stmt* outside the script blocks written in it may raise, which leaves a
     record in `$Error`; a statement the graphs place nothing of may.
     """
-    if raises is None:
-        return bool(statement_raise_kinds(stmt, stmt, faults, world))
+    faults = raises.faults
     judged = False
     for point in faults.points_in(stmt):
         judged = True

@@ -109,3 +109,33 @@ class TestPs1AFunctionRunThroughAComputedItemPathIsRun(TestPs1):
         """))
         if '[int]$p[0]' in output:
             self.assertIn('trap', output)
+
+
+class TestPs1AStoreAVariableRefusesIsNotFoldedIntoItsReads(TestPs1):
+    """
+    A variable carrying a validation attribute, or made read-only, refuses a store it cannot take,
+    and the `catch` around the store runs instead of the read that follows it.
+    """
+
+    @unittest.expectedFailure
+    def test_a_store_a_validation_attribute_refuses_is_not_folded(self):
+        output = self._deobfuscate(cleandoc("""
+            [ValidateRange(1,5)][int]$x = 1
+            try { $x = 9; Write-Host $x } catch { Write-Host 'caught' }
+        """))
+        self.assertNotIn('Write-Host 9', output)
+
+    @unittest.expectedFailure
+    def test_a_store_into_a_read_only_variable_is_not_folded(self):
+        output = self._deobfuscate(cleandoc("""
+            Set-Variable -Name y -Value 1 -Option ReadOnly
+            try { $y = 'a'; Write-Host $y } catch { Write-Host 'caught' }
+        """))
+        self.assertNotIn("Write-Host 'a'", output)
+
+
+class TestPs1APayloadThatDoesNotParseIsNotInlined(TestPs1):
+
+    @unittest.expectedFailure
+    def test_a_payload_missing_its_closing_parenthesis_stays_a_payload(self):
+        self.assertIn("'$x = ('", self._deobfuscate("iex '$x = ('"))

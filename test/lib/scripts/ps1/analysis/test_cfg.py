@@ -4,7 +4,7 @@ import itertools
 
 from inspect import cleandoc
 
-from test import TestBase
+from test import TestBase, wontfix
 
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.analysis.cfg import (
@@ -1838,6 +1838,18 @@ class TestPs1AJumpRunsTheFinallyItLeaves(_Ps1ControlFlowGraphs):
         entry, = self._finally_entries(graph, tree)
         raised = self._node_for(graph, Ps1ThrowStatement)
         self.assertNotIn(id(graph.exit), self._reached_without(raised, entry))
+
+    @wontfix('no obfuscator writes a continue that resumes a trap from inside a try with a finally')
+    def test_a_continue_resuming_a_trap_from_inside_a_try_runs_the_finally_first(self):
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { try { continue } finally { 'f' } }
+            $null = [int]$s
+            'next'
+        """))
+        entry, = self._finally_entries(graph, tree)
+        jump = self._node_for(graph, Ps1ContinueStatement)
+        after = self._required_node(graph, tree.body[2])
+        self.assertNotIn(id(after), self._reached_without(jump, entry))
 
     def test_an_error_a_typed_catch_does_not_take_runs_the_finally(self):
         tree, graph = self._tree_and_graph(

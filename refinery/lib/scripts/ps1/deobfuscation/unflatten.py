@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING, Callable, Generator, NamedTuple
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
+from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references, reads_unreadable_name
+from refinery.lib.scripts.ps1.analysis.opaque import runs_unreadable_code, writes_nobody_can_attribute
 from refinery.lib.scripts.ps1.analysis.values import integer_of, read
-from refinery.lib.scripts.ps1.ast import get_body, is_builtin_variable, unwrap_parens
+from refinery.lib.scripts.ps1.ast import binding_key, get_body, is_builtin_variable, unwrap_parens
 from refinery.lib.scripts.ps1.data import COMPARISON_OPS
 from refinery.lib.scripts.ps1.deobfuscation.emulator import evaluate_truthy
 from refinery.lib.scripts.ps1.deobfuscation.helpers import inside_value_producing_context
@@ -42,8 +44,6 @@ _MAX_STATES = 500
 _MAX_UNROLL_ITERATIONS = 500
 
 if TYPE_CHECKING:
-    from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
-    from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
     _VarKey = tuple[str, Ps1ScopeModifier]
     _StateKey = int | float | str
 
@@ -352,14 +352,66 @@ def _find_state_init(
     var_scope: Ps1ScopeModifier,
 ) -> tuple[int, _StateKey] | None:
     """
-    Scan backwards from the while loop to find the state variable initialization. Returns
-    (index_in_body, initial_state_value) or `None`.
+    Scan backwards from the while loop to the statement that seeds the state variable with a
+    constant, and return its index and the constant; `None` where there is none, or where a
+    statement in between may write the variable (`_may_write_the_state`), since the loop then does
+    not start from the seed.
     """
     for i in range(loop_index - 1, -1, -1):
         value = _is_state_assignment(body[i], var_name, var_scope)
         if value is not None:
             return (i, value)
+        if _may_write_the_state(body[i], var_name):
+            return None
     return None
+
+
+def _may_write_the_state(statement: Node, var_name: str) -> bool:
+    """
+    Whether running *statement* may store into the state variable *var_name*: a variable of that
+    name stands in it under any scope, a command in it writes the name it spells
+    (`refinery.lib.scripts.ps1.analysis.naming.named_references`), or something in it writes where
+    no reading of the source names the target
+    (`refinery.lib.scripts.ps1.analysis.opaque.writes_nobody_can_attribute`).
+    """
+    for node in statement.walk():
+        if isinstance(node, Ps1Variable) and binding_key(node) == var_name:
+            return True
+        if writes_nobody_can_attribute(node):
+            return True
+        if any(
+            reference.key == var_name and reference.role is not Ps1NameRole.READS
+            for reference in named_references(node)
+        ):
+            return True
+    return False
+
+
+class _LaterReads:
+    """
+    Which variables the statements of one body may read after a given statement, read once for the
+    body: a statement may read a variable of a name that stands in it under any scope or that a
+    command in it names, and every variable where it reads a name no reading of the source spells
+    or runs code nobody reads.
+    """
+
+    def __init__(self, body: list[Statement]):
+        self._last: dict[str, int] = {}
+        self._last_unreadable = -1
+        for index, statement in enumerate(body):
+            for node in statement.walk():
+                if isinstance(node, Ps1Variable):
+                    self._last[binding_key(node)] = index
+                if reads_unreadable_name(node) or runs_unreadable_code(node):
+                    self._last_unreadable = index
+                for reference in named_references(node):
+                    self._last[reference.key] = index
+
+    def after(self, index: int, var_name: str) -> bool:
+        """
+        Whether a statement after the one at *index* may read *var_name*.
+        """
+        return self._last_unreadable > index or self._last.get(var_name, -1) > index
 
 
 def _strip_trailing_break(stmts: list[Statement]) -> list[Statement]:
@@ -1243,15 +1295,19 @@ class Ps1ControlFlowDeflattening(Transformer):
             self._try_deflatten_body(body, parent)
 
     def _try_deflatten_body(self, body: list[Statement], parent: Node):
-        # One fault model serves every machine in this body. Each dissolution advances the tree
-        # version, so re-reading it through the cache once per machine rebuilds the control-flow
-        # graph of every block once per machine — a walk cost that is a property of the script, not
-        # of how many of its statements turn out to be removable. The machines here are siblings in
-        # one body, and dissolving one leaves the handlers around another exactly where they were, so
-        # the model built before the first dissolution answers the veto for every later one. It is
-        # read lazily so a body holding no machine at all pays for no build.
-        faults: Ps1FaultReach | None = None
-        error_state: Ps1ErrorStateReach | None = None
+        """
+        Dissolve the state machines of one body as one batch, decided against the tree as it stands
+        (`refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan`): the models are read
+        once, and only for a body that holds a machine, so a body of many machines costs one build.
+
+        A machine is its dispatcher loop and the store that seeds it, and the two stand or fall
+        together: a vetoed half would leave the machine partly dissolved. A machine claiming a
+        seed another machine of the batch claims is left for the next run, and so is one whose
+        state variable a later statement may read, since the recovered statements store nothing
+        into it.
+        """
+        plan: Ps1RemovalPlan | None = None
+        later: _LaterReads | None = None
         i = 0
         while i < len(body):
             stmt = body[i]
@@ -1267,6 +1323,11 @@ class Ps1ControlFlowDeflattening(Transformer):
                 i += 1
                 continue
             init_index, entry_state = init
+            if later is None:
+                later = _LaterReads(body)
+            if later.after(i, match.state_var_name):
+                i += 1
+                continue
             is_exit = _make_exit_check(match.condition, match.state_var_name)
             machine = _extract_state_machine(match, is_exit)
             if machine is None:
@@ -1288,23 +1349,15 @@ class Ps1ControlFlowDeflattening(Transformer):
             ]
             # Statements that sit between the state initialization and the dispatcher loop are
             # unrelated and stay where they are; only the loop and its `$state = ...` seed move.
-            # A vetoed half would leave the machine partly dissolved and the cursor pointing into a
-            # body that no longer has the shape the arithmetic below assumes, so the whole recovery
-            # stands or falls together.
-            if faults is None:
+            if plan is None:
                 cache = model_cache(self, parent)
-                faults = cache.faults
-                error_state = cache.error_state
-            plan = Ps1RemovalPlan(
-                parent,
-                all_or_nothing=True,
-                faults=faults,
-                error_state=error_state,
-            )
-            plan.propose(body[init_index])
-            plan.propose(stmt, recovered)
-            if not plan.commit():
-                i += 1
-                continue
+                plan = Ps1RemovalPlan(
+                    parent,
+                    handlers=cache.handlers,
+                    under_the_world=False,
+                    error_state=cache.error_state,
+                )
+            plan.propose_together([(body[init_index], None), (stmt, recovered)])
+            i += 1
+        if plan is not None and plan.commit():
             self.mark_changed()
-            i += len(recovered) - 1

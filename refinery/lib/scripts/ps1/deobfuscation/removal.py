@@ -1,5 +1,6 @@
 """
-The single route by which a PowerShell cleanup pass removes or rewrites statements in a body.
+The single route by which a PowerShell cleanup pass removes or rewrites statements in a body: every
+edit of a statement list lands through `land`, and every removal is judged by a `Ps1RemovalPlan`.
 """
 from __future__ import annotations
 
@@ -15,15 +16,14 @@ from refinery.lib.scripts import (
     owning_field,
     reattach,
 )
+from refinery.lib.scripts.ps1.analysis.cfg import list_may_carry_on
 from refinery.lib.scripts.ps1.analysis.effects import (
     Ps1HandlerVerdicts,
     deletion_is_observable,
     emptying_unhooks_a_handler,
 )
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
-from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
-from refinery.lib.scripts.ps1.analysis.raising import Ps1RaiseModel, statement_raise_kinds
-from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
+from refinery.lib.scripts.ps1.analysis.raising import may_raise_where_spliced, statement_raise_kinds
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ExpressionStatement,
@@ -39,14 +39,6 @@ class _Proposal(NamedTuple):
     replacement: list[Statement]
 
 
-def _raise_verdicts(handlers: Ps1HandlerVerdicts, world: Ps1WorldReach | None) -> Ps1RaiseModel:
-    """
-    The raise model a plan or a batch reads: under its world where it was given one, and without
-    one otherwise, so that a `trap` deletion and the lines of its body are weighed alike.
-    """
-    return handlers.raises(world is not None)
-
-
 def _removes_a_handler(statement: Node) -> bool:
     """
     Whether the statement *is* fault-handling machinery rather than something that might fault.
@@ -56,13 +48,12 @@ def _removes_a_handler(statement: Node) -> bool:
     `removals_may_fault` answers only the first half of the fault question — can what this pass
     removes throw — and says nothing about this half, so this half is asked of every pass, and it is
     asked in reverse: not where an error raised here would go, but whether anything is left that
-    could offer this handler one. Its semantic half comes from the handler verdicts a plan is given,
-    so a plan given none keeps every `trap` it is asked to remove.
+    could offer this handler one. Its semantic half comes from the handler verdicts a plan holds.
     """
     return isinstance(statement, Ps1TrapStatement)
 
 
-def _rescopes_a_handler(replacement: list[Statement]) -> bool:
+def rescopes_a_handler(replacement: Sequence[Statement]) -> bool:
     """
     Whether installing *replacement* would move a `trap` into a statement block other than the one
     it was written in, which re-aims a handler rather than removing or rewriting one.
@@ -75,6 +66,75 @@ def _rescopes_a_handler(replacement: list[Statement]) -> bool:
     `trap` nested deeper inside one keeps the block it is written in and is not this.
     """
     return any(isinstance(statement, Ps1TrapStatement) for statement in replacement)
+
+
+def raisers_a_splice_moves(statements: Sequence[Node], replacement: Sequence[Statement]) -> list[Statement]:
+    """
+    The lines of *replacement* other than the last that may raise where they are spliced into the
+    list *statements* in place of one of its statements, where that list declares a `trap` set
+    that may carry the run on after a statement
+    (`refinery.lib.scripts.ps1.analysis.cfg.list_may_carry_on`); none where it does not.
+
+    A raise inside the statement replaced abandoned the rest of it and carried on after it, and the
+    same raise in a spliced line carries on at the next line of the splice: measured on 5.1 as
+    `trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'`, which
+    writes `next` alone, where resolving the `if` into its statements writes `tail` too. The last
+    line moves nothing, since what follows it is what followed the statement. Read without a model,
+    the lines first (`refinery.lib.scripts.ps1.analysis.raising.may_raise_where_spliced`) and the
+    `trap` set only where one of them may raise; a caller holding a raise model of the tree the
+    splice lands in clears what it can of the lines found here.
+    """
+    raisers = [line for line in replacement[:-1] if may_raise_where_spliced(line)]
+    if raisers and list_may_carry_on(statements):
+        return raisers
+    return []
+
+
+def _install(parent: Node, attr: str, edits: Sequence[_Proposal]) -> tuple[bool, list[Node]]:
+    """
+    Apply *edits* to the list `parent.<attr>` as one edit, reporting whether the list moved and which
+    nodes it now holds because of it, without repairing them: see `_restore` for why a batch
+    repairs once every edit of it has landed.
+
+    What landed is decided per splice rather than taken from *edits*, because the two are not the
+    same set. `BodyEdit` ignores a splice for a node its list does not hold — the class describes an
+    edit to one list and nothing else — so a replacement can be allowed and still never be
+    installed. Repairing that one would hand it the children it is still not holding, which is the
+    corruption `Ps1RemovalPlan.propose` undoes at registration, reintroduced by the repair.
+
+    The question a splice was honoured is asked of the statement it names and not of the resulting
+    list, and only the first is the same question: a replacement that already stands in the list is
+    carried over by an edit that ignored its splice, so reading the result back reports it installed
+    by an edit that installed nothing.
+    """
+    if not edits:
+        return False, []
+    held = {id(item) for item in getattr(parent, attr, None) or []}
+    edit = BodyEdit(parent, attr)
+    for proposal in edits:
+        edit.splice(proposal.statement, proposal.replacement)
+    if not edit.apply():
+        return False, []
+    return True, [
+        statement
+        for proposal in edits
+        if id(proposal.statement) in held
+        for statement in proposal.replacement
+    ]
+
+
+def land(parent: Node, attr: str, statement: Statement, replacement: Sequence[Statement]) -> bool:
+    """
+    Put *replacement* where *statement* stands in the list `parent.<attr>`, or remove it where
+    *replacement* is empty, and report whether the list moved; the parts of *statement* the
+    replacement does not take are put back in order where it does not land. The route every edit of
+    a statement list takes: a `Ps1RemovalPlan` lands its batch the same way, and
+    `refinery.lib.scripts.ps1.deobfuscation.substitution.substitute_statement` lands through this.
+    """
+    reattach(statement)
+    moved, landed = _install(parent, attr, [_Proposal(statement, list(replacement))])
+    _restore(landed)
+    return moved
 
 
 def _restore(landed: list[Node]) -> None:
@@ -237,6 +297,11 @@ class Ps1RemovalPlan:
     `survivors`, and calls `commit`. What the class owns is the part every pass has to get right the
     same way: the per-statement veto, and the fact that the whole batch lands as one tree edit.
 
+    Every verdict reads the handler verdicts of the tree the plan edits, *handlers*, and one raise
+    model of them, which *under_the_world* picks: the model reading the flow-sensitive world, which
+    a pass holding the world reads, or the one without it. *error_state* answers the reads of `$?`
+    and of the error record a removal may change.
+
     **Which set a guard must be shown is decided by its polarity.** A guard *permissive* in the
     survivor set — more survivors makes a removal more likely — must see the **pre-veto** set,
     `survivors`; the veto therefore runs inside `commit`, after such a guard has had its answer, so a
@@ -253,10 +318,10 @@ class Ps1RemovalPlan:
     (`Ps1DeadCodeElimination`) sets it `False` and skips the veto. The set-level refusal that a batch
     must not leave a protected body empty is asked of every pass whatever this flag says.
 
-    `all_or_nothing` is the second: a veto normally skips the proposal it lands on and lets the rest
-    through, which is wrong when a partly applied batch is broken rather than smaller —
-    `Ps1ControlFlowDeflattening` deleting a dispatcher loop but not its `$state` seeding leaves a
-    state machine half dissolved. The class cannot tell the two cases apart, so the pass says which.
+    A veto normally skips the proposal it lands on and lets the rest through, which is wrong when a
+    partly applied batch is broken rather than smaller: `Ps1ControlFlowDeflattening` deleting a
+    dispatcher loop but not its `$state` seeding leaves a state machine half dissolved. The class
+    cannot tell the two cases apart, so a pass files such edits with `propose_together`.
     """
 
     def __init__(
@@ -264,59 +329,22 @@ class Ps1RemovalPlan:
         parent: Node,
         attr: str = 'body',
         removals_may_fault: bool = True,
-        all_or_nothing: bool = False,
         *,
-        faults: Ps1FaultReach | None,
-        world: Ps1WorldReach | None = None,
-        error_state: Ps1ErrorStateReach | None = None,
-        handlers: Ps1HandlerVerdicts | None = None,
+        handlers: Ps1HandlerVerdicts,
+        under_the_world: bool,
+        error_state: Ps1ErrorStateReach,
     ):
-        """
-        `faults` is the model the removal verdicts are reached against, and `None` says this plan
-        installs replacements and removes nothing. A caller that has no removal to file has no
-        verdict to reach and nothing to reach it with, and filing a removal against such a plan is
-        refused at `propose` rather than let through unchecked. The one such caller is
-        `refinery.lib.scripts.ps1.deobfuscation.substitution.substitute_statement`.
-
-        `world` is the second model the veto may need, and it is optional because only one half of
-        one question reads it: whether a variable read can raise depends on the semantics in force,
-        and a payload the analysis cannot read may change those. Without it that half is refused and
-        the veto asks the context-free question alone, which is what every pass got before the
-        world was offered — see
-        `refinery.lib.scripts.ps1.analysis.raising.Ps1RaiseModel.cannot_fault`.
-
-        `error_state` is the third model the veto may consult, a sibling of `world`: whether a read
-        of the record a raise leaves in `$Error`/`$StackTrace` is reachable after the raiser, which
-        keeps a raise no handler took but a later read observes. Optional and threaded exactly
-        where `world` is, because it answers the same removals — those a pass cannot rule out as
-        fault-free. Absent, that channel is skipped and the veto asks the handler question alone,
-        which is what every pass got before the model existed — see
-        `refinery.lib.scripts.ps1.analysis.effects.deletion_is_observable`.
-
-        `handlers` is the semantic half of the question asked before a `trap` is deleted, taken from
-        the same cache as `faults` and `world`, and handed to
-        `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_traps_is_observed`:
-        whether what the `trap` guards may raise is read under `world` when one was given and
-        without one otherwise, which is the reading the removal veto and the replacement veto read
-        too, and whether what a run without the `trap` executes is observable. The same reading of what may fire a `trap` decides
-        whether the veto passes over a line in its body as one no run reaches.
-        Absent, no `trap` is removed and every `trap` body is read as one that may run: neither
-        question can be asked without it, and keeping the code is the answer that changes nothing.
-        A `handlers` built over another fault model or another world than the ones given is
-        refused, because its verdicts would be about a different tree.
-        """
-        if handlers is not None:
-            if handlers.faults is not faults or world is not None and handlers.world is not world:
-                raise ValueError('the handler verdicts were built over other models than this plan')
         self.parent = parent
         self.attr = attr
         self.removals_may_fault = removals_may_fault
-        self.all_or_nothing = all_or_nothing
-        self.faults = faults
-        self.world = world
-        self.error_state = error_state
         self.handlers = handlers
+        self.faults = handlers.faults
+        self.raises = handlers.raises(under_the_world)
+        self.error_state = error_state
         self._proposals: dict[int, _Proposal] = {}
+        self._groups: list[tuple[Statement, ...]] = []
+        self._vetoes: dict[int, tuple[_Proposal, bool]] = {}
+        self._vetoes_read_at: int | None = None
         self._verdict: tuple[int, list[_Proposal]] | None = None
 
     def propose(
@@ -342,12 +370,26 @@ class Ps1RemovalPlan:
         """
         proposal = _Proposal(statement, list(replacement or ()))
         try:
-            if not proposal.replacement and self.faults is None:
-                raise ValueError('this plan was opened to substitute and holds no fault model')
             self._proposals[id(statement)] = proposal
             self._verdict = None
         finally:
             reattach(statement)
+
+    def propose_together(self, edits: Sequence[tuple[Statement, list[Statement] | None]]) -> bool:
+        """
+        Register *edits*, each as `propose` would, as one group that stands or falls together: a
+        veto on any of them keeps every one of them standing. A group naming a statement this plan
+        already holds a proposal for is refused, since the edit it would take over belongs to
+        another; reports whether the group was registered.
+        """
+        if any(id(statement) in self._proposals for statement, _ in edits):
+            for statement, _ in edits:
+                reattach(statement)
+            return False
+        for statement, replacement in edits:
+            self.propose(statement, replacement)
+        self._groups.append(tuple(statement for statement, _ in edits))
+        return True
 
     def withdraw(self, statement: Statement) -> None:
         """
@@ -356,6 +398,7 @@ class Ps1RemovalPlan:
         `propose` never let the replacement take anything in the first place.
         """
         self._proposals.pop(id(statement), None)
+        self._groups = [group for group in self._groups if not any(member is statement for member in group)]
         self._verdict = None
 
     def abandon(self) -> None:
@@ -364,6 +407,7 @@ class Ps1RemovalPlan:
         that built a whole batch and then decided against all of it.
         """
         self._proposals.clear()
+        self._groups.clear()
         self._verdict = None
 
     @property
@@ -388,19 +432,13 @@ class Ps1RemovalPlan:
         **A rewrite is refused for one reason: it relocates a handler.** A replacement keeps
         evaluating the original expression and throws where the original threw, leaving an enclosing
         handler as reachable as before. What that does not cover is a `trap` carried out of the block
-        it was written in (`_rescopes_a_handler`), which re-aims that handler over the rest of the
+        it was written in (`rescopes_a_handler`), which re-aims that handler over the rest of the
         target body.
 
-        **A replacement spliced *into* a block a resuming `trap` guards is refused too**: a raise
-        inside a nested block abandons the rest of that block and resumes after it, so resolving the
-        block into its statements puts them where the handler resumes — measured on 5.1 as
-        `trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'`, which
-        writes `next` alone while the unrefused splice would write `tail` too. The refusal fires when
-        the target body is guarded by a resuming trap set and a spliced statement other than the last
-        can raise where the replaced statement stands
-        (`refinery.lib.scripts.ps1.analysis.raising.statement_raise_kinds`); a one-statement
-        replacement, or one whose raiser is last, moves nothing. A plan opened to substitute holds no fault model, so this half is skipped
-        there — a stated follow-on.
+        **A replacement spliced into a list whose `trap` set may carry the run on is refused too**
+        where a spliced line other than the last may raise: see `raisers_a_splice_moves`, whose
+        lines the raise model of this plan then judges where the replaced statement stands
+        (`refinery.lib.scripts.ps1.analysis.raising.statement_raise_kinds`).
 
         **A handler and a statement that might fault are opposite questions.** Deleting a `trap`
         re-routes errors it did not raise, so what decides it is whether anything is left that can
@@ -412,32 +450,31 @@ class Ps1RemovalPlan:
         and of `removals_may_fault`. Every leaf statement writes `$?` whether or not it can raise,
         and a script can read the flag back, so removing a statement a live `$?` read observes
         changes what that read sees. `refinery.lib.scripts.ps1.analysis.errorstate` answers it
-        positionally through `success_flag_write_observed`; absent that model the channel is skipped.
+        positionally through `success_flag_write_observed`.
         """
         if proposal.replacement:
-            if _rescopes_a_handler(proposal.replacement):
+            if rescopes_a_handler(proposal.replacement):
                 return True
-            faults = self.faults
-            if faults is None or not faults.guarded_by_a_resuming_trap(proposal.statement):
-                return False
-            raises = None if self.handlers is None else _raise_verdicts(self.handlers, self.world)
-            return any(
-                statement_raise_kinds(raiser, proposal.statement, faults, self.world, raises)
-                for raiser in proposal.replacement[:-1]
-            )
-        if (
-            self.error_state is not None
-            and self.error_state.success_flag_write_observed(proposal.statement)
-        ):
-            return True
-        faults = self.faults
-        if faults is None:
+            raisers = raisers_a_splice_moves(getattr(self.parent, self.attr, None) or (), proposal.replacement)
+            return any(statement_raise_kinds(raiser, proposal.statement, self.raises) for raiser in raisers)
+        if self.error_state.success_flag_write_observed(proposal.statement):
             return True
         if not self.removals_may_fault:
             return False
-        handlers = self.handlers
-        raises = None if handlers is None else _raise_verdicts(handlers, self.world)
-        return deletion_is_observable(proposal.statement, faults, self.world, self.error_state, raises)
+        return deletion_is_observable(proposal.statement, self.raises, self.error_state)
+
+    def _vetoed_at(self, epoch: int, proposal: _Proposal) -> bool:
+        """
+        `_vetoed`, kept per proposal until it or the tree changes: a verdict reads the proposal and
+        the tree alone, so a batch that grows one proposal at a time asks it once per proposal.
+        """
+        if self._vetoes_read_at != epoch:
+            self._vetoes.clear()
+            self._vetoes_read_at = epoch
+        found = self._vetoes.get(id(proposal.statement))
+        if found is None or found[0] is not proposal:
+            found = self._vetoes[id(proposal.statement)] = proposal, self._vetoed(proposal)
+        return found[1]
 
     def _allowed(self) -> list[_Proposal]:
         """
@@ -455,10 +492,16 @@ class Ps1RemovalPlan:
         granted = {id(p) for p in self._trap_removals_allowed(traps)}
         allowed = [
             p for p in proposals
-            if id(p) in granted or id(p) not in weighed and not self._vetoed(p)
+            if id(p) in granted or id(p) not in weighed and not self._vetoed_at(epoch, p)
         ]
-        if self.all_or_nothing and len(allowed) != len(proposals):
-            allowed = []
+        if self._groups:
+            kept = {id(p.statement) for p in allowed}
+            broken = {
+                id(member) for group in self._groups
+                if not all(id(member) in kept for member in group)
+                for member in group
+            }
+            allowed = [p for p in allowed if id(p.statement) not in broken]
         if self._empties_a_protected_body(allowed):
             allowed = []
         self._verdict = epoch, allowed
@@ -470,18 +513,9 @@ class Ps1RemovalPlan:
         question so that two copies of one handler are never each deleted on the strength of the
         other.
         """
-        faults = self.faults
-        handlers = self.handlers
-        if faults is None or handlers is None:
-            return []
-        error_state = self.error_state
-        candidates = [
-            p for p in traps
-            if error_state is None or not error_state.success_flag_write_observed(p.statement)
-        ]
+        candidates = [p for p in traps if not self.error_state.success_flag_write_observed(p.statement)]
         statements = [p.statement for p in candidates if isinstance(p.statement, Ps1TrapStatement)]
-        raises = _raise_verdicts(handlers, self.world)
-        granted = {id(trap) for trap in faults.removable_traps(statements, raises, handlers.skips)}
+        granted = {id(trap) for trap in self.faults.removable_traps(statements, self.raises, self.handlers.skips)}
         return [p for p in candidates if id(p.statement) in granted]
 
     def commit(self) -> bool:
@@ -492,34 +526,14 @@ class Ps1RemovalPlan:
         _restore(landed)
         return moved
 
-    def _apply(self, allowed: list[_Proposal]) -> tuple[bool, list[Statement]]:
+    def _apply(self, allowed: list[_Proposal]) -> tuple[bool, list[Node]]:
         """
-        Land one already-reached verdict, reporting whether the tree moved and which nodes the list
-        now holds because of it. Split out for `Ps1RemovalPlans`, which has to reach every verdict
-        before it lands any of them, and land every edit before it repairs any of them.
-
-        What landed is decided per splice rather than taken from `allowed`, because the two are not
-        the same set. `BodyEdit` ignores a splice for a node its list does not hold — the class
-        describes an edit to one list and nothing else — so a replacement can be allowed and still
-        never be installed. Repairing that one would hand it the children it is still not holding,
-        which is the corruption `propose` undoes at registration, reintroduced by the repair.
-
-        The question a splice was honoured is asked of the statement it names and not of the
-        resulting list, and only the first is the same question: a replacement that already stands
-        in the list is carried over by an edit that ignored its splice, so reading the result back
-        reports it installed by an edit that installed nothing.
+        Land one already-reached verdict through `_install`, reporting whether the tree moved and
+        which nodes the list now holds because of it. Split out for `Ps1RemovalPlans`, which has to
+        reach every verdict before it lands any of them, and land every edit before it repairs any
+        of them.
         """
-        if not allowed:
-            return False, []
-        held = {id(item) for item in getattr(self.parent, self.attr, None) or []}
-        if not self._edit(allowed).apply():
-            return False, []
-        return True, [
-            statement
-            for proposal in allowed
-            if id(proposal.statement) in held
-            for statement in proposal.replacement
-        ]
+        return _install(self.parent, self.attr, allowed)
 
     def _empties_a_protected_body(self, allowed: list[_Proposal]) -> bool:
         """
@@ -571,16 +585,17 @@ class Ps1RemovalPlans:
 
     def __init__(
         self,
-        faults: Ps1FaultReach,
-        world: Ps1WorldReach | None = None,
-        error_state: Ps1ErrorStateReach | None = None,
-        handlers: Ps1HandlerVerdicts | None = None,
+        *,
+        handlers: Ps1HandlerVerdicts,
+        under_the_world: bool,
+        error_state: Ps1ErrorStateReach,
         removals_may_fault: bool = True,
     ):
-        self.faults = faults
-        self.world = world
-        self.error_state = error_state
         self.handlers = handlers
+        self.under_the_world = under_the_world
+        self.faults = handlers.faults
+        self.raises = handlers.raises(under_the_world)
+        self.error_state = error_state
         self.removals_may_fault = removals_may_fault
         #: Every plan this opens may remove, so unlike `Ps1RemovalPlan` there is no
         #: substitution-only spelling of this class: a caller holding one is a pass that deletes.
@@ -630,10 +645,9 @@ class Ps1RemovalPlans:
                 parent,
                 attr,
                 self.removals_may_fault,
-                faults=self.faults,
-                world=self.world,
-                error_state=self.error_state,
                 handlers=self.handlers,
+                under_the_world=self.under_the_world,
+                error_state=self.error_state,
             )
             return plan
 
@@ -721,7 +735,7 @@ class Ps1RemovalPlans:
         example: it concludes a function is dead from the call sites going away, so a vetoed caller
         it never heard about leaves the emitted script calling a function it does not define. Such a
         guard asks this, drops what it now forbids with `withdraw`, and asks again; the loop
-        terminates because the batch only shrinks — except under `all_or_nothing`, against a
+        terminates because the batch only shrinks — except for a group a withdrawal breaks, against a
         protected body, or where withdrawing an edit that the batch holds another list back for
         releases that list (see `_decide`), where a withdrawal can grow this set, so a pass that
         loops on `accepted` owes its own termination argument.
@@ -820,11 +834,7 @@ class Ps1RemovalPlans:
             touched.append([proposal.statement])
         if not any(deleted):
             return set(), set(), set()
-        handlers = self.handlers
-        faults = self.faults
-        assert handlers is not None and faults is not None
-        raises = _raise_verdicts(handlers, self.world)
-        waiting, withheld = faults.edits_that_wait(deleted, touched, raises)
+        waiting, withheld = self.faults.edits_that_wait(deleted, touched, self.raises)
         count = len(verdicts)
         plans = {id(verdicts[index][0]) for index in waiting if index < count}
         rewritten = {id(rewrites[index - count][0].statement) for index in waiting if index >= count}
