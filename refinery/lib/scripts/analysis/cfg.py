@@ -10,9 +10,9 @@ to the handler that would catch a throw.
 
 The graph is keyed to AST node identity (`node_of`) and is a disposable, per-body view — the tree
 stays the spine. It is *conservative by construction*: where modelling control flow precisely would
-be intricate (the order of evaluation inside an expression, the exact point a statement throws, a
-finalizer on an exceptional path) the graph adds edges rather than omits them, so an analysis reading
-it sees at least every path the program can take. Nested function bodies are not descended into; each
+be intricate (the order of evaluation inside an expression, the exact point a statement throws) the
+graph adds edges rather than omits them, so an analysis reading it sees at least every path the
+program can take. Nested function bodies are not descended into; each
 has its own graph.
 
 **What a language supplies is the dispatch, not the shapes.** `CfgBuilder` holds the frontier
@@ -862,6 +862,27 @@ class _Target:
     finalizers: int = 0
 
 
+class _Jump(enum.Enum):
+    """
+    How a jump arrives at the construct it names: past its end, or at its next iteration.
+    """
+    OUT = 'out'
+    BACK = 'back'
+
+
+@dataclass(eq=False)
+class _Finalizer:
+    """
+    A finalizer open while its guarded block is built, and the jumps that leave the block through
+    it. Each runs the body from `entry` and goes on from its end: to the next finalizer out where it
+    leaves that one as well, which `passes_outward` records, and else to the place it jumps to, one
+    entry of `landings` per place.
+    """
+    entry: CfgNode
+    passes_outward: bool = False
+    landings: dict[tuple[_Jump, int], _Target | None] = field(default_factory=dict)
+
+
 @dataclass(eq=False)
 class Resumption:
     """
@@ -955,7 +976,7 @@ class CfgBuilder:
         self.cfg = ControlFlowGraph(owner)
         self._handlers: list[CfgNode] = []
         self._targets: list[_Target] = []
-        self._finalizers: list[CfgNode] = []
+        self._finalizers: list[_Finalizer] = []
         self._resumptions: list[Resumption] = []
         self._pending_labels: frozenset[str] = frozenset()
 
@@ -967,15 +988,61 @@ class CfgBuilder:
         target.finalizers = len(self._finalizers)
         self._targets.append(target)
 
-    def _cross_finalizers(self, node: CfgNode, target: _Target | None) -> None:
+    def _leave(self, node: CfgNode, jump: _Jump, target: _Target | None) -> None:
         """
-        Join the jump *node* to the entry of every finalizer it leaves on its way to *target*, or
-        on its way out of the body where *target* is `None`: the finalizer runs before control
-        arrives there.
+        Send the jump *node* to *target* the way *jump* arrives there, or out of the body where
+        *target* is `None`. A jump that leaves finalizers on its way enters the innermost of them
+        and goes on from its end, one finalizer after the other outward, and to *target* from the
+        end of the outermost; `guarded` draws those edges once the finalizer bodies are built. No
+        edge joins the jump to *target* directly: control arrives there only after every finalizer
+        it leaves has run to its end.
         """
         crossed = self._finalizers if target is None else self._finalizers[target.finalizers:]
-        for entry in crossed:
-            self.add_edge(node, entry)
+        if not crossed:
+            self._arrive(node, jump, target)
+            return
+        self.add_edge(node, crossed[-1].entry)
+        for finalizer in crossed[1:]:
+            finalizer.passes_outward = True
+        crossed[0].landings[jump, id(target)] = target
+
+    def _arrive(self, node: CfgNode, jump: _Jump, target: _Target | None) -> None:
+        """
+        Join *node* to where a jump arrives at *target* the way *jump* says, or to the body's exit
+        where *target* is `None`.
+        """
+        if target is None:
+            self.add_edge(node, self.cfg.exit)
+        elif jump is _Jump.OUT:
+            target.breaks.append(node)
+        elif target.continue_to is not None:
+            self.add_edge(node, target.continue_to)
+        else:
+            target.continues.append(node)
+
+    def _leave_finalizer(self, finalizer: _Finalizer, ends: list[CfgNode]) -> None:
+        """
+        Join *ends*, the points from which the body of *finalizer* runs off its end, to where the
+        runs that entered it go on besides what follows its guarded statement. Each goes on from a
+        point of its own, built here and so inside the guarded statement: a reader asking where a
+        run goes once that statement completed meets none of them past it. An error that entered the
+        finalizer goes on outward. A jump that left the block through it goes on to the next
+        finalizer out where it leaves that one too, and else to the place it jumps to, one point per
+        place. A finalizer that jumps or throws itself has no *ends*, and the run it was entered
+        with goes nowhere from it.
+        """
+        entry = finalizer.entry
+        if any(self.cfg.is_exceptional(source, entry) for source in entry.predecessors):
+            self.exceptional_edge(self._point_after(ends), self.escape())
+        if finalizer.passes_outward:
+            self.add_edge(self._point_after(ends), self._finalizers[-1].entry)
+        for (jump, _), target in finalizer.landings.items():
+            self._arrive(self._point_after(ends), jump, target)
+
+    def _point_after(self, ends: list[CfgNode]) -> CfgNode:
+        node = self.synthetic_node()
+        self.link(ends, node)
+        return node
 
     def build(self) -> ControlFlowGraph:
         frontier = [self.cfg.entry]
@@ -1568,18 +1635,20 @@ class CfgBuilder:
         rather than defaulted: the safe answer invents a path the program cannot take, and the
         other drops one it can.
 
-        The finalizer is entered from the block's normal exits and from every handler's, and itself
-        carries an exceptional edge outward, because a finalizer runs on the exceptional path too and
-        control leaves the construct from it either way. It also guards every handler body: a
-        handler that throws, returns or jumps out of the construct runs the finalizer on its way, so
-        where the block and every handler end that way, the finalizer is still reached.
+        The finalizer is entered from the block's normal exits and from every handler's, and runs on
+        every other way out of the construct as well: an error no handler takes enters it, and so
+        does a jump leaving the block or a handler body, and each goes on from its end, which
+        `_leave_finalizer` draws. It also guards every handler body: a handler that throws, returns
+        or jumps out of the construct runs the finalizer on its way, so where the block and every
+        handler end that way, the finalizer is still reached.
         """
         handlers = list(handlers)
         entries = [self.detached_node(handler) for handler, _ in handlers]
         finalizer_entry = self.detached_node(finalizer) if finalizer is not None else None
+        record = _Finalizer(finalizer_entry) if finalizer_entry is not None else None
         guard = entries[0] if entries else finalizer_entry
-        if finalizer_entry is not None:
-            self._finalizers.append(finalizer_entry)
+        if record is not None:
+            self._finalizers.append(record)
         if guard is not None:
             self._handlers.append(guard)
         block_exits = self.statement(block, frontier) if block is not None else list(frontier)
@@ -1598,13 +1667,14 @@ class CfgBuilder:
                 self.statement(body, [entry]) if body is not None else [entry])
         if clause_guard is not None:
             self._handlers.pop()
-        if finalizer_entry is not None:
+        if record is not None:
             self._finalizers.pop()
-        self.close_handler_set(entries, escapes=escapes, outward=self.escape())
-        if finalizer_entry is not None and finalizer is not None:
+        outward = self.escape() if finalizer_entry is None else finalizer_entry
+        self.close_handler_set(entries, escapes=escapes, outward=outward)
+        if record is not None and finalizer_entry is not None:
             self.link(normal_exits, finalizer_entry)
             final_exits = self.sequence(list(finalizer_body), [finalizer_entry])
-            self.exceptional_edge(finalizer_entry, self.escape())
+            self._leave_finalizer(record, final_exits)
             return final_exits
         return normal_exits
 
@@ -1640,12 +1710,7 @@ class CfgBuilder:
         """
         node = self.node(element)
         self.link(frontier, node)
-        target = self._break_target(label)
-        self._cross_finalizers(node, target)
-        if target is not None:
-            target.breaks.append(node)
-        else:
-            self.add_edge(node, self.cfg.exit)
+        self._leave(node, _Jump.OUT, self._break_target(label))
         return []
 
     def jump_back(
@@ -1656,14 +1721,7 @@ class CfgBuilder:
         """
         node = self.node(element)
         self.link(frontier, node)
-        target = self._continue_target(label)
-        self._cross_finalizers(node, target)
-        if target is None:
-            self.add_edge(node, self.cfg.exit)
-        elif target.continue_to is not None:
-            self.add_edge(node, target.continue_to)
-        else:
-            target.continues.append(node)
+        self._leave(node, _Jump.BACK, self._continue_target(label))
         return []
 
     def terminate(
@@ -1673,17 +1731,15 @@ class CfgBuilder:
         A statement after which control does not continue in this body: a return, or a throw.
 
         A throw is `exceptional`, so it reaches the innermost open handler rather than the exit, and
-        only reaches the exit when no handler is open. A return leaves the body outright — the
-        finalizer question a return inside a guarded block raises is one this graph deliberately
-        answers by the conservative edge rather than by modelling the unwind.
+        only reaches the exit when no handler is open. A return leaves the body through every
+        finalizer open around it, as a jump out of the body does.
         """
         node = self.node(element)
         self.link(frontier, node)
         if exceptional:
             self.exceptional_edge(node, self.unwinding())
         else:
-            self._cross_finalizers(node, None)
-            self.add_edge(node, self.cfg.exit)
+            self._leave(node, _Jump.OUT, None)
         return []
 
     def has_continue_target(self, label: str | None) -> bool:

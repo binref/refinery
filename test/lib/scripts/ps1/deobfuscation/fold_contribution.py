@@ -616,6 +616,9 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$ErrorActionPreference = 'Stop'\n$p = @()\nthrow 'x'; Write-Host 'rest'",
             "$ErrorActionPreference = 'Stop'\n"
             '$p = @()\n'
+            "try { Write-Host 't' } finally { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+            "$ErrorActionPreference = 'Stop'\n"
+            '$p = @()\n'
             "try { foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
             "$ErrorActionPreference = 'Stop'\n"
             '$p = @()\n'
@@ -689,6 +692,8 @@ CONTRIBUTION: dict[str, Contribution] = {
             '$p = @()\n'
             "function f1 { throw 'x'; Write-Host 'rest' }; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'",
             "$p = @()\nthrow 'x'; Write-Host 'rest'",
+            '$p = @()\n'
+            "try { Write-Host 't' } finally { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
             '$p = @()\n'
             "try { foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
             '$p = @()\n'

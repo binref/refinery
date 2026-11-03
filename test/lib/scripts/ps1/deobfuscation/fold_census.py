@@ -2328,8 +2328,7 @@ FOLDS: dict[str, str] = {
         '} finally {\n'
         "  throw 'x'\n"
         "  Write-Host 'rest'\n"
-        '}\n'
-        "Write-Host 'after'",
+        '}',
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @()\n'
     "try { foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
@@ -2368,8 +2367,7 @@ FOLDS: dict[str, str] = {
         '} finally {\n'
         "  throw 'x'\n"
         "  Write-Host 'rest'\n"
-        '}\n'
-        "Write-Host 'after'",
+        '}',
     "$ErrorActionPreference = 'Stop'\n"
     '$p = @()\n'
     "try { throw 'x'; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'":
@@ -3448,7 +3446,7 @@ FOLDS: dict[str, str] = {
         '} catch [System.IO.IOException] {}\n'
         "Write-Host 'after'",
     "$p = @()\ntry { Write-Host 't' } finally { throw 'x'; Write-Host 'rest' }; Write-Host 'after'":
-        "try {\n  Write-Host 't'\n} finally {\n  throw 'x'\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
+        "try {\n  Write-Host 't'\n} finally {\n  throw 'x'\n  Write-Host 'rest'\n}",
     '$p = @()\n'
     "try { foreach ($i in 1, 2) { throw 'x'; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'":
         "try {\n  foreach ($i in 1, 2) {\n    throw 'x'\n  }\n} catch {\n  Write-Host 'c'\n}\nWrite-Host 'after'",
@@ -3458,7 +3456,7 @@ FOLDS: dict[str, str] = {
         "throw 'x'",
     '$p = @()\n'
     "try { throw 'x' } catch { try { throw 'x' } finally { throw 'x'; Write-Host 'rest' } }; Write-Host 'after'":
-        "try {\n  throw 'x'\n} finally {\n  throw 'x'\n  Write-Host 'rest'\n}\nWrite-Host 'after'",
+        "try {\n  throw 'x'\n} finally {\n  throw 'x'\n  Write-Host 'rest'\n}",
     '$p = @()\n'
     "try { throw 'x'; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'":
         "try {\n  throw 'x'\n} catch [System.IO.IOException] {\n  Write-Host 'c'\n}\nWrite-Host 'after'",

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import itertools
-import unittest
 
 from inspect import cleandoc
 
@@ -43,6 +42,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ReturnStatement,
     Ps1Script,
     Ps1ScriptBlock,
+    Ps1ThrowStatement,
     Ps1TrapStatement,
     Ps1TryCatchFinally,
 )
@@ -1713,12 +1713,7 @@ class TestPs1AJumpRunsTheFinallyItLeaves(_Ps1ControlFlowGraphs):
         jump = self._node_for(graph, Ps1BreakStatement)
         self.assertNotIn(outer, jump.successors)
 
-    @unittest.expectedFailure
     def test_the_finally_a_break_leaves_carries_on_where_the_break_goes(self):
-        """
-        The end of the `finally` body flows to the statement after the `try` alone, so a store it
-        makes is not seen where the `break` arrives.
-        """
         tree, graph = self._tree_and_graph(cleandoc("""
             foreach ($i in 1, 2) {
               try { break } finally { 'f' }
@@ -1729,6 +1724,70 @@ class TestPs1AJumpRunsTheFinallyItLeaves(_Ps1ControlFlowGraphs):
         entry, = self._finally_entries(graph, tree)
         after = self._required_node(graph, tree.body[-1])
         self.assertIn(id(after), self._forward(entry))
+
+    def test_a_break_leaving_two_finally_bodies_runs_the_inner_then_the_outer(self):
+        tree, graph = self._tree_and_graph(cleandoc("""
+            foreach ($i in 1, 2) {
+              try {
+                try { break } finally { 'inner' }
+                'rest'
+              } finally { 'outer' }
+              return
+            }
+            'after'
+        """))
+        outer, inner = self._finally_entries(graph, tree)
+        jump = self._node_for(graph, Ps1BreakStatement)
+        after = self._required_node(graph, tree.body[-1])
+        self.assertNotIn(id(outer), self._reached_without(jump, inner))
+        self.assertNotIn(id(after), self._reached_without(jump, outer))
+        self.assertIn(id(after), self._forward(jump))
+
+    def test_a_return_leaving_two_finally_bodies_runs_both_before_leaving_the_function(self):
+        tree, graph = self._tree_and_graph(cleandoc("""
+            function f {
+              try {
+                try { return } finally { 'inner' }
+              } finally { 'outer' }
+              'rest'
+            }
+        """))
+        definition = tree.body[0]
+        assert isinstance(definition, Ps1FunctionDefinition) and definition.body is not None
+        graph = build_ps1_control_flow(tree)[id(definition.body)]
+        outer, inner = self._finally_entries(graph, tree)
+        jump = self._node_for(graph, Ps1ReturnStatement)
+        self.assertNotIn(id(graph.exit), self._reached_without(jump, inner))
+        self.assertNotIn(id(graph.exit), self._reached_without(jump, outer))
+        self.assertIn(id(graph.exit), self._forward(jump))
+
+    def test_a_finally_that_throws_drops_the_break_it_was_entered_with(self):
+        tree, graph = self._tree_and_graph(cleandoc("""
+            foreach ($i in 1, 2) {
+              try { break } finally { throw 'f' }
+            }
+            'after'
+        """))
+        jump = self._node_for(graph, Ps1BreakStatement)
+        after = self._required_node(graph, tree.body[-1])
+        self.assertNotIn(id(after), self._forward(jump))
+
+    def test_an_error_no_catch_takes_runs_the_finally_before_it_leaves(self):
+        tree, graph = self._tree_and_graph("try { throw 'x' } finally { 'f' }")
+        entry, = self._finally_entries(graph, tree)
+        raised = self._node_for(graph, Ps1ThrowStatement)
+        self.assertNotIn(id(graph.exit), self._reached_without(raised, entry))
+
+    def test_an_error_a_typed_catch_does_not_take_runs_the_finally(self):
+        tree, graph = self._tree_and_graph(
+            "try { throw 'x' } catch [System.IO.IOException] { 'c' } finally { 'f' }")
+        construct = tree.body[0]
+        assert isinstance(construct, Ps1TryCatchFinally)
+        clause, = construct.catch_clauses
+        entry, = self._finally_entries(graph, tree)
+        caught = self._required_node(graph, clause.body.body[0])
+        raised = self._node_for(graph, Ps1ThrowStatement)
+        self.assertIn(id(entry), self._reached_without(raised, caught))
 
 
 class TestPs1AProcessBlockRunsOncePerInput(_Ps1ControlFlowGraphs):

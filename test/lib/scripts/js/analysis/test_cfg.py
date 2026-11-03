@@ -331,6 +331,29 @@ class TestControlFlowGraph(TestBase):
                         pending.extend(node.successors)
                 self.assertIn(id(cfg.node_of(cleanup)), reached)
 
+    def test_a_break_through_a_finally_arrives_after_the_loop_only_once_the_finally_ran(self):
+        ast, cfg = self._cfg('for (;;) { try { break; } finally { c; } } d;')
+        cleanup, after = (n for n in ast.walk_in_order() if isinstance(n, JsExpressionStatement))
+        jump = cfg.node_of(self._first(ast, JsBreakStatement))
+        finished = cfg.node_of(cleanup)
+        arrived = cfg.node_of(after)
+        assert jump is not None and finished is not None and arrived is not None
+        reached: set[int] = set()
+        pending = [jump]
+        while pending:
+            for successor in pending.pop().successors:
+                if successor is not finished and id(successor) not in reached:
+                    reached.add(id(successor))
+                    pending.append(successor)
+        self.assertNotIn(id(arrived), reached)
+        self.assertIn(id(arrived), self._forward_from(jump))
+
+    def test_a_finally_that_continues_replaces_the_break_it_was_entered_with(self):
+        ast, cfg = self._cfg('for (;;) { try { break; } finally { continue; } } d;')
+        after = cfg.node_of(self._first(ast, JsExpressionStatement))
+        assert after is not None
+        self.assertNotIn(id(after), self._reachable(cfg))
+
     def test_a_continue_naming_the_outer_of_two_labels_of_a_loop_continues_it(self):
         ast, cfg = self._cfg('a: b: do { continue a; } while (x); y;')
         after = cfg.node_of(self._first(ast, JsExpressionStatement))
