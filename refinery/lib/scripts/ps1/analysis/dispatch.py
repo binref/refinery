@@ -289,6 +289,9 @@ class _Jump(enum.Flag):
     RUNS_CODE = enum.auto()
 
 
+#: The jumps a loop or `switch` may take: `break` and `continue`, with or without a label.
+_LOOP_JUMPS = _Jump.LOOP | _Jump.LABELLED
+
 _LOOPS = (
     Ps1DoLoop,
     Ps1ForEachLoop,
@@ -858,7 +861,7 @@ class Ps1Dispatch:
         )
         self._evaluation = Ps1Reading(self._tree, _Levels(self._tree))
         self._tails: dict[int, frozenset[Node]] = {}
-        self._jumping: dict[int, bool] = {}
+        self._jumping: dict[tuple[int, _Jump], bool] = {}
         self._jumps: dict[int, _Jump] = {}
 
     def depth_of(self, node: Node) -> int:
@@ -977,16 +980,20 @@ class Ps1Dispatch:
         leaving = self._leaving_jumps(node)
         if leaving & ~_Jump.RUNS_CODE:
             return True
-        return _Jump.RUNS_CODE in leaving and self._a_body_jumps_out(node)
+        return _Jump.RUNS_CODE in leaving and self._a_body_jumps_out(node, _Jump.EXIT | _LOOP_JUMPS)
 
     def lets_out_a_loop_jump(self, node: Node) -> bool:
         """
-        Whether a `break` or `continue` written in *node* may carry control out of it: an unlabelled
-        one that no loop, `switch` or `trap` body in *node* takes, or one naming a label. A jump
-        written in a script block counts, because 5.1 hands it to the code that ran the block; a
-        jump made by a body that *node* only calls does not.
+        Whether a `break` or `continue` may carry control out of *node*: an unlabelled one written
+        in it that no loop, `switch` or `trap` body in *node* takes, one naming a label, or one let
+        out by a body that *node* runs. A jump written in a script block counts, because 5.1 hands
+        it to the code that ran the block, and so does a call where some body of the script lets
+        one out or the script runs code it does not spell.
         """
-        return bool(self._leaving_jumps(node) & (_Jump.LOOP | _Jump.LABELLED))
+        leaving = self._leaving_jumps(node)
+        if leaving & _LOOP_JUMPS:
+            return True
+        return _Jump.RUNS_CODE in leaving and self._a_body_jumps_out(node, _LOOP_JUMPS)
 
     def _leaving_jumps(self, node: Node) -> _Jump:
         """
@@ -1028,17 +1035,17 @@ class Ps1Dispatch:
             memo[id(current)] = leaving
         return memo[id(node)]
 
-    def _a_body_jumps_out(self, node: Node) -> bool:
+    def _a_body_jumps_out(self, node: Node, escaping: _Jump) -> bool:
         """
-        Whether some body of the tree *node* stands in may jump out of itself into the code that
-        ran it: a script block lets out an `exit`, or a `break` or `continue` nothing in it takes,
-        or the tree runs code it does not spell.
+        Whether some body of the tree *node* stands in may let one of the *escaping* jumps out of
+        itself into the code that ran it, which a script block does where nothing in it takes the
+        jump, and the tree does where it runs code it does not spell.
         """
         root = tree_root(node)
-        found = self._jumping.get(id(root))
+        key = id(root), escaping
+        found = self._jumping.get(key)
         if found is None:
-            escaping = _Jump.EXIT | _Jump.LOOP | _Jump.LABELLED
-            found = self._jumping[id(root)] = any(
+            found = self._jumping[key] = any(
                 runs_code_it_cannot_read(inner)
                 or isinstance(inner, Ps1ScriptBlock) and bool(self._leaving_jumps(inner) & escaping)
                 for inner in root.walk()

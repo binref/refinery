@@ -25,6 +25,23 @@ class TestPs1AnAttributeArgumentWithoutAValueIsPrintedAsWritten(TestPs1):
         self.assertIn('Parameter(Mandatory)', Ps1Synthesizer().convert(Ps1Parser(source).parse()))
 
 
+class TestPs1AJumpABlockLetsOutReachesTheLoopAroundIt(TestPs1):
+
+    @unittest.expectedFailure
+    def test_a_continue_a_pipeline_block_lets_out_runs_the_iterator_of_the_for_loop(self):
+        """
+        5.1 hands the `continue` in the block to the `for` loop around the pipeline, so `$j++` runs
+        and the condition ends the loop after one run; read as `$True`, it never does.
+        """
+        output = self._deobfuscate_iterative(cleandoc("""
+            for ($j = 0; $j -lt 1; $j++) {
+              1 | ForEach-Object { continue }
+              break
+            }
+        """))
+        self.assertNotIn('$True', output)
+
+
 class TestPs1ABlockHeldByAPropertyIsInvokedAsABlock(TestPs1):
 
     @unittest.expectedFailure

@@ -595,6 +595,35 @@ class TestPs1ASwitchIsKeptWhileAJumpInItsClauseLandsOnIt(TestPs1):
         """), Ps1DeadCodeElimination)
         self.assertIn('switch', result)
 
+    def test_a_break_in_a_function_the_clause_calls_keeps_the_switch(self):
+        result = self._apply(cleandoc("""
+            function f { break }
+            foreach ($i in 1..3) {
+              switch (1) {
+                1 {
+                  f
+                  Write-Host $i
+                }
+              }
+              Write-Host 'x'
+            }
+        """), Ps1DeadCodeElimination)
+        self.assertIn('switch', result)
+
+    def test_a_break_in_code_the_clause_cannot_read_keeps_the_switch(self):
+        result = self._apply(cleandoc("""
+            foreach ($i in 1..3) {
+              switch (1) {
+                1 {
+                  Invoke-Expression 'break'
+                  Write-Host $i
+                }
+              }
+              Write-Host 'x'
+            }
+        """), Ps1DeadCodeElimination)
+        self.assertIn('switch', result)
+
     def test_a_trailing_break_naming_the_loop_around_the_switch_keeps_it(self):
         """
         The `break` leaves the `foreach` after its first value, so the input writes `1` alone.
@@ -906,6 +935,57 @@ class TestPs1ALoopWhoseBodyCannotRunTwiceRunsItOnce(TestPs1):
             }
             """
         ), Ps1DeadCodeElimination)
+
+    def test_a_break_in_a_function_the_body_calls_keeps_the_loop(self):
+        result = self._apply(cleandoc(
+            """
+            function f { break }
+            foreach ($i in 1..3) {
+              while ($True) {
+                f
+                Write-Host $i
+                break
+              }
+              Write-Host 'x'
+            }
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertIn('while ($True)', result)
+
+    def test_a_continue_in_a_block_the_body_runs_keeps_a_do_loop_that_never_repeats(self):
+        result = self._apply(cleandoc(
+            """
+            $sb = { continue }
+            foreach ($i in 1..3) {
+              do {
+                & $sb
+                Write-Host $i
+              } while ($False)
+              Write-Host 'x'
+            }
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertIn('while ($False)', result)
+
+    def test_a_break_an_inner_loop_takes_does_not_keep_the_loop(self):
+        result = self._apply(cleandoc(
+            """
+            do {
+              foreach ($x in $items) {
+                break
+              }
+              Write-Host 'a'
+            } while ($False)
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc(
+            """
+            foreach ($x in $items) {
+              break
+            }
+            Write-Host 'a'
+            """
+        ))
 
     def test_a_resuming_trap_that_carries_control_past_the_last_throw_keeps_the_loop(self):
         self._assertUnchanged(cleandoc(

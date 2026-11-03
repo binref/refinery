@@ -382,14 +382,19 @@ def _simulate_empty_for_terminal(node: Ps1ForLoop) -> tuple[Ps1Variable, int] | 
     return variable, value
 
 
-def _body_running_once(body: list[Statement], dominance: DominatorModel) -> list[Statement] | None:
+def _body_running_once(
+    body: list[Statement],
+    dominance: DominatorModel,
+    dispatch: Ps1Dispatch,
+) -> list[Statement] | None:
     """
     The statements one run of a loop body comes to when the body never starts a second run, or
     `None` when it may. Control must not run off the end of the body: its last statement is an
     unlabeled `break`, which is dropped, or one the control-flow graph says never completes, such
     as a `return` (`refinery.lib.scripts.analysis.dominance.DominatorModel.completes`). And no other
-    `break` or `continue` may stand in it at any depth, since one could start another run or, once
-    the body stands outside the loop, leave a different one.
+    `break` or `continue` may leave a statement of it, written there or in a body it runs
+    (`refinery.lib.scripts.ps1.analysis.dispatch.Ps1Dispatch.lets_out_a_loop_jump`), since one
+    could start another run or, once the body stands outside the loop, leave a different one.
 
     The graph is asked rather than the trailing `break` alone because the statements that never run
     are deleted too, a `break` behind a `return` among them, and a loop that waited for its `break`
@@ -404,10 +409,8 @@ def _body_running_once(body: list[Statement], dominance: DominatorModel) -> list
         once = body
     else:
         return None
-    for stmt in once:
-        for node in stmt.walk():
-            if isinstance(node, (Ps1BreakStatement, Ps1ContinueStatement)):
-                return None
+    if any(dispatch.lets_out_a_loop_jump(stmt) for stmt in once):
+        return None
     return list(once)
 
 
@@ -622,11 +625,11 @@ class Ps1DeadCodeElimination(Transformer):
 
     def _try_prune(self, stmt: Statement, cache: Ps1ModelCache) -> list[Statement] | None:
         if isinstance(stmt, Ps1WhileLoop):
-            return self._prune_while(stmt, cache.dominance)
+            return self._prune_while(stmt, cache.dominance, cache.dispatch)
         if isinstance(stmt, Ps1DoLoop):
-            return self._prune_do_loop(stmt, cache.dominance)
+            return self._prune_do_loop(stmt, cache.dominance, cache.dispatch)
         if isinstance(stmt, Ps1ForLoop):
-            return self._prune_for(stmt, cache.dominance)
+            return self._prune_for(stmt, cache.dominance, cache.dispatch)
         if isinstance(stmt, Ps1IfStatement):
             return self._prune_if(stmt)
         if isinstance(stmt, Ps1SwitchStatement):
@@ -638,36 +641,48 @@ class Ps1DeadCodeElimination(Transformer):
         return None
 
     @staticmethod
-    def _prune_while(node: Ps1WhileLoop, dominance: DominatorModel) -> list[Statement] | None:
+    def _prune_while(
+        node: Ps1WhileLoop,
+        dominance: DominatorModel,
+        dispatch: Ps1Dispatch,
+    ) -> list[Statement] | None:
         truth = is_truthy(node.condition)
         if truth is False:
             return []
-        if node.body is None or (body := _body_running_once(node.body.body, dominance)) is None:
+        if node.body is None:
+            return None
+        if (body := _body_running_once(node.body.body, dominance, dispatch)) is None:
             return None
         if truth is True or node.condition is None:
             return body
         return [Ps1IfStatement(clauses=[(node.condition, Block(body=body))])]
 
     @staticmethod
-    def _prune_do_loop(node: Ps1DoLoop, dominance: DominatorModel) -> list[Statement] | None:
+    def _prune_do_loop(
+        node: Ps1DoLoop,
+        dominance: DominatorModel,
+        dispatch: Ps1Dispatch,
+    ) -> list[Statement] | None:
         if node.body is not None:
             body = node.body.body
-            if (once := _body_running_once(body, dominance)) is not None:
+            if (once := _body_running_once(body, dominance, dispatch)) is not None:
                 return once
             trivially_exits = (
                 is_truthy(node.condition) is True if node.is_until
                 else is_truthy(node.condition) is False
             )
             if trivially_exits:
-                for stmt in body:
-                    for child in stmt.walk():
-                        if isinstance(child, (Ps1BreakStatement, Ps1ContinueStatement)):
-                            return None
+                if any(dispatch.lets_out_a_loop_jump(stmt) for stmt in body):
+                    return None
                 return list(body)
         return None
 
     @staticmethod
-    def _prune_for(node: Ps1ForLoop, dominance: DominatorModel) -> list[Statement] | None:
+    def _prune_for(
+        node: Ps1ForLoop,
+        dominance: DominatorModel,
+        dispatch: Ps1Dispatch,
+    ) -> list[Statement] | None:
         truth = _evaluate_for_condition(node)
         if truth is None:
             truth = is_truthy(node.condition)
@@ -676,7 +691,7 @@ class Ps1DeadCodeElimination(Transformer):
             if node.initializer is not None:
                 result.append(_hoisted_initializer(node.initializer))
             return result
-        body = None if node.body is None else _body_running_once(node.body.body, dominance)
+        body = None if node.body is None else _body_running_once(node.body.body, dominance, dispatch)
         if body is not None:
             result = []
             if node.initializer is not None:
