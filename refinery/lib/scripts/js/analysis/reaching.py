@@ -45,6 +45,7 @@ from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
 from refinery.lib.scripts.js.analysis.cfg import CfgNode, ControlFlowGraph
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
+from refinery.lib.scripts.js.analysis.evaluation import walk_run
 from refinery.lib.scripts.js.analysis.model import Binding
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
@@ -82,17 +83,18 @@ class _BodyEvents(NamedTuple):
     """
     The points of one graph's body at which code other than the body's statements may run, each
     with the control-flow node that evaluates it, or with `None` where the graphs place it nowhere.
-    One inside a nested function locates into that function's own graph and is left out.
+    Only the run of the body is read (`refinery.lib.scripts.js.analysis.evaluation.walk_run`): one
+    inside a nested function or the initializer of a field belongs to that run and is left out.
 
-    The *calls* are its call expressions. A call the graphs do not place at all is kept: it is
-    evaluated when the body around it is invoked, which is a point no node of this graph stands for
-    — a parameter default of a function *expression* is one — so it can neither be ordered here
-    nor dismissed, and the caller has to refuse rather than drop the kill. The *suspensions* are
-    the points at which its run may stop and resume later, with other code run in between: an
-    `await`, a `yield`, the head of a `for await` loop, which awaits each value, every point at
-    which a run leaves the body of such a loop other than through its head, which waits for the
-    iterator to close (`_exits_that_close`), and the `return` of a value in an async generator,
-    which awaits that value before any `finally` around it runs.
+    The *calls* are its call expressions. A call of the run the graphs do not place at all is kept:
+    a parameter default of the body's own function is evaluated when the body is invoked, which is
+    a point no node of this graph stands for, so it can neither be ordered here nor dismissed, and
+    the caller has to refuse rather than drop the kill. The *suspensions* are the points at which
+    its run may stop and resume later, with other code run in between: an `await`, a `yield`, the
+    head of a `for await` loop, which awaits each value, every point at which a run leaves the body
+    of such a loop other than through its head, which waits for the iterator to close
+    (`_exits_that_close`), and the `return` of a value in an async generator, which awaits that
+    value before any `finally` around it runs.
     """
     calls: list[tuple[JsCallExpression, CfgNode | None]]
     suspensions: list[tuple[Node, CfgNode | None]]
@@ -373,7 +375,7 @@ class ReachingModel:
                 and is_async_function(owner)
                 and is_generator_function(owner)
             )
-            for node in owner.walk():
+            for node in walk_run(owner):
                 if isinstance(node, JsCallExpression):
                     located = self.dominance.locate(node)
                     if located is None:

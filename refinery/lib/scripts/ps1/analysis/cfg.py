@@ -100,13 +100,15 @@ FUNCTION_NODES = (Ps1ScriptBlock,)
 #: used for a `static` one, and never at the class statement it is written in.
 DEFERRED_NODES = (Ps1PropertyMember,)
 
+_RUNS_APART = (*FUNCTION_NODES, *DEFERRED_NODES)
+
 
 def _runs_apart(holder: Node, part: Node) -> bool:
     """
     Whether *part* of *holder* runs at a time of its own: every part of a script block runs when
     the block is invoked, and every part of a class property when it is initialized.
     """
-    return isinstance(holder, (*FUNCTION_NODES, *DEFERRED_NODES))
+    return isinstance(holder, _RUNS_APART)
 
 
 def _owns_a_graph(node: Node) -> bool:

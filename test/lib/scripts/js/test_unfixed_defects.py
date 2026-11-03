@@ -799,6 +799,120 @@ class TestAFinderWhoseGlobalReturnACaughtThrowSkipsIsKept(TestBase):
         self.assertEqual(before_and_after(source), (('undefined\n', None), ('undefined\n', None)))
 
 
+#: Finders that store the global object into a local and then store something else into it or
+#: update it, mapped to what Node prints for them: the local no longer holds the global object.
+A_FINDER_WHOSE_LOCAL_HOLDS_THE_GLOBAL_OBJECT_ONLY_FOR_A_WHILE: dict[str, Program] = {
+    'a store of another value after the global object, in an arrow': Program(
+        a_program("""
+            function finder() {
+              var fs = [(g) => ((g = globalThis) && (g = 1)) || g];
+              return fs[0]();
+            }
+            var G = finder();
+            console.log(G === globalThis);
+            """),
+        prints('false'),
+    ),
+    'an update after the global object is stored': Program(
+        a_program("""
+            function finder() { var g = globalThis; g++; return g; }
+            var G = finder();
+            console.log(G === globalThis);
+            """),
+        prints('false'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFinderWhoseLocalHoldsTheGlobalObjectOnlyForAWhileIsKept(TestBase):
+    """
+    The finder fold takes a local of the finder to hold the global object wherever one store to it
+    stores the global object, the root `TestAFinderWhoseGlobalReturnACaughtThrowSkipsIsKept` pins
+    for a store that threw. A later store of another value, or an update, leaves the local holding
+    something else, and the call is still replaced by `globalThis`.
+    """
+
+    @wontfix(
+        'a finder stores the global object into its local and returns it; none stores another '
+        'value into that local afterwards or updates it, and the form a real finder takes, a '
+        'store that threw, is tracked by TestAFinderWhoseGlobalReturnACaughtThrowSkipsIsKept'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_FINDER_WHOSE_LOCAL_HOLDS_THE_GLOBAL_OBJECT_ONLY_FOR_A_WHILE.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
+#: Finders whose `try` block runs code that writes a variable outside the finder without a call the
+#: fold checks, mapped to what Node prints for them: the finder returns the global object, and the
+#: write has happened once.
+A_FINDER_RUNNING_CODE_THAT_WRITES_OUTSIDE_IT: dict[str, Program] = {
+    'a getter of an object literal': Program(
+        a_program("""
+            var hits = 0;
+            function getGlobal() {
+              var h = globalThis;
+              try { ({ get x() { hits = hits + 1; return 0; } }).x; } catch (e) {}
+              return h;
+            }
+            var G = getGlobal();
+            console.log(G === globalThis, hits);
+            """),
+        prints('true 1'),
+        Reading.SCRIPT,
+    ),
+    'a function written inline and run through call': Program(
+        a_program("""
+            var hits = 0;
+            function getGlobal() {
+              var h = globalThis;
+              try { (function () { hits = hits + 1; }).call(null); } catch (e) {}
+              return h;
+            }
+            var G = getGlobal();
+            console.log(G === globalThis, hits);
+            """),
+        prints('true 1'),
+        Reading.SCRIPT,
+    ),
+    'a function written inline and run as the tag of a template': Program(
+        a_program("""
+            var hits = 0;
+            function getGlobal() {
+              var h = globalThis;
+              try { (function () { hits = hits + 1; })`x`; } catch (e) {}
+              return h;
+            }
+            var G = getGlobal();
+            console.log(G === globalThis, hits);
+            """),
+        prints('true 1'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFinderRunningCodeThatWritesOutsideItIsKept(TestBase):
+    """
+    The finder fold replaces a call of the finder by `globalThis`, which drops whatever else the
+    body does. It refuses a finder that constructs or that calls a function it does not hold, and
+    lets every other unknown call pass, since a host's alias is read through one. A getter, a
+    function written inline and run through `call`, and a function written inline as the tag of a
+    template run code the fold never checks, so the write that code makes is dropped.
+    """
+
+    @wontfix(
+        'a finder reads the names a host may give the global object, in a try block or a test; '
+        'none runs a getter, a call through call or a tagged template that writes outside it'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_FINDER_RUNNING_CODE_THAT_WRITES_OUTSIDE_IT.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.read(), row.required())
+
+
 #: Programs whose `try` block reads `window` before it stores `r`, so where the host lacks `window`
 #: the store never runs, and whose `catch` clause then leaves by a throw or a `return` before the
 #: `finally` reads `r`, mapped to what Node prints: the value `r` held before the store.
@@ -5349,6 +5463,53 @@ class TestAScriptKeptForItsValueEndsOnTheValueOfItsLastStore(TestBase):
                     completion_values([deobfuscated], evaluation),
                     completion_values([source], evaluation),
                 )
+
+
+#: Programs calling a function whose only effect is a write to a local of its own, made by a
+#: function it declares, where the function also declares a class whose members read nothing,
+#: mapped to the text a deobfuscation that sees the call does nothing writes for each.
+A_CALL_WRITING_ONLY_ITS_OWN_LOCAL_BESIDE_A_CLASS = {
+    a_program("""
+        function f() { var t = 0; function inc() { t++; } inc(); class A { v = 1; } return t; }
+        f();
+        console.log(1);
+        """): 'console.log(1);',
+    a_program("""
+        function f() {
+          var t = 0;
+          function inc() { t++; }
+          inc();
+          class A { m() { return 1; } }
+          return t;
+        }
+        f();
+        console.log(1);
+        """): 'console.log(1);',
+}
+
+
+class TestACallWritingOnlyItsOwnLocalBesideAClassIsRemoved(TestBase):
+    """
+    A write a function makes to its own local, through a function it declares, is left out of what
+    a call of it does only where no function or field initializer written inside it can run after
+    the call returns (`refinery.lib.scripts.js.analysis.effects.EffectModel._keeps_its_closures`).
+    A method or a field initializer of a class runs whenever the class is used, so a class written
+    inside the function makes every such write count, although nothing in the class reads the
+    local: the call stays. Without the class, the same call is removed.
+    """
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_for_each_text_what_it_prints_for_the_program(self):
+        rows = A_CALL_WRITING_ONLY_ITS_OWN_LOCAL_BESIDE_A_CLASS
+        self.assertEqual(
+            {source: behavior(source) for source in rows},
+            {source: behavior(text) for source, text in rows.items()},
+        )
+
+    @unittest.expectedFailure
+    def test_each_program_is_folded(self):
+        rows = A_CALL_WRITING_ONLY_ITS_OWN_LOCAL_BESIDE_A_CLASS
+        self.assertEqual({source: folded(source) for source in rows}, rows)
 
 
 #: A function flattened into a generator whose run makes a class with a static block declaring a

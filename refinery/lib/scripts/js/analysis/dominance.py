@@ -55,7 +55,6 @@ from refinery.lib.scripts.js.analysis.cfg import (
 from refinery.lib.scripts.js.analysis.evaluation import (
     enclosing_run,
     evaluated_whenever_completed,
-    owns_a_run,
 )
 from refinery.lib.scripts.js.analysis.intrinsics import (
     SPECIES_KEYS,
@@ -463,7 +462,7 @@ class DominanceModel(DominatorModel):
                         if not self._statement_completes_before(site, point):
                             ordered[current] = False
                         continue
-                    if not owns_a_run(activation):
+                    if activation is self.model.root:
                         ordered[current] = False
                         continue
                 if (known := orders.get(activation)) is not None:
@@ -530,7 +529,7 @@ class DominanceModel(DominatorModel):
                     known[function] = True
                     return True
                 if (
-                    owns_a_run(activation)
+                    activation is not self.model.root
                     and activation not in seen
                     and known.get(activation) is None
                 ):
@@ -771,7 +770,7 @@ class DominanceModel(DominatorModel):
         owner = self._activation_of(point)
         if (site := self._site_in(definition, owner)) is not None:
             return self._statement_completes_before(site, point)
-        if owns_a_run(owner):
+        if owner is not self.model.root:
             return self._ordered(definition, owner)
         return False
 

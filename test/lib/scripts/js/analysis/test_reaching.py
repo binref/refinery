@@ -354,6 +354,22 @@ class TestReaching(TestBase):
             'var x = 1; function f() { var r = x; async function g() { await 0; } return r; } x = 2;'
         ))
 
+    def test_reaches_past_a_default_calling_a_writer_in_a_function_nothing_calls(self):
+        for source in (
+            'var x = 1; function m() { x = 2; } function g(a = m()) { return a; } x;',
+            'var x = 1; function m() { x = 2; } var g = function (a = m()) { return a; }; x;',
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(self._query(source))
+
+    def test_does_not_reach_past_a_call_whose_default_calls_a_writer(self):
+        for source in (
+            'var x = 1; function m() { x = 2; } function g(a = m()) { return a; } g(); x;',
+            'var x = 1; function m() { x = 2; } var g = function (a = m()) { return a; }; g(); x;',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._query(source))
+
     def _foreign_kills(self, source: str) -> tuple[Node, list[Node] | None]:
         """
         The tree of *source* and the points

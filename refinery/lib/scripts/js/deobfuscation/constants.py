@@ -317,24 +317,28 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
 
     Non-interference, per fact the decisions read:
 
-    - `ReachingModel.value_preserved` — whether a definition's value reaches a read unchanged.
-      Batch edits remove reads, write sites, and declarators; none adds a kill, so a value that
-      reached a read unchanged still does. A declined read — one a kill stood between — may become
-      inlinable once the edit removing the kill applies, which the next round decides; the refusal
-      the batch acted on stays valid.
-    - `DominanceModel.runs_before_function` and `runs_before_every_invocation` — whether a value
-      runs before a function, or before every invocation of one. Batch edits remove statements and
-      reads, so the set of invocation points can only shrink; a value that preceded them all still
-      does.
-    - The effect summaries — `EffectModel.mutators_escape`, `EffectModel.static_callee`,
-      `EffectModel.function_can_mutate`, `EffectModel.some_function_can_mutate` — over functions
-      the batch never rewrites. Removing a call site removes a mutation opportunity rather than
-      adding one, so a function that could not write a binding still cannot.
+    - `refinery.lib.scripts.js.analysis.reaching.ReachingModel.value_preserved` — whether a
+      definition's value reaches a read unchanged. Batch edits remove reads, write sites, and
+      declarators; none adds a kill, so a value that reached a read unchanged still does. A
+      declined read — one a kill stood between — may become inlinable once the edit removing the
+      kill applies, which the next round decides; the refusal the batch acted on stays valid.
+    - `refinery.lib.scripts.js.analysis.dominance.DominanceModel.runs_before_function` and
+      `refinery.lib.scripts.js.analysis.dominance.DominanceModel.runs_before_every_invocation` —
+      whether a value runs before a function, or before every invocation of one. Batch edits
+      remove statements and reads, so the set of invocation points can only shrink; a value that
+      preceded them all still does.
+    - The effect summaries over functions the batch never rewrites:
+      `refinery.lib.scripts.js.analysis.effects.EffectModel.mutators_escape`,
+      `refinery.lib.scripts.js.analysis.effects.EffectModel.static_callee`,
+      `refinery.lib.scripts.js.analysis.effects.EffectModel.function_can_mutate` and
+      `refinery.lib.scripts.js.analysis.effects.EffectModel.some_function_can_mutate`. Removing
+      a call site removes a mutation opportunity rather than adding one, so a function that could
+      not write a binding still cannot.
     - The reference counts that gate removals: no removal decision reads one — a count taken
       before the round's plans apply cannot see the reads another plan of the same round deletes,
       and a substitution whose value is an identifier adds a read the entry snapshot never saw —
       so the plan counts at apply time, on the tree its substitutions leave behind, and
-      `is_attached` refuses the substitutions an earlier plan detached.
+      `refinery.lib.scripts.is_attached` refuses the substitutions an earlier plan detached.
     - The values the substitutions write: each is a node of the entry tree, an initializer that a
       substitution of the same round can rewrite in place before the one writing it lands. In
       `var x = p; var y = x; f(); g(y);` the round substitutes `p` for the `x` in `y`'s initializer
@@ -387,20 +391,22 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             (declarator, constant_value)
 
         Also returns the set of fully rejected (mutated) names — those reassigned, updated,
-        destructured, or written by a run that escapes (`EffectModel.mutators_escape`), be it a
-        function or the initializer of a field, whose value cannot be pinned to a single
-        definition. A candidate a dynamic scope could rewrite with no static write site is no longer
-        rejected outright: the reaching query orders every located rebind hazard
-        (`SemanticModel.binding_reflection_kill_sites`) against each read, so the reads that stand
-        before the hazard fold and the ones after it stay. The one rebind that keeps its rejection
-        is the nodeless one — the write a call makes on entry, which the text does not spell and
-        no ordering can place (`binding_dynamic_rebind_sites` answering `None`) — and a candidate
-        the analyst declared a host reaches by name is rejected the same way: the host reads it once
-        the file has run, and may have rewritten it before any read the substitution would fold, so
-        neither its declarator nor any read of it may be replaced. A write through a global-object
-        alias is rejected alongside. The points past which a surviving candidate's value no longer
-        holds are not enumerated here; the reaching query derives them from the effect model at
-        each use.
+        destructured, or written by a run that escapes
+        (`refinery.lib.scripts.js.analysis.effects.EffectModel.mutators_escape`), be it a function
+        or the initializer of a field, whose value cannot be pinned to a single definition. A
+        candidate a dynamic scope could rewrite with no static write site is no longer rejected
+        outright: the reaching query orders every located rebind hazard
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.binding_reflection_kill_sites`)
+        against each read, so the reads that stand before the hazard fold and the ones after it
+        stay. The one rebind that keeps its rejection is the nodeless one — the write a call makes
+        on entry, which the text does not spell and no ordering can place
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.binding_dynamic_rebind_sites`
+        answering `None`) — and a candidate the analyst declared a host reaches by name is rejected
+        the same way: the host reads it once the file has run, and may have rewritten it before any
+        read the substitution would fold, so neither its declarator nor any read of it may be
+        replaced. A write through a global-object alias is rejected alongside. The points past
+        which a surviving candidate's value no longer holds are not enumerated here; the reaching
+        query derives them from the effect model at each use.
         """
         candidates: dict[str, list[_CandidateEntry]] = {}
         rejected: set[str] = set()

@@ -1168,10 +1168,7 @@ class EffectModel:
         names = self.model.function_names(func)
         if names is None:
             return True
-        if (
-            isinstance(func, FUNCTION_NODES) and is_generator_function(func)
-            or self.model.reached_without_its_name(func)
-        ):
+        if is_generator_function(func) or self.model.reached_without_its_name(func):
             return True
         for binding in names.bindings:
             if (
