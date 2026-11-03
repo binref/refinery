@@ -603,3 +603,16 @@ class TestPs1AMemberOperatorPrintsBackAgainstTheValueItBoundTo(TestBase):
             '$x <# c #>.5' : '$x\n.5',
             '$x<# c #>.5'  : '$x.5',
         })
+
+
+class TestPs1AScriptBlockPrintsBackAsTheTextItRendersTo(TestBase):
+    """
+    A script block renders as the source text between its braces, so a script that writes one out
+    prints that text, and laying the block out anew changes what the script prints.
+    """
+
+    @unittest.expectedFailure
+    def test_a_block_the_script_writes_out_keeps_the_text_between_its_braces(self):
+        # Measured on 5.1, this writes ` K `.
+        printed = _written(Ps1Parser('$b = { K }; Write-Host $b').parse())
+        self.assertIn('$b = { K }', printed)

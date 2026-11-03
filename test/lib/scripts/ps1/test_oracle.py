@@ -168,11 +168,25 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
         'Both handlers are removed. 5.1 hands the cast to the first untyped `trap`, which continues, '
         'and never to the second, so `after` runs with and without them; the removal only lets '
         'through the record the first one suppressed.',
-    "trap { continue }; $out = New-Object byte[] 3; "
-    "for ($i = 0; $i -lt 3; $i++) { $out[$i] = 7 -bxor $k[$i % $k.Length] }; Write-Host \"out=$($out -join ',')\"":
-        'The handler is removed. `$k` is unset, so every index divides by zero: with the `trap` the '
-        'first failure resumes past the loop, without it each of the three is reported and stepped '
-        'over, and `$out` holds zeros either way. Only the error records differ.',
+    "trap { continue }; $s = { throw 'x' }; [int]'a'; Write-Host 'after'":
+        'The handler is removed. The block holding the `throw` is stored and never run, so the cast '
+        'is the one thing that raises, and `after` runs with and without the `trap`.',
+    "trap { continue }; if ($true) { trap { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'after'":
+        'Both handlers are removed. The inner `trap` takes the cast and continues with `tail`, which '
+        'is where 5.1 goes without it, and the outer one is never reached.',
+    "trap { continue }; foreach ($q in 1, 2) { trap { continue }; [int]'a'; Write-Host \"tail $q\" }; "
+    "Write-Host 'after'":
+        'Both handlers are removed. The inner `trap` takes the cast in each pass and continues with '
+        'the line after it, so both `tail` lines and `after` run either way, and the removal lets '
+        'through one record per pass.',
+    "trap { continue }; if ($true) { trap [System.IO.IOException] { continue }; "
+    "if ($true) { trap { continue }; [int]'a' }; Write-Host 'mid' }; Write-Host 'after'":
+        'All three handlers are removed. The innermost `trap` takes the cast and continues past it, '
+        'so neither the typed one nor the outer one is reached, and `mid` and `after` run either way.',
+    "trap { continue }; if ($true) { trap { break }; "
+    "if ($true) { trap { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'mid' }; Write-Host 'after'":
+        'All three handlers are removed. The innermost `trap` takes the cast and continues, so the '
+        '`break` above it never fires, and `tail`, `mid` and `after` run either way.',
 }
 
 #: Snippets whose deobfuscation does not behave like the snippet. Each is a semantics defect: the
@@ -243,6 +257,10 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'matches nothing writes a `CommandNotFoundException` to the error stream whatever is done '
         'with the result, so the output writes an error record the snippet does not. A pattern '
         'that matches nothing writes none, which is the neighbouring `*vnMT*` row.',
+    "function K { $Null = 1 }; K; $b = { K }; Write-Host $b":
+        'The snippet writes ` K `, the text between the braces of the block, and the output writes '
+        'that block laid out over three lines. The printer lays out every block anew, so parsing '
+        'and printing back alone changes what a script that writes a block out prints.',
     "$env:B = 'function K { Write-Host P }'; Invoke-Expression $env:B; function K { 42 }; "
     "$x = K; Write-Output $x; $env:C = 'K'; Invoke-Expression $env:C":
         'The `function` definition shadows one an `Invoke-Expression` above it bound under the same '
