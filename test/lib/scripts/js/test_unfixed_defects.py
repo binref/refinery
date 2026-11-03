@@ -5512,6 +5512,43 @@ class TestACallWritingOnlyItsOwnLocalBesideAClassIsRemoved(TestBase):
         self.assertEqual({source: folded(source) for source in rows}, rows)
 
 
+#: Programs holding a branch in a static block of a class that the block never takes, mapped to the
+#: text a deobfuscation that removes the branch writes for each.
+A_BRANCH_A_STATIC_BLOCK_NEVER_TAKES = {
+    a_program("""
+        class C { static { if (false) { console.log(1); } else { console.log(2); } } }
+        """): inspect.cleandoc("""
+        class C {
+          static {
+            console.log(2);
+          }
+        }
+        """),
+}
+
+
+class TestABranchAStaticBlockNeverTakesIsRemoved(TestBase):
+    """
+    The removal of code that never runs
+    (`refinery.lib.scripts.js.deobfuscation.deadcode.JsDeadCodeElimination`) visits the statement
+    lists of the script, of each block and of each case, but not that of a static block of a class,
+    so a branch the block never takes stays where the same branch in a function body goes.
+    """
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_for_each_text_what_it_prints_for_the_program(self):
+        rows = A_BRANCH_A_STATIC_BLOCK_NEVER_TAKES
+        self.assertEqual(
+            {source: behavior(source) for source in rows},
+            {source: behavior(text) for source, text in rows.items()},
+        )
+
+    @unittest.expectedFailure
+    def test_each_program_is_folded(self):
+        rows = A_BRANCH_A_STATIC_BLOCK_NEVER_TAKES
+        self.assertEqual({source: folded(source) for source in rows}, rows)
+
+
 #: A function flattened into a generator whose run makes a class with a static block declaring a
 #: name its scope object has, mapped to what Node prints for it: inside the block, the name is the
 #: block's own.

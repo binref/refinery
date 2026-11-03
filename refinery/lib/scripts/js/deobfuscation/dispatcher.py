@@ -36,7 +36,14 @@ from enum import Enum, auto
 from functools import partial
 from typing import TYPE_CHECKING, Callable, NamedTuple, TypeVar
 
-from refinery.lib.scripts import BodyEdit, Node, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts import (
+    BodyEdit,
+    ListIndex,
+    ListRemoval,
+    Node,
+    _remove_from_parent,
+    _replace_in_parent,
+)
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.model import (
     enclosing_operator,
@@ -542,14 +549,16 @@ class _Dispatch:
     One dispatch read: the expression it replaces, the reference to the router it consumes, and the
     key it selects. It denotes the selected function where *arguments* is `None` and a call of it
     with *arguments* otherwise; *payload* is the payload reference of the assignment in front that
-    the replacement takes away. A call whose result is called as a method of the wrapper keeps the
-    wrapper around it under *receiver*, which is the receiver that call sees.
+    the replacement takes away, and *store* the statement holding that assignment where it stands
+    as a statement of its own, which goes with it. A call whose result is called as a method of the
+    wrapper keeps the wrapper around it under *receiver*, which is the receiver that call sees.
     """
     node: Node
     reference: JsIdentifier
     key: str
     arguments: list[Expression] | None
     payload: JsIdentifier | None = None
+    store: JsExpressionStatement | None = None
     receiver: str | None = None
 
     def replacement(self, name: str) -> Expression:
@@ -569,31 +578,42 @@ class _Dispatch:
 
 class _PayloadInFront(NamedTuple):
     """
-    An assignment of an array to the payload paired with the dispatch after it: the pair itself, the
-    payload reference it assigns, and the elements it assigns.
+    An assignment of an array to the payload that runs right before the dispatch after it: what the
+    call replacing the dispatch takes the place of, the payload reference it assigns, the elements
+    it assigns, and the statement holding it where it stands as a statement of its own.
     """
-    pair: JsSequenceExpression
+    site: Node
     target: JsIdentifier
     elements: list[Expression | None]
+    statement: JsExpressionStatement | None
 
 
 def _payload_in_front(
     expression: Node,
     payload: Binding,
     model: SemanticModel,
+    lists: ListIndex,
 ) -> _PayloadInFront | None:
     """
-    The assignment of an array to the payload that *expression* follows in a pair, or `None` where
-    it follows none.
+    The assignment of an array to the payload that runs right before *expression*, or `None` where
+    none does. The two make a pair, of which *expression* is the second half, or they are the two
+    statements that pair makes standing as a statement
+    (`refinery.lib.scripts.js.deobfuscation.sequences.JsSequenceStatementSplitting`), of which
+    *expression* makes up the second.
     """
-    pair = enclosing_operator(expression)
-    if (
-        not isinstance(pair, JsSequenceExpression)
-        or len(pair.expressions) != 2
-        or strip_parens(pair.expressions[1]) is not expression
+    holder = enclosing_operator(expression)
+    statement = None
+    if isinstance(holder, JsSequenceExpression):
+        if len(holder.expressions) != 2 or strip_parens(holder.expressions[1]) is not expression:
+            return None
+        site, store = holder, holder.expressions[0]
+    elif (
+        isinstance(holder, JsExpressionStatement)
+        and isinstance(statement := lists.preceding(holder), JsExpressionStatement)
     ):
+        site, store = expression, statement.expression
+    else:
         return None
-    store = pair.expressions[0]
     if (
         isinstance(store, JsAssignmentExpression)
         and store.operator == '='
@@ -601,7 +621,7 @@ def _payload_in_front(
         and model.resolve(target) is payload
         and isinstance(elements := store.right, JsArrayExpression)
     ):
-        return _PayloadInFront(pair, target, elements.elements)
+        return _PayloadInFront(site, target, elements.elements, statement)
     return None
 
 
@@ -746,13 +766,14 @@ def _read_dispatch(
     dispatcher: _Dispatcher,
     entries: dict[str, _Entry],
     cache: ModelCache,
+    lists: ListIndex,
 ) -> _Dispatch | None:
     """
     The dispatch *reference* is the callee of, or `None` where it is not one this pass reads. The
     key selects the entry and the flags behind it what the dispatch denotes: the create flag the
     entry itself, the clear flag a call of it with the payload emptied, and any other flag a call
-    with what the payload holds, which is only known where the dispatch is the second half of a pair
-    assigning it. The wrap flag puts the result under the wrap key, so a dispatch spelling it is
+    with what the payload holds, which is only known where an assignment of it runs right before
+    the dispatch (`_payload_in_front`). The wrap flag puts the result under the wrap key, so a dispatch spelling it is
     read only together with the access on that key, and a `new` dispatch only with it, since `new`
     hands back what the router returned only where that is an object. Every argument after the
     third is dropped, so it must run nothing, and a create dispatch takes none: the router reads a
@@ -798,7 +819,7 @@ def _read_dispatch(
         for argument in dispatch.arguments[3:]
     ):
         return None
-    in_front = _payload_in_front(expression, dispatcher.payload, cache.model)
+    in_front = _payload_in_front(expression, dispatcher.payload, cache.model, lists)
     if flag == dispatcher.create_flag:
         if in_front is not None or len(dispatch.arguments) > 3:
             return None
@@ -818,7 +839,14 @@ def _read_dispatch(
         make_undefined_expression() if element is None else element
         for element in in_front.elements
     ]
-    return _Dispatch(in_front.pair, reference, key, arguments, payload=in_front.target)
+    return _Dispatch(
+        in_front.site,
+        reference,
+        key,
+        arguments,
+        payload=in_front.target,
+        store=in_front.statement,
+    )
 
 
 class JsDispatcherUnwrapper(ScopeProcessingTransformer):
@@ -868,8 +896,9 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
                 return
             entries[key] = entry
         dispatches: list[_Dispatch] = []
+        lists = ListIndex()
         for reference in model.references(dispatcher.binding):
-            dispatch = _read_dispatch(reference, dispatcher, entries, cache)
+            dispatch = _read_dispatch(reference, dispatcher, entries, cache, lists)
             if dispatch is None:
                 return
             dispatches.append(dispatch)
@@ -927,6 +956,11 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
             ]
         for dispatch in sorted(dispatches, key=lambda dispatch: _depth(dispatch.node)):
             _replace_in_parent(dispatch.node, dispatch.replacement(names[dispatch.key]))
+        stores = ListRemoval()
+        for dispatch in dispatches:
+            if dispatch.store is not None:
+                stores.remove(dispatch.store)
+        stores.apply()
         edit = BodyEdit(scope, 'body')
         edit.splice(
             dispatcher.declaration,

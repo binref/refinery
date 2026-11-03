@@ -995,11 +995,7 @@ class ListIndex:
         """
         return parent in self._indexes
 
-    def owning_list(self, node: Node) -> tuple[Node, str] | None:
-        """
-        The parent and attribute name of the child list `node` sits in, or `None` when it sits in
-        none.
-        """
+    def _place_in_a_list(self, node: Node) -> tuple[Node, _Place, int] | None:
         parent = node.parent
         if parent is None:
             return None
@@ -1009,7 +1005,29 @@ class ListIndex:
             place = self._index(parent).get(id(node))
         if place is None or place.position is None or place.slot is not None:
             return None
+        return parent, place, place.position
+
+    def owning_list(self, node: Node) -> tuple[Node, str] | None:
+        """
+        The parent and attribute name of the child list `node` sits in, or `None` when it sits in
+        none.
+        """
+        if (held := self._place_in_a_list(node)) is None:
+            return None
+        parent, place, _ = held
         return parent, place.name
+
+    def preceding(self, node: Node) -> Node | None:
+        """
+        The node right before `node` in the child list it sits in, or `None` when it sits in none
+        or first in one.
+        """
+        if (held := self._place_in_a_list(node)) is None:
+            return None
+        parent, place, position = held
+        if not position or not isinstance(item := vars(parent)[place.name][position - 1], Node):
+            return None
+        return item
 
     def clear(self) -> None:
         self._indexes.clear()

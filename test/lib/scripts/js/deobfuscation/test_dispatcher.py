@@ -29,6 +29,7 @@ from refinery.lib.scripts.js.model import (
     JsExpressionStatement,
     JsFunctionDeclaration,
 )
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 #: The length helper the obfuscation declares beside its router when it records the length of each
@@ -705,6 +706,55 @@ class TestEveryDispatchIsRewrittenToWhatItDenotes(TestBase):
             **KEYS_THAT_ARE_NOT_FREE_NAMES,
         }
         self.assertEqual({source: unwrapped(source) for source in rows}, {source: True for source in rows})
+
+
+#: Programs calling an entry with arguments as a statement of its own, which the obfuscation writes
+#: as a statement that is the assignment of the payload and the dispatch joined by a comma, mapped
+#: to what Node prints for them: the pair as the whole statement, in parentheses, as the body of a
+#: branch, and followed by another part.
+A_DISPATCH_STANDING_AS_A_STATEMENT = {
+    a_dispatcher(
+        ['"k1": function () { var [a, b] = p; console.log(a + b); }'],
+        ['p = [1, 2], d("k1");'],
+    ): '3\n',
+    a_dispatcher(
+        ['"k1": function () { var [a, b] = p; console.log(a + b); }'],
+        ['(p = [3, 4], d("k1"));'],
+    ): '7\n',
+    a_dispatcher(
+        ['"k1": function () { var [a, b] = p; console.log(a + b); }'],
+        ['function run(c) { if (c) p = [5, 6], d("k1"); }', 'run(1);', 'run(0);'],
+    ): '11\n',
+    a_dispatcher(
+        ['"k1": function () { var [a, b] = p; console.log(a + b); }'],
+        ['p = [1, 1], d("k1"), console.log("after");'],
+    ): '2\nafter\n',
+}
+
+
+class TestADispatchStandingAsAStatementIsRewritten(TestBase):
+    """
+    A call of an entry standing as a statement becomes a statement that is a pair, which the
+    deobfuscation writes as two statements before the router is read
+    (`refinery.lib.scripts.js.deobfuscation.sequences.JsSequenceStatementSplitting`). The
+    assignment of the payload in the first then runs right before the dispatch in the second, as it
+    does in the pair.
+    """
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_each_program_still_prints(self):
+        rows = A_DISPATCH_STANDING_AS_A_STATEMENT
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_the_router_is_gone_after_the_deobfuscation(self):
+        rows = A_DISPATCH_STANDING_AS_A_STATEMENT
+        self.assertEqual(
+            {source: 'function d(' in deobfuscate_source(source, execution=ExecutionModel.module) for source in rows},
+            {source: False for source in rows},
+        )
 
 
 #: A program that dispatches through a callee name built by an expression rather than written as a
