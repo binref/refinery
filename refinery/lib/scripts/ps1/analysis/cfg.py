@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Sequence
+from typing import Callable, Sequence
 
 from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.analysis.cfg import (
@@ -44,6 +44,12 @@ from refinery.lib.scripts.analysis.cfg import (
     ControlFlowGraph,
     ControlFlowModel,
     build_control_flow,
+)
+from refinery.lib.scripts.ps1.analysis.dispatch import (
+    Ps1CallSites,
+    Ps1Dispatch,
+    Ps1ErrorKind,
+    preferences_of,
 )
 from refinery.lib.scripts.ps1.analysis.handlers import (
     Ps1TrapDisposition,
@@ -158,7 +164,7 @@ class Ps1TrapSet(Ps1TrapSelection):
     and a reader of `refinery.lib.scripts.analysis.cfg.ControlFlowGraph.completion_of` would read a
     statement that never completes as one the rest of the block cannot follow. `outward` is where an
     error goes that the set does not take, and where the errors it takes would go if none of it
-    were written.
+    were written. `owner` is the node holding the block.
     """
 
     def __init__(
@@ -169,6 +175,10 @@ class Ps1TrapSet(Ps1TrapSelection):
         traps: Sequence[Ps1TrapStatement],
     ):
         super().__init__(traps)
+        owner = traps[0].parent
+        if owner is None:
+            raise ValueError('a trap set stands in no statement list')
+        self.owner: Node = owner
         self.graph = graph
         self.statements = tuple(statements)
         self.entries = entries
@@ -183,12 +193,6 @@ class Ps1TrapSet(Ps1TrapSelection):
 
     def disposition(self, trap: Ps1TrapStatement) -> Ps1TrapDisposition:
         return self.dispositions[id(trap)]
-
-    def may_rethrow(self, trap: Ps1TrapStatement) -> bool:
-        """
-        Whether running the body of *trap* may hand the error it took back up with a `break`.
-        """
-        return Ps1TrapDisposition.RETHROWS in self.disposition(trap)
 
 
 @dataclass(eq=False, repr=False)
@@ -313,23 +317,26 @@ def _descended_bodies(statement: Node) -> list[list[Node]]:
 
 
 class _Builder(CfgBuilder):
+    """
+    The structure of one body: its handlers, `trap` sets, report frames and resumption slots, with
+    every route an error takes outward drawn as though it may take it. That is all a `trap` body
+    built for its disposition needs, since how the body ends reads no error edge; every graph a
+    consumer reads is drawn by `_RoutingBuilder`, which asks the evaluator where an error goes.
+    *dispositions* reads how the body of a `trap` ends.
+    """
+
     def __init__(
         self,
         owner: Node,
+        dispositions: Callable[[Ps1TrapStatement], Ps1TrapDisposition],
         descend: bool = False,
         trap_sets: dict[int, Ps1TrapSet] | None = None,
-        dispositions: dict[int, Ps1TrapDisposition] | None = None,
     ):
         super().__init__(owner)
         self._trap_body: _TrapBody | None = None
         self._descend = descend
         self._trap_sets = {} if trap_sets is None else trap_sets
-        self._dispositions = {} if dispositions is None else dispositions
-        session = session_of(owner)
-        self._throws_step_over = (
-            session.silenced
-            or session.silenced_by_a_call and not isinstance(owner, Ps1Script)
-        )
+        self._dispositions = dispositions
         self._open_sets: list[Ps1TrapSet] = []
         self._frames: list[_ReportFrame] = []
         self._trap_holders = _TrapHolders()
@@ -394,26 +401,44 @@ class _Builder(CfgBuilder):
         """
         A report node is not a handler: it stands for 5.1 reporting an error that was raised, and an
         edge into it makes what follows the statement it carries on after reachable. So only a point
-        that may fail is joined to one: a point evaluating nothing, as a `break` does, or only what
-        `refinery.lib.scripts.ps1.analysis.values.is_fault_free` clears, is not.
+        that `may_fail` is joined to one.
         """
-        if not isinstance(target, Ps1ReportNode):
+        return not isinstance(target, Ps1ReportNode) or self.may_fail(element)
+
+    @staticmethod
+    def may_fail(element: Node) -> bool:
+        """
+        Whether the point *element* stands for may raise an error, read off the point alone: the
+        head of a `foreach` may, since its loop variable may carry a type that rejects the value,
+        and any other point may unless it evaluates nothing, as a `break` does, or only what
+        `refinery.lib.scripts.ps1.analysis.values.is_fault_free` clears. A `throw` is routed by a
+        rule of its own.
+        """
+        if isinstance(element, Ps1ForEachLoop):
             return True
         operands = point_operands(element)
         return operands is None or not all(is_fault_free(operand) for operand in operands)
 
-    def _throw_target(self) -> CfgNode | None:
+    def lets_past(self, trap_set: Ps1TrapSet) -> bool:
         """
-        Where the error a `throw` raises goes: to the `try` or `trap` in force, else where its body
-        may run silently to the report node or past the `throw`, which is `None`, and else to the
-        body exit, since 5.1 ends the run on a `throw` nothing takes.
+        Whether the `trap` set *trap_set* may hand an error it is offered on to what guards its
+        block; read here as though it may.
         """
-        handler = self._handlers[-1] if self._handlers else None
-        if handler is not None and not isinstance(handler, Ps1ReportNode):
-            return handler
-        if self._throws_step_over:
-            return handler
-        return self.cfg.exit
+        return True
+
+    def throw(self, statement: Ps1ThrowStatement, frontier: list[CfgNode]) -> list[CfgNode]:
+        """
+        A `throw`, its error sent to the innermost handler in force; this builder always has one,
+        since it builds a `trap` body under the handler standing over it.
+        """
+        return self.terminate(statement, frontier, exceptional=True)
+
+    def reenter(self, trap_set: Ps1TrapSet, bodies: Sequence[CfgNode]) -> None:
+        """
+        Join the points of the bodies of *trap_set*, *bodies*, to the set itself where an error
+        raised in a `trap` body may be offered to its set again; read here as though it may not.
+        """
+        return None
 
     def _outward(self) -> CfgNode:
         """
@@ -442,11 +467,7 @@ class _Builder(CfgBuilder):
         Where blocks nest, the innermost one declaring a `trap` is the only set the error is offered
         to, which pushing that set on the handler stack already says. The set passes the error
         outward — to the `catch` or `trap` guarding the block, and to the body exit when nothing
-        guards it — exactly when it may fail to take it: every `trap` in it carrying a filter no
-        error is known to match, or one of them reaching the `break` that runs the body and
-        rethrows. Nothing else in a body reaches the exit on an exceptional edge without a handler
-        having been offered the error, which is what tells an error that ends the script apart from
-        one that is reported and stepped over.
+        guards it — exactly when it may fail to take it, which `lets_past` answers.
 
         A trap does not guard itself: an error raised inside a trap body is offered to whatever
         the set itself unwinds to, so the trap bodies are built under that and only the block's own
@@ -456,7 +477,9 @@ class _Builder(CfgBuilder):
         repeats. `refinery.lib.scripts.analysis.cfg.CfgBuilder.guarded` pops before building its
         `catch` bodies for the same reason. Where nothing guards the block, the trap body is built
         under `escape`: 5.1 reports an error raised in it and carries on after the statement holding
-        the block, as it does for one leaving a `try` or `catch` body.
+        the block, as it does for one leaving a `try` or `catch` body. Where a `trap` of the set may
+        run from inside a `try` statement of the block, an error its body raises leaves that `try`
+        statement and is offered to the set again, which `reenter` draws.
 
         **A trap body is built against an empty jump-target stack**, because 5.1 compiles one as a
         scope of its own: `break` in it ends the trap and rethrows, and `continue` in it resumes the
@@ -514,19 +537,16 @@ class _Builder(CfgBuilder):
             body_from = len(self.cfg.nodes)
             falls_through = self._body(trap.body, [trap_set.entry(trap)])
             handling += self.cfg.nodes[body_from:]
-            trap_set.dispositions[id(trap)] = trap_disposition(trap, self._dispositions)
+            trap_set.dispositions[id(trap)] = self._dispositions(trap)
             if trap_set.is_selectable(trap):
                 resumes += falls_through + built.resumes
-        escapes = (
-            not trap_set.takes_every_error()
-            or any(trap_set.may_rethrow(trap) for trap in trap_set.selectable)
-        )
+        self.reenter(trap_set, handling[len(entries):])
         self._handlers.pop()
         self._trap_body = enclosing
         self._targets = outer_targets
         self._pending_labels = outer_labels
         trap_set.outward = self._outward()
-        self.close_handler_set(list(chain), escapes=escapes)
+        self.close_handler_set(list(chain), escapes=self.lets_past(trap_set))
         self._handlers.append(chain[0])
         if not resumes:
             exits = self.sequence(statements, frontier)
@@ -658,13 +678,7 @@ class _Builder(CfgBuilder):
         if isinstance(statement, Ps1ExitStatement):
             return self.terminate(statement, frontier, exceptional=False)
         if isinstance(statement, Ps1ThrowStatement):
-            node = self.node(statement)
-            self.link(frontier, node)
-            target = self._throw_target()
-            if target is None:
-                return [node]
-            self.exceptional_edge(node, target)
-            return []
+            return self.throw(statement, frontier)
         if isinstance(statement, Ps1ReturnStatement):
             return self.terminate(statement, frontier, exceptional=False)
         if isinstance(statement, Ps1BreakStatement):
@@ -795,9 +809,100 @@ class _Builder(CfgBuilder):
         )
 
 
-def build_ps1_control_flow(root: Ps1Script, descend: bool = False) -> dict[int, ControlFlowGraph]:
+class _RoutingBuilder(_Builder):
     """
-    One control-flow graph per script block — see `FUNCTION_NODES` — and one for the script itself.
+    The graphs every consumer reads: the structure `_Builder` draws, with each route an error takes
+    outward of a `trap` set or a `throw` drawn where the evaluator *dispatch* says it goes, so that
+    the graphs and the evaluator answer alike. The evaluator is asked only what holds under any
+    caller of the body, since which calls run a body is read off these graphs.
+
+    No edge joins a point no handler guards to the end of the body: where an error raised there
+    leaves the body, it is the caller's, and a reader asking where it goes asks the evaluator.
+    """
+
+    def __init__(
+        self,
+        owner: Node,
+        dispatch: Ps1Dispatch,
+        descend: bool = False,
+        trap_sets: dict[int, Ps1TrapSet] | None = None,
+    ):
+        super().__init__(owner, dispatch.disposition, descend, trap_sets)
+        self._dispatch = dispatch
+
+    def lets_past(self, trap_set: Ps1TrapSet) -> bool:
+        """
+        Whether the `trap` set *trap_set* may hand an error it is offered on: see
+        `refinery.lib.scripts.ps1.analysis.dispatch.Ps1Dispatch.lets_past`.
+        """
+        return self._dispatch.lets_past(trap_set.owner)
+
+    def throw(self, statement: Ps1ThrowStatement, frontier: list[CfgNode]) -> list[CfgNode]:
+        """
+        A `throw`: its error goes to the `try` or `trap` in force; where none is, it goes where the
+        evaluator sends it: past the `throw` where the run may carry on after it, to the report
+        node where the run may carry on after the statement that node carries on after, and to
+        the end of the body where it may leave the body.
+        """
+        handler = self._handlers[-1] if self._handlers else None
+        if handler is not None and not isinstance(handler, Ps1ReportNode):
+            return super().throw(statement, frontier)
+        node = self.node(statement)
+        self.link(frontier, node)
+        fate = self._dispatch.fate_under_any_caller(statement, Ps1ErrorKind.THROWN)
+        if fate is None:
+            self.exceptional_edge(node, self.cfg.exit)
+            return []
+        if handler is not None and handler.carries_on_after in fate.carried:
+            self.exceptional_edge(node, handler)
+        if fate.leaves:
+            self.exceptional_edge(node, self.cfg.exit)
+        return [node] if statement in fate.carried else []
+
+    def reenter(self, trap_set: Ps1TrapSet, bodies: Sequence[CfgNode]) -> None:
+        """
+        Where a `trap` of *trap_set* may run from inside a `try` statement of its block, every point
+        of its body that may fail, and every `throw` there, joins the set: see
+        `refinery.lib.scripts.ps1.analysis.dispatch.Ps1Dispatch.traps_run_inside_a_try`.
+        """
+        if not self._dispatch.traps_run_inside_a_try(trap_set.owner):
+            return
+        entry = trap_set.chain[0]
+        for node in bodies:
+            element = node.element
+            if element is None:
+                continue
+            if isinstance(element, Ps1ThrowStatement) or self.may_fail(element):
+                self.exceptional_edge(node, entry)
+
+
+def dispatch_for(root: Node, sites: Ps1CallSites | None = None) -> Ps1Dispatch:
+    """
+    The dispatch of the script *root* stands in, under the error preferences its session may hold:
+    `Stop` where the script writes it to the preference anywhere, a value that silences an error
+    where it may set one, and in a called body also where a call may hand one in. How the body of a
+    `trap` ends is read off the body built on its own (`trap_disposition`), and the dispatch keeps
+    each answer. *sites* names the calls that may run each body; without it, every body may be
+    called with errors passed outward.
+    """
+    session = session_of(root)
+    called = session.silenced or session.silenced_by_a_call
+    return Ps1Dispatch(
+        preferences_of(session.stops, session.silenced),
+        preferences_of(session.stops, called),
+        partial(trap_disposition, memo={}),
+        sites,
+    )
+
+
+def build_ps1_control_flow(
+    root: Ps1Script,
+    descend: bool = False,
+    dispatch: Ps1Dispatch | None = None,
+) -> dict[int, ControlFlowGraph]:
+    """
+    One control-flow graph per script block — see `FUNCTION_NODES` — and one for the script itself,
+    drawn from *dispatch*, or from the `dispatch_for` *root* where none is given.
 
     With *descend* set, a statement carrying a `STATEMENT_LIST_EXPRESSIONS` construct is modelled at
     sub-statement granularity rather than as one atomic node — the finer graph the fault reader needs
@@ -805,15 +910,18 @@ def build_ps1_control_flow(root: Ps1Script, descend: bool = False) -> dict[int, 
     because every consumer but the fault reader wants the coarse one-statement-one-node graph, and
     turning it on changes only the graph the caller who asks for it reads.
     """
-    return _build(root, descend, {})
+    return _build(root, descend, {}, dispatch)
 
 
 def _build(
     root: Ps1Script,
     descend: bool,
     trap_sets: dict[int, Ps1TrapSet],
+    dispatch: Ps1Dispatch | None,
 ) -> dict[int, ControlFlowGraph]:
-    builder = partial(_Builder, descend=descend, trap_sets=trap_sets, dispositions={})
+    if dispatch is None:
+        dispatch = dispatch_for(root)
+    builder = partial(_RoutingBuilder, dispatch=dispatch, descend=descend, trap_sets=trap_sets)
     return build_control_flow(root, builder, _owns_a_graph)
 
 
@@ -829,12 +937,13 @@ def trap_disposition(trap: Ps1TrapStatement, memo: dict[int, Ps1TrapDisposition]
     every statement-list construct in it descended into, with a handler standing over it as the
     block's own set stands over it where the builder wires it — an error raised in a `trap` body
     leaves it rather than stepping over, whatever the preference says. The builder wiring the body
-    into the block it guards reads its disposition from here as well, so that the graph and the
-    dispatch evaluator read one answer.
+    into the block it guards reads its disposition through the dispatch evaluator, which reads it
+    from here, so that the graph and the evaluator read one answer.
     """
     found = memo.get(id(trap))
     if found is None:
-        found = memo[id(trap)] = _Builder(trap, descend=True, dispositions=memo).disposition_of(trap)
+        builder = _Builder(trap, partial(trap_disposition, memo=memo), descend=True)
+        found = memo[id(trap)] = builder.disposition_of(trap)
     return found
 
 
@@ -864,6 +973,13 @@ class Ps1ControlFlowModel(ControlFlowModel):
         return self._by_graph.get(graph, [])
 
 
-def build_control_flow_model(root: Ps1Script, descend: bool = False) -> Ps1ControlFlowModel:
+def build_control_flow_model(
+    root: Ps1Script,
+    descend: bool = False,
+    dispatch: Ps1Dispatch | None = None,
+) -> Ps1ControlFlowModel:
+    """
+    The graphs of `build_ps1_control_flow` with the `trap` sets the builder wired into them.
+    """
     trap_sets: dict[int, Ps1TrapSet] = {}
-    return Ps1ControlFlowModel(_build(root, descend, trap_sets), trap_sets)
+    return Ps1ControlFlowModel(_build(root, descend, trap_sets, dispatch), trap_sets)

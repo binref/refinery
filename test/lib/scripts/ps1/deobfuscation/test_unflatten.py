@@ -389,10 +389,10 @@ class TestPs1DeflatteningDoesNotRebuildTheModelPerMachine(TestPs1):
         built = 0
         build = cache.build_control_flow_model
 
-        def counted(root):
+        def counted(root, **kwargs):
             nonlocal built
             built += 1
-            return build(root)
+            return build(root, **kwargs)
 
         script = Ps1Parser(self._machines(count)).parse()
         with unittest.mock.patch.object(cache, 'build_control_flow_model', counted):

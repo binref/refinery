@@ -41,9 +41,11 @@ from test.lib.scripts.ps1.dispatch import (
     Try,
 )
 
-from refinery.lib.scripts import Node
+from refinery.lib.scripts import Block, Node
+from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
-from refinery.lib.scripts.ps1.analysis.dispatch import Ps1Dispatch, Ps1ErrorKind
+from refinery.lib.scripts.ps1.analysis.cfg import Ps1ControlFlowModel, Ps1ReportNode
+from refinery.lib.scripts.ps1.analysis.dispatch import Ps1Dispatch, Ps1ErrorKind, member_of
 from refinery.lib.scripts.ps1.analysis.effects import deletion_is_observable
 from refinery.lib.scripts.ps1.analysis.handlers import handler_acts
 from refinery.lib.scripts.ps1.deobfuscation import deobfuscate
@@ -957,3 +959,95 @@ class TestPs1TheBodyProgramsOnceContradictedAgreeWithTheModel(TestBase):
                 program, preference = programs[number]
                 with self.subTest(seed=seed, number=number):
                     self.assertEqual(disagreements(program, preference, number), [])
+
+
+def _reached_by_raising(graph: ControlFlowGraph, point: CfgNode) -> set[int]:
+    seen: set[int] = set()
+    pending = [successor for successor in point.successors if graph.raise_taken(point, successor)]
+    while pending:
+        node = pending.pop()
+        if id(node) not in seen:
+            seen.add(id(node))
+            pending.extend(node.successors)
+    return seen
+
+
+def _carrying_on_after(graph: ControlFlowGraph, model: Ps1ControlFlowModel, statement: Node) -> set[int]:
+    """
+    The nodes standing where a run carries on after *statement*: its completion and what follows
+    it, the report node carrying on after it, and the place a `trap` set resumes after it.
+    """
+    places: set[int] = set()
+    for node in graph.completion_of(statement) or ():
+        places.add(id(node))
+        places.update(id(successor) for successor in node.successors)
+    places.update(
+        id(node) for node in graph.nodes
+        if isinstance(node, Ps1ReportNode) and node.carries_on_after is statement
+    )
+    for trap_set in model.trap_sets_in(graph):
+        slot = trap_set.slots.get(id(statement))
+        if slot is not None:
+            places.add(id(slot))
+        for node in trap_set.completions.get(id(statement), ()):
+            places.add(id(node))
+            places.update(id(successor) for successor in node.successors)
+    return places
+
+
+def unreached(source: str) -> list[str]:
+    """
+    Every place the evaluator sends the error of a point of *source* to, under one value of the
+    error preference, that the graphs do not reach from the point along a path starting with an
+    edge taken only when the point raised: a `catch` clause, a `trap`, or a statement the run
+    carries on after. Where the run carries on after the statement the point stands in, the point
+    falling through to the next one is that path.
+    """
+    tree = Ps1Parser(source).parse()
+    cache = Ps1ModelCache(tree)
+    faults = cache.faults
+    model = faults.control_flow
+    raises = cache.raises_alone
+    found: list[str] = []
+    for graph in model.graphs.values():
+        for point in graph.nodes:
+            element = point.element
+            if element is None or isinstance(element, (Ps1CatchClause, Ps1TrapStatement, Block)):
+                continue
+            kinds = raises.kinds(element)
+            if not kinds:
+                continue
+            reached = _reached_by_raising(graph, point)
+            statement = member_of(element)
+            falls_through = any(graph.completes_into(point, successor) for successor in point.successors)
+            for reading in faults.dispatch.readings():
+                fate = reading.fate(element, kinds)
+                if fate is None:
+                    continue
+                for handler in (*fate.caught, *fate.trapped):
+                    entry = graph.node_of(handler)
+                    if entry is not None and id(entry) not in reached:
+                        found.append(F'{_SYNTH.convert(element)} -> {_SYNTH.convert(handler)}')
+                for carried in fate.carried:
+                    if carried is statement and falls_through:
+                        continue
+                    if not _carrying_on_after(graph, model, carried) & reached:
+                        found.append(F'{_SYNTH.convert(element)} -> after {_SYNTH.convert(carried)}')
+    return found
+
+
+class TestPs1TheGraphsReachWhereTheEvaluatorSendsAnError(TestBase):
+    """
+    The graphs draw where an error goes from the evaluator, so over generated programs each place
+    the evaluator sends the error of a point to is reached from that point in the graphs.
+    """
+
+    def test_every_place_the_evaluator_names_is_reached_over_the_generated_programs(self):
+        for number, (program, preference) in enumerate(Generator(SEED).programs(PROGRAMS)):
+            with self.subTest(number=number):
+                self.assertEqual(unreached(dispatch.render(program, preference)), [])
+
+    def test_every_place_the_evaluator_names_is_reached_over_the_body_programs(self):
+        for number, (program, preference) in enumerate(BodyGenerator(BODY_SEED).programs(BODY_PROGRAMS)):
+            with self.subTest(number=number):
+                self.assertEqual(unreached(dispatch.render(program, preference)), [])

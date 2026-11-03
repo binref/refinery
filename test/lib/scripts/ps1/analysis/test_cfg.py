@@ -37,6 +37,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BreakStatement,
     Ps1ContinueStatement,
     Ps1ExitStatement,
+    Ps1ForEachLoop,
     Ps1FunctionDefinition,
     Ps1IfStatement,
     Ps1ReturnStatement,
@@ -1676,6 +1677,66 @@ class TestPs1AnErrorNothingTakesIsReportedPastItsStatement(_Ps1ControlFlowGraphs
                 assert trap_set is not None and isinstance(trap_set.outward, Ps1ReportNode)
                 self.assertIs(trap_set.outward.carries_on_after, tree.body[holder])
                 self.assertTrue(any(node is trap_set.outward for node in trap_set.graph.nodes))
+
+
+class TestPs1TheGraphRoutesAnErrorWhereTheEvaluatorSendsIt(_Ps1ControlFlowGraphs):
+    """
+    Where an error goes outward of a `trap` set or a `throw`, and whether a point may fail, are
+    read off the same rules the dispatch evaluator follows.
+    """
+
+    def test_a_trap_whose_body_runs_off_its_end_lets_the_error_past_under_stop(self):
+        for preference, passes in (("$ErrorActionPreference = 'Stop'", True), ('', False)):
+            with self.subTest(preference=preference):
+                tree, graph = self._tree_and_graph(cleandoc(F"""
+                    {preference}
+                    try {{
+                      trap {{ }}
+                      $null = [int]$s
+                    }} catch {{
+                      'c'
+                    }}
+                """))
+                construct = next(node for node in tree.walk() if isinstance(node, Ps1TryCatchFinally))
+                assert construct.try_block is not None
+                clause, = construct.catch_clauses
+                reached = self._reached_by_an_error_at(graph, construct.try_block.body[1])
+                self.assertEqual(self._required_node(graph, clause) in reached, passes)
+
+    def test_a_throw_where_an_error_may_be_silenced_carries_on_and_may_end_the_run(self):
+        tree, graph = self._tree_and_graph(cleandoc("""
+            $ErrorActionPreference = 'SilentlyContinue'
+            throw 'x'
+            'after'
+        """))
+        raised = self._required_node(graph, tree.body[1])
+        self.assertIn(self._required_node(graph, tree.body[2]), plain_successors(raised))
+        self.assertIn(graph.exit, self._reached_by_an_error_at(graph, tree.body[1]))
+
+    def test_the_head_of_a_foreach_in_a_catch_body_may_fail_and_is_reported(self):
+        tree, graph = self._tree_and_graph(cleandoc("""
+            try { throw 'x' } catch {
+              foreach ($i in 'a') { }
+              'r'
+            }
+            'after'
+        """))
+        loop = next(node for node in tree.walk() if isinstance(node, Ps1ForEachLoop))
+        report, = (node for node in graph.nodes if isinstance(node, Ps1ReportNode))
+        self.assertIs(report.carries_on_after, tree.body[0])
+        self.assertIn(report, self._reached_by_an_error_at(graph, loop))
+
+    def test_an_error_a_trap_body_raises_may_run_the_trap_again_where_it_ran_inside_a_try(self):
+        for clause, again in (('catch [System.IO.IOException] { }', True), ('catch { }', False)):
+            with self.subTest(clause=clause):
+                tree, graph = self._tree_and_graph(cleandoc(F"""
+                    trap {{ $null = [int]$s }}
+                    try {{ throw 'x' }} {clause}
+                """))
+                trap = tree.body[0]
+                assert isinstance(trap, Ps1TrapStatement) and trap.body is not None
+                reached = self._reached_by_an_error_at(graph, trap.body.body[0])
+                self.assertEqual(self._required_node(graph, trap) in reached, again)
 
 
 class TestPs1AJumpRunsTheFinallyItLeaves(_Ps1ControlFlowGraphs):

@@ -37,12 +37,13 @@ from refinery.lib.scripts.analysis.cfg import (
     plain_successors,
 )
 from refinery.lib.scripts.analysis.components import Condensation
-from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
+from refinery.lib.scripts.ps1.analysis.callgraph import Ps1BodyCallers, Ps1CallGraph
 from refinery.lib.scripts.ps1.analysis.cfg import (
     Ps1ControlFlowModel,
     Ps1ReportNode,
     Ps1TrapSet,
     build_control_flow_model,
+    dispatch_for,
 )
 from refinery.lib.scripts.ps1.analysis.dispatch import (
     ERROR_KINDS,
@@ -51,9 +52,9 @@ from refinery.lib.scripts.ps1.analysis.dispatch import (
     Ps1Fate,
     Ps1Reading,
     member_of,
-    preferences_of,
 )
 from refinery.lib.scripts.ps1.analysis.handlers import (
+    Ps1TrapDisposition,
     handler_acts,
     names_every_error,
     settled,
@@ -62,7 +63,6 @@ from refinery.lib.scripts.ps1.analysis.session import (
     session_of,
     stops_on_error,
     writes_stop_to_the_default_table,
-    writes_stop_to_the_preference,
 )
 from refinery.lib.scripts.ps1.ast import (
     STATEMENT_LIST_EXPRESSIONS,
@@ -522,30 +522,6 @@ class SkipVerdicts(Protocol):
         ...
 
 
-class _CallSites:
-    """
-    The calls that may run each body of the script `faults` reads, as
-    `refinery.lib.scripts.ps1.analysis.dispatch.Ps1CallSites` asks for them.
-    """
-
-    def __init__(self, faults: Ps1FaultReach):
-        self._faults = faults
-
-    def bodies(self) -> list[Node]:
-        return [
-            graph.owner for graph in self._faults.control_flow.graphs.values()
-            if isinstance(graph.owner, Ps1ScriptBlock)
-        ]
-
-    def sites_running(self, body: Node) -> list[Node] | None:
-        if not isinstance(body, Ps1ScriptBlock):
-            return None
-        return self._faults.sites_running(body, attributed_only=True)
-
-    def unattributed_sites(self) -> Sequence[Node]:
-        return self._faults.call_graph.unattributed_sites
-
-
 class Ps1FaultReach:
     """
     The fault routing of one script, read off its control-flow graphs.
@@ -561,21 +537,26 @@ class Ps1FaultReach:
     written among those inner statements — is a point it places rather than detail hidden in the one
     node the coarse graph gives the whole statement. It draws that itself from its own root on first
     demand, so no caller can hand it a graph too coarse to see the step-over and remove a
-    load-bearing trap.
+    load-bearing trap. *dispatch* is the evaluator the graphs were drawn from; without it, the
+    reader builds its own, with the bodies a guarded call may run read off the call graph.
     """
 
-    def __init__(self, control_flow: Ps1ControlFlowModel, calls: Callable[[], Ps1CallGraph]):
+    def __init__(
+        self,
+        control_flow: Ps1ControlFlowModel,
+        calls: Callable[[], Ps1CallGraph],
+        dispatch: Ps1Dispatch | None = None,
+    ):
         self._given = control_flow
         self._calls = calls
         self._model: Ps1ControlFlowModel | None = None
         self._version: int | None = None
         self._set_facts: dict[int, _SetFacts] = {}
         self._ending: dict[int, bool] = {}
-        self._stopping: bool | None = None
         self._stop_default: bool | None = None
         self._strict: bool | None = None
         self._strict_v2: bool | None = None
-        self._dispatch: Ps1Dispatch | None = None
+        self._dispatch = dispatch
         self._trap_bodies: dict[int, Ps1TrapStatement | None] = {}
         self._hands_back: dict[int, bool] = {}
         self._kept_for: int | None = None
@@ -600,15 +581,9 @@ class Ps1FaultReach:
         dispatch = self._dispatch
         if dispatch is None:
             root = self._script
-            session = session_of(root) if root is not None else None
-            stops = self._stops_on_every_error()
-            silenced = session is not None and session.silenced
-            called = session is not None and (session.silenced or session.silenced_by_a_call)
-            dispatch = self._dispatch = Ps1Dispatch(
-                preferences_of(stops, silenced),
-                preferences_of(stops, called),
-                _CallSites(self),
-            )
+            if root is None:
+                raise ValueError('the fault reach was handed no graph to read a script from')
+            dispatch = self._dispatch = dispatch_for(root, Ps1BodyCallers(root, self._calls))
         return dispatch
 
     def fate_of(self, node: Node, kinds: Ps1ErrorKind) -> tuple[ControlFlowGraph, CfgNode, Ps1Fate] | None:
@@ -674,7 +649,7 @@ class Ps1FaultReach:
             if isinstance(root, Ps1Script) and any(
                 isinstance(node, STATEMENT_LIST_EXPRESSIONS) for node in root.walk()
             ):
-                self._model = build_control_flow_model(root, descend=True)
+                self._model = build_control_flow_model(root, descend=True, dispatch=self.dispatch)
         return self._model
 
     def points_in(self, node: Node) -> Iterator[Node]:
@@ -1101,31 +1076,6 @@ class Ps1FaultReach:
     def _dispose_alike(self, trap_set: Ps1TrapSet, removed: set[int]) -> bool:
         return self._facts(trap_set).disposes_alike_without(removed)
 
-    def sites_running(self, block: Ps1ScriptBlock, attributed_only: bool = False) -> list[Node] | None:
-        """
-        The calls that may run *block*, or `None` where they cannot all be named. A function body is
-        run by the calls the call graph attributes to its name, and, unless *attributed_only*, by
-        every call it cannot attribute; it has callers no list names where the graph cannot be read,
-        where it is a method of a class, or where the script hands the function out as a value. A
-        script block is run by the `&` or `.` that invokes it where it is written, and by the
-        `ForEach-Object` or `Where-Object` it is handed to.
-        """
-        parent = block.parent
-        if isinstance(parent, Ps1FunctionDefinition):
-            calls = self.call_graph
-            named = calls.named_callers(block)
-            if named is None or attributed_only:
-                return named
-            return [*named, *calls.unattributed_sites]
-        invocation = parent.parent if isinstance(parent, Ps1CommandArgument) else parent
-        if not isinstance(invocation, Ps1CommandInvocation):
-            return None
-        if invocation.name is block:
-            return [invocation] if invocation.invocation_operator in ('&', '.') else None
-        if resolve_command_name(invocation) in ('foreach-object', 'where-object'):
-            return [invocation]
-        return None
-
     def edits_that_wait(
         self,
         deleted: Sequence[Sequence[Node]],
@@ -1230,7 +1180,7 @@ class Ps1FaultReach:
             if cursor is None or id(cursor) in seen:
                 continue
             seen.add(id(cursor))
-            sites = self.sites_running(cursor, attributed_only=True)
+            sites = self.call_graph.sites_running(cursor, attributed_only=True)
             if sites is None:
                 return None
             if isinstance(cursor.parent, Ps1FunctionDefinition):
@@ -1599,7 +1549,7 @@ class Ps1FaultReach:
         trap_set = self._trap_set_of(trap)
         if trap_set is None:
             return True
-        return trap_set.is_selectable(trap) and trap_set.may_rethrow(trap)
+        return trap_set.is_selectable(trap) and Ps1TrapDisposition.RETHROWS in trap_set.disposition(trap)
 
     def _ends_the_script(self, element: Node) -> bool:
         """
@@ -1643,9 +1593,9 @@ class Ps1FaultReach:
         """
         Whether this script writes `Stop` to `$ErrorActionPreference` anywhere at all, which makes
         every error terminating — a failing cast, a division by zero and a member access on `$null`
-        among them, not only what a command reports. The write is read through
-        `refinery.lib.scripts.ps1.analysis.session.writes_stop_to_the_preference`, which counts an
-        assignment and a cmdlet that writes the variable by name alike.
+        among them, not only what a command reports. The session reads it
+        (`refinery.lib.scripts.ps1.analysis.session.Ps1Session.stops`), counting an assignment and
+        a cmdlet that writes the variable by name alike.
 
         This is the wider of the two whole-script arming gates. `$PSDefaultParameterValues` binds an
         action into commands and reaches no cast, so it is read on the per-command path
@@ -1662,12 +1612,8 @@ class Ps1FaultReach:
         nesting around it and still misses what stands at no point they model — a `param` block
         default among it.
         """
-        if self._stopping is None:
-            root = self._script
-            self._stopping = root is not None and any(
-                writes_stop_to_the_preference(node) for node in root.walk()
-            )
-        return self._stopping
+        root = self._script
+        return root is not None and session_of(root).stops
 
     def _a_stop_default_is_in_force(self) -> bool:
         """
@@ -2244,12 +2190,16 @@ def _raise_leaves_region(member: CfgNode, outer: Node, reading: _Reading, raises
     )
 
 
-def build_fault_reach(control_flow: Ps1ControlFlowModel, calls: Callable[[], Ps1CallGraph]) -> Ps1FaultReach:
+def build_fault_reach(
+    control_flow: Ps1ControlFlowModel,
+    calls: Callable[[], Ps1CallGraph],
+    dispatch: Ps1Dispatch | None = None,
+) -> Ps1FaultReach:
     """
     The `Ps1FaultReach` over one script. The reader reads its own root off *control_flow* and draws
     the sub-statement graph it answers from there, so the coarse model is passed only to locate the
     root — and reused unchanged for a script that writes no `$( )` or `@( )`, whose graph is the same
     under `descend`. *calls* is the call graph of the same root, asked only whether a call may run
-    a body.
+    a body. *dispatch* is the evaluator *control_flow* was drawn from, where the caller holds it.
     """
-    return Ps1FaultReach(control_flow, calls)
+    return Ps1FaultReach(control_flow, calls, dispatch)

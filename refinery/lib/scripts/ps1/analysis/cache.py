@@ -15,14 +15,16 @@ from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.modelcache import ModelCacheBase
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockModel, build_block_model
 from refinery.lib.scripts.ps1.analysis.callgraph import (
+    Ps1BodyCallers,
     Ps1CallGraph,
     build_call_graph,
     calls_after_a_definition,
     names_used_before_defined,
 )
-from refinery.lib.scripts.ps1.analysis.cfg import Ps1ControlFlowModel, build_control_flow_model
+from refinery.lib.scripts.ps1.analysis.cfg import Ps1ControlFlowModel, build_control_flow_model, dispatch_for
 from refinery.lib.scripts.ps1.analysis.commands import Ps1CommandModel, build_command_model
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow, build_variable_flow
+from refinery.lib.scripts.ps1.analysis.dispatch import Ps1Dispatch
 from refinery.lib.scripts.ps1.analysis.dominance import build_dominance
 from refinery.lib.scripts.ps1.analysis.effects import (
     Ps1HandlerVerdicts,
@@ -69,6 +71,7 @@ class Ps1ModelCache(ModelCacheBase):
         '_world_reach',
         '_call_graph',
         '_output_flow',
+        '_dispatch',
         '_control_flow',
         '_faults',
         '_dominance',
@@ -94,6 +97,7 @@ class Ps1ModelCache(ModelCacheBase):
     _world_reach: Ps1WorldReach | None
     _call_graph: Ps1CallGraph | None
     _output_flow: Ps1OutputFlow | None
+    _dispatch: Ps1Dispatch | None
     _control_flow: Ps1ControlFlowModel | None
     _faults: Ps1FaultReach | None
     _dominance: DominatorModel | None
@@ -186,9 +190,19 @@ class Ps1ModelCache(ModelCacheBase):
         Purely syntactic, so it needs none of the models above and nothing about the order they are
         built in matters. What it answers is the question every pass here has been approximating
         privately: whether one statement runs before another, whether a branch runs at all, and
-        whether a handler is still reachable once a body is emptied.
+        whether a handler is still reachable once a body is emptied. Where an error goes is drawn
+        from `dispatch`.
         """
-        return self._lazy('_control_flow', lambda: build_control_flow_model(self.root))
+        return self._lazy('_control_flow', lambda: build_control_flow_model(self.root, dispatch=self.dispatch))
+
+    @property
+    def dispatch(self) -> Ps1Dispatch:
+        """
+        Where 5.1 sends an error raised at a point of this root, read off the tree, with the bodies
+        a guarded call may run read off the call graph when a question first needs them. The graphs
+        of `control_flow` are drawn from it and `faults` reads it.
+        """
+        return self._lazy('_dispatch', lambda: dispatch_for(self.root, Ps1BodyCallers(self.root, lambda: self.call_graph)))
 
     @property
     def faults(self) -> Ps1FaultReach:
@@ -207,7 +221,7 @@ class Ps1ModelCache(ModelCacheBase):
 
         Purely syntactic like the graphs it reads, so it joins nothing else and orders nothing else.
         """
-        return self._lazy('_faults', lambda: build_fault_reach(self.control_flow, lambda: self.call_graph))
+        return self._lazy('_faults', lambda: build_fault_reach(self.control_flow, lambda: self.call_graph, self.dispatch))
 
     @property
     def dominance(self) -> DominatorModel:

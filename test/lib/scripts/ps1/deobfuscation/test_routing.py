@@ -111,3 +111,38 @@ class TestPs1AFinallyRunsOnEveryWayOutOfItsTry(TestPs1):
                 output = self._deobfuscate(cleandoc(source))
                 self.assertIn('continue', output)
                 self.assertIn('[int]', output)
+
+
+class TestPs1AnErrorGoesWhereTheEvaluatorSendsIt(TestPs1):
+    """
+    The graphs route an error out of a `trap` set and out of a failing point as 5.1 does, so a
+    store the error skips and a line it abandons stay as written.
+    """
+
+    def test_a_trap_whose_body_runs_off_its_end_hands_the_error_on_under_stop(self):
+        output = self._deobfuscate(cleandoc("""
+            $ErrorActionPreference = 'Stop'
+            $x = 'a'
+            try {
+              trap { }
+              $x = 'b'
+              $null = [int]'z'
+              $x = 'c'
+            } catch {
+              Write-Host 'caught'
+            }
+            Write-Host $x
+        """))
+        self.assertIn("$x = 'b'", output)
+        self.assertNotIn("Write-Host 'c'", output)
+
+    def test_the_head_of_a_foreach_whose_variable_rejects_the_value_ends_the_catch_body(self):
+        output = self._deobfuscate(cleandoc("""
+            [int]$i = 0
+            try { throw 'x' } catch {
+              foreach ($i in 'a') { }
+              $y = 'r'
+            }
+            Write-Host $y
+        """))
+        self.assertNotIn("Write-Host 'r'", output)

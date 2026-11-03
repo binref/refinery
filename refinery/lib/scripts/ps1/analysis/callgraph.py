@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 
-from typing import TYPE_CHECKING, Mapping, NamedTuple, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, NamedTuple, Sequence
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.analysis.dominance import DominatorModel
@@ -217,6 +217,28 @@ class Ps1CallGraph:
             return None
         return [site.invocation for site in self.call_sites(parent.name)]
 
+    def sites_running(self, block: Ps1ScriptBlock, attributed_only: bool = False) -> list[Node] | None:
+        """
+        The calls that may run *block*, or `None` where they cannot all be named. A function body is
+        run by the calls naming the function (`named_callers`), and, unless *attributed_only*, by
+        every call in `unattributed_sites`. A script block is run by the `&` or `.` that invokes it
+        where it is written, and by the `ForEach-Object` or `Where-Object` it is handed to.
+        """
+        parent = block.parent
+        if isinstance(parent, Ps1FunctionDefinition):
+            named = self.named_callers(block)
+            if named is None or attributed_only:
+                return named
+            return [*named, *self.unattributed_sites]
+        invocation = parent.parent if isinstance(parent, Ps1CommandArgument) else parent
+        if not isinstance(invocation, Ps1CommandInvocation):
+            return None
+        if invocation.name is block:
+            return [invocation] if invocation.invocation_operator in ('&', '.') else None
+        if resolve_command_name(invocation) in ('foreach-object', 'where-object'):
+            return [invocation]
+        return None
+
     @property
     def is_readable(self) -> bool:
         """
@@ -368,6 +390,29 @@ class Ps1CallGraph:
                 if name in self._definitions:
                     frontier.append(name)
         return frozenset(reachable)
+
+
+class Ps1BodyCallers:
+    """
+    The calls that may run each script block of the tree *root*, as
+    `refinery.lib.scripts.ps1.analysis.dispatch.Ps1CallSites` asks for them: read off the call
+    graph *calls* hands over, which is asked for only once a question needs it.
+    """
+
+    def __init__(self, root: Node, calls: Callable[[], Ps1CallGraph]):
+        self._root = root
+        self._calls = calls
+
+    def bodies(self) -> list[Node]:
+        return [node for node in self._root.walk() if isinstance(node, Ps1ScriptBlock)]
+
+    def sites_running(self, body: Node) -> list[Node] | None:
+        if not isinstance(body, Ps1ScriptBlock):
+            return None
+        return self._calls().sites_running(body, attributed_only=True)
+
+    def unattributed_sites(self) -> Sequence[Node]:
+        return self._calls().unattributed_sites
 
 
 def names_used_before_defined(

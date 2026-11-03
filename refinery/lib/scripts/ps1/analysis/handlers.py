@@ -5,7 +5,8 @@ error becomes once a `trap` body has run, and whether running a handler is somet
 
 The control-flow builder `refinery.lib.scripts.ps1.analysis.cfg` wires its handler edges from these
 answers and the dispatch evaluator `refinery.lib.scripts.ps1.analysis.dispatch` follows every error
-by them, so neither holds a reading of its own and neither reads the other. How a `trap` body ends
+by them, so neither holds a reading of its own; the builder asks the evaluator where an error goes
+outward of a `trap` set or a `throw`. How a `trap` body ends
 is the one fact that takes a walk over control flow rather than over the tree, and it is a fact of
 the body alone: `refinery.lib.scripts.ps1.analysis.cfg.trap_disposition` builds the body on its own
 to read it.

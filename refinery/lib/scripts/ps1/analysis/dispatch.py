@@ -34,10 +34,12 @@ The rules, each named after the 5.1 code that holds it:
   of it.
 
 Everything here is read off the tree. What a handler means — which errors a filter takes, which
-member of a `trap` set is selected, how a `trap` body ends — is
-`refinery.lib.scripts.ps1.analysis.handlers`, which the control-flow builder reads as well; the
-graphs it draws carry the same routes without the state an error carries along them. A filter
-naming a type is read as one that may or may not match.
+member of a `trap` set is selected — is `refinery.lib.scripts.ps1.analysis.handlers`; how a `trap`
+body ends is handed in by whoever builds the dispatch, which is
+`refinery.lib.scripts.ps1.analysis.cfg.dispatch_for`, reading the body built on its own. The
+control-flow builder draws its error routes from the answers here, so the graphs carry the same
+routes without the state an error carries along them. A filter naming a type is read as one that
+may or may not match.
 
 Every answer is kept, per statement list and per statement, for as long as the tree is the one it
 was read from, so that asking of every point of a script costs the size of the script.
@@ -50,7 +52,6 @@ from functools import partial
 from typing import AbstractSet, Callable, Iterable, NamedTuple, Protocol, Sequence
 
 from refinery.lib.scripts import Block, Node, tree_root
-from refinery.lib.scripts.ps1.analysis.cfg import trap_disposition
 from refinery.lib.scripts.ps1.analysis.handlers import (
     Ps1TrapDisposition,
     Ps1TrapSelection,
@@ -361,9 +362,9 @@ def _runs_code(node: Node) -> bool:
 class _Tree:
     """
     What every reading of one tree shares: the depth of each node, the `trap` set each list
-    declares, how each `trap` body ends, the preferences the error preference may hold, and the
-    values the outward flag may hold where a body was called, which *guards* reads for the body
-    holding a list.
+    declares, how each `trap` body ends, which *dispositions* reads and keeps, the preferences the
+    error preference may hold, and the values the outward flag may hold where a body was called,
+    which *guards* reads for the body holding a list.
     """
 
     def __init__(
@@ -371,21 +372,23 @@ class _Tree:
         preferences: frozenset[Ps1Preference],
         called_preferences: frozenset[Ps1Preference],
         guards: Callable[[Node], tuple[bool, ...]],
+        dispositions: Callable[[Ps1TrapStatement], Ps1TrapDisposition],
         shared: _Tree | None = None,
     ):
         self.preferences = preferences
         self.called = called_preferences
         self.guards = guards
+        self.disposition = dispositions
         self._depths: dict[int, int] = {} if shared is None else shared._depths
         self._selections: dict[int, Ps1TrapSelection | None] = {} if shared is None else shared._selections
-        self._dispositions: dict[int, Ps1TrapDisposition] = {} if shared is None else shared._dispositions
 
     def reading(self, preference: Ps1Preference, called_preference: Ps1Preference) -> _Tree:
         """
         This tree under one value of the error preference in the script and one in a called body,
         sharing what no preference changes: the depths, the `trap` sets and how each body ends.
         """
-        return _Tree(frozenset((preference,)), frozenset((called_preference,)), self.guards, self)
+        single = frozenset((preference,)), frozenset((called_preference,))
+        return _Tree(*single, self.guards, self.disposition, self)
 
     def depth_of(self, node: Node) -> int:
         depths = self._depths
@@ -411,8 +414,19 @@ class _Tree:
         found = self._selections[key] = Ps1TrapSelection(traps) if traps else None
         return found
 
-    def disposition(self, trap: Ps1TrapStatement) -> Ps1TrapDisposition:
-        return trap_disposition(trap, self._dispositions)
+
+def _tries_a_trap_may_run_in(owner: Node) -> list[Ps1TryCatchFinally]:
+    """
+    The `try` statements of the list *owner* holds that a `trap` of the list may run from inside:
+    each has `catch` clauses, and they may take nothing, so 5.1 offers the error to the list's
+    `trap` set from within the `try` statement.
+    """
+    return [
+        statement for statement in getattr(owner, 'body', ())
+        if isinstance(statement, Ps1TryCatchFinally)
+        and statement.catch_clauses
+        and not swallows_every_error(statement)
+    ]
 
 
 def _unguarded() -> tuple[bool, ...]:
@@ -637,19 +651,29 @@ class Ps1Reading:
         fate = Ps1Fate(offered_to_traps=True)
         stops = Ps1Preference.STOP in level.preferences
         carries_on = False
-        reraises = not traps.takes_every_error()
         for trap in traps.selectable:
             acting = handler_acts(trap)
             depth = tree.depth_of(trap.parent) if acting and trap.parent is not None else float('inf')
             fate = fate.joined(Ps1Fate(trapped=frozenset((trap,)), acts=acting, outermost=depth))
-            disposition = settled(tree.disposition(trap), stops)
-            if Ps1TrapDisposition.RESUMES in disposition:
+            if Ps1TrapDisposition.RESUMES in settled(tree.disposition(trap), stops):
                 carries_on = True
-            if Ps1TrapDisposition.RETHROWS in disposition:
-                reraises = True
-        if reraises:
+        if self.lets_past(level, traps):
             fate = fate.joined(self.leaving(level, Ps1ErrorKind.MARKED, guarded))
         return _SetFate(fate, carries_on)
+
+    def lets_past(self, level: Ps1Level, traps: Ps1TrapSelection) -> bool:
+        """
+        Whether the `trap` set *traps* that *level* declares may hand an error it is offered on
+        outward: no member takes every error, or a member 5.1 may select re-raises it, as a body
+        that runs off its end does where `Stop` may be in force.
+        """
+        if not traps.takes_every_error():
+            return True
+        stops = Ps1Preference.STOP in level.preferences
+        return any(
+            Ps1TrapDisposition.RETHROWS in settled(self._tree.disposition(trap), stops)
+            for trap in traps.selectable
+        )
 
     def leaving(self, level: Ps1Level, kind: Ps1ErrorKind, guarded: bool) -> Ps1Fate:
         key = (id(level.owner), kind, guarded)
@@ -688,13 +712,8 @@ class Ps1Reading:
         fate = self._out_of_traps.get(key)
         if fate is None:
             fate = self.leaving(level, kind, guarded)
-            for statement in getattr(level.owner, 'body', ()):
-                if (
-                    isinstance(statement, Ps1TryCatchFinally)
-                    and statement.catch_clauses
-                    and not swallows_every_error(statement)
-                ):
-                    fate = fate.joined(self.dispose(level, statement, kind, guarded))
+            for statement in _tries_a_trap_may_run_in(level.owner):
+                fate = fate.joined(self.dispose(level, statement, kind, guarded))
             self._out_of_traps[key] = fate
         return fate
 
@@ -817,13 +836,15 @@ class Ps1Dispatch:
     it, and so may one its body would report, since a `try` around the call passes errors outward
     through every body the call runs. Which callers guard a body is read off the call sites *sites*
     names for it; without *sites*, every caller may. The script is read as run on its own, which
-    reports what its body would report.
+    reports what its body would report. *dispositions* reads how the body of a `trap` ends, and
+    keeps its answers for as long as the tree is the one it read them from.
     """
 
     def __init__(
         self,
         preferences: AbstractSet[Ps1Preference],
         called_preferences: AbstractSet[Ps1Preference],
+        dispositions: Callable[[Ps1TrapStatement], Ps1TrapDisposition],
         sites: Ps1CallSites | None = None,
     ):
         self._sites = sites
@@ -833,6 +854,7 @@ class Ps1Dispatch:
             frozenset(preferences) | {Ps1Preference.CONTINUE},
             frozenset(called_preferences) | {Ps1Preference.CONTINUE},
             self._body_guards,
+            dispositions,
         )
         self._evaluation = Ps1Reading(self._tree, _Levels(self._tree))
         self._tails: dict[int, frozenset[Node]] = {}
@@ -857,6 +879,42 @@ class Ps1Dispatch:
         body, or `None` where *point* stands in no statement list this reads.
         """
         return self._evaluation.fate(point, kinds)
+
+    def fate_under_any_caller(self, point: Node, kinds: Ps1ErrorKind) -> Ps1Fate | None:
+        """
+        `fate`, read as though a caller of the body may pass errors outward or may not, which reads
+        no call site: the answer the control-flow builder draws from, since which calls run a body
+        is read off graphs drawn from that answer.
+        """
+        evaluation = self._evaluation
+        found = evaluation.fate(point, kinds, False)
+        guarded = evaluation.fate(point, kinds, True)
+        if found is None or guarded is None:
+            return None
+        return found.joined(guarded)
+
+    def disposition(self, trap: Ps1TrapStatement) -> Ps1TrapDisposition:
+        """
+        How the body of *trap* may end.
+        """
+        return self._tree.disposition(trap)
+
+    def lets_past(self, owner: Node) -> bool:
+        """
+        Whether the `trap` set the list *owner* holds declares may hand an error it is offered on
+        outward; see `Ps1Reading.lets_past`. A list declaring none lets every error past.
+        """
+        level = self.level(owner)
+        traps = level.traps
+        return traps is None or self._evaluation.lets_past(level, traps)
+
+    def traps_run_inside_a_try(self, owner: Node) -> bool:
+        """
+        Whether a `trap` of the list *owner* holds may run from inside one of its `try` statements,
+        for an error no `catch` clause of that statement took: an error the `trap` body raises then
+        leaves that `try` statement, and the list offers it to its `trap` set again.
+        """
+        return bool(_tries_a_trap_may_run_in(owner))
 
     def disposed(self, level: Ps1Level, statement: Node, kind: Ps1ErrorKind) -> Ps1Fate:
         """

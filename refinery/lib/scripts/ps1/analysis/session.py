@@ -13,7 +13,7 @@ write errs. Where missing a write keeps code or a handler, the write is read as 
 `writes_stop_to_the_preference` reads an assignment or a command that names the variable.
 Where missing a write deletes code that runs, any mention of the name counts, in a variable, inside
 a string that may run as code or name a provider path, or as the name of a variable written by a
-name nobody can read: `Ps1Session` holds those answers.
+name nobody can read. `Ps1Session` holds the answers for a whole script, read in one walk.
 """
 from __future__ import annotations
 
@@ -573,13 +573,16 @@ class Ps1Session(typing.NamedTuple):
     script's own. `defaults` is whether `$PSDefaultParameterValues` may bind a value into any
     command, which changes what the command does without a word at the call. `seeded` is whether the
     random generator may be seeded, after which every call of `Get-Random` changes what the next one
-    hands back.
+    hands back. `stops` is whether the script writes `Stop` to `$ErrorActionPreference` anywhere,
+    read as spelled (`writes_stop_to_the_preference`): it makes every error terminating, a failing
+    cast among them, and position is not asked, since the preference is a variable of the session.
     """
     silenced: bool
     silenced_by_a_call: bool
     defaults: bool
     seeded: bool
-    informs: bool = False
+    informs: bool
+    stops: bool
 
 
 def _keeps_reporting(value: Node) -> bool:
@@ -587,7 +590,7 @@ def _keeps_reporting(value: Node) -> bool:
 
 
 def _session(root: Node) -> Ps1Session:
-    silenced = silenced_by_a_call = defaults = seeded = informs = False
+    silenced = silenced_by_a_call = defaults = seeded = informs = stops = False
     for node in root.walk():
         if not (silenced and defaults and informs):
             names = _names_of(node)
@@ -603,12 +606,15 @@ def _session(root: Node) -> Ps1Session:
             informs = _binds_an_action(node, selects_stop, _INFORMATION_ACTION)
         if not seeded:
             seeded = _may_seed(node)
+        if not stops:
+            stops = writes_stop_to_the_preference(node)
     return Ps1Session(
         silenced,
         silenced_by_a_call or defaults,
         defaults,
         seeded or defaults,
         informs or defaults,
+        stops,
     )
 
 
