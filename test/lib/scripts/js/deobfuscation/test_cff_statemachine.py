@@ -679,9 +679,11 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
                 function wrapper() {
                   var i, items;
-                  items = [], i = 0;
+                  items = [];
+                  i = 0;
                   while (true) {
-                    items.push(i), i = i + 1;
+                    items.push(i);
+                    i = i + 1;
                     if (!(i < 4)) {
                       break;
                     }

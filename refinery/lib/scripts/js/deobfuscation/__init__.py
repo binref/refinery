@@ -37,6 +37,7 @@ from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlinin
 from refinery.lib.scripts.js.deobfuscation.restunpack import JsRestArrayUnpacking
 from refinery.lib.scripts.js.deobfuscation.scramble import JsScrambleStringDecoder
 from refinery.lib.scripts.js.deobfuscation.selfchecks import JsSelfCheckFolding
+from refinery.lib.scripts.js.deobfuscation.sequences import JsSequenceStatementSplitting
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.singleuse import JsSingleUseFunctionInliner
 from refinery.lib.scripts.js.deobfuscation.stringarray import JsStringArrayResolver
@@ -61,6 +62,7 @@ _pipeline = DeobfuscationPipeline(
         TransformerGroup(
             'normalize',
             JsPrototypeSpellingNormalization,
+            JsSequenceStatementSplitting,
             JsAssignmentsAsFunctionArgs,
             JsSimplifications,
             JsDeadCodeElimination,
