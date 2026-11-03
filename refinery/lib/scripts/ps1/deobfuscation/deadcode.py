@@ -13,6 +13,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
+from refinery.lib.scripts.ps1.analysis.dispatch import Ps1Dispatch
 from refinery.lib.scripts.ps1.analysis.handlers import swallows_every_error
 from refinery.lib.scripts.ps1.analysis.effects import (
     OutputSink,
@@ -428,21 +429,24 @@ def _switch_literal(node):
     return _NO_LITERAL
 
 
-def _switch_clause_body(body: list[Statement]) -> tuple[list[Statement], bool] | None:
+def _switch_clause_body(
+    body: list[Statement],
+    dispatch: Ps1Dispatch,
+) -> tuple[list[Statement], bool] | None:
     """
-    Return the statements of a matched switch clause together with a flag indicating whether the
-    clause terminates the switch (a trailing `break`). Returns `None` when the body contains a
-    top-level `break`/`continue` that is not a single trailing `break`, since inlining it would
-    retarget the jump to an enclosing loop.
+    The statements of a matched switch clause and whether the clause ends the switch, which an
+    unlabelled trailing `break` does; or `None` when inlining the clause would move where a jump in
+    it lands. Any other `break` or `continue` that leaves the clause lands on the switch, or on
+    what its label names, and once the clause stands outside the switch an unlabelled one lands on
+    the loop around it instead. A labelled one is refused without matching its label.
     """
     stmts = list(body)
     stop = False
-    if stmts and isinstance(stmts[-1], Ps1BreakStatement):
+    if stmts and isinstance(last := stmts[-1], Ps1BreakStatement) and last.label is None:
         stmts = stmts[:-1]
         stop = True
-    for stmt in stmts:
-        if isinstance(stmt, (Ps1BreakStatement, Ps1ContinueStatement)):
-            return None
+    if any(dispatch.lets_out_a_loop_jump(stmt) for stmt in stmts):
+        return None
     return stmts, stop
 
 
@@ -626,7 +630,7 @@ class Ps1DeadCodeElimination(Transformer):
         if isinstance(stmt, Ps1IfStatement):
             return self._prune_if(stmt)
         if isinstance(stmt, Ps1SwitchStatement):
-            return self._prune_switch(stmt)
+            return self._prune_switch(stmt, cache.dispatch)
         if isinstance(stmt, Ps1TryCatchFinally):
             return self._prune_try(stmt, cache)
         if isinstance(stmt, Ps1TrapStatement):
@@ -717,7 +721,7 @@ class Ps1DeadCodeElimination(Transformer):
         return [Ps1IfStatement(clauses=kept_clauses, else_block=node.else_block)]
 
     @staticmethod
-    def _prune_switch(node: Ps1SwitchStatement) -> list[Statement] | None:
+    def _prune_switch(node: Ps1SwitchStatement, dispatch: Ps1Dispatch) -> list[Statement] | None:
         if node.regex or node.wildcard or node.file:
             return None
         value = _switch_literal(node.value)
@@ -735,7 +739,7 @@ class Ps1DeadCodeElimination(Transformer):
                 # A non-constant clause condition might match at runtime; cannot resolve statically.
                 return None
             if switch_matches(value, cond_val, case_sensitive=node.case_sensitive):
-                body = _switch_clause_body(block.body)
+                body = _switch_clause_body(block.body, dispatch)
                 if body is None:
                     return None
                 stmts, stop = body
@@ -746,7 +750,7 @@ class Ps1DeadCodeElimination(Transformer):
         if matched:
             return result
         if default_body is not None:
-            body = _switch_clause_body(default_body)
+            body = _switch_clause_body(default_body, dispatch)
             if body is None:
                 return None
             return body[0]

@@ -979,6 +979,15 @@ class Ps1Dispatch:
             return True
         return _Jump.RUNS_CODE in leaving and self._a_body_jumps_out(node)
 
+    def lets_out_a_loop_jump(self, node: Node) -> bool:
+        """
+        Whether a `break` or `continue` written in *node* may carry control out of it: an unlabelled
+        one that no loop, `switch` or `trap` body in *node* takes, or one naming a label. A jump
+        written in a script block counts, because 5.1 hands it to the code that ran the block; a
+        jump made by a body that *node* only calls does not.
+        """
+        return bool(self._leaving_jumps(node) & (_Jump.LOOP | _Jump.LABELLED))
+
     def _leaving_jumps(self, node: Node) -> _Jump:
         """
         The jumps that may carry control out of *node*, read bottom up and kept for every node: what

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import unittest
-
 from inspect import cleandoc
 
 from test.lib.scripts.ps1.deobfuscation import TestPs1
@@ -293,29 +291,6 @@ class TestPs1DeadCodeExtra(TestPs1):
             Write-Host 'B'
         """))
 
-    @unittest.expectedFailure
-    def test_a_switch_is_kept_while_a_continue_nested_in_its_clause_targets_it(self):
-        """
-        A `switch` is a loop to the jumps inside it, so the `continue` ends this `switch` and the
-        `foreach` goes on to write `x`. Resolving the `switch` into its clause hands that `continue`
-        to the `foreach`, which then skips `x`. Only jumps at the top level of the clause are
-        checked before the clause is inlined.
-        """
-        result = self._apply(cleandoc("""
-            foreach ($i in 1..3) {
-              switch (1) {
-                1 {
-                  if ($i -eq 2) {
-                    continue
-                  }
-                  Write-Host $i
-                }
-              }
-              Write-Host 'x'
-            }
-        """), Ps1DeadCodeElimination)
-        self.assertIn('switch', result)
-
     def test_switch_case_sensitive_match(self):
         result = self._apply(
             "switch -CaseSensitive ('Foo') { 'foo' { Write-Host 'A' } 'Foo' { Write-Host 'B' } }",
@@ -563,6 +538,125 @@ class TestPs1DeadCodeExtra(TestPs1):
             'while ($True) { $x = 1; if ($c) { break }; $y = 2; break }',
             Ps1DeadCodeElimination)
         self.assertIn('while', result.lower())
+
+
+class TestPs1ASwitchIsKeptWhileAJumpInItsClauseLandsOnIt(TestPs1):
+    """
+    A `switch` is a loop to the jumps inside it: a `break` or `continue` that nothing nested in the
+    clause takes ends the `switch` or moves it to its next value, and a label sends one to the loop
+    it names. Each `switch` below runs over one value, so a jump that lands on it skips the rest of
+    the clause and the `foreach` goes on to write `x`. Resolving the `switch` into its clause hands
+    the jump to the `foreach`, which then skips `x` or stops.
+    """
+
+    def test_a_continue_nested_in_the_clause_keeps_the_switch(self):
+        result = self._apply(cleandoc("""
+            foreach ($i in 1..3) {
+              switch (1) {
+                1 {
+                  if ($i -eq 2) {
+                    continue
+                  }
+                  Write-Host $i
+                }
+              }
+              Write-Host 'x'
+            }
+        """), Ps1DeadCodeElimination)
+        self.assertIn('switch', result)
+
+    def test_a_break_nested_in_the_clause_keeps_the_switch(self):
+        result = self._apply(cleandoc("""
+            foreach ($i in 1..3) {
+              switch (1) {
+                1 {
+                  if ($i -eq 2) {
+                    break
+                  }
+                  Write-Host $i
+                }
+              }
+              Write-Host 'x'
+            }
+        """), Ps1DeadCodeElimination)
+        self.assertIn('switch', result)
+
+    def test_a_continue_in_a_block_the_clause_runs_keeps_the_switch(self):
+        result = self._apply(cleandoc("""
+            foreach ($i in 1..3) {
+              switch (1) {
+                1 {
+                  1 | ForEach-Object { continue }
+                  Write-Host $i
+                }
+              }
+              Write-Host 'x'
+            }
+        """), Ps1DeadCodeElimination)
+        self.assertIn('switch', result)
+
+    def test_a_trailing_break_naming_the_loop_around_the_switch_keeps_it(self):
+        """
+        The `break` leaves the `foreach` after its first value, so the input writes `1` alone.
+        Taking it for the `break` that ends the `switch` drops it and writes `x` after every value.
+        """
+        result = self._apply(cleandoc("""
+            :outer foreach ($i in 1..3) {
+              switch (1) {
+                1 {
+                  Write-Host $i
+                  break outer
+                }
+              }
+              Write-Host 'x'
+            }
+        """), Ps1DeadCodeElimination)
+        self.assertIn('break outer', result)
+
+    def test_a_continue_an_inner_loop_takes_lets_the_switch_go(self):
+        self.assertEqual(self._apply(cleandoc("""
+            foreach ($i in 1..3) {
+              switch (1) {
+                1 {
+                  foreach ($j in 1..2) {
+                    if ($j -eq 1) {
+                      continue
+                    }
+                    Write-Host $j
+                  }
+                }
+              }
+              Write-Host 'x'
+            }
+        """), Ps1DeadCodeElimination), cleandoc("""
+            foreach ($i in 1..3) {
+              foreach ($j in 1..2) {
+                if ($j -eq 1) {
+                  continue
+                }
+                Write-Host $j
+              }
+              Write-Host 'x'
+            }
+        """))
+
+    def test_a_trailing_break_without_a_label_lets_the_switch_go(self):
+        self.assertEqual(self._apply(cleandoc("""
+            foreach ($i in 1..3) {
+              switch (1) {
+                1 {
+                  Write-Host $i
+                  break
+                }
+              }
+              Write-Host 'x'
+            }
+        """), Ps1DeadCodeElimination), cleandoc("""
+            foreach ($i in 1..3) {
+              Write-Host $i
+              Write-Host 'x'
+            }
+        """))
 
 
 class TestPs1UnreachableStatementRemoval(TestPs1):
