@@ -773,11 +773,11 @@ def _read_dispatch(
     key selects the entry and the flags behind it what the dispatch denotes: the create flag the
     entry itself, the clear flag a call of it with the payload emptied, and any other flag a call
     with what the payload holds, which is only known where an assignment of it runs right before
-    the dispatch (`_payload_in_front`). The wrap flag puts the result under the wrap key, so a dispatch spelling it is
-    read only together with the access on that key, and a `new` dispatch only with it, since `new`
-    hands back what the router returned only where that is an object. Every argument after the
-    third is dropped, so it must run nothing, and a create dispatch takes none: the router reads a
-    fourth argument as its table of lengths there.
+    the dispatch (`_payload_in_front`). The wrap flag puts the result under the wrap key, so a
+    dispatch spelling it is read only together with the access on that key, and a `new` dispatch
+    only with it, since `new` hands back what the router returned only where that is an object.
+    Every argument after the third is dropped, so it must run nothing, and a create dispatch takes
+    none: the router reads a fourth argument as its table of lengths there.
     """
     dispatch = reference.parent
     if (
