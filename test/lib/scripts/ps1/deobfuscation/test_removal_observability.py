@@ -1552,6 +1552,80 @@ class TestPs1AnAdvancedFunctionToldToStopRunsUnderStop(TestPs1):
             "function f { [CmdletBinding()] param() $null = [int]'a'; Write-Host 'in-f' }; f -ErrorAction Stop; "
             "Write-Host 'end'"))
 
+    @unittest.expectedFailure
+    def test_a_bare_failing_line_in_an_advanced_function_told_to_stop_is_kept(self):
+        """
+        The same line written bare, removed for the same reason.
+        """
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "function f { [CmdletBinding()] param() [int]'a'; Write-Host 'in-f' }; f -ErrorAction Stop; "
+            "Write-Host 'end'"))
+
+
+class TestPs1AnErrorNoticedOutsideTheBodyThatRaisesItKeepsTheRaise(TestPs1):
+    """
+    An error a body raises is noticed by what its caller does after the call: a `2>` on the call
+    writes it into a file, and 5.1 files it in `$Error`, which a read after the call sees. The
+    removal veto reads the record and the redirection only inside the body, so the raise is removed
+    and the file or the read comes out empty.
+    """
+
+    @unittest.expectedFailure
+    def test_a_bare_raise_whose_error_the_call_redirects_to_a_file_is_kept(self):
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "function f { [int]'a'; Write-Host 'in' }\nf 2> err.txt\nWrite-Host 'after'"))
+
+    @unittest.expectedFailure
+    def test_a_discarded_raise_whose_error_the_call_redirects_to_a_file_is_kept(self):
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "function f { $Null = [int]'a'; Write-Host 'in' }\nf 2> err.txt\nWrite-Host 'after'"))
+
+    @unittest.expectedFailure
+    def test_a_bare_raise_in_a_called_body_is_kept_where_the_error_record_is_read_after_the_call(self):
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "function f { [int]'a'; Write-Host 'x' }\nf\nWrite-Host $Error.Count"))
+
+    @unittest.expectedFailure
+    def test_a_discarded_raise_in_a_called_body_is_kept_where_the_error_record_is_read_after_the_call(self):
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "function f { $Null = [int]'a'; Write-Host 'x' }\nf\nWrite-Host $Error.Count"))
+
+
+class TestPs1EverySpellingOfAReadOfTheErrorRecordKeepsTheRaise(TestPs1):
+    """
+    `$Error` read through the session API or through the `variable:` drive is the same list as
+    `$Error`, so it sees the record a raise above it leaves. Neither spelling is read as a read of
+    the record, so the raise is removed and the count comes out 0 where 5.1 prints 1.
+    """
+
+    @unittest.expectedFailure
+    def test_a_read_through_the_session_api_keeps_the_raise(self):
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "[int]'a'\nWrite-Host $ExecutionContext.SessionState.PSVariable.GetValue('Error').Count"))
+
+    @unittest.expectedFailure
+    def test_a_read_through_the_variable_drive_keeps_the_raise(self):
+        self.assertIn("[int]'a'", self._deobfuscate(
+            "[int]'a'\nWrite-Host (Get-Content variable:Error).Count"))
+
+
+class TestPs1AnUnreadablePayloadMayEndTheScriptAtAnyRaiseBelowIt(TestPs1):
+    """
+    Code nobody can read may set `$ErrorActionPreference` to `Stop`, and then a division by zero
+    below it ends the script before `after` runs. The sound reading keeps a failing cast there, and
+    removes a failing division in either spelling.
+    """
+
+    @unittest.expectedFailure
+    def test_a_bare_division_by_zero_below_an_unreadable_payload_is_kept(self):
+        self.assertIn('1 / 0', self._deobfuscate(
+            "Invoke-Expression $p\n1/0\nWrite-Host 'after'"))
+
+    @unittest.expectedFailure
+    def test_a_discarded_division_by_zero_below_an_unreadable_payload_is_kept(self):
+        self.assertIn('1 / 0', self._deobfuscate(
+            "Invoke-Expression $p\n$Null = 1/0\nWrite-Host 'after'"))
+
 
 class TestPs1RemovingATrapReadsWhereItsErrorsLand(TestPs1):
     """

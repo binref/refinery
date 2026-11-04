@@ -4,6 +4,7 @@ import unittest
 
 from inspect import cleandoc
 
+from test import wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.analysis.model import build_semantic_model
@@ -635,13 +636,38 @@ class TestPs1BareOutputIsStrippedByDefault(TestPs1):
                 self._assertStripped(junk, marker)
 
     def test_a_range_the_operator_cannot_build_is_not_expanded_where_output_is_kept(self):
-        # Regression: folding expanded `4242424242..4242424245` into an array of literals, which
-        # prints numbers where 5.1 fails to convert the bounds, and expanding `0..2147483647` would
-        # write two billion of them into the script.
+        """
+        Regression: folding expanded `4242424242..4242424245` into an array of literals, which
+        prints numbers where 5.1 fails to convert the bounds, and expanding `0..2147483647` would
+        write two billion of them into the script.
+        """
         for junk in ('4242424242..4242424245', '1..2147483648', '0..2147483647'):
             with self.subTest(junk):
                 result = self._deobfuscate(F'{junk}\n{_ANCHOR}', preserve_bare_output=True)
                 self.assertEqual(result, F'{junk}\n{_ANCHOR}')
+
+    @wontfix('no obfuscator writes a dynamicparam block')
+    def test_the_dictionary_a_dynamicparam_block_hands_back_is_kept(self):
+        """
+        The value a `dynamicparam` block writes is the set of parameters the function binds, not
+        console output.
+        """
+        result = self._deobfuscate(cleandoc("""
+            function f {
+              [CmdletBinding()]
+              param()
+              dynamicparam {
+                $d = New-Object System.Management.Automation.RuntimeDefinedParameterDictionary
+                $d
+              }
+              end {
+                Write-Host 'x'
+              }
+            }
+            f
+        """))
+        self.assertIn('RuntimeDefinedParameterDictionary', result)
+        self.assertRegex(result, r'(?m)^\s*\$d\s*$')
 
     def test_a_bare_value_in_a_function_every_call_site_only_prints_is_stripped(self):
         # The direction that needs the call graph: position alone says only that the value leaves
@@ -859,8 +885,8 @@ class TestPs1OutputSomethingElseHoldsIsKeptEitherWay(TestPs1):
         self._assertKeptEitherWay(F'{self._QZMR}Qzmr | Out-Null\n{_ANCHOR}', 'Xtjbnwqm')
 
     def test_a_fault_inside_a_function_a_handler_catches_is_kept(self):
-        # The fault gate has to hold across a call, where the veto that reads a `try` body cannot
-        # see: deleting the throw makes the handler dead code.
+        # The removal veto has to hold across a call: the cast raises in the body and the `catch`
+        # around the call takes it, so deleting the cast makes the handler dead code.
         self._assertKeptEitherWay(
             "function Qzmr { [Int]'Xtjbnwqm' }\n"
             "try { Qzmr } catch { Write-Host 'CAUGHT' }", 'CAUGHT')
