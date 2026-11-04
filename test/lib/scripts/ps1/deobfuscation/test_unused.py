@@ -1008,18 +1008,22 @@ class TestPs1RemovalIsMonotoneInWhatItKnows(TestPs1):
 
 class TestPs1DiscardedObjectRemoval(TestPs1):
 
-    def test_a_bare_object_a_cast_or_a_call_produces_is_kept(self):
-        # Each of these writes one object to the output stream on PowerShell 5.1, and each is kept
-        # because building it runs code that could raise: a cast converts by calling into the target
-        # type, and the synchronized table is a call like any other. The plain `@{ a = 1 }` beside
-        # them is not, which is why it is stripped and these are not.
+    @unittest.expectedFailure
+    def test_a_bare_object_a_cast_or_a_call_produces_is_stripped(self):
+        """
+        Each of these writes one object to the output stream on PowerShell 5.1 and nothing else, so
+        it goes like the plain `@{ a = 1 }` does. Building it calls into a type, which is read as a
+        call that may raise, and so it is kept, though no handler is there to notice an error.
+        """
         for source in (
             "[pscustomobject]@{\n  Name = 'x'\n  Value = 42\n}",
             '[Collections.Hashtable]::Synchronized(@{})',
         ):
             with self.subTest(source):
-                self._assertUnchanged(
-                    F"{source}\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+                self.assertEqual(
+                    self._apply(F"{source}\nWrite-Host 'keep'", Ps1JunkStatementRemoval),
+                    "Write-Host 'keep'",
+                )
 
     def test_void_foreach_pipeline_removed(self):
         result = self._apply(
