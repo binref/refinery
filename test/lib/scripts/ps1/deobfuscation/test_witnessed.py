@@ -637,14 +637,6 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
             patch.object(unused, 'bare_output_is_preserved', lambda options: True),
             notices='test_a_bare_literal_at_the_root_is_stripped')
 
-    def test_the_fault_gate_on_a_deleted_write_is_witnessed(self):
-        # What separates `42` from `[Int]'abc'`, both of which are output and only one of which
-        # terminates the script where it stands.
-        self._assertWitnessed(
-            [_KEPT_EITHER_WAY],
-            patch.object(unused, '_writes_only_what_cannot_fault', lambda stmt, raises: True),
-            notices='test_a_statement_that_can_raise_is_kept')
-
     def test_the_redirection_gate_on_a_deleted_write_is_witnessed(self):
         # Patched in `effects`, where the outward walk reads it, because a redirection decides where
         # the value goes and not whether the statement around it is shaped like a discard.

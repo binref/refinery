@@ -583,7 +583,8 @@ _STRIPPABLE = {
 class TestPs1BareOutputIsStrippedByDefault(TestPs1):
     """
     A statement whose only effect is to write a value to the success output stream is deleted when
-    the value provably reaches the console and nothing else, and when evaluating it cannot raise.
+    the value provably reaches the console and nothing else, and when nothing would notice an error
+    it raises.
     Each test names why a shape qualifies rather than pinning a rendering.
     """
 
@@ -613,15 +614,29 @@ class TestPs1BareOutputIsStrippedByDefault(TestPs1):
             with self.subTest(kind):
                 self._assertStripped(*_STRIPPABLE[kind])
 
-    def test_a_range_the_operator_cannot_build_is_not_stripped(self):
-        # Regression: `4242424242..4242424245` raises the same `Int32` conversion error `[Int]'x'`
-        # raises, so it is a guard that already stopped the script and deleting it resumes
-        # execution. Folding expanded it into an array of literals before anything asked, and an
-        # array of literals is granted unconditionally.
-        for junk in ('4242424242..4242424245', '1..2147483648', '0..2147483647'):
+    @unittest.expectedFailure
+    def test_a_failing_cast_or_division_nothing_handles_is_stripped(self):
+        """
+        5.1 reports the failed conversion or division and runs the next line, as it does for the
+        same value written as `$Null = [Int]'abc'`, which is removed. The bare value is kept
+        because it may raise.
+        """
+        for junk, marker in (("[Int]'Xtjbnwqm'", 'Xtjbnwqm'), ('4242424242 / $zero', '/')):
             with self.subTest(junk):
-                self.assertIn('ANCHOR', (result := self._deobfuscate(F'{junk}\n{_ANCHOR}')))
-                self.assertIn('4242424242' if junk.startswith('42') else '2147483', result)
+                self._assertStripped(junk, marker)
+
+    @unittest.expectedFailure
+    def test_a_range_whose_bounds_fail_to_convert_is_stripped(self):
+        """
+        A bound past `Int32` fails to convert the way `[Int]'x'` does, and the next line runs just
+        the same. The range is kept because it may raise.
+        """
+        for junk, marker in (
+            ('4242424242..4242424245', '4242424242'),
+            ('1..2147483648', '2147483648'),
+        ):
+            with self.subTest(junk):
+                self._assertStripped(junk, marker)
 
     def test_a_bare_value_in_a_function_every_call_site_only_prints_is_stripped(self):
         # The direction that needs the call graph: position alone says only that the value leaves
@@ -837,14 +852,6 @@ class TestPs1OutputSomethingElseHoldsIsKeptEitherWay(TestPs1):
         on a table of command names.
         """
         self._assertKeptEitherWay(F'{self._QZMR}Qzmr | Out-Null\n{_ANCHOR}', 'Xtjbnwqm')
-
-    def test_a_statement_that_can_raise_is_kept(self):
-        # Each of these terminates the script where it stands, so deleting one resumes execution
-        # that had stopped. Both classify as output like `42` does, and only the fault gate parts
-        # them from it.
-        for junk in ("[Int]'Xtjbnwqm'", '4242424242 / $zero'):
-            with self.subTest(junk):
-                self._assertKeptEitherWay(F'{junk}\n{_ANCHOR}', 'Xtjbnwqm' if "'" in junk else '/')
 
     def test_a_fault_inside_a_function_a_handler_catches_is_kept(self):
         # The fault gate has to hold across a call, where the veto that reads a `try` body cannot
