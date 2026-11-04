@@ -762,12 +762,13 @@ BEHAVIOURS: tuple[str, ...] = (
 
     #: What an error preference set by name is asked to preserve the behaviour of: `Stop` set
     #: through the session state or through a variable handed out makes a failed conversion
-    #: terminate the script unless a `trap` handles it. What a caught error cuts short is asked the
+    #: terminate the script unless a `trap` handles it. The conversion is an argument, so that it
+    #: stays where a bare one nothing notices is removed. What a caught error cuts short is asked the
     #: same of a store: the store before the failure is the one the read below the `try` observes.
     "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); "
-    "trap { continue }; [int]'a'; Write-Output 'after'",
-    "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; [int]'a'; "
-    "Write-Output 'after'",
+    "trap { continue }; Write-Output ([int]'a'); Write-Output 'after'",
+    "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; "
+    "Write-Output ([int]'a'); Write-Output 'after'",
     "$y = 'w'; try { $y = 'x'; [int]'a'; $y = 'v' } catch {}; Write-Output $y",
 
     #: What a store into an array made by no occurrence of its name is asked to preserve the
@@ -1116,6 +1117,23 @@ CLAIMS: tuple[str, ...] = (
     "$v = 'a'; & ([ScriptBlock]::Create('$v + \"b\"')); Write-Output (1 + 1)",
     "$v = 'a'; & ([ScriptBlock]::Create('$v = \"b\"')); Write-Output $v; Write-Output (1 + 1)",
     "$v = 'a'; . ([ScriptBlock]::Create('$v = \"b\"')); Write-Output $v; Write-Output (1 + 1)",
+
+    #: What a failing line written as the argument of `Write-Host` does, which is how the host-free
+    #: tests keep one that a bare line nothing notices would not be: a terminating error raised in
+    #: the argument ends the script and a `trap` takes it, a non-terminating one is reported and the
+    #: next line runs either way, and a failing command piped into `Write-Host` leaves `$?` false,
+    #: where the same command as its argument would leave it true. Each row carries a tail the tool
+    #: rewrites.
+    "trap { continue }; Write-Host (Get-Item nope -ErrorAction Stop); Write-Host 'after'; "
+    "Write-Output (1 + 1)",
+    "Write-Host (Get-Item nope -ErrorAction Stop); Write-Host 'after'; Write-Output (1 + 1)",
+    "trap { continue }; Write-Host (Get-Item nope -ErrorAction Continue); Write-Host 'after'; "
+    "Write-Output (1 + 1)",
+    "Write-Host (Get-Item nope -ErrorAction Continue); Write-Host 'after'; Write-Output (1 + 1)",
+    "$ErrorActionPreference = 'Stop'; Write-Host (Get-Item nope); Write-Host 'after'; "
+    "Write-Output (1 + 1)",
+    "$ErrorActionPreference = 'Stop'; Write-Host ([int]'a'); Write-Host 'after'; Write-Output (1 + 1)",
+    'Get-Item nope -ErrorAction SilentlyContinue | Write-Host; Write-Host $?; Write-Output (1 + 1)',
 )
 
 

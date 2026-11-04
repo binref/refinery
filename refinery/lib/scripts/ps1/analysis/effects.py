@@ -1067,9 +1067,9 @@ class StatementEffect(enum.Enum):
     `EFFECT`, and nothing here distinguishes them because nothing needs to.
 
     Nor does any member say whether the statement can *throw*. That is
-    `refinery.lib.scripts.ps1.analysis.raising`, which a caller about to remove an `OUTPUT`
-    statement has to ask separately: `[Int]'abc'` and
-    `1/0` are both `OUTPUT`, and removing either resumes a script that had terminated.
+    `refinery.lib.scripts.ps1.analysis.raising`, and whether anything notices the throw is
+    `deletion_is_observable`, which a caller about to remove any statement asks: `[Int]'abc'` and
+    `1/0` are both `OUTPUT`, and 5.1 reports either and runs the next line.
     """
     EFFECT = 'effect'
     OUTPUT = 'output'

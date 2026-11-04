@@ -1535,7 +1535,7 @@ class TestPs1AnActionThatArrivesBySplattingIsTheActionTheCommandRunsUnder(_Ps1Fa
         self._assertKept(F"""
             trap {{ continue }}
             $p = @{{ErrorAction = 'Stop'}}
-            Get-Item nope @p
+            Write-Host (Get-Item nope @p)
             {_FOLLOWER}
         """)
 
@@ -1544,11 +1544,11 @@ class TestPs1AnActionThatArrivesBySplattingIsTheActionTheCommandRunsUnder(_Ps1Fa
         self._assertDeobfuscatesTo(F"""
             trap {{ continue }}
             $p = @{{ErrorAction = 'Continue'}}
-            Get-Item nope @p
+            Write-Host (Get-Item nope @p)
             {_FOLLOWER}
         """, F"""
             $p = @{{ErrorAction = 'Continue'}}
-            Get-Item nope @p
+            Write-Host (Get-Item nope @p)
             {_FOLLOWER}
         """)
 

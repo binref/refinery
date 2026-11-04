@@ -3378,13 +3378,13 @@ class TestPs1AnErrorPreferenceSetByNameIsStillHandled(_Ps1Ledger):
     def test_a_preference_the_session_state_sets_is_one_a_trap_handles(self):
         self._assertTheTrapIsKept(
             "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); "
-            "trap { continue }; [int]'a'; Write-Output 'after'")
+            "trap { continue }; Write-Output ([int]'a'); Write-Output 'after'")
 
     @unittest.expectedFailure
     def test_a_preference_set_through_the_handed_out_variable_is_one_a_trap_handles(self):
         self._assertTheTrapIsKept(
             "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; "
-            "[int]'a'; Write-Output 'after'")
+            "Write-Output ([int]'a'); Write-Output 'after'")
 
 
 class TestPs1AStoreACaughtErrorCutsShortIsTheOneObserved(_Ps1Ledger):

@@ -22,13 +22,11 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     unconsumed_statement,
 )
 from refinery.lib.scripts.ps1.analysis.model import Binding, Ps1NameSet, Ps1SemanticModel, Scope
-from refinery.lib.scripts.ps1.analysis.raising import Ps1RaiseModel
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
     assignment_of,
     assignment_target_is_all_variables,
     assignment_target_variables,
-    fault_operand,
     get_body,
     get_statement_owners,
     normalize_command_name,
@@ -53,24 +51,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
 )
 from refinery.lib.scripts.ps1.options import bare_output_is_preserved, env_stores_are_preserved
-
-
-def _writes_only_what_cannot_fault(stmt: Node, raises: Ps1RaiseModel) -> bool:
-    """
-    Whether a statement writes a value to the output stream and can do nothing else — not even
-    raise. `refinery.lib.scripts.ps1.analysis.effects.StatementEffect.OUTPUT` says the first half
-    and deliberately says nothing about the second, so a caller about to delete such a statement
-    asks the fault question here.
-
-    It is the same question `refinery.lib.scripts.ps1.analysis.effects.fault_is_observed` asks of a
-    `DISCARD`, and it goes through the same model *over the same operand* for that reason: a bare
-    `$x` answered fault-free at one of the two sites and not at the other would be deleted as a
-    discard and kept as an output in one script, and so would one the two sites disagreed about
-    which expression to weigh. `refinery.lib.scripts.ps1.ast.fault_operand` is that
-    one reading, and it answers `None` for a statement that is not one expression.
-    """
-    operand = fault_operand(stmt)
-    return operand is not None and raises.cannot_fault(operand, stmt)
 
 
 class _MutationEdit(NamedTuple):
@@ -485,7 +465,6 @@ class Ps1JunkStatementRemoval(Transformer):
                 path.guarded,
                 called if id(parent) in top else None,
                 world,
-                cache.raises(True),
             )
             for statement in body:
                 if statement in removable:
@@ -661,7 +640,6 @@ class Ps1JunkStatementRemoval(Transformer):
         guarded: bool,
         called: frozenset[str] | None,
         world: Ps1WorldReach,
-        raises: Ps1RaiseModel,
     ) -> set[Node]:
         """
         What this pass would drop from the statement list `parent` owns, where `sink` is the
@@ -672,7 +650,7 @@ class Ps1JunkStatementRemoval(Transformer):
         one worth keeping and a body of them turns a junk function inert. It is not by itself a
         licence to drop, because emission is all it claims: a call returning `System.Void` emits as
         little as a discard idiom and can still raise, which is the removal veto's to weigh and not
-        this. An `OUTPUT` writes a value someone could see, and dropping it needs four separate
+        this. An `OUTPUT` writes a value someone could see, and dropping it needs three separate
         things to hold, none of which implies another:
 
         - the caller asks for it, which is `bare_output_is_preserved` read the other way round;
@@ -681,11 +659,13 @@ class Ps1JunkStatementRemoval(Transformer):
           across the call graph buys, and the reason this is not the positional answer;
         - the body runs on the normal path and not only on a fault, which is `guarded` read the other
           way round. A `trap` or `catch` body's value is console output exactly when the handler
-          fires; deleting it as noise drops what the script prints when it recovers from an error;
-        - evaluating it cannot raise, which is the raise model's to say. `[Int]'abc'` and `1/0`
-          are `OUTPUT` like `42` is, and both terminate the script where they stand, so deleting one
-          resumes execution that had stopped — and does it across a function boundary, where the
-          `try` veto in `Ps1RemovalPlan` cannot see.
+          fires; deleting it as noise drops what the script prints when it recovers from an error.
+
+        Whether it may raise is not one of them. `[Int]'abc'` and `1/0` are `OUTPUT` like `42` is,
+        and 5.1 reports either and runs the next line, so deleting one is observable only where
+        something notices the error: a handler, a `Stop`, a read of `$?` or `$Error`. That is the
+        removal veto's question, asked of an `OUTPUT` as of a `DISCARD`
+        (`refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan`).
 
         A definition goes when `called` holds the names some call in the tree reaches and its name
         is not one of them. `called` is `None` where no definition in this body goes for want of a
@@ -705,11 +685,10 @@ class Ps1JunkStatementRemoval(Transformer):
                     removable.add(stmt)
                 continue
             effect = statement_effect(stmt, world)
-            if effect is StatementEffect.DISCARD:
+            if effect is StatementEffect.DISCARD or (
+                effect is StatementEffect.OUTPUT and strip_bare_output
+            ):
                 removable.add(stmt)
-            elif effect is StatementEffect.OUTPUT and strip_bare_output:
-                if _writes_only_what_cannot_fault(stmt, raises):
-                    removable.add(stmt)
         return removable
 
 

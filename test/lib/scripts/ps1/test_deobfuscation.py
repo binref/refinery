@@ -551,16 +551,13 @@ class TestPs1ErrorHandlerSurvival(TestPs1):
                 out = self._deobfuscate_iterative(F"{script}\nWrite-Host 'keep'")
                 self.assertIn('Start-Process', out)
 
-    def test_an_empty_catch_lets_a_noise_bareword_go_and_keeps_what_may_emit(self):
-        # An empty `catch` licenses *deleting* a statement that raises, and licenses nothing wider.
-        # `[Int]$env:FOO` is the case where the two halves of that disagree: the cast prints nothing
-        # when it fails and the number when it succeeds, and the analysis cannot read the operand to
-        # tell which, so it can be neither deleted nor moved out and the whole of it stays. A proven
-        # throw would fold the construct away instead; this is the possible one that does not. The
-        # bareword goes on the separate guess that nothing defines it.
+    def test_an_empty_catch_lets_a_noise_bareword_and_a_cast_it_swallows_go(self):
+        # An empty `catch` swallows what `[Int]$env:FOO` raises, and the number the cast prints when
+        # it succeeds is console output, so it goes like a bare value nothing handles. The bareword
+        # goes on the separate guess that nothing defines it.
         out = self._deobfuscate_iterative(
             "try { foo =5 } catch {}\ntry { [Int]$env:FOO } catch {}\nWrite-Host 'keep'")
-        self.assertEqual(out, "try {\n  [Int]$env:FOO\n} catch {}\nWrite-Host 'keep'")
+        self.assertEqual(out, "Write-Host 'keep'")
 
 
 class TestPs1NameTrustSurvivesRewriting(TestPs1):

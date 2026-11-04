@@ -315,12 +315,11 @@ class TestPs1JunkStatementRemoval(TestPs1):
             'function Helper { Write-Host $args[0] }; Helper; Write-Host done')
         self.assertIn('Helper', result)
 
-    def test_an_expandable_string_is_kept_however_much_it_looks_like_noise(self):
-        # `"noise ${x} text"` prints `noise  text`, and what the text says is not a question this
-        # pipeline asks. It is kept for the reason a plain `'junk string'` is not: expanding one
-        # runs whatever the parts hold, so it can raise, and nothing here can rule that out.
+    def test_an_expandable_string_that_only_prints_is_stripped(self):
+        # `"noise ${x} text"` prints `noise  text` and does nothing else, so it goes like a plain
+        # `'junk string'` does.
         result = self._deobfuscate('"noise ${x} text"; Write-Host done')
-        self.assertIn('noise', result)
+        self.assertNotIn('noise', result)
         self.assertIn('done', result)
 
     def test_empty_body_guard(self):
@@ -609,27 +608,24 @@ class TestPs1BareOutputIsStrippedByDefault(TestPs1):
         # Constructing an array or a hash table cannot fail when nothing inside it can, so these
         # join the literals rather than needing a rule of their own. A range is not one of them —
         # the operator converts both endpoints and then allocates the span, so it is weighed
-        # separately and only a short range of `Int32` bounds qualifies.
+        # separately where it is folded, and only a short range of `Int32` bounds is expanded.
         for kind in ('array literal', 'hash literal', 'range'):
             with self.subTest(kind):
                 self._assertStripped(*_STRIPPABLE[kind])
 
-    @unittest.expectedFailure
     def test_a_failing_cast_or_division_nothing_handles_is_stripped(self):
         """
         5.1 reports the failed conversion or division and runs the next line, as it does for the
-        same value written as `$Null = [Int]'abc'`, which is removed. The bare value is kept
-        because it may raise.
+        same value written as `$Null = [Int]'abc'`, which is removed too.
         """
         for junk, marker in (("[Int]'Xtjbnwqm'", 'Xtjbnwqm'), ('4242424242 / $zero', '/')):
             with self.subTest(junk):
                 self._assertStripped(junk, marker)
 
-    @unittest.expectedFailure
     def test_a_range_whose_bounds_fail_to_convert_is_stripped(self):
         """
         A bound past `Int32` fails to convert the way `[Int]'x'` does, and the next line runs just
-        the same. The range is kept because it may raise.
+        the same.
         """
         for junk, marker in (
             ('4242424242..4242424245', '4242424242'),
@@ -637,6 +633,15 @@ class TestPs1BareOutputIsStrippedByDefault(TestPs1):
         ):
             with self.subTest(junk):
                 self._assertStripped(junk, marker)
+
+    def test_a_range_the_operator_cannot_build_is_not_expanded_where_output_is_kept(self):
+        # Regression: folding expanded `4242424242..4242424245` into an array of literals, which
+        # prints numbers where 5.1 fails to convert the bounds, and expanding `0..2147483647` would
+        # write two billion of them into the script.
+        for junk in ('4242424242..4242424245', '1..2147483648', '0..2147483647'):
+            with self.subTest(junk):
+                result = self._deobfuscate(F'{junk}\n{_ANCHOR}', preserve_bare_output=True)
+                self.assertEqual(result, F'{junk}\n{_ANCHOR}')
 
     def test_a_bare_value_in_a_function_every_call_site_only_prints_is_stripped(self):
         # The direction that needs the call graph: position alone says only that the value leaves
@@ -1008,12 +1013,10 @@ class TestPs1RemovalIsMonotoneInWhatItKnows(TestPs1):
 
 class TestPs1DiscardedObjectRemoval(TestPs1):
 
-    @unittest.expectedFailure
     def test_a_bare_object_a_cast_or_a_call_produces_is_stripped(self):
         """
         Each of these writes one object to the output stream on PowerShell 5.1 and nothing else, so
-        it goes like the plain `@{ a = 1 }` does. Building it calls into a type, which is read as a
-        call that may raise, and so it is kept, though no handler is there to notice an error.
+        it goes like the plain `@{ a = 1 }` does.
         """
         for source in (
             "[pscustomobject]@{\n  Name = 'x'\n  Value = 42\n}",

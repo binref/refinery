@@ -137,49 +137,34 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
     "function K { $Null = [Int]'abc' }; K; Write-Host 'A'":
         'The same fault in a called body: the definition and its only call are removed together and '
         '`A` runs, where the snippet also left the error record the cast raised.',
-    "trap { continue }; [int]'a'; Write-Host 'after'":
-        'The handler is removed. The cast raises a statement-terminating error 5.1 steps over with '
-        'or without a `trap`, so `after` runs either way and the handler only suppressed the record '
-        'the removal now lets through.',
-    "trap { continue }; 1/0; Write-Host 'after'":
-        'The same handler over a division rather than a cast.',
     "trap { continue }; zzq0000=5; Write-Host 'after'":
-        'The same over a bareword 5.1 cannot resolve: the CommandNotFound is statement-terminating '
-        'and steps over with or without the `trap`, so `after` runs and the removal only lets its '
-        'record through.',
+        'The handler is removed. The CommandNotFound 5.1 raises for a bareword it cannot resolve is '
+        'statement-terminating and steps over with or without the `trap`, so `after` runs and the '
+        'removal only lets its record through.',
     "$v = 'a'; & ([ScriptBlock]::Create('$v + \"b\"')); Write-Output (1 + 1)":
         'The created block is inlined as the statements it spells and the one statement it is '
         'becomes the bare value `$v + "b"`, which the strip removes as console output — the '
         'documented default the other entries of this table state. `ps1 -k` keeps the value.',
-    "Get-Command zzqnope -ErrorAction SilentlyContinue; Set-Alias zzq Write-Output; $?":
-        'The trailing `$?` is removed as console output, so the snippet writes `True` and the '
-        'default writes nothing; `ps1 -k` keeps it. The `Set-Alias` binds a name nothing invokes, '
-        'so it no longer withholds the strip from the statement below it the way an opener the '
-        'flood cannot see past does. The two statements before the read both stay: the '
-        '`Get-Command` reports a name and the `Set-Alias` sets the `$?` the read observes.',
-    "trap { continue }; trap { break }; [int]'a'; Write-Host 'after'":
-        'Both handlers are removed. 5.1 hands the cast to the first untyped `trap`, which continues, '
-        'and never to the second, so `after` runs with and without them; the removal only lets '
-        'through the record the first one suppressed.',
-    "trap { continue }; $s = { throw 'x' }; [int]'a'; Write-Host 'after'":
-        'The handler is removed. The block holding the `throw` is stored and never run, so the cast '
-        'is the one thing that raises, and `after` runs with and without the `trap`.',
-    "trap { continue }; if ($true) { trap { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'after'":
-        'Both handlers are removed. The inner `trap` takes the cast and continues with `tail`, which '
-        'is where 5.1 goes without it, and the outer one is never reached.',
-    "trap { continue }; foreach ($q in 1, 2) { trap { continue }; [int]'a'; Write-Host \"tail $q\" }; "
-    "Write-Host 'after'":
-        'Both handlers are removed. The inner `trap` takes the cast in each pass and continues with '
-        'the line after it, so both `tail` lines and `after` run either way, and the removal lets '
-        'through one record per pass.',
-    "trap { continue }; if ($true) { trap [System.IO.IOException] { continue }; "
-    "if ($true) { trap { continue }; [int]'a' }; Write-Host 'mid' }; Write-Host 'after'":
-        'All three handlers are removed. The innermost `trap` takes the cast and continues past it, '
-        'so neither the typed one nor the outer one is reached, and `mid` and `after` run either way.',
-    "trap { continue }; if ($true) { trap { break }; "
-    "if ($true) { trap { continue }; [int]'a'; Write-Host 'tail' }; Write-Host 'mid' }; Write-Host 'after'":
-        'All three handlers are removed. The innermost `trap` takes the cast and continues, so the '
-        '`break` above it never fires, and `tail`, `mid` and `after` run either way.',
+    "[int]'a'; Write-Host 'after'":
+        'The cast is removed, as its `$Null =` form is. 5.1 reports the failed conversion, steps '
+        'over it and runs `after`, so the only difference is the error record the removal drops.',
+    "trap { }; [int]'a'; Write-Host 'after'":
+        'The cast and the empty handler are removed. The handler resumes after reporting what it is '
+        'offered, so 5.1 reports the failed conversion and runs `after` with or without it, and the '
+        'removal only drops that record.',
+    "$(trap { continue }); [int]'a'; Write-Host 'after'":
+        'The cast is removed. The `trap` stands in the subexpression and never sees it, so 5.1 '
+        'reports the failed conversion and runs `after`, and the removal only drops that record.',
+    "Get-Item nope -ErrorAction Continue; Write-Host 'after'":
+        'The command is removed. It reports a path it cannot find and does nothing else, and 5.1 '
+        'runs `after`, so the only difference is that record.',
+    "Get-Date -c; Write-Output 'ran'":
+        'The command is removed. 5.1 finds no parameter `-c` to bind, reports that and runs `ran`, '
+        'so the only difference is the error record.',
+    "try { item =5 } catch {}; Write-Host 'after'":
+        'The `try` is removed with the command in it. `item =5` reports a path it cannot find, an '
+        'error the `catch` is never offered, and 5.1 runs `after`; the removal only drops that '
+        'record.',
 }
 
 #: Snippets whose deobfuscation does not behave like the snippet. Each is a semantics defect: the
@@ -341,12 +326,12 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'the read of the handed-out `Value` to `$x` and drops the command whose `-OutVariable` '
         'fills `$v`.',
     "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); "
-    "trap { continue }; [int]'a'; Write-Output 'after'":
+    "trap { continue }; Write-Output ([int]'a'); Write-Output 'after'":
         'The `trap` is removed, so the failed conversion terminates the script where the snippet '
         'writes `after`. The fault model reads the error preference off the stores that spell '
         'it and takes it for `Continue`.',
-    "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; [int]'a'; "
-    "Write-Output 'after'":
+    "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; "
+    "Write-Output ([int]'a'); Write-Output 'after'":
         'The same, with the preference set through the variable `Get-Variable` hands out.',
     "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; & { iex $c }; Write-Output $x[1]":
         'The read is folded to `2` where the snippet writes `9`: the payload runs in a child '
@@ -630,6 +615,33 @@ CLAIM_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
     "function Raise { throw 'e' }; function Wrap { trap { continue }; Raise; Write-Host 'in' "
     "}; Wrap; Write-Host 'after'":
         ('INFO\tin', 'INFO\tafter'),
+    "trap { continue }; Write-Host (Get-Item nope -ErrorAction Stop); Write-Host 'after'; "
+    "Write-Output (1 + 1)":
+        ('INFO\tafter', 'OUT\tSystem.Int32\t2'),
+    "Write-Host (Get-Item nope -ErrorAction Stop); Write-Host 'after'; Write-Output (1 + 1)":
+        ('THROW\tPathNotFound,Microsoft.PowerShell.Commands.GetItemCommand',),
+    "trap { continue }; Write-Host (Get-Item nope -ErrorAction Continue); Write-Host 'after'; "
+    "Write-Output (1 + 1)": (
+        'ERROR\tPathNotFound,Microsoft.PowerShell.Commands.GetItemCommand'
+        '\tSystem.Management.Automation.ItemNotFoundException',
+        'INFO\t',
+        'INFO\tafter',
+        'OUT\tSystem.Int32\t2',
+    ),
+    "Write-Host (Get-Item nope -ErrorAction Continue); Write-Host 'after'; Write-Output (1 + 1)": (
+        'ERROR\tPathNotFound,Microsoft.PowerShell.Commands.GetItemCommand'
+        '\tSystem.Management.Automation.ItemNotFoundException',
+        'INFO\t',
+        'INFO\tafter',
+        'OUT\tSystem.Int32\t2',
+    ),
+    "$ErrorActionPreference = 'Stop'; Write-Host (Get-Item nope); Write-Host 'after'; "
+    "Write-Output (1 + 1)":
+        ('THROW\tPathNotFound,Microsoft.PowerShell.Commands.GetItemCommand',),
+    "$ErrorActionPreference = 'Stop'; Write-Host ([int]'a'); Write-Host 'after'; Write-Output (1 + 1)":
+        ('THROW\tInvalidCastFromStringToInteger',),
+    'Get-Item nope -ErrorAction SilentlyContinue | Write-Host; Write-Host $?; Write-Output (1 + 1)':
+        ('INFO\tFalse', 'OUT\tSystem.Int32\t2'),
 }
 
 #: What the host's own command tables hold, measured. The tables in `refinery.lib.scripts.ps1.data`

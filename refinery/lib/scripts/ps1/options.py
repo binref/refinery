@@ -21,14 +21,14 @@ class Ps1DeobfuscationOptions:
     stream is worth.
 
     - Stripping model (default, `preserve_bare_output=False`): such a statement is deleted wherever
-      the analysis can prove three things: that evaluating it cannot raise, that its value reaches
-      the process output and nothing more, and that no redirection moves it away. What is lost is
-      text on a console nobody is watching, and what is bought is the removal of the junk an
-      obfuscator pads a script with. The proof rests on one assumption no file can settle: that the
-      input is a standalone script and not a library some other file imports, whose functions are
-      then called from call sites this analysis never sees. A script in which nothing runs keeps
-      its console output under this model too, because that output is then the whole of what it
-      does; see `refinery.lib.scripts.ps1.deobfuscation.deobfuscate`.
+      the analysis can prove three things: that nothing would notice an error it raises, that its
+      value reaches the process output and nothing more, and that no redirection moves it away.
+      What is lost is text on a console nobody is watching, and what is bought is the removal of
+      the junk an obfuscator pads a script with. The proof rests on one assumption no file can
+      settle: that the input is a standalone script and not a library some other file imports,
+      whose functions are then called from call sites this analysis never sees. A script in which
+      nothing runs keeps its console output under this model too, because that output is then the
+      whole of what it does; see `refinery.lib.scripts.ps1.deobfuscation.deobfuscate`.
 
     - Preserving model (`preserve_bare_output=True`): no such statement is ever deleted. This is the
       answer for a script whose printed output *is* the artifact, and for a `.psm1` or any other

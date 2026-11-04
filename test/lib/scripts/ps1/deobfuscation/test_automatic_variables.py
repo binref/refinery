@@ -20,9 +20,10 @@ _TAIL = "Write-Host 'TAIL'"
 #: A command that runs and succeeds. Windows PowerShell 5.1 leaves `$?` at `$true` after it.
 _SUCCEEDS = "Write-Host 'FIRST'"
 
-#: A command that fails and whose error `-ErrorAction SilentlyContinue` suppresses. 5.1 sets `$?` to
-#: `$false` after it, so a suppressed error is still an observable one.
-_FAILS = r'Get-Item C:\missing -ErrorAction SilentlyContinue'
+#: A command that fails and whose error `-ErrorAction SilentlyContinue` suppresses, piped into a
+#: command that acts so that the line stays. 5.1 sets `$?` to `$false` after it, measured in
+#: `corpus.CLAIMS`, so a suppressed error is still an observable one.
+_FAILS = 'Get-Item nope -ErrorAction SilentlyContinue | Write-Host'
 
 #: A discarded conversion 5.1 answers with a terminating error. It sets `$?` to `$false` and appends
 #: a record to `$Error`, and the script runs on to the next statement.
