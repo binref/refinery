@@ -8,7 +8,6 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
 from refinery.lib.scripts.js.analysis.environment import (
-    _HOST_GLOBALS,
     _NODE_ABSENT,
     _SPECS,
     GUARANTEED_GLOBALS,
@@ -372,7 +371,16 @@ class TestNodeAgreesWithTheEnvironment(TestBase):
         self.assertIsNone(error)
         self.assertEqual(json.loads(out), [])
 
-    def test_what_node_holds_is_what_its_global_object_has(self):
+    def test_node_holds_no_property_the_environment_does_not_know(self):
         out, error = behavior(_A_READOUT_OF_THE_GLOBAL_OBJECT)
         self.assertIsNone(error)
-        self.assertEqual(json.loads(out), _HOST_GLOBALS['node'])
+        kinds: dict[str, str] = json.loads(out)
+        unknown = [name for name in kinds if not HostEnvironment.node.holds(name)]
+        keeping_their_own_value_unknown = [
+            name
+            for name, kind in kinds.items()
+            if kind not in ('value', 'setter:stored')
+            and not HostEnvironment.node.keeps_its_own_value(name)
+        ]
+        self.assertEqual(unknown, [])
+        self.assertEqual(keeping_their_own_value_unknown, [])

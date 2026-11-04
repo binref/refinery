@@ -122,6 +122,24 @@ A_NAME_OF_A_PROPERTY_THE_HOST_KEEPS_ITS_OWN_VALUE_IN: dict[str, Program] = {
         prints('1', 'onload=undefined'),
         Reading.WINDOW,
     ),
+    'a function stored into the var top and called': Program(
+        a_program("""
+            var top = function (a) { return a + 1; };
+            try { console.log(top(1)); } catch (e) { console.log(e.constructor.name); }
+            """),
+        prints('TypeError', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a function declared in a block under the name status and called': Program(
+        a_program("""
+            {
+              function status() { return 'x'; }
+            }
+            try { console.log(status()); } catch (e) { console.log(e.constructor.name); }
+            """),
+        prints('TypeError', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
 }
 
 
@@ -177,6 +195,32 @@ class TestAPropertyABrowserKeepsItsOwnValueInIsNotReadAsAVariable(TestBase):
     def test_a_strict_store_into_top_which_throws_is_kept(self):
         source = "'use strict'; top = 1; console.log('after');"
         self.assertIn('top = 1', folded(source, environment=HostEnvironment.browser))
+
+    def test_a_call_of_a_function_stored_into_status_is_not_answered_by_that_function(self):
+        source = a_program("""
+            var status = function () { return 'x'; };
+            console.log(status());
+            """)
+        self.assertIn('console.log(status());', folded(source, environment=HostEnvironment.browser))
+
+    def test_a_call_of_a_function_declared_in_a_block_under_the_name_top_is_kept(self):
+        source = a_program("""
+            {
+              function top() { return 'x'; }
+            }
+            console.log(top());
+            """)
+        self.assertIn('console.log(top());', folded(source, environment=HostEnvironment.browser))
+
+
+class TestAPropertyNodeDoesNotHoldIsAVariableThere(TestBase):
+
+    def test_a_call_of_a_function_stored_into_status_is_answered_for_node(self):
+        source = a_program("""
+            var status = function () { return 'x'; };
+            console.log(status());
+            """)
+        self.assertIn("console.log('x');", folded(source, environment=HostEnvironment.node))
 
 
 class TestAPropertyTheHostHoldsLeavesTheFoldsOfAVariable(TestBase):

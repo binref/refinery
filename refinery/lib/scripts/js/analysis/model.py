@@ -3243,10 +3243,11 @@ class SemanticModel:
         (`_bindings_holding_the_global_object`), so a value read out of such a write would feed the
         very set that decides whether it is one. A binding with no declaration — an implicit global,
         and the binding `_ensure_implicit_global_from_alias_write` mints — contributes nothing and
-        is never complete, even where the file assigns it by name. With *ignore_dynamic_rebinds* the
-        dynamic-rebind conjunct is left out of the completeness verdict: the values answer what the
-        text spells, and whether a rebind crosses a given read is the caller's ordering question
-        over `binding_dynamic_rebind_sites`.
+        is never complete, even where the file assigns it by name. Neither is a property the host
+        holds and keeps a value of its own in (`held_by_the_host`): a read of it does not give back
+        what the file stored. With *ignore_dynamic_rebinds* the dynamic-rebind conjunct is left out
+        of the completeness verdict: the values answer what the text spells, and whether a rebind
+        crosses a given read is the caller's ordering question over `binding_dynamic_rebind_sites`.
 
         The values hold wherever the name is not in their temporal dead zone; a bare declarator
         contributes no value even though the name reads `undefined` there, and a consumer that needs a
@@ -3639,7 +3640,7 @@ class SemanticModel:
         complete = (
             ignore_dynamic_rebinds
             or not self.binding_maybe_reassigned_dynamically(binding)
-        )
+        ) and not self.held_by_the_host(binding)
         if binding.supplied_by_host and not any(
             isinstance(declaration.parent, JsFunctionDeclaration)
             and declaration.parent.id is declaration
@@ -3988,7 +3989,8 @@ class SemanticModel:
         reads the property (`host_reaches_global`) or holds it before the script runs
         (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.holds`). A declaration that
         lands there in place of one that bound a name of its own body stores into what the host
-        reads, or reads what the host put there, and a `let` there shadows it.
+        reads, or reads what the host put there. A `let` there shadows it, or is refused with a
+        `SyntaxError` where the property cannot be redefined.
         """
         return (
             scope is self.root_scope
@@ -4012,16 +4014,20 @@ class SemanticModel:
         runs and that keeps a value of its own when the script stores one
         (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.keeps_its_own_value`), such
         as the `status` of a browser window, which keeps a string, or its `top`, which keeps the
-        window: the binding is a `var` at the top of a script, which declares no property of its own
-        there, or a name the script never declares. What a read of it gives is not what the file
-        stored. A function declaration replaces such a property with a variable of its own.
+        window: the binding is a `var` at the top of a script or the one Annex B gives a function
+        declared in a block there, neither of which declares a property of its own, or a name the
+        script never declares. What a read of it gives is not what the file stored. A function
+        declared at the top of the script replaces such a property with a variable of its own, where
+        the copy Annex B makes of one declared in a block stores into it.
         """
         return (
-            binding.kind in (BindingKind.VAR, BindingKind.IMPLICIT_GLOBAL)
+            binding.kind in (BindingKind.VAR, BindingKind.FUNCTION, BindingKind.IMPLICIT_GLOBAL)
             and self.environment.keeps_its_own_value(binding.name)
             and self.reaches_global_object(binding)
             and not any(
-                isinstance(declaration.parent, JsFunctionDeclaration)
+                isinstance(function := declaration.parent, JsFunctionDeclaration)
+                and (holder := statement_list_holding(function)) is not None
+                and hoists_its_functions(holder)
                 for declaration in binding.declarations
             )
         )

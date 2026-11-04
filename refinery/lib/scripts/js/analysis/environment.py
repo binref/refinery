@@ -536,181 +536,13 @@ asserted absent — which would fold `typeof requestAnimationFrame` to `'undefin
 yields `'function'`.
 """
 
-_WINDOW_EVENT_HANDLERS = frozenset({
-    'onabort',
-    'onafterprint',
-    'onanimationcancel',
-    'onanimationend',
-    'onanimationiteration',
-    'onanimationstart',
-    'onappinstalled',
-    'onauxclick',
-    'onbeforeinput',
-    'onbeforeinstallprompt',
-    'onbeforematch',
-    'onbeforeprint',
-    'onbeforetoggle',
-    'onbeforeunload',
-    'onbeforexrselect',
-    'onblur',
-    'oncancel',
-    'oncanplay',
-    'oncanplaythrough',
-    'onchange',
-    'onclick',
-    'onclose',
-    'oncommand',
-    'oncontentvisibilityautostatechange',
-    'oncontextlost',
-    'oncontextmenu',
-    'oncontextrestored',
-    'oncuechange',
-    'ondblclick',
-    'ondevicemotion',
-    'ondeviceorientation',
-    'ondeviceorientationabsolute',
-    'ondrag',
-    'ondragend',
-    'ondragenter',
-    'ondragleave',
-    'ondragover',
-    'ondragstart',
-    'ondrop',
-    'ondurationchange',
-    'onemptied',
-    'onended',
-    'onerror',
-    'onfocus',
-    'onformdata',
-    'ongamepadconnected',
-    'ongamepaddisconnected',
-    'ongotpointercapture',
-    'onhashchange',
-    'oninput',
-    'oninvalid',
-    'onkeydown',
-    'onkeypress',
-    'onkeyup',
-    'onlanguagechange',
-    'onload',
-    'onloadeddata',
-    'onloadedmetadata',
-    'onloadstart',
-    'onlostpointercapture',
-    'onmessage',
-    'onmessageerror',
-    'onmousedown',
-    'onmouseenter',
-    'onmouseleave',
-    'onmousemove',
-    'onmouseout',
-    'onmouseover',
-    'onmouseup',
-    'onmousewheel',
-    'onoffline',
-    'ononline',
-    'onpagehide',
-    'onpagereveal',
-    'onpageshow',
-    'onpageswap',
-    'onpause',
-    'onplay',
-    'onplaying',
-    'onpointercancel',
-    'onpointerdown',
-    'onpointerenter',
-    'onpointerleave',
-    'onpointermove',
-    'onpointerout',
-    'onpointerover',
-    'onpointerrawupdate',
-    'onpointerup',
-    'onpopstate',
-    'onprogress',
-    'onratechange',
-    'onrejectionhandled',
-    'onreset',
-    'onresize',
-    'onscroll',
-    'onscrollend',
-    'onscrollsnapchange',
-    'onscrollsnapchanging',
-    'onsearch',
-    'onsecuritypolicyviolation',
-    'onseeked',
-    'onseeking',
-    'onselect',
-    'onselectionchange',
-    'onselectstart',
-    'onslotchange',
-    'onstalled',
-    'onstorage',
-    'onsubmit',
-    'onsuspend',
-    'ontimeupdate',
-    'ontoggle',
-    'ontransitioncancel',
-    'ontransitionend',
-    'ontransitionrun',
-    'ontransitionstart',
-    'onunhandledrejection',
-    'onunload',
-    'onvolumechange',
-    'onwaiting',
-    'onwebkitanimationend',
-    'onwebkitanimationiteration',
-    'onwebkitanimationstart',
-    'onwebkittransitionend',
-    'onwheel',
-})
-"""
-The event handler attributes of a browser window: properties of the global object whose value the
-window calls when the event they name fires, so a function a script stores in one runs with no call
-in the file. The set is every name starting with `on` on a window of a current Chromium browser and
-its prototype chain. A name only another browser defines is missing, which keeps a store into it
-dead.
-"""
-
-_WORKER_EVENT_HANDLERS = frozenset({
-    'onerror',
-    'onlanguagechange',
-    'onmessage',
-    'onmessageerror',
-    'onrejectionhandled',
-    'onrtctransform',
-    'onunhandledrejection',
-})
-"""
-The event handler attributes of a dedicated worker global scope, in the sense of
-`_WINDOW_EVENT_HANDLERS`, read out of the same browser.
-"""
-
-_WINDOW_ATTRIBUTES_READ_ON_STORE = frozenset({
-    'location',
-    'name',
-    'opener',
-})
-"""
-The attributes of a browser window, other than its event handlers, whose value the window reads
-when a script stores one: it navigates to the address stored in `location`, keeps what is stored
-in `name` as the name of the window, which the next page loaded into it reads, and cuts the window
-off from the page that opened it when `null` is stored in `opener`. The set was read out of a
-current Chromium window, every property with a setter on the window and its prototype chain:
-storing `null` into each of the others replaced the property with the value stored, so nothing
-of the window reads it, and `status` kept the value as a string, which no part of the window
-reads either. `location` was not stored into, since that navigates; `opener` was replaced as
-well, but a tab no page opened cannot show what the standard has a store of `null` do first. A
-name only another browser defines is missing, which keeps a store into it dead. A dedicated
-worker has no such attribute: every setter on its global scope replaced the property.
-"""
-
-
 def _load_host_globals() -> dict[str, dict[str, str]]:
     """
     The own properties of the global object of each host, read out of it and shipped as
     `js-globals.json`: a browser window and a dedicated worker of a current Chromium, and Node.
-    Each maps the name of a property to what it is, where a store of `null` and of an object was
-    made into each one with a setter:
+    The names a wallet added to the window read (`cardano`, `ethereum`, `solana`, `web3`) are left
+    out. Each maps the name of a property to what it is, where a store of `null` and of an object
+    was made into each one with a setter:
 
     - `value`: a writable data property;
     - `constant`: a data property that is not writable;
@@ -747,6 +579,49 @@ def _keeping_their_own_value(*hosts: str) -> frozenset[str]:
         for name, kind in _HOST_GLOBALS[host].items()
         if kind not in _KINDS_READ_BACK_AFTER_A_STORE
     )
+
+
+_WINDOW_EVENT_HANDLERS = frozenset(name for name in _HOST_GLOBALS['window'] if name.startswith('on'))
+"""
+The event handler attributes of a browser window: properties of the global object whose value the
+window calls when the event they name fires, so a function a script stores in one runs with no call
+in the file. The set is every name starting with `on` that the window holds (`_load_host_globals`).
+A name only another browser defines is missing, which keeps a store into it dead.
+"""
+
+
+_WORKER_EVENT_HANDLERS = frozenset({
+    'onerror',
+    'onlanguagechange',
+    'onmessage',
+    'onmessageerror',
+    'onrejectionhandled',
+    'onrtctransform',
+    'onunhandledrejection',
+})
+"""
+The event handler attributes of a dedicated worker global scope, in the sense of
+`_WINDOW_EVENT_HANDLERS`, read out of the same browser.
+"""
+
+_WINDOW_ATTRIBUTES_READ_ON_STORE = frozenset({
+    'location',
+    'name',
+    'opener',
+})
+"""
+The attributes of a browser window, other than its event handlers, whose value the window reads
+when a script stores one: it navigates to the address stored in `location`, keeps what is stored
+in `name` as the name of the window, which the next page loaded into it reads, and cuts the window
+off from the page that opened it when `null` is stored in `opener`. The set was read out of a
+current Chromium window, every property with a setter on the window and its prototype chain:
+storing `null` into each of the others replaced the property with the value stored, so nothing
+of the window reads it, and `status` kept the value as a string, which no part of the window
+reads either. `location` was not stored into, since that navigates; `opener` was replaced as
+well, but a tab no page opened cannot show what the standard has a store of `null` do first. A
+name only another browser defines is missing, which keeps a store into it dead. A dedicated
+worker has no such attribute: every setter on its global scope replaced the property.
+"""
 
 
 class JsEngine(enum.Enum):
@@ -959,8 +834,10 @@ class HostEnvironment(enum.Enum):
         Whether the global object of some host this one covers holds a property of its own under
         *name* before a script runs. A `var` of the name at the top of a classic script declares no
         property then but names that one, which holds what the host put there until the script
-        stores a value, and a `let` there shadows it. A property the global object inherits is not
-        one it holds: a `var` of its name declares a property of its own in front of it.
+        stores a value. A `let` there shadows it, unless the property cannot be redefined, as the
+        `top` of a browser window cannot, where the script is refused with a `SyntaxError`. A
+        property the global object inherits is not one it holds: a `var` of its name declares a
+        property of its own in front of it.
         """
         return name in _SPECS[self].held
 
