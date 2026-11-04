@@ -28,6 +28,7 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BatchedScopeTransformer,
     access_key,
+    fresh_name,
     function_binds_name,
     insert_after_prologue,
     is_receiver_binding_call,
@@ -133,7 +134,7 @@ class _NamespacePlan(NamedTuple):
     declarator: JsVariableDeclarator
     declaration: JsVariableDeclaration
     creation: JsExpressionStatement | None
-    flattenable: set[str]
+    names: dict[str, str]
     hoisted: dict[str, _PropertyAssignment]
     declarations: set[str]
     remove_declarator: bool
@@ -144,7 +145,9 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
     Replace `NS.prop` member accesses with bare identifiers when `NS` is declared as an empty
     object literal and is only ever used via property access. Emits `var` declarations for the
     flattened property names. A property whose name conflicts with an existing variable in the
-    scope, or that a plain object inherits, is left on the namespace object. A namespace that a
+    scope, or that a plain object inherits, is left on the namespace object. A property whose
+    variable would be the property of the global object a host reads becomes a variable of another
+    name (`_variable_names`). A namespace that a
     method may read through `this` is left whole. A namespace may also be declared bare and made
     by one statement of its scope that runs at most once whenever the scope does, and before every
     access of the namespace (`_creation`):
@@ -241,34 +244,36 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         scope_obj = model.scope_of(scope)
         if scope_obj is None:
             return None
-        conflicts = self._find_conflicting_names(model, scope, scope_obj, props, declarator)
-        captured = self._captured_keys(model, scope, scope_obj, accesses)
+        names = self._variable_names(model, scope, scope_obj, props)
+        conflicts = self._find_conflicting_names(model, scope, scope_obj, names, declarator)
+        captured = self._captured_keys(model, scope, scope_obj, accesses, names)
         inherited = self._inherited_keys(props, cache.effects)
         flattenable = props - conflicts - captured - inherited
         flattenable = {
             key for key in flattenable
-            if is_valid_identifier(key) and not self.name_emitted_in(scope, key)
+            if is_valid_identifier(names[key]) and not self.name_emitted_in(scope, names[key])
         }
         if not flattenable:
             return None
         func_assigns = self._detect_function_assignments(body, name, flattenable)
         hoisted_keys = (
-            self._hoistable_functions(func_assigns, accesses, cache.dominance)
+            self._hoistable_functions(func_assigns, accesses, cache.dominance, names)
             if func_assigns else set()
         )
         hoisted = {k: v for k, v in func_assigns.items() if k in hoisted_keys}
-        declarations = flattenable - set(hoisted) - self._declared_var_names(body)
-        for key in declarations:
-            self.emits(scope, key)
+        declarations = {names[key] for key in flattenable - set(hoisted)}
+        declarations -= self._declared_var_names(body)
+        for variable in declarations:
+            self.emits(scope, variable)
         for key in hoisted:
-            self.emits(scope, key)
+            self.emits(scope, names[key])
         return _NamespacePlan(
             scope=scope,
             name=name,
             declarator=declarator,
             declaration=decl_stmt,
             creation=creation,
-            flattenable=flattenable,
+            names={key: names[key] for key in flattenable},
             hoisted=hoisted,
             declarations=declarations,
             remove_declarator=not (props - flattenable),
@@ -286,11 +291,11 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
                 anchors.append(plan.creation)
         if not all(is_attached(anchor) for anchor in anchors):
             return
-        if not self._rewrite(plan.scope, plan.name, plan.declarator, plan.flattenable):
+        if not self._rewrite(plan.scope, plan.name, plan.declarator, plan.names):
             return
         self._remove_hoisted_statements(plan.scope, plan.hoisted)
         self._emit_declarations(plan.scope, plan.declarations)
-        self._emit_function_declarations(plan.scope, plan.hoisted)
+        self._emit_function_declarations(plan.scope, plan.hoisted, plan.names)
         if plan.remove_declarator:
             self._remove_declarator(plan.scope, plan.declarator, plan.declaration)
             if plan.creation is not None:
@@ -436,18 +441,53 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
             if not property_absent_from_written_chain(effects, dict, key)
         }
 
+    def _variable_names(
+        self,
+        model: SemanticModel,
+        scope: Node,
+        scope_obj: Scope,
+        props: set[str],
+    ) -> dict[str, str]:
+        """
+        The name of the variable each key of *props* becomes in *scope*: the key itself, unless a
+        declaration of it there would be the property of the global object a host reads
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.lands_on_the_host`). Such a key takes
+        the first suffix `refinery.lib.scripts.js.deobfuscation.helpers.fresh_name` finds that the
+        text spells nowhere, no host reads, and no declaration of the batch takes: the object the
+        program stored into was its own, and `cfg.location = u` at the top of a script becomes a
+        variable `location_1`, where a variable `location` would navigate the window.
+        """
+        assert self._root is not None
+        names = {key: key for key in props}
+        spelled: set[str] | None = None
+        for key in sorted(props):
+            if not is_valid_identifier(key) or not model.lands_on_the_host(key, scope_obj):
+                continue
+            if spelled is None:
+                spelled = {
+                    node.name for node in self._root.walk() if isinstance(node, JsIdentifier)
+                }
+            taken = set(names.values()) | spelled
+            names[key] = fresh_name(key, lambda name: (
+                name in taken
+                or model.host_reaches_global(name)
+                or self.name_emitted_in(scope, name)
+            ))
+        return names
+
     @staticmethod
     def _find_conflicting_names(
         model: SemanticModel,
         scope: Node,
         scope_obj: Scope,
-        props: set[str],
+        names: dict[str, str],
         declarator: JsVariableDeclarator,
     ) -> set[str]:
         """
-        Return the subset of property names that cannot be flattened because they already appear
-        as variable references in the scope. An occurrence that resolves to a binding strictly
-        nested below *scope_obj* shadows the would-be declaration and is therefore not a conflict.
+        Return the keys of *names* that cannot be flattened because the name of the variable each
+        becomes (`_variable_names`) already appears as a variable reference in the scope. An
+        occurrence that resolves to a binding strictly nested below *scope_obj* shadows the
+        would-be declaration and is therefore not a conflict.
 
         An occurrence in object position (`k.y`) counts the same way a bare one does: it reads the
         binding, so the declaration the flattening emits would capture it. Only an occurrence in
@@ -456,11 +496,13 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         no access to the namespace, but a name it reads from outside is captured all the same.
         """
         decl_id = declarator.id
+        keys = {name: key for key, name in names.items()}
         conflicts: set[str] = set()
         for node in scope.walk():
             if not isinstance(node, JsIdentifier):
                 continue
-            if node.name not in props or node.name in conflicts:
+            key = keys.get(node.name)
+            if key is None or key in conflicts:
                 continue
             if node is decl_id:
                 continue
@@ -469,7 +511,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
                 continue
             if model.is_shadowed(node.name, node, scope_obj):
                 continue
-            conflicts.add(node.name)
+            conflicts.add(key)
         return conflicts
 
     def _captured_keys(
@@ -478,11 +520,12 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         scope: Node,
         scope_obj: Scope,
         references_by_key: dict[str, list[Node]],
+        names: dict[str, str],
     ) -> set[str]:
         """
-        The keys some access `NS.k` of which the bare `k` that replaces it would not carry to the
-        declaration the flattening emits in *scope*: between the access and *scope* the name is
-        bound anew, by a binding of the program
+        The keys some access `NS.k` of which the bare name that replaces it, the variable *names*
+        maps the key to, would not carry to the declaration the flattening emits in *scope*: between
+        the access and *scope* the name is bound anew, by a binding of the program
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.is_shadowed`), by a declaration an
         earlier plan of the batch emits into a scope nested below this one
         (`refinery.lib.scripts.js.deobfuscation.helpers.BatchedScopeTransformer.name_emitted_in`),
@@ -493,14 +536,15 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         """
         captured: set[str] = set()
         for key, references in references_by_key.items():
+            variable = names[key]
             for reference in references:
                 assert isinstance(reference, JsMemberExpression) and reference.object is not None
                 if (
-                    model.is_shadowed(key, reference.object, scope_obj)
+                    model.is_shadowed(variable, reference.object, scope_obj)
                     or self._crosses_a_with_body(model, reference, scope_obj)
                     or model.direct_eval_declares_below(reference, scope_obj)
                     or any(
-                        self.name_emitted_in(enclosing, key)
+                        self.name_emitted_in(enclosing, variable)
                         for enclosing in self._scopes_between(reference, scope)
                     )
                 ):
@@ -536,11 +580,12 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         scope: Node,
         name: str,
         declarator: JsVariableDeclarator,
-        flattenable: set[str],
+        names: dict[str, str],
     ) -> bool:
         """
-        Replace every flattenable `NS.prop` member access in the scope subtree with a bare
-        identifier, walking the tree as it stands. Returns whether any replacement landed.
+        Replace every flattenable `NS.prop` member access in the scope subtree with the bare name of
+        the variable *names* maps its key to, walking the tree as it stands. Returns whether any
+        replacement landed.
         """
         decl_id = declarator.id
         moved = False
@@ -553,9 +598,9 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
             if not isinstance(parent, JsMemberExpression) or parent.object is not node:
                 continue
             key = access_key(parent)
-            if key is None or key not in flattenable:
+            if key is None or key not in names:
                 continue
-            replacement = JsIdentifier(name=key, offset=parent.offset)
+            replacement = JsIdentifier(name=names[key], offset=parent.offset)
             if _replace_in_parent(parent, replacement):
                 moved = True
         return moved
@@ -626,6 +671,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         func_assigns: dict[str, _PropertyAssignment],
         references_by_key: dict[str, list[Node]],
         dominance: DominanceModel,
+        names: dict[str, str],
     ) -> set[str]:
         """
         The function properties whose single `NS.f = function…` assignment may be raised to a hoisted
@@ -634,17 +680,17 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         a `DominanceModel.runs_before_all` query over every `NS.f` access, computed forms included, so
         a read that could run first (earlier in the scope, or inside a function invoked earlier) keeps
         the property in place. The rewrite to a declaration also drops the function expression's own
-        name, so a differing live inner name (a recursive `function fact` assigned to `NS.other`) would
-        become unbound; such a property is likewise held back. A property failing either test keeps its
-        assignment in place behind a bare `var f;`, reproducing the original member's
-        `undefined`-until-assigned semantics.
+        name, so an inner name other than that of the variable the key becomes (*names*), as a
+        recursive `function fact` assigned to `NS.other` has, would become unbound; such a property
+        is likewise held back. A property failing either test keeps its assignment in place behind
+        a bare `var f;`, reproducing the original member's `undefined`-until-assigned semantics.
         """
         hoistable: set[str] = set()
         for key, entry in func_assigns.items():
             func_expr = entry.rhs
             if not isinstance(func_expr, JsFunctionExpression):
                 continue
-            if func_expr.id is not None and func_expr.id.name != key:
+            if func_expr.id is not None and func_expr.id.name != names[key]:
                 continue
             statement = entry.statement
             references = [ref for ref in references_by_key.get(key, ()) if ref is not entry.write]
@@ -656,21 +702,22 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
     def _emit_function_declarations(
         scope: Node,
         func_assigns: dict[str, _PropertyAssignment],
+        names: dict[str, str],
     ) -> None:
         """
-        Hoist a function declaration for each flattened property that held a function expression, all
-        spliced in one call.
+        Hoist a function declaration for each flattened property that held a function expression,
+        under the name of the variable *names* maps its key to, all spliced in one call.
 
         The names are sorted in reverse because one splice keeps the order it is handed, where the
         head-insertion it replaced reversed it. The emitted order is the one that was emitted before,
         and sorting them forward would silently change the output of every flattened namespace.
         """
         declarations = []
-        for name in sorted(func_assigns, reverse=True):
-            func_expr = func_assigns[name].rhs
+        for key in sorted(func_assigns, reverse=True):
+            func_expr = func_assigns[key].rhs
             assert isinstance(func_expr, JsFunctionExpression)
             declarations.append(JsFunctionDeclaration(
-                id=JsIdentifier(name=name),
+                id=JsIdentifier(name=names[key]),
                 params=func_expr.params or [],
                 body=func_expr.body,
                 generator=is_generator_function(func_expr),

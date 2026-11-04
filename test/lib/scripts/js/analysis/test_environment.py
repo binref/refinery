@@ -84,6 +84,21 @@ class TestTheUniversalHostCallsEveryHandlerAPinnedHostCalls(TestBase):
                 with self.subTest(environment=environment.name, name=name):
                     self.assertTrue(HostEnvironment.universal.calls_handler(name))
 
+    def test_every_stored_value_a_pinned_host_reads_is_read_without_a_pin(self):
+        for environment in HostEnvironment:
+            for name in _SPECS[environment].read_on_store:
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertTrue(HostEnvironment.universal.reads_stored_value(name))
+
+
+class TestAHostReadsTheValueStoredWhereItCallsAHandler(TestBase):
+
+    def test_every_handler_a_host_calls_is_a_property_whose_stored_value_it_reads(self):
+        for environment in HostEnvironment:
+            for name in _SPECS[environment].handlers:
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertTrue(environment.reads_stored_value(name))
+
 
 class TestABareGlobalReadIsJudgedAgainstThePinnedHost(TestBase):
     """
@@ -278,6 +293,12 @@ class TestNodeAgreesWithTheEnvironment(TestBase):
         out, error = behavior('console.log(JSON.stringify([' + ', '.join(F'typeof {name}' for name in names) + ']));')
         self.assertIsNone(error)
         self.assertEqual(dict(zip(names, json.loads(out))), {name: 'undefined' for name in names})
+
+    def test_node_defines_no_property_whose_stored_value_another_host_reads(self):
+        names = sorted(_SPECS[HostEnvironment.universal].read_on_store)
+        out, error = behavior(F'console.log(JSON.stringify({json.dumps(names)}.filter(name => name in globalThis)));')
+        self.assertIsNone(error)
+        self.assertEqual(json.loads(out), [])
 
     def test_node_defines_no_handler_another_host_calls(self):
         names = sorted(_SPECS[HostEnvironment.universal].handlers)

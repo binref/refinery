@@ -49,6 +49,13 @@ A_LOAD_HANDLER_A_WINDOW_CALLS: dict[str, Program] = {
         prints('loaded', 'onload=undefined'),
         Reading.WINDOW,
     ),
+    'a load handler stored by a function called where it is written': Program(
+        a_program("""
+            (function () { onload = function () { console.log('loaded'); }; })();
+            """),
+        prints('loaded', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
     'a load handler stored into a var by a function the script calls': Program(
         a_program("""
             var onload;

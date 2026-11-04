@@ -19,11 +19,13 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     body_returns_undefined,
+    host_landing_names,
     inlined_declarations_safe,
     nothing_still_names,
     preserve_script_end_value,
     reaches_script_completion,
     references_receiver_this,
+    rename_binding,
     sanitize_inlined_body,
     walk_scope,
 )
@@ -76,10 +78,11 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         `eval` that resolves in the wrapper's scope rather than the script's — and the arguments
         of the call must be droppable, since the call evaluates them and nothing reads them. The
         declaration gate holds the move itself: every binding the body declares lands in the
-        script's own scope without capturing or colliding, and none of them under a name a host
-        reaches (`refinery.lib.scripts.js.analysis.model.SemanticModel.declaration_may_land`),
-        and no opaque surface stands anywhere that could re-invoke the wrapper by name once it is
-        gone.
+        script's own scope without capturing or colliding, and no opaque surface stands anywhere
+        that could re-invoke the wrapper by name once it is gone. A binding that would land on a
+        property of the global object a host reads takes a name nothing spells instead
+        (`refinery.lib.scripts.js.deobfuscation.helpers.host_landing_names`): the body's own
+        `var location` stays a variable rather than navigating the window.
         """
         model = cache.model
         if (
@@ -142,7 +145,16 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         wrapper_scope = model.function_scope(declaration)
         if wrapper_scope is None:
             return False
-        if not inlined_declarations_safe(wrapper_scope, model, model.root_scope):
+        spelled = {node.name for node in root.walk() if isinstance(node, JsIdentifier)}
+        renamed = host_landing_names(
+            wrapper_scope.bindings.values(),
+            lambda _: model.root_scope,
+            model,
+            spelled.__contains__,
+        )
+        if renamed is None:
+            return False
+        if not inlined_declarations_safe(wrapper_scope, model, model.root_scope, renamed=renamed):
             return False
         statements = sanitize_inlined_body(list(body.body))
         if statements is None:
@@ -153,6 +165,8 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
                 returns_undefined=body_returns_undefined(body.body),
                 reaches_completion=reaches_script_completion(statement, root),
             )
+        for binding, name in renamed.items():
+            rename_binding(binding, name)
         self._replace_invocation_with_body(root, declaration, statement, statements)
         self.mark_changed()
         return True

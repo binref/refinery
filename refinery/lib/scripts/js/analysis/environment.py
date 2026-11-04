@@ -683,6 +683,25 @@ The event handler attributes of a dedicated worker global scope, in the sense of
 `_WINDOW_EVENT_HANDLERS`, read out of the same browser.
 """
 
+_WINDOW_ATTRIBUTES_READ_ON_STORE = frozenset({
+    'location',
+    'name',
+    'opener',
+})
+"""
+The attributes of a browser window, other than its event handlers, whose value the window reads
+when a script stores one: it navigates to the address stored in `location`, keeps what is stored
+in `name` as the name of the window, which the next page loaded into it reads, and cuts the window
+off from the page that opened it when `null` is stored in `opener`. The set was read out of a
+current Chromium window, every property with a setter on the window and its prototype chain:
+storing `null` into each of the others replaced the property with the value stored, so nothing
+of the window reads it, and `status` kept the value as a string, which no part of the window
+reads either. `location` was not stored into, since that navigates; `opener` was replaced as
+well, but a tab no page opened cannot show what the standard has a store of `null` do first. A
+name only another browser defines is missing, which keeps a store into it dead. A dedicated
+worker has no such attribute: every setter on its global scope replaced the property.
+"""
+
 
 class JsEngine(enum.Enum):
     """
@@ -754,13 +773,15 @@ class _EnvironmentSpec:
     that deletes one makes a later bare read of it throw; a language-mandated name is treated as present
     regardless, preserving the sound default's behavior exactly where the host adds nothing.
     *engine* is the engine every engine the host covers is, where there is one. *handlers* are the
-    properties of the global object whose value the host calls.
+    properties of the global object whose value the host calls, and *read_on_store* the others whose
+    value the host reads when a script stores one.
     """
     provided: frozenset[str]
     mandated: frozenset[str]
     absent: frozenset[str] = frozenset()
     engine: JsEngine | None = None
     handlers: frozenset[str] = frozenset()
+    read_on_store: frozenset[str] = frozenset()
 
     def provides(self, name: str) -> bool:
         return name in self.provided
@@ -872,6 +893,17 @@ class HostEnvironment(enum.Enum):
         """
         return name in _SPECS[self].handlers
 
+    def reads_stored_value(self, name: str) -> bool:
+        """
+        Whether some host this one covers reads the value a script stores in the property *name* of
+        the global object, at the store or later, with no read of it in the file: it calls the event
+        handler stored there (`calls_handler`), navigates to the address stored in the `location` of
+        a browser window, or keeps what is stored in its `name` for the next page. A store there is
+        never dead.
+        """
+        spec = _SPECS[self]
+        return name in spec.handlers or name in spec.read_on_store
+
     @property
     def engine(self) -> JsEngine | None:
         """
@@ -951,6 +983,7 @@ _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {
         GUARANTEED_GLOBALS,
         GUARANTEED_GLOBALS,
         handlers=_WINDOW_EVENT_HANDLERS | _WORKER_EVENT_HANDLERS,
+        read_on_store=_WINDOW_ATTRIBUTES_READ_ON_STORE,
     ),
     HostEnvironment.node: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _NODE_GLOBALS,
@@ -963,6 +996,7 @@ _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {
         GUARANTEED_GLOBALS,
         _BROWSER_ABSENT,
         handlers=_WINDOW_EVENT_HANDLERS,
+        read_on_store=_WINDOW_ATTRIBUTES_READ_ON_STORE,
     ),
     HostEnvironment.worker: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _WORKER_GLOBALS,

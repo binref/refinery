@@ -617,7 +617,7 @@ class DominanceModel(DominatorModel):
                 for site in self.model.reflection_surface_sites(name)
                 if not site.is_descendant_of(function)
             )
-            if name.exported or self.model.reached_from_outside(name):
+            if name.exported or self.model.called_from_outside(name):
                 points.append(self.model.root)
         return points
 

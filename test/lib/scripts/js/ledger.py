@@ -276,9 +276,10 @@ def deobfuscated_host_behavior(
 
 #: The attributes of a browser window the entries observe, installed on the global object before a
 #: script runs as the HTML standard declares them: `name` and `status` are `DOMString` attributes,
-#: whose setter stores the value converted to a string, `onload` is an event handler attribute,
-#: which holds a function stored into it and `null` in place of anything else, and `window` is the
-#: global object itself.
+#: whose setter stores the value converted to a string, `location` navigates the window to the
+#: address stored into it, which the entry prints, and cannot be declared anew, `onload` is an event
+#: handler attribute, which holds a function stored into it and `null` in place of anything else,
+#: and `window` is the global object itself.
 WINDOW_ATTRIBUTES = a_program("""
     (function () {
       Object.defineProperty(globalThis, 'window', {
@@ -296,6 +297,12 @@ WINDOW_ATTRIBUTES = a_program("""
         get: function () { return status; },
         set: function (v) { status = String(v); },
         configurable: true
+      });
+      Object.defineProperty(globalThis, 'location', {
+        get: function () {
+          return { href: 'https://example.test/', toString: function () { return this.href; } };
+        },
+        set: function (v) { console.log('navigate ' + String(v)); }
       });
       Object.defineProperty(globalThis, 'onload', {
         get: function () { return onload; },

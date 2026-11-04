@@ -3940,22 +3940,10 @@ class TestAPackedAccessAWithObjectSuppliesStillGoesThroughTheProxy(TestBase):
     """
 
 
-#: Classic scripts storing into a name a browser window defines as a `DOMString` attribute of the
+#: A classic script storing into a name a browser window defines as a `DOMString` attribute of the
 #: global object, which keeps what is stored into it as a string, mapped to the behavior a window
-#: gives them.
+#: gives it.
 A_STORE_A_WINDOW_KEEPS_AS_A_STRING = {
-    'a number stored into the var name and read back': Program(
-        a_program("""
-            var name;
-            function f(n) {
-              name = n;
-              return name + 1;
-            }
-            console.log(f(5));
-            """),
-        prints('51', 'onload=undefined'),
-        Reading.WINDOW,
-    ),
     'a number stored into the var status and compared': Program(
         a_program("""
             var status;
@@ -3975,11 +3963,12 @@ A_STORE_A_WINDOW_KEEPS_AS_A_STRING = {
 @one_expected_failure_per_program(A_STORE_A_WINDOW_KEEPS_AS_A_STRING)
 class TestAStoreAWindowKeepsAsAStringIsReadAsAString(TestBase):
     """
-    A browser window defines some names on the global object before a script runs, and `name` and
-    `status` keep what is stored into them as a string. A file-level `var` of such a name is that
-    same property, so what it holds is converted on the way in. The deobfuscation reads it as a
-    variable of the script and moves it into the function using it, where it is a plain local that
-    keeps a number.
+    A browser window defines some names on the global object before a script runs, and `status`
+    keeps what is stored into it as a string. A file-level `var` of such a name is that same
+    property, so what it holds is converted on the way in. The deobfuscation reads it as a variable
+    of the script and moves it into the function using it, where it is a plain local that keeps a
+    number. The window reads nothing stored into `status`, so the name is no property whose stored
+    value a host reads; `name`, which the window keeps for the next page, is one, and stays.
     """
 
 
@@ -6646,19 +6635,33 @@ class TestAFileLevelVarObservedAsAPropertyOfTheGlobalObjectStays(TestBase):
 
 class TestAFileLevelVarABrowserDefinesAsAnAccessorIsNotReadAsAPlainVariable(TestBase):
     """
-    A browser defines some properties of the global object as accessors, `name` and `status` among
-    them, whose setter keeps the value as a string. A file-level `var` with such a name declares no
-    new property: it is that accessor, so `var name = 1` stores the string `'1'`. The deobfuscation
-    reads it as a plain variable and folds `typeof name` to `'number'`. Node defines no such
+    A browser defines some properties of the global object as accessors, `status` among them,
+    whose setter keeps the value as a string. A file-level `var` with such a name declares no new
+    property: it is that accessor, so `var status = 1` stores the string `'1'`. The deobfuscation
+    reads it as a plain variable and folds `typeof status` to `'number'`. Node defines no such
     accessor, so the entry asks the deobfuscation for the browser host and states what the HTML
     standard gives the setter.
     """
 
     @unittest.expectedFailure
-    def test_the_type_of_a_number_stored_into_name_is_not_folded_to_number(self):
-        source = 'var name = 1; console.log(typeof name);'
+    def test_the_type_of_a_number_stored_into_status_is_not_folded_to_number(self):
+        source = 'var status = 1; console.log(typeof status);'
         deobfuscated = deobfuscate_source(source, environment=HostEnvironment.browser)
         self.assertNotIn("'number'", deobfuscated)
+
+
+class TestAStrictStoreIntoAPropertyAWindowDefinesWithoutASetterStillThrows(TestBase):
+    """
+    A browser window defines `top` with a getter and no setter. A store into it does nothing in
+    sloppy code and throws a `TypeError` in strict code. The deobfuscation removes the store as one
+    nothing reads, and the strict script that threw prints instead.
+    """
+
+    @wontfix('no program stores into the top of its window in strict code')
+    def test_the_store_is_kept_for_a_browser(self):
+        source = "'use strict'; top = 1; console.log('after');"
+        deobfuscated = deobfuscate_source(source, environment=HostEnvironment.browser)
+        self.assertIn('top = 1', deobfuscated)
 
 
 #: A program whose table of functions is handed back by the `valueOf` every object inherits,

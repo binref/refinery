@@ -235,10 +235,10 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
     def _is_host_entrypoint(self, model: SemanticModel, binding: Binding) -> bool:
         """
-        Whether *binding* names a function a host invokes by name, and is one a host could actually
-        reach — a top-level declaration under the script execution model.
+        Whether *binding* names a function code outside the file calls by name, and is one it could
+        actually reach — a top-level declaration under the script execution model.
         """
-        return model.reached_from_outside(binding)
+        return model.called_from_outside(binding)
 
     def _remove_resolved_definitions(self, script: JsScript, admission: CallAdmission) -> None:
         removed: set[int] = set()

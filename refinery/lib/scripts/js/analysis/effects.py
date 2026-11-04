@@ -1149,7 +1149,7 @@ class EffectModel:
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_its_name`). The
         initializer of a field runs at each construction of its class, which no call names. And code
         outside the file may call it by a name it reaches
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`): a host calls
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.called_from_outside`): a host calls
         a declared entry point whenever the script hands it control, and code loading a library
         calls its functions once the file has run, as an importer calls an export.
 
@@ -1173,7 +1173,7 @@ class EffectModel:
         for binding in names.bindings:
             if (
                 binding.exported
-                or self.model.reached_from_outside(binding)
+                or self.model.called_from_outside(binding)
                 or binding.writes
                 or binding.dynamic_refs
                 or len(binding.declarations) != 1
@@ -1939,10 +1939,13 @@ class EffectModel:
         """
         Whether assigning *binding* has no observable consumer, so the assignment is not counted as
         a write: nothing reads the value of the binding, a `delete` of the name reading none
-        (`refinery.lib.scripts.js.analysis.model.is_delete_operand`), the binding is not
-        exported, which an importer reads across the module boundary, and the program is
-        `global_pristine`: it exposes no reflection surface through which the name could be read
-        and installs no accessor that an assignment to a global property could trigger as a setter.
+        (`refinery.lib.scripts.js.analysis.model.is_delete_operand`), nothing reaches it where no
+        read of it stands
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_without_a_read`), such as an
+        importer reading an export or a host reading the `location` a script stores, and the
+        program is `global_pristine`: it exposes no reflection surface through which the name could
+        be read and installs no accessor that an assignment to a global property could trigger as a
+        setter.
         This ports the evaluator's sound permissiveness for an obfuscator's write-only scratch
         binding.
 
@@ -1957,9 +1960,11 @@ class EffectModel:
         `refinery.lib.scripts.js.analysis.localization` answers, and once it holds, that pass moves
         the declaration into the function, whose own binding a write to is not counted at all.
         """
-        if not self.global_pristine or binding.exported:
+        if not self.global_pristine:
             return False
-        return all(is_delete_operand(read) for read in binding.reads)
+        if not all(is_delete_operand(read) for read in binding.reads):
+            return False
+        return not self.model.reached_without_a_read(binding)
 
     def _member_write_class(self, member: JsMemberExpression, func: Node) -> _WriteClass:
         """

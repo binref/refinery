@@ -21,6 +21,7 @@ from typing import (
     Generic,
     Iterable,
     Iterator,
+    Mapping,
     NamedTuple,
     Sequence,
     TypeVar,
@@ -82,6 +83,7 @@ from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
+    JsAssignmentPattern,
     JsBinaryExpression,
     JsBlockStatement,
     JsBooleanLiteral,
@@ -1815,16 +1817,17 @@ def inlined_declarations_safe(
     site_scope: Scope,
     *,
     exclude: Collection[Binding] = (),
+    renamed: Mapping[Binding, str] | None = None,
 ) -> bool:
     """
     Whether the names a spliced body declares at its own top level — the bindings of
-    *declared_scope* — can be introduced at the site it is spliced into without capturing an
-    identifier already meaningful there. Such declarations are local to the body's own function;
-    inlining lifts `var` and function declarations into the caller's function or script scope and
-    `let`/`const`/`class` into the caller's immediate block, where a same-named reference, an
-    inherited binding, or a redeclaration would silently rebind to the inlined declaration or
-    produce a duplicate lexical declaration. Each name is checked against the scope it would
-    actually land in.
+    *declared_scope*, each under the name *renamed* gives it, if any — can be introduced at the
+    site it is spliced into without capturing an identifier already meaningful there. Such
+    declarations are local to the body's own function; inlining lifts `var` and function
+    declarations into the caller's function or script scope and `let`/`const`/`class` into the
+    caller's immediate block, where a same-named reference, an inherited binding, or a
+    redeclaration would silently rebind to the inlined declaration or produce a duplicate lexical
+    declaration. Each name is checked against the scope it would actually land in.
 
     *exclude* names the bindings the same edit deletes elsewhere: a use resolving to one is
     carried off by the deletion rather than captured, so the introduced declaration may share its
@@ -1832,9 +1835,14 @@ def inlined_declarations_safe(
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.declaration_may_land`), which no name a
     CommonJS host binds around the file does at its top.
     """
+    names = renamed or {}
     bindings = declared_scope.bindings
-    hoisted = {name for name, binding in bindings.items() if binding.is_hoisted}
-    lexical = {name for name, binding in bindings.items() if binding.is_lexical}
+    hoisted = {
+        names.get(binding, name) for name, binding in bindings.items() if binding.is_hoisted
+    }
+    lexical = {
+        names.get(binding, name) for name, binding in bindings.items() if binding.is_lexical
+    }
     if hoisted:
         var_scope = site_scope.var_scope
         if var_scope is None:
@@ -2345,6 +2353,103 @@ def substitute_use_position(node: JsIdentifier, replacement: Node, *, as_spelled
     if not as_spelled:
         replacement = spelled_for_the_callee_position(node, replacement)
     return _replace_in_parent(node, replacement)
+
+
+def spelled_by_a_shorthand(name: JsIdentifier) -> bool:
+    """
+    Whether the binding identifier *name* is written by a shorthand property of a pattern, alone or
+    with a default, as in `{ a }` or `{ a = 1 }`: the identifier is also the key the pattern reads,
+    so a binding of another name has to read the same key.
+    """
+    holder = name.parent
+    if isinstance(holder, JsAssignmentPattern) and holder.left is name:
+        holder = holder.parent
+    return isinstance(holder, JsProperty) and holder.shorthand
+
+
+def binding_renamable(binding: Binding) -> bool:
+    """
+    Whether *binding* can take another name by respelling the identifiers the model records for
+    it (`rename_binding`): every reference is such an identifier, none is resolved at runtime
+    through a `with` body (`Binding.dynamic_refs`), no Annex B copy ties it to a binding of
+    another scope, no export list names it, and no identifier spelling it is also the key of a
+    shorthand property (`spelled_by_a_shorthand`) other than one a rename can write out in full:
+    `{ a }` and `({ a } = o)` become `{ a: b }` and `({ a: b } = o)`, while `({ a = 1 } = o)` and a
+    declaration `var { a } = o` are refused.
+    """
+    if binding.dynamic_refs or binding.copies_made or binding.copies_received:
+        return False
+    for reference in (*binding.reads, *binding.writes, *binding.indefinite_writes):
+        if not isinstance(reference, JsIdentifier):
+            return False
+        parent = reference.parent
+        if isinstance(parent, JsExportSpecifier):
+            return False
+        if not spelled_by_a_shorthand(reference):
+            continue
+        if (
+            not isinstance(parent, JsProperty)
+            or parent.computed
+            or parent.value is not reference
+            or not is_use_position(reference)
+        ):
+            return False
+    return not any(spelled_by_a_shorthand(declaration) for declaration in binding.declarations)
+
+
+def rename_binding(binding: Binding, name: str) -> None:
+    """
+    Give *binding*, which `binding_renamable` admits, the name *name*: every identifier declaring
+    it and every reference to it is respelled, and a shorthand property `{ a }` reading it is
+    written out in full, `{ a: name }`, so that its key stays.
+    """
+    for declaration in binding.declarations:
+        set_value(declaration, 'name', name)
+    respelled: set[int] = set()
+    for reference in (*binding.reads, *binding.writes, *binding.indefinite_writes):
+        if id(reference) in respelled:
+            continue
+        respelled.add(id(reference))
+        assert isinstance(reference, JsIdentifier)
+        parent = reference.parent
+        if isinstance(parent, JsProperty) and parent.shorthand:
+            spelled = JsIdentifier(name=name, offset=reference.offset)
+            written_out = substitute_use_position(reference, spelled)
+            assert written_out
+        else:
+            set_value(reference, 'name', name)
+
+
+def host_landing_names(
+    bindings: Iterable[Binding],
+    landing: Callable[[Binding], Scope | None],
+    model: SemanticModel,
+    spelled: Callable[[str], bool],
+) -> dict[Binding, str] | None:
+    """
+    A new name for each of *bindings* that a declaration moved into the scope *landing* gives it
+    would put on a property of the global object a host reads
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.lands_on_the_host`), or `None` where one
+    of them cannot take another name (`binding_renamable`). The declaration that bound a name of
+    its own scope keeps doing so under the new name, where the old one would store into what the
+    host reads: a `var location` lifted out of a function body would navigate the window. A new
+    name is the old one with the first suffix `fresh_name` finds that the text spells nowhere
+    (*spelled*), no host reads, and no other binding here takes.
+    """
+    chosen: dict[Binding, str] = {}
+    for binding in bindings:
+        scope = landing(binding)
+        if scope is None or not model.lands_on_the_host(binding.name, scope):
+            continue
+        if not binding_renamable(binding):
+            return None
+        taken = set(chosen.values())
+        chosen[binding] = fresh_name(binding.name, lambda name: (
+            name in taken
+            or spelled(name)
+            or model.host_reaches_global(name)
+        ))
+    return chosen
 
 
 def _effect_oracles(

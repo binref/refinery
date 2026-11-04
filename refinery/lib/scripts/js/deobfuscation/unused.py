@@ -905,15 +905,16 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         candidate (one is script-scope, the other strictly function-local), so the batch stays
         mutually consistent.
 
-        Relocation takes the name out of the global scope, so a binding a host reaches by name is
-        left where it stands (`_named_host_entrypoint`): a function that stores the load handler in
-        a script-level `var onload` writes the property the window calls, which the same store into
-        a local of that function never does.
+        Relocation takes the name out of the global scope, so a binding code outside the file
+        reaches by name is left where it stands
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`): a function
+        that stores the load handler in a script-level `var onload` writes the property the window
+        calls, which the same store into a local of that function never does.
         """
         relocations: dict[int, tuple[JsBlockStatement, list[str]]] = {}
         declarators: list[JsVariableDeclarator] = []
         for binding, function in localizable_bindings(self.liveness, self.reaching):
-            if self._named_host_entrypoint(binding):
+            if self.model.reached_from_outside(binding):
                 continue
             body = getattr(function, 'body', None)
             if not isinstance(body, JsBlockStatement):
@@ -1011,32 +1012,45 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         """
         Whether code this pass cannot read could name *binding*, so its declaration and assignments
         must be kept even when no static reference remains. A function-local is at risk only from a
-        `with` or direct `eval` inside its own function; a global, from any surface, from a caller
-        outside the file, and from a body the file hands the global object to; and an exported
-        binding, from an importer that reads its value once the module has run.
+        `with` or direct `eval` inside its own function; a global, from any surface, from code
+        outside the file reading or calling it
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`), and from a
+        body the file hands the global object to; and an exported binding, from an importer that
+        reads its value once the module has run.
 
         Those last cases have references the model does record where the text spells them, and they
-        keep everything reached through such a name. What they cannot reach is the reachability walk
-        over function declarations, which finds a function only where a statement names it, so the
-        fact is read here as well. The model decides them all; a `None` binding (a synthesized node
-        the model never saw) is treated as not reachable, matching the surrounding removal logic.
+        keep everything reached through such a name. The model decides them all; a `None` binding (a
+        synthesized node the model never saw) is treated as not reachable, matching the surrounding
+        removal logic.
         """
         if binding is None:
             return False
+        if self._reached_without_a_reference(binding):
+            return True
+        return self.model.reached_from_outside(binding)
+
+    def _function_reachable(self, binding: Binding | None) -> bool:
+        """
+        Whether code this pass cannot read could call the function declaration *binding* names, so
+        it must be kept even when no statement names it: the reachability walk over function
+        declarations finds a function only where a statement names it. It is `_reflection_reachable`
+        with code outside the file counted only where it calls the function
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.called_from_outside`): a declaration
+        defines the property of the global object without storing into it, so a browser reads
+        nothing of a `function name` at the top of a script.
+        """
+        if binding is None:
+            return False
+        return self._reached_without_a_reference(binding) or self.model.called_from_outside(binding)
+
+    def _reached_without_a_reference(self, binding: Binding) -> bool:
+        """
+        Whether code reaches *binding* where the file spells no reference to it: a body the file
+        hands the global object to, an importer reading an export, or reflection.
+        """
         if binding.reachable_through_a_handed_object or binding.exported:
             return True
-        if self._named_host_entrypoint(binding):
-            return True
         return self.model.reflection_can_reach(binding)
-
-    def _named_host_entrypoint(self, binding: Binding) -> bool:
-        """
-        Whether a host reaches *binding* by name: the caller declared it one, or the host calls it
-        as an event handler. This answers the same question reflection does — could code outside
-        the recorded references reach this binding — for the case the model cannot see at all, a
-        caller living outside the file.
-        """
-        return self.model.reached_from_outside(binding)
 
     def _binds_names_global_code_sees(self, parent: Node) -> bool:
         """
@@ -1109,7 +1123,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         kept_by_reflection = {
             name for name, func in functions.items()
             if isinstance(func.id, JsIdentifier)
-            and self._reflection_reachable(self.model.binding_of(func.id))
+            and self._function_reachable(self.model.binding_of(func.id))
         }
         unreachable = (set(functions.keys()) - reachable) - kept_by_reflection
         if not unreachable:
@@ -1175,8 +1189,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     def _host_entrypoints(self, functions: dict[str, JsFunctionDeclaration]) -> frozenset[str]:
         """
-        Which of *functions* a host invokes (`_named_host_entrypoint`): those the caller declared a
-        host invokes by name or the host calls as event handlers, and every function of a file that
+        Which of *functions* code outside the file calls
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.called_from_outside`): those the
+        caller declared a host invokes by name or the host calls as event handlers, and every
+        function of a file that
         holds nothing but function declarations, a library that code outside it calls. Naming one
         seeds it as a reachability root, so everything it calls is reachable through it and
         survives too, which is the point, since an entrypoint is usually the root of the whole
@@ -1188,7 +1204,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             if not isinstance(func.id, JsIdentifier):
                 continue
             binding = self.model.binding_of(func.id)
-            if binding is not None and self._named_host_entrypoint(binding):
+            if binding is not None and self.model.called_from_outside(binding):
                 names.add(name)
         return frozenset(names)
 

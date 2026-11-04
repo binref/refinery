@@ -30,16 +30,18 @@ from refinery.lib.scripts.js.analysis.model import (
     pattern_identifiers,
     references_own_arguments,
 )
-from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer, remove_declarator
+from refinery.lib.scripts.js.deobfuscation.helpers import (
+    ScriptLevelTransformer,
+    remove_declarator,
+    spelled_by_a_shorthand,
+)
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
-    JsAssignmentPattern,
     JsBlockStatement,
     JsExpressionStatement,
     JsFunctionDeclaration,
     JsFunctionNode,
     JsIdentifier,
-    JsProperty,
     JsScript,
     JsSequenceExpression,
     JsSwitchCase,
@@ -59,26 +61,14 @@ def _parameters(function: JsFunctionNode) -> dict[int, JsIdentifier]:
     """
     The names the parameter list of *function* binds and a rename of their identifier alone gives
     another name, by the id of the identifier declaring each. A name a shorthand property binds
-    (`_spelled_by_a_shorthand`) is left out.
+    (`refinery.lib.scripts.js.deobfuscation.helpers.spelled_by_a_shorthand`) is left out.
     """
     params: dict[int, JsIdentifier] = {}
     for param in function.params:
         for name in pattern_identifiers(param):
-            if not _spelled_by_a_shorthand(name):
+            if not spelled_by_a_shorthand(name):
                 params[id(name)] = name
     return params
-
-
-def _spelled_by_a_shorthand(name: JsIdentifier) -> bool:
-    """
-    Whether the binding identifier *name* is written by a shorthand property of a pattern, alone or
-    with a default, as in `{ a }` or `{ a = 1 }`: the identifier is also the key the pattern reads,
-    so a parameter of another name has to read the same key.
-    """
-    holder = name.parent
-    if isinstance(holder, JsAssignmentPattern) and holder.left is name:
-        holder = holder.parent
-    return isinstance(holder, JsProperty) and holder.shorthand
 
 
 def _entry_copies(function: JsFunctionNode, model: SemanticModel) -> list[JsAssignmentExpression]:

@@ -238,9 +238,9 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
         source = 'function w() {\n  print(1);\n}\nw(print(2));'
         self.assertEqual(source, self._singleuse(source))
 
-    def test_a_body_declaration_the_analyst_names_an_entrypoint_refuses_the_fold(self):
+    def test_a_body_declaration_the_analyst_names_an_entrypoint_is_renamed_where_it_lands(self):
         source = 'function w() {\n  var m = 1;\n  print(m);\n}\nw();'
         self.assertEqual(
-            source,
+            'var m_1 = 1;\nprint(m_1);',
             self._run_transformer(
                 source, JsSingleUseFunctionInliner, DeobfuscationOptions(entrypoints=('m',))))

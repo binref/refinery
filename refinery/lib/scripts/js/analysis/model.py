@@ -3836,17 +3836,12 @@ class SemanticModel:
         file as CommonJS, and a `var` of it starts out holding what the host passed rather than
         `undefined`.
 
-        None lands at the top of a script under a name a host reaches (`host_reaches_global`)
-        either: there a `var` is the property of the global object the host calls, and a `let`
-        shadows it, where the declaration it came from bound a name of its own body. A `Function`
-        body declaring `var onload` and spliced at the top would install a load handler the window
-        then calls once more.
+        None lands on a property of the global object a host reads (`lands_on_the_host`) either: a
+        `Function` body declaring `var onload` and spliced at the top would install a load handler
+        the window then calls once more. A pass that can give such a declaration another name asks
+        `lands_on_the_host` first and asks here about the name it chose.
         """
-        if (
-            scope is self.root_scope
-            and not self.file_kind.scopes_declarations_to_the_file
-            and any(self.host_reaches_global(name) for name in names)
-        ):
+        if any(self.lands_on_the_host(name, scope) for name in names):
             return False
         for name in names:
             binding = scope.bindings.get(name)
@@ -3962,27 +3957,65 @@ class SemanticModel:
 
     def host_reaches_global(self, name: str) -> bool:
         """
-        Whether a host reaches the property *name* of the global object from outside the file: the
-        host *environment* calls the event handler stored there
+        Whether a host reads the value stored in the property *name* of the global object from
+        outside the file: the host *environment* calls the event handler stored there, navigates to
+        the address stored there, or keeps it for the next page
+        (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.reads_stored_value`), or the
+        analyst declared the name one a host calls (`host_calls_global`).
+        """
+        return self.environment.reads_stored_value(name) or self.host_calls_global(name)
+
+    def host_calls_global(self, name: str) -> bool:
+        """
+        Whether a host calls the function stored in the property *name* of the global object from
+        outside the file: the host *environment* calls the event handler stored there
         (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.calls_handler`), or the
-        analyst declared the name one it reaches (*host_entrypoint*).
+        analyst declared the name one it calls (*host_entrypoint*). Every such property is one whose
+        value a host reads (`host_reaches_global`); a browser reads `location` and calls nothing
+        stored there.
         """
         if self.environment.calls_handler(name):
             return True
         return self._host_entrypoint is not None and self._host_entrypoint(name)
 
+    def lands_on_the_host(self, name: str, scope: Scope) -> bool:
+        """
+        Whether a `var` or function declaration of *name* in *scope* would be the property of the
+        global object a host reads (`host_reaches_global`): *scope* is the top scope of a script.
+        A declaration that lands there in place of one that bound a name of its own body stores
+        into what the host reads, and a `let` there shadows it.
+        """
+        return (
+            scope is self.root_scope
+            and not self.file_kind.scopes_declarations_to_the_file
+            and self.host_reaches_global(name)
+        )
+
     def named_by_the_host(self, binding: Binding) -> bool:
         """
-        Whether a host may reach *binding* by name: it reaches the property of the global object
+        Whether a host may reach *binding* by name: it reads the property of the global object
         under that name (`host_reaches_global`), and the binding is that property
+        (`_is_the_global_property`). A declared object is reached as much as a declared function,
+        and the host converts a value stored in `location` or `name` to a string, which calls the
+        methods it carries.
+        """
+        return self.host_reaches_global(binding.name) and self._is_the_global_property(binding)
+
+    def called_by_the_host(self, binding: Binding) -> bool:
+        """
+        Whether a host may call the function *binding* holds: it calls the function stored in the
+        property of the global object under that name (`host_calls_global`), and the binding is that
+        property (`_is_the_global_property`).
+        """
+        return self.host_calls_global(binding.name) and self._is_the_global_property(binding)
+
+    def _is_the_global_property(self, binding: Binding) -> bool:
+        """
+        Whether *binding* is the property of the global object under its name
         (`reaches_global_object`), itself or through a `var` Annex B copies it into. The name alone
         does not decide it: a nested binding, a `let`, or anything a module scopes to the file never
-        becomes a property of the global object. A declared object is reached as much as a declared
-        function, and the host may call a method installed on it whenever the script hands it
-        control.
+        becomes a property of the global object.
         """
-        if not self.host_reaches_global(binding.name):
-            return False
         if any(self.reaches_global_object(copy.var) for copy in binding.copies_made):
             return True
         return self.reaches_global_object(binding)
@@ -3990,16 +4023,25 @@ class SemanticModel:
     def reached_from_outside(self, binding: Binding) -> bool:
         """
         Whether code outside the file may reach *binding* by name at some point through the global
-        object: a host names it (`named_by_the_host`), or the file is a library, holding nothing but
-        function declarations at its top (`declares_only_functions`), and *binding* names one of
-        them as a property of the global object, which code that loads the library calls once the
-        file has run. An importer reaching an export is not among them: that is
-        `Binding.exported`, which a caller asks beside this. A pass that could delete such a
-        declaration, fold a read of one into its value, or relocate one out of the global scope
-        asks here before doing so, so that the answer is one predicate's rather than each pass's
-        own.
+        object, reading what it holds or calling it: a host reads it (`named_by_the_host`), or code
+        outside the file calls it (`called_from_outside`). An importer reaching an export is not
+        among them: that is `Binding.exported`, which a caller asks beside this. A pass that could
+        delete such a declaration or a store into it, fold a read of one into its value, or
+        relocate one out of the global scope asks here before doing so, so that the answer is one
+        predicate's rather than each pass's own.
         """
-        if self.named_by_the_host(binding):
+        return self.named_by_the_host(binding) or self.called_from_outside(binding)
+
+    def called_from_outside(self, binding: Binding) -> bool:
+        """
+        Whether code outside the file may call the function *binding* holds, by its name through
+        the global object: a host calls it (`called_by_the_host`), or the file is a library,
+        holding nothing but function declarations at its top (`declares_only_functions`), and
+        *binding* names one of them as a property of the global object, which code that loads the
+        library calls once the file has run. A pass asking where or how often a function runs asks
+        here; one asking whether what a name holds is read asks `reached_from_outside`.
+        """
+        if self.called_by_the_host(binding):
             return True
         return (
             self.declares_only_functions()
@@ -4040,7 +4082,7 @@ class SemanticModel:
     def callable_from_outside(self, function: Node) -> bool:
         """
         Whether code outside the file can call *function* while the file's own text still runs, at
-        a point that text does not order: a host calls a function it names (`named_by_the_host`)
+        a point that text does not order: a host calls a function it names (`called_by_the_host`)
         whenever the script hands it control, and an importer in an import cycle calls an export,
         one exported by name or an anonymous `export default function`, before the module's body
         has finished (`importer_may_run_first`). The functions of a library
@@ -4049,7 +4091,7 @@ class SemanticModel:
         """
         names = self.function_names(function)
         for binding in () if names is None else names.bindings:
-            if self.importer_may_run_first(binding) or self.named_by_the_host(binding):
+            if self.importer_may_run_first(binding) or self.called_by_the_host(binding):
                 return True
         return (
             isinstance(function.parent, JsExportDefaultDeclaration)

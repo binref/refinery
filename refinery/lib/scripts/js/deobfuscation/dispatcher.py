@@ -659,7 +659,9 @@ def _choose_names(
     name is its own, otherwise it is prefixed with an underscore, otherwise it is `f`, and a
     numbered suffix is added until the name is free: no other recovered function takes it, no
     binding of *scope* other than the router has it, declaring it would capture no use within
-    *scope*, and no dispatch rewritten to it sees a nearer binding of it. A key read off the global
+    *scope* and would be no property of the global object a host reads
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.lands_on_the_host`), and no dispatch
+    rewritten to it sees a nearer binding of it. A key read off the global
     object as a string is not considered, since the obfuscation makes up its keys at random.
     """
     exclude = (dispatcher.binding,)
@@ -673,7 +675,7 @@ def _choose_names(
     used: set[str] = set()
 
     def taken(name: str, key: str) -> bool:
-        if name in used:
+        if name in used or model.lands_on_the_host(name, scope):
             return True
         bound = scope.bindings.get(name)
         if bound is not None and bound is not dispatcher.binding:
