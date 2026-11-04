@@ -34,6 +34,8 @@ import operator
 from dataclasses import dataclass
 from typing import Callable, NamedTuple
 
+from refinery.lib.json import loads
+from refinery.lib.resources import datapath
 from refinery.lib.scripts.js.builtins import ITERATOR_METHODS
 
 
@@ -703,6 +705,50 @@ worker has no such attribute: every setter on its global scope replaced the prop
 """
 
 
+def _load_host_globals() -> dict[str, dict[str, str]]:
+    """
+    The own properties of the global object of each host, read out of it and shipped as
+    `js-globals.json`: a browser window and a dedicated worker of a current Chromium, and Node.
+    Each maps the name of a property to what it is, where a store of `null` and of an object was
+    made into each one with a setter:
+
+    - `value`: a writable data property;
+    - `constant`: a data property that is not writable;
+    - `getter`: an accessor without a setter;
+    - `setter:stored`: an accessor a read of which gave back what was stored into it;
+    - `setter:own`: an accessor a read of which gave back a value of its own after a store;
+    - `setter:threw`: an accessor whose setter threw;
+    - `setter:untested`: an accessor nothing was stored into: the `location` of a window, which
+      navigates.
+    """
+    with datapath('js-globals.json').open('rb') as fp:
+        return loads(fp.read())
+
+
+_HOST_GLOBALS = _load_host_globals()
+
+_KINDS_READ_BACK_AFTER_A_STORE = frozenset({
+    'value',
+    'setter:stored',
+})
+"""
+The kinds of property a read of which gives back what a script stored into it.
+"""
+
+
+def _held_by(*hosts: str) -> frozenset[str]:
+    return frozenset(name for host in hosts for name in _HOST_GLOBALS[host])
+
+
+def _keeping_their_own_value(*hosts: str) -> frozenset[str]:
+    return frozenset(
+        name
+        for host in hosts
+        for name, kind in _HOST_GLOBALS[host].items()
+        if kind not in _KINDS_READ_BACK_AFTER_A_STORE
+    )
+
+
 class JsEngine(enum.Enum):
     """
     The engine a host runs scripts in, where every engine the host covers is that one engine. It
@@ -774,7 +820,9 @@ class _EnvironmentSpec:
     regardless, preserving the sound default's behavior exactly where the host adds nothing.
     *engine* is the engine every engine the host covers is, where there is one. *handlers* are the
     properties of the global object whose value the host calls, and *read_on_store* the others whose
-    value the host reads when a script stores one.
+    value the host reads when a script stores one. *held* are the properties the global object holds
+    before a script runs, and *own_value* those of them that keep a value of their own when a script
+    stores one.
     """
     provided: frozenset[str]
     mandated: frozenset[str]
@@ -782,6 +830,8 @@ class _EnvironmentSpec:
     engine: JsEngine | None = None
     handlers: frozenset[str] = frozenset()
     read_on_store: frozenset[str] = frozenset()
+    held: frozenset[str] = frozenset()
+    own_value: frozenset[str] = frozenset()
 
     def provides(self, name: str) -> bool:
         return name in self.provided
@@ -904,6 +954,26 @@ class HostEnvironment(enum.Enum):
         spec = _SPECS[self]
         return name in spec.handlers or name in spec.read_on_store
 
+    def holds(self, name: str) -> bool:
+        """
+        Whether the global object of some host this one covers holds a property of its own under
+        *name* before a script runs. A `var` of the name at the top of a classic script declares no
+        property then but names that one, which holds what the host put there until the script
+        stores a value, and a `let` there shadows it. A property the global object inherits is not
+        one it holds: a `var` of its name declares a property of its own in front of it.
+        """
+        return name in _SPECS[self].held
+
+    def keeps_its_own_value(self, name: str) -> bool:
+        """
+        Whether the property *name* that the global object of some host this one covers holds
+        (`holds`) keeps a value of its own when a script stores one into it: it has no setter, so
+        sloppy code stores nothing, or its setter keeps something other than what was stored, such
+        as the string the `status` of a browser window converts it to. A read of it after the store
+        does not give back what was stored.
+        """
+        return name in _SPECS[self].own_value
+
     @property
     def engine(self) -> JsEngine | None:
         """
@@ -984,12 +1054,16 @@ _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {
         GUARANTEED_GLOBALS,
         handlers=_WINDOW_EVENT_HANDLERS | _WORKER_EVENT_HANDLERS,
         read_on_store=_WINDOW_ATTRIBUTES_READ_ON_STORE,
+        held=_held_by('window', 'worker', 'node'),
+        own_value=_keeping_their_own_value('window', 'worker', 'node'),
     ),
     HostEnvironment.node: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _NODE_GLOBALS,
         GUARANTEED_GLOBALS,
         _NODE_ABSENT,
         engine=JsEngine.v8,
+        held=_held_by('node'),
+        own_value=_keeping_their_own_value('node'),
     ),
     HostEnvironment.browser: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _BROWSER_GLOBALS,
@@ -997,11 +1071,15 @@ _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {
         _BROWSER_ABSENT,
         handlers=_WINDOW_EVENT_HANDLERS,
         read_on_store=_WINDOW_ATTRIBUTES_READ_ON_STORE,
+        held=_held_by('window'),
+        own_value=_keeping_their_own_value('window'),
     ),
     HostEnvironment.worker: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _WORKER_GLOBALS,
         GUARANTEED_GLOBALS,
         _WORKER_ABSENT,
         handlers=_WORKER_EVENT_HANDLERS,
+        held=_held_by('worker'),
+        own_value=_keeping_their_own_value('worker'),
     ),
 }

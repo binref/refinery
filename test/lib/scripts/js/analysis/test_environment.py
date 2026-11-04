@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import unittest
 
@@ -7,6 +8,7 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
 from refinery.lib.scripts.js.analysis.environment import (
+    _HOST_GLOBALS,
     _NODE_ABSENT,
     _SPECS,
     GUARANTEED_GLOBALS,
@@ -21,6 +23,35 @@ from refinery.lib.scripts.js.model import JsIdentifier
 from refinery.lib.scripts.js.parser import JsParser
 
 _HOST_CONDITIONAL_ALIASES = ('window', 'self', 'top', 'frames', 'global')
+
+#: A program printing what each own property of the global object it runs on is, in the terms the
+#: data of `refinery.lib.scripts.js.analysis.environment` uses: a store of `null` and of an object is
+#: made into each property with a setter, and a read after it either gives back what was stored or a
+#: value the property keeps of its own.
+_A_READOUT_OF_THE_GLOBAL_OBJECT = inspect.cleandoc("""
+    const describe = Object.getOwnPropertyDescriptor;
+    const print = console.log.bind(console);
+    const kinds = {};
+    for (const k of Object.getOwnPropertyNames(globalThis).sort()) {
+      const d = describe(globalThis, k);
+      kinds[k] = 'value' in d ? (d.writable ? 'value' : 'constant') : (d.set ? 'setter' : 'getter');
+    }
+    for (const k of Object.keys(kinds)) {
+      if (kinds[k] !== 'setter') continue;
+      let outcome = 'stored';
+      for (const v of [null, {}]) {
+        try {
+          globalThis[k] = v;
+        } catch (e) {
+          outcome = 'threw';
+          break;
+        }
+        if (globalThis[k] !== v) outcome = 'own';
+      }
+      kinds[k] = 'setter:' + outcome;
+    }
+    print(JSON.stringify(kinds));
+    """)
 
 
 def _bare_read_may_throw(source: str, name: str, environment: HostEnvironment) -> bool:
@@ -98,6 +129,41 @@ class TestAHostReadsTheValueStoredWhereItCallsAHandler(TestBase):
             for name in _SPECS[environment].handlers:
                 with self.subTest(environment=environment.name, name=name):
                     self.assertTrue(environment.reads_stored_value(name))
+
+
+class TestAHostHoldsEveryPropertyItHasAPartIn(TestBase):
+    """
+    A window holds every property whose stored value it reads, and the default `universal`
+    environment holds every property a pinned host holds and keeps its own value in each that one
+    does. A worker is not asked the first: it inherits most of what it calls and provides from the
+    prototype of its global object, which a `var` of the name does not land on.
+    """
+
+    def test_every_property_whose_stored_value_a_window_reads_is_one_it_holds(self):
+        spec = _SPECS[HostEnvironment.browser]
+        for name in spec.handlers | spec.read_on_store:
+            with self.subTest(name=name):
+                self.assertTrue(HostEnvironment.browser.holds(name))
+
+    def test_every_property_a_pinned_host_holds_is_held_without_a_pin(self):
+        for environment in HostEnvironment:
+            for name in _SPECS[environment].held:
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertTrue(HostEnvironment.universal.holds(name))
+                    if environment.keeps_its_own_value(name):
+                        self.assertTrue(HostEnvironment.universal.keeps_its_own_value(name))
+
+    def test_every_host_keeps_its_own_value_in_the_constants_of_the_language(self):
+        for environment in HostEnvironment:
+            for name in ('NaN', 'Infinity', 'undefined'):
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertTrue(environment.keeps_its_own_value(name))
+
+    def test_a_property_no_host_holds_keeps_no_value_of_its_own(self):
+        for environment in HostEnvironment:
+            with self.subTest(environment=environment.name):
+                self.assertFalse(environment.holds('zzz'))
+                self.assertFalse(environment.keeps_its_own_value('zzz'))
 
 
 class TestABareGlobalReadIsJudgedAgainstThePinnedHost(TestBase):
@@ -305,3 +371,8 @@ class TestNodeAgreesWithTheEnvironment(TestBase):
         out, error = behavior(F'console.log(JSON.stringify({json.dumps(names)}.filter(name => name in globalThis)));')
         self.assertIsNone(error)
         self.assertEqual(json.loads(out), [])
+
+    def test_what_node_holds_is_what_its_global_object_has(self):
+        out, error = behavior(_A_READOUT_OF_THE_GLOBAL_OBJECT)
+        self.assertIsNone(error)
+        self.assertEqual(json.loads(out), _HOST_GLOBALS['node'])

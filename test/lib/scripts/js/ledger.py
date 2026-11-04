@@ -279,11 +279,20 @@ def deobfuscated_host_behavior(
 #: whose setter stores the value converted to a string, `location` navigates the window to the
 #: address stored into it, which the entry prints, and cannot be declared anew, `onload` is an event
 #: handler attribute, which holds a function stored into it and `null` in place of anything else,
-#: and `window` is the global object itself.
+#: `window` and `top` are the global object itself, which neither can be declared anew nor be given
+#: another value, and `history` is the session history of the window, which has no setter.
 WINDOW_ATTRIBUTES = a_program("""
     (function () {
       Object.defineProperty(globalThis, 'window', {
         get: function () { return globalThis; }
+      });
+      Object.defineProperty(globalThis, 'top', {
+        get: function () { return globalThis; }
+      });
+      var history = { length: 1 };
+      Object.defineProperty(globalThis, 'history', {
+        get: function () { return history; },
+        configurable: true
       });
       var name = '';
       var status = '';

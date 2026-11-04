@@ -3983,15 +3983,17 @@ class SemanticModel:
 
     def lands_on_the_host(self, name: str, scope: Scope) -> bool:
         """
-        Whether a `var` or function declaration of *name* in *scope* would be the property of the
-        global object a host reads (`host_reaches_global`): *scope* is the top scope of a script.
-        A declaration that lands there in place of one that bound a name of its own body stores
-        into what the host reads, and a `let` there shadows it.
+        Whether a `var` or function declaration of *name* in *scope* would be a property of the
+        global object the host has a part in: *scope* is the top scope of a script, and the host
+        reads the property (`host_reaches_global`) or holds it before the script runs
+        (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.holds`). A declaration that
+        lands there in place of one that bound a name of its own body stores into what the host
+        reads, or reads what the host put there, and a `let` there shadows it.
         """
         return (
             scope is self.root_scope
             and not self.file_kind.scopes_declarations_to_the_file
-            and self.host_reaches_global(name)
+            and (self.host_reaches_global(name) or self.environment.holds(name))
         )
 
     def named_by_the_host(self, binding: Binding) -> bool:
@@ -4003,6 +4005,26 @@ class SemanticModel:
         methods it carries.
         """
         return self.host_reaches_global(binding.name) and self._is_the_global_property(binding)
+
+    def held_by_the_host(self, binding: Binding) -> bool:
+        """
+        Whether *binding* is a property of the global object that the host holds before the script
+        runs and that keeps a value of its own when the script stores one
+        (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.keeps_its_own_value`), such
+        as the `status` of a browser window, which keeps a string, or its `top`, which keeps the
+        window: the binding is a `var` at the top of a script, which declares no property of its own
+        there, or a name the script never declares. What a read of it gives is not what the file
+        stored. A function declaration replaces such a property with a variable of its own.
+        """
+        return (
+            binding.kind in (BindingKind.VAR, BindingKind.IMPLICIT_GLOBAL)
+            and self.environment.keeps_its_own_value(binding.name)
+            and self.reaches_global_object(binding)
+            and not any(
+                isinstance(declaration.parent, JsFunctionDeclaration)
+                for declaration in binding.declarations
+            )
+        )
 
     def called_by_the_host(self, binding: Binding) -> bool:
         """
@@ -4026,14 +4048,19 @@ class SemanticModel:
     def reached_from_outside(self, binding: Binding) -> bool:
         """
         Whether code outside the file may reach *binding* by name at some point through the global
-        object, reading what it holds or calling it: a host reads it (`named_by_the_host`), or code
-        outside the file calls it (`called_from_outside`). An importer reaching an export is not
-        among them: that is `Binding.exported`, which a caller asks beside this. A pass that could
-        delete such a declaration or a store into it, fold a read of one into its value, or
-        relocate one out of the global scope asks here before doing so, so that the answer is one
-        predicate's rather than each pass's own.
+        object, reading what it holds, keeping a value of its own in it, or calling it: a host reads
+        it (`named_by_the_host`), the host holds it and keeps its own value in it
+        (`held_by_the_host`), or code outside the file calls it (`called_from_outside`). An
+        importer reaching an export is not among them: that is `Binding.exported`, which a caller
+        asks beside this. A pass that could delete such a declaration or a store into it, fold a
+        read of one into its value, or relocate one out of the global scope asks here before doing
+        so, so that the answer is one predicate's rather than each pass's own.
         """
-        return self.named_by_the_host(binding) or self.called_from_outside(binding)
+        return (
+            self.named_by_the_host(binding)
+            or self.held_by_the_host(binding)
+            or self.called_from_outside(binding)
+        )
 
     def called_from_outside(self, binding: Binding) -> bool:
         """

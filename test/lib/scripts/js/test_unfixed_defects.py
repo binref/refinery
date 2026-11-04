@@ -353,65 +353,6 @@ class TestTheEvaluatorRunsABodyInTheModeItDeclares(TestBase):
         )
 
 
-#: A strict region assigning to one of the global names that is not writable, mapped to the behavior
-#: Node gives it: the pair of what it prints and what it throws. The write is refused in every row,
-#: so the statement does exactly one thing and that thing is throw. What varies is where the mode
-#: comes from, how the assignment is spelled, and whether anything catches what it throws.
-A_STRICT_REGION_ASSIGNING_TO_A_NON_WRITABLE_GLOBAL = {
-    "'use strict';\nNaN = 1;\nconsole.log(1);\n": ('', 'TypeError'),
-    "'use strict';\nundefined = 1;\nconsole.log(1);\n": ('', 'TypeError'),
-    "'use strict';\nInfinity = 1;\nconsole.log(1);\n": ('', 'TypeError'),
-    "'use strict';\n(NaN) = 1;\nconsole.log(1);\n": ('', 'TypeError'),
-    "'use strict';\n[NaN] = [1];\nconsole.log(1);\n": ('', 'TypeError'),
-    "'use strict';\n({p: undefined} = {p: 1});\nconsole.log(1);\n": ('', 'TypeError'),
-    "(function () { 'use strict'; NaN = 1; console.log(1); })();\n": ('', 'TypeError'),
-    "var out = 'L';\nclass C { static { NaN = 1; } }\nconsole.log(out);\n": ('', 'TypeError'),
-    "'use strict';\ntry { NaN = 1; console.log('L'); }"
-    " catch (e) { console.log(e.constructor.name); }\n": ('TypeError\n', None),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAWriteTheModeRefusesIsNotAWriteThatDoesNothing(TestBase):
-    """
-    `undefined`, `NaN` and `Infinity` name properties of the global object that no program may
-    replace. An assignment to one of them is discarded where the assignment is sloppy code and is a
-    `TypeError` where it is strict code, so in a strict region the statement has exactly one effect
-    and throwing is it. It is removed in both, and everything the throw stood in front of then runs.
-
-    Which region is strict is not what is misread: the mode is taken from wherever the file puts it
-    and the removal follows it everywhere. A directive at the head of the script, one at the head of
-    the function body holding the write, and a class static block, which is strict with no directive
-    anywhere in the file, are all removed alike.
-
-    Neither is this the removal of a statement that does nothing. The same write to `Object`, `Math`
-    or `globalThis` — writable, every one of them — is removed from the same strict position, and
-    Node prints `1` for those programs before and after; so is the same write to `NaN` behind a
-    `var NaN` that binds the name locally; and so is every one of these writes in a file with no
-    directive in it at all. `delete Object.prototype` in that position is left standing, with both
-    sides refused by a `TypeError`.
-    """
-
-    @unittest.expectedFailure
-    def test_an_assignment_to_a_non_writable_global_throws_in_a_strict_region(self):
-        """
-        Node refuses the first eight programs of
-        `A_STRICT_REGION_ASSIGNING_TO_A_NON_WRITABLE_GLOBAL` with a `TypeError` having printed
-        nothing, and prints `TypeError` for the last, which catches what the write throws. Every
-        deobfuscation goes on past the statement its program stopped at, printing `1` for the first
-        seven and `L` for the last two.
-
-        The extent stops at the plain write. `NaN += 1`, `NaN++`, `NaN ||= 1` and `var q = NaN = 1`
-        in the same strict position are all left standing and refused on both sides, and so is
-        `NaN = 1, 0`, which is the same write with something behind it in the same statement.
-        """
-        rows = A_STRICT_REGION_ASSIGNING_TO_A_NON_WRITABLE_GLOBAL
-        self.assertEqual(
-            {source: before_and_after(source) for source in rows},
-            {source: (answer, answer) for source, answer in rows.items()},
-        )
-
-
 #: A region that runs strict, holding an assignment to a name no declaration binds, mapped to the
 #: behavior Node gives it. Assigning to an unresolvable reference is a `ReferenceError` in strict
 #: code where sloppy code creates a property of the global object, so the statement's one effect is
@@ -2376,33 +2317,6 @@ class TestAPrototypeWrittenByItsOwnMethodIsReadInAFunctionTheEvaluatorRuns(TestB
         )
 
 
-#: A classic script reading a property nothing writes off an empty object, under a name the global
-#: object holds, mapped to what a host prints for it.
-A_PROPERTY_OF_AN_EMPTY_OBJECT_NAMED_LIKE_A_GLOBAL = {
-    'var o = {}; console.log(o.Math);': 'undefined\n',
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAPropertyOfAnEmptyObjectNamedLikeAGlobalStaysUndefined(TestBase):
-    """
-    An empty object literal whose properties are only read under known keys is taken apart into one
-    variable per property, named after the property, and one nothing writes becomes a declaration
-    with no value. In a classic script, a top-level `var Math` declares nothing new: the name keeps
-    the built-in the global object holds, so `var Math; console.log(Math)` prints the `Math` object
-    where the program printed `undefined`. In a browser, `var name` reads the window's name the same
-    way.
-    """
-
-    @unittest.expectedFailure
-    def test_the_deobfuscation_of_a_classic_script_prints_what_it_prints(self):
-        rows = A_PROPERTY_OF_AN_EMPTY_OBJECT_NAMED_LIKE_A_GLOBAL
-        self.assertEqual(
-            {source: before_and_after_in_a_host(source) for source in rows},
-            each_program_still_prints(rows),
-        )
-
-
 class TestAPropertyNamedLikeABuiltInLeavesTheBuiltInTrusted(TestBase):
     """
     The scan of escapes (`refinery.lib.scripts.js.analysis.intrinsics.build_intrinsic_writes`)
@@ -3940,38 +3854,6 @@ class TestAPackedAccessAWithObjectSuppliesStillGoesThroughTheProxy(TestBase):
     """
 
 
-#: A classic script storing into a name a browser window defines as a `DOMString` attribute of the
-#: global object, which keeps what is stored into it as a string, mapped to the behavior a window
-#: gives it.
-A_STORE_A_WINDOW_KEEPS_AS_A_STRING = {
-    'a number stored into the var status and compared': Program(
-        a_program("""
-            var status;
-            function f(n) {
-              status = n;
-              return status === n;
-            }
-            console.log(f(404));
-            """),
-        prints('false', 'onload=undefined'),
-        Reading.WINDOW,
-    ),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_STORE_A_WINDOW_KEEPS_AS_A_STRING)
-class TestAStoreAWindowKeepsAsAStringIsReadAsAString(TestBase):
-    """
-    A browser window defines some names on the global object before a script runs, and `status`
-    keeps what is stored into it as a string. A file-level `var` of such a name is that same
-    property, so what it holds is converted on the way in. The deobfuscation reads it as a variable
-    of the script and moves it into the function using it, where it is a plain local that keeps a
-    number. The window reads nothing stored into `status`, so the name is no property whose stored
-    value a host reads; `name`, which the window keeps for the next page, is one, and stays.
-    """
-
-
 class TestAHandlerTheListedHostsDoNotCallIsKept(TestBase):
     """
     The host data lists the event handlers a desktop Chromium window and a dedicated worker call.
@@ -4001,49 +3883,6 @@ class TestAHandlerTheListedHostsDoNotCallIsKept(TestBase):
             window.ontouchstart = function (event) { console.log(event.touches.length); };
             """)
         self.assertIn('event.touches.length', folded(source, environment=HostEnvironment.browser))
-
-
-#: A classic script that declares a name the global object holds as a read-only property and stores
-#: a value in it, mapped to what the host prints: the store is ignored in sloppy code, and the name
-#: still reads what the global object holds.
-A_STORE_A_READ_ONLY_GLOBAL_IGNORES = {
-    a_program("""
-        var NaN = 5;
-        console.log(NaN);
-        """): 'NaN\n',
-}
-
-
-class TestAScriptLevelVarSharingAReadOnlyGlobalHoldsNoStoredValue(TestBase):
-    """
-    A script-level `var` names a property of the global object, and where that property is
-    read-only, sloppy code ignores the store a declaration or an assignment makes to it. The
-    language makes `NaN`, `Infinity` and `undefined` read-only, and a browser does the same for
-    `window`, `document`, `top` and many more names. The deobfuscation folds the read to the stored
-    value. A correct one keeps the read, or folds it to what the global object holds where the host
-    is known.
-    """
-
-    @unittest.expectedFailure
-    @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    def test_a_read_after_a_store_a_language_global_ignores_prints_the_global(self):
-        rows = A_STORE_A_READ_ONLY_GLOBAL_IGNORES
-        self.assertEqual(
-            {source: before_and_after_in_a_host(source) for source in rows},
-            each_program_still_prints(rows),
-        )
-
-    @unittest.expectedFailure
-    def test_a_read_after_a_store_a_browser_global_ignores_is_kept(self):
-        """
-        Node has no read-only `top`, so the text of the output holds this row: in a browser the
-        read prints the window, not `5`.
-        """
-        source = a_program("""
-            var top = 5;
-            console.log(top);
-            """)
-        self.assertIn('console.log(top)', folded(source))
 
 
 #: Programs that give a local object the key `k` by a write the `in` fold does not count, mapped to
@@ -5819,11 +5658,10 @@ A_FUNCTIONS_OWN_VARIABLE_LIFTED_INTO_A_SCRIPT = {
 class TestAFunctionsOwnVariableStaysOffTheGlobalObject(TestBase):
     """
     A variable a function declares is its own. Spliced into the top of a classic script, the
-    declaration makes it a property of the global object, which other scripts see and which may be
-    one the host already has: in a browser, a `var status` lifted this way writes the window's own.
-    The reflection pass lifts the declarations of a `Function` body this way, and the single-use
-    function inliner those of the function it inlines. Refusing every such lift would keep most
-    wrapped scripts wrapped.
+    declaration makes it a property of the global object, which other scripts see; a name the host
+    holds is renamed on the way. The reflection pass lifts the declarations of a `Function` body this
+    way, and the single-use function inliner those of the function it inlines. Refusing every such
+    lift would keep most wrapped scripts wrapped.
     """
 
 
@@ -6588,8 +6426,7 @@ class TestAFunctionExpressionAssigningToItsOwnNameKeepsItself(TestBase):
 
 #: Classic scripts with a file-level `var` that the deobfuscation moves into a function or removes,
 #: whose presence on the global object the program observes, mapped to what Node prints for each:
-#: an `in` test of the global object for the name, and a `var undefined` assigned to, which every
-#: engine but JScript leaves undefined.
+#: an `in` test of the global object for the name.
 A_FILE_LEVEL_VAR_OBSERVED_AS_A_PROPERTY_OF_THE_GLOBAL_OBJECT = {
     'an in test of the global object': Program(
         a_program("""
@@ -6601,15 +6438,6 @@ A_FILE_LEVEL_VAR_OBSERVED_AS_A_PROPERTY_OF_THE_GLOBAL_OBJECT = {
         prints('true'),
         Reading.SCRIPT,
     ),
-    'a var undefined assigned to': Program(
-        a_program("""
-            var undefined;
-            function f() { undefined = 5; return undefined; }
-            console.log(f());
-            """),
-        prints('undefined'),
-        Reading.SCRIPT,
-    ),
 }
 
 
@@ -6618,92 +6446,28 @@ class TestAFileLevelVarObservedAsAPropertyOfTheGlobalObjectStays(TestBase):
     """
     A file-level `var` of a classic script is a property of the global object. An `in` test for its
     name reads that property without naming the binding, so the removal of the declaration goes
-    unseen; and a `var undefined` declares nothing new, the global object holding `undefined`
-    already as a property no assignment changes, so moving it into a function makes a writable
-    local of it.
+    unseen.
     """
 
-    @wontfix(
-        'no program tests the global object for a var it declares itself, nor assigns to a var '
-        'named undefined'
-    )
+    @wontfix('no program tests the global object for a var it declares itself')
     def test_the_deobfuscation_prints_what_the_program_prints(self):
         for label, row in A_FILE_LEVEL_VAR_OBSERVED_AS_A_PROPERTY_OF_THE_GLOBAL_OBJECT.items():
             with self.subTest(label=label):
                 self.assertEqual(row.deobfuscated(), row.prints)
 
 
-class TestAFileLevelVarABrowserDefinesAsAnAccessorIsNotReadAsAPlainVariable(TestBase):
+class TestAStrictStoreIntoAPropertyAWorkerInheritsWithoutASetterStillThrows(TestBase):
     """
-    A browser defines some properties of the global object as accessors, `status` among them,
-    whose setter keeps the value as a string. A file-level `var` with such a name declares no new
-    property: it is that accessor, so `var status = 1` stores the string `'1'`. The deobfuscation
-    reads it as a plain variable and folds `typeof status` to `'number'`. Node defines no such
-    accessor, so the entry asks the deobfuscation for the browser host and states what the HTML
-    standard gives the setter.
+    A dedicated worker inherits `self` from the prototype of its global object, with a getter and
+    no setter. A store into it does nothing in sloppy code and throws a `TypeError` in strict code.
+    The host data holds only the properties of the global object itself, so the deobfuscation
+    removes the store as one nothing reads, and the strict script that threw prints instead.
     """
 
-    @unittest.expectedFailure
-    def test_the_type_of_a_number_stored_into_status_is_not_folded_to_number(self):
-        source = 'var status = 1; console.log(typeof status);'
-        deobfuscated = deobfuscate_source(source, environment=HostEnvironment.browser)
-        self.assertNotIn("'number'", deobfuscated)
-
-
-class TestAStrictStoreIntoAPropertyAWindowDefinesWithoutASetterStillThrows(TestBase):
-    """
-    A browser window defines `top` with a getter and no setter. A store into it does nothing in
-    sloppy code and throws a `TypeError` in strict code. The deobfuscation removes the store as one
-    nothing reads, and the strict script that threw prints instead.
-    """
-
-    @wontfix('no program stores into the top of its window in strict code')
-    def test_the_store_is_kept_for_a_browser(self):
-        source = "'use strict'; top = 1; console.log('after');"
-        deobfuscated = deobfuscate_source(source, environment=HostEnvironment.browser)
-        self.assertIn('top = 1', deobfuscated)
-
-
-class TestAKeyNamedLikeAPropertyAWindowHoldsIsNoVariableAtTheTop(TestBase):
-    """
-    A browser window holds `top` before a script runs, with a getter and no setter, so a file-level
-    `var top` declares nothing new and a store into it does nothing in sloppy code. The namespace
-    flattening turns the key `top` of an object of the program into such a variable, and the window
-    reads itself where the program read what it stored.
-    """
-
-    @unittest.expectedFailure
-    def test_the_flattening_declares_no_variable_top_for_a_browser(self):
-        source = a_program("""
-            var pos = {};
-            pos.top = String(Math.random() < 2);
-            pos.left = String(Math.random() < 2);
-            console.log(pos.top + pos.left);
-            """)
-        deobfuscated = deobfuscate_source(source, environment=HostEnvironment.browser)
-        self.assertNotRegex(deobfuscated, r'\bvar\b[^;]*\btop\b')
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAnObjectStoredIntoAPropertyAWindowKeepsAsAStringIsConverted(TestBase):
-    """
-    A browser window keeps what is stored into `status` as a string, so the store converts the
-    object it is given by calling the object's own `toString`. The window reads nothing stored into
-    `status`, so the deobfuscation removes the store as one nothing reads, and with it that call.
-    """
-
-    @wontfix('no program stores an object with a toString of its own into the status of its window')
-    def test_the_deobfuscation_prints_what_the_program_prints(self):
-        row = Program(
-            a_program("""
-                var c = 0;
-                status = { toString: function () { c = 1; return 'x'; } };
-                console.log(c);
-                """),
-            prints('1', 'onload=undefined'),
-            Reading.WINDOW,
-        )
-        self.assertEqual(row.deobfuscated(), row.prints)
+    @wontfix('no program stores into the self of its worker in strict code')
+    def test_the_store_is_kept_for_a_worker(self):
+        source = "'use strict'; self = 1; console.log('after');"
+        self.assertIn('self = 1', folded(source, environment=HostEnvironment.worker))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
