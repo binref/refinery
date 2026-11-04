@@ -10,12 +10,12 @@ from test.lib.scripts.ps1.deobfuscation import TestPs1
 #: behind. Every claim below is about the shapes in which deleting it does change what runs.
 _RAISE = "$Null = [Int]'abc'"
 
-#: The same failing cast written as its own statement rather than stored, so the raise survives
-#: where `_RAISE` is dropped as a dead store. It is the witness for an arming that escalates *every*
-#: error rather than only what a command reports: under a `Stop` preference this cast ends the
-#: script, so a `trap` over it is load bearing, and under a default-table `Stop` — which reaches
-#: commands only — it is not, which is the difference the two armings are told apart by.
-_BARE_CAST_RAISE = "[int]'a'"
+#: The same failing cast written as the argument of a statement that acts, so the raise stays where
+#: `_RAISE` goes. It is the witness for an arming that escalates *every* error rather than only what
+#: a command reports: under a `Stop` preference this cast ends the script, so a `trap` over it is
+#: load bearing, and under a default-table `Stop` — which reaches commands only — it is not, which
+#: is the difference the two armings are told apart by.
+_CAST_RAISE = "Write-Host ([int]'a')"
 
 #: The type Windows PowerShell 5.1 gives that error, so a handler filtered on it matches the raise.
 _MATCHING = '[System.Management.Automation.RuntimeException]'
@@ -46,10 +46,15 @@ _OPAQUE = '$args'
 #: terminating. Left to itself it ends the script, which is the whole difference between the two.
 _STOPPING_RAISE = 'Get-Item nope -ErrorAction Stop'
 
-#: The same command as `_STOPPING_RAISE` with no action of its own, so what it reports is
+#: `_STOPPING_RAISE` as the argument of a statement that acts. Written bare under a `trap` that
+#: carries on, the command is removed with the `trap`, since nothing is left to notice its error;
+#: as an argument it stays, so the `trap` is decided by the handler question alone.
+_ACTING_STOPPING_RAISE = F'Write-Host ({_STOPPING_RAISE})'
+
+#: The same command as `_ACTING_STOPPING_RAISE` with no action of its own, so what it reports is
 #: terminating exactly when a preference says every error is. It is the raise that makes a write of
 #: `$ErrorActionPreference` the only reason a `trap` over it is load bearing.
-_UNSPECIFIED_RAISE = 'Get-Item nope'
+_UNSPECIFIED_RAISE = 'Write-Host (Get-Item nope)'
 
 #: A command 5.1 answers with a parameter-binding failure — a terminating error that fires a `trap`
 #: with no `-ErrorAction Stop` anywhere.
@@ -1245,14 +1250,14 @@ class TestPs1ACommandToldToStopMakesItsErrorEndTheScript(_Ps1FaultEscalation):
     def test_a_trap_that_continues_over_a_command_told_to_stop_is_kept(self):
         self._assertKept(F"""
             trap {{ continue }}
-            {_STOPPING_RAISE}
+            {_ACTING_STOPPING_RAISE}
             {_FOLLOWER}
         """)
 
     def test_an_empty_trap_over_a_command_told_to_stop_is_kept(self):
         self._assertKept(F"""
             trap {{}}
-            {_STOPPING_RAISE}
+            {_ACTING_STOPPING_RAISE}
             {_FOLLOWER}
         """)
 
@@ -1260,7 +1265,7 @@ class TestPs1ACommandToldToStopMakesItsErrorEndTheScript(_Ps1FaultEscalation):
         self._assertKept(F"""
             trap {{ continue }}
             if ({_OPAQUE}) {{
-              {_STOPPING_RAISE}
+              {_ACTING_STOPPING_RAISE}
             }}
             {_FOLLOWER}
         """)
@@ -1268,10 +1273,10 @@ class TestPs1ACommandToldToStopMakesItsErrorEndTheScript(_Ps1FaultEscalation):
     def test_a_trap_over_a_command_told_to_continue_is_removed(self):
         self._assertDeobfuscatesTo(F"""
             trap {{ continue }}
-            Get-Item nope -ErrorAction Continue
+            Write-Host (Get-Item nope -ErrorAction Continue)
             {_FOLLOWER}
         """, F"""
-            Get-Item nope -ErrorAction Continue
+            Write-Host (Get-Item nope -ErrorAction Continue)
             {_FOLLOWER}
         """)
 
@@ -1389,7 +1394,7 @@ class TestPs1EverySpellingOfTheStopActionMakesTheTrapOverItLoadBearing(_Ps1Fault
     def _assertTheTrapOverTheActionIsKept(self, action: str) -> None:
         self._assertKept(F"""
             trap {{ continue }}
-            Get-Item nope -ErrorAction {action}
+            Write-Host (Get-Item nope -ErrorAction {action})
             {_FOLLOWER}
         """)
 
@@ -1433,8 +1438,8 @@ class TestPs1EverySpellingOfTheErrorActionParameterCarriesTheStopItIsGiven(_Ps1F
 
     def _assertTheTrapOverTheParameterIsKept(self, parameter: str) -> None:
         self._assertTheTrapOverTheCommandIsKept(
-            F'Get-Item nope {parameter} Stop',
-            'Get-Item nope -ErrorAction Stop',
+            F'Write-Host (Get-Item nope {parameter} Stop)',
+            'Write-Host (Get-Item nope -ErrorAction Stop)',
         )
 
     def test_a_prefix_no_other_parameter_answers_to_binds_the_action(self):
@@ -1449,12 +1454,12 @@ class TestPs1EverySpellingOfTheErrorActionParameterCarriesTheStopItIsGiven(_Ps1F
 
     def test_an_action_attached_to_the_parameter_with_a_colon_binds_it(self):
         for command in [
-            'Get-Item nope -ErrorAction:Stop',
-            'Get-Item nope -EA:Stop',
+            'Write-Host (Get-Item nope -ErrorAction:Stop)',
+            'Write-Host (Get-Item nope -EA:Stop)',
         ]:
             with self.subTest(command):
                 self._assertTheTrapOverTheCommandIsKept(
-                    command, 'Get-Item nope -ErrorAction:Stop',
+                    command, 'Write-Host (Get-Item nope -ErrorAction:Stop)',
                 )
 
 
@@ -1478,7 +1483,8 @@ class TestPs1EverySpellingOfAnActionOtherThanStopLeavesTheTrapRemovable(_Ps1Faul
         """)
 
     def _assertTheTrapOverTheActionIsRemoved(self, action: str) -> None:
-        self._assertTheTrapOverTheCommandIsRemoved(F'Get-Item nope -ErrorAction {action}')
+        self._assertTheTrapOverTheCommandIsRemoved(
+            F'Write-Host (Get-Item nope -ErrorAction {action})')
 
     def test_a_member_name_other_than_stop_leaves_the_trap_removable(self):
         for action in ['Continue', 'SilentlyContinue', 'Ignore']:
@@ -1496,10 +1502,13 @@ class TestPs1EverySpellingOfAnActionOtherThanStopLeavesTheTrapRemovable(_Ps1Faul
                 self._assertTheTrapOverTheActionIsRemoved(action)
 
     def test_a_member_other_than_stop_attached_with_a_colon_leaves_the_trap_removable(self):
-        commands = ['Get-Item nope -ErrorAction:Continue', 'Get-Item nope -EA:SilentlyContinue']
+        commands = [
+            'Write-Host (Get-Item nope -ErrorAction:Continue)',
+            'Write-Host (Get-Item nope -EA:SilentlyContinue)',
+        ]
         expected = [
-            'Get-Item nope -ErrorAction:Continue',
-            'Get-Item nope -ErrorAction:SilentlyContinue',
+            'Write-Host (Get-Item nope -ErrorAction:Continue)',
+            'Write-Host (Get-Item nope -ErrorAction:SilentlyContinue)',
         ]
         for command, spelled in zip(commands, expected):
             with self.subTest(command):
@@ -1681,7 +1690,7 @@ class TestPs1AStopPreferenceACmdletArmsMakesEveryErrorTerminating(_Ps1FaultEscal
         self._assertKept(F"""
             New-Variable ErrorActionPreference Stop -Force
             trap {{ continue }}
-            {_BARE_CAST_RAISE}
+            {_CAST_RAISE}
             {_FOLLOWER}
         """)
 
@@ -1774,7 +1783,7 @@ class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
             Set-Variable @t
             & {{
               trap {{ continue }}
-              {_BARE_CAST_RAISE}
+              {_CAST_RAISE}
               {_FOLLOWER}
             }}
         """)
@@ -1784,7 +1793,7 @@ class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
         self._assertKept(F"""
             Set-Item -LiteralPath Variable:ErrorActionPreference Stop
             trap {{ continue }}
-            {_BARE_CAST_RAISE}
+            {_CAST_RAISE}
             {_FOLLOWER}
         """)
 
@@ -1840,10 +1849,10 @@ class TestPs1AnAmbiguousActionPrefixKeepsTheTrapOverIt(_Ps1FaultEscalation):
     def test_a_trap_over_a_command_whose_action_prefix_is_ambiguous_is_removed(self):
         self._assertDeobfuscatesTo(F"""
             trap {{ continue }}
-            Get-Item nope -ErrorAction S
+            Write-Host (Get-Item nope -ErrorAction S)
             {_FOLLOWER}
         """, F"""
-            Get-Item nope -ErrorAction S
+            Write-Host (Get-Item nope -ErrorAction S)
             {_FOLLOWER}
         """)
 
