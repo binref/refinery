@@ -1029,20 +1029,6 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return True
         return self.model.reached_from_outside(binding)
 
-    def _function_reachable(self, binding: Binding | None) -> bool:
-        """
-        Whether code this pass cannot read could call the function declaration *binding* names, so
-        it must be kept even when no statement names it: the reachability walk over function
-        declarations finds a function only where a statement names it. It is `_reflection_reachable`
-        with code outside the file counted only where it calls the function
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.called_from_outside`): a declaration
-        defines the property of the global object without storing into it, so a browser reads
-        nothing of a `function name` at the top of a script.
-        """
-        if binding is None:
-            return False
-        return self._reached_without_a_reference(binding) or self.model.called_from_outside(binding)
-
     def _reached_without_a_reference(self, binding: Binding) -> bool:
         """
         Whether code reaches *binding* where the file spells no reference to it: a body the file
@@ -1123,7 +1109,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         kept_by_reflection = {
             name for name, func in functions.items()
             if isinstance(func.id, JsIdentifier)
-            and self._function_reachable(self.model.binding_of(func.id))
+            and (binding := self.model.binding_of(func.id)) is not None
+            and self._reached_without_a_reference(binding)
         }
         unreachable = (set(functions.keys()) - reachable) - kept_by_reflection
         if not unreachable:
@@ -1152,7 +1139,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         *body*. Reachability is otherwise read off the names *body* spells, which covers every
         reference only when *body* is all of the function's scope. A function declared in a block
         is copied into the enclosing function by Annex B (§B.3.3), and a call after the block
-        reaches it from a list that walk never sees.
+        reaches it from a list that walk never sees, as does a host reading the copy at the top of a
+        script (`refinery.lib.scripts.js.analysis.model.SemanticModel.annex_b_copy_observed`).
         """
         members = {id(stmt) for stmt in body}
         names: set[str] = set()
@@ -1192,12 +1180,14 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         Which of *functions* code outside the file calls
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.called_from_outside`): those the
         caller declared a host invokes by name or the host calls as event handlers, and every
-        function of a file that
-        holds nothing but function declarations, a library that code outside it calls. Naming one
-        seeds it as a reachability root, so everything it calls is reachable through it and
-        survives too, which is the point, since an entrypoint is usually the root of the whole
-        program. The binding is taken from each declaration's own identifier rather than looked up
-        by name, so a same-named function in a nested body is judged on its own merits.
+        function of a file that holds nothing but function declarations, a library that code
+        outside it calls. Naming one seeds it as a reachability root, so everything it calls is
+        reachable through it and survives too, which is the point, since an entrypoint is usually
+        the root of the whole program. The binding is taken from each declaration's own identifier
+        rather than looked up by name, so a same-named function in a nested body is judged on its
+        own merits. A host that only reads a property is not asked about here: a declaration at the
+        top of a script defines the property without storing into it, and the store a function
+        declared in a block makes through its Annex B copy is one `_referenced_outside` keeps.
         """
         names: set[str] = set()
         for name, func in functions.items():

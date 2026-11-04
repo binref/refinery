@@ -208,10 +208,9 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         `with`-body call still needs the binding. This mirrors the reflection gate the unused-code
         remover applies, so both transforms keep the same functions.
 
-        A function a host reaches by name is likewise never removable, one the caller declared a
-        host entrypoint or one the host calls as an event handler: the host calls it from outside
-        the file, so no reference here can prove it dead. Both transforms consult the same
-        predicate, or they would disagree about which functions survive.
+        A function code outside the file reaches by name is likewise never removable
+        (`_reached_from_outside`): no reference here can prove it dead. Both transforms consult the
+        same predicates, or they would disagree about which functions survive.
 
         An exported binding is never removable for the same reason the other removal sweeps keep it:
         an importer reads its value across the module boundary once the module has run, so no
@@ -223,7 +222,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             return False
         exclude = self._function_exclude_node(func)
         for binding in names.bindings:
-            if self._is_host_entrypoint(model, binding):
+            if self._reached_from_outside(model, func, binding):
                 return False
             if binding.exported:
                 return False
@@ -233,12 +232,21 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 return False
         return True
 
-    def _is_host_entrypoint(self, model: SemanticModel, binding: Binding) -> bool:
+    @staticmethod
+    def _reached_from_outside(model: SemanticModel, func: _FuncNode, binding: Binding) -> bool:
         """
-        Whether *binding* names a function code outside the file calls by name, and is one it could
-        actually reach — a top-level declaration under the script execution model.
+        Whether code outside the file reaches the definition of *func* through *binding*, a name
+        holding it. A declaration is reached where such code calls the function
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.called_from_outside`), as a host
+        calls an entry point the analyst named or an event handler. A `var` holding the function
+        stores it, and the store is reached where a host reads what it holds
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`): a browser
+        navigates to the function stored in `location`. The unused-code remover asks the same two
+        questions of a declaration and of a store.
         """
-        return model.called_from_outside(binding)
+        if isinstance(func, JsFunctionDeclaration):
+            return model.called_from_outside(binding)
+        return model.reached_from_outside(binding)
 
     def _remove_resolved_definitions(self, script: JsScript, admission: CallAdmission) -> None:
         removed: set[int] = set()

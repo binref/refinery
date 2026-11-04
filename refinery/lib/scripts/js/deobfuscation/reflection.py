@@ -620,19 +620,12 @@ def _body_free_names(body_model: SemanticModel, parsed: JsScript) -> set[str]:
     return free
 
 
-def _body_declared_names(body_model: SemanticModel) -> set[str]:
-    """
-    The names a `Function`-constructed body declares at its top level — the `var`, function, `let`,
-    `const`, and `class` bindings that inlining would hoist into the caller's scope. Implicit globals
-    are excluded: those are writes to globals, covered by the free-name check rather than introduced as
-    new bindings.
-    """
-    return {binding.name for binding in _body_declared_bindings(body_model)}
-
-
 def _body_declared_bindings(body_model: SemanticModel) -> list[Binding]:
     """
-    The bindings behind `_body_declared_names`.
+    The bindings a `Function`-constructed body declares at its top level — the `var`, function,
+    `let`, `const`, and `class` bindings that inlining would hoist into the caller's scope. Implicit
+    globals are excluded: those are writes to globals, covered by the free-name check rather than
+    introduced as new bindings.
     """
     return [
         binding for binding in body_model.root_scope.bindings.values()
@@ -1984,7 +1977,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
         free = _body_free_names(body_model, parsed)
         if resolves_globally and 'arguments' in free:
             return None
-        declared = _body_declared_names(body_model)
+        declarations = _body_declared_bindings(body_model)
+        declared = {binding.name for binding in declarations}
         if not self._spliced_names.isdisjoint(free | declared):
             return None
         if origin is not None and not self._runs_alike_at_its_origin(
@@ -2031,29 +2025,23 @@ class JsReflectionInlining(ScriptLevelTransformer):
             global_reads = reads
         renamed: dict[Binding, str] = {}
         if declared:
-            spelled = {
-                node.name for tree in (root, parsed) for node in tree.walk()
-                if isinstance(node, JsIdentifier)
-            }
             landing = host_landing_names(
-                _body_declared_bindings(body_model),
+                declarations,
                 lambda binding: _landing_scope(binding, scope, site_scope),
                 root_model,
-                spelled.__contains__,
+                (root, parsed),
+                body_model,
             )
-            if landing is None:
+            if landing is None or not self._reflected_declarations_safe(
+                body_model, root_model, site_scope, site, scope, at_global_scope, landing, exclude,
+            ):
                 return None
             renamed = landing
-        if declared and not self._reflected_declarations_safe(
-            body_model, root_model, site_scope, site, scope, at_global_scope, exclude, renamed,
-        ):
-            return None
         for read, text in global_reads:
             _replace_in_parent(read, _indirect_eval_of(text))
-        respelled = {binding.name: name for binding, name in renamed.items()}
         for binding, name in renamed.items():
             rename_binding(binding, name)
-        self._spliced_names |= {respelled.get(name, name) for name in declared}
+        self._spliced_names |= {renamed.get(binding, binding.name) for binding in declarations}
         self._spliced_names |= _body_written_free_names(body_model, parsed)
         return parsed
 
@@ -2122,16 +2110,16 @@ class JsReflectionInlining(ScriptLevelTransformer):
         site: Node,
         scope: ReflectedScope,
         at_global_scope: bool,
+        renamed: Mapping[Binding, str],
         exclude: Collection[Binding] = (),
-        renamed: Mapping[Binding, str] | None = None,
     ) -> bool:
         """
         Whether the top-level declarations of a reflected body can be reproduced by inlining it at the
         call site, each under the name *renamed* gives it, if any. A `Function`-constructed body's
         declarations are local to the created function and lift into the caller's scopes
-        (`inlined_declarations_safe`); evaluated code declares in its execution scope and is handled
-        by `_eval_declarations_safe`. *exclude* carries the atomic fold's post-rewrite view to the
-        lift check.
+        (`refinery.lib.scripts.js.deobfuscation.helpers.inlined_declarations_safe`); evaluated code
+        declares in its execution scope and is handled by `_eval_declarations_safe`. *exclude*
+        carries the atomic fold's post-rewrite view to the lift check.
         """
         if scope is ReflectedScope.FUNCTION_CONSTRUCTOR:
             return inlined_declarations_safe(
@@ -2153,15 +2141,15 @@ class JsReflectionInlining(ScriptLevelTransformer):
         site: Node,
         scope: ReflectedScope,
         at_global_scope: bool,
-        renamed: Mapping[Binding, str] | None = None,
+        renamed: Mapping[Binding, str],
     ) -> bool:
         """
         Whether an `eval` body's top-level declarations can be inlined at the call site, a
-        `let`/`const`/`class` under the name *renamed* gives it, if any. A
-        `let`/`const`/`class` lives in a declarative environment discarded when the evaluation
-        returns, so a persistent inlined binding differs only if a name it declares is referenced
-        outside the body; it is declined where introducing it at the site would capture such a
-        reference, and where it would land on a name the host binds around a CommonJS file
+        `let`/`const`/`class` under the name *renamed* gives it, if any. A `let`/`const`/`class`
+        lives in a declarative environment discarded when the evaluation returns, so a persistent
+        inlined binding differs only if a name it declares is referenced outside the body; it is
+        declined where introducing it at the site would capture such a reference, and where it
+        would land on a name the host binds around a CommonJS file
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.declaration_may_land`). A `var` or
         function persists: under indirect eval it becomes a global-object property, reproducible
         only at top-level script scope and never under a module model; under direct eval it lands in
@@ -2180,10 +2168,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         at hoisting instead.
         """
         root = root_model.root
-        names = renamed or {}
         bindings = body_model.root_scope.bindings
         lexical = {
-            names.get(binding, name) for name, binding in bindings.items() if binding.is_lexical
+            renamed.get(binding, name) for name, binding in bindings.items() if binding.is_lexical
         }
         if lexical and not root_model.declaration_may_land(lexical, site_scope):
             return False

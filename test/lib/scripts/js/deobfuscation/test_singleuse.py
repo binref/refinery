@@ -244,3 +244,20 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
             'var m_1 = 1;\nprint(m_1);',
             self._run_transformer(
                 source, JsSingleUseFunctionInliner, DeobfuscationOptions(entrypoints=('m',))))
+
+    def test_a_body_declaration_a_pattern_names_under_every_suffix_refuses_the_fold(self):
+        source = 'function w() {\n  var m = 1;\n  print(m);\n}\nw();'
+        self.assertEqual(
+            source,
+            self._run_transformer(
+                source, JsSingleUseFunctionInliner, DeobfuscationOptions(entrypoints=('m*',))))
+
+    def test_a_body_declaration_read_through_the_shorthand_proto_refuses_the_fold(self):
+        source = 'function w() {\n  var __proto__ = 1;\n  print({ __proto__ });\n}\nw();'
+        self.assertEqual(
+            source,
+            self._run_transformer(
+                source, JsSingleUseFunctionInliner, DeobfuscationOptions(entrypoints=('__proto__',))))
+
+    def test_a_wrapper_declared_under_a_name_a_browser_reads_folds(self):
+        self.assertEqual('print(1);', self._singleuse('function name() {\n  print(1);\n}\nname();'))

@@ -56,11 +56,11 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
     access_key,
-    fresh_name,
     integer_literal,
     is_valid_identifier,
     make_string_literal,
     make_undefined_expression,
+    name_off_the_host,
     property_key,
     references_receiver_this,
     remove_declarator,
@@ -653,15 +653,16 @@ def _choose_names(
     scope: Scope,
     dispatcher: _Dispatcher,
     dispatches: list[_Dispatch],
-) -> dict[str, str]:
+) -> dict[str, str] | None:
     """
-    The name each recovered function is declared with in *scope*, by key. A key that is a valid
-    name is its own, otherwise it is prefixed with an underscore, otherwise it is `f`, and a
-    numbered suffix is added until the name is free: no other recovered function takes it, no
-    binding of *scope* other than the router has it, declaring it would capture no use within
-    *scope* and would be no property of the global object a host reads
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.lands_on_the_host`), and no dispatch
-    rewritten to it sees a nearer binding of it. A key read off the global
+    The name each recovered function is declared with in *scope*, by key, or `None` where one of
+    them finds none. A key that is a valid name is its own, otherwise it is prefixed with an
+    underscore, otherwise it is `f`, and a numbered suffix is added where that name is taken: by
+    another recovered function, by a binding of *scope* other than the router, by a use within
+    *scope* a declaration of it would capture, or by a nearer binding a dispatch rewritten to it
+    sees; or where a declaration of it would be a property of the global object a host reads,
+    which the suffix must not be either
+    (`refinery.lib.scripts.js.deobfuscation.helpers.name_off_the_host`). A key read off the global
     object as a string is not considered, since the obfuscation makes up its keys at random.
     """
     exclude = (dispatcher.binding,)
@@ -675,7 +676,7 @@ def _choose_names(
     used: set[str] = set()
 
     def taken(name: str, key: str) -> bool:
-        if name in used or model.lands_on_the_host(name, scope):
+        if name in used:
             return True
         bound = scope.bindings.get(name)
         if bound is not None and bound is not dispatcher.binding:
@@ -687,7 +688,10 @@ def _choose_names(
         return any(model.is_shadowed(name, site.reference, scope) for site in sites[key])
 
     for key, base in bases.items():
-        name = chosen[key] = fresh_name(base, partial(taken, key=key))
+        name = name_off_the_host(base, scope, model, partial(taken, key=key))
+        if name is None:
+            return None
+        chosen[key] = name
         used.add(name)
     return chosen
 
@@ -937,7 +941,8 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
             if (decided := entry.parameters(length)) is None:
                 return
             parameters[key] = decided
-        names = _choose_names(model, body_scope, dispatcher, dispatches)
+        if (names := _choose_names(model, body_scope, dispatcher, dispatches)) is None:
+            return
         removals = _removable_declarators(cache, dispatcher.payload)
         removals.extend(_removable_declarators(
             cache,

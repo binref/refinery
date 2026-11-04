@@ -8,6 +8,7 @@ from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after
 
 from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
+from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
@@ -791,3 +792,10 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             with self.subTest(source):
                 self.assertEqual(behavior(source), behavior(self._flatten(source)))
                 self.assertEqual(*before_and_after(source))
+
+    def test_a_key_a_pattern_names_under_every_suffix_stays_on_the_namespace(self):
+        source = 'var cfg = {};\ncfg.main = 1;\nprint(cfg.main);'
+        self.assertEqual(
+            source,
+            self._run_transformer(
+                source, JsNamespaceFlattening, DeobfuscationOptions(entrypoints=('m*',))))

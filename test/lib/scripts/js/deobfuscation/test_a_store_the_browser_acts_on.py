@@ -170,6 +170,57 @@ A_VALUE_OF_ITS_OWN_NAMED_LIKE_A_PROPERTY_THE_WINDOW_READS: dict[str, Program] = 
         prints('ran', '1', 'onload=undefined'),
         Reading.WINDOW,
     ),
+    'an address a Function body keeps in a var of its own and reads through a direct eval': Program(
+        a_program("""
+            Function("var location = String(Math.random() < 2 ? 'http://x.test/' : ''); console.log(eval('location'));")();
+            """),
+        prints('http://x.test/', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a name a function called once declares again in a catch clause binding it': Program(
+        a_program("""
+            function main() {
+              var name = String(Math.random() < 2);
+              try { throw 'two'; } catch (name) { var name = 'three'; console.log(name); }
+              console.log(name);
+            }
+            main();
+            """),
+        prints('three', 'true', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a name a function called once declares again in a with body whose object has it': Program(
+        a_program("""
+            function main() {
+              var o = { name: 'x' };
+              var name = String(Math.random() < 2);
+              with (o) { var name = 'b'; }
+              console.log(o.name, name);
+            }
+            main();
+            """),
+        prints('b true', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'an address a Function body keeps beside the global object it hands to a call': Program(
+        a_program("""
+            Function("var location = String(Math.random() < 2); (function (g) { console.log(location, typeof g.setTimeout); })(this);")();
+            """),
+        prints('true function', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
+    'a load handler a function called once declares in a block beside a let of its name': Program(
+        a_program("""
+            function main() {
+              let onload = String(Math.random() < 2 ? 'mine' : '');
+              { function onload() { console.log('loaded'); } onload(); }
+              console.log(onload);
+            }
+            main();
+            """),
+        prints('loaded', 'mine', 'onload=undefined'),
+        Reading.WINDOW,
+    ),
 }
 
 
@@ -274,3 +325,17 @@ class TestAStoreTheBrowserReadsIsKept(TestBase):
             location = 'http://x.test/';
             """)
         self.assertEqual(folded(source, environment=HostEnvironment.node), '')
+
+    def test_a_function_stored_into_location_is_kept_once_its_calls_fold(self):
+        source = a_program("""
+            var location = function (a) { return a + 1; };
+            console.log(location(1));
+            """)
+        self.assertIn('var location = function', folded(source, environment=HostEnvironment.browser))
+
+    def test_a_function_declared_in_a_block_at_the_top_under_the_name_location_is_kept(self):
+        source = a_program("""
+            { function location() { return 1; } }
+            console.log(1);
+            """)
+        self.assertIn('function location()', folded(source, environment=HostEnvironment.browser))

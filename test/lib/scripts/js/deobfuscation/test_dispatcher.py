@@ -29,7 +29,7 @@ from refinery.lib.scripts.js.model import (
     JsExpressionStatement,
     JsFunctionDeclaration,
 )
-from refinery.lib.scripts.js.options import ExecutionModel
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 #: The length helper the obfuscation declares beside its router when it records the length of each
@@ -105,13 +105,15 @@ def a_dispatcher(
     ))
 
 
-def unwrapped(source: str) -> bool:
+def unwrapped(source: str, options: DeobfuscationOptions | None = None) -> bool:
     """
-    Whether the dispatcher pass alone, run on *source*, leaves no function named `d`.
+    Whether the dispatcher pass alone, run on *source* under *options*, leaves no function named
+    `d`.
     """
     ast = JsParser(source).parse()
     transformer = JsDispatcherUnwrapper()
-    transformer.models = ModelCache(ast)
+    transformer.options = options
+    transformer.models = ModelCache(ast, options)
     transformer.visit(ast)
     return not any(
         isinstance(node, JsFunctionDeclaration) and node.id is not None and node.id.name == 'd'
@@ -462,6 +464,10 @@ class TestARecoveredFunctionNeitherCapturesNorIsCaptured(TestBase):
             {source: before_and_after_in_a_host(source) for source in rows},
             {source: (behavior, behavior) for source, behavior in rows.items()},
         )
+
+    def test_a_key_a_pattern_names_under_every_suffix_keeps_the_router(self):
+        source = a_dispatcher(['"main": function () { return 1; }'], ['console.log(d("main"));'])
+        self.assertFalse(unwrapped(source, DeobfuscationOptions(entrypoints=('m*',))))
 
     @wontfix('the obfuscation makes up its keys at random, so no program reads one off the global object')
     def test_a_key_read_off_the_global_object_in_a_script(self):

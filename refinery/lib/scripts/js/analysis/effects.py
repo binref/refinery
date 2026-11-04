@@ -1945,9 +1945,8 @@ class EffectModel:
         importer reading an export or a host reading the `location` a script stores, and the
         program is `global_pristine`: it exposes no reflection surface through which the name could
         be read and installs no accessor that an assignment to a global property could trigger as a
-        setter.
-        This ports the evaluator's sound permissiveness for an obfuscator's write-only scratch
-        binding.
+        setter. This ports the evaluator's sound permissiveness for an obfuscator's write-only
+        scratch binding.
 
         A binding every reference of which lies in one function is observed all the same: a later
         run of the function reads what an earlier one stored, and a run that calls the function

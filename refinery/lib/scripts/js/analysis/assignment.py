@@ -115,8 +115,8 @@ class DefiniteAssignmentModel:
     `refinery.lib.scripts.analysis.cfg.ControlFlowModel`; query with `definitely_assigned_at`.
     A bare write establishes a global only in code that cannot run as strict code, and a member
     write through a top-level `this` only where the file is a script; the semantic model answers
-    both for the file it was built over. A function code outside the file reaches by name
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`) has a call site
+    both for the file it was built over. A function code outside the file calls by name
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.called_from_outside`) has a call site
     outside the file, so the meet over its spelled call sites does not bound its entry facts and
     it gets none.
     """
@@ -395,7 +395,7 @@ class DefiniteAssignmentModel:
         for binding in names.bindings:
             if binding.dynamic_refs or not self.model.binding_pinned_to(binding, owner):
                 return frozenset()
-            if self.model.reached_from_outside(binding):
+            if self.model.called_from_outside(binding):
                 return frozenset()
             for read in names.reads_of(binding):
                 if not is_invocation_target(read):

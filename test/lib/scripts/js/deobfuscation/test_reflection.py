@@ -762,6 +762,13 @@ class TestReflectionInlining(TestJsDeobfuscator):
                 JsReflectionInlining,
                 DeobfuscationOptions(entrypoints=('m',))))
 
+    def test_a_body_declaration_a_pattern_names_under_every_suffix_stays_packed(self):
+        source = "Function('var main = 1; print(main);')();"
+        self.assertEqual(
+            source,
+            self._run_transformer(
+                source, JsReflectionInlining, DeobfuscationOptions(entrypoints=('m*',))))
+
     def test_separated_reassigned_temporary_not_inlined(self):
         source = "let m = Function('return 1');\nm = other;\nvar x = m();"
         self.assertEqual(

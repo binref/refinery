@@ -1817,7 +1817,7 @@ def inlined_declarations_safe(
     site_scope: Scope,
     *,
     exclude: Collection[Binding] = (),
-    renamed: Mapping[Binding, str] | None = None,
+    renamed: Mapping[Binding, str],
 ) -> bool:
     """
     Whether the names a spliced body declares at its own top level — the bindings of
@@ -1835,13 +1835,12 @@ def inlined_declarations_safe(
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.declaration_may_land`), which no name a
     CommonJS host binds around the file does at its top.
     """
-    names = renamed or {}
     bindings = declared_scope.bindings
     hoisted = {
-        names.get(binding, name) for name, binding in bindings.items() if binding.is_hoisted
+        renamed.get(binding, name) for name, binding in bindings.items() if binding.is_hoisted
     }
     lexical = {
-        names.get(binding, name) for name, binding in bindings.items() if binding.is_lexical
+        renamed.get(binding, name) for name, binding in bindings.items() if binding.is_lexical
     }
     if hoisted:
         var_scope = site_scope.var_scope
@@ -2340,12 +2339,9 @@ def substitute_use_position(node: JsIdentifier, replacement: Node, *, as_spelled
     if isinstance(parent, JsExportSpecifier):
         return False
     if isinstance(parent, JsProperty) and parent.shorthand:
-        if parent.computed or parent.value is not node:
+        if not shorthand_can_be_written_out(node):
             return False
-        key = parent.key
-        if isinstance(key, JsIdentifier) and key.name == PROTO_KEY:
-            return False
-        if key is node:
+        if parent.key is node:
             set_child(parent, 'key', _clone_node(node))
         set_child(parent, 'value', replacement)
         set_value(parent, 'shorthand', False)
@@ -2353,6 +2349,22 @@ def substitute_use_position(node: JsIdentifier, replacement: Node, *, as_spelled
     if not as_spelled:
         replacement = spelled_for_the_callee_position(node, replacement)
     return _replace_in_parent(node, replacement)
+
+
+def shorthand_can_be_written_out(node: JsIdentifier) -> bool:
+    """
+    Whether *node* is the value of a shorthand property that can be written out in full with
+    another value in its place, as `substitute_use_position` does to `{ a }`: neither is its key
+    computed, a shape no source spells, nor is it `__proto__`, since `{ __proto__ }` gives the
+    object a property of that name where `{ __proto__: v }` sets its prototype.
+    """
+    holder = node.parent
+    if not isinstance(holder, JsProperty) or not holder.shorthand:
+        return False
+    if holder.computed or holder.value is not node:
+        return False
+    key = holder.key
+    return not isinstance(key, JsIdentifier) or key.name != PROTO_KEY
 
 
 def spelled_by_a_shorthand(name: JsIdentifier) -> bool:
@@ -2367,34 +2379,57 @@ def spelled_by_a_shorthand(name: JsIdentifier) -> bool:
     return isinstance(holder, JsProperty) and holder.shorthand
 
 
-def binding_renamable(binding: Binding) -> bool:
+def binding_renamable(binding: Binding, model: SemanticModel) -> bool:
     """
-    Whether *binding* can take another name by respelling the identifiers the model records for
-    it (`rename_binding`): every reference is such an identifier, none is resolved at runtime
-    through a `with` body (`Binding.dynamic_refs`), no Annex B copy ties it to a binding of
-    another scope, no export list names it, and no identifier spelling it is also the key of a
-    shorthand property (`spelled_by_a_shorthand`) other than one a rename can write out in full:
-    `{ a }` and `({ a } = o)` become `{ a: b }` and `({ a: b } = o)`, while `({ a = 1 } = o)` and a
-    declaration `var { a } = o` are refused.
+    Whether *binding*, a binding of *model*, can take another name by respelling the identifiers
+    the model records for it (`rename_binding`), with nothing that tells the two names apart.
+
+    No code names it at run time from its own scope, as a direct `eval` or a `with` body would go
+    on naming the old one
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.reflection_can_reach_from_its_scope`),
+    and no body the program hands the global object to reaches it
+    (`refinery.lib.scripts.js.analysis.model.Binding.reachable_through_a_handed_object`), where the
+    model records the object handed over as one of its references. No Annex B copy ties it to a
+    binding of another scope, and no function declared in a block of its scope bears its name:
+    the binding blocks the copy Annex B makes of that function, which is made once the two names
+    differ. Every declaration of it stores into it, where one in a `catch` clause binding the same
+    name stores into the parameter and one in a `with` body may store into the object.
+
+    Every reference is an identifier spelling its name where it reads or writes it, one no export
+    list names and the key of no shorthand property (`spelled_by_a_shorthand`) but one a rename
+    can write out in full (`shorthand_can_be_written_out`): `{ a }` and `({ a } = o)` become
+    `{ a: b }` and `({ a: b } = o)`, while `({ a = 1 } = o)`, `{ __proto__ }` and a declaration
+    `var { a } = o` are refused.
     """
-    if binding.dynamic_refs or binding.copies_made or binding.copies_received:
+    if (
+        binding.copies_made
+        or binding.copies_received
+        or binding.reachable_through_a_handed_object
+        or model.reflection_can_reach_from_its_scope(binding)
+    ):
         return False
+    for declaration in binding.declarations:
+        if spelled_by_a_shorthand(declaration):
+            return False
+        if model.lookup(binding.name, model.scope_of(declaration)) is not binding:
+            return False
     for reference in (*binding.reads, *binding.writes, *binding.indefinite_writes):
-        if not isinstance(reference, JsIdentifier):
-            return False
-        parent = reference.parent
-        if isinstance(parent, JsExportSpecifier):
-            return False
-        if not spelled_by_a_shorthand(reference):
-            continue
         if (
-            not isinstance(parent, JsProperty)
-            or parent.computed
-            or parent.value is not reference
+            not isinstance(reference, JsIdentifier)
+            or reference.name != binding.name
             or not is_use_position(reference)
+            or isinstance(reference.parent, JsExportSpecifier)
         ):
             return False
-    return not any(spelled_by_a_shorthand(declaration) for declaration in binding.declarations)
+        if spelled_by_a_shorthand(reference) and not shorthand_can_be_written_out(reference):
+            return False
+    return not any(
+        isinstance(node, JsFunctionDeclaration)
+        and node.id is not None
+        and node.id.name == binding.name
+        and node.id not in binding.declarations
+        for node in walk_scope(binding.scope.node, include_root_body=True)
+    )
 
 
 def rename_binding(binding: Binding, name: str) -> None:
@@ -2420,35 +2455,65 @@ def rename_binding(binding: Binding, name: str) -> None:
             set_value(reference, 'name', name)
 
 
+def name_off_the_host(
+    base: str,
+    scope: Scope,
+    model: SemanticModel,
+    taken: Callable[[str], bool],
+) -> str | None:
+    """
+    The name a declaration of *base* takes in *scope*, a scope of *model*: *base* itself where
+    *taken* leaves it free and a declaration of it there is no property of the global object a
+    host reads (`refinery.lib.scripts.js.analysis.model.SemanticModel.lands_on_the_host`), and
+    otherwise the first suffix `fresh_name` finds that *taken* leaves free, or `None` where a host
+    reads that one as well. No host environment reads a name with a suffix, but a pattern the
+    analyst names entry points by holds for every suffix of a name it holds for, as `*` and `On*`
+    do, so the host is asked about the one suffix the search settles on: asked of every suffix,
+    the search would never end.
+    """
+    if not taken(base) and not model.lands_on_the_host(base, scope):
+        return base
+    name = fresh_name(base, lambda candidate: candidate == base or taken(candidate))
+    if model.lands_on_the_host(name, scope):
+        return None
+    return name
+
+
 def host_landing_names(
     bindings: Iterable[Binding],
     landing: Callable[[Binding], Scope | None],
     model: SemanticModel,
-    spelled: Callable[[str], bool],
+    text: Iterable[Node],
+    declared_by: SemanticModel,
 ) -> dict[Binding, str] | None:
     """
-    A new name for each of *bindings* that a declaration moved into the scope *landing* gives it
-    would put on a property of the global object a host reads
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.lands_on_the_host`), or `None` where one
-    of them cannot take another name (`binding_renamable`). The declaration that bound a name of
+    A new name for each of *bindings*, which *declared_by* holds, whose declaration would be a
+    property of the global object a host reads
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.lands_on_the_host`) once moved into the
+    scope of *model* that *landing* gives it, or `None` where one of them cannot take another name
+    (`binding_renamable`) or finds none (`name_off_the_host`). The declaration that bound a name of
     its own scope keeps doing so under the new name, where the old one would store into what the
-    host reads: a `var location` lifted out of a function body would navigate the window. A new
-    name is the old one with the first suffix `fresh_name` finds that the text spells nowhere
-    (*spelled*), no host reads, and no other binding here takes.
+    host reads: a `var location` lifted out of a function body would navigate the window. No
+    identifier of the trees in *text* spells a new name, nor does another binding here take it;
+    the trees are read only once a binding needs one.
     """
     chosen: dict[Binding, str] = {}
+    spelled: set[str] | None = None
     for binding in bindings:
         scope = landing(binding)
         if scope is None or not model.lands_on_the_host(binding.name, scope):
             continue
-        if not binding_renamable(binding):
+        if not binding_renamable(binding, declared_by):
             return None
-        taken = set(chosen.values())
-        chosen[binding] = fresh_name(binding.name, lambda name: (
-            name in taken
-            or spelled(name)
-            or model.host_reaches_global(name)
-        ))
+        if spelled is None:
+            spelled = set()
+            for tree in text:
+                spelled |= collect_identifier_names(tree)
+        name = name_off_the_host(binding.name, scope, model, spelled.__contains__)
+        if name is None:
+            return None
+        spelled.add(name)
+        chosen[binding] = name
     return chosen
 
 

@@ -28,11 +28,12 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BatchedScopeTransformer,
     access_key,
-    fresh_name,
+    collect_identifier_names,
     function_binds_name,
     insert_after_prologue,
     is_receiver_binding_call,
     is_valid_identifier,
+    name_off_the_host,
     property_absent_from_written_chain,
     references_receiver_this,
 )
@@ -147,10 +148,9 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
     flattened property names. A property whose name conflicts with an existing variable in the
     scope, or that a plain object inherits, is left on the namespace object. A property whose
     variable would be the property of the global object a host reads becomes a variable of another
-    name (`_variable_names`). A namespace that a
-    method may read through `this` is left whole. A namespace may also be declared bare and made
-    by one statement of its scope that runs at most once whenever the scope does, and before every
-    access of the namespace (`_creation`):
+    name (`_variable_names`). A namespace that a method may read through `this` is left whole. A
+    namespace may also be declared bare and made by one statement of its scope that runs at most
+    once whenever the scope does, and before every access of the namespace (`_creation`):
 
         var NS;
         if (c) { NS = {}; NS.f = function () { ... }; NS.f(); }
@@ -194,9 +194,11 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
     def __init__(self):
         super().__init__()
         self._root: JsScript | None = None
+        self._spelled: set[str] | None = None
 
     def visit_JsScript(self, node: JsScript):
         self._root = node
+        self._spelled = None
         return super().visit_JsScript(node)
 
     def _process_scope_body(self, scope: Node, body: list) -> None:
@@ -248,7 +250,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         conflicts = self._find_conflicting_names(model, scope, scope_obj, names, declarator)
         captured = self._captured_keys(model, scope, scope_obj, accesses, names)
         inherited = self._inherited_keys(props, cache.effects)
-        flattenable = props - conflicts - captured - inherited
+        flattenable = set(names) - conflicts - captured - inherited
         flattenable = {
             key for key in flattenable
             if is_valid_identifier(names[key]) and not self.name_emitted_in(scope, names[key])
@@ -452,28 +454,42 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         The name of the variable each key of *props* becomes in *scope*: the key itself, unless a
         declaration of it there would be the property of the global object a host reads
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.lands_on_the_host`). Such a key takes
-        the first suffix `refinery.lib.scripts.js.deobfuscation.helpers.fresh_name` finds that the
-        text spells nowhere, no host reads, and no declaration of the batch takes: the object the
-        program stored into was its own, and `cfg.location = u` at the top of a script becomes a
-        variable `location_1`, where a variable `location` would navigate the window.
+        the name `refinery.lib.scripts.js.deobfuscation.helpers.name_off_the_host` finds, which the
+        text spells nowhere and no declaration of the batch takes, and is left out where there is
+        none, which keeps it on the namespace: the object the program stored into was its own, and
+        `cfg.location = u` at the top of a script becomes a variable `location_1`, where a variable
+        `location` would navigate the window.
         """
-        assert self._root is not None
         names = {key: key for key in props}
-        spelled: set[str] | None = None
+
+        def taken(name: str) -> bool:
+            return (
+                name in names.values()
+                or name in self._spelled_names()
+                or self.name_emitted_in(scope, name)
+            )
+
         for key in sorted(props):
             if not is_valid_identifier(key) or not model.lands_on_the_host(key, scope_obj):
                 continue
-            if spelled is None:
-                spelled = {
-                    node.name for node in self._root.walk() if isinstance(node, JsIdentifier)
-                }
-            taken = set(names.values()) | spelled
-            names[key] = fresh_name(key, lambda name: (
-                name in taken
-                or model.host_reaches_global(name)
-                or self.name_emitted_in(scope, name)
-            ))
+            variable = name_off_the_host(key, scope_obj, model, taken)
+            if variable is None:
+                del names[key]
+            else:
+                names[key] = variable
         return names
+
+    def _spelled_names(self) -> set[str]:
+        """
+        Every name an identifier of the script spells, read once per invocation and only once a key
+        needs another name (`_variable_names`). A name an earlier plan of the invocation writes into
+        the tree, which a plan applied at once does, is one it emits, and `name_emitted_in` holds it
+        back.
+        """
+        if self._spelled is None:
+            assert self._root is not None
+            self._spelled = collect_identifier_names(self._root)
+        return self._spelled
 
     @staticmethod
     def _find_conflicting_names(
@@ -535,9 +551,8 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         Scopes are decided innermost first, so every such plan is decided before this one.
         """
         captured: set[str] = set()
-        for key, references in references_by_key.items():
-            variable = names[key]
-            for reference in references:
+        for key, variable in names.items():
+            for reference in references_by_key[key]:
                 assert isinstance(reference, JsMemberExpression) and reference.object is not None
                 if (
                     model.is_shadowed(variable, reference.object, scope_obj)

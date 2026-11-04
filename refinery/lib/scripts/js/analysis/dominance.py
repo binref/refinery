@@ -574,7 +574,7 @@ class DominanceModel(DominatorModel):
         script as one more point, the script root standing for it (`_statement_completes_before`),
         since such an importer calls in only once the module has finished, and so has one code
         loading a library calls by name
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`).
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.called_from_outside`).
 
         Memoized by identity: the enumeration is a pure function of *activation* and the model,
         both fixed for the model's lifetime — the whole DominanceModel is rebuilt when the tree

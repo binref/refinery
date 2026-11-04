@@ -69,18 +69,20 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         changes nothing a name can tell.
 
         The reference gates hold the shape — the name is read exactly once, as the callee of a
-        bare top-level call, written nowhere, exported nowhere, reached by no host the analyst
-        named, and named by nothing outside the declaration and the invocation, so nothing
-        survives the edit that could miss the function. The tampering gate holds the multiplicity
-        — the one invocation executes at most once, so the moved body runs exactly as often as
-        the call did. The body gates hold what a splice at statement position cannot reproduce —
-        a receiver, `arguments`, `new.target`, a strict prologue, a nested `return`, or a direct
-        `eval` that resolves in the wrapper's scope rather than the script's — and the arguments
-        of the call must be droppable, since the call evaluates them and nothing reads them. The
-        declaration gate holds the move itself: every binding the body declares lands in the
-        script's own scope without capturing or colliding, and no opaque surface stands anywhere
-        that could re-invoke the wrapper by name once it is gone. A binding that would land on a
-        property of the global object a host reads takes a name nothing spells instead
+        bare top-level call, written nowhere, exported nowhere, called by no code outside the file
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.called_from_outside`), and named by
+        nothing outside the declaration and the invocation, so nothing survives the edit that could
+        miss the function. A declaration stores nothing a browser reads, so a wrapper declared as
+        `function name` goes like any other. The tampering gate holds the multiplicity — the one
+        invocation executes at most once, so the moved body runs exactly as often as the call did.
+        The body gates hold what a splice at statement position cannot reproduce — a receiver,
+        `arguments`, `new.target`, a strict prologue, a nested `return`, or a direct `eval` that
+        resolves in the wrapper's scope rather than the script's — and the arguments of the call
+        must be droppable, since the call evaluates them and nothing reads them. The declaration
+        gate holds the move itself: every binding the body declares lands in the script's own scope
+        without capturing or colliding, and no opaque surface stands anywhere that could re-invoke
+        the wrapper by name once it is gone. A declaration that would land on a property of the
+        global object a host reads takes a name nothing spells instead
         (`refinery.lib.scripts.js.deobfuscation.helpers.host_landing_names`): the body's own
         `var location` stays a variable rather than navigating the window.
         """
@@ -107,7 +109,7 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         call, statement = invoked
         if not nothing_still_names(model, [declaration, statement]):
             return False
-        if model.reached_from_outside(binding):
+        if model.called_from_outside(binding):
             return False
         if model.reflection_surface_sites(binding):
             return False
@@ -145,12 +147,12 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         wrapper_scope = model.function_scope(declaration)
         if wrapper_scope is None:
             return False
-        spelled = {node.name for node in root.walk() if isinstance(node, JsIdentifier)}
         renamed = host_landing_names(
             wrapper_scope.bindings.values(),
-            lambda _: model.root_scope,
+            lambda binding: model.root_scope if binding.is_hoisted or binding.is_lexical else None,
             model,
-            spelled.__contains__,
+            (root,),
+            model,
         )
         if renamed is None:
             return False

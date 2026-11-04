@@ -6664,6 +6664,89 @@ class TestAStrictStoreIntoAPropertyAWindowDefinesWithoutASetterStillThrows(TestB
         self.assertIn('top = 1', deobfuscated)
 
 
+class TestAKeyNamedLikeAPropertyAWindowHoldsIsNoVariableAtTheTop(TestBase):
+    """
+    A browser window holds `top` before a script runs, with a getter and no setter, so a file-level
+    `var top` declares nothing new and a store into it does nothing in sloppy code. The namespace
+    flattening turns the key `top` of an object of the program into such a variable, and the window
+    reads itself where the program read what it stored.
+    """
+
+    @unittest.expectedFailure
+    def test_the_flattening_declares_no_variable_top_for_a_browser(self):
+        source = a_program("""
+            var pos = {};
+            pos.top = String(Math.random() < 2);
+            pos.left = String(Math.random() < 2);
+            console.log(pos.top + pos.left);
+            """)
+        deobfuscated = deobfuscate_source(source, environment=HostEnvironment.browser)
+        self.assertNotRegex(deobfuscated, r'\bvar\b[^;]*\btop\b')
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnObjectStoredIntoAPropertyAWindowKeepsAsAStringIsConverted(TestBase):
+    """
+    A browser window keeps what is stored into `status` as a string, so the store converts the
+    object it is given by calling the object's own `toString`. The window reads nothing stored into
+    `status`, so the deobfuscation removes the store as one nothing reads, and with it that call.
+    """
+
+    @wontfix('no program stores an object with a toString of its own into the status of its window')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        row = Program(
+            a_program("""
+                var c = 0;
+                status = { toString: function () { c = 1; return 'x'; } };
+                console.log(c);
+                """),
+            prints('1', 'onload=undefined'),
+            Reading.WINDOW,
+        )
+        self.assertEqual(row.deobfuscated(), row.prints)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionRenamedOffAPropertyTheWindowReadsKeepsItsName(TestBase):
+    """
+    A declaration moved to the top of a script under a name whose stored value the window reads
+    takes another name, as the `onload` a `Function` body declares becomes `onload_1`, and a
+    function or class declared under it takes the new name as its own `name`.
+    """
+
+    @wontfix('no program reads the name of a function it declares under a name a browser reads')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        row = Program(
+            a_program("""
+                Function("function onload() {} console.log(onload.name);")();
+                """),
+            prints('onload', 'onload=undefined'),
+            Reading.WINDOW,
+        )
+        self.assertEqual(row.deobfuscated(), row.prints)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestANameTakenOffAPropertyTheWindowReadsIsNoNameTheProgramAsksFor(TestBase):
+    """
+    A declaration moved to the top of a script under a name whose stored value the window reads
+    takes the first suffix no identifier of the program spells, as `location` becomes `location_1`.
+    A program may still ask for the new name as a string, and finds the global it did not have.
+    """
+
+    @wontfix('no program tests the global object for a name it never declares')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        row = Program(
+            a_program("""
+                Function("var location = String(Math.random() < 2); console.log(location);")();
+                console.log('location_1' in globalThis);
+                """),
+            prints('true', 'false', 'onload=undefined'),
+            Reading.WINDOW,
+        )
+        self.assertEqual(row.deobfuscated(), row.prints)
+
+
 #: A program whose table of functions is handed back by the `valueOf` every object inherits,
 #: selected under a key only the run knows, mapped to what Node prints run as a CommonJS file.
 A_TABLE_HANDED_BACK_UNDER_A_KEY_KNOWN_ONLY_AT_RUNTIME = {

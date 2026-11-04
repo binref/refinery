@@ -3802,10 +3802,12 @@ class SemanticModel:
         """
         Whether anything may observe the copy Annex B makes of the function *declaration*, declared
         in a block, or the `var` that copy declares: the `var` is read, written, named in a `with`
-        body, exported, carried by an object handed to a call, or reachable by reflection. A write
-        observes the `var` because without it the same assignment lands on whatever the name means
-        outside the function, or creates a global. A declaration this model was not built over may
-        be observed.
+        body, exported, carried by an object handed to a call, reachable by reflection, or reached
+        by code outside the file (`reached_from_outside`), as a browser navigates once the copy
+        stores a function declared in a block at the top of a script under the name `location`. A
+        write observes the `var` because without it the same assignment lands on whatever the name
+        means outside the function, or creates a global. A declaration this model was not built
+        over may be observed.
         """
         if declaration.id is None:
             return False
@@ -3817,6 +3819,7 @@ class SemanticModel:
             or copy.var.writes
             or copy.var.has_indefinite_write
             or self.reflection_can_reach(copy.var)
+            or self.reached_from_outside(copy.var)
             for copy in block.copies_made
             if copy.declaration is declaration
         )
@@ -4086,8 +4089,8 @@ class SemanticModel:
         whenever the script hands it control, and an importer in an import cycle calls an export,
         one exported by name or an anonymous `export default function`, before the module's body
         has finished (`importer_may_run_first`). The functions of a library
-        (`reached_from_outside`) are not among them, and neither are the exports an importer
-        outside every cycle reaches: code that loads the file calls those once it has run.
+        (`called_from_outside`) are not among them, and neither are the exports an importer outside
+        every cycle reaches: code that loads the file calls those once it has run.
         """
         names = self.function_names(function)
         for binding in () if names is None else names.bindings:
@@ -6439,8 +6442,8 @@ def build_semantic_model(
     such as the payload of a `Function` construction, is a script. *exports_read_outside* says
     whether code that loads the file may read what it exports; see
     `SemanticModel.module_exports_unread`. *host_entrypoint* says whether the analyst declared a
-    name one a host reaches; see `SemanticModel.host_reaches_global`. The default declares none, and
-    a host then reaches only the event handlers *environment* calls.
+    name one a host calls; see `SemanticModel.host_calls_global`. The default declares none, and a
+    host then reaches only the properties *environment* reads (`SemanticModel.host_reaches_global`).
     """
     return SemanticModel(
         root,

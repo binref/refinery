@@ -207,6 +207,6 @@ def is_host_entrypoint(options: object | None, name: str) -> bool:
     `DeobfuscationOptions` names no entrypoints, which is the behavior of every caller that supplies
     none: reachability is then decided by the file alone, as before. The event handlers the host
     calls need no declaration; the model asks its environment for those
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.host_reaches_global`).
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.host_calls_global`).
     """
     return isinstance(options, DeobfuscationOptions) and options.names_entrypoint(name)
