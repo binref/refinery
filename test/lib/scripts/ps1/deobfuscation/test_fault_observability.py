@@ -748,6 +748,21 @@ class TestPs1AnUnreadablePayloadMayArmStrictModeWithoutSpellingIt(TestPs1):
             {_UNREADABLE}
         """, _UNSET_READ)
 
+    @unittest.expectedFailure
+    def test_an_unset_read_below_an_unreadable_payload_with_no_handler_is_kept(self):
+        """
+        The payload may arm strict mode and set `$ErrorActionPreference` to `Stop` both, and then
+        the read ends the script before the anchor runs. The discarded read is removed, which is
+        right only for a payload that arms at most one of the two.
+        """
+        for read in (_UNSET_OUTPUT, _UNSET_READ):
+            with self.subTest(read):
+                self._assertKept(F"""
+                    {_UNREADABLE}
+                    {read}
+                    {_ANCHOR}
+                """)
+
 
 class TestPs1OnlyABareNameIsGrantedTheStrictModeReading(TestPs1):
     """

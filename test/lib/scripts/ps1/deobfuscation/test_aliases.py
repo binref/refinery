@@ -182,12 +182,12 @@ class TestPs1AliasDefinitionRemoval(TestPs1):
         result = self._deobfuscate(cleandoc("""
             Set-Alias foo Write-Output
             foo 'hi'
-            ${alias:foo}
+            Write-Host ${alias:foo}
         """))
         self.assertEqual(result, cleandoc("""
             Set-Alias foo Write-Output
             Write-Output 'hi'
-            $alias:foo
+            Write-Host $alias:foo
         """))
 
     def test_a_command_that_opens_the_world_keeps_the_definition(self):
@@ -375,14 +375,14 @@ class TestPs1AliasShadowing(TestPs1):
         # function defined, `gci` still runs Get-ChildItem.
         closed = self._deobfuscate(cleandoc("""
             function global:gci { Start-Process calc }
-            gci
+            Write-Host (gci)
             Write-Host done
         """))
-        self.assertEqual(closed, 'Get-ChildItem\nWrite-Host done')
+        self.assertEqual(closed, 'Write-Host (Get-ChildItem)\nWrite-Host done')
         open_world = self._deobfuscate(cleandoc("""
             function global:gci { Start-Process calc }
             iex $x
-            gci
+            Write-Host (gci)
             Write-Host done
         """))
         self.assertIn('Start-Process calc', open_world)

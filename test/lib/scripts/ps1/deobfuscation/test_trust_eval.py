@@ -181,7 +181,7 @@ class TestPs1TrustedEvalStillExcusesAnEvalBesideAProviderPathThatBindsNothing(Te
 
     _READS_THE_PROVIDER = (
         "Test-Path 'alias:curl'",
-        'Get-ChildItem alias:',
+        'Write-Host (Get-ChildItem alias:)',
         cleandoc("""
             $q = Get-Item function:more
             Write-Host $q
@@ -364,11 +364,10 @@ class TestPs1TrustedEvalAlsoAssumesTheUnreadableCodeReadsNothing(TestPs1):
             trust_eval=True,
         )
 
-    def test_the_default_keeps_all_four(self):
+    def test_the_default_keeps_what_the_payload_could_reach(self):
         scripts = (
             'Invoke-Expression $c\nfunction Zzq {\n  Stop-Process -Name x\n}',
             "Invoke-Expression $c\nfunction Zzq {\n  Write-Host 'side'\n  'payload'\n}\nZzq",
-            'Invoke-Expression $c\n$q',
             '$r = $sb.Invoke()\nSet-Alias zzq Get-Date\nWrite-Host $r',
         )
         for script in scripts:

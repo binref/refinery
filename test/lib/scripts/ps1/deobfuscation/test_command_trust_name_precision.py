@@ -94,7 +94,7 @@ class TestPs1DiscardedPureCallNamePrecisionControls(TestPs1):
         cannot resolve to one command survives to flood, and flooding that one is right.
         """
         result = self._deobfuscate(
-            F'Set-Alias Some-Other-Name Get-Date\n{_CALL_OF_ANOTHER_NAME}\n'
+            F'Set-Alias Some-Other-Name Get-Date\nWrite-Host ({_CALL_OF_ANOTHER_NAME})\n'
             F'$Null = Get-Random -Maximum 88175\n{_ANCHOR}')
         self.assertIn('Get-Date', result)
         self.assertNotIn(_OTHER_NAME_TOKEN, result)

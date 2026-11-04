@@ -888,7 +888,7 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
         result = self._deobfuscate_iterative(cleandoc("""
             trap [System.IO.IOException] {}
             if ($True) {
-              [int]'a'
+              Write-Host ([int]'a')
               trap [System.Management.Automation.RuntimeException] {
                 continue
               }

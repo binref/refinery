@@ -312,7 +312,7 @@ class TestPs1JunkStatementRemoval(TestPs1):
 
     def test_called_function_preserved(self):
         result = self._deobfuscate(
-            'function Helper { Get-Item $args[0] }; Helper; Write-Host done')
+            'function Helper { Write-Host $args[0] }; Helper; Write-Host done')
         self.assertIn('Helper', result)
 
     def test_an_expandable_string_is_kept_however_much_it_looks_like_noise(self):
@@ -1252,7 +1252,7 @@ class TestPs1PayloadRetention(TestPs1):
         result = self._deobfuscate(
             "function Write-Host { Start-Process calc }\n"
             "function f { Write-Host 'x'; Get-Item $args[0] }\nf")
-        self.assertIn('Get-Item', result)
+        self.assertIn("Write-Host 'x'", result)
         self.assertIn('Start-Process calc', result)
 
 

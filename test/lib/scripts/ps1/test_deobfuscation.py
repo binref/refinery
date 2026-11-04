@@ -597,7 +597,7 @@ class TestPs1NameTrustSurvivesRewriting(TestPs1):
         out = self._deobfuscate_iterative(cleandoc(
             """
             ${function:gci} = { Start-Process calc }
-            gci
+            Write-Host (gci)
             Write-Host done
             """
         ))
