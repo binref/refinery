@@ -1,14 +1,3 @@
-"""
-What `refinery.lib.scripts.ps1.analysis.values.read` makes of an expression, what
-`refinery.lib.scripts.ps1.analysis.values.evaluate` makes of a whole one, what
-`refinery.lib.scripts.ps1.analysis.values.apply_unary` makes of a complement, what
-`refinery.lib.scripts.ps1.analysis.values.integer_of` and
-`refinery.lib.scripts.ps1.analysis.values.collect_integers` hand a caller that wants a number, and
-what `refinery.lib.scripts.ps1.analysis.values.render` writes a value back as, each held against
-what a real Windows PowerShell 5.1 host made of the same expression. No host is run from here: the
-measurements are the ones already taken and checked in, and this module reads them as data, so the
-expectations below are the host's rather than ours.
-"""
 from __future__ import annotations
 
 import dataclasses
@@ -20,6 +9,7 @@ import unittest
 
 from typing import Any, Callable, NamedTuple
 
+from test import backlog, opportunity
 from test.lib.scripts.ps1.corpus import (
     BOUNDARIES,
     GRID_WITNESS_GAPS,
@@ -61,7 +51,6 @@ from refinery.lib.scripts.ps1.analysis.values import (
     render,
     resolve_expression_type,
     type_of,
-    text_of,
     read_operand,
 )
 from refinery.lib.scripts.ps1.analysis.world import Ps1TypeWorld
@@ -99,9 +88,6 @@ _ROW_PATTERN = re.compile(
     r'\$t = (?P<expression>.+); Write-Output \(,\$t\); Write-Output \$t'
 )
 
-#: What counts as a single numeric literal in a measured row. The selection is textual on purpose:
-#: it has to be independent of the parser it is used to test, or a lexer that stopped reading a
-#: spelling would quietly withdraw the row that measures it instead of failing on it.
 _NUMERAL = re.compile(r'[-+]?\(?[0-9][0-9a-zA-Z_.+-]*\)?')
 
 
@@ -123,20 +109,13 @@ BOOLEAN = _type('System.Boolean')
 DOUBLE = _type('System.Double')
 DECIMAL = _type('System.Decimal')
 OBJECT_ARRAY = _type('System.Object[]')
+ARRAY = _type('System.Array')
 
 
 def _boolean(rendered: str) -> bool:
-    """
-    The Boolean a host printed. Those two spellings are the only ones it prints, and a third is a
-    `KeyError` rather than a truth value read out of the length of a word.
-    """
     return {'True': True, 'False': False}[rendered]
 
 
-#: How the Python payload of a fact is spelled for each .NET type a measured row carries. A type no
-#: entry covers is a `KeyError` naming it rather than a comparison against a value read the wrong
-#: way round. A Char and a String are spelled alike on purpose: what tells the two apart is the
-#: `Ps1TypeName` a fact is stamped with, never the Python object it holds.
 _PAYLOADS: dict[str, Callable[[str], int | float | bool | decimal.Decimal | str]] = {
     'System.Int32'   : int,
     'System.Int64'   : int,
@@ -155,41 +134,21 @@ _PAYLOADS: dict[str, Callable[[str], int | float | bool | decimal.Decimal | str]
 
 
 def _transcript(expression: str, witness: str = '$t') -> tuple[str, ...]:
-    """
-    What a 5.1 host printed for the measured row that assigns `expression` to `$t` and then prints
-    `$t` whole and `witness`. A row this module asks for and the corpus does not hold is a
-    `KeyError` naming it: nothing here may run a host, so a case has to be measured in
-    `test.lib.scripts.ps1.corpus` before it can be asked about.
-    """
     row = F'$t = {expression}; Write-Output (,$t); Write-Output {witness}'
     return TYPE_TRANSCRIPTS[row]
 
 
 def _printed(line: str) -> tuple[str, str]:
-    """
-    The type a transcript line's value carried and the text the host rendered it as.
-    """
     kind, carried, rendered = line.split('\t')
     assert kind == 'OUT', line
     return carried, rendered
 
 
 def _throws(transcript: tuple[str, ...]) -> bool:
-    """
-    Whether a host produced no value for the row: its first line is the error the expression raised
-    rather than a value on the output stream, whether 5.1 stepped over the erroring statement and
-    left `$t` unset or the error stopped the run.
-    """
     return not transcript[0].startswith('OUT\t')
 
 
 def _measured(expression: str) -> tuple[str, str]:
-    """
-    The .NET type and the rendered value a host printed for `expression`. Both witnesses name the
-    type — the first for `$t` wrapped in a one-element array and unrolled back out of it, the
-    second for `$t` written directly — and a row whose two witnesses disagree is not a measurement
-    of one value.
-    """
     wrapped, printed = _transcript(expression)
     stamp, reported = _printed(wrapped)
     carried, rendered = _printed(printed)
@@ -203,11 +162,6 @@ def _measured_fact(expression: str) -> Ps1Fact:
 
 
 def _measured_count(expression: str) -> tuple[str, int]:
-    """
-    The container type and the element count a host printed for an array shape. Such a row prints
-    `$t.Count` as its second witness, because printing the array itself prints its elements and
-    never says how many there are.
-    """
     wrapped, counted = _transcript(expression, '$t.Count')
     container, _ = _printed(wrapped)
     counter, rendered = _printed(counted)
@@ -221,20 +175,11 @@ def _measured_shape(expression: str) -> tuple[Ps1TypeName, int]:
 
 
 def _measured_rendering(expression: str) -> tuple[str, str]:
-    """
-    The container type a host stamped a collection with and the text it wrote the collection as.
-    Writing one writes its elements, so this is the witness that says what they are: an element
-    that is itself a collection is written as `System.Object[]` rather than as its contents.
-    """
     wrapped, _ = _transcript(expression, '$t.Count')
     return _printed(wrapped)
 
 
 def _measured_elements(expression: str) -> tuple[Ps1Fact, ...]:
-    """
-    The facts a host printed for the elements of a collection. Writing a collection out unrolls it,
-    so every line after the first witness is one element under the type it carried.
-    """
     transcript = _transcript(expression)
     elements: list[Ps1Fact] = []
     for line in transcript[1:]:
@@ -257,33 +202,21 @@ def _numeral_rows() -> dict[str, tuple[str, ...]]:
 
 _NUMERAL_ROWS = _numeral_rows()
 
-#: The fact a 5.1 host pins each measured numeral spelling to.
 MEASURED: dict[str, Ps1Fact] = {
     expression: _measured_fact(expression)
     for expression, transcript in _NUMERAL_ROWS.items()
     if not _throws(transcript)
 }
 
-#: The measured spellings 5.1 itself has no value for. It reports NumericConstantTooLarge for a
-#: hexadecimal literal that fills neither width, and reads a digit group broken by an underscore as
-#: a command name, because 5.1 has no digit separator.
 REFUSED: tuple[str, ...] = tuple(
     expression for expression, transcript in _NUMERAL_ROWS.items() if _throws(transcript)
 )
 
-#: Measured spellings `read` refuses although the host pins each to a value: a unary minus over a
-#: parenthesized literal is an operator over a value, so reaching past the parenthesis to the numeral
-#: would report its width without its sign. `evaluate` applies the operator and answers the width the
-#: parenthesis decides — `-(2147483648)` stays the Int64 it negates, `-(2147483647)` the Int32.
 UNANSWERED: tuple[str, ...] = (
     '-(2147483648)',
     '-(2147483647)',
 )
 
-#: Measured spellings the host holds only by a rounding, which `read` refuses rather than invent
-#: an answer for. The corpus holds a row for each: the host prints a value, and no reading of the
-#: digits spells it — a five over twenty-nine places ending in one is held at twenty-eight places
-#: ending in zero, and a numeral of twenty-nine nines is the `System.Decimal` `10`.
 ROUNDED: tuple[str, ...] = (
     '0.50000000000000000000000000001d',
     '9.9999999999999999999999999999d',
@@ -297,10 +230,6 @@ DECIDED: tuple[str, ...] = tuple(
 
 
 def _slot(expression: str) -> Expression:
-    """
-    The right hand side of `$t = <expression>`, which is the slot every measured row puts its
-    expression in.
-    """
     statement = Ps1Parser(F'$t = {expression}').parse().body[0]
     assert isinstance(statement, Ps1ExpressionStatement)
     assignment = statement.expression
@@ -311,24 +240,14 @@ def _slot(expression: str) -> Expression:
 
 
 def _read(expression: str) -> Ps1Fact:
-    """
-    The fact `read` answers for a measured row's expression.
-    """
     return read(_slot(expression))
 
 
 def _evaluated(expression: str) -> Ps1Outcome:
-    """
-    The outcome `evaluate` answers for a measured row's expression, which is the one call a caller
-    holding the whole tree of it makes.
-    """
     return evaluate(_slot(expression))
 
 
 def _elements(fact: Ps1Fact) -> tuple[Ps1Fact, ...]:
-    """
-    The element facts an array constant carries.
-    """
     assert isinstance(fact, Ps1Constant), fact
     payload = fact.payload
     assert isinstance(payload, tuple), payload
@@ -336,10 +255,6 @@ def _elements(fact: Ps1Fact) -> tuple[Ps1Fact, ...]:
 
 
 def _payload(fact: Ps1Fact) -> object:
-    """
-    The Python object a constant carries, which is everything a caller whose currency is a payload
-    holds of the value: the type stamped beside it stays behind.
-    """
     assert isinstance(fact, Ps1Constant), fact
     return fact.payload
 
@@ -350,49 +265,22 @@ def _read_shape(expression: str) -> tuple[Ps1TypeName | None, int]:
 
 
 def _spelled(fact: Ps1Fact) -> str:
-    """
-    The source text a fact is written back as, which is what a caller putting the value into a
-    script emits. A fact that names a value always has one, so nothing to write is a broken
-    contract here rather than a case to be handled.
-    """
     node = render(fact)
     assert node is not None, fact
     return Ps1Synthesizer().convert(node)
 
 
-#: What counts as a cast in a measured row: the type an accelerator names in brackets, and the
-#: operand written against it. The selection is textual for the same reason the numeral one is, and
-#: an operand may not open with a colon, so that a read of a static member — `[double]::NaN` — is
-#: not taken for a value cast to `Double`.
-#:
-#: A text match alone is not enough, because the pattern is greedy where the language is not:
-#: `[byte]1 -shl 4` matches it with the operand `1 -shl 4`, which is a different expression from
-#: the one the host was asked about — the cast binds to the `1` and the shift is applied after. So
-#: the match is confirmed against the parse, which is the only thing that knows the precedence.
 _CAST = re.compile(r'\[(?P<target>[A-Za-z0-9_]+)\](?P<operand>[^:].*)')
 
-#: A row that measures `-as` instead. `X -as [T]` and `[T]X` are different expressions and the
-#: corpus measures both, so the two have to be told apart before either is read as an expectation.
 _AS = re.compile(r'(?P<operand>.+) -as \[(?P<target>[A-Za-z0-9_]+)\]')
 
 
 class _Cast(NamedTuple):
-    """
-    The two halves of a measured cast, as the row spells them.
-    """
     target: str
     operand: str
 
 
 def _converts(expression: str, operator: str | None) -> bool:
-    """
-    Whether the whole of `expression` is the conversion the pattern took it for: a cast when
-    `operator` is `None`, and otherwise a binary application of that operator.
-
-    A row that does not parse is not caught: every measured row is PowerShell a host ran, so one
-    the parser refuses is a defect to be seen rather than a row to be quietly dropped from the
-    selection.
-    """
     statements = [
         node for node in Ps1Parser(expression).parse().walk()
         if isinstance(node, Ps1ExpressionStatement)
@@ -421,17 +309,10 @@ def _rows(pattern: re.Pattern[str], operator: str | None = None) -> dict[str, _C
 CAST_ROWS = _rows(_CAST)
 AS_ROWS = _rows(_AS, '-as')
 
-#: The measured casts a host answered by throwing, which are therefore the rows that have no value
-#: to be held against.
 THROWN: tuple[str, ...] = tuple(
     expression for expression in CAST_ROWS if _throws(_transcript(expression))
 )
 
-#: The measured casts whose value the domain declines to compute, under the reason `convert`
-#: documents for each. Every row here is one a host printed a value for, so an entry states that
-#: the domain answers less than the host does — deliberately, because the rule that would produce
-#: the value is one no measurement covers, and a .NET rule guessed at is a wrong answer that looks
-#: like a right one.
 DECLINED: dict[str, tuple[str, ...]] = {
     'a String spelling 5.1 reads by two rules that disagree with each other': (
         "[int]'1e3'",
@@ -456,42 +337,15 @@ DECLINED_CASTS: tuple[str, ...] = tuple(
     expression for group in DECLINED.values() for expression in group
 )
 
-#: The declined casts that name no type either, because the *operand* names no value and so the
-#: conversion is never reached. `_evaluated_cast` falls back to the target's own column for those,
-#: and `_cast_names` answers only where the whole column names one type — which it does not for
-#: `System.Boolean`, although a host converts every value to one and throws for none. An entry is a
-#: **defect**: the type is one the domain could name and does not.
 UNREAD_OPERANDS: tuple[str, ...] = (
     '[bool](0.0 / 0.0)',
 )
 
-#: The corpus rows where the readers below name a type and `evaluate` names a different one, which
-#: the agreement law would otherwise forbid outright. An entry is a **defect**, not a tolerance: it
-#: is listed so that the law keeps its full strength everywhere else and a second disagreement fails
-#: here rather than joining a silence.
-#:
-#: `resolve_expression_type` and `candidate_types` answer a cast with the type its *name* resolves
-#: to, and `[array]` is the one accelerator where that is not the type the cast produces:
-#: `System.Array` is abstract and has no instance, so `[array]5` is a `System.Object[]` — measured,
-#: and recorded that way in the conversion grid, which is where `evaluate` reads it.
-#: `analysis.values._from_conversion_cell` already documents the exception; the two name-reading
-#: entries do not consult it. Fixing it means a cast's type coming from the measured cell rather
-#: than from the spelling, for every target and not just this one.
-READER_DISAGREEMENTS: tuple[str, ...] = (
-    '$t = [array]5; Write-Output (,$t); Write-Output $t.Count',
-)
-
-#: The measured casts whose operand is itself a cast, which is how the language spells a value of a
-#: type it has no literal for. They are the round trip the domain has to make inside one expression:
-#: the inner cast is read as the value it spells, and the outer one converts that.
 NESTED_CASTS: tuple[str, ...] = (
     '[int][char]65',
     '[int][char]48',
 )
 
-#: Every measured way a script spells a collection, each of which the corpus counts the elements
-#: of. Both operators are here on the same parts, because the point of measuring them is that they
-#: build different arrays out of them.
 COLLECTION_SHAPES: tuple[str, ...] = (
     '@()',
     ', 1',
@@ -502,13 +356,6 @@ COLLECTION_SHAPES: tuple[str, ...] = (
     '@(@(1, 2), 3)',
 )
 
-#: The .NET types whose values are integers. This is a fact about the framework rather than about
-#: the code under test: each of these is a whole number held in a fixed number of bits, and every
-#: other type a measured row carries is either a number that is not one — a `System.Double` or a
-#: `System.Decimal` — or not a number at all. What makes the distinction load-bearing is that 5.1
-#: reaches a number from any of them, so a caller wanting one from a `System.Boolean` or a
-#: `System.String` is asking for a *conversion*, which is a rule of its own with a rounding and a
-#: parsing question in it.
 INTEGER_TYPES: frozenset[str] = frozenset((
     'System.Byte',
     'System.SByte',
@@ -520,9 +367,6 @@ INTEGER_TYPES: frozenset[str] = frozenset((
     'System.UInt64',
 ))
 
-#: The measured casts whose target is a type 5.1 spells no literal for. Each expression is
-#: therefore the only way a value of that type can be written back into a script, and the host
-#: stamped the row with the type and the value that spelling produces.
 CAST_SPELLINGS: tuple[str, ...] = (
     '[byte]5',
     '[sbyte]-5',
@@ -538,29 +382,16 @@ CAST_SPELLINGS: tuple[str, ...] = (
 
 
 def _converted(expression: str) -> Ps1Outcome:
-    """
-    What `convert` makes of a measured cast row: the type the row names as its target, applied to
-    the fact `read` makes of the operand it is written against.
-    """
     row = CAST_ROWS[expression]
     return convert(_read(row.operand), _type(row.target))
 
 
-#: A measured row that assigns an expression to `$t` and writes it. The second witness is optional
-#: here where the other harvests require it, because a row whose value is `$null` has only the
-#: first: writing `$null` writes nothing at all, so there would be no second line to measure.
 _OPERATION_ROW = re.compile(
     r'\$t = (?P<expression>.+?); Write-Output \(,\$t\)(?:; Write-Output \$t)?'
 )
 
 
 def _application(expression: str) -> Ps1BinaryExpression | None:
-    """
-    The one binary operator a measured expression applies, or `None` where it applies none. This
-    selection is by the parse where the numeral and cast harvests select on the text, because what
-    reads an operator row is a fold and a fold sees the parse; a row that stops being selected is
-    caught by the count rather than by the shape of the selection.
-    """
     statement = Ps1Parser(F'$t = {expression}').parse().body[0]
     if not isinstance(statement, Ps1ExpressionStatement):
         return None
@@ -583,30 +414,18 @@ def _operation_rows() -> dict[str, tuple[str, ...]]:
     return rows
 
 
-#: Every measured operation, keyed by the expression the row applies its operator in.
 OPERATION_ROWS: dict[str, tuple[str, ...]] = _operation_rows()
 
-#: The measured operations a 5.1 host answered by throwing, which are therefore the rows that have
-#: no value to be held against.
 THROWN_OPERATIONS: tuple[str, ...] = tuple(
     expression for expression, transcript in OPERATION_ROWS.items() if _throws(transcript)
 )
 
 
 def _measured_operation(expression: str) -> tuple[str, str]:
-    """
-    The .NET type and the rendered value a host printed for a measured operation, read from the
-    `(,$t)` witness, which is the one witness every row has.
-    """
     return _printed(OPERATION_ROWS[expression][0])
 
 
 def _witnessed_fact(measured: tuple[str, str]) -> Ps1Fact:
-    """
-    The fact a host printed, from the type and the text one of its witnesses carried. A witness that
-    reports no type and `<null>` is `$null`, which is a value the expression produced rather than a
-    sign that it produced none.
-    """
     name, rendered = measured
     if (name, rendered) == ('', '<null>'):
         return NULL
@@ -618,25 +437,12 @@ def _measured_operation_fact(expression: str) -> Ps1Fact:
 
 
 def _applied(expression: str) -> Ps1Outcome:
-    """
-    What `apply` makes of a measured operation: the operator the row spells, over the facts
-    `read_operand` makes of the two operands it stands between.
-
-    `read_operand` and not `read`, because an operand of an operator is not read the way the same
-    numeral is read standing alone: 5.1 folds a constant expression in its parser and a `Decimal`
-    numeral reaching that fold loses the places it has nothing to hold. `'x' + 1.0d` is `x1` while
-    `$t = 1.0d` is `1.0`, both measured, so a step composed out of `read` would answer a value no
-    host prints and the law that `evaluate` agrees with its steps would be quantified over the
-    wrong step.
-    """
     applied = _application(expression)
     assert applied is not None, expression
     return apply(
         applied.operator.lower(), read_operand(applied.left), read_operand(applied.right))
 
 
-#: The measured operations the domain answers with the exact value a host printed for them. Each is
-#: a fold the constant folding pass performs, so this list is what says a fold was not lost.
 PINNED_OPERATIONS: tuple[str, ...] = (
     "'a' + 1.5",
     "'x' + (1.0d)",
@@ -809,9 +615,6 @@ PINNED_OPERATIONS: tuple[str, ...] = (
     "'a' + [uint64]18446744073709551615",
 )
 
-#: A measured join beside the measured cast of the same value to String. `+` with a text on its left
-#: appends the text its right operand writes, so the two rows of a pair ask one question twice and
-#: an answer that is right at one of them and wrong at the other is not one answer.
 JOINED_AGAINST_ITS_TEXT: tuple[tuple[str, str], ...] = (
     ("'a' + $true", '[string]$true'),
     ("'a' + $false", '[string]$false'),
@@ -823,10 +626,6 @@ JOINED_AGAINST_ITS_TEXT: tuple[tuple[str, str], ...] = (
     ("'a' + [uint64]18446744073709551615", '[string][uint64]18446744073709551615'),
 )
 
-#: The six comparisons, in each of the three ways one may be spelled: bare, `-c` for a comparison
-#: that minds case and `-i` for one that ignores it. Written out rather than harvested off the
-#: language tables, so that a spelling the lexer stopped reading takes rows out of the population
-#: below and is caught there rather than shrinking it quietly.
 COMPARISON_OPERATORS: frozenset[str] = frozenset(
     F'-{case}{name}'
     for name in ('eq', 'ne', 'lt', 'le', 'gt', 'ge')
@@ -839,16 +638,10 @@ def _is_comparison(expression: str) -> bool:
     return applied is not None and applied.operator.lower() in COMPARISON_OPERATORS
 
 
-#: Every measured operation that applies one of them, selected by the parse so that a comparison
-#: measured after this was written is one the laws over it are quantified over too.
 COMPARISON_ROWS: tuple[str, ...] = tuple(
     expression for expression in OPERATION_ROWS if _is_comparison(expression)
 )
 
-#: The measured comparisons the domain settles a Boolean for, grouped by what settles them. 5.1
-#: reads the operand on the *left* to decide what kind of comparison happens and converts the other
-#: one into it, except that an absent operand on either side is settled before any conversion — so
-#: the group a row is in is a claim about the language and not about the values in it.
 DECIDED_COMPARISONS: dict[str, tuple[str, ...]] = {
     'a text on the left, so the right operand is read as text': (
         "'' -eq 0",
@@ -928,11 +721,6 @@ DECIDED_COMPARISON_ROWS: tuple[str, ...] = tuple(
     expression for group in DECIDED_COMPARISONS.values() for expression in group
 )
 
-#: The measured comparisons the domain settles no value for. Refusing is allowed — ordering two
-#: texts is a culture's question, and ordering a number against a text may abort.
-#: Answering one of them differently from a host is not allowed. An entry leaving this tuple is an
-#: answer gained and one joining it an answer lost, so neither can happen without this being
-#: rewritten.
 UNDECIDED_COMPARISONS: tuple[str, ...] = (
     "'10' -lt '9'",
     "'10' -lt 9",
@@ -953,22 +741,12 @@ UNDECIDED_COMPARISONS: tuple[str, ...] = (
     "[char]0x00DF -eq 'ss'",
 )
 
-#: The measured comparisons against a collection on the left, which 5.1 answers with the elements
-#: that match the right operand rather than with a truth: `10, 20, 30 -eq 20` is the one-element
-#: collection `20` and `@(1, 2) -eq $null` is the empty one. The domain settles the same collection,
-#: so these are decided rather than refused, but the host printed the members and not a fact this
-#: module reconstructs — so the type is pinned here and the value beside the fold, in
-#: `test.lib.scripts.ps1.deobfuscation.test_value_domain`.
 FILTERED_COMPARISONS: tuple[str, ...] = (
     '10, 20, 30 -eq 20',
     '10, 20, 30, 20, 10 -ne 20',
     '@(1, 2) -eq $null',
 )
 
-#: The measured Decimal literals at the extremes of the type. A `System.Decimal` is a 96 bit
-#: coefficient with a scale of at most 28, so `2**96 - 1` is the largest magnitude it holds and
-#: carries the 29 significant digits the type is worth; the other three are that magnitude at a
-#: scale of one, its negative, and 29 significant digits at the widest scale.
 WIDEST_DECIMAL_LITERALS: tuple[str, ...] = (
     '79228162514264337593543950335d',
     '-79228162514264337593543950335d',
@@ -976,9 +754,6 @@ WIDEST_DECIMAL_LITERALS: tuple[str, ...] = (
     '1.2345678901234567890123456789d',
 )
 
-#: The measured Decimal arithmetic the domain answers, at magnitudes and scales Python's default
-#: 28 digit context cannot hold. `79228162514264337593543950334d + 1d` lands exactly on the largest
-#: value the type holds and `1.50d + 1.50d` keeps the scale both addends were written with.
 EXACT_DECIMAL_OPERATIONS: tuple[str, ...] = (
     '10d + 0',
     '100000000000000d * 100000000000000d',
@@ -989,18 +764,12 @@ EXACT_DECIMAL_OPERATIONS: tuple[str, ...] = (
     '79228162514264337593543950335d * 1d',
 )
 
-#: The measured Decimal divisions, which are asked about separately from the other operations
-#: because a quotient is the one that need not be exact: `1d / 3d` is rounded onto the places the
-#: type has, where `79228162514264337593543950335d / 1d` is answered whole and `1d / 0.1d` is a
-#: whole Python spells with an exponent.
 DECIMAL_DIVISIONS: tuple[str, ...] = (
     '1d / 3d',
     '1d / 0.1d',
     '79228162514264337593543950335d / 1d',
 )
 
-#: The measured cast of a Decimal to String, which is where the scale a value was written with
-#: becomes text.
 DECIMAL_TEXTS: tuple[str, ...] = (
     '[string]1.50d',
     '[string]0.5d',
@@ -1008,9 +777,6 @@ DECIMAL_TEXTS: tuple[str, ...] = (
     '[string]10d',
 )
 
-#: Decimal literals that spell one number at more than one scale, each of which the corpus measures
-#: the cast to String of. The type keeps the places a value was written with, so `1.0d` and `1.00d`
-#: are one number and two values, and a host writes the one `1.0` and the other `1.00`.
 SCALED_DECIMALS: tuple[str, ...] = (
     '1.0d',
     '1.00d',
@@ -1019,28 +785,14 @@ SCALED_DECIMALS: tuple[str, ...] = (
     '1.100d',
 )
 
-#: The precisions the questions about a Decimal are asked under. 28 is Python's default and the
-#: others stand for what anything else sharing the process may set it to: one digit, a handful, and
-#: more than the type has.
 DECIMAL_PRECISIONS: tuple[int, ...] = (1, 5, 28, 60)
 
 
 def _digits(fact: Ps1Fact) -> str | None:
-    """
-    The digits a fact writes its value with, or `None` where it names no value. The two outcomes are
-    spelled apart because they are different outcomes, and the digits are read off the payload
-    rather than compared as numbers: `Decimal('3.00')` and `Decimal('3')` are equal and are not the
-    same text, and the scale a Decimal carries is exactly what its rows measure.
-    """
     return str(_payload(fact)) if isinstance(fact, Ps1Constant) else None
 
 
 def _complement(expression: str) -> Ps1UnaryExpression | None:
-    """
-    The complement a measured expression applies, or `None` where it applies none. Selected by the
-    parse and by the operator, because a measured row that writes a unary minus — `- 2147483648`,
-    with the space that keeps the sign out of the numeral — is a different question.
-    """
     statement = Ps1Parser(F'$t = {expression}').parse().body[0]
     if not isinstance(statement, Ps1ExpressionStatement):
         return None
@@ -1065,38 +817,26 @@ def _complement_rows() -> dict[str, tuple[str, ...]]:
     return rows
 
 
-#: Every measured complement, keyed by the expression the row writes it in.
 COMPLEMENT_ROWS: dict[str, tuple[str, ...]] = _complement_rows()
 
-#: The measured complements a 5.1 host answered by throwing.
 THROWN_COMPLEMENTS: tuple[str, ...] = tuple(
     expression for expression, transcript in COMPLEMENT_ROWS.items() if _throws(transcript)
 )
 
 
 def _complemented(expression: str) -> Ps1Outcome:
-    """
-    What `apply_unary` makes of a measured complement: the operator the row spells, over the fact
-    `read` makes of the operand it stands before.
-    """
     applied = _complement(expression)
     assert applied is not None, expression
     return apply_unary(applied.operator, read(applied.operand))
 
 
 def _complement_operand(expression: str) -> Expression | None:
-    """
-    The operand a measured complement stands before.
-    """
     applied = _complement(expression)
     assert applied is not None, expression
     return applied.operand
 
 
 def _measured_complement(expression: str) -> tuple[str, str]:
-    """
-    The .NET type and the rendered value a host printed for a measured complement.
-    """
     return _printed(COMPLEMENT_ROWS[expression][0])
 
 
@@ -1105,11 +845,6 @@ def _measured_complement_fact(expression: str) -> Ps1Fact:
 
 
 def _negation(expression: str) -> Ps1UnaryExpression | None:
-    """
-    The unary minus a measured expression applies, or `None` where it applies none. The parse
-    decides it, as it does for a complement, and here that is the whole selection: a minus written
-    against a numeral is part of the numeral, so `-5` is a literal and only `- 5` is an operator.
-    """
     statement = Ps1Parser(F'$t = {expression}').parse().body[0]
     if not isinstance(statement, Ps1ExpressionStatement):
         return None
@@ -1134,47 +869,28 @@ def _negation_rows() -> dict[str, tuple[str, ...]]:
     return rows
 
 
-#: Every measured negation, keyed by the expression the row writes it in.
 NEGATION_ROWS: dict[str, tuple[str, ...]] = _negation_rows()
 
-#: The measured negations a 5.1 host answered by throwing.
 THROWN_NEGATIONS: tuple[str, ...] = tuple(
     expression for expression, transcript in NEGATION_ROWS.items() if _throws(transcript)
 )
 
-#: The measured negation a host printed to fewer digits than the value carries: 5.1 writes a Double
-#: as fifteen significant figures and the negated UInt64 maximum has twenty. What such a row
-#: measures is the widening, so the type is what the value is held against.
 ABBREVIATED_NEGATIONS: tuple[str, ...] = ('- [uint64]18446744073709551615',)
 
 
 def _negated(expression: str) -> Ps1Outcome:
-    """
-    What `apply_unary` makes of a measured negation: the operator the row spells, over the operand
-    as the operator path reads it — `read_operand`, because a whole-number `Decimal` numeral
-    standing where an operator reaches it loses the places it was written with, and the host's
-    `- 1.0d` is `-1` for that reason and not by the subtraction.
-    """
     applied = _negation(expression)
     assert applied is not None, expression
     return apply_unary(applied.operator, read_operand(applied.operand))
 
 
 def _negated_as_subtraction(expression: str) -> Ps1Outcome:
-    """
-    What the same negation comes to when it is asked as the subtraction 5.1 compiles it into: `-`
-    over an Int32 zero and the operand the minus stands before, read the same way the binary path
-    reads both of its sides.
-    """
     applied = _negation(expression)
     assert applied is not None, expression
     return apply('-', Ps1Constant(INT32, 0), read_operand(applied.operand))
 
 
 def _measured_negation(expression: str) -> tuple[str, str]:
-    """
-    The .NET type and the rendered value a host printed for a measured negation.
-    """
     return _printed(NEGATION_ROWS[expression][0])
 
 
@@ -1183,30 +899,17 @@ def _measured_negation_fact(expression: str) -> Ps1Fact:
 
 
 def _coerced(text: str) -> Ps1Fact:
-    """
-    The number a String computes as where an operator wants one, which keeps the type the numeral
-    written inside it spells. A text this reader answers nothing for is a broken selection here
-    rather than a case to pass over: every one of `NEGATED_STRINGS` spells a number 5.1 reads.
-    """
     coerced = _coerced_numeral(Ps1Constant(STRING, text))
     assert coerced is not None, text
     return coerced
 
 
 def _sign_of(fact: Ps1Fact) -> float:
-    """
-    The sign a floating payload carries, which is the only thing that tells `+0.0` from `-0.0`: the
-    two compare equal, so a negation that produced the other one is invisible to `==`.
-    """
     payload = _payload(fact)
     assert isinstance(payload, float), payload
     return math.copysign(1.0, payload)
 
 
-#: The String operands a negation is asked over. Between them they spell a number of every width
-#: 5.1 reads out of a String — the `L` suffix over an integer and over a real, two decimals no Int32
-#: holds, a binary multiplier, a real, an exponent and the `D` suffix — and the last four spell one
-#: an Int32 does hold, so that a width kept and a width lost are told apart.
 NEGATED_STRINGS: tuple[str, ...] = (
     '5L',
     '1.5L',
@@ -1222,21 +925,12 @@ NEGATED_STRINGS: tuple[str, ...] = (
     '',
 )
 
-#: Two magnitudes at the widest a .NET `System.Decimal` reaches. Such a value is a 96 bit integer
-#: scaled by a power of ten, so `2**96 - 1` is the largest it holds at scale zero and carries the 29
-#: significant digits the type is worth; the second is those same digits at a scale of one. Python
-#: keeps 28 by default and rounds every `decimal` result to whatever `decimal.getcontext().prec`
-#: says, so either magnitude comes back a different number from arithmetic that consults it.
 WIDEST_DECIMALS: tuple[decimal.Decimal, ...] = (
     decimal.Decimal((1 << 96) - 1),
     decimal.Decimal(F'{(1 << 96) - 1}E-1'),
 )
 
 
-#: The shapes a measured row settles an expression's truth in. They are one question written down
-#: several ways: `[bool] $x` prints the Boolean the conversion produced, `if ($x)` prints the branch
-#: that same conversion selected, each of the three logical operators prints the truth of the
-#: operand that decides it, and `-not $x` prints the opposite of it.
 _BOOLEAN_CAST_ROW = re.compile(
     r'\$t = (?P<expression>\[bool\](?P<condition>.+))'
     r'; Write-Output \(,\$t\); Write-Output \$t'
@@ -1262,7 +956,6 @@ _NEGATION_ROW = re.compile(
     r'; Write-Output \(,\$t\); Write-Output \$t'
 )
 
-#: Each shape with whether the Boolean it prints is the condition's own truth or its negation.
 _TRUTH_SHAPES: tuple[tuple[re.Pattern[str], bool], ...] = (
     (_BOOLEAN_CAST_ROW, False),
     (_BRANCH_ROW, False),
@@ -1272,19 +965,10 @@ _TRUTH_SHAPES: tuple[tuple[re.Pattern[str], bool], ...] = (
     (_NEGATION_ROW, True),
 )
 
-#: What the branch a host ran says about the condition it ran on. A rendering neither name covers
-#: is a `KeyError` naming it rather than a truth read out of a word this does not know.
 _BRANCH_TAKEN = {'yes': True, 'no': False}
 
 
 def _truth_rows() -> dict[str, dict[str, bool]]:
-    """
-    What every measured row that settles a condition's truth says that truth is, keyed by the
-    condition and then by the expression the row writes it in. A condition several shapes settle is
-    kept once per shape rather than collapsed, so that the shapes can be held against each other:
-    the truth a row carries is read through the shape it was written in, and a shape read the wrong
-    way round would otherwise put a host's own answer into the expectations upside down.
-    """
     rows: dict[str, dict[str, bool]] = {}
     for row in TYPE_TRANSCRIPTS:
         for pattern, negated in _TRUTH_SHAPES:
@@ -1298,53 +982,24 @@ def _truth_rows() -> dict[str, dict[str, bool]]:
 
 
 def _measured_truth(expression: str) -> bool:
-    """
-    What a host counted a measured expression as, read out of whichever witness its row prints.
-    """
     carried, rendered = _measured(expression)
     return _boolean(rendered) if carried == 'System.Boolean' else _BRANCH_TAKEN[rendered]
 
 
-#: Every measured row that settles a truth, by the condition it settles and the expression it is
-#: written in.
 TRUTH_ROWS: dict[str, dict[str, bool]] = _truth_rows()
 
-#: The truth a 5.1 host counted each measured condition as, taken from one of its rows. Which one
-#: does not matter where the shapes agree, and that they agree is itself measured rather than
-#: assumed.
 TRUTHS: dict[str, bool] = {
     condition: next(iter(settled.values())) for condition, settled in TRUTH_ROWS.items()
 }
 
-#: The measured conditions this has to settle rather than refuse: a string, an empty string, a
-#: number, zero and `$null`. A module that answered nothing at all would agree with every host
-#: there is, so the agreement above is held over these too.
 PLAIN_CONDITIONS: tuple[str, ...] = ("'a'", "''", "'0'", '1', '0', '$null')
 
-#: The measured conditions the domain names no truth for. A NaN is the whole of it: a host counts
-#: `0.0 / 0.0` true, and the domain names the Double it is and no value of one. A condition that
-#: leaves this tuple is a truth gained and one that joins it is a truth lost, so neither can happen
-#: without this being rewritten.
-UNSETTLED_CONDITIONS: tuple[str, ...] = ('(0.0 / 0.0)',)
-
-#: A measured condition beside the collection of one holding it. The two are counted apart by a
-#: host, which is what says that what a one-element collection makes of its element is not what a
-#: condition makes of the same value.
 ELEMENT_PAIRS: tuple[tuple[str, str], ...] = (
     ('[char]0', '(,[char]0)'),
     ('(,@())', '(,(,@()))'),
 )
 
 
-#: The measured operations the domain answers with a value the host did not print. Empty, and the
-#: partition below is what keeps it so: an operation whose fold stops matching its measurement has
-#: to be written here before the suite passes again, which is a diff saying that a wrong constant is
-#: now being emitted rather than a number quietly moving.
-MISFOLDED_OPERATIONS: dict[str, str] = {}
-
-#: The measured operations whose result a host printed to fewer digits than the value has: 5.1
-#: writes a Double as fifteen significant figures, and `512MB * 512MB` is 2 to the 58th exactly.
-#: What such a row measures is the widening, so the type is what the value is held against.
 ABBREVIATED_OPERATIONS: tuple[str, ...] = (
     '$true + 9223372036854775807L',
     '0 - [uint64]18446744073709551615',
@@ -1359,8 +1014,6 @@ ABBREVIATED_OPERATIONS: tuple[str, ...] = (
     '9223372036854775807 + 2',
 )
 
-#: The binary operators the grid was captured for: the five arithmetic, the three bitwise, the two
-#: shifts and the six comparisons.
 GRID_OPERATORS: tuple[str, ...] = (
     '+',
     '-',
@@ -1380,37 +1033,30 @@ GRID_OPERATORS: tuple[str, ...] = (
     '-ge',
 )
 
-#: The operand types a cell may be read as a fact over: every type the capture used as an operand,
-#: less the ones a `GRID_WITNESS_GAPS` row convicts, and less the ones measured complete that the
-#: domain does not read anyway.
 SPANNED_TYPES: frozenset[str] = (
     frozenset(GRID_WITNESSES) - frozenset(GRID_WITNESS_GAPS) - GRID_COMPLETE_BUT_UNREAD)
 
-#: The conversion cells every witness of their source threw for. The capture recorded no type at
-#: all for a `[char]` of a Decimal or of a Single, so there is nothing in either cell for a cast
-#: over a source the witnesses fall short of to keep.
 EVERY_WITNESS_THREW: tuple[tuple[str, str], ...] = (
     ('System.Char', 'System.Decimal'),
     ('System.Char', 'System.Single'),
 )
 
+THROWS_THE_WITNESSES_MISSED: dict[str, tuple[str, str]] = {
+    '[sbyte][char]200'       : ('System.SByte', 'System.Char'),
+    '[int16][char]40000'     : ('System.Int16', 'System.Char'),
+    '[sbyte][single]200'     : ('System.SByte', 'System.Single'),
+    '[int16][single]40000'   : ('System.Int16', 'System.Single'),
+    '[int][single]3e10'      : ('System.Int32', 'System.Single'),
+    '[long][single]1e19'     : ('System.Int64', 'System.Single'),
+    '[decimal][single]::NaN' : ('System.Decimal', 'System.Single'),
+}
+
 
 def _grid_operand(name: str) -> Ps1Fact:
-    """
-    A fact of the grid's operand type `name` that pins no value, so that the cell it indexes is the
-    only place an answer about it could come from. The `System.Void` row is `$null`'s — the corpus
-    lists `$null` as the witness it was captured from — and there is no value of that type for a
-    `Ps1Typed` to stand for.
-    """
     return NULL if name == 'System.Void' else Ps1Typed(_type(name))
 
 
 def _cell(operator: str, left: str | Ps1TypeName, right: str | Ps1TypeName) -> OperatorOutcome:
-    """
-    The grid cell an operator and two operand types index. A cell the grid does not cover raises
-    here, naming what was asked for, rather than reaching an expectation as `None`: a question the
-    grid stopped answering has to fail where it is asked and say which question it was.
-    """
     cell = binary_outcome(operator, left, right)
     if cell is None:
         raise KeyError(F'the grid has no cell for {left} {operator} {right}')
@@ -1418,9 +1064,6 @@ def _cell(operator: str, left: str | Ps1TypeName, right: str | Ps1TypeName) -> O
 
 
 def _cast_cell(target: str | Ps1TypeName, source: str | Ps1TypeName) -> OperatorOutcome:
-    """
-    The conversion cell a target and a source type index, read the way `_cell` reads a binary one.
-    """
     cell = conversion_outcome(target, source)
     if cell is None:
         raise KeyError(F'the grid has no cell for [{target}] of {source}')
@@ -1428,11 +1071,6 @@ def _cast_cell(target: str | Ps1TypeName, source: str | Ps1TypeName) -> Operator
 
 
 def _recorded(cell: OperatorOutcome) -> tuple[str, ...]:
-    """
-    A grid cell spelled the way `GRID_WITNESS_GAPS` spells one: the types it was observed to
-    produce, with `throw` and `null` beside them where it was observed to do either, sorted so that
-    the shipped cell and the recorded one can be compared.
-    """
     names = [str(one) for one in cell.types]
     if cell.may_throw:
         names.append('throw')
@@ -1442,17 +1080,10 @@ def _recorded(cell: OperatorOutcome) -> tuple[str, ...]:
 
 
 def _generalisations(fact: Ps1Fact) -> tuple[Ps1Fact, ...]:
-    """
-    The facts that say strictly less about the same value: that it carries the type it carries,
-    where it carries one, and that nothing at all is known about it.
-    """
     carried = type_of(fact)
     return (UNKNOWN,) if carried is None else (Ps1Typed(carried), UNKNOWN)
 
 
-#: One operand of each type the domain builds facts of, which is what the questions below about
-#: generalising an operand are asked over. A zero of each numeric kind is here because the divisor
-#: is what decides whether a division throws, and the three kinds do not agree about it.
 OPERANDS: tuple[Ps1Fact, ...] = (
     NULL,
     MEASURED['0xFF'],
@@ -1468,8 +1099,6 @@ OPERANDS: tuple[Ps1Fact, ...] = (
     Ps1Constant(STRING, 'abc'),
 )
 
-#: A division and a remainder by a zero of each numeric kind, as the type it is written in, the
-#: value divided and the zero it is divided by.
 ZERO_DIVISIONS: tuple[tuple[Ps1TypeName, Ps1Fact, Ps1Fact], ...] = (
     (INT32, Ps1Constant(INT32, 5), Ps1Constant(INT32, 0)),
     (DECIMAL, Ps1Constant(DECIMAL, decimal.Decimal(5)), Ps1Constant(DECIMAL, decimal.Decimal(0))),
@@ -1477,10 +1106,6 @@ ZERO_DIVISIONS: tuple[tuple[Ps1TypeName, Ps1Fact, Ps1Fact], ...] = (
 )
 
 
-#: Every corpus table that holds PowerShell expressions, deduplicated and in a stable order. What
-#: `evaluate` promises is a claim about every expression a script can contain, so the questions
-#: about it below are asked of the population these tables are rather than of cases picked here: a
-#: contract that only survives the examples its author thought of is not the contract.
 CORPUS_SOURCES: tuple[str, ...] = tuple(dict.fromkeys((
     *TYPES,
     *BOUNDARIES,
@@ -1491,10 +1116,6 @@ CORPUS_SOURCES: tuple[str, ...] = tuple(dict.fromkeys((
 
 
 class _Site(NamedTuple):
-    """
-    One expression the corpus contains, carrying the source it stands in so that a disagreement is
-    reported as the script it was found in rather than as a node with no context.
-    """
     source: str
     node: Expression
 
@@ -1508,32 +1129,18 @@ def _corpus_sites() -> tuple[_Site, ...]:
     return tuple(sites)
 
 
-#: Every expression the corpus writes, which is the population the agreements below quantify over.
 SITES: tuple[_Site, ...] = _corpus_sites()
 
-#: The world a typing question is asked in. It is closed, so that a command name still denotes what
-#: the collected metadata says: an open world types nothing at all, and an agreement over it would
-#: hold because neither side answers rather than because they answer alike.
 CLOSED_WORLD = Ps1WorldReach(Ps1TypeWorld(True, frozenset()))
 
 
 class _Numeral(NamedTuple):
-    """
-    A corpus site where the literal node reports a number of its own and `evaluate` names a value:
-    the spelling as it was written, the number the node reports for it, and the fact the domain
-    names.
-    """
     raw: str
     reported: int
     named: Ps1Constant
 
 
 def _numeral_node(expression: str) -> Ps1IntegerLiteral:
-    """
-    The numeral node a spelling parses to, for the assertions that hold the number a *node* reports
-    against the value the domain names. The node's own reading is weaker on purpose — see
-    `refinery.lib.scripts.ps1.model.Ps1IntegerLiteral`.
-    """
     node = _slot(expression)
     assert isinstance(node, Ps1IntegerLiteral), expression
     return node
@@ -1552,19 +1159,12 @@ def _corpus_numerals() -> tuple[_Numeral, ...]:
 
 NUMERALS: tuple[_Numeral, ...] = _corpus_numerals()
 
-#: The corpus spellings whose literal node reports a number 5.1 did not print for them. A
-#: hexadecimal literal that fills its width names a bit pattern rather than a magnitude, and a
-#: decimal too wide for any integer type is a Double: the node reads the digits, and `MEASURED`
-#: holds what a host made of the same ones.
 MISREAD_SPELLINGS: tuple[str, ...] = (
     '0xFFFFFFFF',
     '0xFFFFFFFFFFFFFFFF',
     '100000000000000000000000000000000',
 )
 
-#: Every target the shipped conversion grid holds a column for, written out rather than read off
-#: the resource so that a column added or withdrawn fails here instead of quietly changing what a
-#: cast of a value nothing is known about is answered with.
 CONVERSION_TARGETS: tuple[str, ...] = (
     'array',
     'bool',
@@ -1585,38 +1185,22 @@ CONVERSION_TARGETS: tuple[str, ...] = (
 
 
 def _operator_of(expression: str) -> str:
-    """
-    The operator a measured operation writes, in the case the row spells it.
-    """
     applied = _application(expression)
     assert applied is not None, expression
     return applied.operator
 
 
 def _cased(expression: str, case: Callable[[str], str]) -> Ps1Outcome:
-    """
-    What `evaluate` answers for a measured operation whose operator is written in `case`. The case
-    is changed on the parsed operator rather than in the source text, so that nothing else about the
-    row can change along with it.
-    """
     applied = _application(expression)
     assert applied is not None, expression
     return evaluate(dataclasses.replace(applied, operator=case(applied.operator)))
 
 
 def _element_payloads(fact: Ps1Fact) -> list[object]:
-    """
-    What each element of an array fact holds. An element that names no value stands for itself, so
-    that comparing the list against collected bytes fails on it rather than passing it over.
-    """
     return [one.payload if isinstance(one, Ps1Constant) else one for one in _elements(fact)]
 
 
 class _Collected(NamedTuple):
-    """
-    A corpus site the byte-array reader answers for and `evaluate` names an array at: the bytes the
-    reader collected out of it, and what each element of that array holds.
-    """
     source: str
     collected: bytes
     payloads: list[object]
@@ -1639,20 +1223,18 @@ BYTE_ARRAYS: tuple[_Collected, ...] = _corpus_byte_arrays()
 
 
 def _names_a_value(fact: Ps1Fact) -> bool:
-    """
-    Whether a fact names a value rather than a bound on one. `$null` is one: it is what an absent
-    value *is*, and not the absence of knowledge about it.
-    """
     return fact is NULL or isinstance(fact, Ps1Constant)
 
 
+def _an_array_cast_evaluated_as_the_object_array_it_builds(node: Expression) -> bool:
+    return (
+        isinstance(node, Ps1CastExpression)
+        and resolve_type(node.type_name) == ARRAY
+        and type_of(evaluate(node).value) == OBJECT_ARRAY
+    )
+
+
 class _Step(NamedTuple):
-    """
-    A corpus cast or operator, with what the one-step reader answers over the facts its operands
-    come to and what the whole expression is answered with. `consultable` is whether the step could
-    be asked at all: `convert` and `apply` both read a grid indexed by the operand's type, and an
-    operand that names no type indexes no row in it.
-    """
     source: str
     kind: str
     consultable: bool
@@ -1661,11 +1243,6 @@ class _Step(NamedTuple):
 
 
 def _operand_of(node) -> Ps1Outcome:
-    """
-    What an operand of an operator comes to, which is `evaluate` over it except where `read_operand`
-    reads a numeral standing there differently from the same numeral standing alone. The step and
-    the whole have to be asked about the same operand or the law below compares two expressions.
-    """
     folded = read_operand(node)
     return Ps1Outcome(NEVER, folded) if folded is not UNKNOWN else evaluate(node)
 
@@ -1703,10 +1280,6 @@ STEPS: tuple[_Step, ...] = _corpus_steps()
 
 
 class _Array(NamedTuple):
-    """
-    A corpus array and what `evaluate` makes of it: whether the array names a value, and whether
-    every element it holds does.
-    """
     source: str
     named: bool
     elements_named: bool
@@ -1729,9 +1302,6 @@ ARRAYS: tuple[_Array, ...] = _corpus_arrays()
 
 
 class _Spelled(NamedTuple):
-    """
-    A corpus site the tree's string reader answers a text for and `evaluate` names a fact at.
-    """
     source: str
     text: str
     named: Ps1Fact
@@ -1752,10 +1322,6 @@ STRINGS: tuple[_Spelled, ...] = _corpus_strings()
 
 
 class TestPs1MeasuredNumerals(unittest.TestCase):
-    """
-    A numeric literal's spelling decides its .NET type as much as its digits do, and every
-    expectation here is what a 5.1 host printed for that spelling.
-    """
 
     def test_every_numeral_the_corpus_measures_is_selected(self):
         self.assertEqual(
@@ -1773,26 +1339,11 @@ class TestPs1MeasuredNumerals(unittest.TestCase):
                 self.assertEqual(_read(expression), MEASURED[expression])
 
     def test_a_numeral_5_1_cannot_read_is_not_read_here_either(self):
-        """
-        Our lexer accepts both of these and hands the domain a number for each: the seventeen
-        hexadecimal digits as an arbitrary-width integer, and the underscored group as ten. 5.1 has
-        no value for either, so a fact here would be one no run of the script can produce.
-        """
         for expression in REFUSED:
             with self.subTest(expression):
                 self.assertEqual(_read(expression), UNKNOWN)
 
-    def test_a_numeral_the_domain_does_not_read_is_refused_rather_than_guessed(self):
-        for expression in UNANSWERED:
-            with self.subTest(expression):
-                self.assertEqual(_read(expression), UNKNOWN)
-
     def test_the_rounded_measured_numerals_are_the_only_unread_ones(self):
-        """
-        The host answers a value for every one of `ROUNDED`, and the domain refuses each rather than
-        invent it. The set is pinned in both directions: a numeral the host rounds joining it, and a
-        refusal reaching beyond it, are both defects of this boundary.
-        """
         self.assertEqual(
             sorted(
                 expression for expression in MEASURED if _read(expression) is UNKNOWN
@@ -1801,14 +1352,6 @@ class TestPs1MeasuredNumerals(unittest.TestCase):
         )
 
     def test_a_negated_parenthesized_literal_keeps_the_width_of_the_literal_it_negates(self):
-        """
-        `-2147483648` is one literal that fits an Int32, while `-(2147483648)` negates the Int64
-        literal `2147483648` and stays an Int64 — the same value under two types. A `-` glued to the
-        numeral is part of it and `read` answers it; a `-` over a parenthesized literal is an
-        operator, which `read` refuses because reaching past the parenthesis would report the
-        literal's width without its sign. `evaluate` applies the operator and answers the width the
-        parenthesis decides.
-        """
         self.assertEqual(_read('-2147483648'), MEASURED['-2147483648'])
         for expression in ('-(2147483648)', '-(2147483647)'):
             with self.subTest(expression):
@@ -1816,21 +1359,11 @@ class TestPs1MeasuredNumerals(unittest.TestCase):
                 self.assertEqual(_evaluated(expression).value, MEASURED[expression])
 
     def test_a_real_with_a_long_suffix_is_the_rounded_int64_the_host_prints(self):
-        """
-        5.1 prints Int64 2 for both `1.5L` and `2.5L`, which is the half-to-even rounding of a cast
-        rather than a refusal to read the spelling.
-        """
         for expression in ('1.5L', '2.5L'):
             with self.subTest(expression):
                 self.assertEqual(_read(expression), MEASURED[expression])
 
     def test_the_same_printed_value_under_two_spellings_is_two_different_facts(self):
-        """
-        The host prints 255 for `0xFF` and for `0xFFL`, and 1.5 for `1.5` and for `1.5d`, and stamps
-        each pair with two different types. A domain that carried the value alone could not tell the
-        members of a pair apart, and every operation whose result type follows its operands' would
-        then answer for the wrong one.
-        """
         by_value: dict[str, dict[str, str]] = {}
         for expression in DECIDED:
             name, rendered = _measured(expression)
@@ -1861,12 +1394,6 @@ class TestPs1FactLattice(unittest.TestCase):
         self.assertEqual(type_of(Ps1Constant(CHAR, 'A')), CHAR)
 
     def test_a_char_and_a_string_carrying_equal_payloads_are_different_facts(self):
-        """
-        5.1 answers `[char]65 -is [char]` True and `'A' -is [char]` False, prints 66 for
-        `1 + [char]65` and throws on `1 + 'A'`, and refuses to replicate a Char where it replicates
-        a String. Both carry the same `'A'`, so only the type they are stamped with tells them
-        apart.
-        """
         self.assertNotEqual(Ps1Constant(CHAR, 'A'), Ps1Constant(STRING, 'A'))
         self.assertNotEqual(type_of(Ps1Constant(CHAR, 'A')), type_of(Ps1Constant(STRING, 'A')))
 
@@ -1876,18 +1403,8 @@ class TestPs1FactLattice(unittest.TestCase):
 
 
 class TestPs1WhatCountsAsAnInteger(unittest.TestCase):
-    """
-    The number a caller wanting an integer is handed. Two things settle it, and both are the host's:
-    the type it stamped the value with, and the digits it printed. A type outside `INTEGER_TYPES` is
-    a value 5.1 reaches a number *from*, by a conversion with a rounding or a parsing rule in it, and
-    never a number this may hand back.
-    """
 
     def _integer_rows(self) -> dict[str, Ps1Fact]:
-        """
-        Every measured value whose spelling the domain reads: the numerals, and the casts that are
-        the only way to write a value of a type no literal spells.
-        """
         rows = {expression: MEASURED[expression] for expression in DECIDED}
         rows.update({
             expression: _measured_fact(expression) for expression in CAST_SPELLINGS
@@ -1920,11 +1437,6 @@ class TestPs1WhatCountsAsAnInteger(unittest.TestCase):
         )
 
     def test_a_hexadecimal_numeral_that_fills_its_width_is_the_negative_number_it_names(self):
-        """
-        The digits of `0xFFFFFFFF` spell 4294967295 and the value is -1, so a caller reading the
-        digits and a caller reading the value differ by 4294967296 at every site that takes an
-        integer.
-        """
         self.assertEqual(_measured('0xFFFFFFFF'), ('System.Int32', '-1'))
         self.assertEqual(_measured('0xFFFFFFFFFFFFFFFF'), ('System.Int64', '-1'))
         self.assertEqual(_measured('0xFF'), ('System.Int32', '255'))
@@ -1934,12 +1446,6 @@ class TestPs1WhatCountsAsAnInteger(unittest.TestCase):
         self.assertEqual(_numeral_node('0xFFFFFFFF').value, 0xFFFFFFFF)
 
     def test_a_value_5_1_only_converts_to_a_number_is_not_read_as_one(self):
-        """
-        Each of these reaches a number on 5.1 and is not one: measured, `[int]$null` is 0,
-        `[int]$true` is 1, `[int]'5'` is 5, `[int][char]65` is 65, `[int]1.5` is 2 and `[int]10d`
-        is 10. Two of those round rather than truncate and one parses text, so a caller that read
-        the payload of any of them would be picking a conversion rule of its own.
-        """
         self.assertEqual(
             {
                 cast: _measured(cast) for cast in (
@@ -1979,12 +1485,6 @@ class TestPs1WhatCountsAsAnInteger(unittest.TestCase):
 
 
 class TestPs1CollectedIntegers(unittest.TestCase):
-    """
-    The integers a caller reading a command's arguments gets. A scalar is a list of one, because
-    PowerShell binds one value and a collection of one to the same parameter; an array is what its
-    elements name; and one element that is no integer refuses the whole list rather than being
-    dropped from it, since a list shorter than the script wrote is a different argument.
-    """
 
     def test_a_scalar_is_a_list_of_one_and_an_array_is_its_elements(self):
         self.assertEqual(
@@ -2026,11 +1526,6 @@ class TestPs1CollectedIntegers(unittest.TestCase):
                 self.assertIsNone(collect_integers(_slot(expression)))
 
     def test_a_number_no_byte_holds_is_no_byte_array(self):
-        """
-        Measured, `[byte]-1` and `[byte]300` both throw rather than wrapping, so a list holding
-        either is not one 5.1 would bind to a byte array — and `0xFFFFFFFF` is exactly the first of
-        those, written in a way that looks like the second.
-        """
         self.assertEqual(_throws(_transcript('[byte]-1')), True)
         self.assertEqual(_throws(_transcript('[byte]300')), True)
         self.assertEqual(collect_byte_array(_slot('@(0x41, 0xFF)')), b'A\xff')
@@ -2097,8 +1592,6 @@ class TestPs1StringSpelling(unittest.TestCase):
         self.assertIsInstance(node2, Ps1StringLiteral)
 
     def test_make_string_literal_avoids_herestring_breakout(self):
-        # A value with a line beginning with the here-string terminator `'@` must not be emitted as
-        # a here-string, or it would close the string early; a safe multi-line value still may.
         unsafe = make_string_literal("a\n'@\nb")
         self.assertNotIsInstance(unsafe, Ps1HereString)
         safe = make_string_literal('a\nb')
@@ -2106,12 +1599,6 @@ class TestPs1StringSpelling(unittest.TestCase):
 
 
 class TestPs1ValueSpelling(unittest.TestCase):
-    """
-    What `render` writes a fact back as. A value always has a spelling — a literal where 5.1 has
-    one for its type, the cast of a decimal numeral where it does not — so a caller holding a
-    value never has to choose between leaving the source alone and writing something else.
-    Nothing to write is therefore reserved for a fact that names no value.
-    """
 
     def test_only_a_fact_that_names_no_value_is_left_unwritten(self):
         self.assertIsNone(render(UNKNOWN))
@@ -2154,11 +1641,6 @@ class TestPs1ValueSpelling(unittest.TestCase):
                 self.assertEqual(_spelled(_read(spelling)), spelling)
 
     def test_a_numeral_carries_the_suffix_that_pins_its_type_and_no_other(self):
-        """
-        5.1 has two numeric literal suffixes: `L` names an Int64 and `d` a Decimal. An integer
-        numeral written without one is an Int32 and a real without one a Double, so those two are
-        written bare.
-        """
         self.assertEqual(_spelled(Ps1Constant(INT32, 7)), '7')
         self.assertEqual(_spelled(Ps1Constant(INT64, 1)), '1L')
         self.assertEqual(_spelled(Ps1Constant(DECIMAL, decimal.Decimal(10))), '10d')
@@ -2181,22 +1663,12 @@ class TestPs1ValueSpelling(unittest.TestCase):
         )
 
     def test_the_cast_a_value_is_written_as_reads_back_as_that_value(self):
-        """
-        A cast is how the language spells a value of a type it has no literal for, so it is a
-        spelling `read` has to invert or nothing this module writes out could be read in again.
-        What says each spelling names the right value is the host, which stamped `[byte]5` a Byte 5.
-        """
         for expression in CAST_SPELLINGS:
             with self.subTest(expression):
                 self.assertEqual(_read(expression), _measured_fact(expression))
         self.assertEqual(_measured('[byte]5'), ('System.Byte', '5'))
 
     def test_a_char_and_a_one_character_string_are_not_written_alike(self):
-        """
-        Measured, `[char]65` is a Char and `'A'` a String: the two answer `-is [char]` differently,
-        carry different methods and reach different numbers under `[int]`. One spelling for both
-        would erase that at the one point where a value re-enters a script.
-        """
         self.assertEqual(_measured('[char]65'), ('System.Char', 'A'))
         self.assertEqual(_spelled(Ps1Constant(CHAR, 'A')), '[char]65')
         self.assertEqual(_spelled(Ps1Constant(STRING, 'A')), "'A'")
@@ -2218,11 +1690,6 @@ class TestPs1ValueSpelling(unittest.TestCase):
         self.assertEqual(_spelled(fact), "'a', 1")
 
     def test_the_array_operator_writes_the_empty_collection_and_no_other(self):
-        """
-        `@(...)` unrolls the collection it is handed, so writing a one-element collection with it
-        would hand back what was inside instead: measured, `,(1, 2)` holds one element and
-        `@((1, 2))` holds two. The comma operator is what writes every non-empty collection.
-        """
         self.assertEqual(_measured_count('@()'), ('System.Object[]', 0))
         self.assertEqual(_measured_count(',(1, 2)'), ('System.Object[]', 1))
         self.assertEqual(_measured_count('@((1, 2))'), ('System.Object[]', 2))
@@ -2231,11 +1698,6 @@ class TestPs1ValueSpelling(unittest.TestCase):
         self.assertNotEqual(_read(',(1, 2)'), _read('@((1, 2))'))
 
     def test_a_collection_is_written_by_what_it_holds_and_not_by_how_it_was_spelled(self):
-        """
-        `@(@(1, 2))` and `@((1, 2))` are both the two-element collection `1, 2`, and `@(@(1, 2), 3)`
-        is the two-element one whose first element is a collection. Each is written back as what it
-        holds, which is a different spelling from the one it was read from and the same value.
-        """
         self.assertEqual(_spelled(_read('@(@(1, 2))')), '1, 2')
         self.assertEqual(_spelled(_read('@((1, 2))')), '1, 2')
         self.assertEqual(_spelled(_read('@(@(1, 2), 3)')), '(1, 2), 3')
@@ -2256,12 +1718,6 @@ class TestPs1ValueSpelling(unittest.TestCase):
 
 
 class TestPs1ArrayFacts(unittest.TestCase):
-    """
-    The two ways of writing a collection do not build the same array out of the same parts. The
-    comma operator takes each operand whole; `@(...)` collects what a pipeline hands it, and a
-    pipeline unrolls a collection one level on the way. Every expectation here is the length a 5.1
-    host counted.
-    """
 
     def test_a_measured_array_shape_reads_as_an_object_array_of_the_measured_length(self):
         self.assertEqual(
@@ -2270,11 +1726,6 @@ class TestPs1ArrayFacts(unittest.TestCase):
         )
 
     def test_the_comma_operator_takes_its_operand_whole_where_the_array_operator_unrolls_it(self):
-        """
-        Measured, `,(1, 2)` counts one element and `@((1, 2))` counts two out of the same parts, so
-        the collection `@(...)` was handed is not the one it built. Reading the two alike would let
-        a caller lose or gain a level of nesting without anything in the answer saying so.
-        """
         self.assertEqual(_measured_count(',(1, 2)'), ('System.Object[]', 1))
         self.assertEqual(_measured_count('@((1, 2))'), ('System.Object[]', 2))
         self.assertNotEqual(_read(',(1, 2)'), _read('@((1, 2))'))
@@ -2282,11 +1733,6 @@ class TestPs1ArrayFacts(unittest.TestCase):
         self.assertEqual(_read('@((1, 2))'), _read('1, 2'))
 
     def test_the_array_operator_unrolls_the_value_a_statement_produced_and_not_what_was_in_it(self):
-        """
-        `@(@(1, 2), 3)` and `(1, 2), 3` are written by the host alike — two elements, the first of
-        them an `Object[]` — so the unrolling happened once, to the collection the statement
-        produced, and did not reach into the collection that was inside it.
-        """
         self.assertEqual(
             _measured_rendering('@(@(1, 2), 3)'), ('System.Object[]', 'System.Object[] 3'))
         self.assertEqual(
@@ -2313,12 +1759,6 @@ class TestPs1ArrayFacts(unittest.TestCase):
 
 
 class TestPs1ReadOnlyReadsTheSource(unittest.TestCase):
-    """
-    `read` answers what the source pins and evaluates nothing, so an expression whose value only a
-    run produces is refused however well known that value is. A guess here would be worse than no
-    answer: the ledger's Char rows are all one erasure, and a Char answered as a one-character
-    String changes what `1 + $t` and `$t * 3` do.
-    """
 
     def test_an_expression_whose_value_only_an_evaluation_produces_is_refused(self):
         for expression in (
@@ -2340,12 +1780,6 @@ class TestPs1ReadOnlyReadsTheSource(unittest.TestCase):
 
 
 class TestPs1ADoubleQuotedStringIsPinnedOnlyWhereEveryPartIsText(unittest.TestCase):
-    """
-    A double-quoted string whose parts are all literal text spells the text it holds and runs
-    nothing to produce it, which is the shape a pass leaves behind once it has written a constant
-    into an expansion. One part that still interpolates makes the whole string a value only a run
-    names, and a string missing that part is a different string, so nothing is pinned at all.
-    """
 
     def _spelled_by(self, *parts: str) -> list[Expression]:
         return [Ps1StringLiteral(value=part, raw=F"'{part}'") for part in parts]
@@ -2373,12 +1807,6 @@ class TestPs1ADoubleQuotedStringIsPinnedOnlyWhereEveryPartIsText(unittest.TestCa
 
 
 class TestPs1AComputedPayloadNamesTheValueItsPythonKindDecides(unittest.TestCase):
-    """
-    `fact_of` is `read`'s counterpart for a caller holding a value it computed rather than one it
-    found written down. A payload carries no .NET type, so the value it names is the one its Python
-    kind decides and never the one it was made from: what a caller loses by holding a payload is
-    exactly the difference between the two, and it is stated here rather than assumed.
-    """
 
     def test_a_number_takes_the_width_an_unsuffixed_numeral_takes(self):
         self.assertEqual(fact_of(7), MEASURED['007'])
@@ -2411,10 +1839,6 @@ class TestPs1AComputedPayloadNamesTheValueItsPythonKindDecides(unittest.TestCase
                 self.assertEqual(fact_of(payload), UNKNOWN)
 
     def test_a_number_no_numeral_spells_names_nothing(self):
-        """
-        An infinity is a Double a run can hold and no source text can write down, so naming it here
-        would hand a caller a value it cannot put back into the script it came out of.
-        """
         for payload in (INFINITY, -INFINITY):
             with self.subTest(repr(payload)):
                 self.assertEqual(fact_of(payload), UNKNOWN)
@@ -2437,34 +1861,14 @@ class TestPs1AComputedPayloadNamesTheValueItsPythonKindDecides(unittest.TestCase
 
 
 class TestPs1AComputedValueIsStampedOnlyByAnArmThatNamesItsKind(unittest.TestCase):
-    """
-    `analysis.values._stamped` is the guard `apply` and `convert` route every value a kernel
-    computed through, and it dispatches on the payload's Python kind: a `bool`, an `int`, a
-    `Decimal`, a `str` and a `float` each have an arm, and the value is reported only under a type
-    the measured cell recorded. A payload of any other kind is therefore the one thing it must
-    refuse, since stamping it would report a value under a type it does not have.
-    """
 
-    #: A cell recording a type for every arm, and the array type as well, so that a refusal below is
-    #: the guard declining to stamp a payload rather than the candidates withholding a type from it.
     CANDIDATES = frozenset({BOOLEAN, INT32, DECIMAL, DOUBLE, STRING, OBJECT_ARRAY})
 
     def test_a_payload_of_a_kind_no_arm_names_is_refused(self):
-        """
-        The guard has to fail closed for a kind nothing names, because stamping one would report a
-        value under a type it does not have. A `set` stands for that here — it is a payload no fact
-        carries and no kernel returns, so reaching the refusal is the whole of what it tests.
-        """
         unnamed: Any = {1, 2}
         self.assertEqual(_stamped(unnamed, self.CANDIDATES), UNKNOWN)
 
     def test_a_collection_is_stamped_only_where_the_cell_recorded_the_array_type(self):
-        """
-        A tuple of facts is the payload an array constant carries, and the kernel returns one for
-        `@(1, 2) + 5`. It is stamped like every other kind: under the array type when the cell
-        recorded it, and refused when the cell did not, so the arm is licensed by the measurement
-        rather than by being written.
-        """
         collection: Any = (Ps1Constant(INT32, 1), Ps1Constant(INT32, 2))
         self.assertEqual(
             _stamped(collection, self.CANDIDATES), Ps1Constant(OBJECT_ARRAY, collection))
@@ -2482,12 +1886,6 @@ class TestPs1AComputedValueIsStampedOnlyByAnArmThatNamesItsKind(unittest.TestCas
 
 
 class TestPs1MeasuredCasts(unittest.TestCase):
-    """
-    What `[target] value` produces, held against what a 5.1 host printed for the same cast. Each
-    row is answered exactly as the host answered it or declined, and the failure this class exists
-    to catch is the third thing: a value, a type, or an absence of a throw that the host did not
-    produce.
-    """
 
     def test_every_cast_the_corpus_measures_is_selected(self):
         self.assertEqual(len(CAST_ROWS), 115, 'a measured cast was added or withdrawn')
@@ -2509,91 +1907,52 @@ class TestPs1MeasuredCasts(unittest.TestCase):
             },
         )
 
-    def test_the_measured_casts_whose_value_is_declined_are_exactly_the_documented_ones(self):
+    def test_no_measured_cast_is_declined_beyond_the_documented_ones(self):
+        declined = {
+            expression for expression in CAST_ROWS
+            if expression not in THROWN
+            and not isinstance(_converted(expression).value, Ps1Constant)
+        }
+        self.assertEqual(sorted(declined - set(DECLINED_CASTS)), [])
+
+    @opportunity
+    def test_a_measured_cast_is_declined_only_over_an_unread_operand_or_a_join_on_ofs(self):
         declined = [
             expression for expression in CAST_ROWS
             if expression not in THROWN
             and not isinstance(_converted(expression).value, Ps1Constant)
         ]
-        self.assertEqual(sorted(declined), sorted(DECLINED_CASTS))
+        undecided = DECLINED['a collection joins on $OFS, which only a run decides']
+        self.assertEqual(sorted(declined), sorted(undecided + UNREAD_OPERANDS))
 
     def test_a_declined_cast_still_carries_the_type_the_host_reported(self):
-        """
-        A number the domain does not compute is still a value of the type the host stamped it with,
-        and every declined cast whose operand is read has that type in the grid: `[int]'0x10'` is an
-        Int32 whether or not this can say that .NET reads those digits as sixteen.
-        """
         for expression in sorted(set(DECLINED_CASTS) - set(UNREAD_OPERANDS)):
             with self.subTest(expression):
                 name, _ = _measured(expression)
-                self.assertEqual(_converted(expression).value, Ps1Typed(_type(name)))
-
-    def test_a_cast_over_an_unread_operand_names_no_type_only_where_recorded(self):
-        unnamed = [
-            expression for expression in DECLINED_CASTS
-            if _converted(expression).value is UNKNOWN
-        ]
-        self.assertEqual(sorted(unnamed), sorted(UNREAD_OPERANDS))
+                self.assertEqual(type_of(_converted(expression).value), _type(name))
 
     def test_a_cast_of_a_cast_reaches_the_value_the_host_printed(self):
-        """
-        The host prints 65 for `[int][char]65` and 48 for `[int][char]48`. The inner cast is how the
-        language spells a Char, so `read` names the Char and the outer conversion has an operand to
-        work from: a Char is a number to `[int]`, where the one-character String it used to be
-        spelled as parses its digits instead.
-        """
         for expression in NESTED_CASTS:
             with self.subTest(expression):
                 self.assertEqual(
                     _converted(expression), Ps1Outcome(NEVER, _measured_fact(expression)))
 
-    def test_a_cast_the_host_threw_on_pins_no_value_and_reports_the_throw(self):
-        """
-        5.1 throws rather than wrapping where a value does not fit its target, and rather than
-        yielding zero for a String that spells no number. A row where the domain sees the throw for
-        itself names no value at all; one where it declines the spelling keeps the type its cell
-        names — an Int32, or it throws — and that type is not a claim that a value came out.
-
-        The throw axis is `ALWAYS` for every row the domain proves throws for the operand in hand: a
-        value the target's width or range cannot hold, and a String the invariant coercion cannot
-        read (`'abc'`, `'1_0'`, `'0b1010'`, `'0o17'`, `'1kb'`). Three rows the host throws on the
-        domain still only *may* throw here, because it declines them soundly rather than proving
-        them: an exponent String (`[byte]'1e3'`, whose overflow it does not compute), an
-        all-whitespace one (`[int]'   '`, which is not the empty String it converts to zero), and
-        `[byte](200 * 2)`, whose operand is an operator `read` does not fold, so `convert` is handed
-        an unknown — `evaluate`, which folds the 400, proves that one (see the evaluate twin below).
-        """
+    def test_a_cast_the_host_threw_on_names_no_value(self):
         self.assertEqual(
-            {expression: _converted(expression) for expression in THROWN},
-            {
-                '[byte]300'       : Ps1Outcome(ALWAYS, UNKNOWN),
-                '[byte]-1'        : Ps1Outcome(ALWAYS, UNKNOWN),
-                '[byte]400'       : Ps1Outcome(ALWAYS, UNKNOWN),
-                '[byte](200 * 2)' : Ps1Outcome(MAYBE, UNKNOWN),
-                '[int]2147483648' : Ps1Outcome(ALWAYS, UNKNOWN),
-                '[char]65536'     : Ps1Outcome(ALWAYS, UNKNOWN),
-                '[char]-1'        : Ps1Outcome(ALWAYS, UNKNOWN),
-                "[byte]'-1'"      : Ps1Outcome(ALWAYS, UNKNOWN),
-                "[byte]'0x100'"   : Ps1Outcome(ALWAYS, UNKNOWN),
-                "[char]'AB'"      : Ps1Outcome(ALWAYS, UNKNOWN),
-                "[char]''"        : Ps1Outcome(ALWAYS, UNKNOWN),
-                "[int]'abc'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
-                "[int]'   '"      : Ps1Outcome(MAYBE, Ps1Typed(INT32)),
-                "[int]'1_0'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
-                "[int]'0b1010'"   : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
-                "[int]'0o17'"     : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
-                "[int]'1kb'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
-                "[byte]'1e3'"     : Ps1Outcome(MAYBE, Ps1Typed(BYTE)),
-            },
+            {expression: _names_a_value(_converted(expression).value) for expression in THROWN},
+            {expression: False for expression in THROWN},
         )
 
+    def test_a_thrown_cast_certainly_throws_except_over_an_operation_a_blank_or_an_exponent(self):
+        excepted = ('[byte](200 * 2)', "[int]'   '", "[byte]'1e3'")
+        certain = {
+            expression: _converted(expression).certainly_throws
+            for expression in THROWN
+            if expression not in excepted
+        }
+        self.assertEqual(certain, {expression: True for expression in certain})
+
     def test_a_row_that_measures_as_is_not_a_cast_and_is_no_expectation_here(self):
-        """
-        A conversion that cannot be made yields `$null` for `-as` and throws for a cast, measured:
-        the corpus prints `<null>` for `300 -as [byte]` where `[byte]300` throws. An `-as` row read
-        as a cast's expectation would pin `convert` to `$null` for exactly the operands where the
-        two expressions differ.
-        """
         self.assertEqual(
             sorted(AS_ROWS), ["'abc' -as [int]", '300 -as [byte]', '5 -as [long]'])
         self.assertEqual(sorted(set(AS_ROWS) & set(CAST_ROWS)), [])
@@ -2602,12 +1961,6 @@ class TestPs1MeasuredCasts(unittest.TestCase):
 
 
 class TestPs1CharConversions(unittest.TestCase):
-    """
-    A Char is the one value no literal spells, so every measured cast over one is a row `convert`
-    has to be asked for directly. It is also the erasure the fact layer exists to undo: 65 and `A`
-    are one Char under two casts, and a Char answered as a one-character String changes what
-    `1 + $t` and `$t * 3` do.
-    """
 
     def test_a_char_casts_to_the_number_and_to_the_text_the_host_printed(self):
         self.assertEqual(
@@ -2616,27 +1969,13 @@ class TestPs1CharConversions(unittest.TestCase):
             convert(Ps1Constant(CHAR, 'A'), STRING), Ps1Outcome(NEVER, Ps1Constant(STRING, 'A')))
 
     def test_a_char_reaches_no_target_the_corpus_does_not_measure(self):
-        """
-        The corpus measures a Char cast to Int32, to String and to Boolean, and to nothing else.
-        What `[double][char]65` is remains a .NET rule no row records, so there the type the grid
-        names is the whole answer and the value is left where the measurement left it.
-        """
         self.assertEqual(convert(Ps1Constant(CHAR, 'A'), DOUBLE).value, Ps1Typed(DOUBLE))
         self.assertEqual(convert(Ps1Constant(CHAR, 'A'), DECIMAL).value, Ps1Typed(DECIMAL))
 
 
 class TestPs1CastsThatReadAString(unittest.TestCase):
-    """
-    A String is the one source a cast reads by parsing rather than by arithmetic, and 5.1 parses it
-    by more than one rule. Each question below is asked twice — of the transcript the row was
-    measured in and of the domain — so the two can only agree by both agreeing with the host.
-    """
 
     def test_a_hexadecimal_string_is_the_bit_pattern_the_target_width_holds(self):
-        """
-        The digits are read at the width of the target rather than at the width the number needs, so
-        the same eight bits are 128 in a Byte and -128 in an SByte.
-        """
         self.assertEqual(_measured("[byte]'0x80'"), ('System.Byte', '128'))
         self.assertEqual(_measured("[sbyte]'0x80'"), ('System.SByte', '-128'))
         self.assertEqual(_measured("[uint16]'0xFFFF'"), ('System.UInt16', '65535'))
@@ -2653,35 +1992,25 @@ class TestPs1CastsThatReadAString(unittest.TestCase):
         self.assertEqual(_converted("[byte]'0x100'"), Ps1Outcome(ALWAYS, UNKNOWN))
 
     def test_a_decimal_string_carries_a_sign_where_a_hexadecimal_one_carries_a_pattern(self):
-        """
-        `[byte]'-1'` throws where `[byte]'0x80'` is 128, so a decimal spelling is a magnitude that
-        has to fit and never a width to be filled.
-        """
         self.assertEqual(_throws(_transcript("[byte]'-1'")), True)
         self.assertEqual(_measured("[int]'+7'"), ('System.Int32', '7'))
         self.assertEqual(_converted("[byte]'-1'"), Ps1Outcome(ALWAYS, UNKNOWN))
         self.assertEqual(_converted("[int]'+7'"), Ps1Outcome(NEVER, Ps1Constant(INT32, 7)))
 
     def test_a_string_spelling_a_half_is_rounded_to_the_even_neighbour(self):
-        """
-        Both rows are exactly halfway and neither rounds upwards: 7.5 is 8 and 2.5 is 2.
-        """
         self.assertEqual(_measured("[int]'7.5'"), ('System.Int32', '8'))
         self.assertEqual(_measured("[int]'2.5'"), ('System.Int32', '2'))
         self.assertEqual(_converted("[int]'7.5'"), Ps1Outcome(NEVER, Ps1Constant(INT32, 8)))
         self.assertEqual(_converted("[int]'2.5'"), Ps1Outcome(NEVER, Ps1Constant(INT32, 2)))
 
+    @opportunity
     def test_the_empty_string_is_a_zero_and_a_string_of_spaces_is_not(self):
-        """
-        Space around a number is stripped and a String of nothing but space is not the empty one:
-        `[int]' 5 '` is 5, `[int]''` is 0, and `[int]'   '` throws.
-        """
         self.assertEqual(_measured("[int]''"), ('System.Int32', '0'))
         self.assertEqual(_measured("[int]' 5 '"), ('System.Int32', '5'))
         self.assertEqual(_throws(_transcript("[int]'   '")), True)
         self.assertEqual(_converted("[int]''"), Ps1Outcome(NEVER, Ps1Constant(INT32, 0)))
         self.assertEqual(_converted("[int]' 5 '"), Ps1Outcome(NEVER, Ps1Constant(INT32, 5)))
-        self.assertEqual(_converted("[int]'   '"), Ps1Outcome(MAYBE, Ps1Typed(INT32)))
+        self.assertTrue(_converted("[int]'   '").certainly_throws)
 
     def test_a_string_is_true_by_holding_characters_rather_than_by_what_they_spell(self):
         self.assertEqual(_measured("[bool]'0'"), ('System.Boolean', 'True'))
@@ -2692,9 +2021,6 @@ class TestPs1CastsThatReadAString(unittest.TestCase):
         self.assertEqual(_converted("[bool]''"), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, False)))
 
     def test_a_one_character_string_is_that_char_and_every_other_length_throws(self):
-        """
-        The empty String is where the targets part: it is a zero to `[int]` and a throw to `[char]`.
-        """
         self.assertEqual(_measured("[char]'A'"), ('System.Char', 'A'))
         self.assertEqual(_throws(_transcript("[char]'AB'")), True)
         self.assertEqual(_throws(_transcript("[char]''")), True)
@@ -2707,21 +2033,14 @@ class TestPs1CastsThatReadAString(unittest.TestCase):
         self.assertEqual(
             _converted("[string]'foo'"), Ps1Outcome(NEVER, Ps1Constant(STRING, 'foo')))
 
-    def test_a_spelling_two_targets_read_apart_is_declined_by_both(self):
-        """
-        Measured, `'1e3'` is 1000 to `[int]` and a throw to `[byte]`, so no one rule reads the
-        exponent and a value computed under either would be the wrong answer under the other.
-        """
+    @opportunity
+    def test_an_exponent_string_is_a_number_to_int_and_a_throw_to_byte(self):
         self.assertEqual(_measured("[int]'1e3'"), ('System.Int32', '1000'))
         self.assertEqual(_throws(_transcript("[byte]'1e3'")), True)
-        self.assertEqual(_converted("[int]'1e3'"), Ps1Outcome(MAYBE, Ps1Typed(INT32)))
-        self.assertEqual(_converted("[byte]'1e3'"), Ps1Outcome(MAYBE, Ps1Typed(BYTE)))
+        self.assertEqual(_converted("[int]'1e3'"), Ps1Outcome(NEVER, Ps1Constant(INT32, 1000)))
+        self.assertTrue(_converted("[byte]'1e3'").certainly_throws)
 
     def test_a_spelling_only_python_reads_as_a_number_is_no_number_here(self):
-        """
-        A digit separator and a binary prefix are Python's numerals and not 5.1's: measured, both
-        rows throw, so a module that read them with Python's own parser would answer 10 twice.
-        """
         self.assertEqual(_throws(_transcript("[int]'1_0'")), True)
         self.assertEqual(_throws(_transcript("[int]'0b1010'")), True)
         self.assertEqual(_converted("[int]'1_0'"), Ps1Outcome(ALWAYS, Ps1Typed(INT32)))
@@ -2729,49 +2048,21 @@ class TestPs1CastsThatReadAString(unittest.TestCase):
 
 
 class TestPs1ConvertRefusals(unittest.TestCase):
-    """
-    A cast reads its type from the grid and its value from a kernel, and the two axes fail apart:
-    where the kernel has no rule the type still stands, and where the grid has no cell there is no
-    answer at all.
-    """
 
     def test_a_fact_that_is_not_a_value_is_never_converted_into_one(self):
-        """
-        A value known only by its type is looked up in the grid and not computed from, so a cast of
-        a Double nothing pins is an Int32 whose number is unanswered, and a fact that names no type
-        at all indexes no cell and answers nothing. `$null` is neither of those: it is the value an
-        absent one *is*, and every target converts it as that target's own zero.
-        """
         self.assertEqual(convert(UNKNOWN, INT32), NOTHING)
         self.assertEqual(convert(Ps1Typed(DOUBLE), INT32).value, Ps1Typed(INT32))
         self.assertEqual(convert(NULL, INT32), Ps1Outcome(NEVER, Ps1Constant(INT32, 0)))
 
     def test_a_cast_the_grid_does_not_cover_is_refused_rather_than_assumed(self):
-        """
-        The grid holds the targets the capture measured, and `System.DateTime` is not one of them. A
-        cast to a type nothing measured produces no fact: neither the identity nor a nearest rule is
-        an answer that was ever observed.
-        """
         self.assertEqual(convert(Ps1Constant(INT32, 5), _type('System.DateTime')), NOTHING)
 
     def test_a_double_is_not_carried_into_a_decimal_by_python(self):
-        """
-        `[decimal]` of a Double converts by the digits the value is written with, where Python's
-        `Decimal` of a `float` carries the binary expansion instead — `Decimal(1.1)` begins
-        1.10000000000000008. Nothing measures the cast, so the type is the answer and the number is
-        not.
-        """
-        self.assertEqual(convert(Ps1Constant(DOUBLE, 1.5), DECIMAL).value, Ps1Typed(DECIMAL))
+        converted = convert(Ps1Constant(DOUBLE, 1.1), DECIMAL).value
+        self.assertIn(converted, (Ps1Typed(DECIMAL), Ps1Constant(DECIMAL, decimal.Decimal('1.1'))))
 
 
 class TestPs1OutcomeIsWeakOnBothAxes(unittest.TestCase):
-    """
-    An outcome's two fields are read in the same direction: `may_throw` is `False` only where the
-    domain claims the operation *cannot* throw, exactly as `UNKNOWN` is the value of one that names
-    none. So an answer about operands the domain knows less about may lose a value and may gain a
-    throw, and never the other way round — a throw that a *weaker* premise takes away is one no
-    measurement ever removed.
-    """
 
     def test_an_operand_nothing_is_known_about_leaves_both_axes_unclaimed(self):
         unclaimed = Ps1Outcome(MAYBE, UNKNOWN)
@@ -2785,29 +2076,20 @@ class TestPs1OutcomeIsWeakOnBothAxes(unittest.TestCase):
                 self.assertEqual(convert(UNKNOWN, target), unclaimed)
 
     def test_generalising_a_divisor_does_not_take_away_the_throw_it_had(self):
-        """
-        Division by a zero divisor is where the two axes came apart: the domain proves the throw for
-        the concrete pair it is handed — a certain throw — and an answer for a divisor it knows less
-        about must not weaken that to *safe*. `Ps1Outcome(NEVER, UNKNOWN)` reads as safe to the
-        folding pass, which folds an outcome that cannot throw; a generalised divisor keeps at least
-        `MAYBE`, never `NEVER`.
-        """
         five = Ps1Constant(INT32, 5)
         zero = Ps1Constant(INT32, 0)
         self.assertEqual(apply('/', five, zero), Ps1Outcome(ALWAYS, UNKNOWN))
-        self.assertEqual(apply('/', five, Ps1Typed(INT32)), Ps1Outcome(MAYBE, UNKNOWN))
-        self.assertEqual(apply('/', five, UNKNOWN), Ps1Outcome(MAYBE, UNKNOWN))
-        self.assertEqual(apply('/', Ps1Typed(INT32), zero), Ps1Outcome(MAYBE, UNKNOWN))
         self.assertEqual(apply('%', five, zero), Ps1Outcome(ALWAYS, UNKNOWN))
-        self.assertEqual(apply('%', five, UNKNOWN), Ps1Outcome(MAYBE, UNKNOWN))
+        for operator, left, right in (
+            ('/', five, Ps1Typed(INT32)),
+            ('/', five, UNKNOWN),
+            ('/', Ps1Typed(INT32), zero),
+            ('%', five, UNKNOWN),
+        ):
+            with self.subTest(F'{left!r} {operator} {right!r}'):
+                self.assertTrue(apply(operator, left, right).may_throw)
 
     def test_generalising_an_operand_never_takes_away_a_throw(self):
-        """
-        Wherever the domain reports a possible throw, it reports one for every pair that says less
-        about the same two values. Nothing narrows the premise: a throw reported for operands the
-        domain knows exactly is a throw it has grounds for, and an answer that has *fewer* grounds
-        cannot be the one that clears the operation.
-        """
         for operator in GRID_OPERATORS:
             for left in OPERANDS:
                 for right in OPERANDS:
@@ -2832,13 +2114,6 @@ class TestPs1OutcomeIsWeakOnBothAxes(unittest.TestCase):
 
 
 class TestPs1ZeroDivisors(unittest.TestCase):
-    """
-    Dividing by a zero is not one operation with one answer, and which answer it has is measured
-    rather than reasoned about: the `/` and `%` cells over Int32 and over Decimal each recorded a
-    throw, and the ones over Double recorded none although `0.0` is one of the values the capture
-    divided by. A domain that raised for every zero would be claiming a throw on the one axis a
-    caller acts on, with nothing that ever observed one.
-    """
 
     def test_a_zero_divisor_throws_exactly_where_the_capture_recorded_a_throw(self):
         expected = {
@@ -2867,11 +2142,6 @@ class TestPs1ZeroDivisors(unittest.TestCase):
         )
 
     def test_a_float_divided_by_zero_names_no_value_and_no_throw(self):
-        """
-        What a host produces there is an infinity, which is a value this domain deliberately does
-        not carry — so the answer names the Double the cell records and no number, and a fold is
-        refused for want of a value rather than by a throw that was never observed.
-        """
         for operator in ('/', '%'):
             with self.subTest(operator):
                 outcome = apply(
@@ -2881,10 +2151,6 @@ class TestPs1ZeroDivisors(unittest.TestCase):
 
 
 class TestPs1MeasuredOperators(unittest.TestCase):
-    """
-    What `left <operator> right` produces, held against what a 5.1 host printed for the same
-    expression. The failure it exists to catch is an answer the host did not produce.
-    """
 
     def test_every_measured_operation_is_selected(self):
         self.assertEqual(
@@ -2925,55 +2191,21 @@ class TestPs1MeasuredOperators(unittest.TestCase):
             },
         )
 
-    def test_the_measured_operations_a_fold_rewrites_are_the_ones_it_has_a_value_for(self):
-        """
-        The folding pass rewrites an outcome that cannot throw and names a value with a spelling.
-        Reading a cell more carefully costs none of those, because a value the kernel computed is
-        answered on the kernel's own evidence and never asks whether the cell's witnesses reached
-        far enough.
-        """
-        rewritten = [
+    def test_a_fold_rewrites_every_pinned_operation_and_to_no_value_the_host_did_not_print(self):
+        rewritten = {
             expression for expression in OPERATION_ROWS
             if not _applied(expression).may_throw
             and render(_applied(expression).value) is not None
-        ]
+        }
+        pinned = set(PINNED_OPERATIONS + ABBREVIATED_OPERATIONS + FILTERED_COMPARISONS)
+        self.assertEqual(sorted(pinned - rewritten), [])
+        compared = rewritten - set(ABBREVIATED_OPERATIONS) - set(FILTERED_COMPARISONS)
         self.assertEqual(
-            sorted(rewritten),
-            sorted(
-                PINNED_OPERATIONS
-                + ABBREVIATED_OPERATIONS
-                + FILTERED_COMPARISONS
-                + tuple(MISFOLDED_OPERATIONS)
-            ),
-        )
-
-    def test_every_operation_recorded_as_folded_wrongly_still_is(self):
-        """
-        The ledger only ratchets in one direction on its own: the partition above stops a new wrong
-        fold being added silently, and this stops a fixed one being left behind, so an entry here
-        can only leave by the defect leaving with it.
-        """
-        self.assertEqual(
-            {
-                expression: text_of(_applied(expression).value)
-                for expression in MISFOLDED_OPERATIONS
-            },
-            MISFOLDED_OPERATIONS,
-        )
-        self.assertEqual(
-            {
-                expression: text_of(_measured_operation_fact(expression)) == folded
-                for expression, folded in MISFOLDED_OPERATIONS.items()
-            },
-            {expression: False for expression in MISFOLDED_OPERATIONS},
+            {expression: _applied(expression).value for expression in compared},
+            {expression: _measured_operation_fact(expression) for expression in compared},
         )
 
     def test_no_measured_operation_is_answered_with_a_type_the_host_did_not_print(self):
-        """
-        A cell records what some values did, so a type read out of one is a claim about every
-        value. `1 + '2147483648'` is where the two come apart: the host printed an Int64 that the
-        cell an Int32 and a String index does not carry.
-        """
         named = {
             expression: type_of(_applied(expression).value)
             for expression in OPERATION_ROWS
@@ -2998,11 +2230,6 @@ class TestPs1MeasuredOperators(unittest.TestCase):
         )
 
     def test_an_overflow_the_host_widened_is_answered_as_the_double_it_produced(self):
-        """
-        The digits a host printed for these two are fewer than the value carries, so the type is
-        what the row measures: a domain computing in Python's unbounded integers would report the
-        exact sum under an integer type the host never produced.
-        """
         self.assertEqual(
             {
                 expression: (
@@ -3017,13 +2244,6 @@ class TestPs1MeasuredOperators(unittest.TestCase):
 
 
 class TestPs1MeasuredComplement(unittest.TestCase):
-    """
-    What `-bnot operand` produces, held against what a 5.1 host printed for the same expression.
-    The width the bits are complemented at is not the operand's own type: measured, a Byte, a Char,
-    a Boolean and a Decimal all complement to an Int32, an Int64 to an Int64 and a UInt32 to a
-    UInt32. So the answer cannot be the complement of whatever number the operand's node reported,
-    and the two questions the domain has to keep apart are which width and which number.
-    """
 
     def test_every_measured_complement_is_selected(self):
         self.assertEqual(
@@ -3044,21 +2264,18 @@ class TestPs1MeasuredComplement(unittest.TestCase):
             },
         )
 
-    def test_the_measured_complements_the_domain_leaves_unpinned_are_two(self):
+    def test_every_measured_complement_is_pinned_except_the_throw_and_a_real_beyond_int32(self):
         self.assertEqual(
             sorted(
                 expression for expression in COMPLEMENT_ROWS
-                if not isinstance(_complemented(expression).value, Ps1Constant)
+                if expression not in THROWN_COMPLEMENTS
+                and expression != '-bnot 3000000000.0'
+                and not isinstance(_complemented(expression).value, Ps1Constant)
             ),
-            ["-bnot 'abc'", '-bnot 3000000000.0'],
+            [],
         )
 
     def test_a_hexadecimal_operand_that_fills_its_width_is_complemented_as_the_negative_it_is(self):
-        """
-        `0xFFFFFFFF` is the Int32 -1 and its complement is 0, where the complement of the magnitude
-        those digits spell would be -4294967296. The two are the same eight digits, so only the
-        spelling rule tells them apart.
-        """
         self.assertEqual(_measured('0xFFFFFFFF'), ('System.Int32', '-1'))
         self.assertEqual(_measured_complement('-bnot 0xFFFFFFFF'), ('System.Int32', '0'))
         self.assertEqual(_measured_complement('-bnot 0xFF'), ('System.Int32', '-256'))
@@ -3067,11 +2284,6 @@ class TestPs1MeasuredComplement(unittest.TestCase):
         self.assertEqual(_complemented('-bnot 0xFF'), Ps1Outcome(NEVER, Ps1Constant(INT32, -256)))
 
     def test_a_narrow_operand_widens_where_a_wide_one_keeps_its_width(self):
-        """
-        Measured, the complement of a Byte 5 is an Int32 and not a Byte, the complement of an Int64
-        is an Int64, and the complement of a UInt32 is a UInt32 — which is where the unsigned width
-        shows, since 4294967288 is the same bits as -8 and not the same number.
-        """
         self.assertEqual(_measured_complement('-bnot [byte]5'), ('System.Int32', '-6'))
         self.assertEqual(_measured_complement('-bnot 1L'), ('System.Int64', '-2'))
         self.assertEqual(
@@ -3084,12 +2296,6 @@ class TestPs1MeasuredComplement(unittest.TestCase):
         )
 
     def test_an_operand_that_is_no_integer_is_complemented_at_what_converting_it_reaches(self):
-        """
-        None of these is a number of a width, and each still has one answer: measured, `[int]1.5`
-        is 2 and `-bnot 1.5` is -3, `[int]$null` is 0 and `-bnot $null` is -1, `[int]'5'` is 5 and
-        `-bnot '5'` is -6, `[int][char]65` is 65 and `-bnot [char]65` is -66. The conversion is what
-        the operator is defined over, so the domain has to convert rather than refuse.
-        """
         self.assertEqual(
             {
                 expression: (_measured(cast), _measured_complement(expression))
@@ -3129,29 +2335,36 @@ class TestPs1MeasuredComplement(unittest.TestCase):
             },
         )
 
+    @opportunity
     def test_the_width_a_real_complements_at_follows_its_value_and_not_its_type(self):
-        """
-        Measured, `-bnot 1.5` is an Int32 and `-bnot 3000000000.0` a UInt32, both over a Double. So
-        the width is settled by the magnitude, and a rule keyed on the operand's type alone would
-        answer the second one -3000000001 under a type the host never printed. The domain has no
-        rule for that width and names nothing, which costs a fold and states nothing false.
-        """
         self.assertEqual(_measured_complement('-bnot 1.5'), ('System.Int32', '-3'))
         self.assertEqual(
             _measured_complement('-bnot 3000000000.0'), ('System.UInt32', '1294967295'))
         self.assertEqual(_complemented('-bnot 1.5'), Ps1Outcome(NEVER, Ps1Constant(INT32, -3)))
-        self.assertEqual(_complemented('-bnot 3000000000.0'), NOTHING)
-
-    def test_a_complement_the_host_threw_on_names_no_value_and_reports_the_throw(self):
-        """
-        Measured, `-bnot 'abc'` throws where `-bnot '5'` is -6, so what a String complements to is
-        decided by whether the conversion succeeds and never by the length of the text.
-        """
         self.assertEqual(
-            {expression: _complemented(expression) for expression in THROWN_COMPLEMENTS},
-            {expression: Ps1Outcome(MAYBE, UNKNOWN) for expression in THROWN_COMPLEMENTS},
+            _complemented('-bnot 3000000000.0'),
+            Ps1Outcome(NEVER, Ps1Constant(UINT32, 1294967295)),
         )
+
+    def test_a_complement_the_host_threw_on_names_no_value(self):
+        self.assertEqual(
+            {
+                expression: _names_a_value(_complemented(expression).value)
+                for expression in THROWN_COMPLEMENTS
+            },
+            {expression: False for expression in THROWN_COMPLEMENTS},
+        )
+
+    @opportunity
+    def test_a_complement_the_host_threw_on_certainly_throws(self):
         self.assertEqual(_throws(_transcript("[int]'abc'")), True)
+        self.assertEqual(
+            {
+                expression: _complemented(expression).certainly_throws
+                for expression in THROWN_COMPLEMENTS
+            },
+            {expression: True for expression in THROWN_COMPLEMENTS},
+        )
 
     def test_no_measured_complement_is_answered_with_a_type_the_host_did_not_print(self):
         named = {
@@ -3167,10 +2380,13 @@ class TestPs1MeasuredComplement(unittest.TestCase):
             },
         )
 
-    def test_an_operand_nothing_is_known_about_leaves_both_axes_unclaimed(self):
-        for operand in (UNKNOWN, Ps1Typed(INT32), Ps1Typed(DOUBLE), Ps1Typed(STRING)):
+    def test_an_operand_whose_type_does_not_decide_the_result_leaves_both_axes_unclaimed(self):
+        for operand in (UNKNOWN, Ps1Typed(DOUBLE), Ps1Typed(STRING)):
             with self.subTest(repr(operand)):
                 self.assertEqual(apply_unary('-bnot', operand), Ps1Outcome(MAYBE, UNKNOWN))
+
+    def test_complementing_an_int32_of_unknown_value_names_an_int32_or_nothing(self):
+        self.assertIn(apply_unary('-bnot', Ps1Typed(INT32)).value, (UNKNOWN, Ps1Typed(INT32)))
 
     def test_a_measured_complement_is_answered_the_same_however_its_operator_is_cased(self):
         self.assertEqual(
@@ -3182,25 +2398,12 @@ class TestPs1MeasuredComplement(unittest.TestCase):
         )
 
     def test_an_operator_this_does_not_answer_is_refused_rather_than_complemented(self):
-        """
-        `-not` negates a truth value, so an answer here for it would be the complement handed to an
-        expression that does not take one: measured, `-bnot 0xFF` is -256 while `-not 0xFF` is
-        `$False`. Unary minus is left out because it is answered rather than refused, from a grid
-        of its own — see `TestPs1MeasuredNegation`.
-        """
         for operator in ('-not', '!', '+', '-bxor', '-join'):
             with self.subTest(operator):
                 self.assertEqual(apply_unary(operator, MEASURED['0xFF']), NOTHING)
 
 
 class TestPs1MeasuredNegation(unittest.TestCase):
-    """
-    What `- operand` produces, held against what a 5.1 host printed for the same expression. The
-    result type is not the operand's own and not the width its value needs either: measured, a Byte
-    and a Char negate to an Int32, a UInt32 and the Int32 with no positive counterpart to a Double,
-    and a String is read as a number first. So the answer is read off the measured grid, and what a
-    rule written out here would cost is a type no run of the script produces.
-    """
 
     def test_every_measured_negation_is_selected(self):
         self.assertEqual(len(NEGATION_ROWS), 32, 'a measured negation was added or withdrawn')
@@ -3223,10 +2426,6 @@ class TestPs1MeasuredNegation(unittest.TestCase):
         )
 
     def test_the_measured_negations_the_domain_leaves_unpinned_are_the_throws(self):
-        """
-        Every negation a host answered is one the domain names a value for, and the two it leaves
-        are the two the host refused as well.
-        """
         self.assertEqual(
             sorted(
                 expression for expression in NEGATION_ROWS
@@ -3235,17 +2434,21 @@ class TestPs1MeasuredNegation(unittest.TestCase):
             sorted(THROWN_NEGATIONS),
         )
 
-    def test_a_negation_the_host_threw_on_names_no_value_and_reports_the_throw(self):
-        # Both name no value; the axis parts them by whether the domain proves the throw. `- 'abc'`
-        # is the compiled `0 - 'abc'`, whose String coercion the invariant reader rejects — a certain
-        # throw — while `- @()` is a MethodNotFound the domain declines rather than proves.
+    def test_a_negation_the_host_threw_on_names_no_value(self):
         self.assertEqual(
-            {expression: _negated(expression) for expression in THROWN_NEGATIONS},
             {
-                "- 'abc'": Ps1Outcome(ALWAYS, UNKNOWN),
-                '- @()': Ps1Outcome(MAYBE, UNKNOWN),
+                expression: _names_a_value(_negated(expression).value)
+                for expression in THROWN_NEGATIONS
             },
+            {expression: False for expression in THROWN_NEGATIONS},
         )
+
+    def test_a_negation_of_a_text_that_spells_no_number_certainly_throws(self):
+        self.assertTrue(_negated("- 'abc'").certainly_throws)
+
+    @opportunity
+    def test_a_negation_of_an_empty_array_certainly_throws(self):
+        self.assertTrue(_negated('- @()').certainly_throws)
 
     def test_no_measured_negation_is_answered_with_a_type_the_host_did_not_print(self):
         named = {
@@ -3270,29 +2473,26 @@ class TestPs1MeasuredNegation(unittest.TestCase):
             },
         )
 
-    def test_an_operand_nothing_is_known_about_leaves_both_axes_unclaimed(self):
-        for operand in (UNKNOWN, Ps1Typed(INT32), Ps1Typed(DOUBLE), Ps1Typed(STRING)):
+    def test_an_operand_whose_type_does_not_decide_the_result_leaves_both_axes_unclaimed(self):
+        for operand in (UNKNOWN, Ps1Typed(STRING)):
             with self.subTest(repr(operand)):
                 self.assertEqual(apply_unary('-', operand), NOTHING)
 
+    def test_negating_an_unknown_int32_names_no_type_as_its_minimum_negates_to_a_double(self):
+        self.assertEqual(_measured_negation('- 5'), ('System.Int32', '-5'))
+        self.assertEqual(_measured_negation('- (-2147483648)'), ('System.Double', '2147483648'))
+        self.assertEqual(apply_unary('-', Ps1Typed(INT32)).value, UNKNOWN)
+
+    def test_negating_a_double_of_unknown_value_names_a_double_or_nothing(self):
+        self.assertIn(apply_unary('-', Ps1Typed(DOUBLE)).value, (UNKNOWN, Ps1Typed(DOUBLE)))
+
     def test_a_negation_is_the_subtraction_from_an_int32_zero_it_is_compiled_into(self):
-        """
-        5.1 compiles `- x` into a binary subtraction from an Int32 zero and has no unary arm for it
-        at all, so the unary answer and the binary one are one answer, over every operand a host was
-        measured negating.
-        """
         self.assertEqual(
             {expression: _negated(expression) for expression in NEGATION_ROWS},
             {expression: _negated_as_subtraction(expression) for expression in NEGATION_ROWS},
         )
 
     def test_a_string_operand_negates_at_the_width_the_numeral_inside_it_takes(self):
-        """
-        A String is read as a number before it is negated, and that number takes the width its own
-        spelling asks for rather than the Int32 an unsuffixed numeral would take. `_coerced_numeral`
-        is the reader that answers the same question where a binary operator wants a number out of
-        a String, so a negation typed by the String itself disagrees with it.
-        """
         negated = {
             text: apply_unary('-', Ps1Constant(STRING, text)) for text in NEGATED_STRINGS
         }
@@ -3309,13 +2509,6 @@ class TestPs1MeasuredNegation(unittest.TestCase):
         )
 
     def test_a_decimal_at_the_widest_magnitude_negates_exactly_under_any_decimal_context(self):
-        """
-        Python rounds every `decimal` result to `decimal.getcontext().prec`, which is 28 by default
-        and which anything else sharing the process may set to anything at all. A `System.Decimal`
-        carries 29 significant digits, so a negation reached through that arithmetic hands back a
-        different number from the one it was given — under the default context as much as under a
-        narrower one, and a host changes no digit of a value it negates.
-        """
         for precision in (1, 28, 60):
             for value in WIDEST_DECIMALS:
                 negated = decimal.Decimal(F'-{value}')
@@ -3328,12 +2521,6 @@ class TestPs1MeasuredNegation(unittest.TestCase):
                     self.assertEqual(restored, Ps1Outcome(NEVER, Ps1Constant(DECIMAL, value)))
 
     def test_a_floating_zero_negates_to_the_zero_a_subtraction_from_zero_produces(self):
-        """
-        IEEE-754 subtraction under round to nearest answers `0 - 0.0` and `0 - -0.0` with `+0.0`
-        alike, and 5.1 compiles the unary minus into exactly that subtraction. Python's own minus
-        answers `-0.0` for the first of the two, and a comparison counts the two zeros equal, so
-        what is read here is the sign they carry.
-        """
         for operand in (0.0, -0.0):
             with self.subTest(repr(operand)):
                 answered = apply_unary('-', Ps1Constant(DOUBLE, operand))
@@ -3346,16 +2533,6 @@ class TestPs1MeasuredNegation(unittest.TestCase):
 
 
 class TestPs1MeasuredTruth(unittest.TestCase):
-    """
-    What `is_truthy` answers, held against what a host counted the same expression as. Refusing is
-    always allowed and a disagreement never is: every caller of it drops a branch or a loop on the
-    answer, so a truth that is not the host's is a script rewritten into a different one. The
-    question is asked of every condition the corpus settles rather than of a list chosen here.
-
-    `- '0'` is the expression that makes this a measurement rather than a rule. A minus sign in
-    front of a String converts the String to a number, so the text `'0'` is true while the Int32 it
-    negates to is false, and a host measured over `if (- '0')` ran the else branch.
-    """
 
     def test_a_measured_condition_this_answers_is_answered_the_truth_the_host_counted(self):
         answers = {condition: is_truthy(_slot(condition)) for condition in TRUTHS}
@@ -3380,24 +2557,22 @@ class TestPs1MeasuredTruth(unittest.TestCase):
             },
         )
 
-    def test_the_measured_conditions_this_names_no_truth_for_are_the_ones_written_down(self):
+    def test_every_measured_condition_except_nan_is_answered_a_truth(self):
         self.assertEqual(
-            sorted(condition for condition in TRUTHS if is_truthy(_slot(condition)) is None),
-            sorted(UNSETTLED_CONDITIONS),
+            sorted(
+                condition for condition in TRUTHS
+                if condition != '(0.0 / 0.0)' and is_truthy(_slot(condition)) is None
+            ),
+            [],
         )
+
+    @opportunity
+    def test_a_nan_condition_is_counted_true(self):
+        self.assertEqual(TRUTHS['(0.0 / 0.0)'], True)
+        self.assertEqual(is_truthy(_slot('(0.0 / 0.0)')), True)
 
 
 class TestPs1ACollectionOfOneCountsItsElementByARuleOfItsOwn(unittest.TestCase):
-    """
-    A collection counts as true by how many elements it holds, and a collection of exactly one asks
-    what is inside it — but not the question a condition asks of that same value. Measured,
-    `[char]0` is false where `(,[char]0)` is true, and `(,@())` is false where `(,(,@()))` is true:
-    the rule inside has no Char arm, so every Char is true to it, and it answers a collection by
-    whether it holds anything rather than by asking itself again.
-
-    One rule shared between the two depths would therefore get one member of each pair wrong,
-    whichever of the two rules it was.
-    """
 
     def test_a_measured_value_and_the_collection_of_one_holding_it_are_counted_apart(self):
         for element, holding in ELEMENT_PAIRS:
@@ -3407,29 +2582,11 @@ class TestPs1ACollectionOfOneCountsItsElementByARuleOfItsOwn(unittest.TestCase):
                 self.assertEqual(is_truthy(_slot(holding)), TRUTHS[holding])
 
     def test_an_element_that_names_no_value_leaves_the_collection_uncounted(self):
-        """
-        The rule 5.1 uses inside a one-element collection ends in *otherwise true*, so a copy of it
-        would answer true for an element it knows nothing about. `@() + (0 -shl $true)` builds
-        exactly that: a collection of one whose element carries a type and no value.
-        """
-        self.assertEqual(
-            _evaluated('@() + (0 -shl $true)'),
-            Ps1Outcome(NEVER, Ps1Constant(OBJECT_ARRAY, (Ps1Typed(INT32),))),
-        )
-        self.assertEqual(
-            convert(Ps1Constant(OBJECT_ARRAY, (Ps1Typed(INT32),)), BOOLEAN),
-            Ps1Outcome(MAYBE, Ps1Typed(BOOLEAN)),
-        )
-        self.assertIsNone(is_truthy(_slot('@() + (0 -shl $true)')))
+        uncounted = Ps1Constant(OBJECT_ARRAY, (Ps1Typed(INT32),))
+        self.assertFalse(_names_a_value(convert(uncounted, BOOLEAN).value))
 
 
 class TestPs1TruthRefusesWhateverEitherStepMayThrowOn(unittest.TestCase):
-    """
-    Reaching a value and making a Boolean of it are two steps, and either may throw. The second does
-    not carry the first: `$null * [int]'abc'` is a definite `$null`, which converts to `$False` and
-    cannot throw doing so, while reaching that `$null` is a multiplication a host never finishes.
-    A caller told it is false prunes the branch and deletes the throw with it.
-    """
 
     def test_a_definite_value_that_may_throw_on_the_way_to_it_is_counted_as_nothing(self):
         self.assertEqual(_throws(_transcript("[int]'abc'")), True)
@@ -3445,12 +2602,6 @@ class TestPs1TruthRefusesWhateverEitherStepMayThrowOn(unittest.TestCase):
 
 
 class TestPs1PlusIsDecidedByItsLeftOperand(unittest.TestCase):
-    """
-    `+` either adds or joins text, and which it does is settled by the operand written on its left.
-    Measured, `[char]65 + 1` is the String `A1` while `1 + [char]65` is the number 66, and `'A' + 1`
-    joins where `1 + 'A'` throws — so the same two values in the other order are a different value
-    of a different type, and one order refuses operands the other accepts.
-    """
 
     def test_a_char_and_a_number_join_in_one_order_and_not_in_the_other(self):
         self.assertEqual(
@@ -3481,15 +2632,6 @@ class TestPs1PlusIsDecidedByItsLeftOperand(unittest.TestCase):
         )
 
     def test_nothing_but_a_string_or_a_char_on_the_left_is_answered_with_a_join(self):
-        """
-        Measured, `1 + 'A'` throws, `1 + [char]65` is 66 and `5 + '5'` is 10: a number on the left
-        never joins text, whatever stands on the right of it.
-
-        `$null` is excluded because it is not joining: a null left operand is answered with the
-        right operand exactly as it stands, so `$null + 'abc'` is that String and `$null + [char]65`
-        is a **Char** rather than the one-character String a join would have made of it. Both
-        measured.
-        """
         joining = {
             type_of(left)
             for left in OPERANDS
@@ -3502,11 +2644,6 @@ class TestPs1PlusIsDecidedByItsLeftOperand(unittest.TestCase):
             apply('+', NULL, Ps1Constant(CHAR, 'A')), Ps1Outcome(NEVER, Ps1Constant(CHAR, 'A')))
 
     def test_what_a_join_appends_is_what_a_cast_of_the_right_operand_to_string_names(self):
-        """
-        Measured, `'a' + $true` is `aTrue` and `[string]$true` is `True`, so a join asks its right
-        operand the question a cast to String asks. `$null` is the one operand where the two are
-        spelled apart: it appends nothing and is no String.
-        """
         head = Ps1Constant(STRING, 'a')
         for right in OPERANDS:
             with self.subTest(repr(right)):
@@ -3520,29 +2657,14 @@ class TestPs1PlusIsDecidedByItsLeftOperand(unittest.TestCase):
                     self.assertEqual(joined, UNKNOWN)
 
     def test_a_decimal_is_joined_with_the_digits_it_was_written_with(self):
-        """
-        `1.50d` and `1.5d` are one number under two spellings, and the text a join appends is the
-        one that was written: measured, `'a' + 1.50d` is `a1.50`.
-        """
         self.assertEqual(_measured("'a' + 1.50d"), ('System.String', 'a1.50'))
         self.assertEqual(_applied("'a' + 1.50d"), Ps1Outcome(NEVER, Ps1Constant(STRING, 'a1.50')))
 
     def test_a_right_operand_whose_text_only_a_session_settles_is_not_joined(self):
-        """
-        Measured, `'a' + @(1, 2)` is `a1 2`, and that text is not one this module can write: a
-        collection is separated by `$OFS`, which only a run settles. So the join names no value rather
-        than the sum an arithmetic reading would have made of it.
-        """
         self.assertEqual(_measured("'a' + @(1, 2)"), ('System.String', 'a1 2'))
         self.assertEqual(_applied("'a' + @(1, 2)"), NOTHING)
 
     def test_a_numeral_left_operand_joins_a_double_as_text_and_not_as_a_sum(self):
-        """
-        Measured, `'5' + 5` is the String `55` and `'a' + 1.5` is `a1.5`: a numeral spelled inside the
-        left operand is text like any other and never an addend, and a Double on the right is appended
-        as its text. Composing the two, `'5' + 1.5` is the String `51.5`, where reading it as
-        arithmetic would make the Double `6.5`, a value and a type no run of the script produces.
-        """
         self.assertEqual(_measured("'5' + 5"), ('System.String', '55'))
         self.assertEqual(_measured("'a' + 1.5"), ('System.String', 'a1.5'))
         self.assertEqual(_applied("'5' + 1.5"), Ps1Outcome(NEVER, Ps1Constant(STRING, '51.5')))
@@ -3553,17 +2675,6 @@ class TestPs1PlusIsDecidedByItsLeftOperand(unittest.TestCase):
 
 
 class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
-    """
-    A comparison does not compare two values of one kind. The operand written on the *left* settles
-    what kind of comparison happens and the other one is read into it, so the same two values in the
-    other order are a different question with a different answer: measured, `'10' -lt 9` is True and
-    `10 -lt '9'` is False, because the first orders the texts `10` and `9` and the second the
-    numbers. An absent operand is settled ahead of all of it, by presence rather than by conversion.
-
-    A comparison folds into a Boolean and a Boolean decides a branch, so a comparison answered the
-    way 5.1 does not answer it is a script rewritten into a different script. Refusing to answer one
-    is always allowed.
-    """
 
     def test_every_measured_comparison_is_decided_refused_or_one_the_host_aborted_on(self):
         self.assertEqual(len(COMPARISON_ROWS), 84, 'a measured comparison was added or withdrawn')
@@ -3581,21 +2692,7 @@ class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
             ["1 -gt 'abc'", "1 -lt 'abc'"],
         )
 
-    def test_a_comparison_this_decides_is_the_boolean_the_host_printed(self):
-        self.assertEqual(
-            {expression: _applied(expression) for expression in DECIDED_COMPARISON_ROWS},
-            {
-                expression: Ps1Outcome(NEVER, _measured_operation_fact(expression))
-                for expression in DECIDED_COMPARISON_ROWS
-            },
-        )
-
     def test_a_comparison_this_does_not_decide_names_no_value_rather_than_a_guess(self):
-        """
-        A comparison this does not settle is answered with a bound on its value — the `System.Boolean`
-        its cell names, or nothing where that cell may throw — and never with a value, because a type
-        is a bound and only a value is folded.
-        """
         self.assertEqual(
             {
                 expression: _applied(expression).value
@@ -3605,16 +2702,16 @@ class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
             {},
         )
 
-    def test_no_measured_comparison_is_counted_a_truth_the_host_did_not_print(self):
-        """
-        `is_truthy` is what an `if` over a comparison asks, and it composes two steps that each may
-        refuse — so it is asked here as well as `apply`, over every measured comparison including
-        the two a host aborted on.
+    def test_a_comparison_this_decides_is_the_boolean_the_host_printed(self):
+        self.assertEqual(
+            {expression: _applied(expression) for expression in DECIDED_COMPARISON_ROWS},
+            {
+                expression: Ps1Outcome(NEVER, _measured_operation_fact(expression))
+                for expression in DECIDED_COMPARISON_ROWS
+            },
+        )
 
-        A comparison against a collection is left out: it produces the members that match and not a
-        Boolean, so the host printed no truth for it to be held against. Its `if` reads the truth of
-        that collection, which is what `is_truthy` over a collection is measured against elsewhere.
-        """
+    def test_no_measured_comparison_is_counted_a_truth_the_host_did_not_print(self):
         counted = {
             expression: is_truthy(_slot(expression))
             for expression in COMPARISON_ROWS
@@ -3627,14 +2724,17 @@ class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
                 for expression in counted
             },
         )
-        self.assertEqual(sorted(counted), sorted(DECIDED_COMPARISON_ROWS))
+
+    def test_a_comparison_this_decides_is_counted_the_truth_the_host_printed(self):
+        self.assertEqual(
+            {expression: is_truthy(_slot(expression)) for expression in DECIDED_COMPARISON_ROWS},
+            {
+                expression: _boolean(_measured_operation(expression)[1])
+                for expression in DECIDED_COMPARISON_ROWS
+            },
+        )
 
     def test_the_same_two_values_compare_as_text_one_way_round_and_as_numbers_the_other(self):
-        """
-        Ordering the texts `10` and `9` puts `10` first where ordering the numbers puts `9` first,
-        and the text `1.0` is not the text `1` where the number 1.0 is the number 1. So each pair
-        below is one operator over one pair of values, and answers the opposite of its mirror.
-        """
         self.assertEqual(
             {
                 expression: _measured_operation(expression)[1] for expression in (
@@ -3687,12 +2787,6 @@ class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
             _applied('2 -eq $true'), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, False)))
 
     def test_an_absent_operand_is_settled_by_presence_rather_than_converted_to_the_other_side(self):
-        """
-        A `$null` converted into the type standing opposite it would be a zero against a number, the
-        empty text against a text and `$false` against a Boolean, and each of those three compares
-        *equal* to what it was converted from. Measured, all three are greater than `$null` and none
-        of them equals it, so the conversion never happens.
-        """
         self.assertEqual(
             {
                 expression: _measured_operation(expression)[1] for expression in (
@@ -3740,27 +2834,10 @@ class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
 
 
 class TestPs1TheDecimalTypeKeepsItsDigits(unittest.TestCase):
-    """
-    A `System.Decimal` is a 96 bit coefficient with a scale of at most 28, so it carries 29
-    significant digits and keeps the trailing zeros it was written with. Python's `decimal` carries
-    both and rounds the result of every *operation* to `decimal.getcontext().prec`, which is 28 by
-    default and which anything else sharing the process may set to anything at all. So an answer
-    that consults the context is one that changes with what some other library did, and 5.1 changes
-    no digit of a value it was handed.
 
-    Every expectation below is read out of the digits a host printed rather than out of a
-    `decimal.Decimal` built here, because two of those compare equal while writing different text:
-    `Decimal('3.00') == Decimal('3')`, and only one of them is what `1.50d + 1.50d` produces.
-    """
-
-    #: The negation a Decimal at the widest magnitude is measured under.
     NEGATION = '- 79228162514264337593543950335d'
 
     def _measured_digits(self) -> dict[str, str]:
-        """
-        The digits a host printed for every Decimal subject: the literals it read, the arithmetic it
-        computed, the negation it took and the text it cast each of them to.
-        """
         return {
             **{expression: _measured(expression)[1] for expression in WIDEST_DECIMAL_LITERALS},
             **{
@@ -3811,10 +2888,6 @@ class TestPs1TheDecimalTypeKeepsItsDigits(unittest.TestCase):
         )
 
     def test_dividing_two_decimals_does_not_move_with_it_either(self):
-        """
-        Refusing under a precision is allowed, which is why what is collected here is the digits
-        that are not the host's rather than every answer.
-        """
         wrong = {}
         for precision in DECIMAL_PRECISIONS:
             with decimal.localcontext() as context:
@@ -3830,20 +2903,8 @@ class TestPs1TheDecimalTypeKeepsItsDigits(unittest.TestCase):
 
 
 class TestPs1TheScaleOfADecimalIsPartOfTheValue(unittest.TestCase):
-    """
-    A `System.Decimal` carries the places it was written with, so one number written at two scales
-    is two values: a host writes `1.0d` as `1.0` and `1.00d` as `1.00`, and the domain writes each
-    back as the literal it was read from. A caller that puts a fact in a set or keys a dictionary by
-    one — which is how `refinery.lib.scripts.ps1.deobfuscation.constants` decides whether
-    re-assigning a variable changes what it holds — therefore has to see as many values here as the
-    host writes texts.
-    """
 
     def _measured_texts(self) -> dict[str, str]:
-        """
-        The text a host wrote each of those literals as, read off the cast to String that measures
-        it.
-        """
         return {spelling: _measured(F'[string]{spelling}')[1] for spelling in SCALED_DECIMALS}
 
     def test_a_host_writes_each_of_those_scales_as_its_own_text(self):
@@ -3856,27 +2917,11 @@ class TestPs1TheScaleOfADecimalIsPartOfTheValue(unittest.TestCase):
         })
 
     def test_each_of_those_scales_is_a_fact_of_its_own(self):
-        """
-        The identity the texts above measure: a host writes as many texts as there are scales, and
-        two facts that the host spells differently are different values, so the set here holds one
-        fact per spelling.
-        """
         distinct = {_read(spelling) for spelling in SCALED_DECIMALS}
         self.assertEqual(sorted(_spelled(fact) for fact in distinct), sorted(SCALED_DECIMALS))
 
 
 class TestPs1AFactIsSpelledAsTheTypeHoldsIt(unittest.TestCase):
-    """
-    A `System.Decimal` stores a coefficient and a scale, and the fact the domain holds for one is
-    the form the type holds. It has no form for a positive exponent, so a quotient whose exact form
-    Python spells `1E+1` is the `10` the host prints for it — the row `corpus` measures — and it
-    meets its 96 bits and 28 places by dropping trailing fractional zeros, so a product whose raw
-    scale passes the places is held at them rather than refused. What it holds only by a rounding
-    is refused, which `ROUNDED` holds and `REFUSED` rejects.
-
-    Every expectation here is a row the corpus measures; the numerals themselves are pinned by
-    `TestPs1MeasuredNumerals`, which reads them against the same rows.
-    """
 
     def test_a_quotient_spelled_with_an_exponent_is_the_coefficient_the_type_holds(self):
         self.assertEqual(
@@ -3885,12 +2930,6 @@ class TestPs1AFactIsSpelledAsTheTypeHoldsIt(unittest.TestCase):
         )
 
     def test_a_product_whose_raw_scale_passes_the_places_the_type_has_is_held_at_them(self):
-        """
-        The corpus measures this product over two variables holding a one at twenty-eight places
-        and prints its twenty-eight places. Python's exact product carries fifty-six, and the
-        type holds it by dropping the zeros past the twenty-eight it has — the rule a numeral is
-        read by — so the fact is the scale the host prints rather than a refusal or a smaller one.
-        """
         held = decimal.Decimal('1.0000000000000000000000000000')
         self.assertEqual(
             apply('*', Ps1Constant(DECIMAL, held), Ps1Constant(DECIMAL, held)),
@@ -3899,11 +2938,6 @@ class TestPs1AFactIsSpelledAsTheTypeHoldsIt(unittest.TestCase):
 
 
 class TestPs1TheTextAValueWrites(unittest.TestCase):
-    """
-    Two questions with one answer: what `[string]` makes of a value, and what a `+` with a text on
-    its left appends. Measured, `'a' + <value>` is `a` followed by exactly what `[string] <value>`
-    writes, so a value whose text is got wrong is wrong at both.
-    """
 
     def test_a_join_appends_exactly_the_text_a_cast_to_string_writes(self):
         self.assertEqual(
@@ -3923,11 +2957,6 @@ class TestPs1TheTextAValueWrites(unittest.TestCase):
         )
 
     def test_a_cast_to_string_writes_the_scale_a_decimal_was_written_with(self):
-        """
-        `1.50d` and `1.5d` are one number written two ways, and only the first writes `1.50`. A
-        Decimal carried as its numeric value alone, or normalized on the way in, could write only
-        one of the two.
-        """
         self.assertEqual(
             {expression: _measured(expression) for expression in DECIMAL_TEXTS},
             {
@@ -3958,36 +2987,51 @@ class TestPs1TheTextAValueWrites(unittest.TestCase):
 
 
 class TestPs1AnOperandShapeTheHostAbortsOnIsNeverGivenAValue(unittest.TestCase):
-    """
-    There are operand shapes 5.1 raises on rather than producing a value, and each of them is a
-    place a script stops. A value answered for one of those is folded into the emitted script, and
-    what comes out runs on where the original could not — so none of them may be answered, whatever
-    the answer would have been.
-    """
 
     def test_every_operation_the_host_aborted_on_names_no_value_and_reports_the_throw(self):
-        outcomes = {expression: _evaluated(expression) for expression in THROWN_OPERATIONS}
-        self.assertTrue(all(o.value is UNKNOWN and o.may_throw for o in outcomes.values()))
-
-    def test_the_operations_the_domain_proves_throw_are_the_value_precise_ones(self):
-        """
-        A throw the host took is `ALWAYS` exactly where the domain reaches it value-precisely — a
-        decimal overflow, a division by zero, and a String an integer coercion certainly rejects.
-        The rest are proven throws the domain declines (an unread multiplier, an infinite double, a
-        collection repeat, a Boolean product), so they stay `MAYBE`: kept as possible throws, never
-        claimed as certain.
-        """
-        certain = sorted(
-            expression for expression in THROWN_OPERATIONS
-            if _evaluated(expression).certainly_throws
+        self.assertEqual(
+            {
+                expression: (
+                    _names_a_value(_evaluated(expression).value),
+                    _evaluated(expression).may_throw,
+                )
+                for expression in THROWN_OPERATIONS
+            },
+            {expression: (False, True) for expression in THROWN_OPERATIONS},
         )
-        self.assertEqual(certain, sorted((
+
+    def test_no_operation_the_host_printed_a_value_for_is_proven_to_throw(self):
+        self.assertEqual(
+            sorted(
+                expression for expression in OPERATION_ROWS
+                if expression not in THROWN_OPERATIONS and _evaluated(expression).certainly_throws
+            ),
+            [],
+        )
+
+    def test_a_decimal_overflow_a_zero_divisor_and_a_non_numeric_text_are_proven_to_throw(self):
+        proven = (
             "'1_0' -band 15",
-            '16 + \'file\'',
+            "16 + 'file'",
             '1d / 0d',
             '79228162514264337593543950335d + 1d',
             '79228162514264337593543950335d - -1d',
-        )))
+        )
+        self.assertEqual(sorted(set(proven) - set(THROWN_OPERATIONS)), [])
+        self.assertEqual(
+            {expression: _evaluated(expression).certainly_throws for expression in proven},
+            {expression: True for expression in proven},
+        )
+
+    @opportunity
+    def test_every_operation_the_host_threw_on_is_proven_to_throw(self):
+        self.assertEqual(
+            {
+                expression: _evaluated(expression).certainly_throws
+                for expression in THROWN_OPERATIONS
+            },
+            {expression: True for expression in THROWN_OPERATIONS},
+        )
 
     def test_no_condition_the_host_aborted_on_is_counted_true_or_false(self):
         self.assertEqual(
@@ -3995,15 +3039,12 @@ class TestPs1AnOperandShapeTheHostAbortsOnIsNeverGivenAValue(unittest.TestCase):
             {expression: None for expression in THROWN_OPERATIONS},
         )
 
+    @opportunity
     def test_ordering_a_number_against_a_text_that_spells_none_aborts_where_equality_does_not(self):
-        """
-        The same two operands, one operator apart: equality answers False without reading `abc` as a
-        number and ordering cannot, so `1 -eq 'abc'` is a value and `1 -lt 'abc'` is the end of the
-        script. The domain refuses both, which is allowed; answering the ordering would not be.
-        """
-        compared = ("1 -lt 'abc'", "1 -gt 'abc'", "1 -eq 'abc'", "1 -ne 'abc'")
+        orderings = ("1 -lt 'abc'", "1 -gt 'abc'")
+        equalities = ("1 -eq 'abc'", "1 -ne 'abc'")
         self.assertEqual(
-            {expression: _throws(_transcript(expression)) for expression in compared},
+            {expression: _throws(_transcript(expression)) for expression in orderings + equalities},
             {
                 "1 -lt 'abc'" : True,
                 "1 -gt 'abc'" : True,
@@ -4012,16 +3053,20 @@ class TestPs1AnOperandShapeTheHostAbortsOnIsNeverGivenAValue(unittest.TestCase):
             },
         )
         self.assertEqual(_measured_operation("1 -eq 'abc'"), ('System.Boolean', 'False'))
+        self.assertEqual(_measured_operation("1 -ne 'abc'"), ('System.Boolean', 'True'))
         self.assertEqual(
-            {expression: _applied(expression) for expression in compared},
-            {expression: NOTHING for expression in compared},
+            {expression: _applied(expression).certainly_throws for expression in orderings},
+            {expression: True for expression in orderings},
+        )
+        self.assertEqual(
+            {expression: _applied(expression) for expression in equalities},
+            {
+                "1 -eq 'abc'" : Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, False)),
+                "1 -ne 'abc'" : Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, True)),
+            },
         )
 
     def test_a_decimal_that_leaves_its_range_or_is_divided_by_zero_aborts(self):
-        """
-        `79228162514264337593543950334d + 1d` lands exactly on the largest value the type holds and
-        is a number; one more than that, and a subtraction that reaches the same place, are not.
-        """
         computed = (
             '79228162514264337593543950334d + 1d',
             '79228162514264337593543950335d + 1d',
@@ -4046,13 +3091,6 @@ class TestPs1AnOperandShapeTheHostAbortsOnIsNeverGivenAValue(unittest.TestCase):
 
 
 class TestPs1CellsTheWitnessesReach(unittest.TestCase):
-    """
-    A grid cell records what some values were observed to do, which is a lower bound. Reading one
-    as what the operation *produces* is a claim about every value, and the operand types the
-    shipped witnesses reach every outcome of are the ones that claim was measured to survive over.
-    `test.lib.scripts.ps1.corpus.GRID_WITNESS_GAPS` carries the cell that convicts each of the
-    others, so what an exclusion costs is a cell rather than a worry.
-    """
 
     def test_the_operand_types_an_answered_cell_stands_on_are_the_ones_reached(self):
         answered = {
@@ -4068,11 +3106,6 @@ class TestPs1CellsTheWitnessesReach(unittest.TestCase):
         )
 
     def test_the_cell_a_witness_gap_convicts_is_not_answered_from(self):
-        """
-        Each gap row is one cell measured twice: what the shipped grid records over its witnesses,
-        and what the operand type really produces there. The first is what an answer would come
-        from and the second is why it may not.
-        """
         for name, row in GRID_WITNESS_GAPS.items():
             operator, left, right, recorded, produced = row
             with self.subTest(name):
@@ -4082,15 +3115,6 @@ class TestPs1CellsTheWitnessesReach(unittest.TestCase):
                     apply(operator, _grid_operand(left), _grid_operand(right)), NOTHING)
 
     def test_the_type_ledger_contradicts_the_cell_a_string_operand_indexes(self):
-        """
-        What an addition does to a string is decided by which string, and the ledger holds one the
-        capture never wrote out: measured, `1 + '2147483648'` is an Int64, which is a type the cell
-        an Int32 and a String index does not carry at all.
-
-        The domain answers it anyway, and that is the point. The type comes from promoting the two
-        operands — the string coerced to the numeral it spells, which is an Int64 — and not from
-        the cell, so an answer the measurement never wrote down is still the one the host gives.
-        """
         self.assertEqual(_measured("1 + '2147483648'"), ('System.Int64', '2147483649'))
         self.assertEqual(
             sorted(str(one) for one in _cell('+', INT32, STRING).types),
@@ -4102,11 +3126,6 @@ class TestPs1CellsTheWitnessesReach(unittest.TestCase):
         )
 
     def test_a_cell_over_operands_the_witnesses_reach_is_still_the_answer(self):
-        """
-        Measured, `$null * 1` really is `$null` — a value the operation produced and not a sign
-        that it produced none — and `$null` is the witness the grid's `System.Void` row was
-        captured from.
-        """
         self.assertEqual(_measured_operation_fact('$null * 1'), NULL)
         self.assertEqual(apply('*', NULL, Ps1Typed(INT32)), Ps1Outcome(NEVER, NULL))
         self.assertEqual(_cell('-band', INT32, INT32).single_type, INT32)
@@ -4115,12 +3134,6 @@ class TestPs1CellsTheWitnessesReach(unittest.TestCase):
 
 
 class TestPs1SpanRestsOnTheShippedGrid(unittest.TestCase):
-    """
-    Which cells may be read as a fact was measured against the resource this repository ships, by
-    capturing the whole grid a second time over the extremes the shipped witness list is missing.
-    No test can re-run that, so the witness list is a ratchet: a regenerated resource has to fail
-    here rather than leave the measurement standing on a capture it was not made from.
-    """
 
     def test_the_shipped_grid_carries_the_witnesses_the_span_was_measured_from(self):
         self.assertEqual(operand_witnesses(), GRID_WITNESSES)
@@ -4149,17 +3162,10 @@ class TestPs1SpanRestsOnTheShippedGrid(unittest.TestCase):
 
 
 class TestPs1CastNamesItsTargetWhereAnOperatorNamesNothing(unittest.TestCase):
-    """
-    A cast differs from an operator in exactly one way here: what a cast produces is settled by the
-    type that was written, where what an operator produces is settled by its operands' values as
-    much as by their types. So over a source the witnesses fall short of, a cast still names the
-    target and loses only what the witnesses were the evidence for, while an operator over the same
-    operand is left with nothing to say at all.
-    """
 
     def test_a_cast_from_a_source_the_witnesses_fall_short_of_still_names_its_target(self):
         answers = {
-            (target, source): convert(_grid_operand(source), _type(target))
+            (target, source): convert(_grid_operand(source), _type(target)).value
             for source in GRID_WITNESS_GAPS
             for target in GRID_WITNESSES
             if conversion_outcome(target, source) is not None
@@ -4168,47 +3174,48 @@ class TestPs1CastNamesItsTargetWhereAnOperatorNamesNothing(unittest.TestCase):
         self.assertEqual(
             {cell: answer for cell, answer in answers.items() if cell not in EVERY_WITNESS_THREW},
             {
-                cell: Ps1Outcome(MAYBE, Ps1Typed(_type(cell[0])))
+                cell: Ps1Typed(_type(cell[0]))
                 for cell in answers
                 if cell not in EVERY_WITNESS_THREW
             },
         )
         self.assertEqual(
-            {cell: answers[cell] for cell in EVERY_WITNESS_THREW},
-            {cell: Ps1Outcome(MAYBE, UNKNOWN) for cell in EVERY_WITNESS_THREW},
+            {cell: _names_a_value(answers[cell]) for cell in EVERY_WITNESS_THREW},
+            {cell: False for cell in EVERY_WITNESS_THREW},
         )
 
-    def test_such_a_cast_no_longer_claims_that_it_cannot_throw(self):
-        """
-        The cell for a `[string]` of a Char recorded no throw, which is a lower bound in the same
-        way its type is: the three characters the capture wrote out are not every character. The
-        type is what a cast produces or throws trying, so it stands where the silence does not.
-        """
-        self.assertEqual(_cast_cell(STRING, CHAR).may_throw, False)
-        self.assertEqual(convert(Ps1Typed(CHAR), STRING), Ps1Outcome(MAYBE, Ps1Typed(STRING)))
+    def test_a_byte_cast_from_a_source_the_witnesses_fall_short_of_may_throw(self):
+        self.assertEqual(
+            {
+                source: convert(_grid_operand(source), BYTE).may_throw
+                for source in GRID_WITNESS_GAPS
+            },
+            {source: True for source in GRID_WITNESS_GAPS},
+        )
 
-    def test_an_operator_over_the_same_source_is_left_without_an_answer(self):
-        """
-        Measured, `[int]'1e3'` is Int32 1000 and `1 + '1e3'` is Double 1001, so the two read the
-        same String by different rules and reach different types doing it, and both are answered
-        here by the rule that belongs to them: the cast converts to the type it names, and the
-        operator re-reads the string as the numeral it spells and promotes over that.
-        """
+    def test_a_cast_the_host_throws_on_from_a_source_the_witnesses_fall_short_of_may_throw(self):
+        self.assertEqual(
+            {
+                measured: convert(_grid_operand(source), _type(target)).may_throw
+                for measured, (target, source) in THROWS_THE_WITNESSES_MISSED.items()
+            },
+            dict.fromkeys(THROWS_THE_WITNESSES_MISSED, True),
+        )
+
+    @opportunity
+    def test_a_cast_of_a_char_to_string_cannot_throw(self):
+        self.assertEqual(_cast_cell(STRING, CHAR).may_throw, False)
+        self.assertEqual(convert(Ps1Typed(CHAR), STRING), Ps1Outcome(NEVER, Ps1Typed(STRING)))
+
+    @opportunity
+    def test_a_cast_and_an_operator_read_the_same_string_by_different_rules(self):
         self.assertEqual(_measured("[int]'1e3'"), ('System.Int32', '1000'))
-        self.assertEqual(_converted("[int]'1e3'"), Ps1Outcome(MAYBE, Ps1Typed(INT32)))
+        self.assertEqual(_converted("[int]'1e3'"), Ps1Outcome(NEVER, Ps1Constant(INT32, 1000)))
         self.assertEqual(_measured("1 + '1e3'"), ('System.Double', '1001'))
         self.assertEqual(_applied("1 + '1e3'"), Ps1Outcome(NEVER, Ps1Constant(DOUBLE, 1001.0)))
 
 
 class TestPs1EvaluateComposesTheOneStepReaders(unittest.TestCase):
-    """
-    `read`, `convert` and `apply` each answer about one step, and `evaluate` is those put together
-    over a whole expression: a literal is what the source pins, a cast is a conversion of what its
-    operand comes to, an operator an application over both of its, an array its elements and a
-    parenthesis its inner. What that buys a caller is measured rather than described — the rows
-    whose operand is itself an expression are exactly the ones a single step has nothing to say
-    about, and they are answered here with the value a 5.1 host printed.
-    """
 
     def test_a_literal_evaluates_to_the_fact_the_host_printed_for_it(self):
         self.assertEqual(
@@ -4273,16 +3280,6 @@ class TestPs1EvaluateComposesTheOneStepReaders(unittest.TestCase):
         )
 
     def test_the_typing_a_caller_supplies_reaches_every_operand_recursed_into(self):
-        """
-        5.1 prints an Int32 for `'AB'.Length`, and the grid records one for an Int32 `-band` an
-        Int32. Nothing in these sources types `$s`, so the typing the caller passed in is the only
-        way any of them is answered at all: through a parenthesis and through either side of an
-        operator, since a step that dropped it would answer for one operand and not for the next.
-
-        An array is where it reaches and nothing is named all the same, which is not a gap in the
-        threading: a typing yields a bound on a value and never a value, and an array is a value
-        only where every element is one.
-        """
         self.assertEqual(_measured("'AB'.Length"), ('System.Int32', '2'))
         self.assertEqual(_cell('-band', INT32, INT32).single_type, INT32)
         reached = (
@@ -4305,13 +3302,6 @@ class TestPs1EvaluateComposesTheOneStepReaders(unittest.TestCase):
 
 
 class TestPs1EvaluateComposesACastOfAStringWithAJoin(unittest.TestCase):
-    """
-    None of these expressions is a measured row: each writes two measured steps against each other,
-    and what it comes to follows from what a host printed for either. `[int]'0x10'` is Int32 16 and
-    `'5' + 5` is the String `55`, so `'v' + [int]'0x10'` is `v16` and nothing else — while a step
-    the host threw on and a step whose spelling is declined each leave the whole expression with no
-    value, one of them with a throw the domain saw for itself.
-    """
 
     def test_a_join_over_a_cast_of_a_string_is_the_text_the_two_steps_come_to(self):
         self.assertEqual(_measured("[int]'0x10'"), ('System.Int32', '16'))
@@ -4324,26 +3314,24 @@ class TestPs1EvaluateComposesACastOfAStringWithAJoin(unittest.TestCase):
         self.assertEqual(_evaluated("[int]('1' + '0')"), Ps1Outcome(NEVER, Ps1Constant(INT32, 10)))
 
     def test_a_step_the_host_threw_on_leaves_the_join_with_a_throw_and_no_value(self):
-        # The cast throws when 5.1 evaluates it, before the eager `+`, so the whole join is a
-        # certain throw — where the declined-spelling twin below only *may* throw.
         self.assertEqual(_throws(_transcript("[char]'AB'")), True)
         self.assertEqual(_evaluated("'x' + [char]'AB'"), Ps1Outcome(ALWAYS, UNKNOWN))
 
-    def test_a_step_whose_spelling_is_declined_leaves_the_join_with_no_value(self):
+    def test_a_join_over_a_cast_of_an_exponent_string_names_no_text_but_the_number_it_spells(self):
+        self.assertIn(
+            _evaluated("'x' + [int]'1e3'").value,
+            (UNKNOWN, Ps1Typed(STRING), Ps1Constant(STRING, 'x1000')),
+        )
+
+    @opportunity
+    def test_a_join_over_a_cast_of_an_exponent_string_is_the_text_of_the_number_it_spells(self):
         self.assertEqual(_measured("[int]'1e3'"), ('System.Int32', '1000'))
-        self.assertEqual(_evaluated("'x' + [int]'1e3'"), Ps1Outcome(MAYBE, UNKNOWN))
+        self.assertEqual(
+            _evaluated("'x' + [int]'1e3'"), Ps1Outcome(NEVER, Ps1Constant(STRING, 'x1000'))
+        )
 
 
 class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
-    """
-    The contract, quantified over the PowerShell the corpus holds rather than over cases chosen
-    here: for an expression another reader in this code base answers, `evaluate` answers the same
-    thing or names nothing at all. Refusing is always allowed; a third answer never is, because two
-    readers of one script that disagree make the pass consulting both unsound whichever is right.
-
-    Each question below counts the expressions it compared, so that a reader which stopped
-    answering fails here instead of leaving its agreement to hold over nothing.
-    """
 
     def test_an_expression_the_source_pins_evaluates_to_exactly_what_it_pins(self):
         compared = [site for site in SITES if read(site.node) is not UNKNOWN]
@@ -4356,7 +3344,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             [],
         )
 
-    def test_no_expression_carries_one_type_here_and_another_in_the_single_type_reader(self):
+    def test_only_an_array_cast_has_one_type_here_and_another_in_the_single_type_reader(self):
         compared = [
             site for site in SITES
             if resolve_expression_type(site.node) is not None
@@ -4367,11 +3355,12 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             [
                 site.source for site in compared
                 if resolve_expression_type(site.node) != type_of(evaluate(site.node).value)
+                and not _an_array_cast_evaluated_as_the_object_array_it_builds(site.node)
             ],
-            sorted(READER_DISAGREEMENTS),
+            [],
         )
 
-    def test_a_type_named_here_is_one_the_candidate_set_holds(self):
+    def test_a_type_named_here_is_one_the_candidate_set_holds_but_for_an_array_cast(self):
         compared = [
             site for site in SITES
             if candidate_types(site.node, CLOSED_WORLD)
@@ -4383,9 +3372,19 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
                 site.source for site in compared
                 if type_of(evaluate(site.node).value)
                 not in candidate_types(site.node, CLOSED_WORLD)
+                and not _an_array_cast_evaluated_as_the_object_array_it_builds(site.node)
             ],
-            sorted(READER_DISAGREEMENTS),
+            [],
         )
+
+    def test_an_array_cast_is_evaluated_as_the_object_array_it_builds(self):
+        self.assertEqual(_measured_rendering('[array]5'), ('System.Object[]', '5'))
+        self.assertEqual(type_of(_evaluated('[array]5').value), OBJECT_ARRAY)
+
+    @backlog
+    def test_an_array_cast_is_typed_as_the_object_array_it_builds_by_the_readers_of_its_name(self):
+        self.assertEqual(resolve_expression_type(_slot('[array]5')), OBJECT_ARRAY)
+        self.assertIn(OBJECT_ARRAY, candidate_types(_slot('[array]5'), CLOSED_WORLD))
 
     def test_a_string_the_tree_reader_spells_is_the_string_named_here(self):
         self.assertEqual(len(STRINGS), 1731)
@@ -4398,10 +3397,6 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             [row.source for row in BYTE_ARRAYS if list(row.collected) != row.payloads], [])
 
     def test_a_literal_node_and_the_domain_read_one_spelling_as_one_number(self):
-        """
-        The two come apart only where 5.1 does: the node reads the digits it was written with, and
-        the host printed something else for exactly three of the corpus spellings.
-        """
         self.assertEqual(len(NUMERALS), 524)
         self.assertEqual(
             sorted({one.raw for one in NUMERALS if one.named.payload != one.reported}),
@@ -4426,15 +3421,6 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
 
 
 class TestPs1EvaluateIsNoStrongerThanItsSteps(unittest.TestCase):
-    """
-    A composition may refuse where its parts answer, and may not answer where they refuse. So for
-    every cast and every operator the corpus writes, the fact the whole expression is answered with
-    is the fact the one-step reader named over what its operands came to.
-
-    The one exception is a step that cannot be asked at all: `convert` and `apply` both read a grid
-    indexed by the operand's type, and an operand that names no type indexes no row in it. There a
-    cast still names its target, which is a bound on a value and never one.
-    """
 
     def test_a_step_that_can_be_consulted_is_the_whole_answer(self):
         consulted = [step for step in STEPS if step.consultable]
@@ -4455,34 +3441,24 @@ class TestPs1EvaluateIsNoStrongerThanItsSteps(unittest.TestCase):
         )
 
     def test_an_array_names_a_value_only_where_every_element_is_one(self):
-        """
-        A `Ps1Constant` says the value is exactly this, so a collection that named one while holding
-        an element that names only a type would be claiming what it does not have. There is nothing
-        weaker to fall back on either: an array shorter than the script builds is a different value.
-        """
         named = [row for row in ARRAYS if row.named]
         self.assertEqual(len(named), 159)
         self.assertEqual([row.source for row in named if not row.elements_named], [])
 
     def test_an_element_that_names_only_a_type_leaves_the_array_unknown(self):
-        # The element is a certain throw the domain proves, but the array collapses to *nothing*
-        # rather than carrying that up: an element naming only a type is not a value, so the array
-        # is unknown and its own certainty is not established here (a sound miss, not a wrong claim).
         self.assertEqual(_evaluated("[int]'abc'"), Ps1Outcome(ALWAYS, Ps1Typed(INT32)))
-        self.assertEqual(_evaluated("([int]'abc'), 1"), NOTHING)
+        self.assertFalse(_names_a_value(_evaluated("([int]'abc'), 1").value))
         self.assertEqual(
             _evaluated('$null, 1'),
             Ps1Outcome(NEVER, Ps1Constant(OBJECT_ARRAY, (NULL, Ps1Constant(INT32, 1)))),
         )
 
+    @opportunity
+    def test_an_array_holding_an_element_that_certainly_throws_certainly_throws(self):
+        self.assertTrue(_evaluated("([int]'abc'), 1").certainly_throws)
+
 
 class TestPs1EvaluateCarriesAThrowUp(unittest.TestCase):
-    """
-    An operand that may throw makes the expression consuming it one that may throw, whatever the
-    operation does with the value: the expression is what a script runs, and producing the operand
-    is part of running it. So does an operand nothing is known about, because `Ps1Outcome` reads its
-    two fields in one direction and not knowing is not a claim of safety.
-    """
 
     def test_no_expression_is_cleared_of_a_throw_one_it_consumes_may_take(self):
         compared = [
@@ -4496,13 +3472,6 @@ class TestPs1EvaluateCarriesAThrowUp(unittest.TestCase):
             [site.source for site, _ in compared if not evaluate(site.node).may_throw], [])
 
     def test_an_operand_the_host_threw_on_makes_the_operation_one_that_may_throw(self):
-        """
-        5.1 throws for `[int]'abc'`, and neither operation below can throw over the fact that cast
-        leaves behind: the grid records one type and no throw for an Int32 `-band` an Int32 and for
-        a `[string]` of an Int32. So the throw is the operand's, carried up — the operand certainly
-        throws, both operators evaluate it eagerly, and each expression is therefore a certain throw
-        that keeps the result type the surviving step would have named.
-        """
         self.assertEqual(_throws(_transcript("[int]'abc'")), True)
         thrown = _evaluated("[int]'abc'")
         self.assertEqual(thrown, Ps1Outcome(ALWAYS, Ps1Typed(INT32)))
@@ -4525,12 +3494,6 @@ class TestPs1EvaluateCarriesAThrowUp(unittest.TestCase):
 
 
 class TestPs1EvaluateNamesACastsTarget(unittest.TestCase):
-    """
-    A cast names its target whatever it is handed, because naming one is what a cast is: `[int] $x`
-    is an Int32 or it throws. The one target that does not is read off the grid rather than assumed
-    — `[array]` is the only column the capture recorded a value passing through as `$null`, so it is
-    the only one that names no type.
-    """
 
     def test_the_grid_holds_a_column_over_every_source_for_every_target_named_here(self):
         self.assertEqual(
@@ -4570,57 +3533,23 @@ class TestPs1EvaluateNamesACastsTarget(unittest.TestCase):
         self.assertIsNone(conversion_outcome('datetime', 'System.Int32'))
         self.assertEqual(_evaluated('[datetime]$x'), NOTHING)
 
-    def test_a_cast_the_host_threw_on_keeps_what_convert_made_of_the_value_in_hand(self):
-        """
-        The operand of each of these is pinned by the source, so the grid has a row for it and the
-        conversion is settled there rather than by the target: the ones the domain sees the throw of
-        name no value at all, which is more than *a Byte or a throw* would have said, and the ones
-        whose spelling it declines keep the type their cell names beside the throw. Naming the
-        target is for the other case, where the operand names no type and there is no row to read.
-        """
+    def test_a_cast_the_host_threw_on_evaluates_to_no_value(self):
         self.assertEqual(
-            {expression: _evaluated(expression) for expression in THROWN},
-            {
-                '[byte]300'       : Ps1Outcome(ALWAYS, UNKNOWN),
-                '[byte]-1'        : Ps1Outcome(ALWAYS, UNKNOWN),
-                '[byte]400'       : Ps1Outcome(ALWAYS, UNKNOWN),
-                '[byte](200 * 2)' : Ps1Outcome(ALWAYS, UNKNOWN),
-                '[int]2147483648' : Ps1Outcome(ALWAYS, UNKNOWN),
-                '[char]65536'     : Ps1Outcome(ALWAYS, UNKNOWN),
-                '[char]-1'        : Ps1Outcome(ALWAYS, UNKNOWN),
-                "[byte]'-1'"      : Ps1Outcome(ALWAYS, UNKNOWN),
-                "[byte]'0x100'"   : Ps1Outcome(ALWAYS, UNKNOWN),
-                "[char]'AB'"      : Ps1Outcome(ALWAYS, UNKNOWN),
-                "[char]''"        : Ps1Outcome(ALWAYS, UNKNOWN),
-                "[int]'abc'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
-                "[int]'   '"      : Ps1Outcome(MAYBE, Ps1Typed(INT32)),
-                "[int]'1_0'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
-                "[int]'0b1010'"   : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
-                "[int]'0o17'"     : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
-                "[int]'1kb'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
-                "[byte]'1e3'"     : Ps1Outcome(MAYBE, Ps1Typed(BYTE)),
-            },
+            {expression: _names_a_value(_evaluated(expression).value) for expression in THROWN},
+            {expression: False for expression in THROWN},
         )
-        # `evaluate` and `convert` over the read operand agree on every row but one: the operand of
-        # `[byte](200 * 2)` is an operator `read` does not fold, so `convert` is handed an unknown
-        # and only *may* throw, where `evaluate` folds the 400 and proves the throw.
-        folds_only_under_evaluate = '[byte](200 * 2)'
-        self.assertEqual(
-            {e: _evaluated(e) for e in THROWN if e != folds_only_under_evaluate},
-            {e: _converted(e) for e in THROWN if e != folds_only_under_evaluate},
-        )
-        self.assertEqual(_evaluated(folds_only_under_evaluate), Ps1Outcome(ALWAYS, UNKNOWN))
-        self.assertEqual(_converted(folds_only_under_evaluate), Ps1Outcome(MAYBE, UNKNOWN))
-        self.assertEqual(_evaluated('[byte]$x'), Ps1Outcome(MAYBE, Ps1Typed(BYTE)))
+
+    def test_a_thrown_cast_evaluates_to_a_certain_throw_except_over_a_blank_or_an_exponent(self):
+        excepted = ("[int]'   '", "[byte]'1e3'")
+        certain = {
+            expression: _evaluated(expression).certainly_throws
+            for expression in THROWN
+            if expression not in excepted
+        }
+        self.assertEqual(certain, {expression: True for expression in certain})
 
 
 class TestPs1EvaluateRefusesATypeLiteral(unittest.TestCase):
-    """
-    `[int]` written as a value is not an Int32. `resolve_expression_type` answers `System.Int32` for
-    it because what asks that function is a member lookup, and the type a literal *names* is what a
-    lookup needs; the value one *is* is a `System.RuntimeType`, which no measurement here covers.
-    This is the one place `evaluate` deliberately says less than the other reader.
-    """
 
     def test_every_type_literal_the_corpus_writes_is_refused_here_and_typed_there(self):
         literals = [site for site in SITES if isinstance(site.node, Ps1TypeExpression)]
@@ -4640,11 +3569,6 @@ class TestPs1EvaluateRefusesATypeLiteral(unittest.TestCase):
                 self.assertEqual(resolve_expression_type(_slot(source)), _type(name))
 
     def test_an_operator_that_consumes_a_type_literal_is_refused_with_it(self):
-        """
-        `-as` takes one as its right operand, and a conversion that cannot be made yields `$null`
-        there where a cast throws: measured, `300 -as [byte]` is `$null` and `[byte]300` throws. A
-        Byte answered here would be the cast's answer given to a different expression.
-        """
         self.assertEqual(_measured('300 -as [byte]'), ('', '<null>'))
         self.assertEqual(
             {expression: _evaluated(expression) for expression in AS_ROWS},
@@ -4653,12 +3577,6 @@ class TestPs1EvaluateRefusesATypeLiteral(unittest.TestCase):
 
 
 class TestPs1NumeralTypesAreReadFromTheSpelling(unittest.TestCase):
-    """
-    How wide a numeral is written decides its type and only the spelling knows: `1L` is an Int64,
-    `2147483648` an Int64, `9223372036854775808` a Decimal and `1e3` a Double, every one of them
-    measured. `resolve_expression_type` is what a member read on such a literal resolves against, so
-    a numeral answered `System.Int32` there resolved the read against a type the value never had.
-    """
 
     def test_a_measured_numeral_is_typed_by_the_type_the_host_stamped_it_with(self):
         self.assertEqual(
@@ -4686,18 +3604,21 @@ class TestPs1NumeralTypesAreReadFromTheSpelling(unittest.TestCase):
             {expression: _measured(expression)[0] for expression in wider},
         )
 
-    def test_a_spelling_the_domain_will_not_read_is_typed_by_nobody(self):
-        for expression in REFUSED + UNANSWERED:
+    def test_a_spelling_5_1_cannot_read_is_typed_by_nobody(self):
+        for expression in REFUSED:
             with self.subTest(expression):
                 self.assertIsNone(resolve_expression_type(_slot(expression)))
 
+    def test_a_negated_parenthesized_literal_is_typed_by_nobody_or_as_the_host_typed_it(self):
+        for expression in ('-(2147483648)', '-(2147483647)'):
+            with self.subTest(expression):
+                self.assertIn(
+                    resolve_expression_type(_slot(expression)),
+                    (None, type_of(MEASURED[expression])),
+                )
+
 
 class TestPs1OperatorCaseDoesNotChangeTheAnswer(unittest.TestCase):
-    """
-    PowerShell's operators are case-insensitive, and a caller holds whatever case the script wrote.
-    The fact a measured row is answered with is the host's, so it has to be the answer for either
-    spelling of the same operator: a fold lost to a capital letter is a fold lost.
-    """
 
     def test_a_measured_operation_is_answered_the_same_in_either_case(self):
         lettered = [

@@ -24,19 +24,10 @@ def _reach(source: str) -> tuple[Ps1Script, Ps1ErrorStateReach]:
 
 
 def _raiser(tree: Ps1Script) -> Ps1CastExpression:
-    """
-    The `[Int]'abc'` cast every fixture raises with. It is nested inside the statement that raises,
-    and `persistent_read_observed_after` locates it to that statement, so passing the cast asks the
-    query about the raiser wherever it is written — at the top level or inside a branch.
-    """
     return next(node for node in tree.walk() if isinstance(node, Ps1CastExpression))
 
 
 def _success_read(tree: Ps1Script) -> Ps1Variable:
-    """
-    The single `$?` occurrence of a fixture, wherever it is written. `success_flag_at` locates it to
-    the statement that reads it, so passing the variable asks the query about that read's position.
-    """
     return next(
         node for node in tree.walk() if isinstance(node, Ps1Variable) and node.name == '?')
 
@@ -97,10 +88,6 @@ class TestPs1PersistentReadObservedAfterAnswersFromReachability(TestBase):
 
 
 class TestPs1TheErrorReadSitesSplitTheTwoChannels(TestBase):
-    """
-    The channels a raise writes are told apart where the naming knowledge lives, so the persistent
-    query cannot absorb the success flag.
-    """
 
     def test_the_error_record_is_a_persistent_site_and_the_success_flag_a_success_site(self):
         tree = _parse("""
@@ -118,13 +105,6 @@ class TestPs1TheErrorReadSitesSplitTheTwoChannels(TestBase):
 
 
 class TestPs1SuccessFlagAtDecidesFromPosition(TestBase):
-    """
-    `$?` resets on every statement, so its value is a property of what runs immediately before the
-    read. `success_flag_at` decides it from that position: `True` at the top of the root script,
-    `False` when the statement before certainly raises, and `None` — leave it in place — wherever the
-    position cannot settle it. Each pin carries a same-shape control that moves the verdict, so the
-    query is tested by what selects the answer and not by one input's incidental shape.
-    """
 
     def test_a_read_at_the_top_of_the_root_script_is_true(self):
         tree, reach = _reach("if ($?) { 'x' }")
@@ -218,12 +198,6 @@ class TestPs1SuccessFlagAtDecidesFromPosition(TestBase):
 
 
 class TestPs1WritesSuccessFlagIsTheKillSet(TestBase):
-    """
-    A leaf expression-statement resets `$?` on every path it takes; a compound statement and a
-    function definition each leave it on at least one path, so they are transparent. `writes_success_flag`
-    is that measured table — the KILL set the veto's reaching-definition walk blocks on and the gate
-    it opens with.
-    """
 
     def test_a_store_is_a_writer(self):
         tree = _parse('$junk = 5')
@@ -234,14 +208,6 @@ class TestPs1WritesSuccessFlagIsTheKillSet(TestBase):
         self.assertTrue(Ps1ErrorStateReach.writes_success_flag(tree.body[0]))
 
     def test_an_assignment_whose_subexpression_runs_no_statement_still_writes(self):
-        """
-        Measured on Windows PowerShell 5.1: a leaf assignment resets `$?` even when its right-hand
-        subexpression runs zero statements. `Get-Item C:\\missing -EA SilentlyContinue; $x =
-        $(if ($false) {1}); $?` reads `$true`, and so do `$()`, `@()`, and a bare `$(if ($false)
-        {1})` statement. The KILL set is the statement kind, not what the subexpression evaluates, so
-        such a statement must never be read as transparent — doing so would free an earlier writer a
-        later read still observes.
-        """
         tree = _parse('$x = $(if ($false) { 1 })')
         self.assertTrue(Ps1ErrorStateReach.writes_success_flag(tree.body[0]))
 
@@ -262,13 +228,6 @@ class TestPs1WritesSuccessFlagIsTheKillSet(TestBase):
 
 
 class TestPs1SuccessFlagWriteObservedIsAReachingDefinition(TestBase):
-    """
-    Whether removing a `$?` writer would change what a live `$?` read sees — the reaching-definition
-    of the reset-on-every-statement flag. A writer is kept when a read is reachable from it over plain
-    control flow through only transparent statements, and freed when a later writer overwrites the flag
-    first, when the statement is transparent so removing it changes nothing, or when the script reads
-    `$?` nowhere. Each pin carries a same-shape control that moves the verdict.
-    """
 
     def test_a_writer_observed_through_a_transparent_no_op_is_kept(self):
         tree, reach = _reach("""
@@ -286,10 +245,10 @@ class TestPs1SuccessFlagWriteObservedIsAReachingDefinition(TestBase):
         """)
         self.assertFalse(reach.success_flag_write_observed(tree.body[0]))
 
-    def test_the_later_writer_the_read_observes_is_itself_kept(self):
+    def test_a_later_writer_that_changes_what_the_read_sees_is_kept(self):
         tree, reach = _reach("""
             $junk = 5
-            $other = 1
+            $other = [Int]'abc'
             Write-Host $?
         """)
         self.assertTrue(reach.success_flag_write_observed(tree.body[1]))

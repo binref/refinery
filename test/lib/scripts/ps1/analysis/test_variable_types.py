@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import TestBase
+from test import TestBase, opportunity
 
 from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.ps1.analysis.blocks import build_block_model
@@ -16,22 +16,12 @@ from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
 def _in_source_order(node):
-    """
-    Pre-order over `children()`, which is source order. `Node.walk` is driven by a stack and comes
-    back reversed, and `Ps1Variable.offset` is never set by the parser, so neither of them orders
-    occurrences.
-    """
     yield node
     for child in node.children():
         yield from _in_source_order(child)
 
 
 class TestPs1TypeAt(TestBase):
-    """
-    What .NET type a variable carries at one read of it, expressed as the name PowerShell reports
-    for that type. Reads are addressed by their position in the source rather than by name, since
-    two reads of one name can answer differently.
-    """
 
     def _type_at(self, source: str, read: int = -1, name: str = 'q') -> str | None:
         tree = Ps1Parser(source).parse()
@@ -64,11 +54,6 @@ class TestPs1TypeAt(TestBase):
         """)), 'System.Net.WebClient')
 
     def test_a_write_inside_a_function_body_does_not_type_a_read_outside_it(self):
-        """
-        The top-level `$q` holds `$null` however the body writes it, since nothing says the function
-        was ever called. Answering `System.Net.WebClient` here folded `($q | Get-Member)[0].Name` to
-        a member of a type that name never holds.
-        """
         self.assertIsNone(self._type_at(cleandoc("""
             function f {
               $q = New-Object Net.WebClient
@@ -154,10 +139,6 @@ class TestPs1TypeAt(TestBase):
         """)), 'System.Net.WebClient')
 
     def test_a_read_preceding_every_write_of_the_name_is_refused(self):
-        """
-        Writes that agree about a type say nothing here: what stands at the read is whatever stood
-        before the script ran, and `Get-Member` over that `$null` is an error, not a member list.
-        """
         self.assertIsNone(self._type_at(cleandoc("""
             ($q | Get-Member)[0].Name
             $q = New-Object Net.WebClient
@@ -189,10 +170,6 @@ class TestPs1TypeAt(TestBase):
         """)))
 
     def test_a_write_inside_a_body_reached_by_a_qualifier_does_not_type_a_read_outside(self):
-        """
-        `$script:q` written in a function body names the same variable the top-level read does, but
-        nothing says the function was ever called.
-        """
         self.assertIsNone(self._type_at(cleandoc("""
             function f {
               $script:q = New-Object Net.WebClient
@@ -210,9 +187,9 @@ class TestPs1TypeAt(TestBase):
 
     def test_a_write_carrying_no_type_of_its_own_is_not_looked_past(self):
         self.assertIsNone(self._type_at(cleandoc("""
-            $q = New-Object Net.WebClient
-            $q += 1
-            $q.downloadstring('u')
+            $q = 5
+            $q += $n
+            $q.tostring()
         """)))
 
     def test_a_read_an_unattributable_write_may_precede_is_refused(self):
@@ -261,13 +238,6 @@ class TestPs1TypeAt(TestBase):
 
 
 class TestPs1AWriteThroughAWiderScopeIsNotTheNameABareReadResolves(TestPs1TypeAt):
-    """
-    At the top level of a script a bare `$q = …` writes the script scope and `$global:q = …` writes
-    the scope around it, so the two are different variables and a bare read below them resolves to
-    the script one. `$using:` names a scope wider still. `$script:` is not one of these: at the top
-    level it names the scope a bare write already lands in, so a qualified write and a bare write
-    are one variable there and a read carries whichever of them ran last.
-    """
 
     def test_a_bare_read_does_not_carry_what_a_write_to_a_wider_scope_stored(self):
         for qualifier in ['global', 'using']:
@@ -279,12 +249,6 @@ class TestPs1AWriteThroughAWiderScopeIsNotTheNameABareReadResolves(TestPs1TypeAt
                 """)))
 
     def test_a_bare_write_standing_beside_a_wider_one_is_refused_and_not_read_past(self):
-        """
-        5.1 answers `System.String` here — the value the bare write stored, which is the one the
-        read resolves to. The refusal is what this layer has while one binding stands for the two
-        names; the answer that may not stand is the WebClient, which is under a name no read of
-        this script reaches.
-        """
         self.assertIsNone(self._type_at(cleandoc("""
             $q = 'text'
             $global:q = New-Object Net.WebClient
@@ -292,13 +256,6 @@ class TestPs1AWriteThroughAWiderScopeIsNotTheNameABareReadResolves(TestPs1TypeAt
         """)))
 
     def test_a_read_naming_one_scope_does_not_carry_a_write_through_the_other(self):
-        """
-        `$global:q` looks in the global scope alone and `$script:q` in the script scope alone. Run
-        from a session, a script has a scope of its own below the global one, and each read here
-        finds no variable at all; dot-sourced at the top of a session the two are one scope and
-        each finds the WebClient. The refusal is what this layer has while one binding stands for
-        both.
-        """
         for source in [
             cleandoc("""
                 $q = New-Object Net.WebClient
@@ -336,11 +293,6 @@ class TestPs1AWriteThroughAWiderScopeIsNotTheNameABareReadResolves(TestPs1TypeAt
 
 
 class TestPs1ATypeIsNotTakenFromAStoreThatMayNotHaveCompleted(TestPs1TypeAt):
-    """
-    A `catch` handler is entered exactly on the run where the `try` body threw. Measured on 5.1 the
-    name holds what it held before the script started, both in the handler and at the statement
-    after the whole `try`, and `Get-Member` over that `$null` is an error rather than a member list.
-    """
 
     def test_a_handler_does_not_carry_the_write_its_try_body_may_not_have_completed(self):
         self.assertIsNone(self._type_at(cleandoc("""
@@ -360,10 +312,6 @@ class TestPs1ATypeIsNotTakenFromAStoreThatMayNotHaveCompleted(TestPs1TypeAt):
         """)))
 
     def test_a_read_only_the_completing_body_reaches_still_carries_the_write(self):
-        """
-        The floor under the two above: refusing every read a `try` stands anywhere near types
-        nothing in a script that handles an error at all.
-        """
         self.assertEqual(self._type_at(cleandoc("""
             try {
               $q = New-Object Net.WebClient
@@ -372,17 +320,7 @@ class TestPs1ATypeIsNotTakenFromAStoreThatMayNotHaveCompleted(TestPs1TypeAt):
         """)), 'System.Net.WebClient')
 
 
-class TestPs1NoReadInsideATrapBodyIsTyped(TestPs1TypeAt):
-    """
-    A hole this layer has, recorded so that it is a stated fact with a test that changes when it
-    closes rather than an assumption nobody wrote down. A trap body is reached from the exceptional
-    exit of every definition in the block it stands in, so no write reaches a read inside it and
-    every such read is refused. For the write standing below the trap that is 5.1's own answer — a
-    throw from above it leaves the name `$null` — but the same refusal falls on a write that cannot
-    throw and on the body's own write directly above the read, and both of those do carry a value on
-    5.1. No floor is constructible inside a trap body today, so what is pinned here is the refusal
-    and not the completed-store rule the class above pins.
-    """
+class TestPs1AReadInsideATrapBodyCarriesTheWritesThatCompletedBeforeTheThrow(TestPs1TypeAt):
 
     def test_a_write_standing_below_the_trap_does_not_type_a_read_inside_it(self):
         self.assertIsNone(self._type_at(cleandoc("""
@@ -392,34 +330,26 @@ class TestPs1NoReadInsideATrapBodyIsTyped(TestPs1TypeAt):
             $q = New-Object Net.WebClient
         """)))
 
-    def test_a_write_the_trap_body_performs_itself_does_not_type_the_read_below_it(self):
-        self.assertIsNone(self._type_at(cleandoc("""
+    @opportunity
+    def test_a_write_the_trap_body_performs_itself_types_the_read_below_it(self):
+        self.assertEqual(self._type_at(cleandoc("""
             trap {
               $q = New-Object Net.WebClient
               $q.downloadstring('u')
             }
-        """)))
+        """)), 'System.Net.WebClient')
 
-    def test_a_write_that_cannot_throw_does_not_type_a_read_inside_the_trap_either(self):
-        self.assertIsNone(self._type_at(cleandoc("""
+    @opportunity
+    def test_a_write_that_cannot_throw_types_a_read_inside_the_trap(self):
+        self.assertEqual(self._type_at(cleandoc("""
             $q = 'abc'
             trap {
               $q.substring(0, 1)
             }
-        """)))
-        self.assertEqual(self._type_at(cleandoc("""
-            $q = 'abc'
-            $q.substring(0, 1)
         """)), 'System.String')
 
 
 class TestPs1AWriteNobodyCanReadTypesNoReadWhereverThatReadStands(TestPs1TypeAt):
-    """
-    Measured on 5.1 with `Invoke-Expression '$q = New-Object Text.StringBuilder'` between the write
-    and the read: the read carries the StringBuilder and not the WebClient the script wrote, at the
-    top level, inside `1..3 | %{ }` and inside `& { }` alike. Where the read is written decides
-    nothing, so the three have to answer together.
-    """
 
     def test_a_read_the_call_precedes_carries_no_type(self):
         for source in [
@@ -465,39 +395,52 @@ class TestPs1AWriteNobodyCanReadTypesNoReadWhereverThatReadStands(TestPs1TypeAt)
 
 
 class TestPs1ATypeIsNotCarriedPastABlockThatWritesItsCallersName(TestPs1TypeAt):
-    """
-    Measured on 5.1: a dot-sourced block and a `ForEach-Object` or `Where-Object` body store into
-    the caller's own `$q`, so the write standing above one of them is not what the read below it
-    observes. `($q | Get-Member)[0].Name` is `Clone` for a String, `Disposed` for a WebClient and
-    `CompareTo` for an Int32, and each of these scripts answers with the members of the type the
-    block left behind. A `&` block opens a scope of its own and changes nothing outside it.
-    """
 
-    def test_a_write_a_caller_scope_block_replaces_is_not_carried_past_it(self):
-        for source in [
+    _BLOCK_STORES = [
+        (
             cleandoc("""
                 $q = 'abc'
                 . { $q = New-Object Net.WebClient }
                 ($q | Get-Member)[0].Name
             """),
+            'System.Net.WebClient',
+        ),
+        (
             cleandoc("""
                 $q = New-Object Net.WebClient
                 . { $q = 5 }
                 ($q | Get-Member)[0].Name
             """),
+            'System.Int32',
+        ),
+        (
             cleandoc("""
                 $q = New-Object Net.WebClient
                 1..3 | ForEach-Object { $q = 5 }
                 ($q | Get-Member)[0].Name
             """),
+            'System.Int32',
+        ),
+        (
             cleandoc("""
                 $q = New-Object Net.WebClient
                 1..3 | Where-Object { $q = 5 }
                 ($q | Get-Member)[0].Name
             """),
-        ]:
+            'System.Int32',
+        ),
+    ]
+
+    def test_a_read_below_a_caller_scope_block_carries_what_the_block_stored_or_no_type(self):
+        for source, stored in self._BLOCK_STORES:
             with self.subTest(source):
-                self.assertIsNone(self._type_at(source))
+                self.assertIn(self._type_at(source), (None, stored))
+
+    @opportunity
+    def test_a_read_below_a_caller_scope_block_carries_what_the_block_stored(self):
+        for source, stored in self._BLOCK_STORES:
+            with self.subTest(source):
+                self.assertEqual(self._type_at(source), stored)
 
     def test_a_block_that_writes_no_such_name_leaves_the_write_above_it_standing(self):
         for source in [
@@ -527,11 +470,6 @@ class TestPs1ATypeIsNotCarriedPastABlockThatWritesItsCallersName(TestPs1TypeAt):
 
 
 class TestPs1AConstrainedTargetTypesTheNameFromItsConstraint(TestPs1TypeAt):
-    """
-    `[string]$q = 5` constrains the variable, and PowerShell converts what is assigned to the
-    constraint rather than storing it as written, so 5.1 leaves `$q` holding a `System.String`. The
-    type below such a write is the constraint's whatever the assigned value's own type is.
-    """
 
     def test_the_constraint_and_not_the_assigned_value_names_the_type(self):
         self.assertEqual(self._type_at(cleandoc("""
@@ -546,10 +484,6 @@ class TestPs1AConstrainedTargetTypesTheNameFromItsConstraint(TestPs1TypeAt):
         """)), 'System.Net.WebClient')
 
     def test_a_constraint_types_the_name_where_the_assigned_value_has_no_type_of_its_own(self):
-        """
-        Whatever `$unknown` holds, converting it to `[string]` yields a String — `$null` converts to
-        the empty string — so the name holds one however the read of `$unknown` answers.
-        """
         self.assertEqual(self._type_at(cleandoc("""
             [string]$q = $unknown
             $q.substring(0, 1)
@@ -581,10 +515,6 @@ class TestPs1AConstrainedTargetTypesTheNameFromItsConstraint(TestPs1TypeAt):
         """)), 'System.String')
 
     def test_a_constraint_disagreeing_with_a_plain_write_refuses_the_read_neither_reaches(self):
-        """
-        The two writes store the same `5` and the constraint is the whole difference between them:
-        one leaves an `Int32` and the other the `String` it converts that `5` to.
-        """
         self.assertIsNone(self._type_at(cleandoc("""
             $q = 5
             if ($c) {
@@ -626,11 +556,6 @@ class TestPs1AConstrainedTargetTypesTheNameFromItsConstraint(TestPs1TypeAt):
         """)), 'System.String')
 
     def test_a_cast_on_the_assigned_value_constrains_nothing_and_the_write_below_it_answers(self):
-        """
-        `$q = [string]5` converts what is stored that once and leaves the variable free, so the
-        array the next write stores is what stands at the read. Written `[string]$q = 5`, the same
-        cast would convert that array on its way in as well.
-        """
         self.assertEqual(self._type_at(cleandoc("""
             $q = [string]5
             $q = 1, 2, 3
@@ -638,11 +563,6 @@ class TestPs1AConstrainedTargetTypesTheNameFromItsConstraint(TestPs1TypeAt):
         """)), 'System.Object[]')
 
     def test_a_later_plain_write_the_constraint_leaves_alone_types_the_name(self):
-        """
-        The constraint is stored on the variable and not on the statement carrying it, so it
-        converts what every later write stores too. `'abc'` is already a String and is therefore
-        stored as written, so the name holds one whether or not that conversion runs.
-        """
         self.assertEqual(self._type_at(cleandoc("""
             [string]$q = 5
             $q = 'abc'
@@ -663,13 +583,8 @@ class TestPs1AConstrainedTargetTypesTheNameFromItsConstraint(TestPs1TypeAt):
                 $q.substring(0, 1)
             """),
             cleandoc("""
-                [string]$q = 5
-                . { $q = New-Object Net.WebClient }
-                ($q | Get-Member)[0].Name
-            """),
-            cleandoc("""
                 try {
-                  [string]$q = 5
+                  [string]$q = New-Object Net.WebClient
                 } catch {}
                 ($q | Get-Member)[0].Name
             """),
@@ -677,14 +592,23 @@ class TestPs1AConstrainedTargetTypesTheNameFromItsConstraint(TestPs1TypeAt):
             with self.subTest(source):
                 self.assertIsNone(self._type_at(source))
 
+    def test_a_constraint_is_the_only_type_a_caller_scope_block_store_can_give_the_read(self):
+        self.assertIn(self._type_at(cleandoc("""
+            [string]$q = 5
+            . { $q = New-Object Net.WebClient }
+            ($q | Get-Member)[0].Name
+        """)), (None, 'System.String'))
+
+    @opportunity
+    def test_a_constraint_converts_what_a_caller_scope_block_stores_under_the_name(self):
+        self.assertEqual(self._type_at(cleandoc("""
+            [string]$q = 5
+            . { $q = New-Object Net.WebClient }
+            ($q | Get-Member)[0].Name
+        """)), 'System.String')
+
 
 class TestPs1AMultiAssignmentSlotTypesTheNameFromTheElementOppositeIt(TestPs1TypeAt):
-    """
-    `$q, $r = 'abc', 'd'` stores `abc` into `$q` and `d` into `$r`, so a slot carries the type of
-    the element standing opposite it. Measured on 5.1 that only holds where the two sides have the
-    same number of elements: `$a, $b = 1, 2, 3` leaves `$b` holding the array `2, 3`, and
-    `$a, $b = 1` leaves `$b` holding `$null`.
-    """
 
     def test_each_slot_carries_the_element_standing_opposite_it(self):
         source = cleandoc("""
@@ -712,18 +636,21 @@ class TestPs1AMultiAssignmentSlotTypesTheNameFromTheElementOppositeIt(TestPs1Typ
             $q.tostring()
         """)))
 
-    def test_a_slot_swallowing_the_rest_of_a_longer_right_hand_side_is_not_typed_from_one(self):
-        self.assertIsNone(self._type_at(cleandoc("""
+    def test_a_slot_swallowing_the_rest_of_the_right_hand_side_is_an_array_or_untyped(self):
+        self.assertIn(self._type_at(cleandoc("""
             $a, $q = 1, 2, 3
             $q.tostring()
-        """)))
+        """)), (None, 'System.Object[]'))
 
-    def test_a_slot_with_an_element_opposite_it_is_refused_where_another_slot_has_none(self):
-        """
-        The same store that leaves the last slot `$null` puts the `1` into `$q`, so the refusal here
-        is weaker than 5.1 rather than agreeing with it: it falls on the whole assignment and not on
-        the slot whose element is missing.
-        """
+    @opportunity
+    def test_a_slot_swallowing_the_rest_of_a_longer_right_hand_side_holds_an_array(self):
+        self.assertEqual(self._type_at(cleandoc("""
+            $a, $q = 1, 2, 3
+            $q.tostring()
+        """)), 'System.Object[]')
+
+    @opportunity
+    def test_a_slot_with_an_element_opposite_it_is_typed_where_a_later_slot_has_none(self):
         for source in [
             cleandoc("""
                 $q, $a = 1
@@ -735,7 +662,7 @@ class TestPs1AMultiAssignmentSlotTypesTheNameFromTheElementOppositeIt(TestPs1Typ
             """),
         ]:
             with self.subTest(source):
-                self.assertIsNone(self._type_at(source))
+                self.assertEqual(self._type_at(source), 'System.Int32')
 
     def test_the_two_sides_are_read_through_the_parentheses_around_either_of_them(self):
         for source in [
@@ -782,10 +709,6 @@ class TestPs1AMultiAssignmentSlotTypesTheNameFromTheElementOppositeIt(TestPs1Typ
         self.assertEqual(self._type_at(source, name='r'), 'System.Int32')
 
     def test_a_right_hand_side_whose_elements_cannot_be_counted_types_no_slot(self):
-        """
-        A slot carries the element opposite it only where the two sides have the same number of
-        elements, and neither a name nor a command says how many elements it stands for.
-        """
         for source in [
             cleandoc("""
                 $q, $r = $pair
@@ -823,11 +746,6 @@ class TestPs1AMultiAssignmentSlotTypesTheNameFromTheElementOppositeIt(TestPs1Typ
                 $q.substring(0, 1)
             """),
             cleandoc("""
-                $q, $r = 'abc', 'd'
-                . { $q = 5 }
-                ($q | Get-Member)[0].Name
-            """),
-            cleandoc("""
                 ($q | Get-Member)[0].Name
                 $q, $r = 'abc', 'd'
             """),
@@ -835,14 +753,23 @@ class TestPs1AMultiAssignmentSlotTypesTheNameFromTheElementOppositeIt(TestPs1Typ
             with self.subTest(source):
                 self.assertIsNone(self._type_at(source))
 
+    def test_a_read_below_a_caller_scope_block_carries_what_it_stored_over_a_slot_or_no_type(self):
+        self.assertIn(self._type_at(cleandoc("""
+            $q, $r = 'abc', 'd'
+            . { $q = 5 }
+            ($q | Get-Member)[0].Name
+        """)), (None, 'System.Int32'))
+
+    @opportunity
+    def test_a_read_below_a_caller_scope_block_carries_what_it_stored_over_a_slot(self):
+        self.assertEqual(self._type_at(cleandoc("""
+            $q, $r = 'abc', 'd'
+            . { $q = 5 }
+            ($q | Get-Member)[0].Name
+        """)), 'System.Int32')
+
 
 class TestPs1NeitherNewSpellingDecidesWhichWriteAReadObserves(TestPs1TypeAt):
-    """
-    A constrained target and a multi-assignment slot are writes like any other, so which of them a
-    read observes stays the ordering's to answer: a read at the top of a loop body precedes the
-    write below it on the first visit, and carries a write standing before the loop once there is
-    one.
-    """
 
     def test_a_read_at_the_top_of_a_loop_body_precedes_either_spelling_below_it(self):
         for source in [

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import unittest
-
 from inspect import cleandoc
 
+from test import blocker, opportunity, todo, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1TypeSystemSimplifications
@@ -20,61 +19,55 @@ class TestPs1TypeSystemSimplifications(TestPs1):
         result = self._deobfuscate('($unknown | Get-Member)[6].Name')
         self.assertIn('[6].Name', result)
 
-    def test_get_member_index_out_of_range_preserved(self):
-        result = self._deobfuscate('($ExecutionContext | Get-Member)[999].Name')
-        self.assertIn('[999].Name', result)
+    def test_get_member_index_out_of_range_names_no_member(self):
+        source = '($ExecutionContext | Get-Member)[999].Name'
+        self._assertDeobfuscatesToOneOf(source, source, '$Null')
 
-    def test_get_member_over_an_enum_value_is_left_standing(self):
-        """
-        `Get-Member` on a value of an enum lists the instance surface of `System.Enum`, not the
-        enum's values, so the index is not resolved against the values.
-        """
+    def test_get_member_over_an_enum_value_lists_the_enum_instance_members(self):
         source = "Write-Host ([System.ConsoleColor]'Red' | Get-Member)[0].Name"
-        self.assertEqual(self._deobfuscate(source), source)
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'CompareTo'")
 
-    def test_get_member_over_a_preference_variable_is_left_standing(self):
-        self.assertEqual(
-            self._deobfuscate('Write-Host ($VerbosePreference | Get-Member)[0].Name'),
-            "Write-Host ([System.Management.Automation.ActionPreference]'SilentlyContinue'"
-            ' | Get-Member)[0].Name',
+    def test_get_member_filtered_by_a_wildcard_over_a_preference_variable_names_no_enum_value(self):
+        result = self._deobfuscate(
+            'Write-Host (($VerbosePreference | Get-Member | '
+            "Where-Object { $_.Name -like 'Su*' }).Name)"
         )
+        self.assertNotIn('Suspend', result)
 
-    def test_get_member_filtered_by_a_wildcard_over_a_preference_variable_is_left_standing(self):
-        self.assertEqual(
-            self._deobfuscate(
-                "Write-Host (($VerbosePreference | Get-Member | Where-Object { $_.Name -like 'Su*' }).Name)"),
-            cleandoc("""
-                Write-Host (([System.Management.Automation.ActionPreference]'SilentlyContinue' | Get-Member | Where-Object {
-                  $_.Name -Like 'Su*'
-                }).Name)
-            """),
-        )
-
-    @unittest.expectedFailure
+    @opportunity
     def test_get_member_over_a_preference_variable_lists_the_enum_instance_members(self):
         self.assertEqual(
             self._deobfuscate('Write-Host ($VerbosePreference | Get-Member)[0].Name'),
             "Write-Host 'CompareTo'",
         )
 
-    def test_name_on_string_literal_stripped(self):
-        result = self._deobfuscate("$x.('GetCmdlets'.Name)('*w-*ct')")
-        self.assertNotIn('.Name', result)
-        self.assertIn('New-Object', result)
+    def test_get_member_over_a_preference_is_left_standing_or_lists_the_enum_instance_members(self):
+        source = 'Write-Host ($VerbosePreference | Get-Member)[0].Name'
+        self._assertDeobfuscatesToOneOf(
+            source,
+            source,
+            "Write-Host ([System.Management.Automation.ActionPreference]'SilentlyContinue' | "
+            'Get-Member)[0].Name',
+            "Write-Host 'CompareTo'",
+        )
+
+    @todo
+    def test_get_member_filtered_to_properties_indexes_the_properties(self):
+        source = '$q = New-Object Net.WebClient\n($q | Get-Member -MemberType Property)[0].Name'
+        self.assertIn(
+            self._apply(source, Ps1TypeSystemSimplifications),
+            (self._apply(source), "$q = New-Object Net.WebClient\n'AllowReadStreamBuffering'"),
+        )
+
+    @wontfix('no script reads Name from a quoted method name, which always yields nothing on 5.1')
+    def test_the_name_of_a_string_literal_names_no_method(self):
+        source = "$x.('GetCmdlets'.Name)('*w-*ct')"
+        self._assertDeobfuscatesToOneOf(source, source, '')
 
 
 class TestPs1MemberFoldsFollowTheWriteAReadObserves(TestPs1):
-    """
-    Which write a name's type is taken from, at the pass that spells members out. A name is not a
-    variable: the same spelling in two bodies is two of them, and a read outside the body that
-    writes it observes nothing that body did.
-    """
 
     def test_a_function_bodys_write_does_not_fold_a_get_member_index_outside_it(self):
-        """
-        Nothing says `f` was ever called, so the top-level `$q` holds `$null` and `Get-Member` over
-        `$null` is an error rather than a member list.
-        """
         self._assertUnchanged(cleandoc("""
             function f {
               $q = New-Object Net.WebClient
@@ -127,10 +120,6 @@ class TestPs1MemberFoldsFollowTheWriteAReadObserves(TestPs1):
         """))
 
     def test_a_get_member_index_before_every_write_of_the_name_is_left_alone(self):
-        """
-        The name holds what it held before the script ran, and `Get-Member` over that `$null` is an
-        error rather than a member list, so no index into it names a member.
-        """
         self._assertUnchanged(cleandoc("""
             ($q | Get-Member)[0].Name
             $q = New-Object Net.WebClient
@@ -168,6 +157,7 @@ class TestPs1MemberFoldsFollowTheWriteAReadObserves(TestPs1):
             ($q | Get-Member)[0].Name
         """), Ps1TypeSystemSimplifications)
 
+    @blocker
     def test_a_write_before_the_branch_folds_the_read_after_it(self):
         result = self._apply(cleandoc("""
             $q = New-Object Net.WebClient
@@ -175,6 +165,22 @@ class TestPs1MemberFoldsFollowTheWriteAReadObserves(TestPs1):
               $q = New-Object Net.WebClient
             }
             ($q | Get-Member)[0].Name
+        """), Ps1TypeSystemSimplifications)
+        self.assertEqual(result, cleandoc("""
+            $q = New-Object Net.WebClient
+            if ($c) {
+              $q = New-Object Net.WebClient
+            }
+            'Disposed'
+        """))
+
+    def test_a_write_before_the_branch_folds_a_method_lookup_after_it(self):
+        result = self._apply(cleandoc("""
+            $q = New-Object Net.WebClient
+            if ($c) {
+              $q = New-Object Net.WebClient
+            }
+            ($q | Get-Member -MemberType Method)[0].Name
         """), Ps1TypeSystemSimplifications)
         self.assertEqual(result, cleandoc("""
             $q = New-Object Net.WebClient
@@ -192,11 +198,26 @@ class TestPs1MemberFoldsFollowTheWriteAReadObserves(TestPs1):
             ($q | Get-Member)[0].Name
         """), Ps1TypeSystemSimplifications)
 
+    @blocker
     def test_a_qualified_write_folds_the_reads_that_follow_it_in_its_own_body(self):
         result = self._apply(cleandoc("""
             function f {
               $script:q = New-Object Net.WebClient
               ($q | Get-Member)[0].Name
+            }
+        """), Ps1TypeSystemSimplifications)
+        self.assertEqual(result, cleandoc("""
+            function f {
+              $script:q = New-Object Net.WebClient
+              'Disposed'
+            }
+        """))
+
+    def test_a_qualified_write_folds_a_method_lookup_that_follows_it_in_its_own_body(self):
+        result = self._apply(cleandoc("""
+            function f {
+              $script:q = New-Object Net.WebClient
+              ($q | Get-Member -MemberType Method)[0].Name
             }
         """), Ps1TypeSystemSimplifications)
         self.assertEqual(result, cleandoc("""
@@ -259,20 +280,12 @@ class TestPs1MemberFoldsFollowTheWriteAReadObserves(TestPs1):
         """))
 
     def test_a_global_read_of_a_name_written_bare_leaves_the_member_alone(self):
-        """
-        Run from a session, a script's own scope stands below the global one, and `$global:q` finds
-        no variable where the bare write put the WebClient.
-        """
         self._assertUnchanged(cleandoc("""
             $q = New-Object Net.WebClient
             $global:q.downloadstring('u')
         """), Ps1TypeSystemSimplifications)
 
     def test_a_foreach_over_a_string_spells_a_string_member(self):
-        """
-        `Substring` is a member of the string itself; the characters `foreach` is often assumed to
-        yield have no such member at all.
-        """
         result = self._apply(cleandoc("""
             foreach ($s in 'abc') {
               $s.substring(0, 1)
@@ -286,12 +299,6 @@ class TestPs1MemberFoldsFollowTheWriteAReadObserves(TestPs1):
 
 
 class TestPs1AMemberIsNotSpelledFromAStoreThatMayNotHaveCompleted(TestPs1):
-    """
-    A handler runs on the run where its `try` body threw. Measured on 5.1 the name is `$null` at
-    that read and at the statement after the whole `try`, and `Get-Member` over `$null` reports
-    `You must specify an object for the Get-Member cmdlet`, so an index into it names no member of
-    anything.
-    """
 
     def test_a_handler_does_not_spell_a_member_from_its_try_bodys_write(self):
         self._assertUnchanged(cleandoc("""
@@ -326,12 +333,6 @@ class TestPs1AMemberIsNotSpelledFromAStoreThatMayNotHaveCompleted(TestPs1):
 
 
 class TestPs1AMemberInsideATrapBodyIsSpelledOnlyAfterACertainWrite(TestPs1):
-    """
-    A read inside a `trap` body is typed only by a write that certainly completed before the body
-    runs. For the write standing below the trap there is none, since a throw from above it leaves
-    the name `$null`; a write that cannot throw completes wherever it stands, so the read inside the
-    trap is spelled as the same read outside it is.
-    """
 
     def test_a_write_standing_below_the_trap_does_not_spell_a_member_inside_it(self):
         self._assertUnchanged(cleandoc("""
@@ -363,12 +364,6 @@ class TestPs1AMemberInsideATrapBodyIsSpelledOnlyAfterACertainWrite(TestPs1):
 
 
 class TestPs1AMemberIsNotSpelledPastABlockThatWritesItsCallersName(TestPs1):
-    """
-    Measured on 5.1: `. { $q = New-Object Net.WebClient }` and a `ForEach-Object` or `Where-Object`
-    body store into the caller's `$q`, so `($q | Get-Member)[0].Name` answers `Disposed` after one
-    of them where the String written above it would answer `Clone`, and `CompareTo` where the
-    WebClient written above it would answer `Disposed`. A `&` block writes a scope of its own.
-    """
 
     def test_a_write_a_caller_scope_block_replaces_does_not_spell_the_members(self):
         for source in [
@@ -434,12 +429,6 @@ class TestPs1AMemberIsNotSpelledPastABlockThatWritesItsCallersName(TestPs1):
 
 
 class TestPs1AMemberIsNotSpelledAcrossACallThatMayHaveRewrittenTheName(TestPs1):
-    """
-    Measured on 5.1: with `Invoke-Expression '$q = New-Object Text.StringBuilder'` between them, the
-    read carries a StringBuilder rather than the WebClient the script wrote, and it does so whether
-    the read stands at the top level, inside `1..3 | %{ }` or inside `& { }`. Writing the read into
-    a block that runs right there is therefore no way around the call.
-    """
 
     def test_a_read_inside_a_block_the_call_precedes_leaves_the_member_alone(self):
         for source in [

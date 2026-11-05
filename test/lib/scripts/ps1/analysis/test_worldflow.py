@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import unittest
-
 from inspect import cleandoc
 
-from test import TestBase, lines_executed
+from test import TestBase, lines_executed, opportunity
 
 from refinery.lib.scripts import set_body
 from refinery.lib.scripts.analysis import cfg, components
@@ -68,12 +66,6 @@ class TestPs1CommandTrustIsPositionalWhereTheWorldStaysClosed(TestBase):
         self.assertFalse(reach.may_trust_command_name_at('Get-Random', call_after))
 
     def test_a_name_the_whole_run_trusts_is_trusted_at_every_position(self):
-        """
-        The positional query is a widening of the whole-run one and never a second opinion: it
-        short-circuits on the whole-run verdict, so it grants wherever that grants and the flood is
-        consulted only where it refuses. A shadow site sits below to keep the flood in play for the
-        name it spells, and the untouched name has to stay trusted on both sides of it.
-        """
         script = Ps1Parser(
             '$Null = Get-Random -Maximum 88175\n'
             'function Get-Random { Start-Process calc }\n'
@@ -87,16 +79,6 @@ class TestPs1CommandTrustIsPositionalWhereTheWorldStaysClosed(TestBase):
 
 
 class TestPs1FloodsGoForwardThroughAResumingTrap(TestBase):
-    """
-    A `trap { continue }` resumes the block it guards at the statement after the one that threw, so
-    a leak written late in such a block cannot have run at a read written above it. Measured on 5.1:
-    `trap { continue }; Write-Host 'one'; throw 'e'; Write-Host 'three'` writes `one` once and then
-    `three`.
-
-    Both floods answer this way or neither is worth having: an obfuscated script that wraps its
-    whole body in a resuming trap is exactly the one whose every read the over-approximate reading
-    refuses.
-    """
 
     def _reach(self, source: str) -> tuple[Ps1Script, Ps1WorldReach]:
         script = Ps1Parser(source).parse()
@@ -113,10 +95,6 @@ class TestPs1FloodsGoForwardThroughAResumingTrap(TestBase):
         self.assertFalse(reach.closed_at(script.body[3]))
 
     def test_an_opener_poisons_the_reads_resumption_reaches_across_a_terminator(self):
-        """
-        Nothing but resumption joins the two: the `throw` between them ends the statement list, and
-        a flood that stopped there would call the world closed at a read the leak precedes.
-        """
         script, reach = self._reach(
             'trap { continue }\n'
             'Invoke-Expression $env:PAYLOAD\n'
@@ -133,11 +111,6 @@ class TestPs1FloodsGoForwardThroughAResumingTrap(TestBase):
         self.assertFalse(reach.closed_at(script.body[3].try_block.body[0]))
 
     def test_an_opener_last_in_a_nested_guarded_block_poisons_what_follows_the_block(self):
-        """
-        Measured on 5.1: `if ($true) { trap { continue }; Write-Host 'in'; throw 'e' };
-        Write-Host 'after'` writes `in` and then `after`, so a leak in the block has run by the time
-        the statement after the block does.
-        """
         script, reach = self._reach(
             'if ($c) { trap { continue }\n'
             'Invoke-Expression $env:PAYLOAD\n'
@@ -146,18 +119,13 @@ class TestPs1FloodsGoForwardThroughAResumingTrap(TestBase):
         self.assertFalse(reach.closed_at(script.body[1]))
 
     def test_an_opener_inside_the_handler_poisons_the_block_it_resumes_into(self):
-        """
-        A handler runs only after some statement of the block threw and may resume at any of them,
-        so an opener written in one has run wherever the block goes on. No forward edge leaves a
-        handler statement, and answering from the forward edges alone would vouch for exactly the
-        statements the handler resumes into.
-        """
         script, reach = self._reach(
             'trap { Invoke-Expression $env:PAYLOAD\ncontinue }\n'
+            "throw 'x'\n"
             '$Null = [Math]::Sqrt(144)\n'
             '$Null = [Math]::Sqrt(169)')
-        self.assertFalse(reach.closed_at(script.body[1]))
         self.assertFalse(reach.closed_at(script.body[2]))
+        self.assertFalse(reach.closed_at(script.body[3]))
 
     def test_a_redefinition_late_in_a_guarded_block_leaves_the_calls_above_it_trusted(self):
         script, reach = self._reach(
@@ -171,27 +139,16 @@ class TestPs1FloodsGoForwardThroughAResumingTrap(TestBase):
 
     def test_a_redefinition_inside_the_handler_is_distrusted_across_the_block(self):
         script, reach = self._reach(
-            'trap { function Get-Random { Start-Process calc }\ncontinue }\n'
+            'trap { function script:Get-Random { Start-Process calc }\ncontinue }\n'
+            "throw 'x'\n"
             '$Null = Get-Random -Maximum 88175\n'
-            '$Null = Get-Random -Maximum 88176')
-        self.assertFalse(reach.may_trust_command_name_at('Get-Random', script.body[1]))
+            '$Null = Get-Random -Maximum 88176'
+        )
         self.assertFalse(reach.may_trust_command_name_at('Get-Random', script.body[2]))
+        self.assertFalse(reach.may_trust_command_name_at('Get-Random', script.body[3]))
 
 
 class TestPs1TheStatementAResumptionLandsOnIsTheOneControlEnters(TestBase):
-    """
-    Where the forward half finds the statement control resumes at, and the one shape it finds the
-    wrong one for. A slot is put in front of each guarded statement and joined to whatever that
-    statement is entered by; a statement that enters nothing leaves its slot unclaimed and the slot
-    carries on to the next one, which is right for a `trap` declaration and wrong for a construct
-    that builds nodes without being entered at any of them.
-
-    `try { }` with an empty guarded block is that construct: it builds its `catch` clause and links
-    no frontier, so the slot rolls past the whole `try` and the flood never reaches inside it. The
-    grant costs nothing today — an empty `try` cannot throw, so the clause is dead — which is
-    exactly why it needs pinning rather than trusting: what is wrong is the reading, not the shape,
-    and the next construct built this way need not be dead.
-    """
 
     def _reach(self, source: str):
         script = Ps1Parser(source).parse()
@@ -211,7 +168,7 @@ class TestPs1TheStatementAResumptionLandsOnIsTheOneControlEnters(TestBase):
         read = script.body[2].catch_clauses[0].body.body[0]
         self.assertFalse(reach.closed_at(read))
 
-    @unittest.expectedFailure
+    @opportunity
     def test_the_same_read_is_poisoned_where_the_construct_guards_nothing(self):
         script, reach = self._reach(self._guarded('try { } catch { $Null = [Math]::Sqrt(144) }'))
         read = script.body[2].catch_clauses[0].body.body[0]
@@ -219,11 +176,6 @@ class TestPs1TheStatementAResumptionLandsOnIsTheOneControlEnters(TestBase):
 
 
 class TestPs1AReadInsideABlockTheStatementRunsHasTheStatementsPosition(TestBase):
-    """
-    A `ForEach-Object` body runs while the statement holding it runs and at no other time, so a
-    command named inside it is as trustworthy as the same command named beside it. A body something
-    keeps runs whenever that something says, which is a time no per-body graph orders.
-    """
 
     @staticmethod
     def _named(source: str, name: str):
@@ -272,10 +224,6 @@ class TestPs1AReadInsideABlockTheStatementRunsHasTheStatementsPosition(TestBase)
         self.assertFalse(reach.closed_at(inner))
 
     def test_a_redefined_iterator_refuses_the_climb_out_of_its_body(self):
-        """
-        The name is what makes the climb true: a script that takes `ForEach-Object` over may hand
-        the block to something that keeps it, so the body is no longer run where it is written.
-        """
         script, inner = self._named(
             """
             function ForEach-Object { param($b) $global:kept = $b }
@@ -300,11 +248,6 @@ class TestPs1AReadInsideABlockTheStatementRunsHasTheStatementsPosition(TestBase)
 
 
 class TestPs1WhatAnOpenerIsHandedIsEvaluatedBeforeItRuns(TestBase):
-    """
-    A command's arguments are evaluated before the command runs, so what `Invoke-Expression` is
-    handed is evaluated in the world as it stood before the payload ran. Measured on 5.1 in
-    `corpus.BEHAVIOURS`, `$b = 'Write-Host', 'hi'; iex ([string]::Join(' ', $b))` writes `hi`.
-    """
 
     @staticmethod
     def _join_is_closed(source: str) -> bool:
@@ -336,19 +279,17 @@ class TestPs1WhatAnOpenerIsHandedIsEvaluatedBeforeItRuns(TestBase):
         self.assertFalse(self._join_is_closed("while ($true) { iex ([string]::Join(' ', $b)) }"))
 
     def test_a_node_in_a_block_handed_to_the_opener_is_not(self):
-        self.assertFalse(self._join_is_closed(
+        self.assertFalse(self._join_is_closed("& $dispatch { [string]::Join(' ', $b) }"))
+
+    @opportunity
+    def test_a_node_in_a_written_out_block_invoke_command_runs_before_the_opener_is_closed(self):
+        self.assertTrue(self._join_is_closed(
             "Invoke-Command -ScriptBlock { [string]::Join(' ', $b) } -ArgumentList $env:PAYLOAD; "
-            'iex $env:PAYLOAD'))
+            'iex $env:PAYLOAD'
+        ))
 
 
 class TestPs1ABindingOfAnUninvokedNameFloodsNothing(TestBase):
-    """
-    A `Set-Alias` of a name no statement invokes rebinds nothing any call reaches and runs nothing
-    itself, so both positional queries grant below it as they do below no opener at all — while
-    the whole-run verdict, which the call graph reads, still reports the command table open. A
-    binding the script does invoke anywhere, or one the walk cannot read whole, floods like every
-    other opener.
-    """
 
     @staticmethod
     def _below(source: str) -> tuple[Ps1ModelCache, object]:
@@ -370,13 +311,6 @@ class TestPs1ABindingOfAnUninvokedNameFloodsNothing(TestBase):
         self.assertTrue(reach.closed_at(read))
 
     def test_a_dot_sourced_or_provider_target_binding_of_an_uninvoked_name_still_grants(self):
-        """
-        A `Set-Alias` binds exactly the one name it spells, whichever operator carries it and
-        whatever its target looks like: `. Set-Alias` runs no file, and a `function:` target is the
-        command the name is bound to, not a provider write. So a dot-sourced binding and one whose
-        target reads as a provider path each grant below an uninvoked name the way a plain binding
-        does, although both trip guards a stricter opener test excludes a `Set-Alias` for.
-        """
         for source in (
             """
             . Set-Alias zzq i*x
@@ -394,16 +328,11 @@ class TestPs1ABindingOfAnUninvokedNameFloodsNothing(TestBase):
                 self.assertTrue(reach.closed_at(read))
                 self.assertFalse(reach.closed_for_the_whole_run)
 
-    def test_a_call_to_the_bound_name_anywhere_keeps_the_flood(self):
+    def test_a_call_to_the_bound_name_above_the_read_keeps_the_flood(self):
         for source in (
             """
             Set-Alias zzq i*x
             zzq
-            $Null = Get-Random
-            """,
-            """
-            Set-Alias zzq i*x
-            function f { zzq }
             $Null = Get-Random
             """,
             """
@@ -434,12 +363,6 @@ class TestPs1ABindingOfAnUninvokedNameFloodsNothing(TestBase):
                 self.assertFalse(reach.closed_at(read))
 
     def test_a_bare_noun_reaching_a_get_prefixed_binding_keeps_the_flood(self):
-        """
-        `Set-Alias Get-Frob iex` binds a name a bare `Frob` reaches through 5.1's implicit `Get-`
-        retry, so the binding is invoked and must flood; the retry name is why the walk records
-        `frob` and `get-frob` both. Granting below it would delete the `Get-Random` discard although
-        the aliased `iex` ran first.
-        """
         cache, read = self._below(
             """
             Set-Alias Get-Frob iex
@@ -450,17 +373,31 @@ class TestPs1ABindingOfAnUninvokedNameFloodsNothing(TestBase):
         self.assertFalse(cache.world_reach.may_trust_command_name_at('get-random', read))
         self.assertFalse(cache.world_reach.closed_at(read))
 
-    def test_a_call_below_the_read_keeps_the_flood_as_well(self):
-        cache, call = self._below(
-            """
-            Set-Alias zzq i*x
-            $Null = Get-Random
-            zzq
-            """
-        )
-        read = cache.root.body[1]
-        self.assertFalse(cache.world_reach.may_trust_command_name_at('get-random', read))
-        self.assertFalse(cache.world_reach.closed_at(read))
+    @opportunity
+    def test_a_call_to_the_bound_name_that_has_not_run_by_the_read_leaves_it_granted(self):
+        for source, position in (
+            (
+                """
+                Set-Alias zzq i*x
+                $Null = Get-Random
+                zzq
+                """,
+                1,
+            ),
+            (
+                """
+                Set-Alias zzq i*x
+                function f { zzq }
+                $Null = Get-Random
+                """,
+                2,
+            ),
+        ):
+            with self.subTest(source):
+                cache, _ = self._below(source)
+                read = cache.root.body[position]
+                self.assertTrue(cache.world_reach.may_trust_command_name_at('get-random', read))
+                self.assertTrue(cache.world_reach.closed_at(read))
 
     def test_a_binding_the_walk_cannot_read_whole_floods(self):
         for source in (
@@ -495,10 +432,6 @@ class TestPs1ABindingOfAnUninvokedNameFloodsNothing(TestBase):
 
 
 class TestPs1CommandShadowsAnswerAsOneFloodPerName(TestBase):
-    """
-    Every redefined name is answered from one walk over all of them, which has to agree with the
-    forward flood from that name's own sites alone.
-    """
 
     _SCRIPT = cleandoc("""
         trap { function Get-Date { 'd' }

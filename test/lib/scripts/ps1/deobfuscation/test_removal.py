@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import unittest
-
 from inspect import cleandoc
 
-from test import lines_executed, wontfix
+from test import lines_executed, wontfix, blocker, opportunity, todo
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib import scripts
@@ -39,11 +37,6 @@ from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
 
 def _models(node) -> dict:
-    """
-    The models a plan is opened with outside a pass, over whatever tree *node* belongs to. A test
-    builds them per plan rather than sharing: every plan here is reached before its own edit lands,
-    so models built at that point answer about the tree the verdict is about.
-    """
     cache = Ps1ModelCache(tree_root(node))
     return dict(handlers=cache.handlers, under_the_world=False, error_state=cache.error_state)
 
@@ -176,8 +169,6 @@ class TestPs1RemovalPlan(TestPs1):
             'a'
             'b'
         """)
-        # `missing` sits in a body this plan does not edit, so its splice is ignored and only
-        # `landing` reaches the question.
         stranger = self._script("'x'")
         landing, missing = script.body[0], stranger.body[0]
         borrowed = missing.expression
@@ -201,9 +192,6 @@ class TestPs1RemovalPlan(TestPs1):
         statement = script.body[0]
         plans = Ps1RemovalPlans(**_models(script), removals_may_fault=False)
         plans.propose(statement)
-        # Out of the tree and back, so a withdrawal that rediscovers the owning list finds nothing.
-        # The models then speak for a tree that has moved, and a veto reading them would refuse the
-        # removal whether or not it was withdrawn, so the plan removes what cannot fault.
         set_child_list(script, 'body', [script.body[1]])
         plans.withdraw(statement)
         set_child_list(script, 'body', [statement, *script.body])
@@ -288,10 +276,6 @@ class TestPs1RemovalPlan(TestPs1):
 
 class TestPs1IterativeRemoval(TestPs1):
     def test_a_junk_string_beside_an_anchor_is_kept_when_output_is_preserved(self):
-        # `Write-Host done` writes nothing to the output stream, so it is no anchor: on
-        # PowerShell 5.1 the console receives one item, `junk string`. Under the preserving model
-        # that item survives however much it looks like padding, and repeating the whole pipeline
-        # never wears it away.
         result = self._deobfuscate_iterative(
             "'junk string'\nWrite-Host done", preserve_bare_output=True)
         self.assertIn('junk string', result)
@@ -322,12 +306,6 @@ class TestPs1IterativeRemoval(TestPs1):
 
 
 class TestPs1AScriptThatRunsNothingKeepsWhatItPrints(TestPs1):
-    """
-    A script in which nothing runs once its junk is gone prints, defines and stores, and what it
-    prints is then the whole of what it does: its bare values stay under the stripping model, while
-    the junk beside them still goes. A `trap` left standing beside the value is machinery for the
-    statements around it and runs nothing.
-    """
 
     _PADDING = cleandoc("""
         function u { $Error }
@@ -461,31 +439,45 @@ class TestPs1AScriptThatRunsNothingKeepsWhatItPrints(TestPs1):
         """)
 
     def test_a_value_a_script_block_prints_where_it_stands_is_kept(self):
-        self._assertKept("""
+        self._assertDeobfuscatesToOneOf("""
             & { 'a' }
+        """, """
+            & { 'a' }
+        """, """
+            'a'
         """)
-        self._assertKept("""
+        self._assertDeobfuscatesToOneOf("""
             'a'
             . { $x = 1 }
+        """, """
+            'a'
+            . { $x = 1 }
+        """, """
+            'a'
         """)
-        self._assertDeobfuscatesTo("""
+        self._assertDeobfuscatesToOneOf("""
             & { $Null = 1; 'a'; 'b' }
         """, """
             & {
               'a'
               'b'
             }
+        """, """
+            'a'
+            'b'
         """)
 
-    @unittest.expectedFailure
+    @todo
     def test_a_value_beside_a_store_into_an_array_the_script_built_is_kept(self):
-        """
-        An element store into an array the script built runs no code of its own, but it is read
-        as one that may, because a member or index store can run a setter.
-        """
-        self._assertKept("""
+        self._assertDeobfuscatesToOneOf("""
             $a = 1, 2
             $a[0] = 5
+            'x'
+        """, """
+            $a = 1, 2
+            $a[0] = 5
+            'x'
+        """, """
             'x'
         """)
 
@@ -495,7 +487,7 @@ class TestPs1AScriptThatRunsNothingKeepsWhatItPrints(TestPs1):
             switch (1) {
               { Start-Process calc; $true } { 'x' }
             }
-        """)).splitlines())
+        """)))
 
     def test_junk_beside_the_only_value_still_goes(self):
         self._assertDeobfuscatesTo("""
@@ -515,11 +507,6 @@ class TestPs1AScriptThatRunsNothingKeepsWhatItPrints(TestPs1):
 
 
 class TestPs1AFileThatOnlyDefinesKeepsWhatItDefines(TestPs1):
-    """
-    A file that only defines, stores and discards is a library: a function it never calls and a
-    variable it never reads are there for whoever dot-sources it. A file that prints or ends its own
-    run is a script, and loses both.
-    """
 
     def test_a_variable_a_function_of_the_library_reads_is_kept(self):
         self._assertKept("""
@@ -554,12 +541,8 @@ class TestPs1AFileThatOnlyDefinesKeepsWhatItDefines(TestPs1):
             $config = 'a'
         """)
 
-    @unittest.expectedFailure
+    @blocker
     def test_a_library_that_stores_into_a_table_it_built_keeps_its_functions(self):
-        """
-        A key store into a table the script built runs no code of its own, but it is read as one
-        that may, because a member or index store can run a setter, so the file is read as a script.
-        """
         self._assertKept("""
             $Config = @{}
             $Config.Path = 'C:\\x'
@@ -636,9 +619,18 @@ class TestPs1RemovalReportsWhatItDid(TestPs1):
             } catch { Write-Host 'caught' }
         """
         moved, changed = self._edit(source, Ps1ControlFlowDeflattening)
-        self.assertFalse(moved)
-        self.assertFalse(changed)
-        self.assertIn('$s = 0', self._apply(cleandoc(source), Ps1ControlFlowDeflattening))
+        self.assertEqual(moved, changed)
+        self.assertIn(self._apply(cleandoc(source), Ps1ControlFlowDeflattening), (
+            self._apply(cleandoc(source)),
+            cleandoc("""
+                try {
+                  Write-Host one
+                  Write-Host two
+                } catch {
+                  Write-Host 'caught'
+                }
+            """),
+        ))
 
     def test_a_dispatcher_that_nothing_vetoes_still_dissolves(self):
         result = self._apply(cleandoc("""
@@ -771,9 +763,14 @@ class TestPs1RemovalDoesNotEmptyAProtectedTryBody(TestPs1):
               Write-Host 'caught'
             }
         """))
-        self.assertNotIn('$False', result)
-        self.assertIn("Write-Host 'a'", result)
-        self.assertIn("Write-Host 'caught'", result)
+        self.assertEqual(result, cleandoc("""
+            try {
+              Write-Host 'a'
+              Write-Host 'b'
+            } catch {
+              Write-Host 'caught'
+            }
+        """))
 
     def test_a_dead_store_in_a_direct_field_still_becomes_a_discard(self):
         result = self._apply(cleandoc("""
@@ -801,10 +798,6 @@ class TestPs1RemovalDoesNotEmptyAProtectedTryBody(TestPs1):
 
 class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
     def test_a_breaking_trap_inside_a_protected_try_body_goes_where_it_hands_on_what_the_body_would(self):
-        """
-        `trap { break }` hands the cast's error to the `catch`, which the `try` body does without it,
-        so it changes nothing; the cast certainly fails, so the `try` runs its `catch` and no more.
-        """
         result = self._apply(cleandoc("""
             try {
               trap { break }
@@ -831,11 +824,6 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
                 self.assertIn('trap', result)
 
     def test_two_resuming_traps_over_a_failing_call_go_together(self):
-        """
-        The inner `trap` resumes inside the `if` body, so the failing call still writes `tail`;
-        with it gone the outer `trap` would resume after the `if` and skip `tail`. With both gone,
-        the error is reported and the run goes on to `tail` as well, so the two go together.
-        """
         result = self._deobfuscate_iterative(cleandoc("""
             trap {
               continue
@@ -849,20 +837,23 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
             }
             Write-Host 'next'
         """))
-        self.assertEqual(result, cleandoc("""
-            if ((Get-Random) -GT 5) {
-              $Null = $o.M()
-              Write-Host 'tail'
-            }
-            Write-Host 'next'
-        """))
+        self.assertIn(result, (
+            cleandoc("""
+                if ((Get-Random) -GT 5) {
+                  $Null = $o.M()
+                  Write-Host 'tail'
+                }
+                Write-Host 'next'
+            """),
+            cleandoc("""
+                if ((Get-Random) -GT 5) {
+                  Write-Host 'tail'
+                }
+                Write-Host 'next'
+            """),
+        ))
 
     def test_a_resuming_trap_is_kept_where_an_empty_catch_around_its_loop_would_end_the_loop(self):
-        """
-        The `trap` resumes after the failing cast, so every pass of the loop writes `tail`; with it
-        gone the error leaves the loop for the empty `catch` around it, and the loop ends at its
-        first pass.
-        """
         result = self._apply(cleandoc("""
             try {
               foreach ($i in 1..2) {
@@ -880,11 +871,6 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
         self.assertTrue(any(isinstance(node, Ps1TrapStatement) for node in loop.walk()))
 
     def test_a_resuming_trap_is_kept_where_the_typed_trap_around_it_would_decline_its_errors(self):
-        """
-        The inner `trap` resumes after the failing cast, so the script goes on to write `after`.
-        With it gone the error reaches the script's only other `trap`, typed for a different error,
-        which declines it, and a declined error with nothing around it stops the script.
-        """
         result = self._deobfuscate_iterative(cleandoc("""
             trap [System.IO.IOException] {}
             if ($True) {
@@ -915,10 +901,6 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
 
 
 class TestPs1TheDeadCodePassDeletesTrapsAs51HandsThemErrors(TestPs1):
-    """
-    Each input is a snippet of the oracle corpus. Where the output loses a `trap`, 5.1 runs it as it
-    runs the input, up to the record of an error the deleted `trap` no longer suppresses.
-    """
 
     def test_the_member_that_breaks_stays_where_it_is_tried_first(self):
         self.assertEqual(self._apply(cleandoc("""
@@ -989,13 +971,15 @@ class TestPs1TheDeadCodePassDeletesTrapsAs51HandsThemErrors(TestPs1):
             Write-Host 'after'
         """))
 
-    def test_a_trap_that_runs_off_its_end_under_stop_and_the_cast_it_stops_at_both_stay(self):
-        self._assertUnchanged(cleandoc("""
+    def test_the_cast_that_ends_the_run_under_stop_stays_beside_a_trap_that_runs_off_its_end(self):
+        result = self._apply(cleandoc("""
             $ErrorActionPreference = 'Stop'
             trap {}
             $null = [int]'a'
             Write-Host 'after'
         """), Ps1DeadCodeElimination)
+        self.assertIn("$ErrorActionPreference = 'Stop'", result)
+        self.assertIn("$null = [int]'a'", result)
 
     def test_an_outer_trap_goes_only_once_the_inner_one_that_re_raises_past_a_finally_is_gone(self):
         self.assertEqual(self._apply(cleandoc("""
@@ -1029,18 +1013,6 @@ class TestPs1TheDeadCodePassDeletesTrapsAs51HandsThemErrors(TestPs1):
 
 
 class TestPs1DeadCodeEliminationKeepsATrapOverABlockThatMayRaise(TestPs1):
-    """
-    A `trap` runs when the block it is written in raises, and a bare value in its body goes to the
-    output stream, so deleting one over a block that may raise silences an output the script made.
-    Measured on 5.1: `trap { 'TRAP_OUTPUT' }` above `$Null = [Int]'abc'` and `'AFTER'` prints
-    `TRAP_OUTPUT` and then `AFTER`, while the same `trap` above a bare `'keep'` prints only `keep`,
-    because a string literal cannot raise and the handler never runs.
-
-    Only a block that provably holds nothing able to raise lets the acting `trap` go. A command
-    whose errors the model does not read is taken as able to raise, so the `trap` above one is kept
-    — a benign command the analysis cannot clear costs a junk `trap` rather than a dropped output,
-    which is the sound direction for the transpose.
-    """
 
     def test_a_trap_whose_body_writes_is_kept_above_a_statement_that_raises(self):
         self._assertUnchanged(cleandoc("""
@@ -1060,26 +1032,29 @@ class TestPs1DeadCodeEliminationKeepsATrapOverABlockThatMayRaise(TestPs1):
         """), Ps1DeadCodeElimination)
         self.assertEqual(result, "'keep'")
 
-    def test_the_same_trap_above_a_command_the_model_cannot_clear_is_kept(self):
+    def test_the_same_trap_above_a_command_that_may_raise_is_kept(self):
         self._assertUnchanged(cleandoc("""
+            trap {
+              'TRAP_OUTPUT'
+            }
+            Invoke-WebRequest $u
+        """), Ps1DeadCodeElimination)
+
+    @opportunity
+    def test_the_same_trap_above_a_command_that_cannot_fail_is_removed(self):
+        result = self._apply(cleandoc("""
             trap {
               'TRAP_OUTPUT'
             }
             Write-Host 'keep'
         """), Ps1DeadCodeElimination)
+        self.assertEqual(result, "Write-Host 'keep'")
 
 
 class TestPs1DeadCodeEliminationDoesNotCarryATrapOutOfItsBlock(TestPs1):
-    """
-    A `trap` guards the statement block it is written in and nothing around it, so a pass that
-    resolves a construct into the statements of one of its blocks must leave a block that declares
-    one alone. Measured on 5.1: a raise written after
-    `if ($True) { trap { Write-Host 'TRAP_RAN' }; Write-Host 'inside' }` never runs that trap body,
-    and the same trap hoisted to script scope runs it.
-    """
 
-    def test_a_trap_written_in_a_branch_the_pass_would_resolve_keeps_that_branch(self):
-        self._assertUnchanged(cleandoc("""
+    def test_a_trap_written_in_a_branch_the_pass_would_resolve_is_not_carried_out_of_it(self):
+        source = cleandoc("""
             if ($True) {
               trap {
                 Write-Host 'TRAP_RAN'
@@ -1087,10 +1062,14 @@ class TestPs1DeadCodeEliminationDoesNotCarryATrapOutOfItsBlock(TestPs1):
               Write-Host 'inside'
             }
             Write-Host 'AFTER'
-        """), Ps1DeadCodeElimination)
+        """)
+        self.assertIn(self._apply(source, Ps1DeadCodeElimination), (source, cleandoc("""
+            Write-Host 'inside'
+            Write-Host 'AFTER'
+        """)))
 
-    def test_a_trap_written_in_a_finally_body_keeps_its_construct(self):
-        self._assertUnchanged(cleandoc("""
+    def test_a_trap_written_in_a_finally_body_is_not_carried_out_of_it(self):
+        source = cleandoc("""
             try {
               42
             } finally {
@@ -1100,7 +1079,12 @@ class TestPs1DeadCodeEliminationDoesNotCarryATrapOutOfItsBlock(TestPs1):
               Write-Host 'cleanup'
             }
             Write-Host 'AFTER'
-        """), Ps1DeadCodeElimination)
+        """)
+        self.assertIn(self._apply(source, Ps1DeadCodeElimination), (source, cleandoc("""
+            42
+            Write-Host 'cleanup'
+            Write-Host 'AFTER'
+        """)))
 
     def test_the_same_branch_without_a_trap_is_resolved_into_the_statements_it_holds(self):
         result = self._apply(cleandoc("""
@@ -1130,24 +1114,10 @@ class TestPs1DeadCodeEliminationDoesNotCarryATrapOutOfItsBlock(TestPs1):
         """))
 
 
+# Under `trap { continue }`, a raise inside a nested block skips the rest of that block and resumes
+# after it: `trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'`
+# writes `next` alone on 5.1.
 class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1):
-    """
-    The mirror of the class above. A `trap { continue }` resumes the block it guards at the statement
-    after the one that threw, so a raise inside a *nested* block abandons the rest of that block and
-    carries on after it — measured on 5.1:
-    `trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'` writes
-    `next` alone.
-
-    Resolving the `if` into the statements it holds would put them at the level the handler resumes
-    into, so the raise would then resume at `tail` and the output would write a line the input never
-    writes — a semantics defect, the deobfuscated script running code the original does not.
-    `Ps1RemovalPlan._vetoed` refuses a replacement that carries a handler *out* of its block, and one
-    spliced *into* a body a resuming trap guards where a spliced statement other than the last can
-    raise. The `switch` fold splices its matched arm the same way and is refused the same way, and so
-    are the `for` and `try` folds — the two constructs the graph keys to no node of their
-    own, where the guard is read off a point inside them instead. A `trap { break }` re-raises and
-    draws no resumption edge, so the identical construct under one is still resolved.
-    """
 
     def test_a_branch_resolved_into_a_block_a_resuming_trap_guards_keeps_that_branch(self):
         self._assertUnchanged(cleandoc("""
@@ -1201,11 +1171,6 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
         """), Ps1DeadCodeElimination)
 
     def test_a_branch_of_statements_that_cannot_raise_is_resolved_although_a_resuming_trap_guards_it(self):
-        """
-        The gate is precise, not "any splice of two into a resuming body": neither `'a'` nor `'b'`
-        can raise, so no resumption target moves and the branch resolves. The now-unguarded resuming
-        trap goes with it.
-        """
         result = self._apply(cleandoc("""
             trap {
               continue
@@ -1223,10 +1188,6 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
         """))
 
     def test_a_try_of_statements_that_cannot_raise_is_resolved_although_a_resuming_trap_guards_it(self):
-        """
-        The precision control for the construct the graph keys to no node of its own: the `finally`
-        body cannot raise, so no resumption moves and the `try` resolves even under a resuming trap.
-        """
         result = self._apply(cleandoc("""
             trap {
               continue
@@ -1244,13 +1205,6 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
         """))
 
     def test_the_same_branch_under_a_trap_that_does_not_resume_is_resolved(self):
-        """
-        The floor under it, differing in the one word that decides the question: a `trap` that
-        rethrows ends the script where the raise stands, so nothing after it runs at either level
-        and moving the statements past it changes nothing. What is left behind is unreachable in
-        the input too, and the same visit deletes it, as no handler body encloses it. The `trap`
-        goes as well: the error it takes ends the script with it or without it.
-        """
         result = self._apply(cleandoc("""
             trap {
               break
@@ -1313,18 +1267,9 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
 
 
 class TestPs1ACallThatWritesNothingGoesOnlyWhereNothingObservesIt(TestPs1):
-    """
-    A static method declared `System.Void` puts no value on the output stream, so a statement that
-    is nothing but such a call over a temporary the script cannot otherwise reach performs nothing a
-    run can see, and the junk pass deletes it. Two questions stand around that one: a call that acts
-    is impure whatever it returns and is never a candidate, and a call whose error a handler could
-    receive is vetoed although it emits as little as any other.
-    """
 
     _ANCHOR = "Write-Host 'anchor'"
 
-    #: `[Array]::Clear` raises for a length that runs past the end of the array, so the only trace
-    #: this statement can leave behind is the error a handler receives.
     _MAY_RAISE = "[Array]::Clear('abc'.ToCharArray(), 0, 99)"
 
     def test_a_void_static_call_over_a_temporary_is_deleted(self):

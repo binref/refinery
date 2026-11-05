@@ -8,11 +8,6 @@ from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
 class TestPs1TheSessionAScriptMaySet(TestBase):
-    """
-    What a script may set in its session is read the wide way: a spelling the reader cannot tell
-    harmless counts as setting it. Each spelling below is measured on 5.1 in `corpus.BEHAVIOURS`
-    or named by the rule it follows.
-    """
 
     @staticmethod
     def _session(source: str) -> Ps1Session:
@@ -51,13 +46,13 @@ class TestPs1TheSessionAScriptMaySet(TestBase):
                 self.assertTrue(self._session(source).silenced_by_a_call)
         self.assertFalse(self._session('f -ErrorAction Stop').silenced_by_a_call)
 
-    def test_every_mention_of_the_default_table_may_bind_defaults(self):
+    def test_every_spelling_that_may_fill_the_default_table_is_read_as_binding_defaults(self):
         for source in (
             "$PSDefaultParameterValues['Get-Random:Maximum'] = 0",
             "$PSDefaultParameterValues = @{ 'Get-Random:Maximum' = 0 }",
-            "$ExecutionContext.SessionState.PSVariable.Set('PSDefaultParameterValues', @{})",
+            "$ExecutionContext.SessionState.PSVariable.Set('PSDefaultParameterValues', $t)",
             '$table = $PSDefaultParameterValues',
-            "Invoke-Expression '$PSDefaultParameterValues = @{}'",
+            "Invoke-Expression '$PSDefaultParameterValues[$k] = $v'",
         ):
             with self.subTest(source):
                 self.assertTrue(self._session(source).defaults)

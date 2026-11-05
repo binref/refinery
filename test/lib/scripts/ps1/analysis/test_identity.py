@@ -21,9 +21,6 @@ from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
 
 def _last_value(source: str) -> Node:
-    """
-    The expression the last statement of *source* evaluates.
-    """
     statement = Ps1Parser(source).parse().body[-1]
     if not isinstance(statement, Ps1ExpressionStatement) or statement.expression is None:
         raise AssertionError(F'the last statement of {source!r} is not an expression')
@@ -31,9 +28,6 @@ def _last_value(source: str) -> Node:
 
 
 def _first(source: str, kind: type, name: str | None = None) -> Node:
-    """
-    The first node of *kind* in *source*, in source order; a variable is picked by its *name*.
-    """
     for node in Ps1Parser(source).parse().walk_in_order():
         if isinstance(node, kind) and (name is None or getattr(node, 'name', None) == name):
             return node
@@ -45,11 +39,6 @@ def _spelled(node: Node | None) -> str | None:
 
 
 class TestPs1ObjectSources(TestBase):
-    """
-    Which object the value of an expression may be. Each expectation is a 5.1 fact: the store or
-    the call through the expression's value changes what the operand's name holds exactly where
-    the value is that name's object, and `[object]::ReferenceEquals` compares the two directly.
-    """
 
     def _assertMayBe(self, sources: Ps1ObjectSources, operand: str, *, certain: bool):
         self.assertEqual(_spelled(sources.operand), operand)
@@ -65,10 +54,6 @@ class TestPs1ObjectSources(TestBase):
         self._assertMayBe(object_sources(_last_value('($x)')), '$x', certain=True)
 
     def test_a_conversion_may_be_the_object_it_converts_or_a_new_one(self):
-        """
-        Measured: `[array]$x` over an `Object[]` is the array `$x` holds, and `[int[]]$x` over the
-        same array is a new one. Which of the two a conversion is depends on the operand.
-        """
         for source in ('[array]$x', '[int[]]$x', '$x -as [array]'):
             with self.subTest(source):
                 sources = object_sources(_last_value(source))
@@ -79,10 +64,6 @@ class TestPs1ObjectSources(TestBase):
         self._assertUnknown(object_sources(_last_value('[ref]$x')))
 
     def test_a_product_by_a_count_that_converts_to_one_is_its_left_operand(self):
-        """
-        Measured: `$y * 1`, `$y * '1'`, `$y * 1.4` and `$y * $n` with `$n = 1` are each the array
-        `$y` holds. Over a number the product is a new number, so none of them is certain.
-        """
         for source in ('$y * 1', "$y * '1'", '$y * 1.4', '$y * $n'):
             with self.subTest(source):
                 self._assertMayBe(object_sources(_last_value(source)), '$y', certain=False)
@@ -108,9 +89,6 @@ class TestPs1ObjectSources(TestBase):
                 self.assertTrue(sources.made_here)
 
     def test_an_array_subexpression_around_a_conversion_to_an_array_type_is_that_conversion(self):
-        """
-        Measured: `@([object[]]$x)` and `@(([object[]]$x))` are the array `$x` holds.
-        """
         for source in ('@([object[]]$x)', '@(([object[]]$x))'):
             with self.subTest(source):
                 sources = object_sources(_last_value(source))
@@ -122,10 +100,6 @@ class TestPs1ObjectSources(TestBase):
         self._assertMadeHere(object_sources(_last_value('@($x)')))
 
     def test_an_array_subexpression_around_a_local_constrained_to_an_array_type_may_be_it(self):
-        """
-        Measured: `@($a)` over a local constrained as `[object[]]` is that local's array in a
-        function body, and a new array at the top of a dot-sourced script.
-        """
         for source in (
             'function f { [object[]]$a = 1, 2; @($a) }',
             '[object[]]$a = 1, 2; @($a)',

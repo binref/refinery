@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from test import opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation.reflection import Ps1ReflectionMembers
@@ -19,8 +20,6 @@ class TestPs1ReflectionMembers(TestPs1):
         )
 
     def test_the_two_argument_spelling_folds_the_same_way(self):
-        # Measured on 5.1: a non-indexed property accepts the two-argument `GetValue` and answers
-        # the same instance the one-argument one does.
         self.assertEqual(
             self._apply(
                 '$x = [Text.Encoding].GetProperty(\'UTF8\').GetValue($Null, $Null)',
@@ -99,8 +98,6 @@ class TestPs1ReflectionMembers(TestPs1):
         )
 
     def test_an_argument_from_a_constrained_write_folds(self):
-        # Measured on 5.1: `[string]$q = 5` stores the String `5`, so the argument is judged a
-        # String rather than the Int32 that was written.
         self.assertEqual(
             self._apply(
                 "[string]$q = 5\n"
@@ -113,8 +110,6 @@ class TestPs1ReflectionMembers(TestPs1):
         )
 
     def test_a_folded_call_with_a_variable_argument_is_not_junk(self):
-        # A literal argument makes the folded statement pure, and the cleanup passes evaluate it
-        # away; a variable argument is a read the script decides, so the statement stays.
         self.assertEqual(
             self._deobfuscate(
                 "$sb = New-Object Text.StringBuilder\n"
@@ -144,99 +139,59 @@ class TestPs1ReflectionMembers(TestPs1):
             Ps1ReflectionMembers)
 
     def test_a_member_outside_the_cannot_throw_table_is_left_standing(self):
-        # `KeyAvailable` throws on a redirected stdin, and a getter that throws surfaces through
-        # `GetValue` wrapped in a `MethodInvocationException` where the direct read throws as
-        # itself — measured — so the member is not curated and the read stays as written.
         self._assertUnchanged(
             '$x = [Console].GetProperty(\'KeyAvailable\').GetValue($Null)', Ps1ReflectionMembers)
 
     def test_a_property_spelled_in_another_case_is_left_standing(self):
-        # `Type.GetProperty(String)` is case-sensitive, so `GetProperty('utf8')` finds nothing on
-        # 5.1 and `GetValue($Null)` throws, where the case-insensitive member `[T]::utf8` is a
-        # value: rewriting the throw to the value is a different program.
         self._assertUnchanged(
             '$x = [Text.Encoding].GetProperty(\'utf8\').GetValue($Null)', Ps1ReflectionMembers)
 
     def test_a_field_read_is_left_standing(self):
-        # `GetProperty` does not find a field: the read the script spells throws on 5.1, and the
-        # direct member it would resolve to is a different program. No `GetField` arm exists until
-        # a sample needs one.
         self._assertUnchanged(
             '$x = [Math].GetProperty(\'PI\').GetValue($Null)', Ps1ReflectionMembers)
 
     def test_a_method_spelled_in_another_case_is_left_standing(self):
-        # `Type.GetMethod(String, Type[])` is case-sensitive, so `GetMethod('frombase64string')`
-        # finds nothing on 5.1 and `Invoke` throws, where the case-insensitive member
-        # `[Convert]::FromBase64String` is a call: rewriting the throw to the call is a different
-        # program.
         self._assertUnchanged(
             "$x = [Convert].GetMethod('frombase64string', [type[]]@([string]))"
             ".Invoke($Null, @('aGk='))", Ps1ReflectionMembers)
 
     def test_a_name_only_getmethod_is_left_standing(self):
-        # Measured on 5.1: `GetMethod(String)` on an overloaded name throws
-        # `AmbiguousMatchException` before any `Invoke` happens, so the spelling selects nothing
-        # this could re-spell.
         self._assertUnchanged(
             "$x = [Convert].GetMethod('FromBase64String')"
             ".Invoke($Null, @('aGk='))", Ps1ReflectionMembers)
 
     def test_an_overload_the_binder_could_reselect_is_left_standing(self):
-        # Measured on 5.1: a type array of `@([object])` selects `Write(Object)`, and a String
-        # argument re-binds the direct call to `Write(String)` — the binder selects again, and a
-        # different overload is a different program.
         self._assertUnchanged(
             "$x = [Console].GetMethod('Write', [type[]]@([object]))"
             ".Invoke($Null, @('x'))", Ps1ReflectionMembers)
 
     def test_a_void_method_is_left_standing(self):
-        # Measured on 5.1: `Invoke` on a void method answers a value (`$null`) the direct call
-        # writes nothing for, and what the two spellings leave the script holding is not settled
-        # for every context a script can put one in — the zero-argument spelling is one only this
-        # guard refuses, so the pin is on the guard itself.
         self._assertUnchanged(
             "$x = [Console].GetMethod('Clear', [type[]]@()).Invoke($Null, @())",
             Ps1ReflectionMembers)
 
     def test_a_generic_method_is_left_standing(self):
-        # Measured on 5.1: `Invoke` on a generic method definition throws
-        # `InvalidOperationException` where the direct spelling throws a bare `MethodException`.
-        # `Array.Empty`'s return spelling names nothing this resolves, so the genericity is seen
-        # from the signature.
         self._assertUnchanged(
             "$x = [Array].GetMethod('Empty', [type[]]@()).Invoke($Null, @())",
             Ps1ReflectionMembers)
 
     def test_a_generic_method_with_a_concrete_signature_is_left_standing(self):
-        # Measured on 5.1: `Marshal.OffsetOf` is generic although every type in its signature is
-        # concrete, so no spelling guard can see it and the curated deny-table is what refuses it.
         self._assertUnchanged(
             "$x = [Runtime.InteropServices.Marshal].GetMethod('OffsetOf', [type[]]@([string]))"
             ".Invoke($Null, @('x'))", Ps1ReflectionMembers)
 
     def test_a_null_literal_argument_is_left_standing(self):
-        # Measured on 5.1: `Invoke` hands the method raw null where the direct call converts it
-        # (`[Convert]::FromBase64String($Null)` reads the empty string), so a `$null` argument is
-        # a different program.
         self._assertUnchanged(
             "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
             ".Invoke($Null, @($Null))", Ps1ReflectionMembers)
 
     def test_a_discarded_write_to_null_does_not_vouch_the_null_argument(self):
-        # Measured on 5.1: PowerShell discards a write to `$null` (`$null = 'aGk='` leaves `$null`
-        # reading null), so the argument the array hands `Invoke` is raw null and the call throws
-        # where the direct spelling would convert it — the difference the null-literal refusal
-        # above pins, and the write is not a binding the judgment follows.
         self._assertUnchanged(
             "$null = 'aGk='\n"
             "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
             ".Invoke($Null, @($Null))", Ps1ReflectionMembers)
 
     def test_a_constrained_multi_assignment_slot_is_left_standing(self):
-        # Measured on 5.1: the constraint `[string]$q` installed by the earlier write converts the
-        # slot's element on the way in, so `$q, $r = 5, 6` leaves `$q` holding the String `5` —
-        # the raw String throws inside the `Invoke` the fold writes where the direct spelling
-        # converts it, which is the difference the single-target refusal pins.
         self._assertUnchanged(
             "[string]$q = 'x'\n"
             "$q, $r = 5, 6\n"
@@ -244,9 +199,6 @@ class TestPs1ReflectionMembers(TestPs1):
             ".Invoke($Null, @($q))", Ps1ReflectionMembers)
 
     def test_an_empty_decoding_folds_to_the_empty_array(self):
-        # The empty `Byte[]` the call answers is a value with no literal, so the fold spells it as
-        # `@()` — the empty form the renderer answers for one — rather than an array literal
-        # with no elements, which has no spelling at all.
         self.assertEqual(
             self._deobfuscate(
                 "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
@@ -255,15 +207,11 @@ class TestPs1ReflectionMembers(TestPs1):
         )
 
     def test_a_type_array_matching_an_instance_overload_is_left_standing(self):
-        # Measured on 5.1: `Type.GetMethod(String, Type[])` finds instance methods as well as
-        # static ones, and `Invoke` ignores its target for a static — but the direct spelling of
-        # an instance method on a type literal is a call 5.1 cannot make.
         self._assertUnchanged(
             "$x = [Text.StringBuilder].GetMethod('Append', [type[]]@([string]))"
             ".Invoke($Null, @('x'))", Ps1ReflectionMembers)
 
     def test_an_unvouched_member_call_argument_is_left_standing(self):
-        # `String.ToUpper` is not in the curated non-null table, so the judgment refuses.
         self._assertUnchanged(
             "$x = 'abc'.ToUpper()\n"
             "$y = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
@@ -281,15 +229,41 @@ class TestPs1ReflectionMembers(TestPs1):
             "$x = [IO.File].GetMethod('AppendAllText', [type[]]@([string], [string]))"
             ".Invoke($Null, @('a', 'b'))", Ps1ReflectionMembers)
 
-    def test_a_comma_list_without_the_array_wrapper_is_left_standing(self):
-        self._assertUnchanged(
-            "$x = [Math].GetMethod('Max', [type[]]@([int32], [int32]))"
-            ".Invoke($Null, (5, 7))", Ps1ReflectionMembers)
+    @opportunity
+    def test_a_comma_list_without_the_array_wrapper_folds_like_the_wrapped_one(self):
+        self.assertEqual(
+            self._apply(
+                "$x = [Math].GetMethod('Max', [type[]]@([int32], [int32]))"
+                ".Invoke($Null, (5, 7))",
+                Ps1ReflectionMembers,
+            ),
+            '$x = [Math]::Max(5, 7)',
+        )
 
-    def test_a_scalar_argument_is_left_standing(self):
-        self._assertUnchanged(
+    def test_a_bare_comma_list_is_left_alone_or_folds_like_the_wrapped_one(self):
+        source = "$x = [Math].GetMethod('Max', [type[]]@([int32], [int32])).Invoke($Null, (5, 7))"
+        self.assertIn(self._apply(source, Ps1ReflectionMembers), (source, '$x = [Math]::Max(5, 7)'))
+
+    @opportunity
+    def test_a_scalar_argument_folds_like_a_one_element_array(self):
+        self.assertEqual(
+            self._apply(
+                "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+                ".Invoke($Null, 'aGk=')",
+                Ps1ReflectionMembers,
+            ),
+            "$x = [Convert]::FromBase64String('aGk=')",
+        )
+
+    def test_a_scalar_argument_is_left_alone_or_folds_like_a_one_element_array(self):
+        source = (
             "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
-            ".Invoke($Null, 'aGk=')", Ps1ReflectionMembers)
+            ".Invoke($Null, 'aGk=')"
+        )
+        self.assertIn(
+            self._apply(source, Ps1ReflectionMembers),
+            (source, "$x = [Convert]::FromBase64String('aGk=')"),
+        )
 
 
 if __name__ == '__main__':

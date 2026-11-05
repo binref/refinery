@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+from test import blocker, opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1IexInlining
@@ -50,6 +51,21 @@ class TestPs1InvokeCommandInlining(TestPs1):
             'Invoke-Command -ComputerName server -ScriptBlock { Get-Process }'
         )
         self.assertIn('Invoke-Command', result)
+
+    @blocker
+    def test_an_assignment_in_the_block_does_not_reach_the_variable_of_the_caller(self):
+        source = "$x = 'a'\nInvoke-Command -ScriptBlock { $x = 'b' }\nWrite-Host $x"
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'a'")
+
+    @blocker
+    def test_a_return_in_the_block_ends_only_the_block(self):
+        source = "Invoke-Command -ScriptBlock { return }\nWrite-Host 'after'"
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'after'")
+
+    @blocker
+    def test_the_argument_list_binds_to_the_parameters_of_the_block(self):
+        source = 'Invoke-Command -ScriptBlock { param($a) Write-Host $a } -ArgumentList 5'
+        self._assertDeobfuscatesToOneOf(source, source, 'Write-Host 5')
 
 
 class TestPs1IexInlining(TestPs1):
@@ -109,7 +125,6 @@ class TestPs1IexInlining(TestPs1):
         self.assertNotIn('|', result)
 
     def test_iex_piped_deflate_pipeline(self):
-        # Base64-encoded raw deflate of `Write-Host hello`
         b64 = 'Cy/KLEnV9cgvLlHISM3JyQcA'
         data = (
             "(New-Object IO.Compression.DeflateStream("
@@ -129,9 +144,14 @@ class TestPs1IexInlining(TestPs1):
         self.assertIn("$x = 'hello'", result)
         self.assertNotIn('Invoke-Expression', result)
 
-    def test_iex_expression_multi_statement_not_inlined(self):
-        result = self._deobfuscate("$x = Invoke-Expression \"'a'; 'b'\"")
-        self.assertIn('Invoke-Expression', result)
+    def test_iex_of_two_statements_in_a_value_slot_assigns_both_values(self):
+        source = "$x = Invoke-Expression \"'a'; 'b'\"\nWrite-Host $x"
+        self._assertDeobfuscatesToOneOf(
+            source,
+            source,
+            "$x = 'a', 'b'\nWrite-Host $x",
+            "Write-Host ('a', 'b')",
+        )
 
     def test_iex_via_env_comspec_indexing(self):
         data = "& ($env:ComSpec[4,26,25] -Join '') 'Write-Host hello'"
@@ -214,11 +234,14 @@ class TestPs1IexInlining(TestPs1):
         self.assertIn('scriptblock', result.lower())
         self.assertIn('$var', result)
 
-    def test_scriptblock_create_multi_statement(self):
-        result = self._deobfuscate("&([scriptblock]::Create('$a = 1; $b = 2'))")
-        self.assertIn('$a = 1', result)
-        self.assertIn('$b = 2', result)
-        self.assertNotIn('scriptblock', result.lower())
+    @blocker
+    def test_scriptblock_create_multi_statement_inlines_into_a_block_the_call_operator_runs(self):
+        self._assertDeobfuscatesTo("&([scriptblock]::Create('$a = 1; $b = 2'))", """
+            & {
+              $a = 1
+              $b = 2
+            }
+        """)
 
     def test_scriptblock_create_invoke_return_as_is(self):
         result = self._deobfuscate("[scriptblock]::Create('Write-Host hello').InvokeReturnAsIs()")
@@ -248,8 +271,6 @@ class TestPs1IexRedirections(TestPs1):
             "Invoke-Expression 'Write-Host hello' > C:\\o.txt", Ps1IexInlining)
 
     def test_a_redirected_iex_in_a_value_slot_is_not_replaced_by_its_value(self):
-        # `$a` holds `$null` in the original, because the redirection takes the value away before
-        # the assignment sees it; inlining made it `42`.
         self._assertUnchanged("$a = (Invoke-Expression '42' > C:\\o.txt)", Ps1IexInlining)
 
     def test_a_refused_inlining_leaves_every_parent_pointer_true(self):
@@ -257,8 +278,6 @@ class TestPs1IexRedirections(TestPs1):
         self._assertTreeIsIntact(source, source, Ps1IexInlining)
 
     def test_a_refused_inlining_does_not_report_a_change_it_did_not_make(self):
-        # `deobfuscate` runs its passes to a fixpoint, so a pass reporting a change it declined to
-        # make never converges and the whole pipeline spins.
         transform = Ps1IexInlining()
         transform.visit(self._transform("Invoke-Expression 'Write-Host hi' > C:\\o.txt"))
         self.assertFalse(transform.changed)
@@ -270,13 +289,6 @@ class TestPs1IexRedirections(TestPs1):
 
 
 class TestPs1AShadowedForeachStageIsNotDecoded(TestPs1):
-    """
-    The decode pipeline `expr | %{ body } | %{ body }` runs its stages through `ForEach-Object`.
-    A script that redefines `ForEach-Object` runs its own body for each stage instead, so on Windows
-    PowerShell 5.1 (`5.1.26100.9168`) the deflated payload is never reached — the run raises
-    `HIJACK : The term 'HIJACK' is not recognized`. Decoding it anyway inlines code the script never
-    produces.
-    """
 
     _PIPELINE = (
         "(New-Object IO.Compression.DeflateStream("
@@ -299,11 +311,6 @@ class TestPs1AShadowedForeachStageIsNotDecoded(TestPs1):
         self.assertIn('ReadToEnd', result)
 
     def test_a_redefinition_an_earlier_inline_installs_is_seen_by_the_later_decode(self):
-        """
-        The `function ForEach-Object` is not written in the source: the same pass inlines the
-        `Invoke-Expression` that installs it before it reaches the decode pipeline, which must still
-        refuse. A shadow set snapshotted once at the start of the pass misses it and decodes anyway.
-        """
         source = "Invoke-Expression 'function ForEach-Object { \"HIJACK\" }'\n" + self._PIPELINE
         result = self._deobfuscate(source)
         self.assertNotIn('Write-Host', result)
@@ -316,9 +323,15 @@ class TestPs1IexInliningOfAnEmptyBlock(TestPs1):
         self._assertUnchanged('Invoke-Command -ScriptBlock {}', Ps1IexInlining)
 
     def test_an_empty_scriptblock_does_not_abort_the_pipeline(self):
+        source = "Invoke-Command -ScriptBlock {}\nWrite-Host 'go'"
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'go'")
+
+    @opportunity
+    def test_an_empty_scriptblock_run_through_invoke_command_is_removed(self):
         self.assertEqual(
             self._deobfuscate("Invoke-Command -ScriptBlock {}\nWrite-Host 'go'"),
-            "Invoke-Command -ScriptBlock {}\nWrite-Host 'go'")
+            "Write-Host 'go'",
+        )
 
     def test_a_scriptblock_holding_a_statement_is_still_inlined(self):
         self.assertEqual(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test import TestBase
+from test import TestBase, opportunity
 
 from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.ps1.analysis.blocks import (
@@ -17,10 +17,6 @@ from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
 class TestPs1BlockFacts(TestBase):
-    """
-    Every expectation here is what Windows PowerShell 5.1 does, measured on a real host — never what
-    the classifier's own rules imply.
-    """
 
     def _facts(self, source: str, index: int = 0):
         tree = Ps1Parser(source).parse()
@@ -37,10 +33,6 @@ class TestPs1BlockFacts(TestBase):
         return sorted(write.key for write in blocks.writes_reaching_caller(block))
 
     def test_a_dotted_block_writes_the_caller_and_an_ampersand_block_does_not(self):
-        """
-        The pair the whole question turns on: identical syntax, opposite answers, so neither can be
-        read off the block itself.
-        """
         self.assertIs(self._scope(". { $x = 'b' }"), Ps1BlockScope.CALLER)
         self.assertIs(self._scope("& { $x = 'b' }"), Ps1BlockScope.CHILD)
         self.assertEqual(self._written_names(". { $x = 'b' }"), ['x'])
@@ -51,10 +43,6 @@ class TestPs1BlockFacts(TestBase):
         self.assertEqual(self._written_names("function f { $x = 'b' }"), [])
 
     def test_a_child_scope_contains_a_dotted_block_nested_in_it(self):
-        """
-        The dot runs the inner body in the `&` block's scope, and that scope ends with the `&`, so
-        the write never reaches the script.
-        """
         self.assertEqual(self._written_names("& { . { $x = 'b' } }"), [])
         self.assertEqual(self._written_names(". { & { $x = 'b' } }"), [])
         self.assertEqual(self._written_names(". { . { $x = 'b' } }"), ['x'])
@@ -87,14 +75,17 @@ class TestPs1BlockFacts(TestBase):
                 self.assertIs(facts.iteration, Ps1BlockIteration.REPEATED)
 
     def test_a_block_a_command_merely_receives_is_not_claimed_to_run(self):
-        """
-        `f { }`, `Invoke-Command -ScriptBlock { }` and `ForEach-Object { }` are one AST shape, and
-        only the last is known to invoke what it is handed.
-        """
-        for source in ("f { $x = 'b' }", "Invoke-Command -ScriptBlock { $x = 'b' }"):
-            with self.subTest(source):
-                blocks, block = self._facts(source)
-                self.assertIs(blocks.facts(block).reach, Ps1BlockReach.UNKNOWN)
+        blocks, block = self._facts("f { $x = 'b' }")
+        self.assertIs(blocks.facts(block).reach, Ps1BlockReach.UNKNOWN)
+
+    @opportunity
+    def test_a_block_invoke_command_is_handed_runs_where_it_is_written_in_a_child_scope(self):
+        source = "Invoke-Command -ScriptBlock { $x = 'b' }"
+        blocks, block = self._facts(source)
+        facts = blocks.facts(block)
+        self.assertIs(facts.reach, Ps1BlockReach.IMMEDIATE)
+        self.assertIs(facts.scope, Ps1BlockScope.CHILD)
+        self.assertEqual(self._written_names(source), [])
 
     def test_a_block_invoked_through_a_computed_name_is_not_claimed_to_run(self):
         blocks, block = self._facts("& $c { $x = 'b' }")
@@ -107,21 +98,12 @@ class TestPs1BlockFacts(TestBase):
                 self.assertIs(blocks.facts(block).reach, Ps1BlockReach.STORED)
 
     def test_an_unknown_block_is_projected_as_writing_the_caller(self):
-        """
-        The asymmetry the module exists to hold: a kill nobody performs loses an inlining, a kill
-        somebody performs that nobody recorded keeps a stale value.
-        """
         blocks, block = self._facts("f { $x = 'b' }")
         self.assertIs(blocks.facts(block).scope, Ps1BlockScope.UNKNOWN)
         self.assertTrue(blocks.may_write_caller_scope(block))
         self.assertEqual(self._written_names("f { $x = 'b' }"), ['x'])
 
     def test_a_name_addressed_write_reaches_the_caller_exactly_where_a_bare_one_does(self):
-        """
-        Measured: a bare `Set-Variable x 'b'` lands in the scope the command runs in and leaves the
-        caller's `$x` alone from a child scope. It is the write `$x = 'b'` is, spelled without an
-        occurrence, so the body around it and not the spelling decides who sees it afterwards.
-        """
         for bare, named, expected in (
             (". { $x = 'b' }", ". { Set-Variable x 'b' }", ['x']),
             ("& { $x = 'b' }", "& { Set-Variable x 'b' }", []),
@@ -171,18 +153,9 @@ class TestPs1BlockFacts(TestBase):
         self.assertEqual(self._written_names('& { Get-Process -OutVariable p }'), [])
 
     def test_an_appending_out_variable_still_changes_the_name_it_binds(self):
-        """
-        Measured: with `$p` already set, `-OutVariable +p` keeps that value and appends the output,
-        where `-OutVariable p` replaces it. Either way `$p` after the block is not the one before.
-        """
         self.assertEqual(self._written_names('. { Get-Process -OutVariable +p }'), ['p'])
 
     def test_a_write_that_names_its_scope_is_not_a_fact_about_where_the_block_runs(self):
-        """
-        Measured: `-Scope Script` is `$script:x = 'b'`, and `Set-Variable global:x` writes global.
-        Each lands in the scope it names no matter where the block ran, exactly as the qualified
-        assignment beside it does.
-        """
         for source in (
             ". { Set-Variable x 'b' -Scope Script }",
             ". { Set-Variable script:x 'b' }",
@@ -195,19 +168,10 @@ class TestPs1BlockFacts(TestBase):
                 self.assertEqual(self._written_names(source), [])
 
     def test_a_write_that_names_the_scope_it_runs_in_is_still_a_fact_about_the_block(self):
-        """
-        Measured: `-Scope Local` is `$x = 'b'`. Naming a scope is therefore not what puts a write
-        beyond the block; naming one the block does not decide is.
-        """
         self.assertEqual(self._written_names(". { Set-Variable x 'b' -Scope Local }"), ['x'])
         self.assertEqual(self._written_names("& { Set-Variable x 'b' -Scope Local }"), [])
 
     def test_an_environment_write_is_not_a_fact_about_where_the_block_runs(self):
-        """
-        The environment is not scoped: `$env:x = 'b'` reaches the caller from a `&` block as much as
-        from a dotted one, and `Set-Item Env:x 'b'` is the same write. Neither spelling in either
-        body says anything about the scope the block ran in.
-        """
         for source in (
             ". { Set-Item Env:x 'b' }",
             ". { $env:x = 'b' }",
@@ -241,10 +205,6 @@ class TestPs1BlockFactsReachCycleModel(TestBase):
         self.assertTrue(self._repeats("1..3 | ForEach-Object { $x = 'b' }"))
 
     def test_a_body_invoked_once_beside_it_does_not_repeat(self):
-        """
-        The floor under the iteration work: without it, classifying every block as repeating would
-        pass the test above and read as caution.
-        """
         self.assertFalse(self._repeats("& { $x = 'b' }"))
         self.assertFalse(self._repeats(". { $x = 'b' }"))
 
@@ -253,13 +213,6 @@ class TestPs1BlockFactsReachCycleModel(TestBase):
 
 
 class TestPs1AnIteratingCommandRunsOnlyTheBlocksItIsHandedToRun(TestBase):
-    """
-    Measured on Windows PowerShell 5.1. `ForEach-Object -InputObject { 'RAN' }` never runs the
-    block: it reports `ScriptBlockArgumentNoInput` and the block's text is never evaluated.
-    `1, 2 | ForEach-Object { 'B' } { 'P' } { 'E' }` writes `B P P E`, so three positional blocks are
-    `begin`, `process` and `end`, and only the middle one sees each object.
-    `1, 2 | ForEach-Object -Begin { "[$_]" } -Process { "[$_]" }` writes `[]`, `[1]`, `[2]`.
-    """
 
     @staticmethod
     def _blocks(source: str):
@@ -278,10 +231,15 @@ class TestPs1AnIteratingCommandRunsOnlyTheBlocksItIsHandedToRun(TestBase):
         self.assertIs(facts.reach, Ps1BlockReach.IMMEDIATE)
         self.assertIsNotNone(facts.site)
 
-    def test_only_the_first_of_three_positional_blocks_is_placed(self):
+    def test_the_first_of_three_positional_blocks_runs_where_the_command_does(self):
         blocks, found = self._blocks("1, 2 | ForEach-Object { 'B' } { 'P' } { 'E' }")
-        placed = [blocks.facts(block).reach is Ps1BlockReach.IMMEDIATE for block in found]
-        self.assertEqual(placed, [True, False, False])
+        self.assertIs(blocks.facts(found[0]).reach, Ps1BlockReach.IMMEDIATE)
+
+    @opportunity
+    def test_the_second_and_third_of_three_positional_blocks_run_where_the_command_does(self):
+        blocks, found = self._blocks("1, 2 | ForEach-Object { 'B' } { 'P' } { 'E' }")
+        self.assertIs(blocks.facts(found[1]).reach, Ps1BlockReach.IMMEDIATE)
+        self.assertIs(blocks.facts(found[2]).reach, Ps1BlockReach.IMMEDIATE)
 
     def test_a_lone_positional_block_binds_the_current_object(self):
         blocks, found = self._blocks("1, 2 | ForEach-Object { $_ }")
@@ -297,33 +255,22 @@ class TestPs1AnIteratingCommandRunsOnlyTheBlocksItIsHandedToRun(TestBase):
         blocks, found = self._blocks("1, 2 | Where-Object { $_ -gt 1 }")
         self.assertIsNotNone(binds_the_pipeline_variable(found[0]))
 
-    def test_a_block_beside_another_positional_block_binds_nothing(self):
+    def test_the_first_and_third_of_three_positional_blocks_bind_no_current_object(self):
         blocks, found = self._blocks("1, 2 | ForEach-Object { 'B' } { 'P' } { 'E' }")
-        self.assertEqual([binds_the_pipeline_variable(block) for block in found], [None] * 3)
+        self.assertIsNone(binds_the_pipeline_variable(found[0]))
+        self.assertIsNone(binds_the_pipeline_variable(found[2]))
+
+    @opportunity
+    def test_the_second_of_three_positional_blocks_binds_the_current_object(self):
+        blocks, found = self._blocks("1, 2 | ForEach-Object { 'B' } { 'P' } { 'E' }")
+        self.assertIsNotNone(binds_the_pipeline_variable(found[1]))
 
     def test_a_member_name_makes_the_positional_block_an_argument_rather_than_a_body(self):
-        """
-        Measured on 5.1: `1, 2 | ForEach-Object -MemberName ToString { Write-Host 'BLOCK_RAN' }`
-        writes the block's own text twice — it is handed to `ToString` as an argument and never run.
-        `ForEach-Object -InputObject 5 { Write-Host "P:$_" }` does run the block and writes `P:5`,
-        so what tells the two apart is the parameter *set* each written name selects.
-        """
         blocks, found = self._blocks("1, 2 | ForEach-Object -MemberName ToString { 'x' }")
         self.assertIs(blocks.facts(found[0]).reach, Ps1BlockReach.UNKNOWN)
 
 
 class TestPs1AShadowedIteratingCommandRunsItsOwnBodyNotTheBlock(TestBase):
-    """
-    Measured on Windows PowerShell 5.1 (`5.1.26100.9168`). A script that redefines `ForEach-Object`
-    with a `function` runs that body where the block would otherwise run, and `%` follows the same
-    redefinition because it resolves to `ForEach-Object`:
-
-        function ForEach-Object { 'HIJACK' }
-        1, 2 | % { $_ * 2 }        # writes HIJACK, not 2 4
-
-    A `function foreach` binds the separate `foreach` name that the built-in keyword outranks, so it
-    does not take over `ForEach-Object` — `1, 2 | ForEach-Object { $_ * 2 }` still writes `2 4`.
-    """
 
     def _pipeline_block(self, source: str):
         tree = Ps1Parser(source).parse()

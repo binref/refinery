@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
+from test import backlog, blocker, todo, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1WildcardResolution
@@ -38,14 +39,11 @@ class TestPs1VariableDriveResolution(TestPs1):
         result = self._deobfuscate("Set-Item Variable:/G7E 'hello'")
         self.assertEqual(result.strip(), "$G7E = 'hello'")
 
-    def test_set_item_variable_multi_value(self):
-        result = self._deobfuscate(
-            "Set-Item Variable:/G7E $env:Temp '\\NGLClient.exe'"
+    def test_set_item_variable_with_a_joined_value_becomes_an_assignment(self):
+        self.assertEqual(
+            self._deobfuscate("Set-Item Variable:/G7E $env:Temp'\\NGLClient.exe'"),
+            '$G7E = "${env:Temp}\\NGLClient.exe"',
         )
-        self.assertIn('$G7E', result)
-        self.assertIn('=', result)
-        self.assertIn('env:Temp', result)
-        self.assertIn('NGLClient', result)
 
     def test_set_variable_becomes_assignment(self):
         result = self._deobfuscate("Set-Variable foo 42")
@@ -98,11 +96,10 @@ class TestPs1VariableDriveResolution(TestPs1):
         self.assertIn('DownloadFile', result)
         self.assertNotIn('Do*e', result)
 
-    def test_new_object_type_resolution_in_pipeline(self):
-        result = self._deobfuscate(
-            '(New-Object Net.WebClient | Get-Member)[6].Name'
-        )
-        self.assertNotIn('[6].Name', result)
+    @blocker
+    def test_a_get_member_index_over_a_new_object_names_the_member_at_that_index(self):
+        source = '(New-Object Net.WebClient | Get-Member)[6].Name'
+        self._assertDeobfuscatesToOneOf(source, source, "'OpenWriteCompleted'")
 
     def test_where_object_wildcard_variable_type_inferred(self):
         code = (
@@ -149,11 +146,6 @@ class TestPs1VariableDriveResolution(TestPs1):
 
 
 class TestPs1AWildcardIsNotMatchedPastABlockThatWritesItsCallersName(TestPs1):
-    """
-    Measured on 5.1: a dot-sourced block and a `ForEach-Object` or `Where-Object` body store into
-    the caller's `$q`, so after `. { $q = 5 }` the pipeline lists an Int32's members and `Downl*g`
-    matches none of them. A `&` block writes a scope of its own and leaves the WebClient standing.
-    """
 
     def test_a_write_a_caller_scope_block_replaces_does_not_decide_the_member_list(self):
         for source in [
@@ -224,21 +216,51 @@ class TestPs1WildcardResolution(TestPs1):
         self.assertIn('Variable:P*', result)
 
     def test_wildcard_cmdlet_getcmdlets(self):
-        result = self._deobfuscate("$x.GetCmdlets('*w-*ct')")
-        self.assertIn('New-Object', result)
-        self.assertNotIn('GetCmdlets', result)
+        result = self._deobfuscate(
+            "& ($ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')) Net.WebClient"
+        )
+        self.assertEqual(result, 'New-Object Net.WebClient')
 
     def test_wildcard_cmdlet_invoke(self):
-        result = self._deobfuscate("$x.Invoke('*w-*ct')")
-        self.assertIn('New-Object', result)
+        result = self._deobfuscate(
+            "& ($ExecutionContext.InvokeCommand.GetCmdlets.Invoke('*w-*ct')) Net.WebClient"
+        )
+        self.assertEqual(result, 'New-Object Net.WebClient')
 
-    def test_wildcard_member_filter(self):
+    @todo
+    def test_invoke_on_a_script_block_runs_the_block_rather_than_naming_a_cmdlet(self):
+        source = cleandoc("""
+            $f = { param($n) & $n }
+            $r = $f.Invoke('Get-Date')
+            Write-Host ($r[0] -is [datetime])
+        """)
+        self._assertDeobfuscatesToOneOf(
+            source,
+            source,
+            """
+                $f = {
+                  Param($n)
+                  & $n
+                }
+                $r = $f.Invoke('Get-Date')
+                Write-Host ($r[0] -Is [datetime])
+            """,
+        )
+
+    @wontfix(
+        'a working script never pipes a bare type literal into Get-Member to look up an instance '
+        'method, because on 5.1 that finds nothing'
+    )
+    def test_a_member_filter_over_a_type_literal_does_not_match_the_instance_members(self):
         result = self._deobfuscate("[IO.StreamReader] | Get-Member | ? { $_.Name -ilike 'ReadT*d' }")
-        self.assertIn('ReadToEnd', result)
+        self.assertNotIn('ReadToEnd', result)
 
     def test_wildcard_member_filter_no_space_before_operator(self):
-        result = self._deobfuscate("[IO.StreamReader] | Get-Member | ? { $_.Name-ilike'ReadT*d' }")
-        self.assertIn('ReadToEnd', result)
+        result = self._deobfuscate(
+            '$w = New-Object Net.WebClient\n'
+            "$w.(($w | Get-Member | ? { $_.Name-ilike'Downl*g' }).Name)"
+        )
+        self.assertEqual(result, '$w = New-Object Net.WebClient\n$w.DownloadString')
 
     def test_wildcard_where_get_command(self):
         result = self._deobfuscate("Get-Command | ? { $_.Name -ilike '*w-*ct' }")
@@ -302,9 +324,6 @@ class TestPs1WildcardExtra(TestPs1):
 class TestPs1WildcardRedirections(TestPs1):
 
     def test_a_redirected_variable_read_is_not_rewritten_to_the_variable(self):
-        # The rewrite installs an expression and an expression carries no redirections, so the
-        # value went to the console and `C:\out.txt` was never created — PowerShell creates the
-        # target as it sets the redirection up, whatever the command then writes.
         self._assertUnchanged(
             'Get-Variable payload -ValueOnly > C:\\out.txt', Ps1WildcardResolution)
 
@@ -320,21 +339,11 @@ class TestPs1WildcardRedirections(TestPs1):
         self._assertTreeIsIntact(source, source, Ps1WildcardResolution)
 
     def test_a_refused_variable_write_leaves_every_parent_pointer_true(self):
-        # `Set-Variable` builds its replacement out of the argument the command already holds, so a
-        # refusal that does not put it back leaves that argument naming a node the pass threw away.
         source = "Set-Variable x 'v' > C:\\out.txt"
         self._assertTreeIsIntact(source, source, Ps1WildcardResolution)
 
 
 class TestPs1VariableCommandScope(TestPs1):
-    """
-    Rewriting a variable command into a variable reference has to carry the scope the command names
-    and decline when the language has no way to name it. A `-Scope` argument reaches the parser as a
-    switch followed by a positional, so a reading that takes every positional as an argument both
-    names the wrong variable and appends the scope's own spelling to its value.
-
-    Every expectation is measured on 5.1 — see `temp/ps1/census_measurements.md`.
-    """
 
     def test_a_scope_the_language_can_name_is_carried_onto_the_reference(self):
         for scope, rendered in (
@@ -349,11 +358,6 @@ class TestPs1VariableCommandScope(TestPs1):
                     F"{rendered} = 'b'")
 
     def test_a_scope_no_qualifier_reaches_declines_the_rewrite(self):
-        """
-        Measured: `-Scope 1` writes the *caller's* scope, which no qualifier names. An unrecognised
-        word and a computed scope are the same case, and rewriting any of them to a plain
-        assignment would move the write into the scope the command stands in.
-        """
         for scope in ('1', 'Foo', '$s'):
             with self.subTest(scope):
                 self._assertUnchanged(F"Set-Variable y 'b' -Scope {scope}", Ps1WildcardResolution)
@@ -369,16 +373,6 @@ class TestPs1VariableCommandScope(TestPs1):
             "$y = 'b'")
 
     def test_a_parameter_an_assignment_cannot_carry_declines_the_rewrite(self):
-        """
-        Measured: after `New-Variable x -Option ReadOnly` a later `$x = …` raises
-        `SessionStateUnauthorizedAccessException` where after `$x = …` it succeeds, so the option
-        decides what every later store in the script does and an assignment states the opposite.
-        `-Force` is what lets a write land on a name so protected, and `-PassThru` makes the command
-        emit an object an assignment does not emit.
-
-        `-Description` is the floor: it is metadata no read or write observes, so declining on any
-        parameter at all would cost the rewrite for nothing.
-        """
         for source in (
             "Set-Variable y 'b' -Option ReadOnly",
             "Set-Variable y 'b' -Option Constant",
@@ -390,10 +384,6 @@ class TestPs1VariableCommandScope(TestPs1):
                 self._assertUnchanged(source, Ps1WildcardResolution)
 
     def test_a_qualified_name_beside_a_scope_declines_the_rewrite(self):
-        """
-        Measured: `Set-Variable global:y 'b' -Scope Script` leaves both `$global:y` and `$script:y`
-        as they were, so neither qualifier stands for what the command does.
-        """
         self._assertUnchanged("Set-Variable global:y 'b' -Scope Script", Ps1WildcardResolution)
 
     def test_a_read_carries_its_scope_and_declines_what_it_cannot_name(self):
@@ -403,25 +393,16 @@ class TestPs1VariableCommandScope(TestPs1):
         self._assertUnchanged('Get-Variable y -ValueOnly -Scope 1', Ps1WildcardResolution)
 
     def test_the_value_property_carries_the_scope_the_ValueOnly_spelling_does(self):
-        """
-        `(Get-Variable y -Scope Global).Value` and `Get-Variable y -ValueOnly -Scope Global` read
-        the same variable, so a rewrite that drops the qualifier on one of them silently reads a
-        shadowing local instead of the global the script named.
-        """
         self.assertEqual(
             self._apply('(Get-Variable y -Scope Global).Value', Ps1WildcardResolution),
             '$global:y')
         self._assertUnchanged('(Get-Variable y -Scope 1).Value', Ps1WildcardResolution)
 
-    def test_the_name_property_is_the_name_whichever_scope_is_read(self):
-        self.assertEqual(
-            self._apply('(Get-Variable y -Scope 1).Name', Ps1WildcardResolution), "'y'")
+    @backlog
+    def test_the_name_property_of_a_variable_the_caller_may_lack_is_not_resolved(self):
+        self._assertUnchanged('(Get-Variable y -Scope 1).Name', Ps1WildcardResolution)
 
     def test_a_subject_bound_by_name_is_read_like_a_positional_one(self):
-        """
-        A `-Name` or `-Path` argument leaves no free positional behind, so a reading that looks only
-        at positionals declines every named spelling of the same command.
-        """
         for source, expected in (
             ('Get-Variable -Name y -ValueOnly', '$y'),
             ('(Get-Variable -Name y).Value', '$y'),
@@ -435,14 +416,6 @@ class TestPs1VariableCommandScope(TestPs1):
 
 
 class TestPs1NumberedVariableNames(TestPs1):
-    """
-    Measured on 5.1 by comparing the variables a line creates against the ones that existed before
-    it ran: `Set-Variable 007 v` creates `007`, `Set-Variable 0x10 v` creates `0x10` and
-    `Set-Variable 1_000 v` creates `1_000`. A number in command-argument position becomes the text
-    it is written as, never the text of the value it denotes — `007` is not `7` and `0x10` is not
-    `16`. Naming the value instead invents a variable the script never mentions and leaves the one
-    it does mention unresolved.
-    """
 
     def test_a_read_spelled_the_way_the_name_was_written_resolves(self):
         for written in ('007', '0x10', '1_000'):
@@ -487,10 +460,6 @@ class TestPs1NumberedVariableNames(TestPs1):
                 self.assertEqual(self._apply(source, Ps1WildcardResolution), expected)
 
     def test_the_value_property_names_what_the_ValueOnly_spelling_names(self):
-        """
-        `Get-Variable 0x10 -ValueOnly` and `(Get-Variable 0x10).Value` read the same variable, so
-        the two spellings have to agree on which one that is.
-        """
         self.assertEqual(
             self._apply('Get-Variable 0x10 -ValueOnly', Ps1WildcardResolution), '$0x10')
         self.assertEqual(
@@ -498,4 +467,6 @@ class TestPs1NumberedVariableNames(TestPs1):
 
     def test_the_name_property_is_the_text_the_number_was_written_as(self):
         self.assertEqual(
-            self._apply('(Get-Variable 0x10).Name', Ps1WildcardResolution), "'0x10'")
+            self._apply("Set-Variable 0x10 'v'\n(Get-Variable 0x10).Name", Ps1WildcardResolution),
+            "$0x10 = 'v'\n'0x10'",
+        )

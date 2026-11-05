@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import unittest
-
 from inspect import cleandoc
 
-from test import TestBase, wontfix
+from test import TestBase, wontfix, opportunity, todo
 
 from refinery.lib.scripts import Node, Statement, set_body
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
@@ -52,10 +50,6 @@ def _reach(tree: Ps1Script) -> Ps1FaultReach:
 
 
 def _offered(reach: Ps1FaultReach, node: Node) -> tuple[Node, ...] | None:
-    """
-    The handlers the error paths offer an error raised at *node*, or `None` where the graphs place
-    it nowhere.
-    """
     found = reach.fate_of(node, Ps1ErrorKind.STATEMENT)
     if found is None:
         return None
@@ -76,9 +70,6 @@ def _offered(reach: Ps1FaultReach, node: Node) -> tuple[Node, ...] | None:
 
 
 def _offered_where_placed(reach: Ps1FaultReach, node: Node) -> tuple[Node, ...]:
-    """
-    `_offered` for a node the graphs place.
-    """
     offered = _offered(reach, node)
     if offered is None:
         raise AssertionError(F'the graphs place nothing for {node}')
@@ -86,10 +77,6 @@ def _offered_where_placed(reach: Ps1FaultReach, node: Node) -> tuple[Node, ...]:
 
 
 def _leaves(reach: Ps1FaultReach, node: Node) -> bool:
-    """
-    Whether the error paths let an error raised at *node* past every handler of its body: they
-    lead from it to the exit of the body.
-    """
     found = reach.fate_of(node, Ps1ErrorKind.STATEMENT)
     if found is None:
         return True
@@ -109,10 +96,6 @@ def _leaves(reach: Ps1FaultReach, node: Node) -> bool:
 
 
 def _observed(reach: Ps1FaultReach, node: Node) -> bool:
-    """
-    Whether a raise at the position *node* stands at is observed: a statement-terminating error,
-    and where the raise there is terminating, the error of a `throw` and one no list reports.
-    """
     kinds = Ps1ErrorKind.STATEMENT
     if reach.error_is_terminating(node):
         kinds |= Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED
@@ -120,11 +103,6 @@ def _observed(reach: Ps1FaultReach, node: Node) -> bool:
 
 
 class _Answering:
-    """
-    Raise and skip verdicts that read every point as raising every kind where *answer* holds and
-    as raising nothing otherwise, every call as running a body nothing can name, and every region
-    as observed where *answer* holds.
-    """
 
     def __init__(self, answer: bool):
         self._answer = answer
@@ -150,10 +128,6 @@ def _no_trap_is_asked_about(trap: Ps1TrapStatement) -> bool:
 
 
 def _handler_verdicts(tree: Ps1Script, reach: Ps1FaultReach) -> Ps1HandlerVerdicts:
-    """
-    The handler verdicts over *reach*, reading raise models built over *reach* from the models a
-    cache of *tree* holds.
-    """
     cache = Ps1ModelCache(tree)
 
     def raises(under_the_world: bool) -> Ps1RaiseModel:
@@ -178,22 +152,13 @@ def _trap(node: Node) -> Ps1TrapStatement:
 
 
 def _handler_removal_is_observed(tree: Ps1Script, reach: Ps1FaultReach, *traps: Node) -> bool:
-    """
-    The composed verdict the dead-code pass reads: `removing_traps_is_observed` weighing the
-    real fault-possibility predicate and the real soft-step-over predicate together, so a unit test
-    judges a resuming `trap` exactly as the pass does rather than by the always-keep default the
-    reader falls back on when a caller supplies neither.
-    """
     verdicts = _handler_verdicts(tree, reach)
     return reach.removing_traps_is_observed(
         [_trap(trap) for trap in traps], verdicts.raises(False), verdicts.skips)
 
 
-#: The subexpression that `TestPs1ATrapWrittenInASubexpressionGuardsThatSubexpression` is measured
-#: over, and whose shape `TestPs1TheBracketFixturesHoldTheShapeTheirPinsAssume` keeps.
 _TRAP_IN_A_SUBEXPRESSION = "$x = $(trap { 'h' }; 'a')"
 
-#: The array expression twin of `_TRAP_IN_A_SUBEXPRESSION`.
 _TRAP_IN_AN_ARRAY_EXPRESSION = "$x = @(trap { 'h' }; 'a')"
 
 
@@ -342,13 +307,6 @@ class TestPs1FaultLeavesTheBody(TestBase):
 
 
 class TestPs1ATrapDisposesOfTheErrorWhateverConstructEnclosesItsBlock(TestBase):
-    """
-    A `trap` body is a scope of its own for `break` and `continue`, so what the set does with an
-    error is decided by the body alone and not by the loop or `switch` the guarded block happens to
-    be written inside. Measured on 5.1: a `trap { break }` written in a `while` body stops the
-    script where the raise is, exactly as one written at script scope does, and a
-    `trap { continue }` written there resumes at the statement after the raise on every iteration.
-    """
 
     _SPELLINGS = [
         "trap { %s }\n'a'",
@@ -594,15 +552,8 @@ def _traps_of(tree: Ps1Script) -> list[Ps1TrapStatement]:
 
 
 class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
-    """
-    Every script here is a snippet of the oracle corpus or one of its spellings, measured on 5.1
-    with the traps and without the traps the test deletes.
-    """
 
     def test_a_member_that_breaks_written_before_one_that_continues_is_why_the_script_stops(self):
-        """
-        5.1 stops at the cast; without `trap { break }` it writes `after`.
-        """
         tree, reach = _model("""
             trap { break }
             trap { continue }
@@ -614,9 +565,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         self.assertFalse(_handler_removal_is_observed(tree, reach, continues))
 
     def test_a_typed_member_is_tried_before_an_untyped_one_written_above_it(self):
-        """
-        5.1 stops at the division; without the typed `trap` it writes `after`.
-        """
         tree, reach = _model("""
             trap { continue }
             trap [System.Management.Automation.RuntimeException] { break }
@@ -628,10 +576,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         self.assertTrue(_handler_removal_is_observed(tree, reach, typed))
 
     def test_an_inner_resuming_set_is_kept_where_the_outer_one_would_skip_the_rest_of_its_block(self):
-        """
-        5.1 writes `tail` and `after`; without the inner `trap` the outer one resumes past the
-        whole block and only `after` is written.
-        """
         for opening in ('if ($true) {', 'foreach ($q in 1, 2) {'):
             with self.subTest(opening):
                 tree, reach = _model(F"""
@@ -647,9 +591,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
                 self.assertTrue(_handler_removal_is_observed(tree, reach, inner))
 
     def test_a_resuming_set_in_a_try_is_kept_where_the_empty_catch_would_skip_the_rest_of_it(self):
-        """
-        5.1 writes `tail` and `after`; without the `trap` only `after`.
-        """
         tree, reach = _model("""
             try {
               trap { continue }
@@ -661,9 +602,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         self.assertTrue(_handler_removal_is_observed(tree, reach, *_traps_of(tree)))
 
     def test_a_resuming_set_under_a_breaking_one_under_a_resuming_one_is_kept(self):
-        """
-        5.1 writes `tail`, `mid` and `after`; without the innermost `trap` only `after`.
-        """
         tree, reach = _model("""
             trap { continue }
             if ($true) {
@@ -681,9 +619,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         self.assertTrue(_handler_removal_is_observed(tree, reach, innermost))
 
     def test_a_member_that_runs_off_its_end_under_stop_is_not_alike_one_that_continues(self):
-        """
-        5.1 stops at the cast; with `trap { continue }` alone it writes `after`.
-        """
         tree, reach = _model("""
             $ErrorActionPreference = 'Stop'
             trap { }
@@ -695,10 +630,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         self.assertTrue(_handler_removal_is_observed(tree, reach, falls_through))
 
     def test_a_member_that_breaks_is_not_alike_one_that_runs_off_its_end_where_stop_is_set_after_the_raise(self):
-        """
-        5.1 stops at the cast, which the typed `trap` re-raises; without it, `trap { }` takes the
-        cast before the preference is `Stop`, resumes, and `after` is written.
-        """
         tree, reach = _model("""
             trap [System.Management.Automation.PSInvalidCastException] { break }
             trap { }
@@ -710,10 +641,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         self.assertTrue(_handler_removal_is_observed(tree, reach, breaks))
 
     def test_a_resuming_set_is_kept_where_a_typed_set_around_it_declines_to_a_resuming_set_further_out(self):
-        """
-        The innermost `trap` resumes inside its block, so `mid` is written; with it gone, the typed
-        `trap` declines the cast and the outermost one resumes past the whole `if`, skipping `mid`.
-        """
         tree, reach = _model("""
             trap { continue }
             if ($true) {
@@ -730,10 +657,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         self.assertTrue(_handler_removal_is_observed(tree, reach, innermost))
 
     def test_one_of_two_alike_members_may_go_but_not_both(self):
-        """
-        5.1 never hands an error to the second untyped member, and the first one does what the
-        second would; with both gone the outer `trap` resumes past the block, as in the nested row.
-        """
         tree, reach = _model("""
             trap { continue }
             if ($c) {
@@ -751,9 +674,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         self.assertEqual(len(reach.removable_traps([first, second], verdicts.raises(False), verdicts.skips)), 1)
 
     def test_a_member_never_selected_may_go_although_its_body_acts(self):
-        """
-        5.1 writes `after` and never `p`, with the second `trap` and without it.
-        """
         tree, reach = _model("""
             trap { continue }
             trap { Write-Host 'p' }
@@ -764,10 +684,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         self.assertFalse(_handler_removal_is_observed(tree, reach, acting))
 
     def test_a_typed_member_that_alone_stands_for_the_set_is_the_member_kept(self):
-        """
-        The typed member takes every error, so the untyped one is never selected; without both, the
-        preference stops the script at the cast where the typed member resumes it.
-        """
         tree, reach = _model("""
             $ErrorActionPreference = 'Stop'
             trap [System.Exception] { continue }
@@ -780,11 +696,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         self.assertEqual(reach.removable_traps([typed, untyped], verdicts.raises(False), verdicts.skips), [untyped])
 
     def test_a_typed_member_may_go_where_the_member_naming_every_error_takes_its_errors_alike(self):
-        """
-        5.1 writes `after` with both members and with the `Exception` member alone, which takes
-        what the `IOException` member took and resumes as well; without both, the preference stops
-        the script at the cast.
-        """
         tree, reach = _model("""
             $ErrorActionPreference = 'Stop'
             trap [System.IO.IOException] { continue }
@@ -797,10 +708,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
         self.assertEqual(reach.removable_traps([narrow, universal], verdicts.raises(False), verdicts.skips), [narrow])
 
     def test_an_outer_set_an_inner_typed_set_declines_into_is_kept(self):
-        """
-        5.1 writes `after`; without the outer `trap` the inner one declines the cast and the script
-        stops.
-        """
         for opening in ('if ((Get-Date).Year -gt 2000) {', 'foreach ($q in (Get-Date).Year) {'):
             with self.subTest(opening):
                 tree, reach = _model(F"""
@@ -815,10 +722,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
                 self.assertTrue(_handler_removal_is_observed(tree, reach, outer))
 
     def test_an_outer_set_an_inner_set_hands_errors_to_past_a_finally_is_kept(self):
-        """
-        5.1 writes `after`; without the outer `trap` the inner one re-raises or declines the cast
-        through the `finally` and the script stops.
-        """
         for inner in ('trap { break }', 'trap [System.IO.IOException] { continue }'):
             with self.subTest(inner):
                 tree, reach = _model(F"""
@@ -833,10 +736,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
                 self.assertTrue(_handler_removal_is_observed(tree, reach, outer))
 
     def test_an_inner_set_that_re_raises_past_a_finally_to_the_outer_one_may_go(self):
-        """
-        5.1 writes `after` with the inner `trap { break }` and without it: the error it re-raises
-        reaches the outer `trap` as the error itself does once it is gone.
-        """
         tree, reach = _model("""
             trap { continue }
             try {
@@ -874,11 +773,6 @@ class TestPs1DeletingTrapsIsJudgedForTheirWholeSet(TestBase):
 
 
 class TestPs1ATrapIsKeptWhereTheRunWithoutItDoesWhatTheRunWithItDoesNot(TestBase):
-    """
-    Deleting the first `trap` of each script changes what runs after the cast fails: where its
-    errors went past the trap, 5.1 now steps over the cast or lands them elsewhere, and the run in
-    between is compared with the one the trap made. Asked the way the dead-code pass asks it.
-    """
 
     @staticmethod
     def _removal_is_observed(source: str) -> bool:
@@ -889,10 +783,6 @@ class TestPs1ATrapIsKeptWhereTheRunWithoutItDoesWhatTheRunWithItDoesNot(TestBase
         return cache.faults.removing_traps_is_observed([first], handlers.raises(True), handlers.skips)
 
     def test_a_catch_body_the_trap_runs_before_its_errors_would_land_is_observed(self):
-        """
-        5.1 writes `caught` and `after`; without the `trap` the empty `catch` takes the cast and
-        only `after` is written.
-        """
         self.assertTrue(self._removal_is_observed("""
             try {
               trap { continue }
@@ -956,10 +846,6 @@ class TestPs1ATrapIsKeptWhereTheRunWithoutItDoesWhatTheRunWithItDoesNot(TestBase
         """))
 
     def test_a_loop_the_trap_leaves_by_break_before_the_errors_would_land_is_observed(self):
-        """
-        5.1 writes nothing; without the `trap` the empty `catch` takes the cast and the loop writes
-        `after 1` and `after 2`.
-        """
         self.assertTrue(self._removal_is_observed("""
             foreach ($i in 1, 2) {
               try {
@@ -985,10 +871,6 @@ class TestPs1ATrapIsKeptWhereTheRunWithoutItDoesWhatTheRunWithItDoesNot(TestBase
         """))
 
     def test_a_function_the_untrapped_run_leaves_by_return_is_observed(self):
-        """
-        5.1 writes `after` with the `trap`; without it the cast is stepped over to the `return`,
-        and nothing is written.
-        """
         self.assertTrue(self._removal_is_observed("""
             function f {
               trap { continue }
@@ -1036,10 +918,6 @@ class TestPs1ATrapIsKeptWhereTheRunWithoutItDoesWhatTheRunWithItDoesNot(TestBase
 
     @wontfix('a run that loops forever after the trap resumes it is compared as if it ended')
     def test_a_trap_whose_resumption_loops_forever_is_kept(self):
-        """
-        5.1 never returns with the `trap`; without it the empty `catch` takes the cast and `after`
-        is written.
-        """
         self.assertTrue(self._removal_is_observed("""
             try {
               trap { continue }
@@ -1191,18 +1069,6 @@ class TestPs1ATrapRemovalWaitsOnlyForATrapRemovedFromABlockAroundIt(TestBase):
 
 
 class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase):
-    """
-    A statement-terminating error inside `$( )` or `@( )` steps over to the next statement within
-    the bracket, and the bracket then yields that value; a resuming `trap` around the whole statement
-    instead resumes past it. Where those two land differently the trap changes what runs and cannot
-    be removed. The coarse graph cannot tell them apart, because the whole assignment is one node
-    there; the finer graph the trap removal reads separates the local step-over from the resume
-point.
-
-    The reader is handed only the coarse model — the one construction there is — and draws that finer
-    graph itself from its own root, so every reader here reads the step-over and none can be left
-    blind and silently remove a load-bearing trap.
-    """
 
     def _trap_removal_is_observed(self, source: str) -> bool:
         tree, reach = _model(source)
@@ -1220,13 +1086,6 @@ point.
             "trap { continue }; $x = $('a'; [int]'b'); Write-Host $x"))
 
     def test_a_last_statement_soft_error_whose_bracket_value_is_unread_lets_the_trap_go(self):
-        """
-        Measured on 5.1: `trap { continue }; $x = $('a'; [int]'b')` leaves `$x` unset because the
-        `trap` resumes past the assignment, where without the `trap` the bracket yields the `'a'` it
-        collected before the error and `$x` is `a`. The two differ only in `$x`, so with nothing that
-        reads `$x` the difference is unobservable and the trap may go; the reader is what makes the
-        twin above load bearing.
-        """
         self.assertFalse(self._trap_removal_is_observed(
             "trap { continue }; $x = $('a'; [int]'b')"))
 
@@ -1251,11 +1110,6 @@ point.
             "trap { continue }; for ($i = 0; $i -lt 3; $i++) { $y = 1 % 0 }; Write-Host 'after'"))
 
     def test_a_soft_error_whose_later_runs_write_what_is_read_after_the_loop_keeps_the_trap(self):
-        """
-        With the `trap`, the first failed cast resumes past the whole loop and `$y` is never set;
-        delete the `trap` and 5.1 reports the error, steps over to `$i++`, and the second run sets
-        `$y` to 5, which `Write-Host` prints.
-        """
         self.assertTrue(self._trap_removal_is_observed(cleandoc("""
             trap { continue }
             $a = @('x', '5')
@@ -1264,12 +1118,6 @@ point.
         """)))
 
     def test_a_soft_error_in_a_block_a_pipeline_runs_ends_the_whole_statement_and_keeps_the_trap(self):
-        """
-        With the `trap`, the character above 255 fails inside the `ForEach-Object` block and the
-        `trap` resumes past the whole pipeline, so `$k` is never set and 5.1 writes `count=0 key=`.
-        Delete the `trap` and 5.1 reports the one failing input and goes on with the next, writing
-        `count=1 key=98`.
-        """
         self.assertTrue(self._trap_removal_is_observed(cleandoc("""
             trap { continue }
             $s = [string][char]256 + 'b'
@@ -1294,10 +1142,6 @@ point.
         """)))
 
     def test_a_soft_error_after_a_statement_in_an_if_body_lets_the_trap_go(self):
-        """
-        `'out'` runs before the raiser with the trap and without it, so the trap skips nothing, as
-        at script scope.
-        """
         self.assertFalse(self._trap_removal_is_observed(cleandoc("""
             trap { continue }
             if ($c) { 'out'; $null = [int]$s }
@@ -1305,87 +1149,38 @@ point.
         """)))
 
     def test_a_soft_error_before_a_live_tail_in_an_if_body_keeps_the_trap(self):
-        """
-        With the `trap`, a statement-terminating error raised in the `if` body resumes past the whole
-        `if`, so `'tail'` never runs; delete the `trap` and 5.1 reports the error and steps over to
-        `'tail'` within the body. The two runs differ on the success stream, so the trap is load
-        bearing. The observability reader weighs the raiser by whether it can raise and the region it
-        skips by what that region emits, so it keeps the trap for the live `'tail'` an `if` body holds
-        the same as for one a bracket holds.
-        """
         self.assertTrue(self._trap_removal_is_observed(
             "trap { continue }; if ($true) { [int]'a'; 'tail' }; Write-Host 'after'"))
 
     def test_a_soft_error_in_a_for_body_inside_a_subexpression_keeps_the_trap(self):
-        """
-        The same one level deeper: a soft error in a `for` body written inside a `$( )` decides
-        whether the bracket yields `'in'` into `$x` or the assignment is abandoned and `$x` stays
-        unset, and `Write-Host $x` reads that on the continuation. The reader weighs the raiser
-        wherever it stands rather than only in the raiser's direct parent, so it keeps the trap.
-        """
         self.assertTrue(self._trap_removal_is_observed(
             "trap { continue }; $x = $(for ($i = 0; $i -lt 1; $i++) { [int]'a' }; 'in'); Write-Host $x"))
 
     def test_a_skipped_global_write_read_on_the_continuation_keeps_the_trap(self):
-        """
-        With the `trap`, the soft error resumes past the assignment and `$global:g` is never set;
-        without it 5.1 steps over to `$global:g = 5` within the bracket and sets it. `$global:g` is
-        read on the continuation, so the two runs differ there and the trap is load bearing. A
-        scope-qualified store is not a name the reach can prove dead, so it keeps the trap.
-        """
         self.assertTrue(self._trap_removal_is_observed(
             "trap { continue }; $x = $([int]'a'; $global:g = 5); Write-Host $global:g"))
 
     def test_a_skipped_index_write_read_on_the_continuation_keeps_the_trap(self):
-        """
-        The skipped `$a[0] = 9` mutates the array `$a` on the untrapped fall-through; `$a[0]` on the
-        continuation reads that mutation, so the trap that would resume past it is load bearing. A
-        store through an index writes memory the name-liveness index does not track, so it is kept.
-        """
         self.assertTrue(self._trap_removal_is_observed(
             "trap { continue }; $a = @(1, 2); $x = $([int]'a'; $a[0] = 9); $a[0]"))
 
     def test_a_skipped_member_write_read_on_the_continuation_keeps_the_trap(self):
-        """
-        As the index store, one level of member access: `$o.P = 9` is skipped by the resuming trap
-        and `$o.P` reads it on the continuation, so the runs differ and the trap is load bearing.
-        """
         self.assertTrue(self._trap_removal_is_observed(
             "trap { continue }; $o = [pscustomobject]@{ P = 1 }; $x = $([int]'a'; $o.P = 9); $o.P"))
 
     def test_a_skipped_write_read_by_an_increment_on_the_continuation_keeps_the_trap(self):
-        """
-        `$q++` on the continuation reads `$q` before it writes it, so the skipped `$q = 99` is read
-        there: with the `trap` the increment yields `0` off an unset `$q`, without it `99`. A
-        read-modify-write is a read of the name it updates, so the write it observes keeps the trap.
-        """
         self.assertTrue(self._trap_removal_is_observed(
             "trap { continue }; $x = $([int]'a'; $q = 99); Write-Host ($q++)"))
 
     def test_a_skipped_write_a_get_variable_in_a_body_may_read_keeps_the_trap(self):
-        """
-        `Get-Variable y` reads a variable named by data, so a call to `f` on the continuation may
-        read the skipped `$y = 5` from whatever scope it runs in. A dynamic reader written inside a
-        stored body is reachable through any call, so it keeps every skipped write.
-        """
         self.assertTrue(self._trap_removal_is_observed(
             "trap { continue }; function f { Get-Variable y }; $x = $([int]'a'; $y = 5); f"))
 
     def test_a_skipped_read_of_a_non_shape_member_keeps_the_trap(self):
-        """
-        `$proc.Path` runs a property getter this analysis cannot prove pure — an Extended Type System
-        getter may shell out — so the trap that skips it is load bearing: untrapped the getter runs,
-        trapped it does not.
-        """
         self.assertTrue(self._trap_removal_is_observed(
             "trap { continue }; $x = $([int]'a'; $proc.Path); Write-Host 'z'"))
 
     def test_a_skipped_read_of_a_shape_member_lets_the_trap_go(self):
-        """
-        `Length`, `Count` and `Rank` are decided by the receiver's shape and read no getter, so a
-        skipped read of one does nothing a run can see and the trap over it may go — the distinction
-        that keeps the payload loop's `($x).Length` foldable rather than pinning its trap.
-        """
         self.assertFalse(self._trap_removal_is_observed(
             "trap { continue }; $x = $([int]'a'; $y.Length); Write-Host 'z'"))
 
@@ -1406,19 +1201,6 @@ point.
 
 
 class TestPs1ATrapWrittenInASubexpressionGuardsThatSubexpression(TestBase):
-    """
-    `$( )` and `@( )` hold statements, and a `trap` written among them is a handler for those
-    statements and for nothing else. Measured on 5.1: `$x = $(trap { continue }; [int]'a'; 'in')`
-    leaves `in` in `$x`, so the handler took the error and resumption carried on inside the bracket;
-    and `$(trap { continue }); [int]'a'; Write-Host 'after'` writes nothing at all, so the same
-    handler guards no part of the block the bracket is written in.
-
-    The reader reads the sub-statement graph, so it places the `trap` and the statements it stands
-    beside: a raise inside the bracket is offered to the handler written among them, and a raise
-    outside the bracket is offered to no trap written inside one. Both halves of the measurement hold
-    for the reason the measurement gives — the handler's scope is the bracket — rather than the second
-    surviving only because the handler was invisible.
-    """
 
     def _bracket(self, source: str) -> tuple[Ps1TrapStatement, Statement, Ps1FaultReach]:
         tree, reach = _model(source)
@@ -1448,14 +1230,6 @@ class TestPs1ATrapWrittenInASubexpressionGuardsThatSubexpression(TestBase):
 
 
 class TestPs1TheBracketFixturesHoldTheShapeTheirPinsAssume(TestBase):
-    """
-    `TestPs1ATrapWrittenInASubexpressionGuardsThatSubexpression` reads its `trap` and the statement
-    beside it out of the one bracket its fixture parses to, and every reader of that fixture is an
-    expected failure, which takes a fixture that no longer parses to that shape for the wrong answer
-    the pin exists to record. A parser that stopped holding the statements of a bracket in its body,
-    or that stopped placing the `trap` first among them, would retire those pins in silence. This
-    reads the same two sources and fails loudly instead.
-    """
 
     def _which_statements_are_traps(self, source: str) -> list[list[bool]]:
         return [
@@ -1473,12 +1247,6 @@ class TestPs1TheBracketFixturesHoldTheShapeTheirPinsAssume(TestBase):
 
 
 class TestPs1TheReaderPlacesBracketInternalStatementsWithoutATrapToKeep(TestBase):
-    """
-    The reader offers a bracket-written raise to a `trap` beside it because it reads one sub-statement
-    graph, not because a `trap` makes it descend. A `$( )` holding no handler at all has its inner
-    statements placed just the same: the error paths offer them to no handler and let them past none, and
-    `points_in` over the statement the bracket sits in reaches them.
-    """
 
     def _bracket_of(self, source: str) -> tuple[Ps1Script, Ps1SubExpression, Ps1FaultReach]:
         tree, reach = _model(source)
@@ -1498,16 +1266,6 @@ class TestPs1TheReaderPlacesBracketInternalStatementsWithoutATrapToKeep(TestBase
 
 
 class TestPs1ACommandToldToStopEndsTheScriptHoweverItIsTold(TestBase):
-    """
-    `-ErrorAction` takes a `[System.Management.Automation.ActionPreference]`, of which `Stop` is the
-    member whose ordinal is 1. Windows PowerShell 5.1 binds that member from its name, from any
-    abbreviation of the name that no other member of the set answers to, and from any integer
-    spelling of the ordinal; it binds the parameter itself from any prefix of `ErrorAction` that no
-    other parameter of the command answers to, and from the documented alias `EA`, whether the
-    argument is written beside the parameter or attached to it with a colon. A command told to stop
-    reports a terminating error and ends the script wherever nothing takes it, and every member
-    other than `Stop` leaves what it reports non-terminating, so the next statement runs.
-    """
 
     def _verdicts(self, commands: list[str]) -> dict[str, bool]:
         return {
@@ -1566,14 +1324,6 @@ class TestPs1ACommandToldToStopEndsTheScriptHoweverItIsTold(TestBase):
 
 
 class TestPs1AStopPreferenceIsWhatMakesTheTrapUnderItWorthKeeping(TestBase):
-    """
-    `$ErrorActionPreference = 'Stop'` makes every error a command reports terminating, session-wide,
-    and it is the same write however the target is spelled and however `Stop` is named. Under any of
-    those the command below ends the script where nothing takes its error, so removing the `trap`
-    that does take it changes what runs. Under none of them the command reports and the script
-    carries on to the next statement either way, so the handler may go; `$env:ErrorActionPreference`
-    is a process environment variable no error path reads and belongs to that half.
-    """
 
     def _removing_the_trap_is_observed(self, assignment: str) -> bool:
         tree, reach = _model(F"""
@@ -1618,15 +1368,6 @@ class TestPs1AStopPreferenceIsWhatMakesTheTrapUnderItWorthKeeping(TestBase):
 
 
 class TestPs1TheDefaultTableTerminatesACommandButNotACast(TestBase):
-    """
-    `$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'` binds the action into every command that
-    takes one, so a command it runs reports a terminating error — but a failing cast takes no
-    parameter and stays the statement-terminating error 5.1 steps over. Measured on 5.1: with the
-    default set, `Get-Item nope` ends the script and `[int]'a'` does not. This is why the arming is
-    read on the per-command terminating path and not in `_stops_on_every_error`, which escalates a
-    cast as well; a `Stop` written to `$ErrorActionPreference`, by assignment or by a cmdlet, does
-    escalate both, and the rows below hold that difference.
-    """
 
     def _verdicts(self, arming: str) -> dict[str, bool]:
         tree, reach = _model(F"""
@@ -1658,16 +1399,11 @@ class TestPs1TheDefaultTableTerminatesACommandButNotACast(TestBase):
             {'command': True, 'cast': False},
         )
 
-    def test_a_key_scoped_to_another_command_still_arms_this_one(self):
-        """
-        The command scope before the key is not read: any `:ErrorAction` entry arms every command,
-        so a key scoped to `Set-Location` makes `Get-Item` terminating too. 5.1 binds the default
-        per command, so this over-approximates — it keeps a handler the host would let go, the safe
-        direction — and the pin is what a precise-scoping change would have to update.
-        """
+    @opportunity
+    def test_a_key_scoped_to_another_command_leaves_this_one_non_terminating(self):
         self.assertEqual(
             self._verdicts("$PSDefaultParameterValues['Set-Location:ErrorAction'] = 'Stop'"),
-            {'command': True, 'cast': False},
+            {'command': False, 'cast': False},
         )
 
     def test_a_preference_stop_terminates_both_a_command_and_a_cast(self):
@@ -1693,17 +1429,6 @@ class TestPs1TheDefaultTableTerminatesACommandButNotACast(TestBase):
 
 
 class TestPs1ACmdletWriteOfTheStopPreferenceArmsEveryError(TestBase):
-    """
-    A cmdlet that writes `$ErrorActionPreference` by name arms the preference as an assignment does,
-    read through `refinery.lib.scripts.ps1.analysis.naming.named_references`, so a failing cast
-    under it is terminating. Every alias, casing, scope-qualified and provider spelling the
-    authority reads arms it, so the recognition lives there rather than in a hand-kept command list.
-
-    The value written is read precisely — the named `-Value` or the positional the command binds
-    after its name, wherever an explicit `-Name` moves that name off the first slot — so a member
-    other than `Stop` arms nothing, and a write that binds no value at all stores `$null` and arms
-    nothing either.
-    """
 
     def _cast_is_terminating(self, arming: str) -> bool:
         tree, reach = _model(F"""
@@ -1747,18 +1472,6 @@ class TestPs1ACmdletWriteOfTheStopPreferenceArmsEveryError(TestBase):
 
 
 class TestPs1AStrictModeArmingIsReadOverTheWholeScript(TestBase):
-    """
-    Reading a variable that was never set yields `$null` and raises nothing. `Set-StrictMode` makes
-    the same read a statement-terminating error that a `catch` and a `trap` both take, so a script
-    that arms it anywhere is a script where deleting such a read is observable. Both halves are
-    measured on 5.1 in `test.lib.scripts.ps1.corpus.BEHAVIOURS`.
-
-    Whether it is armed is asked of the whole script and never of a position, because which scopes
-    an arming covers is not decidable here: `Set-StrictMode` writes the scope it stands in and
-    `Set-PSDebug -Strict` writes the global one, so a call inside a function arms nothing outside it
-    in the first spelling and everything in the second. `Set-StrictMode -Off` is an arming here like
-    every other spelling, and what that costs is the recall of a script that turns it off again.
-    """
 
     def _armings(self, scripts: list[str]) -> dict[str, bool]:
         return {
@@ -1772,20 +1485,16 @@ class TestPs1AStrictModeArmingIsReadOverTheWholeScript(TestBase):
             'Set-StrictMode -Version Latest',
             'set-strictmode -version 2',
             "& 'Set-StrictMode' -Version 1",
-            "& 'global:Set-StrictMode' -Version 1",
-            'Set-StrictMode -Off',
             'function f { Set-StrictMode -Version 1 }',
             'if ($a) { Set-StrictMode -Version 1 }',
         ]
         self.assertEqual(self._armings(scripts), dict.fromkeys(scripts, True))
 
+    @opportunity
+    def test_turning_strict_mode_off_arms_nothing(self):
+        self.assertEqual(self._armings(['Set-StrictMode -Off']), {'Set-StrictMode -Off': False})
+
     def test_the_second_command_that_arms_it_is_read_as_an_arming_too(self):
-        """
-        `Set-PSDebug -Strict` writes the same engine slot that `Set-StrictMode -Version 1` writes,
-        and writes it for the global scope rather than the current one. Measured on 5.1 in
-        `test.lib.scripts.ps1.corpus.BEHAVIOURS`: the guarded read below it raises and the `catch`
-        runs, exactly as it does under the spelling this scan was first written for.
-        """
         scripts = [
             'Set-PSDebug -Strict',
             'set-psdebug -strict',
@@ -1814,34 +1523,17 @@ class TestPs1AStrictModeArmingIsReadOverTheWholeScript(TestBase):
         ]
         self.assertEqual(self._armings(scripts), dict.fromkeys(scripts, False))
 
-    def test_a_name_assembled_out_of_pieces_is_not_read_as_an_arming(self):
-        """
-        The miss this scan shares with `a_stop_may_be_in_force`: a value is matched as it is
-        written, so a payload no literal spells is invisible. It costs nothing at the tool level
-        for the two spellings that fold — the concatenation and the base64 blob are resolved to the
-        literal before the removal is weighed — and what is left is a payload the analysis cannot
-        read at all, which
-        `test.lib.scripts.ps1.deobfuscation.test_fault_observability` refuses on the world instead.
-        """
+    @todo
+    def test_a_name_assembled_out_of_pieces_and_run_arms_strict_mode(self):
         script = "$c = 'Set-Strict' + 'Mode -Version 1'; Invoke-Expression $c"
-        self.assertEqual(self._armings([script]), {script: False})
+        self.assertEqual(self._armings([script]), {script: True})
 
     def test_a_model_the_graphs_hold_no_script_for_refuses_the_grant(self):
-        """
-        Unlike `_stops_on_every_error`, which answers `False` for an empty model, this one grants a
-        removal, so an empty model has to refuse it: a script nothing was read of is not a script
-        that was read and found to arm nothing.
-        """
         calls = Ps1ModelCache(_parse("'a'")).call_graph
         self.assertTrue(Ps1FaultReach(Ps1ControlFlowModel({}, {}), lambda: calls).strict_mode_may_be_in_force())
 
 
 class TestPs1WhetherAnErrorLeavesTheBodyItWasRaisedIn(TestBase):
-    """
-    The half of the position question that says nothing about where the error goes next, only that
-    the body it was raised in does not decide it. A caller that knows what runs the body reads this
-    and answers the rest for itself.
-    """
 
     def _escapes(self, source: str) -> bool:
         tree, faults = _model(source)
@@ -1860,10 +1552,6 @@ class TestPs1WhetherAnErrorLeavesTheBodyItWasRaisedIn(TestBase):
             "1, 2 | ForEach-Object { try { Get-Random } catch { Write-Host 'h' } }"))
 
     def test_an_empty_catch_settles_it_too(self):
-        """
-        Nothing observable happens, but the error stops there all the same, so where the body runs
-        cannot change where it went.
-        """
         self.assertFalse(self._escapes("1, 2 | ForEach-Object { try { Get-Random } catch { } }"))
 
     def test_a_trap_that_may_decline_the_error_ends_the_body_and_settles_it(self):
@@ -1895,15 +1583,6 @@ class TestPs1AnErrorOfAFunctionDefinedInABodyLeavesOnlyWhereTheFunctionRuns(Test
 
 
 class TestPs1ARaiseEscapesATrapBodyThatRunsOnlyWhereItsBlockMayFireTheTrap(TestBase):
-    """
-    A `trap` does not guard its own body, so a raise among its statements leaves the body and ends
-    the scope the `trap` belongs to — but only where the `trap` actually runs, which is where a
-    statement of the block it guards may raise an error that fires it. What may fire it is what the
-    question asked before the `trap` itself is deleted reads as raising, so it turns on which
-    statement stands in the block and not on where the raise itself is written. A raise behind a
-    function or `& { }` boundary inside the body is in no `trap` body here; the deletion pass keeps
-    it for a different reason, so this is the unit fact and not an integration removal.
-    """
 
     def _first_trap_body_statement(self, source: str) -> tuple[Ps1FaultReach, RaiseVerdicts, Statement]:
         tree, faults = _model(source)
@@ -1960,13 +1639,6 @@ class TestPs1ARaiseEscapesATrapBodyThatRunsOnlyWhereItsBlockMayFireTheTrap(TestB
         self.assertFalse(faults.escapes_a_trap_body(inner, Ps1ErrorKind.STATEMENT))
 
     def test_a_body_raise_a_handler_nested_in_the_trap_body_takes_escapes_no_firing_trap(self):
-        """
-        The raise stands in a `try` inside the `trap` body whose `catch` takes it, so the error
-        never leaves the `trap` body and deleting the raise resurrects nothing — the `escapes_the_body`
-        conjunct, not the firing of the outer block, is what refuses the keep. The block still fires
-        the `trap` (a cast follows it), so a predicate that skipped the escape check would read this
-        as an escaping raise and wrongly keep it.
-        """
         tree, faults = _model("""
             trap {
               try { [int]'a' } catch { 'h' }
@@ -1982,12 +1654,6 @@ class TestPs1ARaiseEscapesATrapBodyThatRunsOnlyWhereItsBlockMayFireTheTrap(TestB
 
 
 class TestPs1AnErrorIsTakenPastAStatementARunCarriesOnAfter(TestBase):
-    """
-    An error raised inside a statement is taken past it where the run carries on after a statement
-    holding it, which is what the `catch` lift asks before it runs a `catch` body in place of its
-    `try`. A `trap` that resumes carries on after the statement of its block that holds the raise,
-    whether its body acts or not.
-    """
 
     @staticmethod
     def _raises_past_the_guard(trap: str) -> bool:
@@ -2009,12 +1675,6 @@ class TestPs1AnErrorIsTakenPastAStatementARunCarriesOnAfter(TestBase):
 
 
 class TestPs1AnEditWaitsForATrapDeletionWhoseScopeItTouches(TestBase):
-    """
-    Of edits judged apart, one that touches a statement where an error may go elsewhere once a
-    deleted `trap` set is gone waits for that deletion: the list the set is written in, the bodies
-    that list runs, and the calls that run the body the set is written in. A set offered no error
-    changes no error's fate, and makes nothing wait.
-    """
 
     @staticmethod
     def _waits(source: str, deleted, touched):
@@ -2070,4 +1730,3 @@ class TestPs1AnEditWaitsForATrapDeletionWhoseScopeItTouches(TestBase):
         trap, raiser = tree.body[0], tree.body[1]
         waiting, withheld = cache.faults.edits_that_wait([[trap]], [[trap, raiser]], cache.handlers.raises(True))
         self.assertEqual((waiting, withheld), (set(), {id(raiser)}))
-

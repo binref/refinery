@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from test import todo
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1ExpandableStringHoist
@@ -20,7 +21,7 @@ class TestPs1ExpandableStringFolding(TestPs1):
 
     def test_expandable_variable_not_folded(self):
         result = self._deobfuscate("\"\"\"$($x)\"\"\"", remove_junk=False)
-        self.assertIn('$(', result)
+        self.assertIn('$x', result)
 
     def test_expandable_full_chain_with_iex(self):
         result = self._deobfuscate_iterative(
@@ -43,22 +44,41 @@ class TestPs1ExpandableExtra(TestPs1):
             "'prefix3suffix'")
 
     def test_expandable_command_subexpr_not_dropped(self):
-        # A command inside an interpolating string contributes its output, so the hoist leaves it.
         result = self._apply(
             '$result = "Value: $(Write-Output 42)"', Ps1ExpandableStringHoist)
         self.assertEqual(result, '$result = "Value: $(Write-Output 42)"')
 
     def test_expandable_hoist_preserves_assignment_order(self):
-        # Void subexpressions hoisted out of expandable strings must keep source execution order;
-        # reversing them would make `$b` read `$a` before it is assigned.
         result = self._apply(
             '$z = 1 + "$($a = 1)" + "$($b = $a)"', Ps1ExpandableStringHoist)
         self.assertLess(result.index('$a = 1'), result.index('$b = $a'))
 
     def test_a_hoisted_subexpression_takes_its_redirection_with_it(self):
-        # The string is replaced by its text and the assignment moves out to the enclosing body, so
-        # the redirection leaves the substitution and returns one statement later. Refusing the
-        # rewrite would be as wrong as losing it.
         self.assertEqual(
             self._apply('$m = "a$($z = Get-Date > C:\\o.txt)b"', Ps1ExpandableStringHoist),
             "$z = Get-Date > C:\\o.txt\n$m = 'ab'")
+
+
+class TestPs1ASubexpressionOfThePipelineInputRunsBeforeTheCommand(TestPs1):
+
+    @todo
+    def test_a_separator_the_payload_text_restores_is_in_place_when_the_payload_runs(self):
+        source = (
+            '''"$( Set-Variable 'OFS' '' )" + 'Write-Host "$(1,2)"' + '''
+            '''"$( Set-Variable 'OFS' ' ' )" | Invoke-Expression'''
+        )
+        self._assertDeobfuscatesToOneOf(source, source, "$OFS = ''\n$OFS = ' '\nWrite-Host '1 2'")
+
+    @todo
+    def test_a_payload_reads_what_a_subexpression_after_its_text_assigns(self):
+        source = '''\'Write-Host $x\' + "$( $x = 'b' )" | Invoke-Expression'''
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'b'")
+
+    @todo
+    def test_a_pipeline_body_reads_what_a_subexpression_of_its_input_assigns(self):
+        source = '''\'a\' + "$( $x = 'b' )" | ForEach-Object { Write-Host $x }'''
+        self._assertDeobfuscatesToOneOf(
+            source,
+            source,
+            "'a' | ForEach-Object {\n  Write-Host 'b'\n}",
+        )

@@ -1,3 +1,4 @@
+import functools
 import gc
 import logging
 import random
@@ -12,7 +13,9 @@ import tracemalloc
 
 from samples import SampleStore
 from types import ModuleType
-from typing import Callable, Iterable
+from typing import Callable, Iterable, TypeVar
+
+_Test = TypeVar('_Test', bound=Callable)
 
 
 @contextlib.contextmanager
@@ -102,6 +105,62 @@ def wontfix(reason: str):
     if not reason.strip():
         raise ValueError('a test is marked as not to be fixed only for a stated reason')
     return unittest.skip(F'will not be fixed: {reason}')
+
+
+def _expected_to_fail_an_assertion(test: _Test) -> _Test:
+    """
+    The test runs as an expected failure that only a failed assertion meets: any other exception
+    it raises, in a subtest or not, is reported as an error.
+    """
+    @functools.wraps(test)
+    def run(case: unittest.TestCase, *args, **kwargs):
+        try:
+            return test(case, *args, **kwargs)
+        except Exception as error:
+            outcome = getattr(case, '_outcome', None)
+            if outcome is None:
+                raise
+            if outcome.expectedFailure is not None:
+                error = outcome.expectedFailure[1]
+            if isinstance(error, (AssertionError, unittest.SkipTest)):
+                raise
+            outcome.expecting_failure = False
+            raise error
+    return unittest.expectedFailure(run)  # type: ignore
+
+
+def opportunity(test: _Test) -> _Test:
+    """
+    Marks a test whose expected result is better than what the code produces, where what it
+    produces is still correct: a simplification it misses, or an answer that says less than it
+    could. The test is expected to fail an assertion.
+    """
+    return _expected_to_fail_an_assertion(test)
+
+
+def todo(test: _Test) -> _Test:
+    """
+    Marks a test of a known defect that is to be fixed, but is not to be counted as a failure yet.
+    The test is expected to fail an assertion.
+    """
+    return _expected_to_fail_an_assertion(test)
+
+
+def backlog(test: _Test) -> _Test:
+    """
+    Marks a test of a defect that real input can reach, unlike one marked with `wontfix`, but whose
+    harm is so small that it ranks below one marked with `todo`. The test is expected to fail an
+    assertion.
+    """
+    return _expected_to_fail_an_assertion(test)
+
+
+def blocker(test: _Test) -> _Test:
+    """
+    Marks a test of a defect that must be fixed before the next release. The test is expected to
+    fail an assertion.
+    """
+    return _expected_to_fail_an_assertion(test)
 
 
 class NameUnknownException(Exception):

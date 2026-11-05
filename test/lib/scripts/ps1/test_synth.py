@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import unittest
-
-from test import TestBase
+from test import TestBase, backlog, blocker, wontfix
 
 from refinery.lib.scripts import Node, UnspellableNode
 from refinery.lib.scripts.ps1.model import (
@@ -505,7 +503,7 @@ class TestPs1SlotsThatSwallowASpelling(TestBase):
         self.assertEqual(
             _written(_write_output(Ps1TypeExpression(name='byte'))), 'Write-Output ([byte])')
 
-    @unittest.expectedFailure
+    @blocker
     def test_a_static_member_of_a_type_in_a_command_argument_is_bracketed(self):
         """
         A type name opens a word in a command argument however much is written behind it, so the
@@ -521,7 +519,10 @@ class TestPs1SlotsThatSwallowASpelling(TestBase):
         )
         self.assertEqual(_written(_write_output(call)), 'Write-Output ([Math]::Max(2, 1))')
 
-    @unittest.expectedFailure
+    @wontfix(
+        'only a hand-built tree reaches it: the parser keeps the brackets a script must spell '
+        'around such an assignment, and no pass puts a bare assignment into a method argument'
+    )
     def test_an_assignment_handed_to_a_call_as_an_argument_is_bracketed(self):
         """
         An assignment is a value only inside a bracket, so one handed to a call needs it:
@@ -611,7 +612,7 @@ class TestPs1AScriptBlockPrintsBackAsTheTextItRendersTo(TestBase):
     prints that text, and laying the block out anew changes what the script prints.
     """
 
-    @unittest.expectedFailure
+    @backlog
     def test_a_block_the_script_writes_out_keeps_the_text_between_its_braces(self):
         # Measured on 5.1, this writes ` K `.
         printed = _written(Ps1Parser('$b = { K }; Write-Host $b').parse())

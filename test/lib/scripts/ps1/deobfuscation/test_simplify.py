@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+from test import backlog
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1AliasInlining, Ps1Simplifications
@@ -11,27 +12,27 @@ class TestPS1BracketRemoval(TestPs1):
 
     def test_string_literal_01(self):
         result = self._deobfuscate('("{0}{2}{1}")')
-        self.assertIn('"{0}{2}{1}"', result)
+        self.assertIn(result.strip(), ('"{0}{2}{1}"', "'{0}{2}{1}'"))
 
     def test_string_literal_02(self):
-        result = self._deobfuscate('( ((    \n( "Test")))')
-        self.assertIn('"Test"', result)
+        result = self._deobfuscate('( ((    \n( "Test"))))')
+        self.assertIn(result.strip(), ('"Test"', "'Test'"))
 
     def test_string_literal_03(self):
         result = self._deobfuscate('(((\n( "Tes""t")\n)) )')
-        self.assertIn('"Tes""t"', result)
+        self.assertIn(result.strip(), ('"Tes""t"', '\'Tes"t\''))
 
     def test_numeric_literal_01(self):
         result = self._deobfuscate('(0x12)')
-        self.assertIn('0x12', result)
+        self.assertEqual(result.strip(), '0x12')
 
     def test_numeric_literal_02(self):
-        result = self._deobfuscate('( ((    \n( 0x12)  ))')
-        self.assertIn('0x12', result)
+        result = self._deobfuscate('( ((    \n( 0x12)  )))')
+        self.assertEqual(result.strip(), '0x12')
 
     def test_numeric_literal_03(self):
         result = self._deobfuscate('((31337) )')
-        self.assertIn('31337', result)
+        self.assertEqual(result.strip(), '31337')
 
 
 class TestPs1NameNormalization(TestPs1):
@@ -52,10 +53,9 @@ class TestPs1NameNormalization(TestPs1):
 class TestPs1SubExpressionSimplification(TestPs1):
 
     def test_a_subexpression_around_a_cast_that_may_fail_stays(self):
-        # Measured on 5.1: with `$s` the text `a`, `$y = $([int]$s)` leaves `$y` empty, where
-        # `$y = [int]$s` leaves it holding what it held.
-        result = self._deobfuscate("foreach ($s in '5', 'a') { $y = $([int]$s); Write-Host $y }")
-        self.assertIn('$([int]$s)', result)
+        # With `$s` holding `a`, 5.1 leaves `$y` empty after `$y = $([int]$s)` but unchanged after
+        # `$y = [int]$s`.
+        self._assertKept("foreach ($s in '5', 'a') { $y = $([int]$s); Write-Host $y }")
 
     def test_a_subexpression_around_a_cast_that_cannot_fail_goes(self):
         result = self._deobfuscate('$y = $([char]65); Write-Host $y')
@@ -179,8 +179,6 @@ class TestPs1SimplifyExtra(TestPs1):
         self.assertNotIn('`', result)
 
     def test_gcm_wildcard_not_substituted_as_name(self):
-        # `gcm` resolves to `Get-Command` through alias inlining, but a wildcard pattern must never
-        # become the command name verbatim.
         result = self._apply("& (gcm i*e-e*) 'hi'", Ps1Simplifications, Ps1AliasInlining)
         self.assertEqual(result, "& (Get-Command i*e-e*) 'hi'")
 
@@ -190,12 +188,6 @@ class TestPs1SimplifyExtra(TestPs1):
 
 
 class TestPs1AParameterNameIsCompletedOnlyForACommandThatBindsByName(TestPs1):
-    """
-    5.1 completes and case-normalizes a parameter name for a cmdlet, function or alias, whose binder
-    matches `-recurse` to `-Recurse` regardless of case. A native program receives every argument as
-    text, so its spelling is the whole of it and the same rewrite would change what the program is
-    handed. The only thing varied across these rows is what the command name denotes.
-    """
 
     def test_a_cmdlet_parameter_is_completed_to_its_canonical_spelling(self):
         self.assertEqual(
@@ -209,10 +201,11 @@ class TestPs1AParameterNameIsCompletedOnlyForACommandThatBindsByName(TestPs1):
             'gci -Recurse',
         )
 
-    def test_a_function_parameter_is_completed_to_its_canonical_spelling(self):
+    @backlog
+    def test_a_parameter_a_function_does_not_declare_keeps_the_spelling_it_was_written_with(self):
         self.assertEqual(
-            self._apply('function f { } ; f -recurse', Ps1Simplifications),
-            'function f {}\nf -Recurse',
+            self._apply('function f { Write-Host $args } ; f -recurse', Ps1Simplifications),
+            'function f {\n  Write-Host $args\n}\nf -recurse',
         )
 
     def test_a_native_program_argument_keeps_the_spelling_it_was_written_with(self):

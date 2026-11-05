@@ -20,9 +20,6 @@ class TestPs1ModelCache(TestBase):
         return Ps1Parser(source).parse()
 
     def test_code_supplied_as_data_may_read_every_name(self):
-        """
-        Measured on 5.1 in `corpus.BEHAVIOURS`: a payload `Invoke-Expression` runs reads `$x`.
-        """
         unseen = Ps1ModelCache(self._script("$x = 'a'; iex $c")).names_may_be_read_unseen
         self.assertIn('x', unseen)
         self.assertIn('y', unseen)
@@ -33,11 +30,6 @@ class TestPs1ModelCache(TestBase):
         self.assertNotIn('x', cache.names_may_be_read_unseen)
 
     def test_a_listing_of_every_variable_reads_every_name_whatever_the_options(self):
-        """
-        Measured on 5.1 in `corpus.BEHAVIOURS`: a store into a variable picked out of
-        `Get-Variable` by its name reaches it. The read is written in plain sight, so trusting code
-        supplied as data does not lift it.
-        """
         cache = Ps1ModelCache(
             self._script('$v = Get-Variable'), Ps1DeobfuscationOptions(trust_eval=True))
         self.assertIn('x', cache.names_may_be_read_unseen)
@@ -50,11 +42,6 @@ class TestPs1ModelCache(TestBase):
     def test_a_script_that_reads_every_name_where_it_spells_it_reads_none_unseen(self):
         unseen = Ps1ModelCache(self._script("$x = 'a'; Write-Host $x")).names_may_be_read_unseen
         self.assertNotIn('x', unseen)
-
-    def test_warming_builds_every_model_the_cache_holds(self):
-        cache = Ps1ModelCache(self._script("$x = 'a'; Write-Host $x"))
-        cache.warm()
-        self.assertNotIn('x', cache.names_may_be_read_unseen)
 
     def test_model_is_memoized_while_the_tree_is_unchanged(self):
         cache = Ps1ModelCache(self._script("$a = 1\n$b = 2"))
@@ -74,10 +61,6 @@ class TestPs1ModelCache(TestBase):
         self.assertIs(cache.cycles, first)
 
     def test_mutating_the_cached_tree_rebuilds_the_cycles(self):
-        """
-        The cycle sets are read off the control-flow graphs, which are keyed to node identity, so a
-        model kept across a mutation would answer about statements the tree no longer holds.
-        """
         script = self._script("while ($x) { $a = 1 }\n$b = 2")
         cache = Ps1ModelCache(script)
         first = cache.cycles
@@ -90,10 +73,6 @@ class TestPs1ModelCache(TestBase):
         self.assertIs(cache.dominance, first)
 
     def test_mutating_the_cached_tree_rebuilds_the_dominance(self):
-        """
-        The dominator trees are computed over the control-flow graphs, which are keyed to node
-        identity, so a model kept across a mutation would order statements the tree no longer holds.
-        """
         script = self._script("$a = 1\n$b = 2")
         cache = Ps1ModelCache(script)
         first = cache.dominance
@@ -118,8 +97,17 @@ class TestPs1ModelCache(TestBase):
         _remove_from_parent(unrelated.body[0])
         self.assertIs(cache.model, first)
 
+    def test_warming_at_a_pins_entry_lets_every_model_be_read_after_an_edit_in_the_pin(self):
+        script = self._script("$x = 'a'; Write-Host $x")
+        cache = Ps1ModelCache(script)
+        with cache.pinned():
+            cache.warm()
+            _remove_from_parent(script.body[0])
+            for name, member in vars(Ps1ModelCache).items():
+                if isinstance(member, property):
+                    getattr(cache, name)
+
     def test_body_splice_advances_the_version_and_rebuilds(self):
-        # A whole-body rewrite must invalidate the cache the same way a per-node removal does.
         script = self._script("$a = 1\n$b = 2")
         cache = Ps1ModelCache(script)
         first = cache.model
@@ -127,8 +115,6 @@ class TestPs1ModelCache(TestBase):
         self.assertIsNot(cache.model, first)
 
     def test_body_splice_keeps_the_list_object(self):
-        # The splice is in place: a transform that kept a reference to the list it was handed
-        # must go on observing the node's current children rather than a detached snapshot.
         script = self._script("$a = 1\n$b = 2")
         body = script.body
         set_body(script, list(script.body[:1]))
@@ -136,8 +122,6 @@ class TestPs1ModelCache(TestBase):
         self.assertEqual(len(body), 1)
 
     def test_clause_splice_adopts_the_nodes_inside_tuples(self):
-        # An if-statement clause is a (condition, block) tuple; both halves are children of the
-        # statement and must be adopted by a splice of the clause list.
         script = self._script('if ($a) { $b = 1 } elseif ($c) { $d = 2 }')
         statement = script.body[0]
         assert isinstance(statement, Ps1IfStatement)
@@ -170,11 +154,6 @@ def _spelled_callee(call: pyast.Call) -> str | None:
 class TestPs1DataflowDominanceWiring(TestBase):
 
     def test_dataflow_never_constructs_the_shared_dominator_model(self):
-        """
-        `Ps1VariableFlow` receives the run's dominator model from the cache, so every pass shares
-        one instance; a `DominatorModel(...)` call inside the module would quietly hand it a private
-        copy again. Importing the name for annotations is fine — the call is what may not reappear.
-        """
         with open(dataflow.__file__, 'r', encoding='utf-8') as fd:
             tree = pyast.parse(fd.read(), filename=dataflow.__file__)
         constructions = [

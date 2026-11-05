@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import TestBase
+from test import TestBase, opportunity
 
 from refinery.lib.scripts import Block, Expression, Node, _remove_from_parent
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
@@ -36,11 +36,6 @@ def _statement(tree: Ps1Script, index: int) -> Node:
 
 
 class TestPs1APlainStoreFailsOnlyWhereTheNameIsConstrained(TestBase):
-    """
-    Storing into a plain local fails where something gave the variable a type, an attribute or
-    options, and for the variables the engine owns; every other store of a value that cannot fail
-    cannot fail either.
-    """
 
     def _store_cannot_fail(self, source: str) -> bool:
         tree, model = _model(source)
@@ -53,12 +48,12 @@ class TestPs1APlainStoreFailsOnlyWhereTheNameIsConstrained(TestBase):
     def test_a_store_into_a_name_the_script_constrains_may_fail(self):
         for constraint in (
             '[int]$x = 1',
-            'function f { param([int]$x) }',
+            'function f { param([int]$x) }; . f 1',
             'New-Variable x 1 -Option ReadOnly',
             "$o = @{ Name = 'x'; Value = 1; Option = 'ReadOnly' }; New-Variable @o",
-            '$v = Get-Variable x',
-            "$PSDefaultParameterValues['New-Variable:Option'] = 'ReadOnly'",
-            'Set-Variable $args[0] 1',
+            "$x = 1; $v = Get-Variable x; $v.Options = 'ReadOnly'",
+            "$PSDefaultParameterValues['New-Variable:Option'] = 'ReadOnly'; New-Variable x 1",
+            'Set-Variable $args[0] 1 -Option ReadOnly',
         ):
             with self.subTest(constraint=constraint):
                 self.assertFalse(self._store_cannot_fail(F"{constraint}\n$x = 'a'"))
@@ -78,10 +73,6 @@ class TestPs1APlainStoreFailsOnlyWhereTheNameIsConstrained(TestBase):
 
 
 class TestPs1AReadUnderStrictModeIsClearedByAStoreThatCertainlyCompleted(TestBase):
-    """
-    Under strict mode a read of an unset variable fails, so a read is cleared only where a store to
-    it completed on every run that reaches it, and nothing may have removed the variable since.
-    """
 
     def _read_cannot_fail(self, source: str) -> bool:
         tree, model = _model(F'Set-StrictMode -Version 1\n{cleandoc(source)}\n$null = $v')
@@ -138,19 +129,27 @@ class TestPs1ABodyBindsWithoutFaultOnlyWhereItsParametersCannotFail(TestBase):
     def test_a_typed_default_that_converts_binds_without_fault(self):
         self.assertTrue(self._binds("function f { param([int]$a = '42') }"))
 
+    @opportunity
+    def test_a_typed_parameter_without_a_default_binds_without_fault(self):
+        self.assertTrue(self._binds('function f { param([int]$a) }'))
+
+    @opportunity
+    def test_a_validated_default_binds_without_fault(self):
+        self.assertTrue(self._binds('function f { param([ValidateNotNull()] $a = 1) }'))
+
     def test_a_parameter_that_may_fail_to_bind_may_fail(self):
         for parameters in (
             "[int]$a = 'abc'",
             '$a = $(throw)',
             '[Parameter(Mandatory)] $a',
-            '[int]$a',
-            '[ValidateNotNull()] $a = 1',
         ):
             with self.subTest(parameters=parameters):
                 self.assertFalse(self._binds(F'function f {{ param({parameters}) }}'))
 
-    def test_a_body_with_dynamic_parameters_may_fail(self):
-        self.assertFalse(self._binds('function f { dynamicparam { } end { } }'))
+    def test_a_body_whose_dynamic_parameters_throw_may_fail(self):
+        self.assertFalse(self._binds(
+            "function f { [CmdletBinding()] param() dynamicparam { throw 'x' } end { } }"
+        ))
 
 
 class TestPs1ACallRaisesWhatItsBodyHandsBack(TestBase):
@@ -173,18 +172,13 @@ class TestPs1ACallRaisesWhatItsBodyHandsBack(TestBase):
         kinds = self._call_kinds("function f { f }\nf")
         self.assertEqual(kinds & (Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED), Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED)
 
-    def test_a_call_handed_an_argument_may_fail_to_bind_it(self):
-        tree, model = _model("function f { 'a' }\nf -Bogus 1")
+    def test_a_call_handed_an_argument_an_advanced_function_lacks_may_fail_to_bind_it(self):
+        tree, model = _model("function f { [CmdletBinding()] param() 'a' }\nf -Bogus 1")
         call = next(node for node in tree.body[-1].walk() if isinstance(node, Ps1CommandInvocation))
         self.assertFalse(model.raises_only_what_its_bodies_hand_back(call))
 
 
 class TestPs1AStatementAPassBuildsIsJudgedByEverythingItEvaluates(TestBase):
-    """
-    A pass asks what a statement it is about to splice in may raise, at the statement it would
-    replace. One it builds anew around lines it reuses evaluates a test of its own, which no graph
-    places, and the lines it reuses do not answer for that test.
-    """
 
     def test_an_if_built_around_a_line_that_cannot_fail_may_fail_on_its_test(self):
         tree, model = _model("""

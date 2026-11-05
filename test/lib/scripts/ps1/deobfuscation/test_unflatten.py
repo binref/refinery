@@ -5,7 +5,7 @@ import unittest.mock
 
 from inspect import cleandoc
 
-from test import lines_executed
+from test import lines_executed, opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.analysis import cache
@@ -95,9 +95,6 @@ class TestPs1ControlFlowDeflattening(TestPs1):
         self.assertIn('$script:nix', result)
 
     def test_a_branch_whose_arms_only_move_the_state_keeps_its_test(self):
-        """
-        Both arms of the branch come out empty, and its test still runs and writes `cond`.
-        """
         code = cleandoc("""
             $s = 0
             while ($s -NE -1) {
@@ -259,11 +256,8 @@ class TestPs1ControlFlowDeflattening(TestPs1):
         self.assertLess(f_idx, s_idx)
 
     def test_a_hexadecimal_state_constant_is_the_value_powershell_gives_it(self):
-        """
-        Measured on 5.1: `0xFFFFFFFF` is the Int32 -1, not the magnitude 4294967295. So state 0 ends
-        the machine, and the `4294967295` case is a state the host never enters. Reading the numeral
-        as its magnitude routes the machine into that case and emits code that never runs.
-        """
+        # In 5.1, `0xFFFFFFFF` is the Int32 -1: this assignment ends the machine and the case
+        # `4294967295` never runs.
         code = cleandoc("""
             $s = 0
             while ($s -ne -1) {
@@ -277,12 +271,8 @@ class TestPs1ControlFlowDeflattening(TestPs1):
         result = self._apply(code, Ps1ControlFlowDeflattening)
         self.assertEqual(result, 'Write-Host $script:reached')
 
-    def test_a_state_id_too_wide_for_an_integer_is_left_flattened(self):
-        """
-        A decimal literal past Int64 is a Decimal, not an integer, so the machine reader names no
-        value for it rather than reading its magnitude as an int it is not. Recovering the machine
-        would key it on a value the host never assigns, so the dispatcher is left in place instead.
-        """
+    @opportunity
+    def test_a_state_id_too_wide_for_an_integer_is_followed_to_the_case_that_spells_it(self):
         code = cleandoc("""
             $s = 0
             while ($s -ne -1) {
@@ -295,15 +285,27 @@ class TestPs1ControlFlowDeflattening(TestPs1):
         """)
         self.assertEqual(
             self._apply(code, Ps1ControlFlowDeflattening),
-            self._apply(code))
+            'Write-Host $script:reached\nWrite-Host $script:x',
+        )
+
+    def test_a_too_wide_state_id_is_left_flattened_or_followed_to_the_case_that_spells_it(self):
+        code = cleandoc("""
+            $s = 0
+            while ($s -ne -1) {
+              switch ($s) {
+                0 { Write-Host $script:reached; $s = 99999999999999999999 }
+                99999999999999999999 { Write-Host $script:x; $s = -1 }
+                default { break }
+              }
+            }
+        """)
+        followed = cleandoc("""
+            Write-Host $script:reached
+            Write-Host $script:x
+        """)
+        self.assertIn(self._apply(code, Ps1ControlFlowDeflattening), (self._apply(code), followed))
 
     def test_a_loop_whose_exit_condition_is_unevaluable_is_left_flattened(self):
-        """
-        Which state ends this loop depends on what `Get-Random` returns, so no state can be shown to
-        end it and none can be shown not to. Recovering the machine as `while ($True)` turns that
-        refusal into the answer that no state exits, and runs a body forever that the host may not
-        run at all.
-        """
         self._assertUnchanged(cleandoc("""
             $s = 0
             while ($s -ne (Get-Random)) {
@@ -340,24 +342,6 @@ class TestPs1ControlFlowDeflattening(TestPs1):
 
 
 class TestPs1DeflatteningDoesNotRebuildTheModelPerMachine(TestPs1):
-    """
-    Every removal plan the pass opens reads the fault model, and that model is layered on the
-    control-flow graph of every block in the script. A commit advances the tree version those
-    graphs are cached against, so re-reading the model through the cache once per machine would
-    rebuild all of them: a body holding several independent machines would pay for the whole script
-    once per machine it dissolves. What a walk over a script costs is a property of the script, not
-    of how many of its statements turn out to be removable.
-
-    The machines in a body are dissolved as one batch, decided against the body as it stands, so the
-    pass reads the models once per body for every machine there. The count is then a property of
-    the script and does not carry the machine count.
-
-    The build is `refinery.lib.scripts.ps1.analysis.cache.build_control_flow_model`, which is what
-    the cache calls, counted here rather than timed so the measurement is the same on every
-    machine. It is compared between two machine counts rather than against a number of its own: a
-    count that answers the same for two machines as for eight is the only one that does not carry
-    the machine count in it.
-    """
 
     _FEW = 2
     _MANY = 8
@@ -420,11 +404,6 @@ class TestPs1DeflatteningDoesNotRebuildTheModelPerMachine(TestPs1):
 
 
 class TestPs1DeflatteningStartsFromTheValueTheLoopReads(TestPs1):
-    """
-    A machine is dissolved from the seed its loop starts from, and the statements it is recovered
-    into store nothing into the state variable. A seed another statement may overwrite before the
-    loop, and a state a later statement may read, leave the machine as it is written.
-    """
 
     def _assertLeftFlattened(self, code: str):
         code = cleandoc(code)

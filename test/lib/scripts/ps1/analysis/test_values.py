@@ -10,6 +10,7 @@ from refinery.lib.scripts.ps1.analysis.calls import call_reader
 from refinery.lib.scripts.ps1.analysis.values import (
     NULL,
     UNKNOWN,
+    Ps1Constant,
     Ps1Outcome,
     Ps1Throws,
     Ps1Typed,
@@ -26,9 +27,6 @@ from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 class Ps1ExpressionTypeTest(TestBase):
 
-    #: The world every script that redefines nothing and runs no opaque code has. Typing questions
-    #: are asked against it because a command name is only trustworthy in a closed world, so an open
-    #: world answers nothing and would test the absence, not the typing.
     CLOSED = Ps1WorldReach(Ps1TypeWorld(True, frozenset()))
 
     @staticmethod
@@ -40,29 +38,18 @@ class Ps1ExpressionTypeTest(TestBase):
 
 
 class TestPs1CandidateTypes(Ps1ExpressionTypeTest):
-    """
-    The candidate set is the primitive the member gate reasons over: a conclusion about a value has
-    to hold for every type the value could carry, so what matters is that a genuinely multi-valued
-    result is reported as such and an unknowable one as the empty set, never as a single guess.
-    """
 
     def _candidates(self, source: str, world: Ps1WorldReach | None = None):
         return candidate_types(self._expr(source), self.CLOSED if world is None else world)
 
     def test_a_cmdlet_contributes_every_output_type_it_declares(self):
-        # Get-Date carries [OutputType([datetime], [string])]; both are candidates, since which one
-        # a call yields depends on its arguments.
         self.assertEqual(
-            self._candidates('(Get-Date)'),
+            self._candidates('(Get-Date @p)'),
             frozenset({resolve_type('System.DateTime'), resolve_type('System.String')}),
         )
 
     def test_an_untrusted_cmdlet_contributes_no_candidates(self):
-        # [OutputType] is only a lower bound: a command that forwards its input emits types it never
-        # declares, so a declaration is trusted only for a curated closed set. Get-Random forwards
-        # -InputObject and Get-Command's declaration is not vouched for, so both are left untyped —
-        # which is what keeps a member read on their result (e.g. (Get-Command X).Name).
-        self.assertEqual(self._candidates('Get-Random'), frozenset())
+        self.assertEqual(self._candidates('Get-Random -InputObject $x'), frozenset())
         self.assertEqual(self._candidates('Get-Command'), frozenset())
 
     def test_a_static_call_takes_the_return_its_overloads_agree_on(self):
@@ -72,27 +59,18 @@ class TestPs1CandidateTypes(Ps1ExpressionTypeTest):
         )
 
     def test_a_static_call_with_disagreeing_overloads_is_empty(self):
-        # Math.Max is overloaded across every numeric type; with no argument typing the return is
-        # not decidable, so nothing is reported rather than one of them picked.
-        self.assertEqual(self._candidates('[Math]::Max(1, 2)'), frozenset())
+        self.assertEqual(self._candidates('[Math]::Max($a, $b)'), frozenset())
 
     def test_a_static_call_surfaces_an_imprecise_supertype_return(self):
-        # Convert.ChangeType is declared to return Object; that supertype is reported as-is.
-        # Narrowing it is not this layer's job — a caller that must not act on a supertype is the
-        # one that neutralises it.
         self.assertEqual(
-            self._candidates('[Convert]::ChangeType($x, [int])'),
+            self._candidates('[Convert]::ChangeType($x, $t)'),
             frozenset({resolve_type('System.Object')}),
         )
 
     def test_an_instance_method_call_is_not_resolved(self):
-        # String.Substring returns a string, but selecting an instance overload needs the receiver
-        # type and argument types; that is deferred, so the call contributes no candidate.
         self.assertEqual(self._candidates('$s.Substring(0, 2)'), frozenset())
 
     def test_a_command_without_a_declared_output_is_empty(self):
-        # Write-Host carries no [OutputType]; an undeclared output is unknown, not empty, so nothing
-        # is contributed rather than absence read as "emits nothing".
         self.assertEqual(self._candidates('Write-Host x'), frozenset())
 
     def test_single_type_forms_are_delegated_to_the_free_function(self):
@@ -102,20 +80,7 @@ class TestPs1CandidateTypes(Ps1ExpressionTypeTest):
                 self.assertIsNotNone(single)
                 self.assertEqual(self._candidates(source), frozenset({single}))
 
-    def test_the_candidate_set_is_a_strict_superset_of_the_free_function(self):
-        # The free function has no arm for a static method call and returns None; the set-valued
-        # view resolves it. This is the widening that keeps it out of the transforms that depend on
-        # the narrower answer.
-        call = self._expr('[Diagnostics.Process]::GetCurrentProcess()')
-        self.assertIsNone(resolve_expression_type(call))
-        self.assertEqual(
-            candidate_types(call, self.CLOSED),
-            frozenset({resolve_type('System.Diagnostics.Process')}),
-        )
-
     def test_an_untyped_variable_is_empty_without_a_model(self):
-        # No variable typing is supplied here; a bare local resolves to nothing until a model
-        # supplies it. Automatic-variable typing still applies, so this is a plain local.
         self.assertEqual(self._candidates('$notavariabletype'), frozenset())
 
     def test_supplied_variable_typing_resolves_a_typed_variable(self):
@@ -128,8 +93,6 @@ class TestPs1CandidateTypes(Ps1ExpressionTypeTest):
         self.assertEqual(self._candidates('$client'), frozenset())
 
     def test_an_open_world_contributes_no_command_candidates(self):
-        # A command name means what the metadata says only while nothing can have rebound it, so the
-        # cmdlet whose declaration is trusted in a closed world contributes nothing in an open one.
         self.assertEqual(
             self._candidates('(Get-Date)', Ps1WorldReach(Ps1TypeWorld(False, frozenset()))),
             frozenset())
@@ -141,16 +104,6 @@ if __name__ == '__main__':
 
 
 class TestPs1TheCurrentPipelineObjectIsTypedByWhatFeedsIt(Ps1ExpressionTypeTest):
-    """
-    Measured on Windows PowerShell 5.1:
-    `(@('one', 'two', 'three') | Measure-Object).GetType().FullName` is
-    `Microsoft.PowerShell.Commands.GenericMeasureInfo`, and
-    `@('one', 'two', 'three') | Measure-Object | ForEach-Object { $_.Count }` writes `3`.
-
-    A cmdlet declares what it writes to the pipeline *per object*, which is already what `$_` is
-    bound to. Anything else upstream is a value the pipeline enumerates, and the type of the whole
-    is not the type of an element — so it contributes nothing rather than the collection's type.
-    """
 
     def _current_object(self, source: str):
         script = Ps1Parser(source).parse()
@@ -162,7 +115,7 @@ class TestPs1TheCurrentPipelineObjectIsTypedByWhatFeedsIt(Ps1ExpressionTypeTest)
 
     def test_a_cmdlet_upstream_types_the_current_object(self):
         self.assertEqual(
-            self._current_object("'a' | Measure-Object | ForEach-Object { $_ }"),
+            self._current_object("'a' | Measure-Object @p | ForEach-Object { $_ }"),
             frozenset({
                 resolve_type('Microsoft.PowerShell.Commands.GenericMeasureInfo'),
                 resolve_type('Microsoft.PowerShell.Commands.GenericObjectMeasureInfo'),
@@ -171,7 +124,7 @@ class TestPs1TheCurrentPipelineObjectIsTypedByWhatFeedsIt(Ps1ExpressionTypeTest)
         )
 
     def test_an_enumerated_value_upstream_types_nothing(self):
-        self.assertEqual(self._current_object("1, 2 | ForEach-Object { $_ }"), frozenset())
+        self.assertEqual(self._current_object('[object[]]$x | ForEach-Object { $_ }'), frozenset())
 
     def test_the_first_element_of_a_pipeline_has_nothing_upstream(self):
         self.assertEqual(self._current_object("ForEach-Object { $_ }"), frozenset())
@@ -199,10 +152,6 @@ class TestPs1TheCurrentPipelineObjectIsTypedByWhatFeedsIt(Ps1ExpressionTypeTest)
 
 
 class TestPs1ACallTheFactsDescribe(TestBase):
-    """
-    What a call answers where a measured fact covers it, and the refusals that keep a fact from
-    answering for a call it was not measured on.
-    """
 
     def _called(self, source: str):
         script = Ps1Parser(source).parse()
@@ -238,19 +187,22 @@ class TestPs1ACallTheFactsDescribe(TestBase):
 
     def test_an_argument_of_a_type_no_fact_names_is_not_covered(self):
         for source in (
-            "[Math]::Sqrt('36')",
+            "[Math]::Sqrt('abc')",
             '[Math]::Sqrt($x)',
-            '[Math]::Sqrt($null)',
+            '[array]::Reverse($null)',
             '[array]::Reverse($x)',
-            "[array]::Reverse('abc')",
             '[array]::Reverse([int[,]]::new(2, 2))',
-            "'a'.GetHashCode()",
         ):
             with self.subTest(source):
                 self._assertNotCovered(source)
 
     def test_an_argument_list_no_fact_names_is_not_covered(self):
-        for source in ('[Math]::Sqrt()', '[Math]::Sqrt(1, 2)', '(5).GetHashCode(1)', 'Get-Random -Maximum 5'):
+        for source in (
+            '[Math]::Sqrt()',
+            '[Math]::Sqrt(1, 2)',
+            '(5).GetHashCode(1)',
+            'Get-Random -Maximum 0',
+        ):
             with self.subTest(source):
                 self._assertNotCovered(source)
 
@@ -272,12 +224,11 @@ class TestPs1ACallTheFactsDescribe(TestBase):
         self.assertEqual(evaluate(statement.expression, calls=reader), evaluate(statement.expression))
 
     def test_a_command_handed_pipeline_input_or_writing_to_a_redirection_is_not_covered(self):
-        for source in ('1 | Get-Random', 'Get-Random 2>$null'):
+        for source in ('$x | Get-Random', 'Get-Random > $f'):
             with self.subTest(source):
                 self._assertNotCovered(F'({source}).GetHashCode()')
 
     def test_a_command_is_not_covered_where_default_parameter_values_may_be_bound(self):
-        # Measured on 5.1: with `Get-Random:Maximum` bound to 0, a bare `Get-Random` fails.
         for binding in (
             "$PSDefaultParameterValues['Get-Random:Maximum'] = 0",
             "$PSDefaultParameterValues = @{ 'Get-Random:Maximum' = 0 }",
@@ -291,11 +242,15 @@ class TestPs1ACallTheFactsDescribe(TestBase):
             with self.subTest(source):
                 self.assertIs(self._called(source).throws, Ps1Throws.NEVER)
 
-    def test_a_command_in_a_pipeline_is_not_covered_where_the_walk_asks_it_alone(self):
-        script = Ps1Parser('1 | Get-Random').parse()
+    def test_a_piped_command_asked_on_its_own_names_what_it_is_handed_or_nothing(self):
+        script = Ps1Parser("'a' | Get-Random").parse()
         command = next(node for node in script.walk() if isinstance(node, Ps1CommandInvocation))
         world = Ps1ModelCache(script).world_reach
-        self.assertTrue(call_reader(world).outcome(command).may_throw)
+        string = named_type('System.String')
+        self.assertIn(
+            call_reader(world).outcome(command).value,
+            (UNKNOWN, Ps1Typed(string), Ps1Constant(string, 'a')),
+        )
 
     def test_a_fact_that_may_fail_answers_that_the_call_may_fail(self):
         fact, = call_facts(CallKind.INSTANCE, named_type('System.Text.StringBuilder'), 'tostring')

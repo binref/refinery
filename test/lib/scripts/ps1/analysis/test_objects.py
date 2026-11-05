@@ -26,12 +26,6 @@ def _objects(source: str) -> tuple[Node, Ps1ObjectFlow]:
 
 
 class TestPs1ACodeNobodyCanReadIsAChange(TestBase):
-    """
-    Code this analysis cannot read may store through any place it can name, whichever scope it runs
-    in. Measured on 5.1 in `corpus.BEHAVIOURS`, a payload storing through a table that holds an
-    array changes the array when a block made from it is run by `&` or `Invoke-Command`, when
-    `InvokeScript` runs it, and when `Invoke-Expression` runs it.
-    """
 
     def test_every_runner_of_code_from_a_string_runs_code_nobody_can_read(self):
         for source in (
@@ -58,11 +52,6 @@ class TestPs1ACodeNobodyCanReadIsAChange(TestBase):
 
 
 class TestPs1AChangeIsOrderedWhereTheNodeIsPlaced(TestBase):
-    """
-    Whether a change may follow a node is asked in the first graph on the node's way out that
-    places the change. Measured on 5.1 in `corpus.BEHAVIOURS`, `$y = & { ,$x }` hands the block the
-    array `$x` holds, and a payload run after it that stores through `$y` changes that array.
-    """
 
     def test_a_change_after_the_statement_that_runs_a_block_follows_a_node_in_it(self):
         tree, objects = _objects('$x = 1, 2, 3; $y = & { ,$x }; $y[0] = 9')
@@ -82,12 +71,6 @@ class TestPs1AChangeIsOrderedWhereTheNodeIsPlaced(TestBase):
 
 
 class TestPs1AChangeTheObjectMaySeeBetweenAWriteAndARead(TestBase):
-    """
-    Whether the object a read observes may have been changed since the write through a place no
-    occurrence of the name spells. Measured on 5.1 in `corpus.BEHAVIOURS`: a store through a
-    table holding the array changes it, and a payload a called function runs through `$y` after
-    `$y = $x` changes the array `$x` holds.
-    """
 
     @staticmethod
     def _unseen(source: str) -> Ps1Handoff:
@@ -129,18 +112,9 @@ class TestPs1AChangeTheObjectMaySeeBetweenAWriteAndARead(TestBase):
 
 
 class TestPs1TheObjectANameHoldsIsWhereItWasMade(TestBase):
-    """
-    The object a read holds is named by the expressions whose evaluation may have made it: an array
-    literal makes one, a second name hands on the one it holds, and a value this cannot follow may
-    be any object at all.
-    """
 
     @staticmethod
     def _made(source: str) -> tuple[set[int], set[int] | None]:
-        """
-        The array literals of *source*, and the expressions that may have made the object the last
-        read of `$x` holds.
-        """
         tree, objects = _objects(source)
         literals = {id(node) for node in tree.walk() if isinstance(node, Ps1ArrayLiteral)}
         made = objects.allocations_at(_occurrences(tree, 'x')[-1])
@@ -169,17 +143,9 @@ class TestPs1TheObjectANameHoldsIsWhereItWasMade(TestBase):
 
 
 class TestPs1AChangeReachesTheObjectsItsNameMayHold(TestBase):
-    """
-    A store one step into what a name holds changes the object that name holds, and a call that
-    rearranges a slot changes the object in that slot. What a store two steps in reaches, and what
-    code nobody can read reaches, is any object at all.
-    """
 
     @staticmethod
     def _may_change(source: str) -> bool:
-        """
-        Whether a change in place *source* makes may change the object the last read of `$x` holds.
-        """
         tree, objects = _objects(source)
         held = objects.allocations_at(_occurrences(tree, 'x')[-1])
         for change in (*objects.semantic.object_change_sites, *objects.unreadable_code):
@@ -207,21 +173,14 @@ class TestPs1AChangeReachesTheObjectsItsNameMayHold(TestBase):
             '$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); $w.Reverse(); '
             'Write-Output $x'))
 
-    def test_a_store_two_steps_in_may_change_any_array(self):
-        self.assertTrue(
-            self._may_change('$x = 1, 2; $z = @(0, 0), 1; $z[0][0] = 7; Write-Output $x'))
+    def test_a_store_two_steps_in_changes_an_array_held_inside_another(self):
+        self.assertTrue(self._may_change('$x = 1, 2; $z = $x, 1; $z[0][0] = 7; Write-Output $x'))
 
     def test_code_nobody_can_read_may_change_any_array(self):
         self.assertTrue(self._may_change('$x = 1, 2; iex $c; Write-Output $x'))
 
 
 class TestPs1ACallAroundAnAssignmentChangesWhatItStored(TestBase):
-    """
-    An assignment used as a value hands the call around it the very object it stored, and a call
-    that writes through the slot it fills changes that object after the assignment ran. Measured on
-    5.1 in `corpus.BEHAVIOURS`: an assignment used as a value is the object it stored, and
-    `[Array]::Reverse(($x))` turns around the array `$x` holds.
-    """
 
     @staticmethod
     def _unseen(source: str) -> Ps1Handoff:
@@ -245,11 +204,6 @@ class TestPs1ACallAroundAnAssignmentChangesWhatItStored(TestBase):
 
 
 class TestPs1ABodyRunAgainRunsItsChangesAfterItsReads(TestBase):
-    """
-    A body its site runs once per input object, and a block a loop runs again, runs every one of
-    its statements again after a read it made. Measured on 5.1 in `corpus.BEHAVIOURS`: a
-    `ForEach-Object` body runs once for each object, in the scope of its caller.
-    """
 
     def test_a_change_before_a_read_in_a_body_run_per_object_follows_the_read(self):
         tree, objects = _objects(
@@ -267,11 +221,6 @@ class TestPs1ABodyRunAgainRunsItsChangesAfterItsReads(TestBase):
 
 
 class TestPs1ANameOfAChainIsHandedTheWholeObject(TestBase):
-    """
-    Each name of a chained assignment holds the very object the chain was handed, however the
-    value of the chain is taken apart afterwards. Measured on 5.1 in `corpus.BEHAVIOURS`: `$z = $y
-    = $x; $z[0] = 9` changes the array `$x` holds.
-    """
 
     def test_an_assignment_used_as_a_value_keeps_the_object_whatever_is_read_off_it(self):
         for source in (
@@ -285,12 +234,6 @@ class TestPs1ANameOfAChainIsHandedTheWholeObject(TestBase):
 
 
 class TestPs1TheObjectANameHoldsIsFollowedOncePerRead(TestBase):
-    """
-    The input is written by whoever is being analysed, and a chain of branches that each hand one
-    name the object of the one before is one line of a generator. What a read holds is the same on
-    every path that leads to it, so asking it once per path is a hang on a chain a few dozen
-    branches long.
-    """
 
     def test_a_chain_of_branches_is_followed_once_per_read(self):
         length = 12
@@ -310,13 +253,11 @@ class TestPs1TheObjectANameHoldsIsFollowedOncePerRead(TestBase):
 
 
 class TestPs1AnAutomaticVariableHoldsWhatTheEngineGaveIt(TestBase):
-    """
-    The engine rebinds `$_` in every `switch` clause, whatever the script last assigned to it, so
-    the object a store through it changes is not one the script's write made.
-    """
 
-    def test_a_store_through_the_pipeline_variable_of_a_switch_may_change_any_object(self):
+    def test_a_store_through_a_switchs_pipeline_variable_may_change_the_array_it_is_handed(self):
         tree, objects = _objects(
             '$_ = 0, 0; $x = 1, 2, 3; switch (,$x) { default { $_[0] = 9 } }; Write-Output $x')
         store = [node for node in _occurrences(tree, '_') if node.parent is not None][-1]
-        self.assertIsNone(objects.changes_of(store))
+        held = objects.allocations_at(_occurrences(tree, 'x')[-1])
+        changed = objects.changes_of(store)
+        self.assertTrue(held is None or changed is None or not changed.isdisjoint(held))

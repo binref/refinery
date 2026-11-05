@@ -985,6 +985,39 @@ BEHAVIOURS: tuple[str, ...] = (
 )
 
 
+_ACCELERATORS = (
+    "$t = [psobject].Assembly.GetType(''System.Management.Automation.TypeAccelerators'')"
+)
+
+_CONVERTER = (
+    'class Conv : System.Management.Automation.PSTypeConverter { '
+    '[bool] CanConvertFrom([object]$s, [Type]$t) { return $true } '
+    '[object] ConvertFrom([object]$s, [Type]$t, [IFormatProvider]$p, [bool]$i) { '
+    "Write-Host 'HIJACKED'; return 7 } "
+    '[bool] CanConvertTo([object]$s, [Type]$t) { return $true } '
+    '[object] ConvertTo([object]$s, [Type]$t, [IFormatProvider]$p, [bool]$i) { '
+    "Write-Host 'HIJACKED'; return 7 } }; "
+    'Update-TypeData -TypeName System.Int32 -TypeConverter Conv; '
+)
+
+CAST_AFTER_A_REPOINTED_ACCELERATOR = (
+    F"$p = '{_ACCELERATORS}; [void]$t::Remove(''int''); "
+    "$t::Add(''int'', [string])'; Invoke-Expression $p; "
+    "$q = [Int]'45' + 5; Write-Host $q"
+)
+
+CAST_TO_AN_ACCELERATOR_A_PAYLOAD_ADDED = (
+    F"$p = '{_ACCELERATORS}; [void]$t::Add(''zzint'', [string])'; Invoke-Expression $p; "
+    "Write-Host ([zzint]'45' + 5)"
+)
+
+CAST_OF_A_CONSTANT_AFTER_A_PLANTED_CONVERTER = F"{_CONVERTER}$q = [Int]'45' + 5; Write-Host $q"
+
+CAST_OF_A_VALUE_AFTER_A_PLANTED_CONVERTER = (
+    F'{_CONVERTER}$q = [Int]$env:ZZQ45 + 5; Write-Host $q; Write-Output (1 + 1)'
+)
+
+
 #: The scripts a host-free ledger's beliefs about 5.1 rest on, each of which is run so that the
 #: belief is measured rather than remembered. Same rule as `BEHAVIOURS`: synthetic, small, safe, and
 #: the deobfuscation differential is quantified over these too, since a script written to catch a
@@ -1134,6 +1167,13 @@ CLAIMS: tuple[str, ...] = (
     "Write-Output (1 + 1)",
     "$ErrorActionPreference = 'Stop'; Write-Host ([int]'a'); Write-Host 'after'; Write-Output (1 + 1)",
     'Get-Item nope -ErrorAction SilentlyContinue | Write-Host; Write-Host $?; Write-Output (1 + 1)',
+
+    #: What a payload can change about a cast that runs after it: the type an accelerator names, and
+    #: the converter a conversion to a type calls.
+    CAST_AFTER_A_REPOINTED_ACCELERATOR,
+    CAST_TO_AN_ACCELERATOR_A_PAYLOAD_ADDED,
+    CAST_OF_A_CONSTANT_AFTER_A_PLANTED_CONVERTER,
+    CAST_OF_A_VALUE_AFTER_A_PLANTED_CONVERTER,
 )
 
 

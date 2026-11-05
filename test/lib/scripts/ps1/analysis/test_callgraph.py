@@ -7,8 +7,6 @@ from refinery.lib.scripts.ps1.analysis.world import Ps1TypeWorld, build_closed_w
 from refinery.lib.scripts.ps1.options import Ps1DeobfuscationOptions
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
-#: A world with nothing shadowed and nothing imported, so that `is_readable` answers on the rows
-#: this file is about rather than on a world that was open to begin with.
 _CLOSED_WORLD = Ps1TypeWorld(True, frozenset())
 
 
@@ -51,12 +49,6 @@ class TestPs1CallGraphReadability(TestBase):
         self.assertTrue(self._graph("function Qzmr { 'P' }\n& 'MyModule\\Other'").is_readable)
 
     def test_a_bare_noun_whose_retry_lands_on_a_definition_keeps_that_definition(self):
-        """
-        Measured on 5.1: `function Get-Item { Write-Output 'from-function' }; item env:zzq` writes
-        `from-function`, so the call reaches the definition although it spells another name. Read by
-        the written key alone the definition is called by nobody, and deleting it takes out the body
-        that runs.
-        """
         graph = self._graph("function Get-Item { 'P' }\nitem env:zzq")
         self.assertFalse(graph.is_readable)
         self.assertEqual(graph.reachable_names(), frozenset({'get-item', 'item'}))
@@ -93,10 +85,6 @@ class TestPs1CallGraphReadability(TestBase):
         self.assertTrue(graph.exports_a_name)
         self.assertFalse(graph.is_readable)
 
-#: Every construct `refinery.lib.scripts.ps1.analysis.world` counts as opening the world, one per
-#: reason it gives. The first group can put a command into this script's tables under a name no
-#: statement here spells; the second cannot reach the command namespace at all, and reads as an
-#: opener only because the call graph is seeded from the type world's verdict.
 _COMMAND_NAMESPACE_OPENERS = (
     ". '.\\stage2.ps1'",
     'Invoke-Expression $code',
@@ -116,16 +104,6 @@ _COMMAND_NAMESPACE_OPENERS = (
 
 
 class TestPs1CallGraphReadabilityAnswersOverAMeasuredWorld(TestBase):
-    """
-    The rows above are quantified over a world stated by hand, so the one `build_call_graph` is
-    actually seeded from — `world.closed_for_the_whole_run` — is answered by nothing there. These
-    ask it over the world a real script measures.
-
-    A construct that mutates the type system binds no command name: a `class` puts a type into the
-    session, `Add-Type` compiles one, and `Update-TypeData` and `Add-Member` re-point members of one.
-    None of them can make a bareword run something else, so none of them says this tree is not the
-    whole story about what a command name denotes.
-    """
 
     @staticmethod
     def _graph(source: str):
@@ -180,10 +158,6 @@ class TestPs1CallGraphReadabilityAnswersOverAMeasuredWorld(TestBase):
 
 
 class TestPs1ACallUnderAConstantNameInParenthesesCallsThatName(TestBase):
-    """
-    `& ('f1')` and `& $('f1')` look `f1` up as `& 'f1'` does, which is what constant folding leaves
-    of `& ('f' + '1')`.
-    """
 
     def test_a_parenthesised_constant_name_is_a_call_site_of_the_function(self):
         for call in ("& ('f1')", "& $('f1')", ". ('f1')"):
@@ -193,11 +167,6 @@ class TestPs1ACallUnderAConstantNameInParenthesesCallsThatName(TestBase):
 
 
 class TestPs1ACallTheGraphCannotAttributeIsListed(TestBase):
-    """
-    A call that runs code this analysis cannot read may run any function of the script, and a later
-    step may spell the call it makes, so it is listed whether or not code supplied as data is
-    trusted.
-    """
 
     def test_every_call_running_unreadable_code_is_listed_under_either_reading(self):
         for call in ('& $n', 'iex $c', '$ExecutionContext.InvokeCommand.InvokeScript($s)'):
@@ -213,10 +182,6 @@ class TestPs1ACallTheGraphCannotAttributeIsListed(TestBase):
 
 
 class TestPs1AFunctionTheScriptHandsOutIsReachedWithoutACall(TestBase):
-    """
-    A function read as a value, looked up, or naming itself through `$MyInvocation` may run where
-    no call names it, so it is reachable and has callers no list holds.
-    """
 
     @staticmethod
     def _graph(source: str):
@@ -255,4 +220,3 @@ class TestPs1AFunctionTheScriptHandsOutIsReachedWithoutACall(TestBase):
 
     def test_reading_only_the_name_of_a_lookup_hands_nothing_out(self):
         self.assertFalse(self._graph("function f1 { 'a' }\n(Get-Command f1).Name").hands_out('f1'))
-

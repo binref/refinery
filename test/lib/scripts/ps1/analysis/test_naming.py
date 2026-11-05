@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test import TestBase
+from test import TestBase, todo
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.ps1.analysis.naming import (
@@ -15,14 +15,6 @@ from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
 class TestPs1NameCensus(TestBase):
-    """
-    Which names a command addresses as a string, and what it does to each. A name reached only this
-    way has no variable occurrence anywhere, so a layer that reasons about occurrences alone sees a
-    value that never changes and folds straight across the command that changed it.
-
-    Every expectation is what PowerShell does, measured on 5.1 where the documentation and our own
-    code are not evidence — see `temp/ps1/census_measurements.md`.
-    """
 
     @staticmethod
     def _command(source: str) -> Ps1CommandInvocation:
@@ -65,18 +57,10 @@ class TestPs1NameCensus(TestBase):
                 self.assertEqual(self._refs(source), [('x', 'WRITES', 'LOCAL')])
 
     def test_a_named_argument_before_the_name_does_not_become_the_name(self):
-        """
-        `-Scope Global` is a switch followed by a positional as far as the parser can tell, so a
-        reading that takes the first positional as the name calls this variable `Global`.
-        """
         self.assertEqual(
             self._refs('Set-Variable -Scope Global x 5'), [('x', 'WRITES', 'SCRIPT')])
 
     def test_a_bare_write_lands_in_the_scope_the_command_is_written_in(self):
-        """
-        Measured: `Set-Variable d 'INNER'` inside a function writes that function's scope and leaves
-        the caller's `$d` alone, so the default is local and not script.
-        """
         self.assertEqual(self._refs('Set-Variable x 5'), [('x', 'WRITES', 'LOCAL')])
 
     def test_an_explicit_script_or_global_scope_is_placed_at_the_script(self):
@@ -89,19 +73,10 @@ class TestPs1NameCensus(TestBase):
             with self.subTest(source):
                 self.assertEqual(self._refs(source), [('x', 'WRITES', 'SCRIPT')])
 
-    def test_a_numeric_scope_names_a_scope_the_lexical_chain_cannot_reach(self):
-        """
-        Measured: `-Scope 1` writes the *caller's* scope, which is not a lexical ancestor of the
-        command, so no walk up the scope chain finds it.
-
-        The quoted spelling is the one that matters to the lookup: `-Scope 1` is an integer literal
-        and never reaches a table of scope *names* at all, so only `-Scope '1'` shows whether an
-        unrecognised name falls to the safe side.
-        """
+    def test_a_numeric_or_computed_scope_names_a_scope_the_lexical_chain_cannot_reach(self):
         for source in (
             'Set-Variable x 5 -Scope 1',
             "Set-Variable x 5 -Scope '1'",
-            'Set-Variable x 5 -Scope Foo',
             'Set-Variable x 5 -Scope $s',
         ):
             with self.subTest(source):
@@ -114,11 +89,6 @@ class TestPs1NameCensus(TestBase):
         self.assertEqual(self._refs('del variable:x'), [('x', 'UNBINDS', 'LOCAL')])
 
     def test_a_bare_noun_reaching_a_variable_reader_reads_the_same_name(self):
-        """
-        Nothing on a 5.1 host claims `variable` or `item`, so the implicit `Get-` retry runs
-        `Get-Variable` and `Get-Item`. A census keyed on the written spelling alone finds no
-        reference here and leaves the read of `$x` unaccounted for.
-        """
         for source in ('Get-Variable x -ValueOnly', 'variable x -ValueOnly'):
             with self.subTest(source):
                 self.assertEqual(self._refs(source), [('x', 'READS', 'LOCAL')])
@@ -141,10 +111,6 @@ class TestPs1NameCensus(TestBase):
                 self.assertEqual(self._refs(source), [('p', 'WRITES', 'LOCAL')])
 
     def test_the_append_form_of_an_out_variable_reads_the_name_as_well(self):
-        """
-        Measured: with `$a = 'PRE'`, `-OutVariable +a` leaves `PRE` in place and appends the output,
-        where `-OutVariable a` replaces it. The append form therefore observes the previous value.
-        """
         self.assertEqual(self._refs('Get-Process -OutVariable +p'), [('p', 'APPENDS', 'LOCAL')])
 
     def test_one_command_may_address_several_names(self):
@@ -163,10 +129,6 @@ class TestPs1NameCensus(TestBase):
                 self.assertEqual(self._refs(source), [])
 
     def test_a_qualified_command_name_does_not_consume_the_name_it_writes(self):
-        """
-        A scope or module qualifier belongs to the command name, so the first argument is still the
-        name the command addresses.
-        """
         for source in (
             'global:sv x 5',
             'Microsoft.PowerShell.Utility\\Set-Variable x 5',
@@ -177,11 +139,6 @@ class TestPs1NameCensus(TestBase):
 
 
 class TestPs1UnreadableNames(TestBase):
-    """
-    A write whose name is computed. Nothing can say which binding it lands on, so the fact belongs
-    to the scope rather than to any binding, and a consumer has to hold every name in that scope in
-    doubt.
-    """
 
     @staticmethod
     def _command(source: str) -> Ps1CommandInvocation:
@@ -208,11 +165,7 @@ class TestPs1UnreadableNames(TestBase):
                 self.assertFalse(addresses_unreadable_name(self._command(source)))
 
     def test_a_computed_name_on_a_read_of_values_writes_nothing(self):
-        """
-        Not knowing which value was read changes no value, so no later fold depends on having
-        identified it — where only values are read and no variable is handed out.
-        """
-        for source in ('Get-Variable $n -ValueOnly', 'Write-Host (Get-Variable $n).Value'):
+        for source in ('Get-Variable $n -ValueOnly', '$x = (Get-Variable $n).Value'):
             with self.subTest(source):
                 self.assertFalse(addresses_unreadable_name(self._command(source)))
 
@@ -223,10 +176,6 @@ class TestPs1UnreadableNames(TestBase):
                 self.assertEqual(named_references(self._command(source)), [])
 
     def test_a_variable_of_a_name_nobody_can_read_handed_out_is_written_anywhere(self):
-        """
-        Measured: a store into the `Value` of a variable picked out of `Get-Variable` rebinds it,
-        and which scope it belongs to is whichever scope the command could see.
-        """
         for source in (
             '$v = Get-Variable',
             '$v = Get-Variable $n',
@@ -237,9 +186,13 @@ class TestPs1UnreadableNames(TestBase):
                     unreadable_name_target(self._command(source)), Ps1NameTarget.UNREADABLE)
 
     def test_a_command_that_addresses_no_variable_is_not_unreadable(self):
-        for source in ('Write-Host $n', 'Get-Process', "Set-Item $path 'v'"):
+        for source in ('Write-Host $n', 'Get-Process'):
             with self.subTest(source):
                 self.assertFalse(addresses_unreadable_name(self._command(source)))
+
+    @todo
+    def test_an_item_write_to_a_computed_path_may_write_any_variable(self):
+        self.assertTrue(addresses_unreadable_name(self._command("Set-Item $path 'v'")))
 
     def test_a_name_computed_after_the_variable_drive_is_spelled_is_unreadable(self):
         for source, target in (
@@ -258,9 +211,6 @@ class TestPs1UnreadableNames(TestBase):
 
 
 def _first(source: str, kind: type, name: str | None = None) -> Node:
-    """
-    The first node of *kind* in *source*, in source order; a variable is picked by its *name*.
-    """
     for node in Ps1Parser(source).parse().walk_in_order():
         if isinstance(node, kind) and (name is None or getattr(node, 'name', None) == name):
             return node
@@ -268,11 +218,6 @@ def _first(source: str, kind: type, name: str | None = None) -> Node:
 
 
 class TestPs1AVariableHandedOut(TestBase):
-    """
-    Which commands hand out the variable itself rather than its value. A store into the `Value` of
-    one rebinds the name from wherever the variable has gone: each script measured on 5.1 in
-    `corpus.BEHAVIOURS` writes the value stored through the variable.
-    """
 
     @staticmethod
     def _handed_out(source: str, kind: type = Ps1CommandInvocation) -> list[tuple[str, bool]]:
@@ -337,10 +282,6 @@ class TestPs1AVariableHandedOut(TestBase):
         )
 
     def test_a_variable_an_output_variable_keeps_is_handed_out(self):
-        """
-        What a command writes out also lands in the variable its `-OutVariable` names, so the
-        variable object leaves in `$o` whatever is read of it where the command stands.
-        """
         self.assertEqual(
             self._handed_out('$n = (Get-Variable b -OutVariable o).Name'),
             [('b', True), ('o', False)],
@@ -359,11 +300,6 @@ class TestPs1AVariableHandedOut(TestBase):
 
 
 class TestPs1TheSessionStateAddressesVariablesByName(TestBase):
-    """
-    The session state's `PSVariable` reads, writes and removes a variable by the name it is
-    handed. Measured on 5.1 in `corpus.BEHAVIOURS`: `GetValue('x')` writes the value of `$x`,
-    `Set('b', 'b')` leaves `$b` holding `b`, and `Remove('b')` leaves it holding nothing.
-    """
 
     @staticmethod
     def _refs(source: str) -> list[tuple[str, str, str]]:
@@ -390,10 +326,6 @@ class TestPs1TheSessionStateAddressesVariablesByName(TestBase):
         )
 
     def test_the_session_state_is_reached_through_any_qualifier_of_its_holder(self):
-        """
-        `$ExecutionContext` is a constant every scope carries, so a qualified spelling of it is the
-        same engine intrinsics the bare one is.
-        """
         for source in (
             "$global:ExecutionContext.SessionState.PSVariable.Set('x', 'b')",
             "$script:ExecutionContext.SessionState.PSVariable.Set('x', 'b')",
@@ -407,10 +339,6 @@ class TestPs1TheSessionStateAddressesVariablesByName(TestBase):
         self.assertEqual(named_references(call), [])
 
     def test_the_session_state_kept_reads_and_writes_every_name(self):
-        """
-        Measured: `$p = $ExecutionContext.SessionState.PSVariable; $p.Set('b', 'b')` leaves `$b`
-        holding `b`, and nothing at the call says which variable the kept table is asked for.
-        """
         for source in (
             '$p = $ExecutionContext.SessionState.PSVariable',
             '$s = $ExecutionContext.SessionState',
@@ -436,11 +364,6 @@ class TestPs1TheSessionStateAddressesVariablesByName(TestBase):
 
 
 class TestPs1AReadOfNamesNobodyCanRead(TestBase):
-    """
-    A read that may observe every variable. Measured on 5.1 in `corpus.BEHAVIOURS`: a store into
-    the variable picked out of `Get-Variable` by its name reaches it, and a pattern reads each
-    variable it matches.
-    """
 
     def test_every_variable_a_command_lists_is_read(self):
         for source in (

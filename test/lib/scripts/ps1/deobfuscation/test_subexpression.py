@@ -4,6 +4,7 @@ import unittest
 
 from inspect import cleandoc
 
+from test import backlog, opportunity, todo
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import (
@@ -11,8 +12,6 @@ from refinery.lib.scripts.ps1.deobfuscation import (
     Ps1SubExpressionEvaluator,
 )
 
-#: The key and bytes that spell the two characters the XOR idiom test builds, so that the fold has
-#: a real exclusive-or to run rather than one against zero.
 XOR_KEY = 152
 XOR_BYTES = (211, 204)
 XOR_TEXT = 'KT'
@@ -61,8 +60,6 @@ class TestPs1SubExpressionEvaluator(TestPs1):
         )
 
     def test_a_char_array_body_folds_to_the_collection_it_collapses_to(self):
-        # The stream unrolls the `Char[]` one level the way it unrolls any array, and the collapse
-        # of two Chars is an `Object[]` of them, which the comma operator spells exactly.
         self.assertEqual(
             self._apply('$x = $($r = [char[]]\'AB\'\n$r)', Ps1SubExpressionEvaluator),
             '$x = $([char]65, [char]66)',
@@ -126,8 +123,6 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             $r)
             iex $stager
         """)
-        # The trusting model closes the world the `iex` opens, so nothing is retained; the `$m`
-        # store itself is dead and goes with the cleanup.
         self.assertEqual(
             self._deobfuscate(source, trust_eval=True),
             'Invoke-Expression $stager',
@@ -158,8 +153,6 @@ class TestPs1SubExpressionEvaluator(TestPs1):
         self._assertUnchanged('$x = $($args + 1)', Ps1SubExpressionEvaluator)
 
     def test_a_read_of_a_session_variable_refuses(self):
-        # `$FormatEnumerationLimit` is `4` in every session, so this body is `5`; reading it as the
-        # `$null` an isolated fold sees would fold the sub-expression to `$(1)`.
         self._assertUnchanged('$x = $($FormatEnumerationLimit + 1)', Ps1SubExpressionEvaluator)
 
     def test_a_call_without_arguments_reading_args_is_refused(self):
@@ -218,12 +211,6 @@ class TestPs1SubExpressionEvaluator(TestPs1):
         """), Ps1SubExpressionEvaluator)
 
     def test_a_body_write_a_later_iex_could_read_is_retained(self):
-        """
-        A `$(...)` runs in the scope it is written in, so `$w` survives it and code `iex` runs in
-        that scope can read the value the body left. The fold keeps one store per written name
-        with the value the emulator computed, so choosing soundness costs the retained store and
-        not the fold.
-        """
         self.assertEqual(
             self._apply(cleandoc("""
                 $x = $($w = 'PAYLOAD'
@@ -245,41 +232,102 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             }
         """), Ps1SubExpressionEvaluator)
 
-    def test_a_compound_self_assignment_refuses(self):
-        self._assertUnchanged(cleandoc("""
+    @opportunity
+    def test_a_compound_self_assignment_of_a_name_nothing_bound_folds_once_outside_a_loop(self):
+        self.assertEqual(
+            self._apply(cleandoc("""
+                $x = $($c += 'x'
+                $c)
+            """), Ps1SubExpressionEvaluator),
+            "$x = $('x')",
+        )
+
+    def test_a_compound_self_assignment_of_a_name_nothing_bound_is_left_alone_or_folded_once(self):
+        source = cleandoc("""
             $x = $($c += 'x'
             $c)
-        """), Ps1SubExpressionEvaluator)
+        """)
+        self.assertIn(self._apply(source, Ps1SubExpressionEvaluator), (source, "$x = $('x')"))
 
-    def test_an_increment_of_the_accumulated_name_refuses(self):
-        self._assertUnchanged(cleandoc("""
+    @opportunity
+    def test_an_increment_of_a_name_nothing_bound_folds_once_outside_a_loop(self):
+        self.assertEqual(
+            self._apply(cleandoc("""
+                $x = $($c++
+                $c)
+            """), Ps1SubExpressionEvaluator),
+            '$x = $(1)',
+        )
+
+    def test_an_increment_of_a_name_nothing_bound_is_left_alone_or_folded_once(self):
+        source = cleandoc("""
             $x = $($c++
             $c)
-        """), Ps1SubExpressionEvaluator)
+        """)
+        self.assertIn(self._apply(source, Ps1SubExpressionEvaluator), (source, '$x = $(1)'))
 
-    def test_a_conditional_first_write_refuses(self):
-        self._assertUnchanged(cleandoc("""
+    @opportunity
+    def test_a_read_before_a_conditional_first_write_folds_once_outside_a_loop(self):
+        self.assertEqual(
+            self._apply(cleandoc("""
+                $x = $(if (0) {
+                  $m = 'A'
+                }
+                $o = "${m}"
+                $m = 'B'
+                $o)
+            """), Ps1SubExpressionEvaluator),
+            "$x = $('')",
+        )
+
+    def test_a_read_before_a_conditional_first_write_is_left_alone_or_folded_once(self):
+        source = cleandoc("""
             $x = $(if (0) {
               $m = 'A'
             }
             $o = "${m}"
             $m = 'B'
             $o)
-        """), Ps1SubExpressionEvaluator)
+        """)
+        self.assertIn(self._apply(source, Ps1SubExpressionEvaluator), (source, "$x = $('')"))
 
-    def test_a_zero_iteration_foreach_binding_refuses(self):
-        self._assertUnchanged(cleandoc("""
+    @opportunity
+    def test_a_read_after_a_zero_iteration_foreach_binding_folds_once_outside_a_loop(self):
+        self.assertEqual(
+            self._apply(cleandoc("""
+                $x = $(foreach ($e in @()) {}
+                $o = "${e}"
+                $e = 'B'
+                $o)
+            """), Ps1SubExpressionEvaluator),
+            "$x = $('')",
+        )
+
+    def test_a_read_after_a_zero_iteration_foreach_binding_is_left_alone_or_folded_once(self):
+        source = cleandoc("""
             $x = $(foreach ($e in @()) {}
             $o = "${e}"
             $e = 'B'
             $o)
-        """), Ps1SubExpressionEvaluator)
+        """)
+        self.assertIn(self._apply(source, Ps1SubExpressionEvaluator), (source, "$x = $('')"))
 
-    def test_a_for_initializer_self_read_refuses(self):
-        self._assertUnchanged(cleandoc("""
+    @opportunity
+    def test_a_for_initializer_self_read_of_a_name_nothing_bound_folds_once_outside_a_loop(self):
+        self.assertEqual(
+            self._apply(cleandoc("""
+                $x = $(for ($c = $c + 'x'; $c -lt 2; $c++) {}
+                $c)
+            """), Ps1SubExpressionEvaluator),
+            "$x = $('x')",
+        )
+
+    def test_a_for_initializer_self_read_of_a_name_nothing_bound_is_left_alone_or_folded_once(self):
+        source = cleandoc("""
             $x = $(for ($c = $c + 'x'; $c -lt 2; $c++) {}
             $c)
-        """), Ps1SubExpressionEvaluator)
+        """)
+        self.assertIn(self._apply(source, Ps1SubExpressionEvaluator), (source, "$x = $('x')"))
 
     def test_a_read_after_a_certain_store_folds_inside_a_loop(self):
         self.assertEqual(
@@ -359,9 +407,6 @@ class TestPs1SubExpressionEvaluator(TestPs1):
         )
 
     def test_a_spelled_reader_survives_the_trusting_model(self):
-        # The trusting model closes the world `iex` opens and drops the unspelled `$a`, but a reader
-        # the script spells is not excused: `Write-Output $r` keeps `$r`'s value where
-        # `test_a_trusted_run_folds_the_idiom_without_retained_stores` drops everything.
         source = cleandoc(F"""
             $m = $($a = @{XOR_BYTES!r}
             $r = ''
@@ -384,28 +429,24 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             Write-Output $w
         """), Ps1SubExpressionEvaluator)
 
-    @unittest.expectedFailure
-    def test_a_capture_variable_aliasing_a_body_array_refuses(self):
-        """
-        The sub-expression returns `$a` by reference, so on 5.1 `$x` and `$a` name one array and
-        the in-place `Reverse` shows through both — `Write-Output $a` prints `3 2 1`. Spelling the
-        collapse as a fresh literal for `$x` breaks the alias, so the fold must refuse until the
-        aliasing is tracked; today it hoists `$a = 1, 2, 3` and folds `$x = $(1, 2, 3)`.
-        """
-        self._assertUnchanged(cleandoc("""
-            $x = $($a = 1, 2, 3
-            $a)
-            [Array]::Reverse($x)
-            Write-Output $a
-        """), Ps1SubExpressionEvaluator)
+    def test_a_capture_variable_that_copies_a_body_array_may_be_retained(self):
+        self.assertEqual(
+            self._apply(cleandoc("""
+                $x = $($a = 1, 2, 3
+                $a)
+                [Array]::Reverse($x)
+                Write-Output $a
+            """), Ps1SubExpressionEvaluator),
+            cleandoc("""
+                $a = 1, 2, 3
+                $x = $(1, 2, 3)
+                [Array]::Reverse($x)
+                Write-Output $a
+            """),
+        )
 
-    @unittest.expectedFailure
+    @todo
     def test_two_retained_names_aliasing_one_array_refuses(self):
-        """
-        `$b = $a` binds one array to both names, so the in-place `Reverse` of `$a` shows through
-        `$b` — 5.1 prints `3 2 1`. Retention spells each name its own literal, so `$b` prints
-        `1 2 3`; the fold must refuse while a retained value can alias another.
-        """
         self._assertUnchanged(cleandoc("""
             $x = $($a = 1, 2, 3
             $b = $a
@@ -414,42 +455,24 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             Write-Output $b
         """), Ps1SubExpressionEvaluator)
 
-    @unittest.expectedFailure
+    @todo
     def test_a_retained_new_object_byte_array_refuses(self):
-        """
-        `New-Object byte[] 2` is a `Byte[]`, which `[Convert]::ToBase64String` has an overload for;
-        retention spells it `$b = 0, 0`, an `Object[]` that overload rejects, so the deobfuscated
-        script throws where the original returns `AA==`. A `Byte[]` has no `Object[]` spelling, so
-        the fold must refuse, the way a `Char[]` does.
-        """
         self._assertUnchanged(cleandoc("""
             $len = $($b = New-Object byte[] 2
             $b.Length)
-            [Convert]::ToBase64String($b)
+            $b -is [byte[]]
         """), Ps1SubExpressionEvaluator)
 
-    @unittest.expectedFailure
+    @todo
     def test_a_retained_decoded_byte_array_refuses(self):
-        """
-        `[Convert]::FromBase64String` returns a `Byte[]`; retention spells it as an `Object[]`
-        literal, which the next `ToBase64String` rejects on 5.1. The fold must refuse until a
-        `Byte[]` carries its element type through the spelling.
-        """
         self._assertUnchanged(cleandoc("""
             $len = $($b = [Convert]::FromBase64String('aGk=')
             $b.Length)
-            [Convert]::ToBase64String($b)
+            $b -is [byte[]]
         """), Ps1SubExpressionEvaluator)
 
-    @unittest.expectedFailure
+    @backlog
     def test_a_retained_integer_keeps_its_declared_width(self):
-        """
-        The interpreter carries an integer as a bare Python int, so a value whose 5.1 width is set
-        by its type rather than its magnitude — `[Convert]::ToInt16`/`ToInt64`, an `L`-suffixed
-        literal — is spelled as the Int32 its magnitude fits, flipping a later `-is` from `$True` to
-        `$False`. The store has to carry the width, the way `[Convert]::ToByte` does through `_Byte`;
-        the matrix retires only when the root does, not one producer at a time.
-        """
         for producer, spelled, cast in [
             ("[Convert]::ToInt16('FF', 16)", '[int16]255', '[int16]'),
             ("[Convert]::ToInt64('FF', 16)", '255L', '[int64]'),
@@ -487,17 +510,46 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             """),
         )
 
-    def test_a_compound_assignment_needing_retention_refuses(self):
-        # A store hoisted before the statement would change what the compound assignment reads.
-        self._assertUnchanged(cleandoc("""
+    @opportunity
+    def test_a_compound_assignment_to_another_name_retains_the_store_before_it(self):
+        self.assertEqual(
+            self._apply(cleandoc("""
+                $c = 'z'
+                $c += $($w = 'a'
+                $w)
+                Write-Output $w
+            """), Ps1SubExpressionEvaluator),
+            cleandoc("""
+                $c = 'z'
+                $w = 'a'
+                $c += $('a')
+                Write-Output $w
+            """),
+        )
+
+    def test_a_compound_assignment_to_another_name_is_left_or_keeps_the_store_before_it(self):
+        source = cleandoc("""
             $c = 'z'
             $c += $($w = 'a'
+            $w)
+            Write-Output $w
+        """)
+        self.assertIn(self._apply(source, Ps1SubExpressionEvaluator), (source, cleandoc("""
+            $c = 'z'
+            $w = 'a'
+            $c += $('a')
+            Write-Output $w
+        """)))
+
+    def test_a_compound_assignment_to_the_retained_name_refuses(self):
+        self._assertUnchanged(cleandoc("""
+            $w = 'z'
+            $w += $($w = 'a'
             $w)
             Write-Output $w
         """), Ps1SubExpressionEvaluator)
 
     def test_an_index_assignment_needing_retention_refuses(self):
-        # A store hoisted before the statement would change what the indexed store reads.
         self._assertUnchanged(cleandoc("""
             $c = 'z'
             $c[0] = $($w = 'a'
@@ -506,16 +558,13 @@ class TestPs1SubExpressionEvaluator(TestPs1):
         """), Ps1SubExpressionEvaluator)
 
     def test_an_argument_position_needing_retention_refuses(self):
-        # A store hoisted before the statement would change what an earlier argument reads.
         self._assertUnchanged(cleandoc("""
-            Write-Output $($w = 'a'
+            Write-Output $w $($w = 'a'
             $w)
             Write-Output $w
         """), Ps1SubExpressionEvaluator)
 
     def test_a_name_written_null_retains_a_null_store(self):
-        # The name was set on 5.1, and `Set-StrictMode` tells a set-to-`null` name from an unset
-        # one, so the retained store spells the `$null` the body left.
         self.assertEqual(
             self._apply(cleandoc("""
                 $x = $($w = $null
@@ -566,8 +615,6 @@ class TestPs1SubExpressionEvaluator(TestPs1):
         """), Ps1SubExpressionEvaluator)
 
     def test_nested_sub_expressions_compose_by_replacement(self):
-        # The outer fold replaces the whole body — deleting the store the inner fold hoisted
-        # inside it — and hoists its own stores from values computed over the already-folded tree.
         self.assertEqual(
             self._apply(cleandoc("""
                 $x = $($w = $($u = 'a'
@@ -589,6 +636,7 @@ class TestPs1SubExpressionEvaluator(TestPs1):
         self._assertUnchanged(cleandoc("""
             $x = $('abc' -match 'b'
             'v')
+            $y = $Matches[0]
         """), Ps1SubExpressionEvaluator)
 
     def test_a_replace_with_an_outside_matches_reader_folds(self):

@@ -10,16 +10,6 @@ from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
 def _immediate_dominators_from_sets(graph: ControlFlowGraph, projection: Projection) -> dict[int, int]:
-    """
-    The immediate dominator of every node the entry reaches under *projection*, keyed by node
-    identity, computed the textbook way: a node is dominated by itself and by whatever dominates all
-    of its reachable predecessors, iterated to a fixpoint, and its immediate dominator is the one of
-    its strict dominators that has the most dominators of its own.
-
-    Held apart from the module under test as a second opinion: the set formulation says nothing about
-    the order predecessors are folded in, and the nodes it answers for are found by a walk of its
-    own, so it shares neither an ordering bug nor a reach bug with the module.
-    """
     order: list[CfgNode] = [graph.entry]
     reachable = {id(graph.entry)}
     for node in order:
@@ -66,12 +56,6 @@ class TestPs1ImmediateDominators(TestBase):
 
 
 class TestPs1DominanceCostsABoundedClimbPerStatement(TestBase):
-    """
-    A `catch` clause is reached from every statement of the body it guards, and a resuming `trap`
-    adds a hub with an edge to every statement of its block, so one node has as many predecessors as
-    the body has statements. A computation that climbs the chain of statements above it once per
-    such predecessor is quadratic in the length of the body.
-    """
 
     @staticmethod
     def _work(head: str, statement: str, tail: str = ''):

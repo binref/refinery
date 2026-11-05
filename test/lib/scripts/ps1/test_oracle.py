@@ -172,8 +172,8 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
 #: its output writes instead, so a failure can be read here.
 #:
 #: The variable entries are each a claim of the corruption ledger as well, and a defect that ledger
-#: already carries as an `expectedFailure`. That the two agree entry for entry matters there: the
-#: ledger reaches its verdict by asking whether a store survived in the tree, and this reaches it by
+#: already carries as a marked test. That the two agree entry for entry matters there: the ledger
+#: reaches its verdict by asking whether a store survived in the tree, and this reaches it by
 #: running both scripts, so neither is evidence for the other.
 #:
 #: An entry this table holds alone would not have that second witness, and every test in this file
@@ -182,6 +182,8 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
 #: a witness of its own shape somewhere host-free. They are carried by `test_corruptions.py`, which
 #: asks whether a store survived in the tree and what the reads below it can still print. That is
 #: not evidence for what is written here, because this reaches its verdict by running both scripts.
+#: A shape made up to show its defect has a witness marked as not to be fixed: it states the right
+#: behaviour but never runs, so such an entry ratchets only where a host is available.
 BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; "
     'function f { iex $c }; f; Write-Output $x[1]':
@@ -642,6 +644,17 @@ CLAIM_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
         ('THROW\tInvalidCastFromStringToInteger',),
     'Get-Item nope -ErrorAction SilentlyContinue | Write-Host; Write-Host $?; Write-Output (1 + 1)':
         ('INFO\tFalse', 'OUT\tSystem.Int32\t2'),
+    corpus.CAST_AFTER_A_REPOINTED_ACCELERATOR:
+        ('INFO\t50',),
+    corpus.CAST_TO_AN_ACCELERATOR_A_PAYLOAD_ADDED:
+        ('INFO\t455',),
+    corpus.CAST_OF_A_CONSTANT_AFTER_A_PLANTED_CONVERTER:
+        ('INFO\t50',),
+    corpus.CAST_OF_A_VALUE_AFTER_A_PLANTED_CONVERTER: (
+        'ERROR\tnullToObjectInvalidCast\tSystem.Management.Automation.RuntimeException',
+        'INFO\t',
+        'OUT\tSystem.Int32\t2',
+    ),
 }
 
 #: What the host's own command tables hold, measured. The tables in `refinery.lib.scripts.ps1.data`

@@ -4,8 +4,10 @@ import inspect
 
 from test import TestBase
 
+from refinery.lib.scripts import set_value
+from refinery.lib.scripts.ps1.data import KNOWN_PS_OPERATORS
 from refinery.lib.scripts.ps1.deobfuscation import deobfuscate
-from refinery.lib.scripts.ps1.model import Ps1Script
+from refinery.lib.scripts.ps1.model import Ps1BinaryExpression, Ps1Script, Ps1UnaryExpression
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
@@ -47,26 +49,63 @@ class TestPs1(TestBase):
                 break
         return Ps1Synthesizer().convert(ast)
 
-    def _assertDeobfuscatesTo(self, source: str, expected: str, trust_eval: bool = False) -> None:
-        """
-        Both arguments are written as ordinary indented PowerShell, and `expected` is rendered
-        through the synthesizer before the comparison, so that brace layout cannot be mistaken for a
-        statement having been removed.
-        """
-        self.assertEqual(
-            self._deobfuscate(inspect.cleandoc(source), trust_eval=trust_eval),
-            self._apply(inspect.cleandoc(expected)),
+    def _untouched(self, source: str) -> str:
+        ast = Ps1Parser(source).parse()
+        for node in ast.walk():
+            if isinstance(node, (Ps1BinaryExpression, Ps1UnaryExpression)):
+                spelled = KNOWN_PS_OPERATORS.get(node.operator.lower(), node.operator)
+                set_value(node, 'operator', spelled)
+        return Ps1Synthesizer().convert(ast)
+
+    def _assertDeobfuscatesTo(
+        self,
+        source: str,
+        expected: str,
+        remove_junk: bool = True,
+        preserve_bare_output: bool = False,
+        trust_eval: bool = False,
+    ) -> None:
+        deobfuscated = self._deobfuscate(
+            inspect.cleandoc(source),
+            remove_junk=remove_junk,
+            preserve_bare_output=preserve_bare_output,
+            trust_eval=trust_eval,
+        )
+        self.assertEqual(deobfuscated, self._untouched(inspect.cleandoc(expected)))
+
+    def _assertDeobfuscatesToOneOf(
+        self,
+        source: str,
+        *expected: str,
+        remove_junk: bool = True,
+        preserve_bare_output: bool = False,
+        trust_eval: bool = False,
+    ) -> None:
+        deobfuscated = self._deobfuscate(
+            inspect.cleandoc(source),
+            remove_junk=remove_junk,
+            preserve_bare_output=preserve_bare_output,
+            trust_eval=trust_eval,
+        )
+        acceptable = tuple(self._untouched(inspect.cleandoc(program)) for program in expected)
+        self.assertIn(deobfuscated, acceptable)
+
+    def _assertKept(
+        self,
+        source: str,
+        remove_junk: bool = True,
+        preserve_bare_output: bool = False,
+        trust_eval: bool = False,
+    ) -> None:
+        self._assertDeobfuscatesTo(
+            source,
+            source,
+            remove_junk=remove_junk,
+            preserve_bare_output=preserve_bare_output,
+            trust_eval=trust_eval,
         )
 
-    def _assertKept(self, source: str, trust_eval: bool = False) -> None:
-        self._assertDeobfuscatesTo(source, source, trust_eval=trust_eval)
-
     def _assertRemoved(self, source: str, statement: str, trust_eval: bool = False) -> None:
-        """
-        The expected output is `source` with `statement` gone and nothing else touched, so the pair
-        of arguments spells out one removal rather than a whole rewritten script. Naming a statement
-        that `source` does not contain would leave the expectation saying nothing, so it is refused.
-        """
         self.assertIn(statement, source)
         self._assertDeobfuscatesTo(source, source.replace(statement, ''), trust_eval=trust_eval)
 
@@ -80,18 +119,9 @@ class TestPs1(TestBase):
         return Ps1Synthesizer().convert(self._transform(source, *transforms))
 
     def _assertUnchanged(self, source: str, *transforms) -> None:
-        """
-        `source` has to be given in the synthesizer's own rendering, since it stands in for the
-        expected output as well.
-        """
         self.assertEqual(self._apply(source, *transforms), source)
 
     def _assertTreeIsIntact(self, source: str, expected: str, *transforms) -> None:
-        """
-        `expected` is required because a stale parent pointer is left by a pass *building* a
-        replacement, so a pass that stops building one satisfies the pointer assertion by doing
-        nothing at all.
-        """
         ast = self._transform(source, *transforms)
         self.assertEqual(Ps1Synthesizer().convert(ast), expected)
         for node in ast.walk():

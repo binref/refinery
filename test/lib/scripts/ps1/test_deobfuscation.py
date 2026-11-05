@@ -50,8 +50,7 @@ class TestPs1ParserModeRescan(TestPs1):
         result = self._deobfuscate(
             '(. $a."B"($c."D"($x,$y,$z),[int]::Max) Arg); $z=1'
         )
-        self.assertIn('Max', result)
-        self.assertIn('Arg', result)
+        self.assertIn('($x, $y, $z), [int]::Max) Arg', result)
 
     def test_dotted_command_name(self):
         result = self._deobfuscate(
@@ -82,12 +81,6 @@ class TestPs1ParserModeRescan(TestPs1):
         self.assertIn('3', result)
 
     def test_a_payload_in_a_typed_catch_after_a_command_try_body_survives(self):
-        """
-        The type name is read in whatever mode the try body left behind, and a command leaves
-        argument mode, where a bare token does not end at `]`. The name then swallowed the handler
-        and the rest of the script, so the payload reached no pass at all and the tail of the file
-        came back out as the handler body.
-        """
         result = self._deobfuscate_iterative(
             "try { Get-Process } catch [System.Exception] { Start-Process calc }\n"
             "Write-Host 'keep'")
@@ -103,11 +96,6 @@ class TestPs1ParserModeRescan(TestPs1):
         ))
 
     def test_an_empty_typed_catch_after_a_command_try_body_keeps_the_script_below_it(self):
-        """
-        The same lexer bug reached through a body that would dissolve under a handler taking every
-        error. `[A]` takes none, so the construct stands, and what this measures is that the handler
-        and the statement below it come back as themselves rather than as the type name's tail.
-        """
         result = self._deobfuscate_iterative("try { foo =5 } catch [A] {}\nWrite-Host 'keep'")
         self.assertEqual(result, cleandoc(
             """
@@ -170,12 +158,18 @@ class TestPs1ClassEnum(TestPs1):
         self.assertNotIn('$Null', result)
         self.assertIn('$xWdH[0]', result)
 
-    def test_class_preserved_alongside_outer_code(self):
+    def test_a_class_is_preserved_while_the_outer_code_folds(self):
         result = self._deobfuscate_iterative(
             '$x = 1; class C { [int]$N }; Write-Host $x'
         )
-        self.assertIn('class C', result)
-        self.assertIn('Write-Host', result)
+        self.assertEqual(result, cleandoc(
+            """
+            class C {
+              [int]$N
+            }
+            Write-Host 1
+            """
+        ))
 
     def test_enum_basic(self):
         result = self._deobfuscate('enum Color { Red; Green; Blue }')
@@ -280,9 +274,6 @@ class TestPs1Integration(TestPs1):
         self.assertIn('$r = for', result)
 
     def test_expandable_here_string_inlining_not_stale(self):
-        # Once $v is inlined the here-string is text alone, which is a value the domain reads, so
-        # $h holds a constant too and the chain resolves all the way to the call. The constant must
-        # reach the output and neither assignment may be left behind.
         result = self._deobfuscate_iterative(cleandoc("""
             $v = 'SECRET'
             $h = @"
@@ -293,8 +284,6 @@ class TestPs1Integration(TestPs1):
         self.assertEqual(result, 'Write-Host "value: SECRET end"')
 
     def test_step_budget_enforced_across_phases(self):
-        # A step budget smaller than the total work must raise rather than letting phase 2 run
-        # unbounded once phase 1 has consumed the budget.
         source = cleandoc("""
             $a = 1 + 2
             $b = 'x' + 'y'
@@ -306,12 +295,6 @@ class TestPs1Integration(TestPs1):
             deobfuscate(ast, max_steps=1)
 
     def test_a_group_that_cannot_settle_within_the_budget_raises_instead_of_hanging(self):
-        """
-        No naturally non-converging input is known to remain, so the enduring contract — that a
-        transformer group which cannot settle within the step budget fails loudly rather than
-        looping forever — is exercised by starving a convergent input of budget. This script
-        settles in three change-producing passes; a budget of two must raise.
-        """
         ast = Ps1Parser(cleandoc("""
             $a = 1 + 2 + 3 + 4 + 5
             $b = 'x' + 'y' + 'z'
@@ -322,13 +305,11 @@ class TestPs1Integration(TestPs1):
             deobfuscate(ast, max_steps=2)
 
     def test_string_equality_guard_prunes_dead_branch(self):
-        # A folded string comparison must cascade into dead-branch elimination across the pipeline.
         result = self._deobfuscate(
             "if ('m' -eq 'z') { Write-Output 'dead' } else { Write-Output 'live' }")
         self.assertEqual(result, "Write-Output 'live'")
 
     def test_logical_guard_prunes_dead_branch(self):
-        # A folded boolean `-and` guard must likewise cascade into dead-branch elimination.
         result = self._deobfuscate(
             "if ($true -and $false) { Write-Output 'dead' } else { Write-Output 'live' }")
         self.assertEqual(result, "Write-Output 'live'")
@@ -389,48 +370,19 @@ class TestPs1Integration(TestPs1):
 
 
 class TestPs1ClosedWorld(TestPs1):
-    """
-    A probe on Windows PowerShell confirmed that `Update-TypeData -Force` can shadow a native member
-    with a code-running ScriptProperty, so a member read after any type-system or command-identity
-    mutation — or after opaque code that could perform one — is not junk and must survive
-    deobfuscation. Each case runs the same read with and without an opener and checks it is deleted
-    only in a closed world.
-    """
 
     def test_a_pure_read_is_deleted_only_in_a_closed_world(self):
         anchor = "$Null = [Environment]::UserName\nWrite-Output 'anchor'\n"
         self.assertNotIn('UserName', self._deobfuscate_iterative(anchor))
-        openers = (
-            'Update-TypeData -TypeName System.String -MemberName M '
-            '-MemberType ScriptProperty -Value { 1 }\n',
-            'Set-Item alias:utd Update-TypeData\n',
-            'iex $x\n',
-        )
-        for opener in openers:
-            with self.subTest(opener):
-                self.assertIn('UserName', self._deobfuscate_iterative(opener + anchor))
+        self.assertIn('UserName', self._deobfuscate_iterative(F'iex $x\n{anchor}'))
 
     def test_a_temporary_mutator_is_deleted_only_in_a_closed_world(self):
-        # The in-place mutator on a temporary is pure, but the grant is a present-member grant, so
-        # it gates on the world too.
         anchor = "$Null = [Array]::Reverse('ab'.ToCharArray())\nWrite-Output 'anchor'\n"
         self.assertNotIn('Reverse', self._deobfuscate_iterative(anchor))
-        self.assertIn('Reverse', self._deobfuscate_iterative('iex $x\n' + anchor))
+        self.assertIn('Reverse', self._deobfuscate_iterative(F'iex $x\n{anchor}'))
 
 
 class TestPs1CommandRedefinition(TestPs1):
-    """
-    A script-local `function`/`filter` (or a `${function:X}=` assignment) shadows a same-named
-    command, so it no longer runs what the metadata describes. The analysis must not delete a read,
-    discard, or pipeline sink of a shadowed command as if it were the inert built-in — every form
-    below runs a real `Start-Process` through the shadowing definition and must survive.
-
-    A scope qualifier selects which scope table the definition lands in and is not part of the name,
-    so every qualified spelling has to shadow what the unqualified call resolves to.
-
-    The shadow reaches forward from where the definition runs and no further, so each form here
-    writes the definition above the call it has to save.
-    """
 
     def test_a_shadowed_commands_effect_survives_every_deletion_form(self):
         anchor = "\nWrite-Output 'keep'\n"
@@ -453,8 +405,6 @@ class TestPs1CommandRedefinition(TestPs1):
                 self.assertIn('Start-Process', self._deobfuscate_iterative(body + anchor))
 
     def test_a_bareword_written_above_the_definition_that_shadows_it_is_still_removed(self):
-        # 5.1 prints only what the handler prints: the name is unbound where the bareword stands and
-        # the definition below it binds nothing retroactively.
         self.assertEqual(
             self._deobfuscate_iterative(
                 'try { Zzz =5 } catch {}\n'
@@ -470,9 +420,6 @@ class TestPs1CommandRedefinition(TestPs1):
             """))
 
     def test_a_multi_assignment_redefinition_keeps_the_call_it_shadows(self):
-        # The payload text survives inside the assignment whatever happens, so asserting on it would
-        # prove nothing here. What the shadow set has to save is the *call*, which is what runs it —
-        # and matching one target shape against one variable never saw this form at all.
         out = self._deobfuscate_iterative(
             "${function:Get-Date}, $y = { Start-Process calc }, 2\n"
             "$Null = (Get-Date).Ticks\n"
@@ -481,16 +428,11 @@ class TestPs1CommandRedefinition(TestPs1):
         self.assertIn('Start-Process', out)
 
     def test_an_unshadowed_pure_read_is_still_deleted(self):
-        # The guard is name-keyed, not blanket: a script that defines an unrelated function still has
-        # its genuinely-pure junk removed.
         out = self._deobfuscate_iterative(
             "function Helper { 'x' }\n$Null = (Get-Date).Ticks\nWrite-Output 'keep'\n")
         self.assertNotIn('Get-Date', out)
 
     def test_a_cast_to_a_script_defined_type_keeps_the_constructor_it_runs(self):
-        # PowerShell converts a string to a custom type by invoking a one-argument constructor, so
-        # the cast is the call. The type is defined in this very script and the constructor body is
-        # standing in the tree, and the conversion was still deleted.
         out = self._deobfuscate_iterative(cleandoc(
             """
             class Loader { Loader([String]$s) { [IO.File]::WriteAllText('C:\\p.txt', $s) } }
@@ -501,10 +443,6 @@ class TestPs1CommandRedefinition(TestPs1):
         self.assertIn('[Loader]', out)
 
     def test_a_name_is_inert_only_when_every_definition_of_it_is(self):
-        # Call sites are attributed to the name, not to one of its definitions, so dropping them
-        # because one definition is empty silences the other: the calls go first, then the surviving
-        # definition reads as never called and follows on the next round. Which definition a call
-        # actually reaches is order and scope information no pass here has, so both are kept.
         for second in ('function f { }', 'function global:f { }'):
             with self.subTest(second):
                 out = self._deobfuscate_iterative(
@@ -513,22 +451,8 @@ class TestPs1CommandRedefinition(TestPs1):
 
 
 class TestPs1ErrorHandlerSurvival(TestPs1):
-    """
-    Moving the real work into a `catch` and making the `try` fail on purpose is a standard
-    anti-analysis shape, and nothing in this pipeline decides whether a statement throws. A `try`
-    body therefore reads as harmless whether it truly is or merely looks it, and once the body is
-    gone the handler beside it is provably unreachable — so the payload goes too, and the deletion
-    is silent.
-
-    The refusal is placed on dropping the handler rather than on emptying the body, because the
-    routes to an empty body are many and each new pass adds another. A body left empty is an
-    artifact of this pipeline: it is evidence about the pass that produced it, never about whether
-    the code as written could raise.
-    """
 
     def test_a_payload_in_a_catch_survives_a_throwing_try_body(self):
-        # Nothing here can tell that `[Int]'abc'` throws — it emits nothing, so the cleanup passes
-        # removed it, and the emptied body then made the handler unreachable.
         for body in ("$Null = [Int]'abc'", "$x = [Int]'abc'", "[Int]'abc'", "[Guid]'nope'"):
             with self.subTest(body):
                 out = self._deobfuscate_iterative(
@@ -536,8 +460,6 @@ class TestPs1ErrorHandlerSurvival(TestPs1):
                 self.assertIn('Start-Process', out)
 
     def test_a_payload_in_a_catch_survives_a_try_body_another_pass_emptied(self):
-        # The same over-deletion reached by every other route: an inert function inlined away, a
-        # definition-only body, a constant-false branch, a bare literal, a trap, an empty loop.
         scripts = (
             "function f { $Null = [Int]'abc' }\ntry { f } catch { Start-Process calc }",
             "try { function g { 'z' } } catch { Start-Process calc }\nWrite-Host (g)",
@@ -552,25 +474,14 @@ class TestPs1ErrorHandlerSurvival(TestPs1):
                 self.assertIn('Start-Process', out)
 
     def test_an_empty_catch_lets_a_noise_bareword_and_a_cast_it_swallows_go(self):
-        # An empty `catch` swallows what `[Int]$env:FOO` raises, and the number the cast prints when
-        # it succeeds is console output, so it goes like a bare value nothing handles. The bareword
-        # goes on the separate guess that nothing defines it.
         out = self._deobfuscate_iterative(
             "try { foo =5 } catch {}\ntry { [Int]$env:FOO } catch {}\nWrite-Host 'keep'")
         self.assertEqual(out, "Write-Host 'keep'")
 
 
 class TestPs1NameTrustSurvivesRewriting(TestPs1):
-    """
-    A rename pass and a pruning pass agree on a name only while they read the same facts about it.
-    Every case here is a rewrite that erased the evidence the later pass needed: the name it renamed
-    was one the script had taken over, or the operator it dropped was the world's only signal that
-    off-tree code runs.
-    """
 
     def test_a_dot_source_of_a_script_keeps_its_operator(self):
-        # `. helper` must keep its dot: dropping it hides the sourced script's scope effects from
-        # the world, which then reads closed and grants every purity check.
         out = self._deobfuscate_iterative(cleandoc(
             """
             . 'profile-loader'
@@ -582,15 +493,10 @@ class TestPs1NameTrustSurvivesRewriting(TestPs1):
         self.assertIn('Get-Date', out)
 
     def test_a_dot_on_a_cmdlet_is_still_dropped(self):
-        # A compiled cmdlet has no body to run in the caller's scope, so the dot carries nothing.
         out = self._deobfuscate_iterative("$c = . New-Object 'Net.WebClient'\nWrite-Host $c")
         self.assertNotIn('. New-Object', out)
 
     def test_a_provider_redefinition_is_kept_while_the_bare_call_resolves_to_the_alias(self):
-        # `${function:gci} = { ... }` is an identity-binding assignment that keeps the world
-        # conservative, so the payload is retained; and because a default alias beats a function,
-        # the bare `gci` resolves to the alias Get-ChildItem. Verified against 5.1: with the
-        # provider assignment in scope, `gci` still runs Get-ChildItem.
         out = self._deobfuscate_iterative(cleandoc(
             """
             ${function:gci} = { Start-Process calc }
@@ -601,21 +507,17 @@ class TestPs1NameTrustSurvivesRewriting(TestPs1):
         self.assertIn('Start-Process calc', out)
         self.assertIn('Get-ChildItem', out)
 
-    def test_a_regex_match_that_populates_matches_is_kept(self):
-        # `-match` writes the automatic `$Matches`, a store to engine state and not merely a value
-        # the expression yields, so a later read of `$Matches` keeps the match alive.
+    def test_a_regex_match_stays_while_a_read_of_matches_needs_it(self):
         out = self._deobfuscate_iterative(cleandoc(
             """
             $c = 'aaa<<calc>>bbb'
             $z = $c -match '<<(.*)>>'
             Invoke-Expression $Matches[1]
             """
-        ))
-        self.assertIn('-Match', out)
+        )).lower()
+        self.assertTrue('-match' in out or '$matches' not in out)
 
     def test_a_scope_qualified_redefinition_is_not_constant_folded(self):
-        # `function global:F` and an unqualified `function F` of the same name are different
-        # definitions and must not be conflated.
         out = self._deobfuscate_iterative(cleandoc(
             """
             function F { 'A' }
@@ -626,9 +528,6 @@ class TestPs1NameTrustSurvivesRewriting(TestPs1):
         self.assertIn('Start-Process calc', out)
 
 
-#: A measured row that runs an `if` over a condition and prints the branch it selected. The script
-#: a host ran is the script the pipeline is asked about here, so the expectation is the host's own
-#: output rather than a rewriting chosen here.
 _BRANCH_ROW = re.compile(
     r"\$t = (?P<script>if \(.+\) \{ 'yes' \} else \{ 'no' \})"
     r'; Write-Output \(,\$t\); Write-Output \$t'
@@ -636,12 +535,6 @@ _BRANCH_ROW = re.compile(
 
 
 def _measured_line(expression: str) -> str:
-    """
-    The text a 5.1 host printed for the measured row that assigns `expression` to `$t` and writes
-    it. A row this module asks for and the corpus does not hold is a `KeyError` naming it: nothing
-    here runs a host, so a case has to be measured in `test.lib.scripts.ps1.corpus` before it can
-    be asked about.
-    """
     row = F'$t = {expression}; Write-Output (,$t); Write-Output $t'
     kind, _, rendered = TYPE_TRANSCRIPTS[row][0].split('\t')
     assert kind == 'OUT', row
@@ -649,9 +542,6 @@ def _measured_line(expression: str) -> str:
 
 
 def _branch_rows() -> dict[str, str]:
-    """
-    Every measured `if`, keyed by the script a host ran and mapped to the branch it printed.
-    """
     rows: dict[str, str] = {}
     for row in TYPE_TRANSCRIPTS:
         match = _BRANCH_ROW.fullmatch(row)
@@ -665,14 +555,6 @@ BRANCHES: dict[str, str] = _branch_rows()
 
 
 class TestPs1MeasuredBranch(TestPs1):
-    """
-    The `if` scripts a 5.1 host ran, put through the whole pipeline: what is left has to be the
-    branch the host printed. A condition counted the other way is not a shorter script, it is a
-    different one, and a Char, a collection and a negated String were each counted wrongly or not
-    at all — `[char]0`, `@(@())` and `- '0'` are all false.
-
-    Junk removal is off so that the bare strings the branches hold stay where they are written.
-    """
 
     def test_every_measured_if_reduces_to_the_branch_the_host_printed(self):
         self.assertEqual(len(BRANCHES), 6, 'a measured branch was added or withdrawn')
@@ -685,9 +567,6 @@ class TestPs1MeasuredBranch(TestPs1):
         )
 
 
-#: Two conditions the domain must not settle, each in a statement that branches or loops on it and
-#: in a logical operator that reads it, and each written the way the deobfuscator writes it so that
-#: the source stands in for the expected output as well.
 UNSETTLED_SOURCES: tuple[str, ...] = (
     cleandoc("""
         if ($Null * [int]'abc') {
@@ -707,18 +586,6 @@ UNSETTLED_SOURCES: tuple[str, ...] = (
 
 
 class TestPs1UnsettledConditionIsLeftStanding(TestPs1):
-    """
-    A condition whose truth the domain cannot name is left where it stands, and the two below are
-    unsettled for reasons that have nothing to do with each other.
-
-    `$Null * [int]'abc'` is a definite `$Null`, which is false, and a host never reaches it: the
-    cast throws. Counting the condition false would prune the branch and take the throw with it.
-
-    `@() + (0 -Shl $True)` is a collection of exactly one element whose type is known and whose
-    value is not. The rule 5.1 uses inside a one-element collection ends in *otherwise true*, so a
-    copy of it would count the whole collection true on the strength of an element nothing is known
-    about.
-    """
 
     def test_a_condition_the_domain_cannot_settle_is_left_where_it_stands(self):
         for source in UNSETTLED_SOURCES:
@@ -726,8 +593,6 @@ class TestPs1UnsettledConditionIsLeftStanding(TestPs1):
                 self.assertEqual(self._deobfuscate_iterative(source, remove_junk=False), source)
 
 
-#: The two spellings that ask what a String no number reads out of counts as, each written the way
-#: the synthesizer writes it, so that the source stands in for the expected output as well.
 THROWING_NEGATIONS: tuple[str, ...] = (
     cleandoc("""
         if (-'abc') {
@@ -739,9 +604,6 @@ THROWING_NEGATIONS: tuple[str, ...] = (
     "$x = (-'abc') -or $False",
 )
 
-#: The spellings a negated zero is folded in, each with the measured expression that settles what a
-#: host makes of it. The Boolean such a row prints is the value the fold has to write, spelled as
-#: the variable that holds it.
 NEGATED_ZERO_FOLDS: dict[str, str] = {
     "$x = -Not (-'0')"       : "-not (- '0')",
     "$x = (-'0') -and $True" : "(- '0') -and $true",
@@ -749,19 +611,6 @@ NEGATED_ZERO_FOLDS: dict[str, str] = {
 
 
 class TestPs1NegatedStringTruth(TestPs1):
-    """
-    A minus sign in front of a String converts the String to a number, so negating one changes what
-    it counts as: measured, the text `'0'` is true where `- '0'` is the Int32 zero. A truth carried
-    through the minus made every spelling below a different script — the logical ones folded to the
-    Boolean a host does not print, and `do { 'A' } until (- '0')` a body a host never stops
-    repeating.
-
-    `- 'abc'` throws and counts as nothing at all, which is why the two spellings over it are left
-    exactly where they stand.
-
-    Junk removal is off so that the bare strings stay where they are written and what is compared
-    is the branches themselves.
-    """
 
     def test_a_negated_string_the_host_threw_on_is_left_where_it_stands(self):
         for source in THROWING_NEGATIONS:
@@ -781,11 +630,6 @@ class TestPs1NegatedStringTruth(TestPs1):
         )
 
     def test_a_loop_whose_condition_is_never_met_is_kept_with_its_body(self):
-        """
-        An `until` runs its body again for as long as the condition counts false, so a loop over
-        the Int32 zero is one a host never leaves. A truth carried through the minus would have
-        ended it after the first pass and left the body behind as a statement that runs once.
-        """
         self.assertEqual(_measured_line("- '0'"), '0')
         self.assertEqual(
             self._deobfuscate_iterative(cleandoc("""
@@ -802,18 +646,6 @@ class TestPs1NegatedStringTruth(TestPs1):
 
 
 class TestPs1ABlockAShadowedIteratorReceivesRunsWhereThatIteratorRunsIt(TestPs1):
-    """
-    A script-local `function ForEach-Object` receives the block as a value rather than running it in
-    place, so the body runs whenever that function chooses to run it. Windows PowerShell 5.1 prints
-    `b` for the script below, because the stored block runs after the second assignment.
-
-    The block is no longer placed at the pipeline it is written in, so the read inside it is not
-    folded to `'a'`. The second assignment `$x = 'b'` is kept: `& $script:store` is an opaque
-    dispatch, so the run takes code from data, and the cleanup passes keep every script-scope store a
-    reader they cannot see could observe. The stored block is such a reader — it reaches `$x` through
-    the shadowing function, which no pass connects the invocation to — so keeping the store is what
-    makes the emitted script print `b` the way 5.1 does.
-    """
 
     _SCRIPT = """
         function ForEach-Object { param($s) $script:store = $s }

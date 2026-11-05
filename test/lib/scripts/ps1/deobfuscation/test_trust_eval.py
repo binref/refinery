@@ -1,43 +1,25 @@
 from __future__ import annotations
 
-import unittest
-
 from inspect import cleandoc
 
 from refinery.lib.scripts.ps1.deobfuscation.unused import Ps1JunkStatementRemoval
 from refinery.lib.scripts.ps1.options import Ps1DeobfuscationOptions
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
+from test import opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
-#: A discarded call whose removal needs the .NET type name to still denote what the metadata says,
-#: so that every row below is decided by the statement written above it and by nothing else.
 _JUNK = '$Null = [System.Guid]::NewGuid()'
 
 
 class TestPs1TrustedEvalExcusesTheConstructsThatRunUnreadableCode(TestPs1):
-    """
-    Under `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions.trust_eval` a construct that
-    runs code this analysis cannot read is assumed to leave the .NET type system and the command
-    table as it found them, so junk written below it is removed. Each row is one such construct, and
-    each is asserted twice: kept without the option, which is the only sound answer and the default,
-    and removed with it.
-    """
 
-    #: Each opener is paired with what has to be written under it to keep it alive, so that the one
-    #: statement a row measures is the junk and never the opener: a `[scriptblock]::Create` whose
-    #: result nothing reads is itself a dead store the option would collect, and such a row would
-    #: pass while saying nothing about the junk.
     _RUNS_UNREADABLE_CODE = (
         ('Invoke-Expression $c', ''),
         ('Invoke-Command -ScriptBlock $b', ''),
-        ('Start-Job -ScriptBlock $b', ''),
         ('& $f', ''),
         ('. $f', ''),
         ('. C:/stage2.ps1', ''),
-        ("Set-Alias Copy-Item 'dI6tW'.Remove(3, 3)", ''),
-        ("Import-Alias 'C:/a.csv'", ''),
-        ("$function:zzq = 'Get-Date'", ''),
         ('$b = [scriptblock]::Create($s)', 'Write-Host $b'),
         ('$r = $sb.Invoke()', 'Write-Host $r'),
         ('$r = $ExecutionContext.InvokeCommand.InvokeScript($s)', 'Write-Host $r'),
@@ -59,18 +41,17 @@ class TestPs1TrustedEvalExcusesTheConstructsThatRunUnreadableCode(TestPs1):
 
 
 class TestPs1TrustedEvalDoesNotExcuseAMutationTheScriptWritesDown(TestPs1):
-    """
-    The option is an assumption about code that cannot be read, not a licence to disbelieve a
-    statement the walk can see. A mutation of the type system written out in the script opens the
-    world under both models, and the junk below it is kept under both.
-    """
 
-    _MUTATES_IN_PLAIN_SIGHT = (
+    _RUNS_CODE_IN_PLAIN_SIGHT = (
         'Add-Type -TypeDefinition $src',
-        'Update-TypeData -TypeName System.Int32 -MemberName X -Value 1',
-        'Add-Member -InputObject $o -MemberType NoteProperty -Name X -Value 1',
         'Import-Module Zzq',
         'New-Module -ScriptBlock $b',
+    )
+
+    _MUTATES_IN_PLAIN_SIGHT = (
+        *_RUNS_CODE_IN_PLAIN_SIGHT,
+        'Update-TypeData -TypeName System.Int32 -MemberName X -Value 1',
+        'Add-Member -InputObject $o -MemberType NoteProperty -Name X -Value 1',
         'class Zzq {}',
         cleandoc("""
             enum Zzq {
@@ -81,38 +62,29 @@ class TestPs1TrustedEvalDoesNotExcuseAMutationTheScriptWritesDown(TestPs1):
         '$o.PSObject.Members.Add($m)',
     )
 
-    @unittest.expectedFailure
-    def test_a_write_to_the_accelerator_table_found_by_name_keeps_the_junk_below_it(self):
-        """
-        Measured on 5.1, `[System.Management.Automation.PSObject+TypeAccelerators]` names no type,
-        so a script finds the table by name; that spelling is read as no write to it.
-        """
-        self._assertKept(
+    def test_a_write_to_the_accelerator_table_found_by_name_is_not_excused_by_the_option(self):
+        script = (
             "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('zzq', [int])\n"
-            F'{_JUNK}')
+            F'{_JUNK}'
+        )
+        self.assertEqual(self._deobfuscate(script, trust_eval=True), self._deobfuscate(script))
 
-    def test_the_junk_below_one_is_kept_by_default(self):
-        for mutation in self._MUTATES_IN_PLAIN_SIGHT:
+    def test_the_junk_below_one_that_runs_code_is_kept_by_default(self):
+        for mutation in self._RUNS_CODE_IN_PLAIN_SIGHT:
             with self.subTest(mutation):
                 self._assertKept(F'{mutation}\n{_JUNK}')
 
-    def test_the_junk_below_one_is_kept_under_the_option_too(self):
+    def test_the_option_changes_nothing_below_one(self):
         for mutation in self._MUTATES_IN_PLAIN_SIGHT:
             with self.subTest(mutation):
-                self._assertKept(F'{mutation}\n{_JUNK}', trust_eval=True)
+                script = F'{mutation}\n{_JUNK}'
+                self.assertEqual(
+                    self._deobfuscate(script, trust_eval=True), self._deobfuscate(script)
+                )
 
 
 class TestPs1TrustedEvalDoesNotExcuseARebindingTheScriptWritesDown(TestPs1):
-    """
-    A statement that spells out both the command name it takes over and what it binds that name to
-    runs no code this analysis cannot read, so the option does not excuse it either. The name it
-    rebinds never reaches the shadow set, which is why the world verdict has to keep refusing:
-    every row below calls the rebound name, and the call runs whatever the row bound it to.
-    """
 
-    #: The last four rows carry a parameter that steers the binding without saying what it is. A
-    #: reading that took every argument for part of the binding would call each of them unreadable
-    #: and excuse the whole statement, which is the shape a switch alone is enough to reach.
     _REBINDS_IN_PLAIN_SIGHT = (
         'Set-Item alias:Get-Date Stop-Process',
         'Set-Item function:Get-Date { Stop-Process }',
@@ -173,11 +145,6 @@ class TestPs1TrustedEvalDoesNotExcuseARebindingTheScriptWritesDown(TestPs1):
 
 
 class TestPs1TrustedEvalStillExcusesAnEvalBesideAProviderPathThatBindsNothing(TestPs1):
-    """
-    A statement that merely names the `alias:` or `function:` provider is read as an identity
-    opener, because the reading cannot tell a path read from a path write. None of the rows below
-    writes anything, so none of them may switch the option off for the script it sits in.
-    """
 
     _READS_THE_PROVIDER = (
         "Test-Path 'alias:curl'",
@@ -200,10 +167,6 @@ class TestPs1TrustedEvalStillExcusesAnEvalBesideAProviderPathThatBindsNothing(Te
 
 
 class TestPs1TrustedEvalChangesNothingAboutAScriptThatRunsNoUnreadableCode(TestPs1):
-    """
-    A script with nothing to excuse comes out of both models byte for byte the same, so that the
-    option is measured as the one thing it is rather than as a second deobfuscation mode.
-    """
 
     _CLOSED_WORLD_SCRIPTS = (
         cleandoc("""
@@ -223,6 +186,13 @@ class TestPs1TrustedEvalChangesNothingAboutAScriptThatRunsNoUnreadableCode(TestP
         """),
     )
 
+    _RUNS_NO_CODE_IN_THIS_SESSION = (
+        'Start-Job -ScriptBlock $b',
+        "Set-Alias Copy-Item 'dI6tW'.Remove(3, 3)",
+        "Import-Alias 'C:/a.csv'",
+        "$function:zzq = 'Get-Date'",
+    )
+
     def test_both_models_produce_the_same_output(self):
         for script in self._CLOSED_WORLD_SCRIPTS:
             with self.subTest(script):
@@ -231,12 +201,25 @@ class TestPs1TrustedEvalChangesNothingAboutAScriptThatRunsNoUnreadableCode(TestP
                     self._deobfuscate(script, trust_eval=True),
                 )
 
+    def test_junk_below_a_statement_running_no_code_in_this_session_goes_under_the_option(self):
+        for statement in self._RUNS_NO_CODE_IN_THIS_SESSION:
+            with self.subTest(statement):
+                self._assertRemoved(F"""
+                    {statement}
+                    {_JUNK}
+                """, _JUNK, trust_eval=True)
+
+    @opportunity
+    def test_junk_below_a_statement_running_no_code_in_this_session_goes_by_default(self):
+        for statement in self._RUNS_NO_CODE_IN_THIS_SESSION:
+            with self.subTest(statement):
+                self._assertRemoved(F"""
+                    {statement}
+                    {_JUNK}
+                """, _JUNK)
+
 
 class TestPs1TrustedEvalReachesTheAnswersOnePayloadDispatcherUsedToWithhold(TestPs1):
-    """
-    Three families kept standing, each reduced to the statement that carries it, and none of them
-    the discarded static call the classes above measure with.
-    """
 
     def test_a_discarded_construction_below_an_eval_is_removed(self):
         self._assertRemoved(
@@ -272,11 +255,6 @@ class TestPs1TrustedEvalReachesTheAnswersOnePayloadDispatcherUsedToWithhold(Test
 
 
 class TestPs1TrustedEvalReachesATransformThatBuildsItsOwnCache(TestPs1):
-    """
-    The option travels on the transformer, so a pass run without the pipeline's shared cache builds
-    one that carries it. A cache that defaulted the option instead would answer under a
-    configuration the transformer beside it does not hold, which is one run reading two settings.
-    """
 
     _SCRIPT = cleandoc("""
         Invoke-Expression $c
@@ -301,12 +279,6 @@ class TestPs1TrustedEvalReachesATransformThatBuildsItsOwnCache(TestPs1):
 
 
 class TestPs1TrustedEvalAlsoAssumesTheUnreadableCodeReadsNothing(TestPs1):
-    """
-    The four costs the option accepts beyond the type system and the command table, each written
-    out so that changing one is a test failure rather than a silent widening. None of them is a
-    wrong answer about what the payload *changes*; each is what follows from also assuming that
-    nothing outside the file reads what is in it. The default keeps all four.
-    """
 
     def test_a_definition_no_statement_calls_is_deleted(self):
         self._assertDeobfuscatesTo(

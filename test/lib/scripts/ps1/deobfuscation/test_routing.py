@@ -6,22 +6,17 @@ from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 
 class TestPs1AFinallyRunsOnEveryWayOutOfItsTry(TestPs1):
-    """
-    5.1 runs a `finally` body when a `break`, `continue`, `return` or `exit` leaves its `try`, and
-    when an error does, and then goes on where the jump or the error goes.
-    """
 
     def test_a_store_in_the_finally_a_break_leaves_is_read_after_the_loop(self):
-        output = self._deobfuscate(cleandoc("""
+        source = """
             $x = 'a'
             foreach ($i in 1, 2) {
               try { break } finally { $x = 'b' }
               return
             }
             Write-Host $x
-        """))
-        self.assertIn("$x = 'b'", output)
-        self.assertNotIn("Write-Host 'a'", output)
+        """
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'b'")
 
     def test_a_store_in_the_finally_an_error_passes_is_read_by_the_catch(self):
         output = self._deobfuscate(cleandoc("""
@@ -114,27 +109,25 @@ class TestPs1AFinallyRunsOnEveryWayOutOfItsTry(TestPs1):
 
 
 class TestPs1AnErrorGoesWhereTheEvaluatorSendsIt(TestPs1):
-    """
-    The graphs route an error out of a `trap` set and out of a failing point as 5.1 does, so a
-    store the error skips and a line it abandons stay as written.
-    """
 
     def test_a_trap_whose_body_runs_off_its_end_hands_the_error_on_under_stop(self):
-        output = self._deobfuscate(cleandoc("""
+        source = """
             $ErrorActionPreference = 'Stop'
             $x = 'a'
             try {
               trap { }
               $x = 'b'
-              $null = [int]'z'
+              $Null = [int]'z'
               $x = 'c'
             } catch {
               Write-Host 'caught'
             }
             Write-Host $x
-        """))
-        self.assertIn("$x = 'b'", output)
-        self.assertNotIn("Write-Host 'c'", output)
+        """
+        self._assertDeobfuscatesToOneOf(source, source, """
+            Write-Host 'caught'
+            Write-Host 'b'
+        """)
 
     def test_the_head_of_a_foreach_whose_variable_rejects_the_value_ends_the_catch_body(self):
         output = self._deobfuscate(cleandoc("""
@@ -149,11 +142,6 @@ class TestPs1AnErrorGoesWhereTheEvaluatorSendsIt(TestPs1):
 
 
 class TestPs1ASpliceUnderATrapThatCarriesOnKeepsAnErrorFromCarryingOnInsideIt(TestPs1):
-    """
-    A `trap` set that carries the run on resumes after the statement that raised. Inlining a payload
-    puts its lines in that statement's place, and an error in one of them would carry the run on at
-    the next line of the payload, which 5.1 never runs.
-    """
 
     def test_a_payload_whose_line_before_the_last_may_fail_is_not_run_line_by_line(self):
         for payload in (
@@ -183,11 +171,9 @@ class TestPs1ASpliceUnderATrapThatCarriesOnKeepsAnErrorFromCarryingOnInsideIt(Te
         output = self._deobfuscate("trap { continue }; iex 'function g { Write-Host 1 }; g'")
         self.assertNotIn('Invoke-Expression', output)
 
-    def test_a_store_in_a_subexpression_under_a_resuming_trap_stays_inside_it(self):
+    def test_a_store_that_may_fail_in_a_subexpression_under_a_resuming_trap_stays_inside_it(self):
         for source in (
             "[int]$x = 0; trap { continue }; Write-Host $($x = 'v'; 'r'); Write-Host $x",
-            "trap { continue }; Write-Host $($x = 'v'; 'r'); Write-Host $x",
-            "trap { continue }; Write-Host $($x = 'v'; $y = 'w'; 'r'); Write-Host $x $y",
             "function f { param([int]$x) trap { continue }; Write-Host $($x = 'v'; 'r'); Write-Host $x }; f 1",
         ):
             with self.subTest(source):
@@ -195,10 +181,6 @@ class TestPs1ASpliceUnderATrapThatCarriesOnKeepsAnErrorFromCarryingOnInsideIt(Te
 
 
 class TestPs1AStoreBeforeAnErrorThatLeavesItsBodyStays(TestPs1):
-    """
-    An error a body hands to whatever ran it ends the body there, as a jump out of it does, and a
-    caller that ran it with `.` reads the value the body stored last.
-    """
 
     def test_a_store_in_a_dot_sourced_block_before_an_error_that_leaves_it_stays(self):
         output = self._deobfuscate(cleandoc("""

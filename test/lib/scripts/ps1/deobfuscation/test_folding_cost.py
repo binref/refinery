@@ -1,11 +1,3 @@
-"""
-What a long chain of operators costs the folding pass. A chain whose leftmost operand is an unknown
-variable folds to itself, so every operator in it is visited and none of them is rewritten: the pass
-asks about the same left subtree once per link, and how often the answer has to be *derived* is
-therefore what separates a cost that grows with the chain from one that grows with its square.
-`refinery.lib.scripts.ps1.analysis.values._evaluated` is the derivation, counted here rather than
-timed so that the measurement is the same on every machine.
-"""
 from __future__ import annotations
 
 import unittest.mock

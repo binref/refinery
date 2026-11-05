@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
-#: An acting statement that is never a removal candidate, so its survival says only that the pass
-#: ran and did not empty the script wholesale. A `Write-Host` writes to the host and never drops.
 _ANCHOR = "Write-Host 'ANCHOR_SURVIVES'"
 _ANCHOR_TOKEN = 'ANCHOR_SURVIVES'
 
@@ -23,13 +21,6 @@ class _Ps1CommandDefinitionKeyword(TestPs1):
 
 
 class TestPs1ADiscardedPureCommandWithNoDefinitionOfItsNameIsRemoved(_Ps1CommandDefinitionKeyword):
-    """
-    The controls that keep the pins below from being vacuous. A discarded side-effect-free command
-    is removable when nothing redefines its name — whether the script names no command-defining
-    keyword at all, or a `workflow`/`configuration` that defines some *other* command. In each case
-    the call still denotes the pure built-in the metadata describes and is shed, across the varied
-    discard idioms.
-    """
 
     def test_a_null_assigned_pure_command_with_no_definition_is_removed(self):
         self._assertDiscardedCallRemoved(
@@ -55,13 +46,6 @@ class TestPs1ADiscardedPureCommandWithNoDefinitionOfItsNameIsRemoved(_Ps1Command
 
 
 class TestPs1ACallAfterAWorkflowDefiningItsNameIsKept(_Ps1CommandDefinitionKeyword):
-    """
-    A `workflow NAME { ... }` statement introduces a command named NAME that shadows a same-named
-    built-in cmdlet under PowerShell's command resolution, so a bare NAME after it resolves to the
-    workflow body rather than the pure built-in the metadata describes. A discarded side-effect-free
-    call to NAME may therefore no longer be trusted as pure and must be kept, just as it is after a
-    `function` redefining the name.
-    """
 
     def test_a_null_assigned_call_after_a_workflow_of_its_name_is_kept(self):
         self._assertDiscardedCallKept(
@@ -75,11 +59,6 @@ class TestPs1ACallAfterAWorkflowDefiningItsNameIsKept(_Ps1CommandDefinitionKeywo
 
 
 class TestPs1ACallAfterAConfigurationDefiningItsNameIsKept(_Ps1CommandDefinitionKeyword):
-    """
-    A `configuration NAME { ... }` (DSC) statement likewise introduces a command named NAME that
-    shadows a same-named built-in cmdlet, so a discarded side-effect-free call to NAME placed after
-    it resolves to the configuration body and must be kept rather than deleted.
-    """
 
     def test_a_void_cast_call_after_a_configuration_of_its_name_is_kept(self):
         self._assertDiscardedCallKept(

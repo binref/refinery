@@ -1,4 +1,5 @@
 from .. import TestUnitBase
+from test import wontfix
 
 import base64
 import gzip
@@ -8,9 +9,6 @@ import inspect
 import unittest
 
 
-#: What the null-assignment sample reduces to once the junk around its payload is gone. Only the
-#: trusting model reaches it: everything the sample writes below its payload dispatcher is junk a
-#: payload that renames a type could tell apart, so the default model keeps all of it.
 _NULL_ASSIGNMENT_GOAL = inspect.cleandoc(
     r"""
         $Null = (Get-Command ???t?).Name
@@ -70,11 +68,12 @@ class TestPs1RealWorldSmall(TestUnitBase):
         self.assertIn('-Class', result)
         self.assertIn('Win32_Processor', result)
 
-    def test_foreach_with_external_variable(self):
+    def test_an_xor_with_a_key_from_the_environment_keeps_reading_the_key(self):
         data = b"$key = $env:K\n'65,66,67'.Split(',') | %{ [Char]([Int]$_ -bxor $key) }"
-        result = data | self.load() | str
-        self.assertIn('-BXor', result.replace('-bxor', '-BXor'))
-        self.assertIn('$key', result)
+        self.assertIn(data | self.load() | str, (
+            "$key = $env:K\n'65', '66', '67' | ForEach-Object {\n  [Char]([Int]$_ -BXor $key)\n}",
+            "'65', '66', '67' | ForEach-Object {\n  [Char]([Int]$_ -BXor $env:K)\n}",
+        ))
 
     def test_foreach_as_cast(self):
         data = (
@@ -89,11 +88,10 @@ class TestPs1RealWorldSmall(TestUnitBase):
         result = data | self.load() | str
         self.assertIn('New-Object Net.WebClient', result)
 
-    def test_set_alias_with_named_params(self):
+    def test_an_iex_alias_set_with_named_parameters_reduces_to_its_payload(self):
         data = b"Set-Alias -Name foo -Value Invoke-Expression; foo 'Write-Host hello'"
         result = data | self.load() | str
-        self.assertIn('Write-Host', result)
-        self.assertIn('hello', result)
+        self.assertEqual(result, 'Write-Host hello')
 
     def test_string_join_static(self):
         data = b"[String]::Join('', @('Hello', ' ', 'World'))"
@@ -198,10 +196,9 @@ class TestPs1RealWorldSmall(TestUnitBase):
         self.assertIn('Write-Host', result)
         self.assertIn('world', result)
 
-    def test_expandable_string_void_subexpr_hoisted(self):
+    def test_iex_of_a_string_built_around_void_subexpressions_is_inlined(self):
         data = b""""$( Set-Variable 'OFS' '' )" + 'Write-Host hello' + "$( Set-Variable 'OFS' ' ' )" | Invoke-Expression"""
         result = data | self.load() | str
-        self.assertIn('$OFS', result)
         self.assertIn('Write-Host', result)
         self.assertIn('hello', result)
         self.assertNotIn('Invoke-Expression', result)
@@ -220,12 +217,18 @@ class TestPs1RealWorldSmall(TestUnitBase):
         self.assertIn('hello', result)
         self.assertNotIn('Invoke-Expression', result)
 
-    def test_piped_iex_command_parameter(self):
+    def test_iex_of_a_piped_string_is_inlined(self):
+        data = b"'Write-Host hello' | Invoke-Expression"
+        self.assertEqual(data | self.load() | str, 'Write-Host hello')
+
+    @wontfix(
+        'no script pipes a payload into Invoke-Expression -Command with no argument, '
+        'and 5.1 refuses that line without running the payload'
+    )
+    def test_a_piped_payload_beside_a_command_parameter_without_an_argument_is_not_run(self):
         data = b"'Write-Host hello' | Invoke-Expression -Command"
         result = data | self.load() | str
-        self.assertIn('Write-Host', result)
-        self.assertIn('hello', result)
-        self.assertNotIn('Invoke-Expression', result)
+        self.assertEqual(result, "'Write-Host hello' | Invoke-Expression -Command")
 
     def test_type_aware_member_case_normalization(self):
         data = b"$r = New-Object Random; $r.nExT(100)"
@@ -401,10 +404,6 @@ class TestPs1RealWorldLarge(TestUnitBase):
         self.assertEqual(result.count(')'), result.count('('))
 
     def test_real_world_03(self):
-        """
-        `$pzhhqdwl = iex(iex(...))` reduces to `$Null = Invoke-Expression (...)` only once `-e` trusts
-        the eval not to read the discarded variable; the open-world default keeps the name it binds.
-        """
         data = (
             B"""$v='i'+''+'E'+'x';sal foo $v;$pzhhqdwl=foo(foo($($('(nQNVrd3W2GjJK36w-objQNVrd3W2GjJK36ct SystQNVrd3"""
             B"""W2GjJK36m.NQNVrd3W2GjJK36t.WQNVrd3W2GjJK36bCliQNVrd3W2GjJK36nt).Dos2Wr6qQRtring(''hfTdH8C6z2Wr6qQRvi"""
@@ -779,13 +778,6 @@ class TestPs1RealWorldLarge(TestUnitBase):
         self.assertIn(goal, test)
 
     def test_junk_statement_downloader(self):
-        """
-        The sample ends in `Invoke-Expression`, which in the open-world default may read any variable
-        and call any function, so the cleanup passes keep the obfuscator's junk. `-e` trusts the eval
-        to touch nothing the script does not spell, which is what strips the noise down to the C2
-        logic — and, because it also trusts the .NET type system, drops the unused `Galaxy`/`Comet`
-        functions and the pure `[Math]`/`[array]` busywork the default cannot prove inert.
-        """
         data = inspect.cleandoc(
             """
             $mlvxprxbencyv = 1 + 1

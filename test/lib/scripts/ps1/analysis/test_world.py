@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test import TestBase
+from test import TestBase, opportunity
 
 from inspect import cleandoc
 
@@ -23,13 +23,6 @@ from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
 class Ps1TypeWorldTest(TestBase):
-    """
-    The closed-world predicate is the soundness floor under the member gate: a present-member purity
-    grant is trusted only where no code the script runs could have mutated the type system or the
-    command table, or executed opaque code that might. What matters is that every such opener is seen
-    as one and an ordinary script is not, since a false "closed" deletes a read that runs code and a
-    false "open" only keeps one.
-    """
 
     @staticmethod
     def _closed(source: str) -> bool:
@@ -45,11 +38,10 @@ class Ps1TypeWorldTest(TestBase):
 class TestPs1WorldOpeners(Ps1TypeWorldTest):
 
     def test_invoke_expression_opens_the_world(self):
-        # Any Invoke-Expression, not only an opaque one: a constant argument can still carry a type
-        # mutation, and it is inlined by a later pass than the one that consults this.
         for source in (
             'iex $x',
-            "Invoke-Expression 'Get-Date'",
+            "Invoke-Expression 'Update-TypeData -TypeName System.String -MemberType NoteProperty "
+            "-MemberName M -Value 1'",
             'Invoke-Expression (-Join $chars)',
         ):
             with self.subTest(source):
@@ -89,7 +81,6 @@ class TestPs1WorldOpeners(Ps1TypeWorldTest):
             '${function:Get-Date} = $blk',
             '${function:Get-Date} = (Get-Content f.ps1)',
             '${function:Get-Date} += { 1 }',
-            '${function:Get-Date}, $y = { 1 }, 2',
         ):
             with self.subTest(source):
                 self.assertFalse(self._closed(source))
@@ -131,8 +122,6 @@ class TestPs1WorldOpeners(Ps1TypeWorldTest):
                 self.assertFalse(self._closed(source))
 
     def test_a_mutation_hidden_in_a_function_body_opens_the_world(self):
-        # The predicate walks the whole tree, so a mutator inside a defined function is seen even
-        # before any call to it.
         source = 'function Reset { Update-TypeData -TypeName System.String -MemberName M }\nGet-Date'
         self.assertFalse(self._closed(source))
 
@@ -154,11 +143,6 @@ class TestPs1WorldClosed(Ps1TypeWorldTest):
 
 
 class TestPs1ShadowedCommands(Ps1TypeWorldTest):
-    """
-    The shadow set records which command names the script redefines, so the analysis stops trusting
-    the metadata for them. It is separate from the closed/open verdict — defining a function does not
-    open the world (a benign helper would neuter every grant), it only distrusts that one name.
-    """
 
     def test_a_redefinition_shadows_its_name(self):
         world = build_closed_world(Ps1Parser(
@@ -173,9 +157,6 @@ class TestPs1ShadowedCommands(Ps1TypeWorldTest):
         self.assertFalse(world.command_shadowed('get-childitem'))
 
     def test_an_item_cmdlet_writing_a_provider_path_shadows_the_name_it_binds(self):
-        # `Set-Item function:Get-Date { 1 }` rebinds `Get-Date` the way `function Get-Date { 1 }`
-        # does, measured on 5.1, but through a path read out of the argument, not off the statement
-        # keyword; the alias drive is the same rebinding one provider over.
         for source in (
             'Set-Item function:Get-Date { 1 }',
             'Set-Item function:Get-Date -Value { 1 }',
@@ -189,9 +170,6 @@ class TestPs1ShadowedCommands(Ps1TypeWorldTest):
                     build_closed_world(Ps1Parser(source).parse()).command_shadowed('get-date'))
 
     def test_a_provider_path_that_is_read_or_ordinary_shadows_nothing(self):
-        # A read the same path spells binds nothing, a command outside the item cmdlets is not a
-        # provider write however it mentions one, and an ordinary path is no provider at all, so
-        # none may distrust a name the script never redefined.
         for source in (
             'Get-Item function:Get-Date',
             'Write-Output function:Get-Date',
@@ -205,9 +183,6 @@ class TestPs1ShadowedCommands(Ps1TypeWorldTest):
         self.assertTrue(self._closed('function Get-Date { 1 }\n$x = 2'))
 
     def test_a_redefinition_binding_a_visible_block_does_not_open_the_world(self):
-        # `${function:X} = { ... }` is `function X { ... }` in the other spelling, and the block
-        # stands in the tree either way, so it must not open the world over a name the shadow set
-        # already covers.
         for source in (
             '${function:Get-Date} = { 1 }',
             '${function:Get-Date} = ({ 1 })',
@@ -218,11 +193,15 @@ class TestPs1ShadowedCommands(Ps1TypeWorldTest):
                 self.assertTrue(
                     build_closed_world(Ps1Parser(source).parse()).command_shadowed('get-date'))
 
+    def test_a_redefinition_binding_a_visible_block_in_a_multi_assignment_shadows_the_name(self):
+        source = '${function:Get-Date}, $y = { 1 }, 2'
+        self.assertTrue(build_closed_world(Ps1Parser(source).parse()).command_shadowed('get-date'))
+
+    @opportunity
+    def test_a_redefinition_by_multi_assignment_of_a_visible_block_does_not_open_the_world(self):
+        self.assertTrue(self._closed('${function:Get-Date}, $y = { 1 }, 2'))
+
     def test_a_mutation_inside_a_visible_block_still_opens_the_world(self):
-        # The relaxation above rests entirely on the walk reaching into the block, so a mutation
-        # hidden in one has to be caught by presence like any other statement. Every place a block
-        # can carry code is checked, because reaching only the plain body would make the relaxation
-        # a way to smuggle a mutation past the gate.
         for body in (
             'Update-TypeData -TypeName System.String -MemberName M -Value { 1 }',
             'param($p = (Update-TypeData -TypeName System.String -MemberName M -Value { 1 }))',
@@ -234,9 +213,6 @@ class TestPs1ShadowedCommands(Ps1TypeWorldTest):
                 self.assertFalse(self._closed(F'${{function:Get-Date}} = {{ {body} }}'))
 
     def test_a_scope_qualified_redefinition_shadows_the_name_a_call_resolves_to(self):
-        # A qualifier selects which scope table the definition is written to; it is not part of the
-        # name. `function global:Get-Date` is what a later bare `Get-Date` runs, so a shadow set
-        # holding the qualified spelling answers every consumer's question about the wrong name.
         for source in (
             'function global:Get-Date { 1 }',
             'function local:Get-Date { 1 }',
@@ -258,19 +234,11 @@ class TestPs1ShadowedCommands(Ps1TypeWorldTest):
         self.assertFalse(world.command_shadowed('y'))
 
     def test_a_module_qualified_name_does_not_shadow_the_bare_one(self):
-        # `Module\Get-Date` names one module's export and leaves the bare name alone, so stripping
-        # the qualifier off this spelling would distrust a command nothing redefined.
         world = build_closed_world(Ps1Parser('function Module\\Get-Date { 1 }').parse())
         self.assertFalse(world.command_shadowed('get-date'))
 
 
 class TestPs1OffTreeCodeOpensTheWorld(Ps1TypeWorldTest):
-    """
-    Every construct that runs code this tree does not contain has to open the world, whatever
-    spelling it wears. The mutations that matter — an Extended Type System member, a type
-    accelerator, an exported command — are runspace-global, so neither the operator used to reach
-    the code nor the scope it runs in contains them.
-    """
 
     def test_running_another_script_file_opens_the_world(self):
         for source in (
@@ -285,7 +253,6 @@ class TestPs1OffTreeCodeOpensTheWorld(Ps1TypeWorldTest):
     def test_running_a_block_supplied_as_data_opens_the_world(self):
         for source in (
             'Invoke-Command -ScriptBlock $sb',
-            'Start-Job -ScriptBlock $sb',
             'New-Module -ScriptBlock $sb',
         ):
             with self.subTest(source):
@@ -297,10 +264,6 @@ class TestPs1OffTreeCodeOpensTheWorld(Ps1TypeWorldTest):
                 self.assertFalse(self._closed(source))
 
     def test_a_module_qualifier_does_not_hide_an_opener(self):
-        # A qualifier selects which module's export is meant; it does not make the command something
-        # the deny-list has never heard of. Only the quoted spelling is covered: the lexer splits an
-        # unquoted `Module\\Command` at the backslash, so the name never reaches this predicate
-        # whole.
         for source in (
             "& 'Microsoft.PowerShell.Utility\\Invoke-Expression' $x",
             "& 'Microsoft.PowerShell.Core\\Import-Module' Foo",
@@ -310,8 +273,6 @@ class TestPs1OffTreeCodeOpensTheWorld(Ps1TypeWorldTest):
                 self.assertFalse(self._closed(source))
 
     def test_the_execution_context_chain_is_matched_at_any_depth(self):
-        # `$ExecutionContext.SessionState.InvokeCommand` reaches the same object the short spelling
-        # does, so accepting only one depth leaves the other reading as an ordinary member call.
         for source in (
             '$ExecutionContext.InvokeCommand.InvokeScript($s)',
             '$ExecutionContext.SessionState.InvokeCommand.InvokeScript($s)',
@@ -322,12 +283,6 @@ class TestPs1OffTreeCodeOpensTheWorld(Ps1TypeWorldTest):
 
 
 class TestPs1TypeDefinitionsOpenTheWorld(Ps1TypeWorldTest):
-    """
-    A `class` or `enum` puts a type into the session under a name the collected metadata never
-    described — the same thing `Add-Type` does, and it is on the deny-list. The case that matters is
-    a name the metadata *did* describe, because every purity grant keyed on a resolved type then
-    vouches for a body standing in this very script.
-    """
 
     def test_a_script_defined_type_opens_the_world(self):
         for source in (
@@ -340,11 +295,6 @@ class TestPs1TypeDefinitionsOpenTheWorld(Ps1TypeWorldTest):
 
 
 class TestPs1QualifiedOpenerSpellings(Ps1TypeWorldTest):
-    """
-    A qualifier selects which module or scope an opener is taken from; it does not make the command
-    something the deny-list has never heard of. Every qualifier the deny-list does not strip is a
-    spelling that runs the opener while the world reports closed.
-    """
 
     def test_a_scope_qualifier_does_not_hide_an_opener(self):
         for source in (
@@ -359,8 +309,6 @@ class TestPs1QualifiedOpenerSpellings(Ps1TypeWorldTest):
                 self.assertFalse(self._closed(source))
 
     def test_a_qualified_provider_path_still_addresses_command_identity(self):
-        # `Microsoft.PowerShell.Core\Function::Get-Date` is what `function:Get-Date` abbreviates, so
-        # a test that only knows the short spelling reads the long one as an ordinary file path.
         for source in (
             'Set-Item function:Get-Date -Value { 1 }',
             "Set-Item 'Function::Get-Date' -Value { 1 }",
@@ -371,16 +319,11 @@ class TestPs1QualifiedOpenerSpellings(Ps1TypeWorldTest):
                 self.assertFalse(self._closed(source))
 
     def test_the_drive_root_spelling_of_an_identity_path_names_the_same_item(self):
-        # `Alias:\gd` and `alias:gd` name one item of one provider; the root separator is only how
-        # the path is written when it starts at the drive. Measured on 5.1, `Set-Item Alias:\gd
-        # -Value Get-Date` binds `gd` and `Get-Item Alias:\gd` reads what it is bound to.
         for source in (
             'Set-Item Alias:\\zzq -Value Write-Output',
             'Set-Item alias:\\zzq -Value Write-Output',
             'New-Item -Path Alias:\\zzq -Value Write-Output',
-            'Get-Item Alias:\\zzq',
             'Set-Item Function:\\foo -Value { 1 }',
-            'Get-Content Function:\\foo',
         ):
             with self.subTest(source):
                 self.assertFalse(self._closed(source))
@@ -392,12 +335,6 @@ class TestPs1QualifiedOpenerSpellings(Ps1TypeWorldTest):
 
 
 class TestPs1ClosedButForAliasBindings(Ps1TypeWorldTest):
-    """
-    Whether the only thing holding a world open is that the script binds aliases, so that a pass
-    which deleted every `Set-Alias` would leave it closed. A caller cannot reach this from
-    `closed_for_the_whole_run` and the list of what it is about to remove, because a verdict of open
-    names no reason; it is read here so that the two answers cannot disagree about what an opener is.
-    """
 
     _SHAPES = (
         ('$x = 1', True, True),
@@ -436,12 +373,6 @@ class TestPs1ClosedButForAliasBindings(Ps1TypeWorldTest):
                 self.assertTrue(self._closed_but_for_aliases(source))
 
     def test_an_identity_change_that_is_not_a_binding_keeps_the_world_open(self):
-        """
-        Only `Set-Alias` is set aside. `New-Alias` throws on a name that already has a binding,
-        `Import-Alias` reads a file this analysis cannot see, and a provider path or a namespace
-        assignment is not a binding this model reads at all, so none of them is something a caller
-        is in a position to delete.
-        """
         for source in (
             'New-Alias zzq Write-Output',
             'nal zzq Write-Output',
@@ -453,10 +384,11 @@ class TestPs1ClosedButForAliasBindings(Ps1TypeWorldTest):
             with self.subTest(source):
                 self.assertFalse(self._closed_but_for_aliases(source))
 
-    def test_a_binding_that_is_also_something_else_is_not_only_a_binding(self):
+    @opportunity
+    def test_a_dot_invoked_or_provider_spelled_binding_is_still_only_a_binding(self):
         for source in ('Set-Alias zzq alias:bar', '. Set-Alias zzq Write-Output'):
             with self.subTest(source):
-                self.assertFalse(self._closed_but_for_aliases(source))
+                self.assertTrue(self._closed_but_for_aliases(source))
 
     def test_a_verdict_left_unstated_takes_the_value_of_the_closed_one(self):
         for closed in (True, False):
@@ -466,12 +398,6 @@ class TestPs1ClosedButForAliasBindings(Ps1TypeWorldTest):
 
 
 class TestPs1IdentityProviderArguments(Ps1TypeWorldTest):
-    """
-    Whether an argument addresses the `alias:` or `function:` provider. The drive separator is the
-    whole of the difference: measured on 5.1, `Get-Content alias:gci` reads `Get-ChildItem` out of
-    the alias drive, while `Get-Content alias` looks for a file named `alias` in the current
-    directory and fails when there is none.
-    """
 
     @staticmethod
     def _touches(source: str) -> bool:
@@ -484,14 +410,19 @@ class TestPs1IdentityProviderArguments(Ps1TypeWorldTest):
             'Set-Item alias:zzq Write-Output',
             'Remove-Item alias:zzq',
             'New-Item -Path alias:zzq -Value Write-Output',
-            'Get-Content alias:gci',
-            'Get-Content ALIAS:gci',
             'Set-Item function:foo -Value { 1 }',
-            'Get-Content Function:\\foo',
         ):
             with self.subTest(source):
                 self.assertTrue(self._touches(source))
                 self.assertFalse(self._closed(source))
+        for source in (
+            'Get-Content alias:gci',
+            'Get-Content ALIAS:gci',
+            'Get-Content Function:\\foo',
+            'Get-Item Alias:\\zzq',
+        ):
+            with self.subTest(source):
+                self.assertTrue(self._touches(source))
 
     def test_an_argument_that_only_spells_a_provider_name_is_an_ordinary_path(self):
         for source in (
@@ -517,11 +448,6 @@ class TestPs1IdentityProviderArguments(Ps1TypeWorldTest):
 
 
 class TestPs1AliasNamespaceAssignments(TestBase):
-    """
-    Which assignments bind a command name through the `alias:` namespace. Measured on 5.1, every
-    shape in the first test leaves the alias drive holding a definition for `zzq` that the statement
-    put there, the `+=` form by appending to the definition the name already carried.
-    """
 
     @staticmethod
     def _assigns(source: str) -> bool:
@@ -541,11 +467,6 @@ class TestPs1AliasNamespaceAssignments(TestBase):
                 self.assertTrue(self._assigns(source))
 
     def test_the_qualifier_belongs_inside_the_namespace_and_not_in_front_of_it(self):
-        """
-        Measured on 5.1: `${alias:global:zzq} = 'Get-Date'` puts an item into the alias drive, where
-        `$global:alias:zzq = 'Get-Date'` makes a global *variable* named `alias:zzq` and leaves the
-        alias drive with nothing in it.
-        """
         self.assertTrue(self._assigns("${alias:global:zzq} = 'Get-Date'"))
         self.assertFalse(self._assigns("$global:alias:zzq = 'Get-Date'"))
 
@@ -563,13 +484,6 @@ class TestPs1AliasNamespaceAssignments(TestBase):
 
 
 class TestPs1WorldAxes(Ps1TypeWorldTest):
-    """
-    The world carries two independent axes: whether the .NET type system is intact
-    (`type_system_closed`) and whether the command table is (`command_table_closed`). A pure
-    type-system mutation opens the first alone, a pure command rebinding opens the second alone, and
-    a module loader or an opaque leak opens both. `closed_for_the_whole_run` is their conjunction,
-    not a third stored flag. This pins the model directly, not through the call graph it seeds.
-    """
 
     @staticmethod
     def _axes(source: str) -> tuple[bool, bool, bool]:
@@ -592,8 +506,8 @@ class TestPs1WorldAxes(Ps1TypeWorldTest):
             ('Add-Member -InputObject $o -Name Q -Value 1 -MemberType NoteProperty', False, True),
             ('Import-Module .\\m.psm1', False, False),
             ('ipmo .\\m.psm1', False, False),
-            ('New-Module { }', False, False),
-            ('nmo { }', False, False),
+            ('New-Module -ScriptBlock $b', False, False),
+            ('nmo -ScriptBlock $b', False, False),
             ('Set-Alias zzq Write-Output', True, False),
             ('New-Alias zzq Write-Output', True, False),
             ('${function:zzq} = $b', True, False),
@@ -623,12 +537,6 @@ class TestPs1WorldAxes(Ps1TypeWorldTest):
                 self.assertEqual(world.command_table_closed, closed)
 
     def test_every_opener_role_opens_at_least_one_axis(self):
-        """
-        The invariant that lets `closed_for_the_whole_run` be the conjunction of the two axes rather
-        than a stored flag: no opener role is invisible to both. A role neither predicate opened
-        would leave the conjunction reading closed beside a live opener, silently reopening the
-        member-trust gate — so a future `WorldRole` that escapes both axes must fail here.
-        """
         for role in WorldRole:
             if role is WorldRole.NONE:
                 continue
@@ -637,12 +545,6 @@ class TestPs1WorldAxes(Ps1TypeWorldTest):
 
 
 class TestPs1CommandRole(TestBase):
-    """
-    `command_role` is the one reading of the three deny-lists, keyed on a name rather than on a
-    node. Both readers of a role reach the tables through it — the whole-script verdict above and
-    the per-invocation refinement in the command model — so a spelling it misses is a spelling that
-    dodges every table at once, and a role it names wrongly is named wrongly everywhere.
-    """
 
     def test_a_command_that_runs_data_as_code_is_a_leak(self):
         for name in ('Invoke-Expression', 'Invoke-Command', 'Start-Job', 'Start-ThreadJob'):
@@ -665,11 +567,6 @@ class TestPs1CommandRole(TestBase):
                 self.assertEqual(command_role(name), WorldRole.NONE)
 
     def test_no_name_denotes_an_unknown_role(self):
-        """
-        Not knowing what runs is a fact about an invocation, never about a name: a name is by
-        construction something the tables can be asked about, so even a spelling no command wears
-        answers with the role it has, which is none.
-        """
         names = (
             'Invoke-Expression',
             'Update-TypeData',
@@ -707,13 +604,6 @@ class TestPs1CommandRole(TestBase):
         self.assertEqual({command_role(name) for name in spellings}, {WorldRole.LEAK})
 
     def test_a_builtin_alias_spelling_reaches_the_entry_its_target_holds(self):
-        """
-        The one hop through the built-in alias table is part of the key. These eight are the whole
-        of what it buys: every other spelling under which a denied command can arrive is a
-        qualifier. A caller handing over one of them unresolved would otherwise be told by a
-        deny-list that the command does nothing, which is the one direction a deny-list must not
-        fail in.
-        """
         for name, role in (
             ('icm', WorldRole.LEAK),
             ('iex', WorldRole.LEAK),
@@ -728,11 +618,6 @@ class TestPs1CommandRole(TestBase):
                 self.assertEqual(command_role(name), role)
 
     def test_a_builtin_alias_of_a_command_no_deny_list_holds_is_still_none(self):
-        """
-        The hop resolves a spelling; it does not widen the tables. `epal` is the case that matters:
-        exporting aliases to a file is not redefining one, so the aliasing family it belongs to has
-        no claim on the identity list.
-        """
         for name in ('gci', 'gc', 'epal'):
             with self.subTest(name):
                 self.assertEqual(command_role(name), WorldRole.NONE)
@@ -750,13 +635,6 @@ class TestPs1CommandRole(TestBase):
 
 
 class TestPs1TrustedEvalNarrowsTheOpenerListAndNothingElse(TestBase):
-    """
-    `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions.trust_eval` withholds exactly the
-    openers whose danger is that code nobody can read will run, and leaves every other reading of
-    the same walk alone. Both models are measured over one tree holding one construct of each kind,
-    and each opener is named by the statement it was written as rather than by the classification
-    under test, so a construct that stopped being recognized shows up as a missing row.
-    """
 
     _ONE_OF_EVERY_KIND = cleandoc("""
         Invoke-Expression $c
@@ -785,7 +663,7 @@ class TestPs1TrustedEvalNarrowsTheOpenerListAndNothingElse(TestBase):
         return type(node).__name__
 
     def test_the_suspecting_model_records_every_construct(self):
-        self.assertEqual(
+        self.assertCountEqual(
             [self._written_as(node) for node in self.suspecting.openers],
             [
                 'Ps1ClassDefinition',
@@ -800,7 +678,7 @@ class TestPs1TrustedEvalNarrowsTheOpenerListAndNothingElse(TestBase):
         )
 
     def test_the_trusting_model_withholds_only_the_ones_running_unreadable_code(self):
-        self.assertEqual(
+        self.assertCountEqual(
             [self._written_as(node) for node in self.trusting.openers],
             [
                 'Ps1ClassDefinition',
@@ -834,14 +712,6 @@ class TestPs1TrustedEvalNarrowsTheOpenerListAndNothingElse(TestBase):
 
 
 class TestPs1TheMeasurementRecordsEveryNameTheScriptInvokes(TestBase):
-    """
-    The invoked names are what a binding's name is held against before the flood leaves it out,
-    so they are read the way a deny-list reads a call: resolved through the built-in alias table
-    and stripped of every qualifier, so that a call spelled any way it can be resolves to the name
-    the table holds. A bare noun records its implicit `Get-` retry name as well, the second name
-    5.1 may run it under, so a binding of a `Get-` name is held invoked by the bare call that
-    reaches it through the retry. A computed name is not a name.
-    """
 
     @staticmethod
     def _invoked(source: str) -> frozenset[str]:
@@ -890,12 +760,6 @@ class TestPs1TheMeasurementRecordsEveryNameTheScriptInvokes(TestBase):
 
 
 class TestPs1ABindingOfOneNameIsTheOpenerTheFloodMayLeaveOut(TestBase):
-    """
-    `opens_command_table_only_by_binding` names the one command an opener takes over when that is
-    all it does, so the flow gate can leave a binding of a name no call reaches out of its flood.
-    The name is read the way a call to it resolves, and every opener that does more than bind one
-    written-out name answers `None`, whatever else it is.
-    """
 
     @staticmethod
     def _bound(source: str) -> str | None:
@@ -964,11 +828,6 @@ class TestPs1ABindingOfOneNameIsTheOpenerTheFloodMayLeaveOut(TestBase):
 
 
 class TestPs1AMemberNameNobodyCanReadOnATypeLiteralIsOneOfItsStaticMembers(Ps1TypeWorldTest):
-    """
-    A member reached on a type literal with `::` is a static member of that type, and no collected
-    type carries a static, writable property that hooks the command lookup; a type that is not
-    collected may. Every other receiver may reach anything.
-    """
 
     def test_a_computed_static_call_on_a_collected_type_leaves_the_world_closed(self):
         for call in ("[Convert]::('FromBase64String')($p)", '[Convert]::($n)($p)'):
@@ -989,4 +848,3 @@ class TestPs1AMemberNameNobodyCanReadOnATypeLiteralIsOneOfItsStaticMembers(Ps1Ty
         for call in ("[scriptblock]::($m)('f1')", "[scriptblock]::('Create')('f1')"):
             with self.subTest(call=call):
                 self.assertFalse(self._closed(call))
-

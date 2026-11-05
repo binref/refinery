@@ -78,8 +78,6 @@ class TestPs1SemanticModel(TestBase):
         self.assertFalse(binding.is_dead)
 
     def test_read_inside_function_keeps_outer_binding_live(self):
-        # PowerShell dynamic scoping: a bare read inside a function references the caller's
-        # variable, so the outer store the function might observe stays live.
         _, binding = self._script_binding(
             "$x = 'payload'\nfunction Run { iex $x }\nRun", 'x')
         assert binding is not None
@@ -92,21 +90,15 @@ class TestPs1SemanticModel(TestBase):
         self.assertFalse(binding.is_dead)
 
     def test_local_qualified_read_resolves_in_the_scope_of_the_reference(self):
-        # $local: names the scope of the reference itself — the same scope a $local: write
-        # binds in — so the read must keep the function-local binding live, not the script one.
         model = self._model('function f { $y = 1; Write-Host $local:y }')
         binding = model.script_scope.children[0].bindings['y']
         self.assertFalse(binding.is_dead)
 
     def test_class_property_declaration_is_not_a_read(self):
-        # A class property declares a member, a namespace distinct from the script's variables,
-        # so it must not keep a script variable of the same name alive.
         model = self._model('$x = 1\nclass C { [int]$x }')
         self.assertTrue(model.script_scope.bindings['x'].is_dead)
 
     def test_scriptblock_assignment_is_write_local(self):
-        # A bare assignment inside a scriptblock creates a scriptblock-local binding, distinct
-        # from the enclosing $inner; it does not add a write to the outer binding.
         model = self._model("$inner = 1\n$cb = { $inner = 99 }\nWrite-Host $inner")
         outer = model.script_scope.bindings['inner']
         block_scope = model.script_scope.children[0]
@@ -115,16 +107,12 @@ class TestPs1SemanticModel(TestBase):
         self.assertEqual(len(outer.writes), 1)
 
     def test_reads_in_scope_sees_read_nested_in_scriptblock(self):
-        # The reconciliation: a read of a script variable nested inside a captured scriptblock
-        # is seen by the read set the dead-store sweep flushes against, so the store survives.
         ast = Ps1Parser("$x = 1\n$arr = @( { Write-Host $x } )").parse()
         model = build_semantic_model(ast)
         value = self._assignment_value(ast, 'arr')
         self.assertIn('x', model.reads_in_scope(value, model.script_scope))
 
     def test_reads_in_scope_sees_compound_assignment_target(self):
-        # A `+=` target observes the variable before writing it, unlike a plain `=` target, which
-        # replaces the value unread.
         ast = Ps1Parser("$x = 1\n$a = ($x += 1)").parse()
         model = build_semantic_model(ast)
         value = self._assignment_value(ast, 'a')
@@ -137,8 +125,6 @@ class TestPs1SemanticModel(TestBase):
         self.assertNotIn('inner', model.reads_in_scope(value, model.script_scope))
 
     def test_environment_variable_is_a_distinct_binding(self):
-        # $env:X and $X are different namespaces: an unread env write is dead, an unread script
-        # write keyed the same name is independently tracked.
         model = self._model("$env:X = 'v'\n$X = 1\nWrite-Host $X")
         self.assertIn('env:x', model.script_scope.bindings)
         self.assertIn('x', model.script_scope.bindings)
@@ -155,11 +141,6 @@ class TestPs1SemanticModel(TestBase):
 
 
 class TestPs1WriteOccurrenceKinds(TestBase):
-    """
-    Which write positions also read the variable. A caller that removes a write on the grounds that
-    nothing reads the binding any more has to count these, and the difference between `=` and `+=`
-    is the whole of it.
-    """
 
     @staticmethod
     def _write(source: str, name: str = 'x') -> Ps1Variable:
@@ -232,11 +213,6 @@ class TestPs1WriteOccurrenceKinds(TestBase):
 
 
 class TestPs1OccurrenceRoles(TestBase):
-    """
-    What each occurrence of a name does to the value it holds, and the two questions that are not
-    the role: whether a value may be installed in its place, and whether it brings the binding into
-    existence.
-    """
 
     @staticmethod
     def _occurrence(source: str, name: str = 'x', index: int = 0) -> Ps1Variable:
@@ -257,12 +233,6 @@ class TestPs1OccurrenceRoles(TestBase):
                 self.assertIs(self._role(source), Ps1OccurrenceRole.WRITE_THROUGH)
 
     def test_a_store_through_a_member_that_may_be_an_entry_reaches_past_the_object(self):
-        """
-        A member whose name the source does not spell, and a member of a table that a key may
-        answer, may be an entry of the object rather than the object: `$h.$k` and `$h.SyncRoot` of
-        `@{ SyncRoot = $x }` are the array `$x` holds. A store one step into them is two steps into
-        what the name holds.
-        """
         for source in ('$x.$m[0] = 9', '$x.SyncRoot[0] = 9', '$x.$($m)[0]++'):
             with self.subTest(source):
                 self.assertIs(self._role(source), Ps1OccurrenceRole.WRITE_THROUGH)
@@ -290,10 +260,6 @@ class TestPs1OccurrenceRoles(TestBase):
                 self.assertIs(self._role(source), Ps1OccurrenceRole.WRITE_OBSERVING)
 
     def test_a_reference_the_callee_may_store_through_observes_the_previous_value(self):
-        """
-        `[Int]::TryParse($s, [ref]$n)` assigns `$n`. The occurrence is a write however it reads, and
-        reading it as anything else lets a value from before the call reach a use after it.
-        """
         for source in (
             "[void][int]::TryParse('7', [ref]$x)",
             "[void][int]::TryParse('7', ([ref]$x))",
@@ -328,11 +294,6 @@ class TestPs1OccurrenceRoles(TestBase):
                 self.assertFalse(is_substitutable_position(self._occurrence(source)))
 
     def test_a_splatted_read_is_not_a_position_a_value_may_be_installed_in(self):
-        """
-        `@x` spreads an array over a command's parameters, so `Get-Item @x` with `$x` holding
-        `'-Path', 'C:\\'` binds `-Path`. The array written in its place is one positional argument
-        instead, which is a different command.
-        """
         splatted = self._occurrence('Get-Item @x')
         self.assertIs(occurrence_role(splatted), Ps1OccurrenceRole.READ)
         self.assertFalse(is_substitutable_position(splatted))
@@ -347,11 +308,6 @@ class TestPs1OccurrenceRoles(TestBase):
 
 
 class TestPs1ReferenceAttribution(TestBase):
-    """
-    Where a `[ref]$n` occurrence lands in the model. It is resolved the way a read is — PowerShell
-    looks the name up and creates nothing — and recorded the way a write is, because the callee
-    stores through it.
-    """
 
     @staticmethod
     def _model(source: str):
@@ -364,20 +320,12 @@ class TestPs1ReferenceAttribution(TestBase):
         self.assertEqual(len(binding.reads), 0)
 
     def test_a_reference_keeps_the_binding_alive_although_nothing_reads_it(self):
-        """
-        The store the callee performs is only observable through the binding, so a pass that deletes
-        `$n = 0` for having no readers deletes the storage the call writes into.
-        """
         model = self._model("$n = 0\n[void][int]::TryParse('7', [ref]$n)")
         binding = model.script_scope.bindings['n']
         self.assertEqual(len(binding.uses), 1)
         self.assertFalse(binding.is_dead)
 
     def test_a_reference_inside_a_body_declares_nothing_there(self):
-        """
-        `[ref]$n` resolves by ordinary lookup, so the name it names is the enclosing one. A local
-        binding invented for it would hide the outer binding the callee actually stores through.
-        """
         model = self._model("$n = 0\nfunction f { [void][int]::TryParse('7', [ref]$n) }")
         function_scope = model.script_scope.children[0]
         self.assertIs(function_scope.kind, ScopeKind.FUNCTION)
@@ -385,10 +333,6 @@ class TestPs1ReferenceAttribution(TestBase):
         self.assertEqual(len(model.script_scope.bindings['n'].writes), 2)
 
     def test_a_binding_whose_only_use_is_a_compound_assignment_is_not_dead(self):
-        """
-        `Binding.reads` holds no occurrence here and the value is observed all the same, which is
-        the shape `Binding.uses` exists for.
-        """
         model = self._model("$x = 'a'\n$x += 'b'")
         binding = model.script_scope.bindings['x']
         self.assertEqual(len(binding.reads), 0)
@@ -397,11 +341,6 @@ class TestPs1ReferenceAttribution(TestBase):
 
 
 class TestPs1StoreThroughAttribution(TestBase):
-    """
-    Where the `$x` of `$x[0] = 'z'` lands in the model. It is resolved the way a read is — the name
-    is looked up to reach the object, and nothing is created — and recorded the way a write is,
-    because a read below it observes an object that is no longer what it was.
-    """
 
     @staticmethod
     def _model(source: str):
@@ -414,10 +353,6 @@ class TestPs1StoreThroughAttribution(TestBase):
         self.assertEqual(len(binding.reads), 0)
 
     def test_a_store_through_observes_the_value_it_reaches_into(self):
-        """
-        The array has to exist for the slot to be written, so the assignment that put it there is
-        still wanted although `Binding.reads` holds nothing.
-        """
         binding = self._model("$x = @('a', 'b')\n$x[0] = 'z'").script_scope.bindings['x']
         self.assertEqual(len(binding.uses), 1)
         self.assertFalse(binding.is_dead)
@@ -429,10 +364,6 @@ class TestPs1StoreThroughAttribution(TestBase):
         self.assertEqual(len(model.script_scope.bindings['x'].writes), 2)
 
     def test_a_store_through_declares_nothing_where_no_scope_binds_the_name(self):
-        """
-        A bare assignment in a body binds there, and a store through does not: it needs a value to
-        reach into, so the binding it names is whichever one already exists.
-        """
         stored = self._model("function f { $x[0] = 'z' }")
         self.assertEqual(stored.script_scope.bindings, {})
         self.assertEqual(stored.script_scope.children[0].bindings, {})
@@ -440,11 +371,6 @@ class TestPs1StoreThroughAttribution(TestBase):
         self.assertEqual(list(assigned.script_scope.children[0].bindings), ['x'])
 
     def test_a_scope_qualified_store_through_and_reference_are_writes(self):
-        """
-        `$script:x[0] = 9` reaches the script scope's object and changes it, and `[ref]$script:x`
-        hands the callee the variable to write back through, so the qualifier leaves each the write
-        it is. What 5.1 writes for the reference is measured in `corpus.CLAIMS`: `42`.
-        """
         stored = self._model("$x = @('a', 'b')\n$script:x[0] = 9")
         self.assertEqual(len(stored.script_scope.bindings['x'].writes), 2)
         referenced = self._model("$x = 0\n[void][int]::TryParse('7', [ref]$script:x)")
@@ -452,11 +378,6 @@ class TestPs1StoreThroughAttribution(TestBase):
 
 
 class TestPs1AQualifiedReadIsFiledOnTheBindingItsScopeHolds(TestBase):
-    """
-    A qualifier naming a script variable resolves to the binding of the scope it names. A `trap`
-    body runs in a scope of its own that the model folds into the one around it, so a qualifier
-    that looks in the reading scope alone names no binding there.
-    """
 
     @staticmethod
     def _qualified_read(source: str, scope: Ps1ScopeModifier):
@@ -468,6 +389,7 @@ class TestPs1AQualifiedReadIsFiledOnTheBindingItsScopeHolds(TestBase):
         raise AssertionError(F'no {scope.value}-qualified read in {source!r}')
 
     def test_a_local_or_private_read_in_a_trap_body_names_no_binding(self):
+        # A `trap` body is a scope of its own: such a read names no variable of the scope around it.
         for scope in (Ps1ScopeModifier.LOCAL, Ps1ScopeModifier.PRIVATE):
             source = F"$x = 'a'; if (1) {{ trap {{ ${scope.value}:x; continue }}; throw 'e' }}"
             with self.subTest(source):
@@ -488,22 +410,12 @@ class TestPs1AQualifiedReadIsFiledOnTheBindingItsScopeHolds(TestBase):
 
 
 class TestPs1NamedReferenceAttribution(TestBase):
-    """
-    Where a name addressed as a string lands in the model. A recognizer that identifies
-    `Set-Variable x` while the model files the reference on the wrong binding — or on none — reads
-    as working, so these assert the binding, its scope and its occurrence counts rather than the
-    recognizer's own answer.
-    """
 
     @staticmethod
     def _model(source: str):
         return build_semantic_model(Ps1Parser(source).parse())
 
     def test_a_named_write_creates_the_binding_when_nothing_else_mentions_it(self):
-        """
-        `$p` appears nowhere as a variable, so unless the census is consulted while the model is
-        built there is no binding for the reference to be filed against.
-        """
         model = self._model('Get-Process -OutVariable p')
         binding = model.script_scope.bindings['p']
         self.assertEqual(len(binding.writes), 1)
@@ -527,11 +439,6 @@ class TestPs1NamedReferenceAttribution(TestBase):
         self.assertFalse(binding.is_dead)
 
     def test_a_bare_named_write_in_a_body_binds_that_body_and_not_the_script(self):
-        """
-        Measured: `Set-Variable d 'INNER'` inside a function writes the function's own scope. Filing
-        it at the script scope would let a later read of the caller's `$d` see a value the function
-        never gave it.
-        """
         model = self._model("$d = 'OUTER'\nfunction f { Set-Variable d 'INNER' }")
         function_scope = model.script_scope.children[0]
         self.assertIn('d', function_scope.bindings)
@@ -550,11 +457,6 @@ class TestPs1NamedReferenceAttribution(TestBase):
         self.assertEqual(len(binding.reads), 1)
 
     def test_an_unbinding_replaces_the_value_rather_than_observing_it(self):
-        """
-        `Remove-Variable a` does not read `$a`, it removes it. Recording it as an occurrence that
-        observes the value would make the assignment before it look like something the removal still
-        needs, and would keep a store alive that nothing reads.
-        """
         model = self._model("$a = 'x'\nRemove-Variable a")
         roles = [write.role for write in model.script_scope.bindings['a'].writes]
         self.assertIn(Ps1OccurrenceRole.WRITE_REPLACING, roles)
@@ -562,14 +464,6 @@ class TestPs1NamedReferenceAttribution(TestBase):
         self.assertNotIn(Ps1OccurrenceRole.WRITE_OBSERVING, roles)
 
     def test_a_computed_name_this_cannot_place_puts_the_scope_it_writes_in_doubt(self):
-        """
-        `-Scope Global` reaches the script scope out of any body, at a moment nothing here orders,
-        so every binding of that scope is in doubt for as long as the tree stands.
-
-        A computed name landing in the scope it is *written* in is deliberately not recorded here.
-        That write happens at a point, and `Ps1VariableFlow.unattributable_writes` holds it there,
-        which is what leaves the reads before it answerable.
-        """
         model = self._model("$x = 'a'\nSet-Variable $n 'b' -Scope Global")
         self.assertTrue(model.script_scope.writes_unreadable_names)
         model = self._model("$x = 'a'\nSet-Variable $n 'b'")
@@ -580,18 +474,10 @@ class TestPs1NamedReferenceAttribution(TestBase):
         self.assertFalse(model.script_scope.writes_unreadable_names)
 
     def test_a_scope_the_lexical_chain_cannot_name_puts_the_script_in_doubt(self):
-        """
-        Measured: `-Scope 1` writes the caller's scope, which is not an ancestor of anything here,
-        so no binding can be shown to be safe from it.
-        """
         model = self._model("function f { Set-Variable x 'b' -Scope 1 }")
         self.assertTrue(model.script_scope.writes_unreadable_names)
 
     def test_a_named_session_state_call_is_filed_on_the_binding_it_names(self):
-        """
-        Measured on 5.1 in `corpus.BEHAVIOURS`: `GetValue('x')` writes what `$x` holds and
-        `Set('x', 'b')` leaves `$x` holding `b`.
-        """
         model = self._model(
             "$x = 'a'\n"
             "Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('x')\n"
@@ -608,10 +494,6 @@ class TestPs1NamedReferenceAttribution(TestBase):
             self._model("$n = (Get-Variable '*mdr*').Name").reads_unreadable_names)
 
     def test_a_variable_handed_out_is_recorded_by_its_name(self):
-        """
-        Measured on 5.1 in `corpus.BEHAVIOURS`: a store into the `Value` of the variable
-        `Get-Variable b` hands out rebinds `$b`.
-        """
         self.assertEqual(
             self._model("$b = 'a'\n$v = Get-Variable b").variables_handed_out, {'b'})
         self.assertEqual(
@@ -621,20 +503,12 @@ class TestPs1NamedReferenceAttribution(TestBase):
         self.assertTrue(self._model('$v = Get-Variable').script_scope.writes_unreadable_names)
 
     def test_the_session_state_handed_out_puts_every_scope_in_doubt(self):
-        """
-        `PSVariable.Set` writes the scope that runs the call, and the session state kept in `$ss`
-        may be called from any body of the script.
-        """
         model = self._model(
             '$ss = $ExecutionContext.SessionState\n'
             "$sb = { $y = 'abc'; $ss.PSVariable.Set('y', 'def'); Write-Output $y }")
         self.assertTrue(all(scope.writes_unreadable_names for scope in model.scopes()))
 
     def test_a_name_the_session_state_reads_is_in_the_read_set_of_the_statement(self):
-        """
-        The dead-store sweep flushes a pending store against this set, so a read it leaves out is
-        a store deleted from under the call that reads it.
-        """
         source = "$b = 'a'\nWrite-Output $ExecutionContext.SessionState.PSVariable.GetValue('b')"
         model = self._model(source)
         statement = model.root.body[1]
@@ -643,20 +517,6 @@ class TestPs1NamedReferenceAttribution(TestBase):
 
 
 class TestPs1AConversionBetweenTwoNamesIsAnAliasThisCannotBeSureOf(TestBase):
-    """
-    A definition whose whole value is a bare variable read hands the object over: `$y = $x`, and
-    `$y = ($x)`, since a parenthesis hands over what it wraps. A conversion on either side of the
-    `=` hands over the very object where nothing needs converting and a fresh one where something
-    does — measured on 5.1, `$x = 1, 2, 3; $y = [array]$x; $y[0] = 9` leaves `$x` reading `9 2 3`,
-    where the same script written with `[int[]]` leaves it reading `1 2 3` — and which of the two
-    ran is a question about the operand's runtime type that no reading of the source settles.
-
-    The store is therefore filed against both names either way, which is what stops a read below it
-    being answered from above, and the link records whether it may also be read as naming a value.
-    A subexpression is not a conversion but a copy: `$y = $($x)` unrolls the array to the pipeline
-    and collects a fresh one, and `[object]::ReferenceEquals($x, $y)` is `False`, so that shape
-    mints no link at all and costs no fold.
-    """
 
     _HANDED_OVER = ('$y = $x', '$y = ($x)')
 
@@ -669,8 +529,8 @@ class TestPs1AConversionBetweenTwoNamesIsAnAliasThisCannotBeSureOf(TestBase):
     )
 
     @staticmethod
-    def _shared(definition: str, store: str, name: str):
-        source = F'$x = 1, 2, 3\n{definition}\n{store}'
+    def _shared(definition: str, store: str, name: str, value: str = '$args[0]'):
+        source = F'$x = {value}\n{definition}\n{store}'
         model = build_semantic_model(Ps1Parser(source).parse())
         return [
             write for write in model.script_scope.bindings[name].writes if write.may_define
@@ -697,15 +557,10 @@ class TestPs1AConversionBetweenTwoNamesIsAnAliasThisCannotBeSureOf(TestBase):
     def test_a_definition_that_certainly_copies_is_no_link_at_all(self):
         for store, name in (('$y[0] = 9', 'x'), ('$x[0] = 9', 'y')):
             with self.subTest(store):
-                self.assertEqual(self._shared('$y = $($x)', store, name), [])
+                self.assertEqual(self._shared('$y = $($x)', store, name, '1, 2, 3'), [])
 
 
 class TestPs1EveryOccurrenceRoleAnswersUnlikeEveryOther(TestBase):
-    """
-    A role's four answers are its value, so two members answering alike are one member wearing two
-    names: the second folds into the first, dispatch picks whichever was declared earlier, and every
-    `is` test against the name that vanished still passes.
-    """
 
     def test_no_two_roles_carry_the_same_four_answers(self):
         answers = {
@@ -716,16 +571,6 @@ class TestPs1EveryOccurrenceRoleAnswersUnlikeEveryOther(TestBase):
 
 
 class TestPs1ACallThatFillsAnArgumentWritesTheNameThatFilledIt(TestBase):
-    """
-    A callee that fills an array it is handed changes what the variable holding that array names,
-    exactly as `[Array]::Reverse` turns one around, and no marker in the signature says so. The
-    occurrence is therefore a store through the value and not a read, while a slot the same call
-    only reads stays a read — which is what keeps the source of a copy folding.
-
-    `[Text.Encoding]::ASCII.GetBytes($s)` at one argument is the control the whole table is shaped
-    around: it fills nothing, it is the most-folded call in an obfuscated script, and a row that
-    denied it would cost more than the one written slot it would catch.
-    """
 
     @staticmethod
     def _occurrence(source: str, name: str = 'x') -> Ps1Variable:
@@ -787,16 +632,6 @@ class TestPs1ACallThatFillsAnArgumentWritesTheNameThatFilledIt(TestBase):
 
 
 class TestPs1TheWrittenSlotTableIsFlooredAgainstTheCollectedMetadata(TestBase):
-    """
-    The written-slot table is a deny table: a slot it fails to name is one a caller puts a value in,
-    and the callee's write is then lost. A row naming a slot the call has no part at is skipped by
-    every consumer that indexes the arguments by it, and a row short of an arity the member offers
-    answers that call with silence rather than with doubt. Both fail open, so both are refused where
-    the table is built rather than where it is read.
-
-    `System.Array.Reverse` is the member the rows are written against here: the collected metadata
-    carries it at one argument and at three, and its written slot is the first.
-    """
 
     def test_a_row_naming_a_slot_beyond_the_last_argument_is_refused(self):
         with self.assertRaises(ValueError):
@@ -832,13 +667,6 @@ class TestPs1TheWrittenSlotTableIsFlooredAgainstTheCollectedMetadata(TestBase):
 
 
 class TestPs1TheKeepNothingTableIsFlooredAgainstTheCollectedMetadata(TestBase):
-    """
-    A call the keep-nothing table names is taken to hand back nothing it was handed, so an array
-    handed to it has no second holder. A member an overload of which returns an object may return
-    the argument itself or a wrapper around it, as `[Array]::AsReadOnly` does, and one taking a
-    parameter by reference may hand an argument out through that, so either is refused where the
-    table is built.
-    """
 
     def test_a_member_returning_an_object_is_refused(self):
         with self.assertRaises(ValueError):
@@ -877,21 +705,6 @@ class TestPs1TheKeepNothingTableIsFlooredAgainstTheCollectedMetadata(TestBase):
 
 
 class TestPs1AChainOfAliasesCostsAboutWhatItsLengthCosts(TestBase):
-    """
-    The input is written by whoever is being analysed, and a chain of names for one array with a
-    couple of mutating calls in it is one line of a generator. Such a chain may cost more than its
-    length and still be a model that finishes; what it may not do is cost so much more that making
-    the chain longer is a hang, which is exactly what an attacker writing the input is looking for.
-
-    The budget is a multiple of what the short chain cost in this same process rather than a number
-    of seconds, so that what is asserted is how the cost grows and not how fast the machine is, and
-    the shortest of several runs is taken at each length so that one stalled measurement cannot
-    decide it. Twenty times the cost for four times the input is generous: everything up to about
-    the square of the length passes.
-
-    The reversals are what the chain is written around: a chain carrying none of them, or one, is
-    answered a different way than a chain carrying two.
-    """
 
     _SHORT = 100
     _LONG = 400
@@ -901,11 +714,6 @@ class TestPs1AChainOfAliasesCostsAboutWhatItsLengthCosts(TestBase):
 
     @staticmethod
     def _chain(length: int) -> str:
-        """
-        `length` definitions, each naming the one before it, with a reversal after the first third
-        and after the second. Every name is on the array the first line built, and every reversal
-        writes that array through whichever name it was handed.
-        """
         lines = ['$a0 = 1, 2, 3']
         for index in range(1, length):
             lines.append(F'$a{index} = $a{index - 1}')
@@ -915,9 +723,6 @@ class TestPs1AChainOfAliasesCostsAboutWhatItsLengthCosts(TestBase):
         return '\n'.join(lines)
 
     def _cost(self, length: int) -> float:
-        """
-        The fastest of the runs that each build the models of a batch of chains of the given length.
-        """
         source = self._chain(length)
         batches = [[Ps1Parser(source).parse() for _ in range(self._BATCH)] for _ in range(self._RUNS)]
         return fastest_processor_time(functools.partial(self._build_all, batch) for batch in batches)
@@ -934,11 +739,6 @@ class TestPs1AChainOfAliasesCostsAboutWhatItsLengthCosts(TestBase):
 
 
 class TestPs1TheModelReadsWhichNamesTheScriptMayRemoveOrConstrain(TestBase):
-    """
-    A name may be removed by a command that unbinds it, and through a variable handed out; it may
-    be constrained by a typed or attributed store, a parameter, a variable command written with
-    options, and through a variable handed out. A name nobody can read may be any name.
-    """
 
     @staticmethod
     def _model(source: str):
@@ -967,4 +767,3 @@ class TestPs1TheModelReadsWhichNamesTheScriptMayRemoveOrConstrain(TestBase):
         ):
             with self.subTest(removal=removal):
                 self.assertIn('a', self._model(removal).variables_removed)
-

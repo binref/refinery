@@ -53,8 +53,6 @@ class TestPs1VariableRenaming(TestPs1):
 class TestPs1RenameExtra(TestPs1):
 
     def test_rename_read_only_variables_are_sorted(self):
-        # Read-only variables are numbered in sorted name order ($b -> $var2, $c -> $var3), making
-        # the renaming deterministic across hash seeds.
         a, b, c = 'a' * 100, 'b' * 100, 'c' * 100
         result = self._apply(cleandoc(F"""
             ${a} = ${c} + ${b}

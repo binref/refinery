@@ -13,7 +13,6 @@ from typing import NamedTuple, TypeGuard
 from unittest.mock import patch
 
 from . import TestBase, TestUnitBase
-from ..lib.scripts.ps1.deobfuscation.test_domain_gap import witnesses
 from ..lib.scripts.ps1.deobfuscation.test_fold_census import census
 
 import refinery.lib.scripts as scripts
@@ -40,12 +39,11 @@ _TESTS = os.path.join('test', 'lib', 'scripts', 'ps1', 'deobfuscation')
 #: excludes is how one starts watching an analysis the other broke.
 _EXCLUDED = 'test_witnessed'
 
-#: The censuses quantify over a fixed population of sources many times over: the fold census once
-#: more for every folding pass it switches off, the domain gap once for every operator. A pass that
-#: is switched off is a deliberately broken analysis, as in the witness suite, and the reruns cost
-#: more than ten times the rest of the directory. The watched run makes, for each census, the one
-#: reading of its population that the census makes with nothing switched off, and nothing else.
-_CENSUSES = (census, witnesses)
+#: The fold census reads a fixed population of sources once more for every folding pass it switches
+#: off, and a pass that is switched off is a deliberately broken analysis, as in the witness suite.
+#: The watched run makes, for each census, the one reading of its population that the census makes
+#: with nothing switched off, and nothing else.
+_CENSUSES = (census,)
 
 
 def _project_root() -> str:

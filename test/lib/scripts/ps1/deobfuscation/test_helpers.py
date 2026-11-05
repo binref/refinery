@@ -21,19 +21,12 @@ def _command_named(tree: Ps1Script, name: str) -> Ps1CommandInvocation:
 class TestPs1Helpers(TestPs1):
 
     def test_switch_matches_bool_int_coercion(self):
-        # PowerShell coerces between bool and int in switch/`-eq` comparisons, so a `$true` label
-        # matches the integer 1 and `$false` matches 0.
         self.assertTrue(switch_matches(1, True))
         self.assertTrue(switch_matches(0, False))
         self.assertFalse(switch_matches(2, True))
 
 
 class TestPs1CommandNameRewrite(TestPs1):
-    """
-    The analysis models read after an in-place command-name rewrite answer about the script as it
-    now stands. Nothing here announces the edit through `refinery.lib.scripts.Transformer.changed`,
-    so the freshness is the tree's own to keep.
-    """
 
     def test_a_rewritten_alias_denotes_the_cmdlet_now_written(self):
         tree = Ps1Parser('gci $x').parse()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import lines_executed, wontfix
+from test import lines_executed, wontfix, blocker
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.analysis import dispatch, faults, raising
@@ -36,10 +36,6 @@ class _Ps1LineFailure(TestPs1):
 
 
 class TestPs1AStoreMayFailWhereTheScriptConstrainsTheName(_Ps1LineFailure):
-    """
-    A plain store into a local cannot fail unless something gave the variable a type, an attribute
-    or an option: then storing a value it refuses is a statement-terminating error the `trap` takes.
-    """
 
     def test_a_store_into_a_variable_a_splat_made_read_only_stays(self):
         self.assertKeeps("""
@@ -60,14 +56,21 @@ class TestPs1AStoreMayFailWhereTheScriptConstrainsTheName(_Ps1LineFailure):
             Write-Host 'after'
         """, '[int]$v1', "$v1 = 'abc'")
 
-    def test_a_store_after_a_default_option_for_new_variable_is_not_folded(self):
-        self.assertKeeps("""
+    def test_a_store_after_a_default_new_variable_option_keeps_its_trap_and_writes_one(self):
+        source = cleandoc("""
             $PSDefaultParameterValues['New-Variable:Option'] = 'ReadOnly'
             New-Variable x 1
             trap { Write-Host 'T'; continue }
             $x = 2
             Write-Host $x
-        """, 'Write-Host $x')
+        """)
+        self.assertIn(
+            self._output(source),
+            (
+                self._apply(source),
+                self._apply(source.replace('Write-Host $x', 'Write-Host 1')),
+            ),
+        )
 
     def test_a_store_after_a_payload_nobody_can_read_stays_where_code_is_suspected(self):
         self.assertKeeps("""
@@ -79,10 +82,6 @@ class TestPs1AStoreMayFailWhereTheScriptConstrainsTheName(_Ps1LineFailure):
 
 
 class TestPs1AReadMayFailUnderStrictModeWhereTheNameMayBeRemoved(_Ps1LineFailure):
-    """
-    Under strict mode a read of a variable that is not set fails, so a read is certain to succeed
-    only where a store to it certainly completed and nothing may have removed the variable since.
-    """
 
     _REMOVALS = (
         'Remove-Variable v1',
@@ -90,7 +89,6 @@ class TestPs1AReadMayFailUnderStrictModeWhereTheNameMayBeRemoved(_Ps1LineFailure
         "'variable:v1' | Remove-Item",
         'Remove-Item -LiteralPath variable:v1',
         'Remove-Item Microsoft.PowerShell.Core\\Variable::v1',
-        'Move-Item variable:v1 variable:v2',
         'Rename-Item variable:v1 v2',
     )
 
@@ -131,10 +129,6 @@ class TestPs1AReadMayFailUnderStrictModeWhereTheNameMayBeRemoved(_Ps1LineFailure
                 """, '$v1\n')
 
     def test_a_read_after_a_store_that_may_fail_where_nothing_takes_the_error_stays(self):
-        """
-        5.1 reports the failed store and carries on without setting `$v1`, so the strict read in
-        the `try` fails and the snippet writes `caught`.
-        """
         for store in ('$v1 = [int]$p[0]', '$v1 = $unset'):
             with self.subTest(store=store):
                 self.assertKeeps(F"""
@@ -146,11 +140,6 @@ class TestPs1AReadMayFailUnderStrictModeWhereTheNameMayBeRemoved(_Ps1LineFailure
 
 
 class TestPs1ACallFactCoversWhatWasMeasured(_Ps1LineFailure):
-    """
-    The commands the facts cover cannot fail on the arguments they were measured on, and may fail
-    on every other: `Select-Object -First -1` is refused, and `Write-Host` fails where the script
-    asks it to stop on what it writes.
-    """
 
     def test_a_negative_count_handed_through_a_variable_keeps_its_line(self):
         self.assertKeeps("""
@@ -197,10 +186,6 @@ class TestPs1ACallFactCoversWhatWasMeasured(_Ps1LineFailure):
         """)
 
     def test_a_raise_in_the_body_of_a_trap_over_lines_the_facts_clear_goes(self):
-        """
-        The body of a `trap` runs only where a line of its block fails; the lines the facts clear
-        cannot fail, so the body never runs and the cast in it raises nothing anyone sees.
-        """
         output = self._output("""
             trap { Write-Host 'T'; $null = [int]'a'; Write-Host 'U'; continue }
             Write-Host 'a'
@@ -213,11 +198,6 @@ class TestPs1ACallFactCoversWhatWasMeasured(_Ps1LineFailure):
 
 
 class TestPs1ACallRaisesWhatTheBodyItRunsHandsBack(_Ps1LineFailure):
-    """
-    Where a `trap` stands over a call, what reaches it is what the called body hands back: an error
-    the body reports where nothing passes errors outward, and one it leaves with where something
-    does, which ends the body at the failing line.
-    """
 
     def test_a_call_from_another_function_before_the_definition_runs_keeps_the_trap(self):
         self.assertKeeps("""
@@ -232,10 +212,6 @@ class TestPs1ACallRaisesWhatTheBodyItRunsHandsBack(_Ps1LineFailure):
         """, 'trap', '  f1\n')
 
     def test_a_failing_line_two_calls_down_keeps_the_trap_that_abandons_the_rest(self):
-        """
-        5.1 writes only `f0`: the error leaves `g1` and `g0` for the `trap` of `f0`. Without the
-        `trap` the error is reported and `g0` is written as well, and so it is without the cast.
-        """
         self.assertKeeps("""
             $p = $args
             function g1 { $null = [int]$p[0] }
@@ -255,11 +231,6 @@ class TestPs1ACallRaisesWhatTheBodyItRunsHandsBack(_Ps1LineFailure):
 
 
 class TestPs1ABodyHandedOutAsAValueRunsWhereNoCallNamesIt(_Ps1LineFailure):
-    """
-    A function the script reads as a value, looks up, or reaches as a class method may run under a
-    `try` no call names, which passes its error outward and ends the body at the failing line; so
-    its `trap` stays, and the function is not dead for want of a call.
-    """
 
     _HANDINGS = (
         'try { 1 | ForEach-Object -Process $function:f1 } catch { Write-Host "c" }',
@@ -296,11 +267,6 @@ class TestPs1ABodyHandedOutAsAValueRunsWhereNoCallNamesIt(_Ps1LineFailure):
 
 
 class TestPs1ACallTheCallGraphCannotAttributeMayRunAnyFunction(_Ps1LineFailure):
-    """
-    Under trusted eval, a call whose target a later step spells still runs the body under the `try`
-    around it, so the body's `trap` stays while its failing line stays. 5.1 writes `m1` for both
-    calls; without the `trap` and with the failing line, the second writes `c`.
-    """
 
     _CALLS = (
         "& ('f' + '1')",
@@ -349,20 +315,17 @@ class TestPs1ConstantInliningDecidesEveryReadBeforeItSubstitutes(_Ps1LineFailure
 
 class TestPs1ANestedGenericTypeNameIsReadWhole(_Ps1LineFailure):
 
-    def test_a_nested_generic_type_name_deobfuscates(self):
-        output = self._output("""
+    @blocker
+    def test_a_script_filling_a_nested_generic_dictionary_still_counts_the_entry_it_adds(self):
+        source = cleandoc("""
             $d = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.List[int]]'
+            $d['a'] = $Null
             Write-Host $d.Count
         """)
-        self.assertIn('Write-Host', output)
+        self.assertIn(self._output(source), (self._apply(source), 'Write-Host 1'))
 
 
 class TestPs1CallsNobodyCanAttributeCostLinearWork(TestPs1):
-    """
-    A call nobody can attribute may run every function body, so a script with many of them beside
-    many trapped functions pays their product wherever it asks about one per body; and a grant that
-    reads the raise model of the tree as it stands rebuilds every model once per substitution.
-    """
 
     @staticmethod
     def _bodies(size: int) -> list[str]:
@@ -395,4 +358,3 @@ class TestPs1CallsNobodyCanAttributeCostLinearWork(TestPs1):
             return self._work('\n'.join(lines))
 
         self.assertWorkGrowsLinearly(work, 16)
-

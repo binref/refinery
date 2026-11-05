@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import unittest
-
 from inspect import cleandoc
 from typing import Callable
 
-from test import TestBase, lines_executed
+from test import TestBase, lines_executed, opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts import BodyEdit, bump_mutation_epoch, set_body
@@ -51,11 +49,6 @@ def _runs_forward(
     barrier: frozenset[CfgNode],
     within: Callable[[CfgNode], bool],
 ) -> tuple[set[int], bool]:
-    """
-    The nodes a run reaches going forward from *step* before *barrier*, and whether it leaves the
-    statement *within* holds on the way. A `trap` entry is reached but not walked past, and so is a
-    node outside the statement.
-    """
     reached: set[int] = set()
     leaves = False
     pending = [node for node in step if node not in barrier]
@@ -74,11 +67,6 @@ def _runs_forward(
 
 
 class TestPs1AStepOverRegionHoldsWhatARunExecutesBeforeItRejoins(TestBase):
-    """
-    A region holds what runs going forward from its start up to where both runs go on alike, and
-    everything once that run leaves the statement it measures. Each answer is compared with that
-    walk.
-    """
 
     _SCRIPTS = [
         cleandoc("""
@@ -199,10 +187,6 @@ class TestPs1HandlerVerdictsAnswerOnlyForTheTreeTheyWereBuiltOver(TestBase):
 
 
 def _weighing(source_of: Callable[[int], str]) -> Callable[[int], int]:
-    """
-    The work of weighing the removal of every `trap` of the script *source_of* writes for a size,
-    the way the dead-code pass weighs it, counted in lines of the modules that answer.
-    """
     def work(size: int) -> int:
         script = Ps1Parser(source_of(size)).parse()
         traps = _traps(script)
@@ -219,10 +203,6 @@ def _weighing(source_of: Callable[[int], str]) -> Callable[[int], int]:
 
 
 def _batching(source_of: Callable[[int], str]) -> Callable[[int], int]:
-    """
-    The work of asking which of every `trap` of the script *source_of* writes for a size may go
-    together, as one batch of the dead-code pass asks it, counted as `_weighing` counts it.
-    """
     def work(size: int) -> int:
         script = Ps1Parser(source_of(size)).parse()
         traps = _traps(script)
@@ -421,12 +401,6 @@ class TestPs1WeighingEveryTrapCostsLinearWork(TestBase):
         self.assertWorkGrowsLinearly(_weighing(source), 20)
 
     def test_nested_resuming_traps_cost_no_more_than_the_square_of_their_depth(self):
-        """
-        Each level's `if` is read as a soft raiser of the level around it, because its body holds
-        one, so every level holds a step-over region over everything inside it, and the regions
-        together hold the square of the depth: `test_faults` tracks that over-keep. What this pins
-        is the next order up, which a pass over every region member's whole statement reaches.
-        """
         def source(size: int) -> str:
             levels = ''.join(
                 F'trap {{ continue }}; if ($x) {{ $v{index} = [int]$s{index}; $w{index} = 1; '
@@ -580,12 +554,8 @@ class TestPs1TheWorldIsBuiltOnlyForAVerdictThatReadsIt(TestBase):
 
 class TestPs1AHeldFaultModelAnswersAlikeWhateverWasAskedBeforeAnEdit(TestBase):
 
-    @unittest.expectedFailure
+    @opportunity
     def test_a_handler_emptied_after_one_question_reads_as_it_does_without_that_question(self):
-        """
-        Whether a handler acts is settled for a whole graph at the first question about it, so a
-        model held across an edit to a handler body answers by what was asked before the edit.
-        """
         answers = []
         for asked_first in (False, True):
             tree = Ps1Parser(cleandoc("""
@@ -620,12 +590,6 @@ class TestPs1NoModelOutlivesADeobfuscation(TestPs1):
 
 
 class TestPs1EveryLandingHoldsItsRaise(TestBase):
-    """
-    How far out an error carries control is kept as the depth of the outermost statement it lands
-    after (`refinery.lib.scripts.ps1.analysis.dispatch.Ps1Fate.outermost`), which says how far out
-    only if every statement an error lands after holds the point it was raised at. Asked of every
-    point of every script the corpus writes.
-    """
 
     def test_every_statement_an_error_lands_after_holds_the_point_it_was_raised_at(self):
         from test.lib.scripts.ps1 import corpus

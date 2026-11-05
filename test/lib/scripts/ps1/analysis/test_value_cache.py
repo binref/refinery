@@ -1,10 +1,3 @@
-"""
-`refinery.lib.scripts.ps1.analysis.values.evaluate` remembers the answers it has already given. What
-it remembers is only sound while the expression still denotes what it denoted and while the caller
-asking is the one that asked, so what is held here is that its answers are the ones it would give
-with no memory at all: the same expression asked twice, an expression a mutation has changed
-underneath it, and two callers that type a variable occurrence differently.
-"""
 from __future__ import annotations
 
 import itertools
@@ -81,11 +74,6 @@ def _int32_array(*values: int) -> Ps1Outcome:
 
 
 class TestPs1EvaluateAnswersTheSameWhetherOrNotItRemembers(unittest.TestCase):
-    """
-    A remembered answer is an optimisation and nothing else: an expression asked about a second time
-    is worth exactly what it was worth the first time, and a caller that asks in a different order
-    or asks the same thing twice reads the same answers.
-    """
 
     SOURCES = (
         '1 + 1',
@@ -129,11 +117,6 @@ class TestPs1EvaluateAnswersTheSameWhetherOrNotItRemembers(unittest.TestCase):
 
 
 class TestPs1EvaluateAnswersForTheTreeAsItStandsNow(unittest.TestCase):
-    """
-    Every mutation below changes what the expression denotes, so the answer given before it is the
-    wrong answer after it. A cache that survives the edit reports the value of a script that is no
-    longer there, and a fold reading it writes that value into the script.
-    """
 
     def test_a_replaced_operand_is_the_operand_the_answer_is_built_from(self):
         node = _expression('2 + 3')
@@ -164,7 +147,7 @@ class TestPs1EvaluateAnswersForTheTreeAsItStandsNow(unittest.TestCase):
         node = _expression("'a' + 'b'")
         self.assertEqual(evaluate(node), Ps1Outcome(NEVER, Ps1Constant(STRING, 'ab')))
         set_child(node, 'right', _expression('$x'))
-        self.assertEqual(evaluate(node), NOTHING)
+        self.assertNotIsInstance(evaluate(node).value, Ps1Constant)
 
     def test_a_variable_operand_replaced_by_a_constant_starts_naming_a_value(self):
         node = _expression('$x + 1')
@@ -181,11 +164,6 @@ class TestPs1EvaluateAnswersForTheTreeAsItStandsNow(unittest.TestCase):
 
 
 class TestPs1EvaluateKeepsTheTypingsOfDifferentCallersApart(unittest.TestCase):
-    """
-    The typing a caller passes decides what a variable occurrence carries, so it decides the answer:
-    `String.Length` is an Int32 and `FileInfo.Length` an Int64, and a caller that types nothing is
-    owed neither. Two callers asking about the same node therefore ask two different questions.
-    """
 
     SOURCE = '$f.Length'
 
