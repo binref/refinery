@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import backlog, blocker, todo, wontfix
+from test import backlog, todo, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1WildcardResolution
@@ -96,7 +96,6 @@ class TestPs1VariableDriveResolution(TestPs1):
         self.assertIn('DownloadFile', result)
         self.assertNotIn('Do*e', result)
 
-    @blocker
     def test_a_get_member_index_over_a_new_object_names_the_member_at_that_index(self):
         source = '(New-Object Net.WebClient | Get-Member)[6].Name'
         self._assertDeobfuscatesToOneOf(source, source, "'OpenWriteCompleted'")

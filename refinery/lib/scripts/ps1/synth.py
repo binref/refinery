@@ -110,6 +110,21 @@ def _numeral_spelling(node: Expression) -> str | None:
     return None
 
 
+def _opens_with_a_type(node: Expression) -> bool:
+    """
+    Whether the node is written starting with a bracketed type: a cast, a type, or a member, call
+    or index read off a type, like `[Math]::Max(2, 1)`. A cast an index or member is read off is
+    bracketed by that read and so opens with the bracket instead.
+    """
+    if isinstance(node, Ps1CastExpression):
+        return True
+    while isinstance(node, (Ps1MemberAccess, Ps1InvokeMember, Ps1IndexExpression)):
+        if node.object is None:
+            return False
+        node = node.object
+    return isinstance(node, Ps1TypeExpression)
+
+
 class Ps1Synthesizer(Synthesizer):
     """
     Three things decide how a node is written, and all three are properties of the slot it goes into
@@ -400,8 +415,13 @@ class Ps1Synthesizer(Synthesizer):
             self._write(' ')
         if node.name:
             # `& 'i' + 'ex'` invokes `i` and then concatenates, so a computed command name needs
-            # brackets for the invocation operator to reach the whole expression.
-            self._emit_word(node.name, precedence.ATOM)
+            # brackets for the invocation operator to reach the whole expression. A name that
+            # opens with a type is read as one word here as it is in an argument, so
+            # `& [scriptblock]::Create($c)` needs them too.
+            if node.invocation_operator and _opens_with_a_type(node.name):
+                self._emit_bracketed(node.name)
+            else:
+                self._emit_word(node.name, precedence.ATOM)
         for arg in node.arguments:
             self._write(' ')
             self.visit(arg)
@@ -431,15 +451,16 @@ class Ps1Synthesizer(Synthesizer):
         Two spellings survive the precedence scale and are still read as something else here, and
         both are bracketed. A numeral whose spelling this slot does not end where the tree does is
         one: `Write-Output -1` passes the String `-1` where `Write-Output (-1)` passes an Int32, and
-        `f +1` and `f -0.0` are words the same way. A cast is the other, measured: `f [byte] 5` is
-        the one word `[byte]5`.
+        `f +1` and `f -0.0` are words the same way. Anything written starting with a type is the
+        other, measured: `f [byte] 5` is the one word `[byte]5`, and the type opens a word however
+        much is written behind it, so `f [Math]::Max(2, 1)` passes text as well.
 
         Neither spelling can reach here from a source — a dash or a bracket in an argument begins a
-        word — so a numeral or a cast standing in this slot is one a pass put here, and bracketing it
+        word — so a numeral or a type standing in this slot is one a pass put here, and bracketing it
         is what makes it mean what the pass meant.
         """
         raw = _numeral_spelling(value)
-        misread = isinstance(value, (Ps1CastExpression, Ps1TypeExpression)) or (
+        misread = _opens_with_a_type(value) or (
             raw is not None and not reads_as_one_numeral(raw, '', Ps1LexerMode.ARGUMENT)
         )
         if misread:
@@ -594,7 +615,7 @@ class Ps1Synthesizer(Synthesizer):
         for arg in node.positional_args:
             items.append(self._render_to_string(arg))
         for key, val in node.named_args:
-            items.append(F'{key}={self._render_to_string(val)}')
+            items.append(key if val is None else F'{key}={self._render_to_string(val)}')
         self._write(', '.join(items))
         self._write(')]')
 

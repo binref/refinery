@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import lines_executed, wontfix, blocker, opportunity, todo
+from test import lines_executed, wontfix, opportunity, todo
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib import scripts
@@ -541,7 +541,6 @@ class TestPs1AFileThatOnlyDefinesKeepsWhatItDefines(TestPs1):
             $config = 'a'
         """)
 
-    @blocker
     def test_a_library_that_stores_into_a_table_it_built_keeps_its_functions(self):
         self._assertKept("""
             $Config = @{}

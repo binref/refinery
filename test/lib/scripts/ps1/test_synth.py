@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test import TestBase, backlog, blocker, wontfix
+from test import TestBase, backlog, wontfix
 
 from refinery.lib.scripts import Node, UnspellableNode
 from refinery.lib.scripts.ps1.model import (
@@ -503,7 +503,6 @@ class TestPs1SlotsThatSwallowASpelling(TestBase):
         self.assertEqual(
             _written(_write_output(Ps1TypeExpression(name='byte'))), 'Write-Output ([byte])')
 
-    @blocker
     def test_a_static_member_of_a_type_in_a_command_argument_is_bracketed(self):
         """
         A type name opens a word in a command argument however much is written behind it, so the

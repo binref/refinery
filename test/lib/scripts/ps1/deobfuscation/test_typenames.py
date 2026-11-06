@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import blocker, opportunity, todo, wontfix
+from test import opportunity, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1TypeSystemSimplifications
@@ -51,7 +51,6 @@ class TestPs1TypeSystemSimplifications(TestPs1):
             "Write-Host 'CompareTo'",
         )
 
-    @todo
     def test_get_member_filtered_to_properties_indexes_the_properties(self):
         source = '$q = New-Object Net.WebClient\n($q | Get-Member -MemberType Property)[0].Name'
         self.assertIn(
@@ -157,7 +156,6 @@ class TestPs1MemberFoldsFollowTheWriteAReadObserves(TestPs1):
             ($q | Get-Member)[0].Name
         """), Ps1TypeSystemSimplifications)
 
-    @blocker
     def test_a_write_before_the_branch_folds_the_read_after_it(self):
         result = self._apply(cleandoc("""
             $q = New-Object Net.WebClient
@@ -198,7 +196,6 @@ class TestPs1MemberFoldsFollowTheWriteAReadObserves(TestPs1):
             ($q | Get-Member)[0].Name
         """), Ps1TypeSystemSimplifications)
 
-    @blocker
     def test_a_qualified_write_folds_the_reads_that_follow_it_in_its_own_body(self):
         result = self._apply(cleandoc("""
             function f {

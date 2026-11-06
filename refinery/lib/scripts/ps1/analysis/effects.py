@@ -77,6 +77,7 @@ from refinery.lib.scripts.ps1.ast import (
     is_reference_cast,
     is_void_cast,
     resolve_command_name,
+    unwrap_assignment_target,
     unwrap_parens,
 )
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
@@ -2414,8 +2415,10 @@ class Contribution(enum.Flag):
 
     - `ACTS`: it does something, such as a command, a call, a `throw`, or a condition whose
       evaluation does something;
-    - `STORES_A_RUN`: it stores a value whose evaluation does something. A library may compute what
-      it stores, so this runs something without making the file more than a library;
+    - `STORES_A_RUN`: it stores a value whose evaluation does something, or stores through a member
+      or an element of a variable's value, where a setter may run. A library may compute what it
+      stores and fill what it built, so this runs something without making the file more than a
+      library;
     - `PRINTS`: it writes a value to the output, such as a bare value or `return` with one;
     - `ENDS`: it ends the run, which `exit` and `return` do;
     - `NOTHING`: it adds none of these.
@@ -2607,6 +2610,8 @@ def _own_contribution(statement: Node, world: Ps1WorldReach, in_a_block: bool) -
         if _expression_acts(expression, world):
             return Contribution.STORES_A_RUN
         return Contribution.NOTHING
+    if _stores_through_a_variable(expression):
+        return Contribution.STORES_A_RUN
     if is_null_discard(expression):
         discarded = expression.value
     elif is_void_cast(expression):
@@ -2652,6 +2657,25 @@ def _is_store(expression: Node) -> bool:
         and expression.operand is not None
         and isinstance(unwrap_parens(expression.operand), Ps1Variable)
     )
+
+
+def _stores_through_a_variable(expression: Node) -> bool:
+    """
+    Whether `expression` is an assignment whose every slot stores into a member or an element of
+    a variable's value, or into the variable itself: `$Config.Path = 'x'`, `$a[0] = 1`. The
+    `$Null = ...` discard is not one.
+    """
+    if not isinstance(expression, Ps1AssignmentExpression) or is_null_discard(expression):
+        return False
+    target = unwrap_assignment_target(expression.target)
+    slots = target.elements if isinstance(target, Ps1ArrayLiteral) else [target]
+    for slot in slots:
+        slot = unwrap_assignment_target(slot)
+        while isinstance(slot, (Ps1MemberAccess, Ps1IndexExpression)) and slot.object is not None:
+            slot = unwrap_parens(slot.object)
+        if not isinstance(slot, Ps1Variable):
+            return False
+    return True
 
 
 def _is_using(expression: Node) -> bool:

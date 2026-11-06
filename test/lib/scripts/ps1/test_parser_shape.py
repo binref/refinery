@@ -456,7 +456,6 @@ CORPUS = [
             Ps1ScriptBlock
               Ps1ParamBlock
                 Ps1Attribute Parameter
-                  Ps1StringLiteral 'Mandatory'
                 Ps1ParameterDeclaration
                   Ps1Variable $x
         """,

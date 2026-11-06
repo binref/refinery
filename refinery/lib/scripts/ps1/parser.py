@@ -2209,7 +2209,7 @@ class Ps1Parser:
             self._advance()
             self._skip_newlines()
             positional: list[Expression] = []
-            named: list[tuple[str, Expression]] = []
+            named: list[tuple[str, Expression | None]] = []
             with self._comma_mode(disabled=True):
                 while not self._at(Ps1TokenKind.RPAREN, Ps1TokenKind.EOF):
                     self._skip_newlines()
@@ -2225,6 +2225,15 @@ class Ps1Parser:
                                 self._skip_newlines()
                                 self._eat(Ps1TokenKind.COMMA)
                                 continue
+                        elif (
+                            key_tok.kind == Ps1TokenKind.GENERIC_TOKEN
+                            and self._at(Ps1TokenKind.COMMA, Ps1TokenKind.RPAREN)
+                        ):
+                            # A bare name is a named argument whose value is omitted, which
+                            # PowerShell reads as `$true`: `[Parameter(Mandatory)]`.
+                            named.append((key_tok.value, None))
+                            self._eat(Ps1TokenKind.COMMA)
+                            continue
                         self._resync(key_tok.offset)
                     expr = self._parse_expression()
                     if expr is not None:

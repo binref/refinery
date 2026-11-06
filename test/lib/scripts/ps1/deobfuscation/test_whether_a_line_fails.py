@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import lines_executed, wontfix, blocker
+from test import lines_executed, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.analysis import dispatch, faults, raising
@@ -315,7 +315,6 @@ class TestPs1ConstantInliningDecidesEveryReadBeforeItSubstitutes(_Ps1LineFailure
 
 class TestPs1ANestedGenericTypeNameIsReadWhole(_Ps1LineFailure):
 
-    @blocker
     def test_a_script_filling_a_nested_generic_dictionary_still_counts_the_entry_it_adds(self):
         source = cleandoc("""
             $d = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.List[int]]'

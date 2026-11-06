@@ -84,54 +84,16 @@ MINIMUM_HARVEST = 400
 #: because the law would then be satisfied by writing it down.
 KNOWN_VIOLATIONS: dict[str, str] = {}
 
-#: Tracked by `test_synth.py::TestPs1SlotsThatSwallowASpelling`: a static member read off a type,
-#: standing as a command argument or behind `&`, is written without the bracket it needs there.
-_TYPE_MEMBER_AS_A_WORD = 'a static member of a type is written into a command argument bare'
-
 #: Tracked by `test_synth.py::TestPs1SlotsThatSwallowASpelling`: an assignment handed to a call as
 #: an argument is written without the bracket that makes it a value there.
 _ASSIGNMENT_AS_AN_ARGUMENT = 'an assignment handed to a call is written into its argument list bare'
 
 #: The same, for the paren-stripped tier.
 KNOWN_BRACKET_VIOLATIONS: dict[str, str] = {
-    "Write-Host ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SGVs!bG8=')))":
-        _TYPE_MEMBER_AS_A_WORD,
     '[Array]::Reverse(($x = 1, 2, 3)); Write-Output $x':
         _ASSIGNMENT_AS_AN_ARGUMENT,
     '[Array]::Reverse(($x = 1, 2))':
         _ASSIGNMENT_AS_AN_ARGUMENT,
-    'Write-Output ([Math]::Max(2, 1))':
-        _TYPE_MEMBER_AS_A_WORD,
-    "$x = 1, 2, 3; $h = @{ k = $x }; function f { & ([scriptblock]::Create($c)) }; "
-    "$c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; f; Write-Output $x":
-        _TYPE_MEMBER_AS_A_WORD,
-    "$x = 'a'; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; & ([scriptblock]::Create($c)); "
-    'Write-Output $x':
-        _TYPE_MEMBER_AS_A_WORD,
-    "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; "
-    '& ([scriptblock]::Create($c)); Write-Output $x':
-        _TYPE_MEMBER_AS_A_WORD,
-    '$x = 1, 2; Write-Output ([object]::ReferenceEquals($x, $x))':
-        _TYPE_MEMBER_AS_A_WORD,
-    '$x = 1, 2; $y = Sort-Object -InputObject $x; '
-    'Write-Output ([object]::ReferenceEquals($x, $y))':
-        _TYPE_MEMBER_AS_A_WORD,
-    "$x = 1, 2; [AppDomain]::CurrentDomain.SetData('k', $x); "
-    "Write-Output ([object]::ReferenceEquals($x, [AppDomain]::CurrentDomain.GetData('k')))":
-        _TYPE_MEMBER_AS_A_WORD,
-    '$y = 1, 2; $z = $y * 1; Write-Output ([object]::ReferenceEquals($y, $z))':
-        _TYPE_MEMBER_AS_A_WORD,
-    '$y = 1, 2; $n = 1; $z = $y * $n; Write-Output ([object]::ReferenceEquals($y, $z))':
-        _TYPE_MEMBER_AS_A_WORD,
-    '$y = 1, 2; $z = $y * 1.4; Write-Output ([object]::ReferenceEquals($y, $z))':
-        _TYPE_MEMBER_AS_A_WORD,
-    '$x = 1, 2, 3; $b = @(([object[]]$x)); '
-    'Write-Output ([object]::ReferenceEquals($x, $b))':
-        _TYPE_MEMBER_AS_A_WORD,
-    '$x = 1, 2, 3; $a, $b = ,$x; Write-Output ([object]::ReferenceEquals($x, $a))':
-        _TYPE_MEMBER_AS_A_WORD,
-    '$x = 1, 2, 3; $b = $null; $b += $x; Write-Output ([object]::ReferenceEquals($x, $b))':
-        _TYPE_MEMBER_AS_A_WORD,
 }
 
 

@@ -10,11 +10,12 @@ from collections import ChainMap
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import Mapping, TypeAlias
+    from typing import Iterable, Mapping, TypeAlias
 
     _Value: TypeAlias = 'str | int | float | bool | list | None | _MatchTable'
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
+from refinery.lib.scripts.ps1.analysis.blocks import runs_alike_in_the_scope_around_it
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
 from refinery.lib.scripts.ps1.analysis.effects import (
@@ -25,6 +26,7 @@ from refinery.lib.scripts.ps1.analysis.effects import (
 from refinery.lib.scripts.ps1.analysis.model import (
     Ps1NameSet,
     Ps1SemanticModel,
+    is_write_occurrence,
     occurrence_role,
 )
 from refinery.lib.scripts.ps1.analysis.separator import OFS_FALLBACK, OFS_NAME
@@ -495,6 +497,52 @@ def _strict_mode_flags(cache) -> tuple[bool, bool]:
     )
 
 
+#: The qualifiers under which a read finds the binding of the scope it runs in before any other.
+_READS_OF_THE_OWN_SCOPE = frozenset({
+    Ps1ScopeModifier.NONE,
+    Ps1ScopeModifier.LOCAL,
+    Ps1ScopeModifier.PRIVATE,
+    Ps1ScopeModifier.VARIABLE,
+})
+
+
+def _runs_alike_where_the_call_stands(
+    code: str,
+    function: Ps1FunctionDefinition,
+    bound: Iterable[str],
+) -> bool:
+    """
+    Whether the code a function's body hands to `Invoke-Expression` does the same where the call of
+    the function stands, which is where an evaluator that hands it on puts it, as in the function's
+    scope, where 5.1 runs it. It has to run alike in a scope around the function's
+    (`refinery.lib.scripts.ps1.analysis.blocks.runs_alike_in_the_scope_around_it`) and read no
+    variable the call binds: one in *bound*, the names the evaluated call holds, or one the body
+    writes anywhere, its parameters included. Such a read finds the function's binding where 5.1
+    runs the code, and whatever the caller holds where the code is put; measured,
+    `function B { $r = 'x'; Invoke-Expression '$r' }; Write-Host (B)` writes x.
+    """
+    from refinery.lib.scripts.ps1.parser import Ps1Parser
+    try:
+        parsed = Ps1Parser(code).parse()
+    except Exception:
+        return False
+    if not runs_alike_in_the_scope_around_it(parsed):
+        return False
+    names = {name.lower() for name in bound}
+    if function.body is not None:
+        names.update(
+            node.name.lower()
+            for node in function.body.walk()
+            if isinstance(node, Ps1Variable) and is_write_occurrence(node)
+        )
+    return not any(
+        isinstance(node, Ps1Variable)
+        and node.scope in _READS_OF_THE_OWN_SCOPE
+        and node.name.lower() in names
+        for node in parsed.walk()
+    )
+
+
 class _Ps1Interpreter:
 
     def __init__(
@@ -957,6 +1005,8 @@ class _Ps1Interpreter:
         try:
             result = child.execute(body, bindings)
         except InvokeExpression as iex:
+            if not _runs_alike_where_the_call_stands(iex.code, funcdef, child._env):
+                raise _Ps1InterpreterError
             return self._resolve_iex_code(iex.code)
         finally:
             self._iterations += child._iterations
@@ -2068,6 +2118,8 @@ class Ps1FunctionEvaluator(Transformer):
         try:
             result = interpreter.execute(funcdef.body, bindings)
         except InvokeExpression as iex:
+            if not _runs_alike_where_the_call_stands(iex.code, funcdef, interpreter._env):
+                return None
             replacement = self._make_iex_node(iex.code)
             if replacement is None:
                 self._failed_counts[key] = self._failed_counts.get(key, 0) + 1

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import lines_executed, wontfix, blocker, todo
+from test import lines_executed, wontfix, todo
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.analysis import world
@@ -13,7 +13,6 @@ from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
 class TestPs1AnAttributeArgumentWithoutAValueIsPrintedAsWritten(TestPs1):
 
-    @blocker
     def test_a_named_attribute_argument_without_a_value_stays_a_name(self):
         source = 'param([Parameter(Mandatory)] $x)'
         self.assertIn('Parameter(Mandatory)', Ps1Synthesizer().convert(Ps1Parser(source).parse()))

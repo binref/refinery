@@ -354,9 +354,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The left operand is replaced by a copy, so the join writes `1,2,3` where the snippet '
         'writes `9,2,3`: the right operand stores through the table after the left one named '
         'the array, and a change is ordered against the whole statement.',
-    '$_ = 5; switch (1) { default { Write-Output $_ } }':
-        'The `switch` over a constant is folded to its clause, which then reads the `$_` the '
-        'script stored and writes `5` where the snippet writes `1`.',
     "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('System.Math', [string]); "
     "iex 'Write-Host ([System.Math].FullName)'":
         'The text is run in the script. 5.1 resolves a type name when the code spelling it is '

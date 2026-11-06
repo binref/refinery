@@ -2688,7 +2688,6 @@ class TestPs1ABodyReadsTheNameItsCallerBinds(_Ps1Ledger):
             'nothing left in the output can write a',
         )
 
-    @todo
     def test_a_switch_clause_reads_the_value_it_runs_for(self):
         tree = self._deobfuscated_tree('$_ = 5; switch (1) { default { Write-Output $_ } }')
         self._assertWrites(

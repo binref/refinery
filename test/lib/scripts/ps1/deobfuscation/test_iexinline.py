@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from test import blocker, opportunity
+from test import opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1IexInlining
@@ -52,17 +52,14 @@ class TestPs1InvokeCommandInlining(TestPs1):
         )
         self.assertIn('Invoke-Command', result)
 
-    @blocker
     def test_an_assignment_in_the_block_does_not_reach_the_variable_of_the_caller(self):
         source = "$x = 'a'\nInvoke-Command -ScriptBlock { $x = 'b' }\nWrite-Host $x"
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'a'")
 
-    @blocker
     def test_a_return_in_the_block_ends_only_the_block(self):
         source = "Invoke-Command -ScriptBlock { return }\nWrite-Host 'after'"
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'after'")
 
-    @blocker
     def test_the_argument_list_binds_to_the_parameters_of_the_block(self):
         source = 'Invoke-Command -ScriptBlock { param($a) Write-Host $a } -ArgumentList 5'
         self._assertDeobfuscatesToOneOf(source, source, 'Write-Host 5')
@@ -234,7 +231,6 @@ class TestPs1IexInlining(TestPs1):
         self.assertIn('scriptblock', result.lower())
         self.assertIn('$var', result)
 
-    @blocker
     def test_scriptblock_create_multi_statement_inlines_into_a_block_the_call_operator_runs(self):
         self._assertDeobfuscatesTo("&([scriptblock]::Create('$a = 1; $b = 2'))", """
             & {

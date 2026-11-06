@@ -13,13 +13,19 @@ from refinery.lib.scripts.ps1.analysis.values import (
     resolve_expression_type,
 )
 from refinery.lib.scripts.ps1.analysis.variable_types import non_null_type_at, type_at
-from refinery.lib.scripts.ps1.ast import get_command_name, get_member_name, unwrap_parens
+from refinery.lib.scripts.ps1.ast import (
+    binds_parameter,
+    get_command_name,
+    get_member_name,
+    unwrap_parens,
+)
 from refinery.lib.scripts.ps1.data import (
     CANONICAL_TYPE_NAMES,
     GET_MEMBER_ALIASES,
     TYPE_ACCELERATORS,
     canonical_member,
     is_enum,
+    member_order,
 )
 from refinery.lib.scripts.ps1.data import resolve_member_type as data_member_type
 from refinery.lib.scripts.ps1.data import (
@@ -29,6 +35,8 @@ from refinery.lib.scripts.ps1.data import (
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName, parse_type_name
 from refinery.lib.scripts.ps1.model import (
     Expression,
+    Ps1CommandArgument,
+    Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
@@ -67,10 +75,16 @@ def canonical_type_name(name: str) -> str | None:
     An accelerator keeps its spelling through a suffix too. `[byte[]]` is the readable form for the
     same reason `[byte]` is, and it reached the display table only because the name it was looked up
     under carried the suffix and the table is keyed without one.
+
+    A constructed generic type is left as written. The display table names only its definition, so
+    rendering `List[int]` off it would answer the open type ``List`1``, which no `New-Object` can
+    build.
     """
     if _accelerator_spelling(name):
         return None
     resolved = resolve_type(name)
+    if resolved is not None and resolved.arguments:
+        return None
     lower = resolved.definition.lower() if resolved is not None else name.lower()
     display = CANONICAL_TYPE_NAMES.get(lower)
     if display is None:
@@ -110,10 +124,15 @@ def resolve_member_type(
     return data_member_type(obj_type, member)
 
 
-def get_member_order(type_name: str | Ps1TypeName) -> list[str] | None:
+def get_member_order(type_name: str | Ps1TypeName, kind: str = '') -> list[str] | None:
     """
-    Return the members of a .NET type in PowerShell Get-Member display order: Methods sorted
-    alphabetically, then properties sorted alphabetically.
+    Return the members of a .NET type in the order `Get-Member` lists them, as observed on a real
+    instance by `refinery.lib.scripts.ps1.data.member_order`; with a `kind`, only the members
+    `refinery.lib.scripts.ps1.data.view_members` records under it, in the same order. A type whose
+    order was not observed is refused: `Get-Member` lists events first and extended members beside
+    the reflected ones, and the member table records neither, so an order built from it puts every
+    name after the first event at the wrong index. Measured, `(New-Object Net.WebClient |
+    Get-Member)[0].Name` is the event `Disposed`.
 
     An enum is refused. `refinery.lib.scripts.ps1.data.view_members` lists an enum's values, which
     is what may follow `::` on the type, where `Get-Member` on a value of the enum lists the
@@ -122,34 +141,64 @@ def get_member_order(type_name: str | Ps1TypeName) -> list[str] | None:
     """
     if is_enum(type_name):
         return None
-    members = view_members(type_name)
-    if members is None:
+    ordered = member_order(type_name)
+    if ordered is None:
         return None
-    methods = sorted(
-        (name for name, m in members.items() if m['kind'] != 'property'),
-        key=str.lower,
-    )
-    properties = sorted(
-        (name for name, m in members.items() if m['kind'] == 'property'),
-        key=str.lower,
-    )
-    return methods + properties
+    if not kind:
+        return list(ordered)
+    members = view_members(type_name) or {}
+    return [name for name in ordered if members.get(name, {}).get('kind') == kind]
 
 
-def _pipeline_pipes_to_get_member(pipeline: Ps1Pipeline) -> bool:
+def _members_listed(command: Ps1CommandInvocation) -> str | None:
     """
-    Check if the last element in a pipeline is a `Get-Member` command.
+    Which members a `Get-Member` call lists, as the kind `get_member_order` narrows to: the empty
+    string for every member when the call has no arguments, `'method'` for `-MemberType Method`,
+    and `None` for any other call, whose list this does not order. `-MemberType Property` is not
+    answered, because the member table does not tell a property from a parameterized one, which
+    `Get-Member` lists under a member type of its own.
+    """
+    arguments = [
+        argument for argument in command.arguments if isinstance(argument, Ps1CommandArgument)
+    ]
+    if not arguments:
+        return ''
+    head, *rest = arguments
+    if head.kind is Ps1CommandArgumentKind.POSITIONAL or not any(
+        binds_parameter(head.name, parameter) for parameter in ('membertype', 'type')
+    ):
+        return None
+    if head.kind is Ps1CommandArgumentKind.NAMED and not rest:
+        value = head.value
+    elif (
+        head.kind is Ps1CommandArgumentKind.SWITCH
+        and len(rest) == 1
+        and rest[0].kind is Ps1CommandArgumentKind.POSITIONAL
+    ):
+        value = rest[0].value
+    else:
+        return None
+    if isinstance(value, Ps1StringLiteral) and value.value.lower() == 'method':
+        return 'method'
+    return None
+
+
+def _pipeline_get_member(pipeline: Ps1Pipeline) -> Ps1CommandInvocation | None:
+    """
+    The `Get-Member` command that ends a pipeline, or `None` where it ends in anything else.
     """
     if not pipeline.elements:
-        return False
+        return None
     last = pipeline.elements[-1]
     if not isinstance(last, Ps1PipelineElement):
-        return False
+        return None
     cmd = last.expression
     if not isinstance(cmd, Ps1CommandInvocation):
-        return False
+        return None
     name = get_command_name(cmd)
-    return name is not None and name.lower() in GET_MEMBER_ALIASES
+    if name is None or name.lower() not in GET_MEMBER_ALIASES:
+        return None
+    return cmd
 
 
 def _pipeline_source_type(
@@ -294,12 +343,16 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
         inner = unwrap_parens(obj.object) if obj.object is not None else None
         if not isinstance(inner, Ps1Pipeline):
             return None
-        if not _pipeline_pipes_to_get_member(inner):
+        get_member = _pipeline_get_member(inner)
+        if get_member is None:
+            return None
+        kind = _members_listed(get_member)
+        if kind is None:
             return None
         type_name = _pipeline_source_type(inner, self._type_of_variable)
         if type_name is None:
             return None
-        ordered = get_member_order(type_name)
+        ordered = get_member_order(type_name, kind)
         if ordered is None or index < 0 or index >= len(ordered):
             return None
         return make_string_literal(ordered[index])

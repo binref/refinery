@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from typing import Iterator
 
 from refinery.lib.scripts import Node
+from refinery.lib.scripts.ps1.analysis.aliasdef import ALIAS_DEFINING_COMMANDS
 from refinery.lib.scripts.ps1.analysis.model import (
     NAME_ROLES,
     Occurrence,
@@ -55,11 +56,14 @@ from refinery.lib.scripts.ps1.analysis.naming import (
     named_references,
 )
 from refinery.lib.scripts.ps1.analysis.opaque import writes_nobody_can_attribute
+from refinery.lib.scripts.ps1.analysis.world import runs_code_in_the_calling_scope
 from refinery.lib.scripts.ps1.ast import (
     binding_key,
     binds_parameter,
     bound_argument_value,
     free_positional_values,
+    get_named_blocks,
+    get_param_block,
     resolve_command_name,
 )
 from refinery.lib.scripts.ps1.data import (
@@ -69,14 +73,19 @@ from refinery.lib.scripts.ps1.data import (
     scriptblock_parameters,
 )
 from refinery.lib.scripts.ps1.model import (
+    Ps1ClassDefinition,
+    Ps1Code,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
+    Ps1EnumDefinition,
     Ps1FunctionDefinition,
     Ps1InvokeMember,
+    Ps1ReturnStatement,
     Ps1ScopeModifier,
     Ps1Script,
     Ps1ScriptBlock,
+    Ps1TrapStatement,
     Ps1Variable,
 )
 
@@ -374,6 +383,94 @@ def classify_block(
         iteration=Ps1BlockIteration.UNKNOWN,
         site=None,
     )
+
+
+#: The variables a scope binds for the code it runs. A block reads these off its own invocation, and
+#: its statements standing in the code that runs it would read that code's instead.
+_INVOCATION_VARIABLES = frozenset({
+    'args',
+    'input',
+    'myinvocation',
+    'psboundparameters',
+    'pscmdlet',
+})
+
+#: The commands whose effect lands in the scope they run in, besides the variable commands that
+#: `_named_writes` reads: an alias, a drive, a module import and the strict-mode setting are each kept
+#: per scope, and end with the scope that made them.
+_SCOPED_STATE_COMMANDS = ALIAS_DEFINING_COMMANDS | frozenset({
+    'import-module',
+    'ipmo',
+    'new-psdrive',
+    'mount',
+    'ndr',
+    'set-strictmode',
+})
+
+#: The qualifiers that name the scope a write lands in, which it then lands in whether the statement
+#: runs in a block's own scope or in the scope around it.
+_SCOPE_NAMING_QUALIFIERS = frozenset({
+    Ps1ScopeModifier.ENV,
+    Ps1ScopeModifier.GLOBAL,
+    Ps1ScopeModifier.SCRIPT,
+})
+
+
+def runs_alike_in_the_scope_around_it(code: Ps1Code, own_scope: bool = True) -> bool:
+    """
+    Whether the statements of *code*, a block or a script parsed from a string, do the same when
+    they stand in the code that runs *code* as when *code* runs them; that is, whether the call can
+    be replaced by the statements. *own_scope* says whether *code* runs in a scope of its own, as a
+    block called with `&` does, or in the scope of its caller, as `Invoke-Command -NoNewScope` runs
+    it.
+
+    A scope of its own is what makes most of the difference. A variable, an alias, a function, a
+    drive, an imported module and the strict-mode setting that the statements make in it are gone
+    when the call returns, and standing in the caller they outlive it. Whatever the scope, the
+    statements must not depend on being the body of a call: a `return` leaves the call and not the
+    caller, a `trap` handles only what the call raises, a parameter and the invocation variables
+    are bound for the call, and code run by dot-sourcing or `Invoke-Expression` writes the scope it
+    runs in. Everything in the block is asked, including the blocks nested in it, because a nested
+    block a command runs in the scope around it writes this one.
+    """
+    if get_param_block(code) is not None or get_named_blocks(code):
+        return False
+    stack: list[Node] = list(code.body)
+    while stack:
+        node = stack.pop()
+        stack.extend(node.children())
+        if isinstance(node, (
+            Ps1ReturnStatement,
+            Ps1TrapStatement,
+            Ps1FunctionDefinition,
+            Ps1ClassDefinition,
+            Ps1EnumDefinition,
+        )):
+            return False
+        if isinstance(node, Ps1Variable):
+            if node.scope is Ps1ScopeModifier.NONE and node.name.lower() in _INVOCATION_VARIABLES:
+                return False
+            if (
+                own_scope
+                and is_write_occurrence(node)
+                and node.scope not in _SCOPE_NAMING_QUALIFIERS
+            ):
+                return False
+            continue
+        if not isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember)):
+            continue
+        if writes_nobody_can_attribute(node):
+            return False
+        if own_scope and any(_named_writes(node)):
+            return False
+        if not isinstance(node, Ps1CommandInvocation):
+            continue
+        name = resolve_command_name(node)
+        if runs_code_in_the_calling_scope(node, name):
+            return False
+        if own_scope and name is not None and name.lower() in _SCOPED_STATE_COMMANDS:
+            return False
+    return True
 
 
 class Ps1BlockModel:

@@ -439,9 +439,12 @@ def _switch_clause_body(
     """
     The statements of a matched switch clause and whether the clause ends the switch, which an
     unlabelled trailing `break` does; or `None` when inlining the clause would move where a jump in
-    it lands. Any other `break` or `continue` that leaves the clause lands on the switch, or on
-    what its label names, and once the clause stands outside the switch an unlabelled one lands on
-    the loop around it instead. A labelled one is refused without matching its label.
+    it lands, or what a variable in it reads. Any other `break` or `continue` that leaves the clause
+    lands on the switch, or on what its label names, and once the clause stands outside the switch
+    an unlabelled one lands on the loop around it instead. A labelled one is refused without
+    matching its label. The switch binds `$_` and `$PSItem` to the value a clause runs for and
+    `$switch` to its enumerator; outside the switch these read whatever the code around it holds,
+    and a block the clause runs reads them from the clause's scope as well.
     """
     stmts = list(body)
     stop = False
@@ -449,6 +452,12 @@ def _switch_clause_body(
         stmts = stmts[:-1]
         stop = True
     if any(dispatch.lets_out_a_loop_jump(stmt) for stmt in stmts):
+        return None
+    if any(
+        is_pipeline_item(node) or is_builtin_variable(node, {'switch'})
+        for stmt in stmts
+        for node in stmt.walk()
+    ):
         return None
     return stmts, stop
 

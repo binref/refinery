@@ -318,7 +318,7 @@ class Ps1RangeExpression(Expression):
 class Ps1Attribute(Node):
     name: str = ''
     positional_args: list[Expression] = field(default_factory=list)
-    named_args: list[tuple[str, Expression]] = field(default_factory=list)
+    named_args: list[tuple[str, Expression | None]] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)

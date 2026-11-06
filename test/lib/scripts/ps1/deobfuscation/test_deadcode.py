@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import blocker, opportunity
+from test import opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.pipeline import PipelineObserver, TransformerGroup
@@ -50,7 +50,6 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertNotIn("'a'", result)
         self.assertNotIn("'c'", result)
 
-    @blocker
     def test_the_clause_a_switch_over_a_constant_runs_keeps_the_value_it_runs_for(self):
         source = "switch ('abc') { 'abc' { Write-Host $_ } }"
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'abc'")

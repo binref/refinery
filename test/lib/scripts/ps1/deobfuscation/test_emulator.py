@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import backlog, blocker, todo, wontfix
+from test import backlog, todo, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1 import data
@@ -281,7 +281,6 @@ class TestPs1FunctionEvaluator(TestPs1):
         """)
         self._assertDeobfuscatesToOneOf(source, source, "'Write-Host Hello'")
 
-    @blocker
     def test_iex_of_a_local_variable_is_not_moved_out_of_its_function(self):
         source = """
             function B { $r = 'x'; Invoke-Expression '$r' }
