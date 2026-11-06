@@ -20,6 +20,7 @@ for comma in (',', ''):
         for suffix in ('st', 'nd', 'rd', 'th', ''):
             _DATETIME_PATTERNS.add(F'{month_name} %d{suffix} %Y{comma} %H:%M:%S')
             _DATETIME_PATTERNS.add(F'{month_name} %d{comma} %Y')
+            _DATETIME_PATTERNS.add(F'%d{comma} {month_name} %Y')
             for day_name in ('%a', '%A'):
                 # Wed, 20 Aug 2025 00:56:59
                 _DATETIME_PATTERNS.add(F'{day_name}{comma} %d{suffix} {month_name} %Y %H:%M:%S')

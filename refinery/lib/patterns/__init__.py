@@ -390,6 +390,7 @@ _pattern_time = r'(?:{H}:{M}(?::{S})?|{I}:{M}(?::{S})?{c}?\(?{p}\)?)'.format_map
 _pattern_date_elements['T'] = _pattern_time
 
 _pattern_date_list = [
+    R'(?:{d}|{D}){c}{B}{c}{Y}',
     R'{A}{c}(?:{d}|{D}){gap}{B}{c}{Y}(?:\s{T})?',
     R'{B}\s(?:{d}|{D}){c}{Y}(?:\s{T})?',
     R'{Y}[-:]{m}[-:]{d}(?:[T\x20]{H}:{M}(?::{S})?(?:\.[0-9]{{1,6}})?(?:Z|{z})?)',
