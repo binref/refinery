@@ -220,3 +220,18 @@ The name of a test and its code should make its purpose and the correctness of i
 The goal is that a test requires no further narration via comment or docstring.
 In the rare case where either requires an explanation:
 Use docstrings to explain purpose and comments to explain correctness.
+
+## Test Markers
+
+A test of a defect that is not fixed yet carries one of the markers from `test/__init__.py`.
+Every marker except `@wontfix` runs the test as an expected failure that only a failed assertion meets.
+Markers are removed when the defect is fixed.
+Rank a defect by how realistic its triggering input is and by how much harm a wrong result does.
+
+| Marker             | Meaning                                                                    |
+|--------------------|----------------------------------------------------------------------------|
+| `@blocker`         | Severe defect. It must be fixed before the next release.                   |
+| `@todo`            | Default category for real defects whose fix is deferred but desired.       |
+| `@backlog`         | A real defect, but of lower priority; TODOs should go first.               |
+| `@wontfix(reason)` | A made-up input shape or out-of-scope scenario that is explicitly skipped. |
+| `@opportunity`     | Not a defect, but a test describing how the code could behave better.      |
