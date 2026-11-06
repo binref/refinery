@@ -187,6 +187,29 @@ class TestPs1SimplifyExtra(TestPs1):
         self.assertEqual(result, "Write-Output 'hi'")
 
 
+class TestPs1AnInvokeOfAMethodTheReceiverCarriesIsTheCallItself(TestPs1):
+
+    def test_a_method_of_what_a_method_call_hands_back_is_called_directly(self):
+        self._assertDeobfuscatesTo(
+            "[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils')"
+            ".GetField.Invoke('amsiInitFailed', 'NonPublic,Static')",
+            "[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils')"
+            ".GetField('amsiInitFailed', 'NonPublic,Static')",
+        )
+
+    def test_a_static_method_of_a_type_is_called_directly(self):
+        self._assertDeobfuscatesTo(
+            '[Convert]::FromBase64String.Invoke($s)',
+            '[Convert]::FromBase64String($s)',
+        )
+
+    def test_a_method_of_a_type_read_with_a_dot_is_a_method_of_the_type_object(self):
+        self._assertDeobfuscatesTo(
+            "[Convert].GetMethod.Invoke('FromBase64String')",
+            "[Convert].GetMethod('FromBase64String')",
+        )
+
+
 class TestPs1AParameterNameIsCompletedOnlyForACommandThatBindsByName(TestPs1):
 
     def test_a_cmdlet_parameter_is_completed_to_its_canonical_spelling(self):

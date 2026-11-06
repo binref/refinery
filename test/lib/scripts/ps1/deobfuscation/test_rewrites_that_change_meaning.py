@@ -58,13 +58,26 @@ class TestPs1AJumpABlockLetsOutReachesTheLoopAroundIt(TestPs1):
 
 class TestPs1ABlockHeldByAPropertyIsInvokedAsABlock(TestPs1):
 
-    @todo
     def test_invoking_a_block_a_property_holds_is_not_rewritten_into_a_method_call(self):
         source = cleandoc("""
             $o = [pscustomobject]@{ B = { Write-Host 'm1' } }
             $o.B.Invoke()
         """)
         self.assertIn(self._deobfuscate_iterative(source), (self._apply(source), "Write-Host 'm1'"))
+
+    def test_invoking_a_block_a_table_key_holds_is_not_rewritten_into_a_method_call(self):
+        source = cleandoc("""
+            $h = @{ B = { Write-Host 'k' } }
+            $h.B.Invoke()
+        """)
+        self.assertIn(self._deobfuscate_iterative(source), (self._apply(source), "Write-Host 'k'"))
+
+    def test_invoking_a_member_of_a_value_of_unknown_type_is_left_alone(self):
+        source = cleandoc("""
+            param($o)
+            $o.B.Invoke()
+        """)
+        self.assertEqual(self._deobfuscate_iterative(source), self._apply(source))
 
 
 class TestPs1ADefaultParameterValueMayChangeWhatAVariableCommandDoes(TestPs1):

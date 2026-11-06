@@ -75,6 +75,7 @@ from refinery.lib.scripts.ps1.data import (
     enum_name,
     enum_ordinal,
     enum_storage,
+    instance_overloads,
     is_assignable_to,
     named_type,
     operand_witnesses,
@@ -348,6 +349,58 @@ def resolve_expression_type(
             return None
         return resolve_member_type(obj_type, member_name)
     return None
+
+
+def resolve_type_floor(
+    expr: Expression,
+    type_of_variable: Ps1VariableTyping | None = None,
+) -> Ps1TypeName | None:
+    """
+    A type the value of `expr` is or derives from, so that every member it declares is one the value
+    carries, or `None` where none is known. This reads further than `resolve_expression_type`, whose
+    answer is the value's own type: a property or a method call answers the type it is declared to
+    hand back, which the value may derive from, where every overload on the side the call reaches
+    declares the same one.
+    """
+    unwrapped = unwrap_parens(expr)
+    if not isinstance(unwrapped, Expression):
+        return None
+    if isinstance(unwrapped, (Ps1MemberAccess, Ps1InvokeMember)) and unwrapped.object is not None:
+        owner = member_owner_floor(unwrapped.object, unwrapped.access, type_of_variable)
+        member = get_member_name(unwrapped.member)
+        if owner is None or member is None:
+            return None
+        if isinstance(unwrapped, Ps1MemberAccess):
+            return resolve_member_type(owner, member)
+        if unwrapped.access is Ps1AccessKind.STATIC:
+            overloads = static_overloads(owner, member)
+        else:
+            overloads = instance_overloads(owner, member)
+        returns = {overload.get('returns') for overload in overloads}
+        if len(returns) != 1:
+            return None
+        declared = next(iter(returns))
+        return resolve_type(declared) if declared else None
+    return resolve_expression_type(unwrapped, type_of_variable)
+
+
+def member_owner_floor(
+    receiver: Expression,
+    access: Ps1AccessKind,
+    type_of_variable: Ps1VariableTyping | None = None,
+) -> Ps1TypeName | None:
+    """
+    A type whose members a member read off `receiver` finds, or `None` where none is known. Read
+    with `::`, that is the type a type literal names; read with a dot, it is `resolve_type_floor`
+    of the receiver, and a type literal there is the `System.Type` it evaluates to rather than the
+    type it names.
+    """
+    named = unwrap_parens(receiver)
+    if access is Ps1AccessKind.STATIC:
+        return resolve_type(named.name) if isinstance(named, Ps1TypeExpression) else None
+    if isinstance(named, Ps1TypeExpression):
+        return resolve_type('System.Type')
+    return resolve_type_floor(receiver, type_of_variable)
 
 
 def non_null_type(

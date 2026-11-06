@@ -845,24 +845,9 @@ class Ps1ConstantFolding(Transformer):
             return None
         lower = member_name.lower()
         return (
-            self._try_fold_invoke_redirect(node, lower)
-            or self._try_fold_instance_method(node, lower)
+            self._try_fold_instance_method(node, lower)
             or self._try_fold_static_method(node, lower)
         ) or None
-
-    @staticmethod
-    def _try_fold_invoke_redirect(
-        node: Ps1InvokeMember, lower: str,
-    ) -> Expression | None:
-        if lower == 'invoke' and isinstance(node.object, Ps1MemberAccess):
-            return Ps1InvokeMember(
-                offset=node.offset,
-                object=node.object.object,
-                member=node.object.member,
-                arguments=node.arguments,
-                access=node.object.access,
-            )
-        return None
 
     @staticmethod
     def _try_fold_instance_method(

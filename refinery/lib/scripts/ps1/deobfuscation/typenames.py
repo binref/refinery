@@ -11,6 +11,7 @@ from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.values import (
     Ps1VariableTyping,
     make_string_literal,
+    member_owner_floor,
     resolve_expression_type,
 )
 from refinery.lib.scripts.ps1.analysis.variable_types import non_null_type_at, type_at
@@ -24,18 +25,23 @@ from refinery.lib.scripts.ps1.data import (
     CANONICAL_TYPE_NAMES,
     GET_MEMBER_ALIASES,
     TYPE_ACCELERATORS,
+    MemberLookup,
     canonical_member,
+    instance_overloads,
     is_enum,
     member_order,
+    member_record,
 )
 from refinery.lib.scripts.ps1.data import resolve_member_type as data_member_type
 from refinery.lib.scripts.ps1.data import (
     resolve_type,
+    static_overloads,
     view_members,
 )
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName, parse_type_name
 from refinery.lib.scripts.ps1.model import (
     Expression,
+    Ps1AccessKind,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
@@ -49,6 +55,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1StringLiteral,
     Ps1Variable,
 )
+
+_OBJECT = 'System.Object'
 
 
 def _accelerator_spelling(name: str) -> bool:
@@ -224,6 +232,19 @@ def _pipeline_source_type(
     return resolve_expression_type(source.expression, type_of_variable)
 
 
+def _carries_the_method(owner: Ps1TypeName, name: str, *, static: bool) -> bool:
+    """
+    Whether the member `name` of `owner` is a method with an overload on the given side. The member
+    is the first one its name matches, as PowerShell reads it, so a property that shares the name
+    with a method is not taken for the method.
+    """
+    record = member_record(owner, name)
+    if isinstance(record, MemberLookup) or record.get('kind') != 'method':
+        return False
+    overloads = static_overloads(owner, name) if static else instance_overloads(owner, name)
+    return bool(overloads)
+
+
 class VariableTypeAwareTransformer(Transformer):
     """
     A pass that asks `refinery.lib.scripts.ps1.analysis.variable_types.type_at` what a variable
@@ -299,8 +320,46 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
 
     def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
         self.generic_visit(node)
+        called = self._try_call_the_invoked_method(node)
+        if called is not None:
+            return called
         self._try_normalize_member_case(node)
         return None
+
+    def _try_call_the_invoked_method(self, node: Ps1InvokeMember) -> Ps1InvokeMember | None:
+        """
+        The call `X.Name(...)` that `X.Name.Invoke(...)` makes where `X.Name` reads a method of `X`.
+        Where it reads a property instead, the `Invoke` runs what the property holds, a script block
+        for instance, and `X.Name(...)` asks for a method the receiver does not have.
+        """
+        member = get_member_name(node.member)
+        if member is None or member.lower() != 'invoke':
+            return None
+        held = node.object
+        if not isinstance(held, Ps1MemberAccess) or held.object is None:
+            return None
+        name = get_member_name(held.member)
+        if name is None or not self._reads_a_method(held.object, name, held.access):
+            return None
+        return Ps1InvokeMember(
+            offset=node.offset,
+            object=held.object,
+            member=held.member,
+            arguments=node.arguments,
+            access=held.access,
+        )
+
+    def _reads_a_method(self, receiver: Expression, name: str, access: Ps1AccessKind) -> bool:
+        """
+        Whether reading the member `name` off `receiver` reads a method. A value whose type is not
+        known, or whose type does not list the member, still carries the methods of `System.Object`.
+        """
+        owner = member_owner_floor(receiver, access, self._type_of_variable)
+        if access is Ps1AccessKind.STATIC:
+            return owner is not None and _carries_the_method(owner, name, static=True)
+        if owner is None or isinstance(member_record(owner, name), MemberLookup):
+            owner = resolve_type(_OBJECT)
+        return owner is not None and _carries_the_method(owner, name, static=False)
 
     def _try_normalize_member_case(self, node: Ps1MemberAccess | Ps1InvokeMember):
         if node.object is None:
