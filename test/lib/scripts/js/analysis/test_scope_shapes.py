@@ -7,7 +7,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase, opportunity, todo
+from test import TestBase, backlog, opportunity
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import (
     Program,
@@ -750,7 +750,7 @@ class TestTheDeclarationsADeadBlockHeldAreKept(TestBase):
             },
         )
 
-    @todo
+    @backlog
     def test_a_dead_clause_in_a_function_leaves_its_name_in_the_function_or_the_read_folded(self):
         self.assertIn(
             folded(A_DECLARATION_A_DEAD_BLOCK_HOLDS['a function that is the whole of an if clause'].text),
@@ -768,7 +768,7 @@ class TestTheDeclarationsADeadBlockHeldAreKept(TestBase):
             ),
         )
 
-    @todo
+    @opportunity
     def test_a_dead_clause_in_a_function_leaves_the_read_folded(self):
         self.assertEqual(
             folded(A_DECLARATION_A_DEAD_BLOCK_HOLDS['a function that is the whole of an if clause'].text),
@@ -861,7 +861,7 @@ class TestACallToABlockFunctionIsFoldedWhereTheCopyHasRun(TestBase):
     def test_a_call_inside_the_block_is_folded_and_the_block_around_it_removed(self):
         self.assertEqual(folded(A_CALL_INSIDE_THE_BLOCK_OF_A_BLOCK_FUNCTION), 'console.log(1);')
 
-    @todo
+    @backlog
     def test_a_call_before_the_copy_runs_comes_back_as_it_was_written_or_folded_to_what_it_prints(self):
         self.assertIn(
             folded(A_CALL_BEFORE_THE_COPY_OF_A_BLOCK_FUNCTION_RUNS),
@@ -871,7 +871,7 @@ class TestACallToABlockFunctionIsFoldedWhereTheCopyHasRun(TestBase):
             ),
         )
 
-    @todo
+    @opportunity
     def test_a_call_before_the_copy_runs_is_folded_to_what_it_prints(self):
         self.assertEqual(folded(A_CALL_BEFORE_THE_COPY_OF_A_BLOCK_FUNCTION_RUNS), "console.log('threw');")
 
@@ -1145,7 +1145,7 @@ class TestTheBlockATakenBranchScopesIsKept(TestBase):
         """
     )
 
-    @todo
+    @backlog
     def test_each_taken_branch_in_a_function_keeps_its_block_there_or_is_folded_to_what_it_prints(self):
         for label in self._IN_A_FUNCTION:
             with self.subTest(label=label):
@@ -1154,7 +1154,7 @@ class TestTheBlockATakenBranchScopesIsKept(TestBase):
                     (self._BLOCK_KEPT_IN_THE_FUNCTION, self._FOLDED_IN_A_FUNCTION),
                 )
 
-    @todo
+    @opportunity
     def test_each_taken_branch_in_a_function_is_folded_to_what_it_prints(self):
         self.assertEqual(
             {label: folded(A_DECLARATION_A_TAKEN_BRANCH_HOLDS[label].text) for label in self._IN_A_FUNCTION},

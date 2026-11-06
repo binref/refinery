@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase, todo
+from test import TestBase, backlog
 from test.lib.scripts.js.analysis.differential import (
     deobfuscate_source,
     module_graph_behavior,
@@ -254,7 +254,7 @@ class TestTheCallsThatLoadCode(TestBase):
     def test_a_require_the_file_declares_loads_nothing(self):
         self.assertCountEqual(self._loaded('function require(m) { return m; } require("./setup.js");'), [])
 
-    @todo
+    @backlog
     def test_a_require_held_under_another_name_loads_code(self):
         self.assertCountEqual(self._loaded('var r = require; r("./setup.js");'), ['./setup.js'])
 

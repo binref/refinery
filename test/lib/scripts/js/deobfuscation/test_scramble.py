@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from test import backlog, todo
+from test import backlog
 from test.lib.scripts.js.analysis.differential import deobfuscate_within
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import printed
@@ -393,7 +393,7 @@ class TestTheInstallationOfADecoderIsKeptWhereACallStillReachesIt(TestJsDeobfusc
         left_alone = printed(F'{self._MACHINERY}\n{inspect.cleandoc(tail)}')
         self.assertIn(self._decode(tail), (machinery_kept_and_the_literal_call_decoded, left_alone))
 
-    @todo
+    @backlog
     def test_an_installation_on_the_global_object_is_kept_where_a_call_reads_the_name(self):
         tail = """
             window.d = decode;

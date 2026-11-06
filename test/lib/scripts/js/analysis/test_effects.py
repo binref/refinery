@@ -5,7 +5,7 @@ import inspect
 
 from dataclasses import replace
 
-from test import TestBase, fastest_processor_time, opportunity, processor_time_ratio, todo
+from test import TestBase, backlog, fastest_processor_time, opportunity, processor_time_ratio
 
 from refinery.lib.scripts import set_child, tree_version
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
@@ -243,7 +243,7 @@ class TestEffectModel(TestBase):
         self.assertTrue(effects.function_can_mutate(g, self._binding(ast, effects.model, 'x')))
         self.assertFalse(effects.summary_of(g).is_pure)
 
-    @todo
+    @backlog
     def test_arithmetic_on_parameters_is_not_pure(self):
         self.assertFalse(self._summary('function f(a, b){ return a * b + 1; }', 'f').is_pure)
 
@@ -269,7 +269,7 @@ class TestEffectModel(TestBase):
         summary = self._summary('function f(){ return String.fromCharCode(65); }', 'f')
         self.assertTrue(summary.is_pure)
 
-    @todo
+    @backlog
     def test_a_pure_intrinsic_converting_a_parameter_is_not_pure(self):
         summary = self._summary('function f(n){ return String.fromCharCode(n); }', 'f')
         self.assertFalse(summary.is_pure)
@@ -2902,7 +2902,7 @@ class TestAParameterDefaultIsPartOfWhatACallEvaluates(TestBase):
         }
         self.assertEqual(impure, set())
 
-    @todo
+    @backlog
     def test_a_call_may_throw_where_a_destructuring_parameter_meets_the_argument_passed(self):
         for source in _A_DESTRUCTURING_PARAMETER_EVERY_DEFAULT_OF_WHICH_IS_BOUND:
             with self.subTest(source=source):

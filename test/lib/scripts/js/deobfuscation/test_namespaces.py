@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import opportunity, todo
+from test import backlog, opportunity
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, before_and_after_in_a_host, prints
@@ -400,7 +400,7 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    @todo
+    @backlog
     def test_a_this_method_called_detached_at_the_top_level_still_reads_the_global_object(self):
         for call in [
             'console.log((0, NS.f)());',

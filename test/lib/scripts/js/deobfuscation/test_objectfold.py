@@ -4,7 +4,7 @@ import functools
 import inspect
 import unittest
 
-from test import TestBase, a_property_of_the_pin_itself, fastest_processor_time, todo
+from test import TestBase, a_property_of_the_pin_itself, backlog, fastest_processor_time
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
@@ -117,7 +117,7 @@ class TestObjectFold(TestJsDeobfuscator):
             self._objectfold('var o = { p: 1 }; eval("x"); SINK(o.p);'),
         )
 
-    @todo
+    @backlog
     def test_script_scope_object_not_folded_past_a_direct_eval_of_unread_code(self):
         source = inspect.cleandoc(
             """

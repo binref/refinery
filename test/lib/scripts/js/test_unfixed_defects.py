@@ -152,7 +152,7 @@ class TestAModulesTopLevelAwaitIsAProgram(TestBase):
         source = 'export {}; await 1; console.log(2);'
         self.assertEqual(before_and_after(source, module=True), (prints('2'), prints('2')))
 
-    @todo
+    @backlog
     def test_a_top_level_await_beside_module_syntax_is_a_well_formed_program(self):
         self.assertEqual(well_formed('export {}; await 1;'), True)
 
@@ -176,7 +176,7 @@ A_USING_DECLARATION_IN_EACH_PLACE_A_SCRIPT_ALLOWS = {
 
 class TestAUsingDeclarationIsAProgram(TestBase):
 
-    @todo
+    @backlog
     def test_a_using_declaration_is_a_well_formed_program(self):
         rows = A_USING_DECLARATION_IN_EACH_PLACE_A_SCRIPT_ALLOWS
         self.assertEqual(
@@ -229,7 +229,7 @@ A_STRICT_BODY_ASSIGNING_TO_AN_UNDECLARED_NAME = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestTheEvaluatorRunsABodyInTheModeItDeclares(TestBase):
 
-    @todo
+    @backlog
     def test_an_assignment_to_an_undeclared_name_throws_in_a_strict_body(self):
         rows = A_STRICT_BODY_ASSIGNING_TO_AN_UNDECLARED_NAME
         self.assertEqual(
@@ -254,7 +254,7 @@ A_STRICT_REGION_ASSIGNING_TO_NO_BINDING = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAWriteOnlyStrictCodeRefusesIsNotADeadStore(TestBase):
 
-    @todo
+    @backlog
     def test_an_assignment_to_no_binding_throws_where_the_region_is_strict(self):
         rows = A_STRICT_REGION_ASSIGNING_TO_NO_BINDING
         self.assertEqual(
@@ -464,12 +464,12 @@ A_FINDER_RETURNING_A_NAME_WHOSE_GLOBAL_STORE_THREW = inspect.cleandoc("""
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAFinderWhoseGlobalReturnACaughtThrowSkipsIsKept(TestBase):
 
-    @todo
+    @backlog
     def test_a_finder_whose_global_return_is_skipped_by_a_caught_throw_is_kept(self):
         source = A_FINDER_WHOSE_GLOBAL_RETURN_A_CAUGHT_THROW_SKIPS
         self.assertEqual(before_and_after(source), (('undefined\n', None), ('undefined\n', None)))
 
-    @todo
+    @backlog
     def test_a_finder_returning_a_name_whose_global_store_threw_is_kept(self):
         source = A_FINDER_RETURNING_A_NAME_WHOSE_GLOBAL_STORE_THREW
         self.assertEqual(before_and_after(source), (('undefined\n', None), ('undefined\n', None)))
@@ -1610,7 +1610,7 @@ A_FUNCTION_REPLACING_ITS_ARGUMENTS = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAFunctionReadingItsArgumentsIsNotInlined(TestBase):
 
-    @todo
+    @backlog
     def test_the_deobfuscation_prints_what_the_program_prints(self):
         row = A_FUNCTION_REPLACING_ITS_ARGUMENTS['arguments replaced by an array of its elements']
         self.assertEqual(row.read(), row.required())
@@ -1661,7 +1661,7 @@ class TestTheScriptValueOfAnUntakenBranchIsHeld(TestBase):
     `1; if (false) { 2; }` evaluates to `undefined` and not to `1`.
     """
 
-    @todo
+    @backlog
     def test_the_script_ends_on_the_value_of_the_untaken_branch(self):
         source = '1;\nif (false) { 2; }\n'
         deobfuscated = deobfuscate_source(source, preserve_script_return=True)
@@ -2452,7 +2452,7 @@ A_CONVERSION_WITH_AN_EFFECT_THE_SCAN_CANNOT_SEE = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAConversionWithAnEffectIsNeitherDroppedNorMoved(TestBase):
 
-    @todo
+    @backlog
     def test_each_program_still_observes_its_conversions_effect(self):
         rows = A_CONVERSION_WITH_AN_EFFECT_THE_SCAN_CANNOT_SEE
         self.assertEqual(
@@ -2477,7 +2477,7 @@ A_RELOCATED_MAY_THROW_READ_KEEPS_ITS_ORDER = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestARelocatedMayThrowReadIsReorderedPastAnEffect(TestBase):
 
-    @todo
+    @backlog
     def test_a_relocated_may_throw_read_keeps_its_order(self):
         rows = A_RELOCATED_MAY_THROW_READ_KEEPS_ITS_ORDER
         self.assertEqual(
@@ -2488,7 +2488,7 @@ class TestARelocatedMayThrowReadIsReorderedPastAnEffect(TestBase):
 
 class TestACommentBehindTheLastStatementOfALiftedBlockIsKept(TestBase):
 
-    @todo
+    @backlog
     def test_the_comment_survives_the_fold_that_lifts_the_block(self):
         output = deobfuscate_source('if (true) { console.log(1); /* c */ } console.log(2);')
         self.assertEqual(('if' in output, '/* c */' in output), (False, True))
@@ -3120,7 +3120,7 @@ AN_INSTALLER_TAKEN_BY_DESTRUCTURING = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAnInstallerTakenByDestructuringIsSeen(TestBase):
 
-    @todo
+    @backlog
     def test_the_install_is_seen(self):
         rows = AN_INSTALLER_TAKEN_BY_DESTRUCTURING
         self.assertEqual(
@@ -3741,7 +3741,7 @@ class TestAMaskedSlotReadsWhatTheArrayInherits(TestBase):
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAScriptKeptForItsValueEndsOnTheValueOfItsLastStore(TestBase):
 
-    @todo
+    @backlog
     def test_the_script_ends_on_the_value_of_its_last_store(self):
         source = 'var acc;\nacc = 5;\n'
         deobfuscated = deobfuscate_source(source, preserve_script_return=True)
@@ -3975,7 +3975,7 @@ PACKED_THIS = (
 @one_expected_failure_per_program(A_FUNCTION_CALLED_THROUGH_THE_PACKED_ACCESSOR_OBJECT, todo)
 class TestAFunctionCalledThroughThePackedAccessorObjectKeepsItsReceiver(TestBase):
 
-    @todo
+    @backlog
     def test_the_packers_own_output_does_not_call_the_function_bare(self):
         output = deobfuscate_source(PACKED_THIS, execution=ExecutionModel.commonjs)
         self.assertNotIn('helper()', output)
@@ -4336,7 +4336,7 @@ AN_ANONYMOUS_FUNCTION_STORED_ON_A_NAMESPACE = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAnAnonymousFunctionStoredOnANamespaceKeepsItsEmptyName(TestBase):
 
-    @todo
+    @backlog
     def test_the_name_of_the_function_stays_empty(self):
         rows = AN_ANONYMOUS_FUNCTION_STORED_ON_A_NAMESPACE
         self.assertEqual(
@@ -4480,7 +4480,7 @@ class TestACheckOfDefineIsNotDecidedPastCodeFunctionBuilds(TestBase):
             with self.subTest(label=label):
                 self.assertEqual(row.behaves(), row.prints)
 
-    @todo
+    @backlog
     def test_the_deobfuscation_by_the_unit_prints_what_the_program_prints(self):
         for label, row in A_CHECK_OF_DEFINE_AFTER_CODE_FUNCTION_BUILDS.items():
             with self.subTest(label=label):

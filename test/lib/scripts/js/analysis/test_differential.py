@@ -5,7 +5,7 @@ import json
 import unicodedata
 import unittest
 
-from test import TestBase, opportunity, todo
+from test import TestBase, backlog, opportunity
 
 from refinery.lib.scripts import canonical
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
@@ -1017,7 +1017,7 @@ class TestDeobfuscationExpressionRegressions(TestBase):
         self._check(
             R"console.log((function(){ return Buffer.from('QUJD', 'base64').toString('utf8'); })());")
 
-    @todo
+    @backlog
     def test_buffer_decoded_to_string_keeps_the_buffer_where_the_host_may_lack_it(self):
         deobfuscated = deobfuscate_source(
             R"console.log((function(){ return Buffer.from('QUJD', 'base64').toString('utf8'); })());")
@@ -1613,7 +1613,7 @@ class TestMemberBaseSafety(TestBase):
             ' f();'
             " console.log('done');")
 
-    @todo
+    @backlog
     def test_setter_only_literal_base_read_leaves_a_global_of_the_same_name_alone(self):
         source = (
             "function f() { var t = { set k(v) { console.log('setter'); } }.k; }"

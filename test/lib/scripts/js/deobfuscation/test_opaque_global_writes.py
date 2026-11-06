@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import unittest
 
-from test import TestBase, opportunity, todo
+from test import TestBase, backlog, opportunity
 from test.lib.scripts.js.analysis.differential import host_behavior, node_executable
 from test.lib.scripts.js.ledger import (
     a_program,
@@ -146,7 +146,7 @@ class TestAGlobalWrittenUnderARuntimeKeyStillBinds(TestBase):
         source = _A_DECODER_A_FUNCTION_DECLARATION_BINDS_REPLACED_BY_THE_WRITE
         self.assertEqual(host_behavior(source), ('', 'TypeError'))
 
-    @todo
+    @backlog
     def test_a_decoder_a_function_declaration_binds_is_not_folded_across_a_write_replacing_it(self):
         source = _A_DECODER_A_FUNCTION_DECLARATION_BINDS_REPLACED_BY_THE_WRITE
         self.assertEqual(deobfuscated_host_behavior(source), ('', 'TypeError'))

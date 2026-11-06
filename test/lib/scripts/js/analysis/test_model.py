@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from test import TestBase, opportunity, todo
+from test import TestBase, backlog, opportunity
 from test.lib.scripts.js.analysis.write_positions import WRITE_POSITIONS
 
 from refinery.lib.scripts import Node
@@ -1281,7 +1281,7 @@ class TestWhereADynamicScopeCouldRebindABinding(TestBase):
         self.assertFalse(volatile)
         self.assertEqual(sites, [])
 
-    @todo
+    @backlog
     def test_a_direct_eval_in_the_global_scope_is_located_for_a_global(self):
         source = 'var x; eval(payload);'
         ast, binding, sites, volatile = self._located(source)

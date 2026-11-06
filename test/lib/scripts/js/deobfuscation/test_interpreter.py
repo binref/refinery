@@ -6,7 +6,7 @@ import unittest
 
 from typing import NamedTuple
 
-from test import opportunity, todo
+from test import backlog, opportunity
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     code_units,
@@ -803,7 +803,7 @@ class TestInterpreterThrowSemantics(_InNode):
             "var r = 'RangeError: Invalid array length';", self._evaluate_in_node(source)
         )
 
-    @todo
+    @backlog
     def test_array_length_range_error_message_is_not_folded_where_the_engine_is_unknown(self):
         source = inspect.cleandoc(
             """

@@ -6,7 +6,7 @@ import unittest
 
 from typing import NamedTuple
 
-from test import TestBase, opportunity, todo
+from test import TestBase, backlog, opportunity
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -668,7 +668,7 @@ class TestReflectionInlining(TestJsDeobfuscator):
                 """
             )))
 
-    @todo
+    @backlog
     def test_a_payload_reading_its_construction_at_script_scope_is_left_standing(self):
         source = "var h = function() {}.constructor; var f = h('print(1); var h; f;'); f();"
         self.assertEqual(printed(source), self._reflect(source))
