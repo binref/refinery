@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from test import opportunity, todo, wontfix
+from test import backlog, opportunity, todo, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1IexInlining
@@ -145,14 +145,14 @@ class TestPs1CodeThatRunsInAScopeOfItsOwnKeepsIt(TestPs1):
         """
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host '[]'")
 
-    @todo
+    @backlog
     def test_an_error_inside_an_invoke_method_ends_only_the_call(self):
         self._assertKept("""
             [scriptblock]::Create('throw "x"').Invoke()
             Write-Host 'after'
         """)
 
-    @todo
+    @backlog
     def test_an_error_inside_an_invoke_method_skips_the_rest_of_its_code(self):
         self._assertKept("""
             [scriptblock]::Create("1/0; Write-Host 'rest'").Invoke()

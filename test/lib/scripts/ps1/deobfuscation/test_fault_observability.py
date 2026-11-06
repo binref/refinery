@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from refinery.lib.scripts.ps1.analysis import faults
 
-from test import opportunity, todo
+from test import backlog, opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 _RAISE = "$Null = [Int]'abc'"
@@ -614,7 +614,7 @@ class TestPs1AnUnreadablePayloadMayArmStrictModeWithoutSpellingIt(TestPs1):
             {_UNREADABLE}
         """, _UNSET_READ)
 
-    @todo
+    @backlog
     def test_a_bare_unset_read_below_an_unreadable_payload_with_no_handler_is_kept(self):
         # The payload may arm strict mode and set `$ErrorActionPreference` to `Stop`; the read then
         # ends the script before the anchor runs.
@@ -624,7 +624,7 @@ class TestPs1AnUnreadablePayloadMayArmStrictModeWithoutSpellingIt(TestPs1):
             {_ANCHOR}
         """)
 
-    @todo
+    @backlog
     def test_a_discarded_unset_read_below_an_unreadable_payload_with_no_handler_is_kept(self):
         self._assertKept(F"""
             {_UNREADABLE}
@@ -716,7 +716,7 @@ class TestPs1ACommandThatRunsUnreadableCodeIsNotAlwaysAWorldOpener(TestPs1):
         self._assertReadSurvivesBelow(
             'Register-CimIndicationEvent -ClassName Win32_ProcessStartTrace -Action $sb')
 
-    @todo
+    @backlog
     def test_a_command_this_analysis_cannot_resolve_keeps_the_read(self):
         self._assertReadSurvivesBelow(_RUNS_UNREADABLE_CODE[5])
 
@@ -728,7 +728,7 @@ class TestPs1ACommandThatRunsUnreadableCodeIsNotAlwaysAWorldOpener(TestPs1):
 
 class TestPs1TheGrantAssumesTheEntryScopeRunsDefaultSemantics(TestPs1):
 
-    @todo
+    @backlog
     def test_the_discarded_read_survives_when_the_caller_says_this_is_a_fragment(self):
         self._assertKept(F"""
             try {{

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test import TestBase, todo
+from test import TestBase, backlog
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.ps1.analysis.naming import (
@@ -190,7 +190,7 @@ class TestPs1UnreadableNames(TestBase):
             with self.subTest(source):
                 self.assertFalse(addresses_unreadable_name(self._command(source)))
 
-    @todo
+    @backlog
     def test_an_item_write_to_a_computed_path_may_write_any_variable(self):
         self.assertTrue(addresses_unreadable_name(self._command("Set-Item $path 'v'")))
 

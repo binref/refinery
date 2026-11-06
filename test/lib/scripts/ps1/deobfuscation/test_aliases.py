@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import opportunity, todo, wontfix
+from test import backlog, opportunity, todo, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 
@@ -438,7 +438,7 @@ class TestPs1AliasShadowing(TestPs1):
 
 class TestPs1AliasRebindingTheToolCannotRead(TestPs1):
 
-    @todo
+    @backlog
     def test_a_read_below_a_forced_alias_of_invoke_expression_is_not_answered_from_above(self):
         source = cleandoc("""
             Set-Alias e Invoke-Expression -Force

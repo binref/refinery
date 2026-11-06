@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import wontfix, backlog, opportunity, todo
+from test import backlog, opportunity, todo, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.ast import get_command_name
@@ -1218,13 +1218,13 @@ class TestPs1AFailingLineInATrapBodyAnythingMayFireIsKept(TestPs1):
 
 class TestPs1AnAdvancedFunctionToldToStopRunsUnderStop(TestPs1):
 
-    @todo
+    @backlog
     def test_a_failing_line_in_an_advanced_function_told_to_stop_is_kept(self):
         self.assertIn("[int]'a'", self._deobfuscate(
             "function f { [CmdletBinding()] param() $null = [int]'a'; Write-Host 'in-f' }; f -ErrorAction Stop; "
             "Write-Host 'end'"))
 
-    @todo
+    @backlog
     def test_a_bare_failing_line_in_an_advanced_function_told_to_stop_is_kept(self):
         self.assertIn("[int]'a'", self._deobfuscate(
             "function f { [CmdletBinding()] param() [int]'a'; Write-Host 'in-f' }; f -ErrorAction Stop; "
@@ -1269,12 +1269,12 @@ class TestPs1EverySpellingOfAReadOfTheErrorRecordKeepsTheRaise(TestPs1):
 
 class TestPs1AnUnreadablePayloadMayEndTheScriptAtAnyRaiseBelowIt(TestPs1):
 
-    @todo
+    @backlog
     def test_a_bare_division_by_zero_below_an_unreadable_payload_is_kept(self):
         self.assertIn('1 / 0', self._deobfuscate(
             "Invoke-Expression $p\n1/0\nWrite-Host 'after'"))
 
-    @todo
+    @backlog
     def test_a_discarded_division_by_zero_below_an_unreadable_payload_is_kept(self):
         self.assertIn('1 / 0', self._deobfuscate(
             "Invoke-Expression $p\n$Null = 1/0\nWrite-Host 'after'"))
@@ -1282,7 +1282,7 @@ class TestPs1AnUnreadablePayloadMayEndTheScriptAtAnyRaiseBelowIt(TestPs1):
 
 class TestPs1RemovingATrapReadsWhereItsErrorsLand(TestPs1):
 
-    @todo
+    @backlog
     def test_a_trap_whose_resumption_ends_a_loop_is_kept(self):
         self.assertIn('trap', self._deobfuscate(
             "$s = 'a'; trap { continue }; while ($Host) { $null = [int]$s }; Write-Host 'after'"))

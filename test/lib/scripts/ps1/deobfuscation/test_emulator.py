@@ -648,7 +648,7 @@ class TestPs1ACallBelowCodeNobodyCanReadIsFoldedOnlyWhereThatCodeIsTrusted(TestP
 
     _OPENERS = ('Invoke-Expression $code', '& $dispatch')
 
-    @todo
+    @backlog
     def test_a_call_below_an_unreadable_payload_leaves_the_script_as_written(self):
         for opener in self._OPENERS:
             with self.subTest(opener):

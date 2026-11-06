@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import itertools
 
-from test import backlog, opportunity, todo
+from test import backlog, opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 _RAISE = "$Null = [Int]'abc'"
@@ -1488,7 +1488,7 @@ class TestPs1AStopBoundThroughDefaultParameterValuesMakesCommandsTerminating(_Ps
 
 class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
 
-    @todo
+    @backlog
     def test_a_splatted_write_of_the_preference_keeps_the_trap_while_the_cast_stays(self):
         self._assertTheTrapStaysWhileTheCastDoes(F"""
             $t = @{{ Name = 'ErrorActionPreference'; Value = 'Stop' }}
@@ -1516,7 +1516,7 @@ class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
             {_FOLLOWER}
         """)
 
-    @todo
+    @backlog
     def test_an_aliased_table_that_binds_the_action_keeps_the_trap(self):
         self._assertKept(F"""
             $x = $PSDefaultParameterValues

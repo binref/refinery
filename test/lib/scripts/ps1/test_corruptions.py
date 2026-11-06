@@ -591,7 +591,7 @@ class TestPs1Corruptions(_Ps1Ledger):
         self.assertNotIn(
             'a', _printed_values(tree), 'the read was folded past a write it cannot see')
 
-    @todo
+    @backlog
     def test_function_running_invoke_expression_may_write_the_callers_variable(self):
         tree = self._deobfuscated_tree("$x = 'a'; function f { iex $c }; f; Write-Host $x")
         self.assertTrue(
@@ -665,7 +665,7 @@ class TestPs1Corruptions(_Ps1Ledger):
             'a', _printed_values(tree), 'the read was not folded past a default that never runs'
         )
 
-    @todo
+    @backlog
     def test_a_parameter_default_run_by_a_call_writes_a_script_variable_named_at_run_time(self):
         tree = self._deobfuscated_tree(
             "$n = 'script:x'; function g($p = (Set-Variable $n 'v')) { }; "
@@ -679,7 +679,7 @@ class TestPs1Corruptions(_Ps1Ledger):
             'a', _printed_values(tree), 'the read was folded past a default the call runs'
         )
 
-    @todo
+    @backlog
     def test_a_child_scope_writing_a_runtime_named_script_variable_reaches_the_caller(self):
         source = "$n = 'script:x'; $x = 'a'; & { Set-Variable $n 'v' }; Write-Host $x"
         printing_v = (
@@ -701,7 +701,7 @@ class TestPs1Corruptions(_Ps1Ledger):
         )
         self.assertIn(self._deobfuscate_iterative(source), printing_v)
 
-    @todo
+    @backlog
     def test_child_scope_may_change_the_process_environment(self):
         tree = self._deobfuscated_tree('& { iex $c }; Write-Host $env:ComSpec')
         self.assertTrue(
@@ -1594,7 +1594,7 @@ class TestPs1ALocalQualifierInABlockRunInItsCallersScopeNamesTheCallersVariable(
             "$x = 'a'; 1 | ForEach-Object { $local:x = 'b' }; Write-Output $x")
         self._assertWrites(tree, [['b']], [['a']], _stores_value(tree, 'x', 'b'))
 
-    @todo
+    @backlog
     def test_a_local_read_in_the_block_sees_the_callers_store(self):
         tree = self._deobfuscated_tree(
             "$x = 'a'; 1 | ForEach-Object { Write-Output $local:x }; $x = 'b'")
@@ -1604,7 +1604,7 @@ class TestPs1ALocalQualifierInABlockRunInItsCallersScopeNamesTheCallersVariable(
         tree = self._deobfuscated_tree("$x = 'a'; . { $local:x = 'b' }; Write-Output $x")
         self._assertWrites(tree, [['b']], [['a']], _stores_value(tree, 'x', 'b'))
 
-    @todo
+    @backlog
     def test_a_local_read_in_a_dot_sourced_block_sees_the_callers_store(self):
         tree = self._deobfuscated_tree("$x = 'a'; . { Write-Output $local:x }; $x = 'b'")
         self._assertWrites(tree, [['a']], [[None]], _stores_value(tree, 'x', 'a'))
@@ -2169,7 +2169,7 @@ class TestPs1CodeNobodyCanReadRunElsewhereStillReachesTheArray(_Ps1Ledger):
 
 class TestPs1CodeNobodyCanReadRunElsewhereMaySetAScriptVariable(_Ps1Ledger):
 
-    @todo
+    @backlog
     def test_a_called_function_sets_the_script_variable(self):
         self._assertTheStoreReachesTheName(
             "$x = 'a'; function f { iex $c }; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; f; "
@@ -2179,7 +2179,7 @@ class TestPs1CodeNobodyCanReadRunElsewhereMaySetAScriptVariable(_Ps1Ledger):
             [['a']],
         )
 
-    @todo
+    @backlog
     def test_a_created_block_sets_the_script_variable(self):
         self._assertTheStoreReachesTheName(
             "$x = 'a'; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; "
@@ -2198,7 +2198,7 @@ class TestPs1CodeNobodyCanReadRunElsewhereMaySetAScriptVariable(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @todo
+    @backlog
     def test_a_created_block_stores_through_the_callers_array(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; "
@@ -2208,7 +2208,7 @@ class TestPs1CodeNobodyCanReadRunElsewhereMaySetAScriptVariable(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @todo
+    @backlog
     def test_a_called_function_stores_through_the_callers_array_before_an_element_is_read(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; "
@@ -2221,14 +2221,14 @@ class TestPs1CodeNobodyCanReadRunElsewhereMaySetAScriptVariable(_Ps1Ledger):
 
 class TestPs1ACommandCodeNobodyCanReadRedefinedRunsThatCode(_Ps1Ledger):
 
-    @todo
+    @backlog
     def test_a_redefined_command_sets_the_script_variable(self):
         tree = self._deobfuscated_tree(
             "$x = 'a'; $c = @('function Write-Host { $script:x = 5 }')[(Get-Random -Maximum 1)]; "
             "iex $c; $x = 'b'; Write-Host 'hi'; Write-Output $x")
         self._assertWrites(tree, [[5]], [['b']], _stores_value(tree, 'x', 'b'))
 
-    @todo
+    @backlog
     def test_a_redefined_command_reaches_the_container(self):
         self._assertTheStoreReachesTheName(
             "$c = @('function Write-Host { $h.k[0] = 9 }')[(Get-Random -Maximum 1)]; iex $c; "
@@ -2524,19 +2524,19 @@ class TestPs1ACommandInAnotherScopeRemovesOrCopiesTheVariableItNames(_Ps1Ledger)
         tree = self._deobfuscated_tree(source)
         self.assertNotIn(['a'], _output_writes(tree), 'the read was folded to the removed value')
 
-    @todo
+    @backlog
     def test_the_session_state_removes_the_variable_of_the_function_s_caller(self):
         self._assertTheReadIsNotTheRemovedValue(
             "$x = 'a'; function f { $ExecutionContext.SessionState.PSVariable.Remove('x') }; f; "
             'Write-Output $x')
 
-    @todo
+    @backlog
     def test_the_session_state_removes_the_variable_of_the_block_s_caller(self):
         self._assertTheReadIsNotTheRemovedValue(
             "$x = 'a'; & { $ExecutionContext.SessionState.PSVariable.Remove('x') }; "
             'Write-Output $x')
 
-    @todo
+    @backlog
     def test_remove_item_removes_the_variable_of_the_function_s_caller(self):
         self._assertTheReadIsNotTheRemovedValue(
             "$x = 'a'; function f { Remove-Item variable:x }; f; Write-Output $x")
@@ -2554,7 +2554,7 @@ class TestPs1ACommandInAnotherScopeRemovesOrCopiesTheVariableItNames(_Ps1Ledger)
 
 class TestPs1AVariableHandedOutInAFunctionIsTheCallers(_Ps1Ledger):
 
-    @todo
+    @backlog
     def test_an_increment_through_the_variable_a_function_is_handed_is_the_caller_s(self):
         tree = self._deobfuscated_tree(
             '$c = 1; function f { (Get-Variable c).Value++ }; f; Write-Output $c')
@@ -2587,7 +2587,7 @@ class TestPs1AnErrorPreferenceSetByNameIsStillHandled(_Ps1Ledger):
             "trap { continue }; Write-Output ([int]'a'); Write-Output 'after'"
         )
 
-    @todo
+    @backlog
     def test_a_preference_set_through_the_handed_out_variable_is_one_a_trap_handles(self):
         self._assertTheFailureIsStillHandled(
             "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; "
@@ -2608,14 +2608,14 @@ class TestPs1AStoreNoOccurrenceOfTheNameSpellsIsStillSeen(_Ps1Ledger):
     def _assertTheStoreReaches(self, source: str, written: int, corrupt: int) -> None:
         self._assertTheStoreReachesTheName(source, 'x', [[written]], [[corrupt]])
 
-    @todo
+    @backlog
     def test_code_nobody_can_read_in_a_child_block_stores_through_the_array(self):
         self._assertTheStoreReaches(
             "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; & { iex $c }; "
             'Write-Output $x[1]',
             9, 2)
 
-    @todo
+    @backlog
     def test_code_nobody_can_read_run_by_invoke_script_stores_through_the_array(self):
         self._assertTheStoreReaches(
             "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; "

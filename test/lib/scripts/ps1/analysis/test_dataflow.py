@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test import TestBase, opportunity, todo
+from test import TestBase, backlog, opportunity
 
 from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.ps1.analysis.blocks import build_block_model
@@ -566,15 +566,15 @@ class TestPs1UnattributableWrites(TestPs1VariableFlow):
 
 class TestPs1UnattributableWritesFromAChildScope(TestPs1VariableFlow):
 
-    @todo
+    @backlog
     def test_a_function_body_running_unreadable_code_kills_across_its_call_sites(self):
         self.assertIsNone(self._observed("$x = 'a'; function f { iex $c }; f; Write-Host $x"))
 
-    @todo
+    @backlog
     def test_a_qualified_write_from_inside_a_child_scope_kills_the_callers_write(self):
         self.assertIsNone(self._observed('''$x = 'a'; & { iex '$script:x = 1' }; Write-Host $x'''))
 
-    @todo
+    @backlog
     def test_a_call_running_unreadable_code_in_a_child_scope_kills_across_it(self):
         for source in (
             "$x = 'a'; & 'stage2.ps1'; Write-Host $x",
@@ -585,7 +585,7 @@ class TestPs1UnattributableWritesFromAChildScope(TestPs1VariableFlow):
             with self.subTest(source):
                 self.assertIsNone(self._observed(source))
 
-    @todo
+    @backlog
     def test_a_computed_write_in_a_child_scope_may_reach_the_callers_variable(self):
         for source in (
             "$x = 'a'; & { Set-Variable $n 'v' }; Write-Host $x",
@@ -594,7 +594,7 @@ class TestPs1UnattributableWritesFromAChildScope(TestPs1VariableFlow):
             with self.subTest(source):
                 self.assertIsNone(self._observed(source))
 
-    @todo
+    @backlog
     def test_a_computed_write_dot_sourced_inside_a_child_scope_may_reach_the_callers_variable(self):
         self.assertIsNone(
             self._observed("$x = 'a'; & { . { Set-Variable $n 'v' } }; Write-Host $x")
