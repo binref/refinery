@@ -24,6 +24,7 @@
       "Bash(flake8 *)",
       "Bash(pyright *)",
       "Bash(gh run view *)",
+      "Bash(gh run watch *)",
       "Bash(gh run list *)",
       "Bash(gh pr view *)",
       "Bash(gh pr checks *)",
