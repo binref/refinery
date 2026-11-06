@@ -102,10 +102,16 @@ class WorldRole(enum.Enum):
 #: the opaque dispatch and scriptblock-execution forms are recognized syntactically instead. The job
 #: and remoting cmdlets belong here rather than beside the mutators: each takes a scriptblock the
 #: walk cannot read when it is written as a variable, and the type-system effects such a block
-#: performs are runspace-global, so a child scope does not contain them.
+#: performs are runspace-global, so a child scope does not contain them. `Invoke-History` runs a
+#: command line out of the session's history, and an event registration runs the `-Action` block
+#: it is handed whenever the event fires, which may be between any two statements after it.
 _LEAK_CMDLETS = frozenset({
     'invoke-command',
     'invoke-expression',
+    'invoke-history',
+    'register-engineevent',
+    'register-objectevent',
+    'register-wmievent',
     'start-job',
     'start-threadjob',
 })
@@ -115,13 +121,16 @@ _LEAK_CMDLETS = frozenset({
 _CALLER_SCOPE_LEAKS = frozenset({'invoke-expression'})
 
 #: The mutators that also load commands into the session, so a bareword after one may name a command
-#: this tree never spells: `Import-Module` imports a module's commands and `New-Module` runs a body
-#: whose functions become callable. Held apart from the pure type-system mutators and folded back
-#: into `_MUTATION_CMDLETS` as one half of its union, so it cannot drift out of that deny-list:
+#: this tree never spells: `Import-Module` imports a module's commands, `New-Module` runs a body
+#: whose functions become callable, and `Add-PSSnapin` and `Import-PSSession` bring in the commands
+#: of a snap-in and of a remote session. Held apart from the pure type-system mutators and folded
+#: back into `_MUTATION_CMDLETS` as one half of its union, so it cannot drift out of that deny-list:
 #: a loader missing from it resolves to `WorldRole.NONE`, `_opens_command_namespace` then never sees
 #: it, and the command axis reads closed beside a live import — the dangerous direction.
 _MODULE_LOADER_CMDLETS = frozenset({
+    'add-pssnapin',
     'import-module',
+    'import-pssession',
     'new-module',
 })
 
@@ -256,8 +265,28 @@ def _opens_command_namespace(node, role: WorldRole) -> bool:
     if role in (WorldRole.LEAK, WorldRole.IDENTITY, WorldRole.UNKNOWN):
         return True
     if role is WorldRole.MUTATION and isinstance(node, Ps1CommandInvocation):
+        if _loaded_by_using(node) == 'module':
+            return True
         return (resolve_command_name(node) or '') in _MODULE_LOADER_CMDLETS
     return False
+
+
+def _loaded_by_using(cmd: Ps1CommandInvocation) -> str | None:
+    """
+    What a `using` statement *cmd* loads into the session, `module` or `assembly`, or `None` where
+    *cmd* is no such statement. A module brings its commands and types in as `Import-Module` does,
+    and an assembly its types as `Add-Type` does; a `using namespace` only shortens type names.
+    """
+    literal = command_name_literal(cmd)
+    if literal is None or literal.value.lower() != 'using' or not cmd.arguments:
+        return None
+    first = cmd.arguments[0]
+    if not isinstance(first, Ps1CommandArgument):
+        return None
+    if first.kind is not Ps1CommandArgumentKind.POSITIONAL:
+        return None
+    kind = (string_value(first.value) or '').lower()
+    return kind if kind in ('module', 'assembly') else None
 
 
 class Ps1ShadowSite(NamedTuple):
@@ -1044,6 +1073,8 @@ def _command_opens_world(cmd: Ps1CommandInvocation) -> WorldRole:
     """
     if is_opaque_dispatch(cmd):
         return WorldRole.UNKNOWN
+    if _loaded_by_using(cmd) is not None:
+        return WorldRole.MUTATION
     name = resolve_command_name(cmd)
     if name is not None and (role := command_role(name)) is not WorldRole.NONE:
         return role

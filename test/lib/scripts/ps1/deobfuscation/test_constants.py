@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import backlog, opportunity
+from test import opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.analysis.values import render
@@ -126,7 +126,6 @@ class TestPs1ConstantInlining(TestPs1):
         result = self._deobfuscate("$x = Get-Date; Write-Output $x")
         self.assertIn('$x', result)
 
-    @backlog
     def test_env_comspec_inlined(self):
         self.assertEqual(self._deobfuscate('$x = $env:ComSpec[4]'), '$x = [char]73')
 

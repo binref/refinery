@@ -51,7 +51,7 @@ class TestPs1TypeSystemSimplifications(TestPs1):
             "Write-Host 'CompareTo'",
         )
 
-    def test_get_member_filtered_to_properties_indexes_the_properties(self):
+    def test_get_member_filtered_to_properties_is_left_standing_or_indexes_the_properties(self):
         source = '$q = New-Object Net.WebClient\n($q | Get-Member -MemberType Property)[0].Name'
         self.assertIn(
             self._apply(source, Ps1TypeSystemSimplifications),
@@ -65,6 +65,39 @@ class TestPs1TypeSystemSimplifications(TestPs1):
 
 
 class TestPs1MemberFoldsFollowTheWriteAReadObserves(TestPs1):
+
+    @wontfix('a script that names members by their index does not add members to the object first')
+    def test_a_member_added_to_the_object_takes_its_place_in_the_listing(self):
+        source = """
+            $q = New-Object Net.WebClient
+            $q | Add-Member -NotePropertyName Aaa -NotePropertyValue 1
+            Write-Host ($q | Get-Member)[49].Name
+        """
+        self._assertDeobfuscatesToOneOf(source, source, """
+            $q = New-Object Net.WebClient
+            $q | Add-Member -NotePropertyName Aaa -NotePropertyValue 1
+            Write-Host 'Aaa'
+        """)
+
+    @wontfix('a script that names members by their index does not cast the object to psobject first')
+    def test_a_cast_to_psobject_keeps_the_members_of_the_object(self):
+        source = """
+            $q = [psobject](New-Object Net.WebClient)
+            Write-Host ($q | Get-Member)[0].Name
+        """
+        self._assertDeobfuscatesToOneOf(source, source, """
+            $Null = [psobject](New-Object Net.WebClient)
+            Write-Host 'Disposed'
+        """, "Write-Host 'Disposed'")
+
+    def test_a_function_named_get_member_takes_the_call_the_fold_reads(self):
+        self._assertUnchanged(cleandoc("""
+            function Get-Member {
+              'X'
+            }
+            $q = New-Object Net.WebClient
+            ($q | Get-Member)[0].Name
+        """), Ps1TypeSystemSimplifications)
 
     def test_a_function_bodys_write_does_not_fold_a_get_member_index_outside_it(self):
         self._assertUnchanged(cleandoc("""

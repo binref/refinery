@@ -606,7 +606,6 @@ class TestPs1Corruptions(_Ps1Ledger):
         self.assertNotIn(
             'a', _printed_values(tree), 'the read was folded across a call that may rewrite it')
 
-    @todo
     def test_set_variable_global_supplies_the_value_that_is_read_back(self):
         tree = self._deobfuscated_tree("Set-Variable global:y 'b'; Write-Host $global:y")
         self.assertTrue(
@@ -614,7 +613,6 @@ class TestPs1Corruptions(_Ps1Ledger):
             'the store was deleted and nothing left in the output supplies the value it wrote',
         )
 
-    @todo
     def test_short_circuited_and_operand_never_stores(self):
         tree = self._deobfuscated_tree("$x = 'a'; $false -and ($x = 'b'); Write-Host $x")
         self._assertPrints(tree, 'x', 'a', 'b')
@@ -625,7 +623,6 @@ class TestPs1Corruptions(_Ps1Ledger):
                     'the store from the unevaluated operand is now reached unconditionally',
                 )
 
-    @todo
     def test_short_circuited_or_operand_never_stores(self):
         tree = self._deobfuscated_tree("$x = 'a'; $true -or ($x = 'b'); Write-Host $x")
         self._assertPrints(tree, 'x', 'a', 'b')
@@ -1592,7 +1589,6 @@ class TestPs1AStoreIsReadByEveryCallStandingAfterIt(_Ps1Ledger):
 
 class TestPs1ALocalQualifierInABlockRunInItsCallersScopeNamesTheCallersVariable(_Ps1Ledger):
 
-    @todo
     def test_a_local_store_in_the_block_is_seen_by_the_caller(self):
         tree = self._deobfuscated_tree(
             "$x = 'a'; 1 | ForEach-Object { $local:x = 'b' }; Write-Output $x")
@@ -1604,7 +1600,6 @@ class TestPs1ALocalQualifierInABlockRunInItsCallersScopeNamesTheCallersVariable(
             "$x = 'a'; 1 | ForEach-Object { Write-Output $local:x }; $x = 'b'")
         self._assertWrites(tree, [['a']], [[None]], _stores_value(tree, 'x', 'a'))
 
-    @todo
     def test_a_local_store_in_a_dot_sourced_block_is_seen_by_the_caller(self):
         tree = self._deobfuscated_tree("$x = 'a'; . { $local:x = 'b' }; Write-Output $x")
         self._assertWrites(tree, [['b']], [['a']], _stores_value(tree, 'x', 'b'))
@@ -2546,13 +2541,11 @@ class TestPs1ACommandInAnotherScopeRemovesOrCopiesTheVariableItNames(_Ps1Ledger)
         self._assertTheReadIsNotTheRemovedValue(
             "$x = 'a'; function f { Remove-Item variable:x }; f; Write-Output $x")
 
-    @todo
     def test_copy_item_writes_the_variable_it_copies_onto(self):
         tree = self._deobfuscated_tree(
             "$y = 'b'; $x = 'a'; Copy-Item variable:y variable:x; Write-Output $x")
         self._assertWrites(tree, [['b']], [['a']], _stores_value(tree, 'y', 'b'))
 
-    @todo
     def test_rename_item_reads_the_variable_it_renames(self):
         tree = self._deobfuscated_tree(
             "$y = 'b'; $x = 'a'; Remove-Variable x; Rename-Item variable:y x; Write-Output $x")
@@ -2567,7 +2560,6 @@ class TestPs1AVariableHandedOutInAFunctionIsTheCallers(_Ps1Ledger):
             '$c = 1; function f { (Get-Variable c).Value++ }; f; Write-Output $c')
         self._assertWrites(tree, [[2]], [[1]], bool(_invocations(tree, _GET_VARIABLE)))
 
-    @todo
     def test_the_variable_an_output_variable_keeps_is_still_filled(self):
         tree = self._deobfuscated_tree(
             "$x = 'a'; Write-Output (Get-Variable x -OutVariable v).Value; Write-Output $v.Name")
@@ -2589,7 +2581,6 @@ class TestPs1AnErrorPreferenceSetByNameIsStillHandled(_Ps1Ledger):
         )
         self.assertIn(['after'], _output_writes(tree), 'the statement the trap resumes into went')
 
-    @todo
     def test_a_preference_the_session_state_sets_is_one_a_trap_handles(self):
         self._assertTheFailureIsStillHandled(
             "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); "
@@ -2825,13 +2816,11 @@ class TestPs1TextRunAfterTheAcceleratorTableChangesStaysText(_Ps1Ledger):
 
 class TestPs1ABase64TextDotNetRejectsIsNotDecoded(_Ps1Ledger):
 
-    @todo
     def test_the_call_on_a_text_holding_a_foreign_character_is_not_folded(self):
         tree = self._deobfuscated_tree(
             "Write-Host ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SGVs!bG8=')))")
         self.assertNotIn('Hello', _printed_values(tree))
 
-    @todo
     def test_a_call_that_fails_on_its_text_still_skips_the_store_behind_it(self):
         tree = self._deobfuscated_tree(
             "$k = 'one'; try { $b = [Convert]::FromBase64String('!!'); $k = 'two' } catch { }; "

@@ -272,7 +272,6 @@ class TestPs1FunctionEvaluator(TestPs1):
         )
         self.assertEqual(self._deobfuscate(data), 'Write-Host Hello')
 
-    @todo
     def test_iex_of_a_variable_the_caller_holds_yields_its_text_and_runs_nothing(self):
         source = cleandoc("""
             function W { Invoke-Expression '$r' }
@@ -287,6 +286,92 @@ class TestPs1FunctionEvaluator(TestPs1):
             Write-Host (B)
         """
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'x'", 'Write-Host x')
+
+    def test_iex_of_a_local_variable_read_by_name_is_not_moved_out_of_its_function(self):
+        source = """
+            function B { $r = 'x'; Invoke-Expression '(Get-Variable r).Value' }
+            $r = 'caller'
+            Write-Host (B)
+        """
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'x'")
+
+    def test_iex_calling_a_function_that_reads_a_local_is_not_moved_out_of_its_function(self):
+        source = """
+            function show { Write-Host $r }
+            function W { $r = 'inner'; Invoke-Expression 'show' }
+            $r = 'outer'
+            W
+        """
+        self._assertDeobfuscatesToOneOf(source, source, """
+            function show { Write-Host $r }
+            function W { $r = 'inner'; show }
+            $r = 'outer'
+            W
+        """)
+
+    def test_iex_joining_an_array_is_not_moved_away_from_the_separator_its_function_sets(self):
+        source = """
+            function B { $OFS = '-'; Invoke-Expression 'Write-Host ([string](1, 2))' }
+            B
+        """
+        self._assertDeobfuscatesToOneOf(source, source, """
+            function B { $OFS = '-'; Write-Host ([string](1, 2)) }
+            B
+        """, "Write-Host '1-2'")
+
+    def test_iex_trampoline_that_returns_what_the_iex_writes(self):
+        self._assertDeobfuscatesTo("""
+            function W { Param([string]$c); return Invoke-Expression $c }
+            W 'Write-Host hi'
+        """, 'Write-Host hi')
+
+    def test_iex_trampoline_that_discards_a_value_first(self):
+        self._assertDeobfuscatesTo("""
+            function W { Param([string]$c); $null = $c.Length; Invoke-Expression $c }
+            W 'Write-Host hi'
+        """, 'Write-Host hi')
+
+    @backlog
+    def test_iex_trampoline_that_discards_the_output_keeps_discarding_it(self):
+        source = """
+            function W { Param([string]$c); Invoke-Expression $c > $Null }
+            W 'Write-Output 1'
+        """
+        self._assertDeobfuscatesToOneOf(source, source, 'Write-Output 1 > $Null', '$Null = Write-Output 1', '')
+
+    def test_iex_whose_result_its_function_goes_on_to_use_is_not_the_value_of_the_call(self):
+        source = """
+            function f { $r = Invoke-Expression '1 + 1'; $r * 2 }
+            Write-Host (f)
+        """
+        self._assertDeobfuscatesToOneOf(source, source, 'Write-Host 4')
+
+    def test_iex_trampoline_whose_payload_assigns_keeps_the_payload_in_a_scope_of_its_own(self):
+        result = self._deobfuscate(cleandoc("""
+            function W { Param([string]$c); Invoke-Expression $c }
+            $u = 'caller'
+            W '$u = "http://x/y"; Write-Host $u'
+            Write-Host $u
+        """))
+        self.assertIn('http://x/y', result)
+        self.assertNotIn("W '", result)
+        self.assertIn("Write-Host 'caller'", result)
+
+    def test_a_dot_sourced_call_writes_the_scope_of_its_caller(self):
+        source = """
+            function C { $q = 'x' }
+            function B { . C; "[$q]" }
+            Write-Host (B)
+        """
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host '[x]'")
+
+    @wontfix('a working script does not call a function from outside the block that defines it')
+    def test_a_function_defined_in_a_block_is_not_known_outside_it(self):
+        source = """
+            & { function g { 'in' } }
+            Write-Host (g)
+        """
+        self._assertDeobfuscatesToOneOf(source, source)
 
     def test_decoy_function_producing_garbage_is_pruned(self):
         data = (

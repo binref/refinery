@@ -142,6 +142,7 @@ _VARIABLE_COMMANDS: dict[str, Ps1NameRole] = {
 #: `Variable:` or `Env:` drive. `Remove-Item Variable:x` is how `del variable:x` arrives.
 _ITEM_COMMANDS: dict[str, Ps1NameRole] = {
     'clear-item': Ps1NameRole.WRITES,
+    'copy-item': Ps1NameRole.READS,
     'get-childitem': Ps1NameRole.READS,
     'get-item': Ps1NameRole.READS,
     'move-item': Ps1NameRole.UNBINDS,
@@ -149,6 +150,16 @@ _ITEM_COMMANDS: dict[str, Ps1NameRole] = {
     'remove-item': Ps1NameRole.UNBINDS,
     'rename-item': Ps1NameRole.UNBINDS,
     'set-item': Ps1NameRole.WRITES,
+}
+
+#: The item commands that write a second item besides the one their path names, and the parameter
+#: that names it, which is also their second positional argument: a copy or a move writes the
+#: item its destination path names, and a rename writes the item of the new name on the drive of
+#: the item it renames. `Copy-Item variable:y variable:x` writes `$x`.
+_SECOND_ITEM_PARAMETERS: dict[str, str] = {
+    'copy-item': 'destination',
+    'move-item': 'destination',
+    'rename-item': 'newname',
 }
 
 #: The commands that write out the variable they address, on the `Variable:` drive for the item
@@ -272,6 +283,7 @@ def named_references(node: Node) -> list[Ps1NamedReference]:
     found: list[Ps1NamedReference] = []
     for command in resolved_command_names(node):
         found.extend(_subject_references(node, command))
+        found.extend(_second_item_references(node, command))
     found.extend(_out_variable_references(node))
     if bound_argument_value(node, 'option') is not None:
         found = [
@@ -403,6 +415,50 @@ def _subject_references(
         target=Ps1NameTarget.SCRIPT if prefix else _declared_target(cmd),
         node=cmd,
         hands_out=not prefix and _hands_out(cmd, command),
+    )
+
+
+def _second_item_references(
+    cmd: Ps1CommandInvocation, command: str,
+) -> Iterator[Ps1NamedReference]:
+    """
+    The write an item command of `_SECOND_ITEM_PARAMETERS` makes to the second item it names, where
+    that item is a variable: its destination on a name drive for a copy or a move, and the new name
+    on the drive of the renamed item for a rename. A move or a rename hands the value of the item it
+    takes away to that second item, so it reads the first one as well as unbinding it.
+    """
+    parameter = _SECOND_ITEM_PARAMETERS.get(command)
+    if parameter is None:
+        return
+    if _ITEM_COMMANDS.get(command) is Ps1NameRole.UNBINDS:
+        for reference in _subject_references(cmd, command):
+            yield replace(reference, role=Ps1NameRole.READS, hands_out=False)
+    value = bound_argument_value(cmd, parameter)
+    if value is None:
+        positional = free_positional_values(cmd, command)
+        index = 0 if bound_argument_value(cmd, 'path') is not None else 1
+        if bound_argument_value(cmd, 'literalpath') is not None:
+            index = 0
+        value = positional[index] if len(positional) > index else None
+    written = argument_text(value)
+    if written is None:
+        return
+    if parameter == 'newname':
+        source = _subject_name(cmd, command, 'path')
+        if source is None:
+            return
+        drive, _ = _drive_path(source)
+        rest = written
+    else:
+        drive, rest = _drive_path(written)
+    prefix = _NAME_DRIVES.get(drive)
+    if prefix is None or not rest or has_wildcard(rest):
+        return
+    yield Ps1NamedReference(
+        key=F'{prefix}{rest.lower()}',
+        role=Ps1NameRole.WRITES,
+        target=Ps1NameTarget.SCRIPT if prefix else _declared_target(cmd),
+        node=cmd,
     )
 
 

@@ -125,6 +125,15 @@ def _opens_with_a_type(node: Expression) -> bool:
     return isinstance(node, Ps1TypeExpression)
 
 
+def _ends_elsewhere_as_a_word(node: Expression) -> bool:
+    """
+    Whether the node is a numeral whose spelling a slot that reads a bare word does not end where
+    the tree does, like `-1`, which such a slot reads as the String it spells.
+    """
+    raw = _numeral_spelling(node)
+    return raw is not None and not reads_as_one_numeral(raw, '', Ps1LexerMode.ARGUMENT)
+
+
 class Ps1Synthesizer(Synthesizer):
     """
     Three things decide how a node is written, and all three are properties of the slot it goes into
@@ -174,8 +183,23 @@ class Ps1Synthesizer(Synthesizer):
     def _emit_word(self, node: Expression, minimum: int):
         """
         Write `node` into a slot that reads a bare word as a value, which is the slot 5.1 lexes in
-        command mode.
+        command mode: an argument, a command name behind `&` or `.`, a redirection target, the
+        operand of `switch -File`, a clause condition and a key.
+
+        Two spellings survive the precedence scale and are still read as something else in such a
+        slot, and both are bracketed. A numeral whose spelling the slot does not end where the tree
+        does is one: `Write-Output -1` passes the String `-1` where `Write-Output (-1)` passes an
+        Int32, and `f +1` and `f -0.0` are words the same way. Anything written starting with a type
+        is the other, measured: `f [byte] 5` is the one word `[byte]5`, and the type opens a word
+        however much is written behind it, so `f [Math]::Max(2, 1)` passes text as well.
+
+        Neither spelling can reach a word slot from a source — a dash or a bracket there begins a
+        word — so a numeral or a type standing in one is one a pass put there, and bracketing it is
+        what makes it mean what the pass meant.
         """
+        if _opens_with_a_type(node) or _ends_elsewhere_as_a_word(node):
+            self._emit_bracketed(node)
+            return
         self._word_slot_ahead = True
         with self._reading(Ps1LexerMode.ARGUMENT):
             self._emit_operand(node, minimum)
@@ -415,13 +439,8 @@ class Ps1Synthesizer(Synthesizer):
             self._write(' ')
         if node.name:
             # `& 'i' + 'ex'` invokes `i` and then concatenates, so a computed command name needs
-            # brackets for the invocation operator to reach the whole expression. A name that
-            # opens with a type is read as one word here as it is in an argument, so
-            # `& [scriptblock]::Create($c)` needs them too.
-            if node.invocation_operator and _opens_with_a_type(node.name):
-                self._emit_bracketed(node.name)
-            else:
-                self._emit_word(node.name, precedence.ATOM)
+            # brackets for the invocation operator to reach the whole expression.
+            self._emit_word(node.name, precedence.ATOM)
         for arg in node.arguments:
             self._write(' ')
             self.visit(arg)
@@ -447,26 +466,8 @@ class Ps1Synthesizer(Synthesizer):
         re-lexes as a single bare word in argument mode, and a command swallows the rest of the line.
         The comma is bracketed too, though it binds tighter than all of them, because it separates
         one argument from the next.
-
-        Two spellings survive the precedence scale and are still read as something else here, and
-        both are bracketed. A numeral whose spelling this slot does not end where the tree does is
-        one: `Write-Output -1` passes the String `-1` where `Write-Output (-1)` passes an Int32, and
-        `f +1` and `f -0.0` are words the same way. Anything written starting with a type is the
-        other, measured: `f [byte] 5` is the one word `[byte]5`, and the type opens a word however
-        much is written behind it, so `f [Math]::Max(2, 1)` passes text as well.
-
-        Neither spelling can reach here from a source — a dash or a bracket in an argument begins a
-        word — so a numeral or a type standing in this slot is one a pass put here, and bracketing it
-        is what makes it mean what the pass meant.
         """
-        raw = _numeral_spelling(value)
-        misread = _opens_with_a_type(value) or (
-            raw is not None and not reads_as_one_numeral(raw, '', Ps1LexerMode.ARGUMENT)
-        )
-        if misread:
-            self._emit_bracketed(value)
-        else:
-            self._emit_word(value, precedence.COMMA + 1)
+        self._emit_word(value, precedence.COMMA + 1)
 
     def visit_Ps1AssignmentExpression(self, node: Ps1AssignmentExpression):
         if node.target:
@@ -776,7 +777,7 @@ class Ps1Synthesizer(Synthesizer):
         if node.file:
             self._write('-File ')
             if node.value:
-                self.visit(node.value)
+                self._emit_word(node.value, precedence.COMMA + 1)
             self._write(' {')
         else:
             self._write('(')

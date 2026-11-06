@@ -87,7 +87,6 @@ _REPOINT_LENGTH = (
 
 class TestPs1AMemberReadOnALiteralIsNotAskedAboutTheWorld(TestPs1):
 
-    @todo
     def test_a_discarded_read_of_a_re_pointed_member_is_kept(self):
         source = F"{_RETYPE}\n$Null = 'abc'.Zq\n{_ANCHOR}"
         self._assertKept(source)

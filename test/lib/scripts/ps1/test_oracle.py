@@ -196,29 +196,12 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'through `$x` from a block created from the string, which runs in a scope of its own and '
         'reads the variables of its caller; code nobody can read is taken to write only the '
         'scope it runs in.',
-    "Set-Variable global:y 'b'; Write-Host $global:y":
-        'The store is dropped, so `b` becomes nothing: a command that writes a variable is not '
-        'read as the store the following read needs.',
-    "$x = 'a'; $false -and ($x = 'b'); Write-Host $x":
-        'The read is folded to `b`, but 5.1 never evaluates the right operand of `-and` when the '
-        'left one is false, so the store never happens and the snippet prints `a`.',
-    "$x = 'a'; $true -or ($x = 'b'); Write-Host $x":
-        'The same rule spelled with the other operator: 5.1 never evaluates the right operand of '
-        '`-or` when the left one is true. Held apart from the `-and` entry because the two are '
-        'separate spellings and a fix that reaches one need not reach the other.',
-    "$x = 'a'; 1 | ForEach-Object { $local:x = 'b' }; Write-Output $x":
-        'The read is folded to `a`. `ForEach-Object` runs its block in its caller\'s scope, so '
-        '`$local:x` there is the caller\'s `$x` and the snippet writes `b`; the model gives the '
-        'block a scope of its own and files the store there.',
     "$x = 'a'; 1 | ForEach-Object { Write-Output $local:x }; $x = 'b'":
         'The store is removed and the read writes `$null` where the snippet writes `a`: the same '
         'scope, read rather than written.',
     "$x = 'a'; . { Write-Output $local:x }; $x = 'b'":
         'The same through a dot, which runs the block in its caller\'s scope as `ForEach-Object` '
         'does.',
-    "$x = 'a'; . { $local:x = 'b' }; Write-Output $x":
-        'The same through a dot, written rather than read: the read is folded to `a` where the '
-        'snippet writes `b`.',
     'function dec($d) { $o = New-Object byte[] 2; $o[0] = $d; $o[1] = 1; $o }; '
     'Write-Output (dec 5)':
         'The call is folded to `(5, 1)`, which writes two Int32 values where the snippet writes '
@@ -249,12 +232,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'snippet calls the definition standing in its own text. This is the risk a name-keyed '
         'removal takes when it stops requiring that the tree be the whole story: not a call to a '
         'name nothing defines, but a call to a body the input never ran.',
-    "Update-TypeData -TypeName System.String -MemberName Zq -MemberType ScriptProperty "
-    "-Value { Write-Host 'S' }; $Null = 'abc'.Zq; Write-Host 'A'":
-        'The read is discarded and removed, but the member it names is a script property the '
-        'statement above it installed, so reading it runs that body. A member read reaches the '
-        'closed-world gate through its receiver, and a literal receiver never asks it: the '
-        'value domain answers from the literal alone.',
     "Update-TypeData -Force -TypeName System.String -MemberName Length -MemberType ScriptProperty "
     "-Value { 99 }; Write-Host 'abc'.Length":
         'The same gap reached through folding rather than removal, and aimed at a member the '
@@ -312,26 +289,10 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The same, with the removal run in a child block.',
     "$x = 'a'; function f { Remove-Item variable:x }; f; Write-Output $x":
         'The same, with the variable removed through the `Variable:` drive.',
-    "$y = 'b'; $x = 'a'; Copy-Item variable:y variable:x; Write-Output $x":
-        'Both stores are removed and the read folded to `a` where the snippet writes `b`: '
-        '`Copy-Item` on the `Variable:` drive is read as addressing no variable.',
-    "$y = 'b'; $x = 'a'; Remove-Variable x; Rename-Item variable:y x; Write-Output $x":
-        'The store of `$y` is removed, so the rename fails and the read writes `$null` where the '
-        'snippet writes `b`: `Rename-Item` on the `Variable:` drive is read as addressing no '
-        'variable.',
     '$c = 1; function f { (Get-Variable c).Value++ }; f; Write-Output $c':
         'The read is folded to `1` where the snippet writes `2`. `Get-Variable` in the function '
         'hands out the caller\'s `$c`, and the wildcard pass rewrites the increment of its '
         '`Value` to one of a local `$c`.',
-    "$x = 'a'; Write-Output (Get-Variable x -OutVariable v).Value; Write-Output $v.Name":
-        'The second read writes `$null` where the snippet writes `x`: the wildcard pass rewrites '
-        'the read of the handed-out `Value` to `$x` and drops the command whose `-OutVariable` '
-        'fills `$v`.',
-    "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); "
-    "trap { continue }; Write-Output ([int]'a'); Write-Output 'after'":
-        'The `trap` is removed, so the failed conversion terminates the script where the snippet '
-        'writes `after`. The fault model reads the error preference off the stores that spell '
-        'it and takes it for `Continue`.',
     "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; "
     "Write-Output ([int]'a'); Write-Output 'after'":
         'The same, with the preference set through the variable `Get-Variable` hands out.',
@@ -372,14 +333,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'function it is handed to, so the failing cast ends the call and the snippet writes the '
         'error and `after`; the output writes `f-rest` and `after`. Which bodies a call runs '
         'under a preference is the interprocedural milestone (cluster 1f).',
-    "Write-Host ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SGVs!bG8=')))":
-        'The decode is folded to `Hello`. `[Convert]::FromBase64String` rejects a text holding a '
-        'character outside the base64 alphabet, so the snippet writes the error alone; the '
-        'emulated decoder skips the character.',
-    "$k = 'one'; try { $b = [Convert]::FromBase64String('!!'); $k = 'two' } catch { }; Write-Host $k":
-        'The call is folded away and the store after it is reached. `[Convert]::FromBase64String` '
-        'rejects `!!`, so the `catch` is taken and the snippet writes `one`; the output writes '
-        '`two`.',
 }
 
 
@@ -4523,7 +4476,9 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
 
 
 #: The corpus snippets the tool emits unchanged. See `TestPs1EverySnippetIsStillRewritten`.
-UNREWRITTEN_SNIPPETS: frozenset[str] = frozenset()
+UNREWRITTEN_SNIPPETS: frozenset[str] = frozenset({
+    "Write-Host ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SGVs!bG8=')))",
+})
 
 
 class TestPs1EverySnippetIsStillRewritten(TestBase):

@@ -63,6 +63,7 @@ from refinery.lib.scripts.ps1.analysis.session import (
     stops_on_error,
     writes_stop_to_the_default_table,
 )
+from refinery.lib.scripts.ps1.analysis.values import evaluate, text_of
 from refinery.lib.scripts.ps1.ast import (
     STATEMENT_LIST_EXPRESSIONS,
     bound_argument_value,
@@ -74,6 +75,7 @@ from refinery.lib.scripts.ps1.ast import (
     string_value,
 )
 from refinery.lib.scripts.ps1.model import (
+    Ps1BinaryExpression,
     Ps1CatchClause,
     Ps1CommandInvocation,
     Ps1FunctionDefinition,
@@ -98,6 +100,17 @@ _STRICT_MODE_COMMANDS = frozenset({
 })
 
 
+def _spelled_text(node: Node) -> str | None:
+    """
+    The text *node* is written as, or the text an operator over constants assembles there:
+    `'Set-Strict' + 'Mode -Version 1'` spells the command as surely as one literal does.
+    """
+    written = string_value(node)
+    if written is not None or not isinstance(node, Ps1BinaryExpression):
+        return written
+    return text_of(evaluate(node).value)
+
+
 def _arms_strict_mode(node: Node) -> bool:
     """
     Whether *node* may turn a read of a variable that was never set into an error.
@@ -120,7 +133,7 @@ def _arms_strict_mode(node: Node) -> bool:
         and resolve_command_name(node) in _STRICT_MODE_COMMANDS
     ):
         return True
-    written = string_value(node)
+    written = _spelled_text(node)
     if written is None:
         return False
     written = written.lower()
@@ -147,7 +160,7 @@ def _arms_strict_mode_v2(node: Node) -> bool:
             return False
         version = bound_argument_value(node, 'version')
         return not (isinstance(version, Ps1IntegerLiteral) and version.value == 1)
-    written = string_value(node)
+    written = _spelled_text(node)
     if written is None or 'set-strictmode' not in written.lower():
         return False
     parent = node.parent

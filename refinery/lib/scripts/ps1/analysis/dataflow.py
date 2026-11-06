@@ -107,6 +107,7 @@ from refinery.lib.scripts.ps1.ast import (
     binding_key,
     bound_argument_value,
     in_evaluation_order,
+    may_be_skipped_by_a_short_circuit,
     string_value,
 )
 from refinery.lib.scripts.ps1.data import PS1_AUTOMATIC_VARIABLES
@@ -243,13 +244,16 @@ class Ps1VariableFlow:
 
         A read in another body is asked at the point that body runs, or not at all — see
         `position_of`.
+
+        A write in the right operand of a `-and` or `-or` is one more: the operator may skip it, and
+        the graphs place it at the statement as if it always ran.
         """
         selection = self._selection(read, lambda write: True)
         if selection is None:
             return None
         found = self._between.reaching_definition(
             selection.graph, selection.use, selection.definitions, selection.kills)
-        if found is None:
+        if found is None or may_be_skipped_by_a_short_circuit(found):
             return None
         if not self._observes_completed_store(
             selection.graph, selection.placed[id(found)], selection.use
@@ -279,6 +283,8 @@ class Ps1VariableFlow:
         if found is None:
             return None
         for write in found:
+            if may_be_skipped_by_a_short_circuit(write):
+                return None
             if not self._observes_completed_store(
                 selection.graph, selection.placed[id(write)], selection.use
             ):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import lines_executed, wontfix, opportunity, todo
+from test import lines_executed, wontfix, opportunity, todo, backlog
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib import scripts
@@ -547,6 +547,25 @@ class TestPs1AFileThatOnlyDefinesKeepsWhatItDefines(TestPs1):
             $Config.Path = 'C:\\x'
             function Get-ConfigPath {
               $Config.Path
+            }
+        """)
+
+    def test_a_library_that_counts_in_a_table_it_built_keeps_its_functions(self):
+        self._assertKept("""
+            $Config = @{ Count = 0 }
+            $Config.Count++
+            function Get-Count {
+              $Config.Count
+            }
+        """)
+
+    @backlog
+    def test_a_library_that_adds_to_a_list_it_built_keeps_its_functions(self):
+        self._assertKept("""
+            $List = New-Object Collections.ArrayList
+            [void]$List.Add(1)
+            function Get-Thing {
+              'thing'
             }
         """)
 

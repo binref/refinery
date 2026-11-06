@@ -17,6 +17,31 @@ class TestPs1AnAttributeArgumentWithoutAValueIsPrintedAsWritten(TestPs1):
         source = 'param([Parameter(Mandatory)] $x)'
         self.assertIn('Parameter(Mandatory)', Ps1Synthesizer().convert(Ps1Parser(source).parse()))
 
+    def test_a_named_attribute_argument_without_a_value_on_a_line_of_its_own_stays_a_name(self):
+        source = cleandoc("""
+            param([Parameter(
+              Position = 0,
+              Mandatory
+            )] $x)
+        """)
+        self.assertIn(
+            'Parameter(Position=0, Mandatory)', Ps1Synthesizer().convert(Ps1Parser(source).parse()))
+
+
+class TestPs1ATypeInASlotThatReadsAWordKeepsItsBrackets(TestPs1):
+
+    def test_a_type_naming_the_target_of_a_redirection(self):
+        self._assertKept('Write-Output 1 > ([string])')
+
+    def test_a_type_naming_the_file_a_switch_reads(self):
+        self._assertKept("switch -File ([string]) { default { Write-Host 'line' } }")
+
+    def test_a_type_as_the_condition_of_a_clause(self):
+        self._assertKept("""
+            $f = Read-Host
+            switch ($f) { ([string]) { Write-Host 'type' } }
+        """)
+
 
 class TestPs1AJumpABlockLetsOutReachesTheLoopAroundIt(TestPs1):
 
@@ -109,7 +134,6 @@ class TestPs1AFunctionRunThroughAComputedItemPathIsRun(TestPs1):
 
 class TestPs1AStoreAVariableRefusesIsNotFoldedIntoItsReads(TestPs1):
 
-    @todo
     def test_a_store_a_validation_attribute_refuses_is_not_folded(self):
         output = self._deobfuscate(cleandoc("""
             [ValidateRange(1,5)][int]$x = 1

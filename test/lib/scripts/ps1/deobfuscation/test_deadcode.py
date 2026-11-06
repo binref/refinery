@@ -54,6 +54,19 @@ class TestPs1DeadCodeElimination(TestPs1):
         source = "switch ('abc') { 'abc' { Write-Host $_ } }"
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'abc'")
 
+    def test_the_clause_keeps_the_value_a_function_it_calls_reads(self):
+        source = """
+            function Show-Item { Write-Output "item=$_" }
+            switch ('abc') { 'abc' { Show-Item } }
+        """
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Output 'item=abc'")
+
+    def test_the_clause_folds_where_a_pipeline_in_it_binds_its_own_value(self):
+        self._assertDeobfuscatesTo(
+            "switch ('abc') { 'abc' { 1, 2 | ForEach-Object { Write-Host $_ } } }",
+            '1, 2 | ForEach-Object { Write-Host $_ }',
+        )
+
     def test_switch_constant_default(self):
         result = self._deobfuscate("switch (99) { 1 { 'a' } default { 'd' } }")
         self.assertIn('d', result)

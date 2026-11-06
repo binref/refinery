@@ -55,6 +55,7 @@ from refinery.lib.scripts import Block, Node, _clone_node, mutation_epoch
 from refinery.lib.scripts.ps1.analysis.blocks import binds_the_pipeline_variable
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
+    SHORT_CIRCUIT_OPERATORS,
     extract_first_positional_string,
     fault_operand,
     get_command_name,
@@ -2377,12 +2378,6 @@ def _evaluated_unary(
     return Ps1Outcome(throw_join(operand.throws, applied.throws), applied.value)
 
 
-#: The operators that may not evaluate their right operand at all, so a certain throw standing there
-#: is not certain for the whole expression. These are the only two 5.1 short-circuits — `? :` and
-#: `??` are 5.1 parse errors and never reach here.
-_SHORT_CIRCUIT = frozenset({'-and', '-or'})
-
-
 def _evaluated_binary(
     node: Ps1BinaryExpression,
     type_of_variable: Ps1VariableTyping | None,
@@ -2405,7 +2400,7 @@ def _evaluated_binary(
     right = _operand(node.right, type_of_variable, calls)
     applied = apply(node.operator, left.value, right.value)
     right_throws = right.throws
-    if node.operator.lower() in _SHORT_CIRCUIT:
+    if node.operator.lower() in SHORT_CIRCUIT_OPERATORS:
         right_throws = _demoted_throw(right_throws)
     return Ps1Outcome(
         throw_join(left.throws, right_throws, applied.throws), applied.value)

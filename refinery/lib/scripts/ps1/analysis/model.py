@@ -59,7 +59,7 @@ from refinery.lib.scripts.ps1.ast import (
     binding_key,
     is_reference_cast,
     stored_value,
-    target_constraint,
+    target_constraints,
     unwrap_assignment_target,
 )
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
@@ -1285,8 +1285,7 @@ class Ps1SemanticModel:
             for write in binding.writes:
                 if write.may_define or not isinstance(write.node, Ps1Variable):
                     continue
-                named = target_constraint(write.node)
-                if named is not None:
+                for named in target_constraints(write.node):
                     binding.constraints.add(data.resolve_type(named))
 
     def _every_binding(self) -> Iterator[Binding]:

@@ -61,7 +61,6 @@ class TestPs1ExpandableExtra(TestPs1):
 
 class TestPs1ASubexpressionOfThePipelineInputRunsBeforeTheCommand(TestPs1):
 
-    @todo
     def test_a_separator_the_payload_text_restores_is_in_place_when_the_payload_runs(self):
         source = (
             '''"$( Set-Variable 'OFS' '' )" + 'Write-Host "$(1,2)"' + '''
@@ -69,12 +68,10 @@ class TestPs1ASubexpressionOfThePipelineInputRunsBeforeTheCommand(TestPs1):
         )
         self._assertDeobfuscatesToOneOf(source, source, "$OFS = ''\n$OFS = ' '\nWrite-Host '1 2'")
 
-    @todo
     def test_a_payload_reads_what_a_subexpression_after_its_text_assigns(self):
         source = '''\'Write-Host $x\' + "$( $x = 'b' )" | Invoke-Expression'''
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'b'")
 
-    @todo
     def test_a_pipeline_body_reads_what_a_subexpression_of_its_input_assigns(self):
         source = '''\'a\' + "$( $x = 'b' )" | ForEach-Object { Write-Host $x }'''
         self._assertDeobfuscatesToOneOf(

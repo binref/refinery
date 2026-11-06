@@ -34,6 +34,7 @@ from refinery.lib.scripts.ps1.analysis.separator import coerced_text_at
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
     Ps1Fact,
+    char_fact,
     convert,
     folded_binary,
     folded_increment,
@@ -818,7 +819,9 @@ class Ps1ConstantInlining(Transformer):
             text = const_value.value
             if not 0 <= idx < len(text):
                 return None
-            replacement = make_string_literal(text[idx])
+            replacement = render(char_fact(text[idx]))
+            if replacement is None:
+                return None
         else:
             array = _get_array_literal(const_value)
             if array is None or not 0 <= idx < len(array.elements):

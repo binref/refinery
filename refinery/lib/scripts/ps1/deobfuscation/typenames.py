@@ -6,6 +6,7 @@ from __future__ import annotations
 from refinery.lib.scripts import Node, Transformer, set_value
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.calls import Ps1CallReader, call_reader
+from refinery.lib.scripts.ps1.analysis.commands import CommandKind
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.values import (
     Ps1VariableTyping,
@@ -131,8 +132,9 @@ def get_member_order(type_name: str | Ps1TypeName, kind: str = '') -> list[str] 
     `refinery.lib.scripts.ps1.data.view_members` records under it, in the same order. A type whose
     order was not observed is refused: `Get-Member` lists events first and extended members beside
     the reflected ones, and the member table records neither, so an order built from it puts every
-    name after the first event at the wrong index. Measured, `(New-Object Net.WebClient |
-    Get-Member)[0].Name` is the event `Disposed`.
+    name after the first event at the wrong index. Measured, this is the event `Disposed`:
+
+        (New-Object Net.WebClient | Get-Member)[0].Name
 
     An enum is refused. `refinery.lib.scripts.ps1.data.view_members` lists an enum's values, which
     is what may follow `::` on the type, where `Get-Member` on a value of the enum lists the
@@ -161,11 +163,14 @@ def _members_listed(command: Ps1CommandInvocation) -> str | None:
     arguments = [
         argument for argument in command.arguments if isinstance(argument, Ps1CommandArgument)
     ]
+    if len(arguments) != len(command.arguments):
+        return None
     if not arguments:
         return ''
     head, *rest = arguments
-    if head.kind is Ps1CommandArgumentKind.POSITIONAL or not any(
-        binds_parameter(head.name, parameter) for parameter in ('membertype', 'type')
+    if (
+        head.kind is Ps1CommandArgumentKind.POSITIONAL
+        or not any(binds_parameter(head.name, parameter) for parameter in ('membertype', 'type'))
     ):
         return None
     if head.kind is Ps1CommandArgumentKind.NAMED and not rest:
@@ -327,6 +332,16 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
             return None
         return node.object
 
+    def _runs_get_member(self, command: Ps1CommandInvocation) -> bool:
+        """
+        Whether *command* runs the `Get-Member` cmdlet rather than a function or an alias the
+        script binds under its name, which outrank the cmdlet.
+        """
+        denotation = model_cache(self, command).commands.denotation(command)
+        if denotation.kind not in (CommandKind.ALIAS, CommandKind.CMDLET):
+            return False
+        return (denotation.target or '').lower() == 'get-member'
+
     def _try_resolve_get_member_index_name(
         self,
         node: Ps1MemberAccess,
@@ -344,7 +359,7 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
         if not isinstance(inner, Ps1Pipeline):
             return None
         get_member = _pipeline_get_member(inner)
-        if get_member is None:
+        if get_member is None or not self._runs_get_member(get_member):
             return None
         kind = _members_listed(get_member)
         if kind is None:

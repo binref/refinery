@@ -62,6 +62,7 @@ from refinery.lib.scripts.ps1.analysis.values import (
 )
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
+    MATCH_OPERATORS,
     assignment_target_is_all_variables,
     assignment_target_variables,
     command_name_literal,
@@ -362,18 +363,6 @@ def _writing_parameters() -> frozenset[str]:
 
 
 _WRITING_PARAMETERS = _writing_parameters()
-
-#: The binary operators whose evaluation writes the automatic `$Matches` variable, so an expression
-#: built on one is a store to engine state rather than a value. Every case-sensitivity and negation
-#: spelling is listed, because the engine populates `$Matches` for all of them.
-MATCH_OPERATORS = frozenset({
-    '-cmatch',
-    '-cnotmatch',
-    '-imatch',
-    '-inotmatch',
-    '-match',
-    '-notmatch',
-})
 
 #: The expression forms that are literally their own value: the base case of `is_side_effect_free`.
 _LITERAL_EXPRESSIONS = (
@@ -2661,14 +2650,17 @@ def _is_store(expression: Node) -> bool:
 
 def _stores_through_a_variable(expression: Node) -> bool:
     """
-    Whether `expression` is an assignment whose every slot stores into a member or an element of
-    a variable's value, or into the variable itself: `$Config.Path = 'x'`, `$a[0] = 1`. The
-    `$Null = ...` discard is not one.
+    Whether `expression` stores into a member or an element of a variable's value, or into the
+    variable itself, with every slot it writes: an assignment such as `$Config.Path = 'x'` or
+    `$a[0] = 1`, and an increment such as `$Config.Count++`. The `$Null = ...` discard is not one.
     """
-    if not isinstance(expression, Ps1AssignmentExpression) or is_null_discard(expression):
+    if isinstance(expression, Ps1UnaryExpression) and expression.operator in ('++', '--'):
+        slots = [expression.operand]
+    elif isinstance(expression, Ps1AssignmentExpression) and not is_null_discard(expression):
+        target = unwrap_assignment_target(expression.target)
+        slots = target.elements if isinstance(target, Ps1ArrayLiteral) else [target]
+    else:
         return False
-    target = unwrap_assignment_target(expression.target)
-    slots = target.elements if isinstance(target, Ps1ArrayLiteral) else [target]
     for slot in slots:
         slot = unwrap_assignment_target(slot)
         while isinstance(slot, (Ps1MemberAccess, Ps1IndexExpression)) and slot.object is not None:

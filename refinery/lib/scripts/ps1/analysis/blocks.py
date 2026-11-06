@@ -40,10 +40,9 @@ from __future__ import annotations
 import enum
 
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Collection, Iterator
 
 from refinery.lib.scripts import Node
-from refinery.lib.scripts.ps1.analysis.aliasdef import ALIAS_DEFINING_COMMANDS
 from refinery.lib.scripts.ps1.analysis.model import (
     NAME_ROLES,
     Occurrence,
@@ -51,13 +50,22 @@ from refinery.lib.scripts.ps1.analysis.model import (
     occurrence_role,
 )
 from refinery.lib.scripts.ps1.analysis.naming import (
+    Ps1NamedReference,
     Ps1NameRole,
     Ps1NameTarget,
     named_references,
+    reads_unreadable_name,
+    unreadable_name_target,
 )
 from refinery.lib.scripts.ps1.analysis.opaque import writes_nobody_can_attribute
-from refinery.lib.scripts.ps1.analysis.world import runs_code_in_the_calling_scope
+from refinery.lib.scripts.ps1.analysis.world import (
+    WorldRole,
+    command_role,
+    may_touch_identity_provider,
+    runs_code_in_the_calling_scope,
+)
 from refinery.lib.scripts.ps1.ast import (
+    MATCH_OPERATORS,
     binding_key,
     binds_parameter,
     bound_argument_value,
@@ -73,11 +81,13 @@ from refinery.lib.scripts.ps1.data import (
     scriptblock_parameters,
 )
 from refinery.lib.scripts.ps1.model import (
+    Ps1BinaryExpression,
     Ps1ClassDefinition,
     Ps1Code,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
+    Ps1DataSection,
     Ps1EnumDefinition,
     Ps1FunctionDefinition,
     Ps1InvokeMember,
@@ -85,6 +95,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ScopeModifier,
     Ps1Script,
     Ps1ScriptBlock,
+    Ps1StringLiteral,
+    Ps1SwitchStatement,
     Ps1TrapStatement,
     Ps1Variable,
 )
@@ -386,24 +398,42 @@ def classify_block(
 
 
 #: The variables a scope binds for the code it runs. A block reads these off its own invocation, and
-#: its statements standing in the code that runs it would read that code's instead.
+#: its statements standing in the code that runs it would read that code's instead. The path of the
+#: script is one of them: a block made from a string has none.
 _INVOCATION_VARIABLES = frozenset({
     'args',
     'input',
     'myinvocation',
     'psboundparameters',
     'pscmdlet',
+    'pscommandpath',
+    'psscriptroot',
 })
 
-#: The commands whose effect lands in the scope they run in, besides the variable commands that
-#: `_named_writes` reads: an alias, a drive, a module import and the strict-mode setting are each kept
-#: per scope, and end with the scope that made them.
-_SCOPED_STATE_COMMANDS = ALIAS_DEFINING_COMMANDS | frozenset({
+#: The qualifiers under which a name means the binding of the scope the occurrence runs in before
+#: any other: a read finds that binding first, and a write lands in that scope.
+_NAMES_OF_THE_OWN_SCOPE = frozenset({
+    Ps1ScopeModifier.NONE,
+    Ps1ScopeModifier.LOCAL,
+    Ps1ScopeModifier.PRIVATE,
+    Ps1ScopeModifier.VARIABLE,
+})
+
+#: The qualifiers under which a read finds the binding of the scope it runs in or none at all.
+_READS_OF_THE_OWN_SCOPE_ONLY = frozenset({
+    Ps1ScopeModifier.LOCAL,
+    Ps1ScopeModifier.PRIVATE,
+})
+
+#: The commands whose effect lands in the scope they run in, besides the ones that bind a command
+#: name and the variable commands that `_counts_from_its_own_scope` reads: a drive, a module and the
+#: strict-mode setting are each kept per scope, and end with the scope that made them, and so is the
+#: variable `Import-LocalizedData` binds the data it reads to.
+_SCOPED_STATE_COMMANDS = frozenset({
+    'import-localizeddata',
     'import-module',
-    'ipmo',
+    'new-module',
     'new-psdrive',
-    'mount',
-    'ndr',
     'set-strictmode',
 })
 
@@ -421,17 +451,21 @@ def runs_alike_in_the_scope_around_it(code: Ps1Code, own_scope: bool = True) -> 
     Whether the statements of *code*, a block or a script parsed from a string, do the same when
     they stand in the code that runs *code* as when *code* runs them; that is, whether the call can
     be replaced by the statements. *own_scope* says whether *code* runs in a scope of its own, as a
-    block called with `&` does, or in the scope of its caller, as `Invoke-Command -NoNewScope` runs
-    it.
+    block called with `&` does, or in the scope of its caller, as `Invoke-Command` runs it when
+    given `-NoNewScope`.
 
     A scope of its own is what makes most of the difference. A variable, an alias, a function, a
     drive, an imported module and the strict-mode setting that the statements make in it are gone
-    when the call returns, and standing in the caller they outlive it. Whatever the scope, the
-    statements must not depend on being the body of a call: a `return` leaves the call and not the
-    caller, a `trap` handles only what the call raises, a parameter and the invocation variables
-    are bound for the call, and code run by dot-sourcing or `Invoke-Expression` writes the scope it
-    runs in. Everything in the block is asked, including the blocks nested in it, because a nested
-    block a command runs in the scope around it writes this one.
+    when the call returns, and standing in the caller they outlive it. That includes the `$Matches`
+    a regex comparison or a `switch -regex` fills, the variable a `data` section names, an item
+    written to the `alias:` or `function:` drive, and a name a command addresses by a scope number,
+    which counts from the scope it runs in. Whatever the scope, the statements must not depend on
+    being the body of a call: a `return` leaves the call and not the caller, a `trap` handles only
+    what the call raises, a parameter and the invocation variables are bound for the call, and code
+    run by dot-sourcing or `Invoke-Expression` writes the scope it runs in. A command whose name is
+    computed may be `Invoke-Expression`, so it is refused as one. Everything in the block is asked,
+    including the blocks nested in it, because a nested block a command runs in the scope around it
+    writes this one.
     """
     if get_param_block(code) is not None or get_named_blocks(code):
         return False
@@ -447,8 +481,14 @@ def runs_alike_in_the_scope_around_it(code: Ps1Code, own_scope: bool = True) -> 
             Ps1EnumDefinition,
         )):
             return False
+        if reads_one_of(node, _INVOCATION_VARIABLES):
+            return False
+        if own_scope and unreadable_name_target(node) is not None:
+            return False
+        if own_scope and isinstance(node, Ps1DataSection) and node.name:
+            return False
         if isinstance(node, Ps1Variable):
-            if node.scope is Ps1ScopeModifier.NONE and node.name.lower() in _INVOCATION_VARIABLES:
+            if own_scope and node.scope in _READS_OF_THE_OWN_SCOPE_ONLY:
                 return False
             if (
                 own_scope
@@ -457,20 +497,80 @@ def runs_alike_in_the_scope_around_it(code: Ps1Code, own_scope: bool = True) -> 
             ):
                 return False
             continue
+        if own_scope and _fills_the_match_table(node):
+            return False
         if not isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember)):
             continue
         if writes_nobody_can_attribute(node):
             return False
-        if own_scope and any(_named_writes(node)):
+        if own_scope and any(map(_counts_from_its_own_scope, named_references(node))):
             return False
         if not isinstance(node, Ps1CommandInvocation):
             continue
         name = resolve_command_name(node)
+        if name is None and not isinstance(node.name, Ps1ScriptBlock):
+            return False
         if runs_code_in_the_calling_scope(node, name):
             return False
-        if own_scope and name is not None and name.lower() in _SCOPED_STATE_COMMANDS:
+        if not own_scope:
+            continue
+        if name in _SCOPED_STATE_COMMANDS or may_touch_identity_provider(node):
+            return False
+        if name is not None and command_role(name) is WorldRole.IDENTITY:
+            return False
+        if _runs_a_block_it_is_handed(node):
             return False
     return True
+
+
+def reads_one_of(node: Node, names: Collection[str]) -> bool:
+    """
+    Whether *node* itself reads one of *names*, lowercased, from the scope it runs in: as a variable
+    under a qualifier that looks there first, or as a string that a command or the session state
+    looks up, which may also be every name at once.
+    """
+    if isinstance(node, Ps1Variable):
+        return node.scope in _NAMES_OF_THE_OWN_SCOPE and node.name.lower() in names
+    if not isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember)):
+        return False
+    if reads_unreadable_name(node):
+        return True
+    return any(reference.key in names for reference in named_references(node))
+
+
+def _fills_the_match_table(node: Node) -> bool:
+    """
+    Whether evaluating *node* itself may fill the automatic `$Matches` of the scope it runs in: a
+    regex comparison does whenever it matches, and so does a `switch -regex` whose clause matches.
+    """
+    if isinstance(node, Ps1BinaryExpression):
+        return node.operator.lower() in MATCH_OPERATORS
+    return isinstance(node, Ps1SwitchStatement) and node.regex
+
+
+def _counts_from_its_own_scope(reference: Ps1NamedReference) -> bool:
+    """
+    Whether the scope a command runs in decides the binding of a name it addresses as a string: a
+    write to a name of that scope does, and so does any reference made by a scope number, which
+    counts from that scope.
+    """
+    if reference.target is Ps1NameTarget.UNREADABLE:
+        return True
+    return reference.target is Ps1NameTarget.LOCAL and reference.role is not Ps1NameRole.READS
+
+
+def _runs_a_block_it_is_handed(cmd: Ps1CommandInvocation) -> bool:
+    """
+    Whether *cmd* is a `ForEach-Object` or `Where-Object`, which runs its body in the scope it is
+    called from, handed a body this cannot read: anything but a block written out or a word.
+    """
+    if names_an_intact_iterating_command(cmd) is None:
+        return False
+    for argument in cmd.arguments:
+        value = argument.value if isinstance(argument, Ps1CommandArgument) else argument
+        if value is not None and not isinstance(value, (Ps1ScriptBlock, Ps1StringLiteral)):
+            return True
+    return False
 
 
 class Ps1BlockModel:
@@ -572,7 +672,7 @@ class Ps1BlockModel:
                 continue
             if (
                 isinstance(node, Ps1Variable)
-                and node.scope is Ps1ScopeModifier.NONE
+                and node.scope in _NAMES_OF_THE_OWN_SCOPE
                 and is_write_occurrence(node)
             ):
                 yield Occurrence(node=node, role=occurrence_role(node), key=binding_key(node))

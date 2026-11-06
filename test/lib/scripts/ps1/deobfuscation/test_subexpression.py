@@ -445,7 +445,6 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             """),
         )
 
-    @todo
     def test_two_retained_names_aliasing_one_array_refuses(self):
         self._assertUnchanged(cleandoc("""
             $x = $($a = 1, 2, 3

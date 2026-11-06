@@ -1500,7 +1500,6 @@ class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
             }}
         """)
 
-    @todo
     def test_a_literal_path_write_of_the_preference_keeps_the_trap_while_the_cast_stays(self):
         self._assertTheTrapStaysWhileTheCastDoes(F"""
             Set-Item -LiteralPath Variable:ErrorActionPreference Stop
@@ -1509,7 +1508,6 @@ class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
             {_FOLLOWER}
         """)
 
-    @todo
     def test_a_whole_table_replacement_that_binds_the_action_keeps_the_trap(self):
         self._assertKept(F"""
             $PSDefaultParameterValues = @{{ '*:ErrorAction' = 'Stop' }}

@@ -2217,6 +2217,7 @@ class Ps1Parser:
                         break
                     if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND):
                         key_tok = self._advance()
+                        self._skip_newlines()
                         if self._eat(Ps1TokenKind.EQUALS):
                             self._skip_newlines()
                             val = self._parse_expression()

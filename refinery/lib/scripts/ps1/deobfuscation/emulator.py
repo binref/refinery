@@ -15,14 +15,10 @@ if TYPE_CHECKING:
     _Value: TypeAlias = 'str | int | float | bool | list | None | _MatchTable'
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
-from refinery.lib.scripts.ps1.analysis.blocks import runs_alike_in_the_scope_around_it
+from refinery.lib.scripts.ps1.analysis.blocks import reads_one_of, runs_alike_in_the_scope_around_it
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
-from refinery.lib.scripts.ps1.analysis.effects import (
-    MATCH_OPERATORS,
-    opens_a_redirection_target,
-    takes_output_away,
-)
+from refinery.lib.scripts.ps1.analysis.effects import opens_a_redirection_target, takes_output_away
 from refinery.lib.scripts.ps1.analysis.model import (
     Ps1NameSet,
     Ps1SemanticModel,
@@ -48,12 +44,15 @@ from refinery.lib.scripts.ps1.analysis.values import (
 )
 from refinery.lib.scripts.ps1.analysis.world import runs_code_supplied_as_data
 from refinery.lib.scripts.ps1.ast import (
+    MATCH_OPERATORS,
     get_body,
     get_command_name,
     get_member_name,
+    is_builtin_variable,
     normalize_command_name,
     normalize_dotnet_type_name,
     standalone_command_statement,
+    unwrap_parens,
 )
 from refinery.lib.scripts.ps1.data import (
     COMPARISON_OPS,
@@ -70,6 +69,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     apply_format_string,
     apply_string_method,
     detect_encoding_chain,
+    dotnet_from_base64,
     dotnet_regex_replace,
     extract_foreach_scriptblock,
     ps_divide,
@@ -387,9 +387,12 @@ class InvokeExpression(Exception):
     Raised when the interpreter encounters `Invoke-Expression` with a string argument. Instead of
     attempting to execute the string (which may contain constructs the interpreter cannot handle),
     the string is propagated upward so the function evaluator can emit it as a literal replacement.
+    *site* is the command that hands the code out: the `Invoke-Expression` itself, or the call of a
+    function whose body handed it out in turn.
     """
-    def __init__(self, code: str):
+    def __init__(self, code: str, site: Node):
         self.code = code
+        self.site = site
 
 
 class _BreakSignal(Exception):
@@ -497,50 +500,91 @@ def _strict_mode_flags(cache) -> tuple[bool, bool]:
     )
 
 
-#: The qualifiers under which a read finds the binding of the scope it runs in before any other.
-_READS_OF_THE_OWN_SCOPE = frozenset({
-    Ps1ScopeModifier.NONE,
-    Ps1ScopeModifier.LOCAL,
-    Ps1ScopeModifier.PRIVATE,
-    Ps1ScopeModifier.VARIABLE,
-})
+#: The variables the engine reads by itself, so that code depends on the value one holds where it
+#: runs without naming it: `$OFS` joins an array converted to a string, and a preference decides
+#: what a command does with an error or a message.
+_READ_BY_THE_ENGINE = PS1_ENGINE_VARIABLES | frozenset(PS1_KNOWN_VARIABLES)
+
+
+def _is_the_last_statement(script_block: Ps1ScriptBlock, site: Node) -> bool:
+    """
+    Whether *site* is the whole of the last thing *script_block* does, which is the one position
+    where the code it hands out stands in for everything the body does from there on: its last
+    statement, or the value its last statement returns, with nothing but a `return` of no value
+    after it.
+    """
+    body = list(script_block.body)
+    while body and isinstance(body[-1], Ps1ReturnStatement) and body[-1].pipeline is None:
+        body.pop()
+    if not body:
+        return False
+    last = body[-1]
+    if isinstance(last, Ps1ExpressionStatement):
+        return last.expression is site
+    if isinstance(last, Ps1ReturnStatement) and last.pipeline is not None:
+        return unwrap_parens(last.pipeline) is site
+    return False
 
 
 def _runs_alike_where_the_call_stands(
     code: str,
     function: Ps1FunctionDefinition,
     bound: Iterable[str],
+    functions: Mapping[str, Ps1FunctionDefinition],
+    own_scope: bool = True,
 ) -> bool:
     """
     Whether the code a function's body hands to `Invoke-Expression` does the same where the call of
     the function stands, which is where an evaluator that hands it on puts it, as in the function's
-    scope, where 5.1 runs it. It has to run alike in a scope around the function's
-    (`refinery.lib.scripts.ps1.analysis.blocks.runs_alike_in_the_scope_around_it`) and read no
-    variable the call binds: one in *bound*, the names the evaluated call holds, or one the body
-    writes anywhere, its parameters included. Such a read finds the function's binding where 5.1
-    runs the code, and whatever the caller holds where the code is put; measured,
-    `function B { $r = 'x'; Invoke-Expression '$r' }; Write-Host (B)` writes x.
+    scope, where 5.1 runs it. Without *own_scope* the code is put there in a block of its own, run
+    by `&`, which opens a child scope of the call site as the call of the function does, so what the
+    code writes ends with that scope in both. It has to run alike in that scope rather than the
+    function's (`refinery.lib.scripts.ps1.analysis.blocks.runs_alike_in_the_scope_around_it`) and
+    read no variable the call binds: one in *bound*, the names the evaluated call holds, or one the
+    body writes anywhere, its parameters included. Such a read finds the function's binding where
+    5.1 runs the code, and whatever the caller holds where the code is put; measured, this writes x:
+
+        function B { $r = 'x'; Invoke-Expression '$r' }; Write-Host (B)
+
+    A read is one however the name is spelled: a variable, or a string that `Get-Variable` or the
+    session state is handed. And it is one wherever it runs from the code: the body of a function of
+    *functions* that the code calls reads the names of whatever scope calls it. The body must not
+    set a variable the engine reads by itself either, which the code reads without naming it.
     """
     from refinery.lib.scripts.ps1.parser import Ps1Parser
     try:
         parsed = Ps1Parser(code).parse()
     except Exception:
         return False
-    if not runs_alike_in_the_scope_around_it(parsed):
+    if not runs_alike_in_the_scope_around_it(parsed, own_scope):
         return False
-    names = {name.lower() for name in bound}
-    if function.body is not None:
-        names.update(
-            node.name.lower()
-            for node in function.body.walk()
-            if isinstance(node, Ps1Variable) and is_write_occurrence(node)
-        )
-    return not any(
-        isinstance(node, Ps1Variable)
-        and node.scope in _READS_OF_THE_OWN_SCOPE
-        and node.name.lower() in names
-        for node in parsed.walk()
-    )
+    written = set() if function.body is None else {
+        node.name.lower()
+        for node in function.body.walk()
+        if isinstance(node, Ps1Variable)
+        and is_write_occurrence(node)
+        and not is_builtin_variable(node)
+    }
+    if not written.isdisjoint(_READ_BY_THE_ENGINE):
+        return False
+    names = written.union(name.lower() for name in bound)
+    if not names:
+        return True
+    pending: list[Node] = [parsed]
+    reached: set[int] = set()
+    while pending:
+        for node in pending.pop().walk():
+            if reads_one_of(node, names):
+                return False
+            if not isinstance(node, Ps1CommandInvocation):
+                continue
+            name = get_command_name(node)
+            callee = None if name is None else functions.get(normalize_command_name(name))
+            if callee is None or callee.body is None or id(callee) in reached:
+                continue
+            reached.add(id(callee))
+            pending.append(callee.body)
+    return True
 
 
 class _Ps1Interpreter:
@@ -640,6 +684,10 @@ class _Ps1Interpreter:
             # it on to a loop *outside* the emulated body, which is a program state this holds no
             # value for. The loops inside the body catch these signals before they get here.
             raise _Ps1InterpreterError
+        except InvokeExpression as handed_out:
+            if stream or not _is_the_last_statement(script_block, handed_out.site):
+                raise _Ps1InterpreterError
+            raise
         return stream
 
     def execute(
@@ -967,13 +1015,17 @@ class _Ps1Interpreter:
         code_str = positional[0]
         if not isinstance(code_str, str):
             raise _Ps1InterpreterError
-        raise InvokeExpression(code_str)
+        raise InvokeExpression(code_str, node)
 
     def _eval_user_function_call(
         self, node: Ps1CommandInvocation, cmd: str,
     ) -> _Value:
         funcdef = self._functions.get(cmd)
         if funcdef is None:
+            raise _Ps1InterpreterError
+        if node.invocation_operator == '.':
+            # Dot-sourced, the body runs in the scope of the caller, and a child interpreter holds
+            # what it writes in a scope of its own.
             raise _Ps1InterpreterError
         if self._depth >= _MAX_INTERPRETER_DEPTH:
             raise _Ps1InterpreterError
@@ -1005,23 +1057,26 @@ class _Ps1Interpreter:
         try:
             result = child.execute(body, bindings)
         except InvokeExpression as iex:
-            if not _runs_alike_where_the_call_stands(iex.code, funcdef, child._env):
+            functions = self._functions
+            if not _runs_alike_where_the_call_stands(iex.code, funcdef, child._env, functions):
                 raise _Ps1InterpreterError
-            return self._resolve_iex_code(iex.code)
+            return self._resolve_iex_code(iex.code, node)
         finally:
             self._iterations += child._iterations
         return result
 
-    def _resolve_iex_code(self, code: str) -> _Value:
+    def _resolve_iex_code(self, code: str, site: Ps1CommandInvocation) -> _Value:
         """
-        When a called function raises `InvokeExpression`, the code string may be a simple variable
-        reference like `$varName`. Resolve it in the current scope before propagating the signal.
+        What the call at *site* produces when the function it calls hands *code* to
+        `Invoke-Expression`, which runs it where the call stands. Code that only reads a variable
+        writes that variable's value, which is read in the current scope; it is a value the call
+        writes and not code it runs. Any other code is handed on, now by *site*.
         """
         from refinery.lib.scripts.ps1.parser import Ps1Parser
         try:
             parsed = Ps1Parser(code).parse()
         except Exception:
-            raise InvokeExpression(code)
+            raise InvokeExpression(code, site)
         if (
             len(parsed.body) == 1
             and isinstance(parsed.body[0], Ps1ExpressionStatement)
@@ -1030,9 +1085,9 @@ class _Ps1Interpreter:
             if isinstance(expr, Ps1Variable):
                 resolved = self._eval_variable(expr)
                 if isinstance(resolved, str):
-                    raise InvokeExpression(resolved)
+                    return resolved
                 raise _Ps1InterpreterError
-        raise InvokeExpression(code)
+        raise InvokeExpression(code, site)
 
     def _collect_positional_args(self, node: Ps1CommandInvocation) -> list[_Value]:
         positional: list[_Value] = []
@@ -1387,7 +1442,10 @@ class _Ps1Interpreter:
             if method == 'tostring' and len(args) == 1:
                 return self._to_str(args[0])
             if method == 'frombase64string' and len(args) == 1:
-                return list(base64.b64decode(self._to_str(args[0])))
+                decoded = dotnet_from_base64(self._to_str(args[0]))
+                if decoded is None:
+                    raise _Ps1InterpreterError
+                return list(decoded)
             if method == 'tobase64string' and len(args) == 1:
                 value = args[0]
                 if not isinstance(value, list):
@@ -2118,9 +2176,14 @@ class Ps1FunctionEvaluator(Transformer):
         try:
             result = interpreter.execute(funcdef.body, bindings)
         except InvokeExpression as iex:
-            if not _runs_alike_where_the_call_stands(iex.code, funcdef, interpreter._env):
+            for own_scope in (True, False):
+                if _runs_alike_where_the_call_stands(
+                    iex.code, funcdef, interpreter._env, self._functions, own_scope
+                ):
+                    break
+            else:
                 return None
-            replacement = self._make_iex_node(iex.code)
+            replacement = self._make_iex_node(iex.code, in_a_block=not own_scope)
             if replacement is None:
                 self._failed_counts[key] = self._failed_counts.get(key, 0) + 1
                 return None
@@ -2285,11 +2348,12 @@ class Ps1FunctionEvaluator(Transformer):
         return _rendered_value(value)
 
     @staticmethod
-    def _make_iex_node(code: str) -> Ps1CommandInvocation | None:
+    def _make_iex_node(code: str, in_a_block: bool = False) -> Ps1CommandInvocation | None:
         """
         Build an `Invoke-Expression 'code'` command node so that the existing IEX-inlining pass
-        can pick it up in a later round. Returns `None` when the code string is empty or does not
-        parse into a valid PowerShell AST (i.e. contains error nodes).
+        can pick it up in a later round, run in a block of its own by `&` when *in_a_block* is set.
+        Returns `None` when the code string is empty or does not parse into a valid PowerShell AST
+        (i.e. contains error nodes).
         """
         if not code or not code.strip():
             return None
@@ -2301,7 +2365,7 @@ class Ps1FunctionEvaluator(Transformer):
         for node in parsed.walk():
             if isinstance(node, Ps1ErrorNode):
                 return None
-        return Ps1CommandInvocation(
+        call = Ps1CommandInvocation(
             name=Ps1StringLiteral(value='Invoke-Expression', raw='Invoke-Expression'),
             arguments=[Ps1CommandArgument(
                 kind=Ps1CommandArgumentKind.POSITIONAL,
@@ -2309,6 +2373,10 @@ class Ps1FunctionEvaluator(Transformer):
                 value=make_string_literal(code),
             )],
         )
+        if not in_a_block:
+            return call
+        block = Ps1ScriptBlock(body=[Ps1ExpressionStatement(expression=call)])
+        return Ps1CommandInvocation(name=block, invocation_operator='&')
 
     def _remove_resolved_definitions(self, root):
         """
@@ -2773,12 +2841,20 @@ class Ps1SubExpressionEvaluator(Transformer):
         where `render`'s refusal of `None` is about the stream, in which an emitted `$null` and an
         emission that did not happen differ. A name the body never wrote on the taken path is not
         stored at all: it is unset on both sides of the fold.
+
+        Two names holding the one collection are refused. Each store spells a collection of its own,
+        and a change made in place through one name would no longer show through the other.
         """
         stores: list[Ps1ExpressionStatement] = []
+        collections: set[int] = set()
         for name in sorted(retained):
             if name not in env:
                 continue
             value = env[name]
+            if isinstance(value, list):
+                if id(value) in collections:
+                    return None
+                collections.add(id(value))
             spelled = null_expression() if value is None else _rendered_value(value)
             if spelled is None:
                 return None

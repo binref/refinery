@@ -1523,7 +1523,6 @@ class TestPs1AStrictModeArmingIsReadOverTheWholeScript(TestBase):
         ]
         self.assertEqual(self._armings(scripts), dict.fromkeys(scripts, False))
 
-    @todo
     def test_a_name_assembled_out_of_pieces_and_run_arms_strict_mode(self):
         script = "$c = 'Set-Strict' + 'Mode -Version 1'; Invoke-Expression $c"
         self.assertEqual(self._armings([script]), {script: True})

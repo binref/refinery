@@ -3,6 +3,7 @@ Shared utilities for PowerShell deobfuscation transforms.
 """
 from __future__ import annotations
 
+import base64
 import math
 import re
 
@@ -463,6 +464,19 @@ def dotnet_regex_replace(pattern: str, replacement: str, text: str, *, flags: in
         text,
         flags=flags,
     )
+
+
+def dotnet_from_base64(text: str) -> bytes | None:
+    """
+    The bytes `[Convert]::FromBase64String` decodes from `text`, or `None` where it raises. It skips
+    a space, a tab, a carriage return and a line feed wherever one stands, and refuses any other
+    character outside the alphabet, a length that is not a multiple of four and a padding that does
+    not close the text.
+    """
+    try:
+        return base64.b64decode(re.sub('[ \\t\\r\\n]', '', text), validate=True)
+    except ValueError:
+        return None
 
 
 _BARE_COMMAND_NAME = re.compile(r'''[^\s'"`(){};|&<>@]+''')

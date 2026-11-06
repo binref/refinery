@@ -3,7 +3,6 @@ PowerShell constant folding transforms.
 """
 from __future__ import annotations
 
-import base64
 import codecs
 import re
 
@@ -56,6 +55,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     apply_string_method,
     collect_format_arguments,
     detect_encoding_chain,
+    dotnet_from_base64,
     dotnet_regex_replace,
     extract_foreach_scriptblock,
     is_pipeline_item,
@@ -648,12 +648,22 @@ class Ps1ConstantFolding(Transformer):
             names = type_names(owner)
             if names is not None:
                 return Ps1ArrayLiteral(elements=[make_string_literal(name) for name in names])
-        if owner is not None and member_record(owner, member) is MemberLookup.ABSENT:
+        if owner is not None and self._lacks_the_member(owner, member, node):
             return Ps1Variable(name='Null')
         result = self._try_fold_regex_member_access(node, member)
         if result is not None:
             return result
         return None
+
+    def _lacks_the_member(self, owner: Ps1TypeName, member: str, node: Ps1MemberAccess) -> bool:
+        """
+        Whether a value of type *owner* has no member *member* where *node* reads it: reflection
+        lists none, and nothing that adds a member to a type, as `Update-TypeData` does, can have
+        run before the read.
+        """
+        if member_record(owner, member) is not MemberLookup.ABSENT:
+            return False
+        return self._world is not None and self._world.closed_at(node)
 
     def _fold_shape_member(
         self,
@@ -982,11 +992,8 @@ class Ps1ConstantFolding(Transformer):
     ) -> Expression | None:
         if lower == 'frombase64string' and len(node.arguments) == 1:
             b64_str = coerced_text(read(node.arguments[0]))
-            if b64_str is not None:
-                try:
-                    decoded = base64.b64decode(b64_str)
-                except Exception:
-                    return None
+            decoded = None if b64_str is None else dotnet_from_base64(b64_str)
+            if decoded is not None:
                 if not decoded:
                     return Ps1ArrayExpression(body=[])
                 elements: list[Expression] = [

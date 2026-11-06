@@ -749,6 +749,43 @@ def is_reference_cast(expr: Node | None) -> TypeGuard[Ps1CastExpression]:
 #: lets a caller read the matched construct's statement list off it.
 STATEMENT_LIST_EXPRESSIONS = (Ps1SubExpression, Ps1ArrayExpression)
 
+#: The operators that may not evaluate their right operand at all: `-and` skips it after a false
+#: left operand and `-or` after a true one. These are the only two 5.1 short-circuits; `? :` and
+#: `??` are 5.1 parse errors.
+SHORT_CIRCUIT_OPERATORS = frozenset({'-and', '-or'})
+
+
+def may_be_skipped_by_a_short_circuit(node: Node) -> bool:
+    """
+    Whether *node* stands in the right operand of a `-and` or `-or`, read up to the script block it
+    runs in, so that it is evaluated only where the left operand does not settle the result.
+    """
+    child = node
+    parent = node.parent
+    while parent is not None and not isinstance(parent, Ps1Code):
+        if (
+            isinstance(parent, Ps1BinaryExpression)
+            and parent.right is child
+            and parent.operator.lower() in SHORT_CIRCUIT_OPERATORS
+        ):
+            return True
+        child = parent
+        parent = parent.parent
+    return False
+
+
+#: The binary operators whose evaluation writes the automatic `$Matches` variable, so an expression
+#: built on one is a store to engine state rather than a value. Every case-sensitivity and negation
+#: spelling is listed, because the engine populates `$Matches` for all of them.
+MATCH_OPERATORS = frozenset({
+    '-cmatch',
+    '-cnotmatch',
+    '-imatch',
+    '-inotmatch',
+    '-match',
+    '-notmatch',
+})
+
 #: The binary operators whose operands may raise a statement-terminating error: division and
 #: remainder by a zero, and arithmetic or bitwise operators over a pairing 5.1 defines no operation
 #: for or over a string that does not convert to a number. Read as a shape — the operands' values are
@@ -1113,14 +1150,24 @@ def target_constraint(var: Ps1Variable) -> str | None:
     Only a cast between the occurrence and the assignment counts, so `$q = [string]5` is not a
     constraint: it converts what is stored once and leaves the variable free.
     """
+    return next(iter(target_constraints(var)), None)
+
+
+def target_constraints(var: Ps1Variable) -> list[str]:
+    """
+    Every type or attribute a constrained assignment target names for *var*, the one standing next
+    to it first: `[ValidateRange(1,5)][int]$x = 1` names `int` and then `ValidateRange(1,5)`. The
+    variable keeps each of them, so each decides what a later write may store in it.
+    """
     assignment = assignment_of(var)
     if assignment is None:
-        return None
+        return []
+    named: list[str] = []
     cursor: Node = var
     parent = cursor.parent
     while parent is not None and parent is not assignment:
         if isinstance(parent, Ps1CastExpression):
-            return parent.type_name
+            named.append(parent.type_name)
         cursor = parent
         parent = cursor.parent
-    return None
+    return named

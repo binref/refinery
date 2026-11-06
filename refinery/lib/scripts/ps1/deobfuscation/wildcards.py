@@ -34,8 +34,10 @@ from refinery.lib.scripts.ps1.data import (
     GET_COMMAND_ALIASES,
     GET_MEMBER_ALIASES,
     KNOWN_CMDLETS,
+    OUT_VARIABLE_PARAMETERS,
     PS1_KNOWN_VARIABLES,
     is_enum,
+    is_type,
     member_names,
 )
 from refinery.lib.scripts.ps1.deobfuscation.substitution import substituted
@@ -254,18 +256,22 @@ _EXPRESSIBLE_SCOPES: dict[str, Ps1ScopeModifier] = {
 #:
 #: `-Description` is deliberately absent: it is metadata no read or write observes. Anything not
 #: listed is *allowed*, which is the wrong polarity for a corruption and the right one for a
-#: rewrite — see `refinery.lib.scripts.ps1.analysis.naming` on why the two tables differ.
+#: rewrite — see `refinery.lib.scripts.ps1.analysis.naming` on why the two tables differ. The
+#: common parameters that fill a variable of their own, `-OutVariable` among them, are refused
+#: beside these: a reference fills none.
 _INEXPRESSIBLE_PARAMETERS = (
     'force',
     'option',
     'passthru',
     'visibility',
+    *sorted(OUT_VARIABLE_PARAMETERS),
 )
 
 
 def _expresses_every_effect(cmd: Ps1CommandInvocation) -> bool:
     """
-    Whether an assignment carries everything *cmd* does, or drops an effect on the floor.
+    Whether a variable reference or an assignment carries everything *cmd* does, or drops an
+    effect on the floor.
     """
     for argument in cmd.arguments:
         if not isinstance(argument, Ps1CommandArgument):
@@ -295,25 +301,40 @@ def _subject_argument_value(
     return None
 
 
-def _expressible_scope(
+#: The qualifiers a variable command reads off the front of the name it is handed, mapped to the
+#: qualifier a reference spells them with: `Set-Variable global:y 1` writes `$global:y`.
+_NAME_QUALIFIERS: dict[str, Ps1ScopeModifier] = {
+    'global': Ps1ScopeModifier.GLOBAL,
+    'local': Ps1ScopeModifier.LOCAL,
+    'private': Ps1ScopeModifier.PRIVATE,
+    'script': Ps1ScopeModifier.SCRIPT,
+}
+
+
+def _expressible_reference(
     node: Ps1CommandInvocation,
     var_name: str,
-) -> Ps1ScopeModifier | None:
+) -> tuple[str, Ps1ScopeModifier | None] | None:
     """
-    The qualifier the variable reference replacing *node* must carry, or `None` when no reference
-    can stand for the command. A name that already carries a qualifier of its own is declined
-    whenever a `-Scope` argument is present too, since the two would have to be rendered one inside
-    the other.
+    The bare name of the variable *node* is about and the qualifier a reference replacing it must
+    carry, the qualifier being `None` where no reference can name the scope. A qualifier written
+    into the name, as `global:y`, is the reference's own and is not part of its name; it is
+    declined beside a `-Scope` argument, since the two would have to be rendered one inside the
+    other. A prefix no qualifier spells, as `env:y`, names no variable this can reference at all.
     """
     declared = bound_argument_value(node, 'scope')
+    qualifier, separator, bare = var_name.rpartition(':')
+    if separator:
+        scope = _NAME_QUALIFIERS.get(qualifier.lower())
+        if scope is None or not bare:
+            return None
+        return bare, None if declared is not None else scope
     if declared is None:
-        return Ps1ScopeModifier.NONE
-    if ':' in var_name:
-        return None
+        return var_name, Ps1ScopeModifier.NONE
     written = string_value(declared)
     if written is None:
-        return None
-    return _EXPRESSIBLE_SCOPES.get(written.lower())
+        return var_name, None
+    return var_name, _EXPRESSIBLE_SCOPES.get(written.lower())
 
 
 def _resolve_variable_name(
@@ -391,6 +412,16 @@ def _extract_where_object_wildcard(
     return string_value(expr.right)
 
 
+#: The type whose methods look a command up by a name or a pattern: what `InvokeCommand` holds.
+_COMMAND_LOOKUP_TYPE = 'System.Management.Automation.CommandInvocationIntrinsics'
+
+#: The methods of `_COMMAND_LOOKUP_TYPE` that list the cmdlets matching a pattern.
+_CMDLET_LISTING_METHODS = frozenset({'getcmdlets', 'getcmdlet'})
+
+#: The methods of `_COMMAND_LOOKUP_TYPE` that name the commands matching a pattern.
+_COMMAND_NAMING_METHODS = frozenset({'getcommandname', 'getcommand'})
+
+
 class Ps1WildcardResolution(VariableTypeAwareTransformer):
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
@@ -460,7 +491,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         rewrite has to decline: the name a command is about is that name whichever scope it reads.
         """
         inner = unwrap_parens(expr)
-        if not isinstance(inner, Ps1CommandInvocation):
+        if not isinstance(inner, Ps1CommandInvocation) or not _expresses_every_effect(inner):
             return None
         name = get_command_name(inner)
         if name is None:
@@ -486,7 +517,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         resolved = _resolve_variable_name(pattern)
         if resolved is None:
             return None
-        return resolved, _expressible_scope(inner, resolved)
+        return _expressible_reference(inner, resolved)
 
     def _try_resolve_get_variable_value_only(
         self,
@@ -498,7 +529,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         cmd_name = get_command_name(node)
         if cmd_name is None or cmd_name.lower() not in _GET_VARIABLE_COMMANDS:
             return None
-        if not _has_valueonly_switch(node):
+        if not _has_valueonly_switch(node) or not _expresses_every_effect(node):
             return None
         command = resolve_command_name(node)
         if command is None:
@@ -515,14 +546,36 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         resolved = _resolve_variable_name(arg_value)
         if resolved is None:
             return None
-        scope = _expressible_scope(node, resolved)
+        reference = _expressible_reference(node, resolved)
+        if reference is None:
+            return None
+        name, scope = reference
         if scope is None:
             return None
         return Ps1Variable(
             offset=node.offset,
-            name=resolved,
+            name=name,
             scope=scope,
         )
+
+    def _looks_up_commands(self, receiver: Expression | None, through_invoke: bool) -> bool:
+        """
+        Whether a method called on *receiver* is one of the command lookups of the engine's
+        `CommandInvocationIntrinsics`, as `$ExecutionContext.InvokeCommand` holds them. Called
+        *through_invoke*, the receiver is the lookup method itself, as `.GetCmdlets.Invoke(...)`
+        names it; an `Invoke` on anything else runs whatever the receiver holds.
+        """
+        if through_invoke:
+            if not isinstance(receiver, Ps1MemberAccess):
+                return False
+            name = get_member_name(receiver.member)
+            if name is None or name.lower() not in _CMDLET_LISTING_METHODS | _COMMAND_NAMING_METHODS:
+                return False
+            receiver = receiver.object
+        if receiver is None:
+            return False
+        found = resolve_expression_type(receiver, self._type_of_variable)
+        return found is not None and is_type(str(found), _COMMAND_LOOKUP_TYPE)
 
     def _try_resolve_cmdlet_method(
         self,
@@ -532,10 +585,12 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         if member_name is None:
             return None
         member_lower = member_name.lower()
-        is_getcmdlets = member_lower in ('getcmdlets', 'getcmdlet')
-        is_getcommand = member_lower in ('getcommandname', 'getcommand')
+        is_getcmdlets = member_lower in _CMDLET_LISTING_METHODS
+        is_getcommand = member_lower in _COMMAND_NAMING_METHODS
         is_invoke = member_lower == 'invoke'
         if not is_getcmdlets and not is_getcommand and not is_invoke:
+            return None
+        if not self._looks_up_commands(node.object, is_invoke):
             return None
         if len(node.arguments) < 1:
             return None
@@ -658,7 +713,10 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         resolved = _resolve_variable_name(var_name)
         if resolved is None:
             return None
-        scope = _expressible_scope(node, resolved)
+        reference = _expressible_reference(node, resolved)
+        if reference is None:
+            return None
+        resolved, scope = reference
         if scope is None:
             return None
         if named_value is not None:

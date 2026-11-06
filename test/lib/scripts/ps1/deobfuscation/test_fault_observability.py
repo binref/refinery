@@ -697,23 +697,18 @@ class TestPs1ACommandThatRunsUnreadableCodeIsNotAlwaysAWorldOpener(TestPs1):
             }}
         """)
 
-    @todo
     def test_a_module_loaded_by_the_using_statement_keeps_the_read(self):
         self._assertReadSurvivesBelow(_RUNS_UNREADABLE_CODE[0])
 
-    @todo
     def test_a_replayed_history_entry_keeps_the_read(self):
         self._assertReadSurvivesBelow(_RUNS_UNREADABLE_CODE[1])
 
-    @todo
     def test_a_loaded_snapin_keeps_the_read(self):
         self._assertReadSurvivesBelow(_RUNS_UNREADABLE_CODE[2])
 
-    @todo
     def test_an_imported_session_keeps_the_read(self):
         self._assertReadSurvivesBelow(_RUNS_UNREADABLE_CODE[3])
 
-    @todo
     def test_an_event_action_keeps_the_read(self):
         self._assertReadSurvivesBelow(_RUNS_UNREADABLE_CODE[4])
 

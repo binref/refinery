@@ -951,7 +951,6 @@ class TestPs1ConstantInliningSelectsOnlyFromConstants(TestPs1):
         self.assertEqual(
             self._apply('$a = @(1, 2)\n$r = $a[0]', Ps1ConstantInlining), '$r = 1')
 
-    @todo
     def test_a_string_is_still_indexed_when_inlined(self):
         self.assertEqual(
             self._apply("$a = 'abc'\n$r = $a[0]", Ps1ConstantInlining), '$r = [char]97'

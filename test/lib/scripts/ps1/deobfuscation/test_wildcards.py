@@ -226,7 +226,6 @@ class TestPs1WildcardResolution(TestPs1):
         )
         self.assertEqual(result, 'New-Object Net.WebClient')
 
-    @todo
     def test_invoke_on_a_script_block_runs_the_block_rather_than_naming_a_cmdlet(self):
         source = cleandoc("""
             $f = { param($n) & $n }
@@ -253,6 +252,17 @@ class TestPs1WildcardResolution(TestPs1):
     def test_a_member_filter_over_a_type_literal_does_not_match_the_instance_members(self):
         result = self._deobfuscate("[IO.StreamReader] | Get-Member | ? { $_.Name -ilike 'ReadT*d' }")
         self.assertNotIn('ReadToEnd', result)
+
+    @backlog
+    def test_a_member_filter_matches_the_events_get_member_lists(self):
+        self._assertKept("""
+            $wc = New-Object Net.WebClient
+            Write-Host ($wc | Get-Member | Where-Object { $_.Name -like 'Dispos*' }).Name
+        """)
+
+    @backlog
+    def test_a_member_filter_over_a_string_does_not_match_its_static_methods(self):
+        self._assertKept("Write-Host ('abc' | Get-Member | Where-Object { $_.Name -like 'Jo*' }).Name")
 
     def test_wildcard_member_filter_no_space_before_operator(self):
         result = self._deobfuscate(

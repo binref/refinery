@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from test import opportunity
+from test import opportunity, todo, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1IexInlining
@@ -63,6 +63,109 @@ class TestPs1InvokeCommandInlining(TestPs1):
     def test_the_argument_list_binds_to_the_parameters_of_the_block(self):
         source = 'Invoke-Command -ScriptBlock { param($a) Write-Host $a } -ArgumentList 5'
         self._assertDeobfuscatesToOneOf(source, source, 'Write-Host 5')
+
+
+class TestPs1CodeThatRunsInAScopeOfItsOwnKeepsIt(TestPs1):
+
+    def _assertNotSpliced(self, source: str, *wrapped: str):
+        source = inspect.cleandoc(source)
+        acceptable = (self._apply(source), *(self._apply(inspect.cleandoc(w)) for w in wrapped))
+        self.assertIn(self._apply(source, Ps1IexInlining), acceptable)
+
+    def test_a_command_under_a_computed_name_may_be_iex_writing_the_block(self):
+        self._assertNotSpliced(
+            "& ([scriptblock]::Create('& $f ''$k = 1'''))",
+            "& { & $f '$k = 1' }",
+        )
+
+    def test_a_regex_match_fills_the_matches_of_the_block(self):
+        self._assertNotSpliced("Invoke-Command -ScriptBlock { if ('y' -match 'y') { Write-Host 1 } }")
+
+    def test_a_switch_with_regex_clauses_fills_the_matches_of_the_block(self):
+        self._assertNotSpliced("Invoke-Command -ScriptBlock { switch -regex ('abc') { 'b' { 1 } } }")
+
+    def test_a_variable_written_by_scope_number_counts_from_the_block(self):
+        self._assertNotSpliced("Invoke-Command -ScriptBlock { Set-Variable -Name x -Value 'b' -Scope 1 }")
+
+    def test_a_computed_name_written_by_scope_number_counts_from_the_block(self):
+        self._assertNotSpliced("Invoke-Command -ScriptBlock { Set-Variable $n 'b' -Scope 1 }")
+
+    def test_a_data_section_binds_its_variable_in_the_block(self):
+        self._assertNotSpliced("Invoke-Command -ScriptBlock { data msgs { 'inner' } }")
+
+    def test_a_function_written_to_the_function_drive_ends_with_the_block(self):
+        self._assertNotSpliced("Invoke-Command -ScriptBlock { Set-Item -Path function:f -Value { 'in' } }")
+
+    def test_a_local_read_finds_only_the_block(self):
+        self._assertNotSpliced('Invoke-Command -ScriptBlock { Write-Host $local:y }')
+
+    def test_a_string_has_no_script_root(self):
+        self._assertNotSpliced("& ([scriptblock]::Create('Write-Host $PSScriptRoot'))")
+
+    def test_an_invoke_method_runs_no_named_blocks(self):
+        self._assertNotSpliced("[scriptblock]::Create('begin { Write-Host 1 } end { Write-Host 2 }').Invoke()")
+
+    def test_an_invoke_method_does_not_bind_the_input_the_call_operator_binds(self):
+        self._assertNotSpliced("[scriptblock]::Create('Write-Host $input; $q = 1').Invoke()")
+
+    def test_a_using_statement_stays_at_the_start_of_its_own_script(self):
+        self._assertNotSpliced("& ([scriptblock]::Create('using namespace System.Text'))")
+
+    def test_an_invoke_method_in_a_value_evaluates_its_arguments(self):
+        self._assertNotSpliced("$y = [scriptblock]::Create('Get-Date').Invoke((Start-Process calc))")
+
+    def test_a_function_named_invoke_command_takes_the_call(self):
+        self._assertNotSpliced("""
+            function Invoke-Command { param($ScriptBlock) 'hooked' }
+            Invoke-Command -ScriptBlock { Write-Host 'decoy' }
+        """)
+
+    @todo
+    def test_an_alias_of_iex_the_script_sets_writes_the_block(self):
+        source = """
+            Set-Alias x iex
+            Invoke-Command -ScriptBlock { x '$y = 1' }
+            Write-Host "[$y]"
+        """
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host '[]'")
+
+    @wontfix('scripts do not call a function that writes its caller by scope number from a block')
+    def test_a_function_writing_by_scope_number_counts_from_the_block_that_calls_it(self):
+        source = """
+            function f { Set-Variable y 1 -Scope 1 }
+            & { Invoke-Command -ScriptBlock { f }; Write-Host "[$y]" }
+        """
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host '[]'")
+
+    @wontfix('scripts do not hide variables from the blocks they run with the private scope')
+    def test_a_private_variable_is_hidden_from_the_block(self):
+        source = """
+            $private:p = 'secret'
+            Invoke-Command -ScriptBlock { Write-Host "[$p]" }
+        """
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host '[]'")
+
+    @todo
+    def test_an_error_inside_an_invoke_method_ends_only_the_call(self):
+        self._assertKept("""
+            [scriptblock]::Create('throw "x"').Invoke()
+            Write-Host 'after'
+        """)
+
+    @todo
+    def test_an_error_inside_an_invoke_method_skips_the_rest_of_its_code(self):
+        self._assertKept("""
+            [scriptblock]::Create("1/0; Write-Host 'rest'").Invoke()
+            Write-Host 'after'
+        """)
+
+    @wontfix('scripts do not ask for the type of what an invoke method returns')
+    def test_an_invoke_method_returns_a_collection(self):
+        source = """
+            $r = [scriptblock]::Create("'a'").Invoke()
+            Write-Host $r.GetType().Name
+        """
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'Collection`1'")
 
 
 class TestPs1IexInlining(TestPs1):
@@ -258,6 +361,21 @@ class TestPs1IexInlining(TestPs1):
     def test_piped_iex_keeps_assignment_target(self):
         result = self._apply("$x = 'Get-Date' | iex", Ps1IexInlining)
         self.assertEqual(result, '$x = Get-Date')
+
+    def test_the_parameters_the_code_declares_keep_their_defaults(self):
+        source = "$r = Invoke-Expression 'param($a = 5) $a'"
+        self.assertEqual(self._apply(source, Ps1IexInlining), self._apply(source))
+
+    def test_a_using_statement_is_not_moved_to_the_middle_of_the_script(self):
+        source = "Write-Host 1\nInvoke-Expression 'using namespace System.Text'"
+        self.assertEqual(self._apply(source, Ps1IexInlining), self._apply(source))
+
+    def test_a_function_named_invoke_expression_takes_the_call(self):
+        source = inspect.cleandoc("""
+            function Invoke-Expression { param($Command) 'hooked' }
+            iex 'Write-Host decoy'
+        """)
+        self.assertEqual(self._apply(source, Ps1IexInlining), self._apply(source))
 
 
 class TestPs1IexRedirections(TestPs1):

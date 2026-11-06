@@ -12,7 +12,9 @@ from refinery.lib.scripts import (
     reattach,
 )
 from refinery.lib.scripts.analysis.dominance import DominatorModel
+from refinery.lib.scripts.ps1.analysis.blocks import binds_the_pipeline_variable, reads_one_of
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
+from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
 from refinery.lib.scripts.ps1.analysis.dispatch import Ps1Dispatch
 from refinery.lib.scripts.ps1.analysis.handlers import swallows_every_error
 from refinery.lib.scripts.ps1.analysis.effects import (
@@ -435,6 +437,8 @@ def _switch_literal(node):
 def _switch_clause_body(
     body: list[Statement],
     dispatch: Ps1Dispatch,
+    calls: Ps1CallGraph,
+    shadowed: frozenset[str],
 ) -> tuple[list[Statement], bool] | None:
     """
     The statements of a matched switch clause and whether the clause ends the switch, which an
@@ -444,7 +448,10 @@ def _switch_clause_body(
     an unlabelled one lands on the loop around it instead. A labelled one is refused without
     matching its label. The switch binds `$_` and `$PSItem` to the value a clause runs for and
     `$switch` to its enumerator; outside the switch these read whatever the code around it holds,
-    and a block the clause runs reads them from the clause's scope as well.
+    and a block the clause runs reads them from the clause's scope as well, as does the body of a
+    function the clause calls. A `$_` that a pipeline in the clause binds for its own body reads
+    that binding instead; *shadowed* is the whole-run set of command names the script has taken
+    over, which `refinery.lib.scripts.ps1.analysis.blocks.binds_the_pipeline_variable` reads.
     """
     stmts = list(body)
     stop = False
@@ -453,13 +460,57 @@ def _switch_clause_body(
         stop = True
     if any(dispatch.lets_out_a_loop_jump(stmt) for stmt in stmts):
         return None
-    if any(
-        is_pipeline_item(node) or is_builtin_variable(node, {'switch'})
-        for stmt in stmts
-        for node in stmt.walk()
-    ):
+    if _reads_what_the_switch_binds(stmts, calls, shadowed):
         return None
     return stmts, stop
+
+
+#: The variables a switch binds for the clause it runs: the value it runs the clause for, under
+#: both its names, and the enumerator.
+_BOUND_BY_A_SWITCH = frozenset({
+    '_',
+    'psitem',
+    'switch',
+})
+
+#: The variables of `_BOUND_BY_A_SWITCH` that a pipeline binds again for a body it runs once per
+#: input object.
+_BOUND_BY_A_PIPELINE = frozenset({
+    '_',
+    'psitem',
+})
+
+
+def _reads_what_the_switch_binds(
+    stmts: list[Statement],
+    calls: Ps1CallGraph,
+    shadowed: frozenset[str],
+) -> bool:
+    """
+    Whether running *stmts* may read a variable of `_BOUND_BY_A_SWITCH`, however its name is
+    spelled: where the read is written in *stmts*, and in the body of every function that *calls*
+    says they call, since a function reads these from whatever scope calls it. Below a body that a
+    pipeline runs once per input object, the variables of `_BOUND_BY_A_PIPELINE` read what that
+    pipeline binds.
+    """
+    pending: list[tuple[Node, bool]] = [(stmt, False) for stmt in stmts]
+    reached: set[tuple[int, bool]] = set()
+    while pending:
+        node, rebound = pending.pop()
+        if isinstance(node, Ps1ScriptBlock):
+            rebound = rebound or binds_the_pipeline_variable(node, shadowed) is not None
+        bound = _BOUND_BY_A_SWITCH - _BOUND_BY_A_PIPELINE if rebound else _BOUND_BY_A_SWITCH
+        if reads_one_of(node, bound):
+            return True
+        pending.extend((child, rebound) for child in node.children())
+        if not isinstance(node, Ps1CommandInvocation):
+            continue
+        name = get_command_name(node)
+        for definition in () if name is None else calls.definitions(name):
+            if definition.body is not None and (id(definition), rebound) not in reached:
+                reached.add((id(definition), rebound))
+                pending.append((definition.body, rebound))
+    return False
 
 
 def _type_definition_ids(node: Node) -> set[int]:
@@ -642,7 +693,9 @@ class Ps1DeadCodeElimination(Transformer):
         if isinstance(stmt, Ps1IfStatement):
             return self._prune_if(stmt)
         if isinstance(stmt, Ps1SwitchStatement):
-            return self._prune_switch(stmt, cache.dispatch)
+            return self._prune_switch(
+                stmt, cache.dispatch, cache.call_graph, cache.closed_world.shadowed_names
+            )
         if isinstance(stmt, Ps1TryCatchFinally):
             return self._prune_try(stmt, cache)
         if isinstance(stmt, Ps1TrapStatement):
@@ -745,7 +798,12 @@ class Ps1DeadCodeElimination(Transformer):
         return [Ps1IfStatement(clauses=kept_clauses, else_block=node.else_block)]
 
     @staticmethod
-    def _prune_switch(node: Ps1SwitchStatement, dispatch: Ps1Dispatch) -> list[Statement] | None:
+    def _prune_switch(
+        node: Ps1SwitchStatement,
+        dispatch: Ps1Dispatch,
+        calls: Ps1CallGraph,
+        shadowed: frozenset[str],
+    ) -> list[Statement] | None:
         if node.regex or node.wildcard or node.file:
             return None
         value = _switch_literal(node.value)
@@ -763,7 +821,7 @@ class Ps1DeadCodeElimination(Transformer):
                 # A non-constant clause condition might match at runtime; cannot resolve statically.
                 return None
             if switch_matches(value, cond_val, case_sensitive=node.case_sensitive):
-                body = _switch_clause_body(block.body, dispatch)
+                body = _switch_clause_body(block.body, dispatch, calls, shadowed)
                 if body is None:
                     return None
                 stmts, stop = body
@@ -774,7 +832,7 @@ class Ps1DeadCodeElimination(Transformer):
         if matched:
             return result
         if default_body is not None:
-            body = _switch_clause_body(default_body, dispatch)
+            body = _switch_clause_body(default_body, dispatch, calls, shadowed)
             if body is None:
                 return None
             return body[0]

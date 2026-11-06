@@ -6,15 +6,15 @@ operates on expandable strings where ALL subexpressions are void-producing
 (assignments only — a command inside `$( ... )` contributes its output to the
 string, so it is never hoisted).
 
-Safety constraint: subexpressions from leftmost expandable strings are
-inserted BEFORE the parent statement (they were going to run first anyway).
-Subexpressions from other expandable strings are inserted AFTER the parent
-statement to preserve execution order.
+Safety constraint: subexpressions from an expandable string that nothing but
+constants is evaluated before are inserted BEFORE the parent statement (they
+were going to run first anyway). Subexpressions from other expandable strings
+are inserted AFTER the parent statement to preserve execution order.
 """
 from __future__ import annotations
 
 from refinery.lib.scripts import Block, Transformer
-from refinery.lib.scripts.ps1.analysis.values import make_string_literal
+from refinery.lib.scripts.ps1.analysis.values import UNKNOWN, evaluate, make_string_literal
 from refinery.lib.scripts.ps1.ast import get_body
 from refinery.lib.scripts.ps1.deobfuscation.substitution import substitute, substitute_statement
 from refinery.lib.scripts.ps1.model import (
@@ -26,6 +26,15 @@ from refinery.lib.scripts.ps1.model import (
     Ps1StringLiteral,
     Ps1SubExpression,
 )
+
+
+def _is_constant(node) -> bool:
+    """
+    Whether evaluating *node* reads no variable, runs nothing and cannot throw, which is what a
+    value the domain pins without any environment is.
+    """
+    outcome = evaluate(node)
+    return not outcome.may_throw and outcome.value is not UNKNOWN
 
 
 class Ps1ExpandableStringHoist(Transformer):
@@ -58,19 +67,22 @@ class Ps1ExpandableStringHoist(Transformer):
         return isinstance(stmt.expression, Ps1AssignmentExpression)
 
     @staticmethod
-    def _is_leftmost(node) -> bool:
+    def _runs_first(node) -> bool:
         """
-        Check whether *node* sits in the leftmost evaluation position of its enclosing expression
-        tree. An expandable string is leftmost when every ancestor
-        `refinery.lib.scripts.ps1.model.Ps1BinaryExpression` has it (or the subtree containing it)
-        as its `left` operand. This guarantees the subexpressions would have been the first thing
-        evaluated, so hoisting them before the statement does not change execution order.
+        Check whether nothing but constants is evaluated before *node* in its enclosing expression
+        tree: every ancestor `refinery.lib.scripts.ps1.model.Ps1BinaryExpression` has it (or the
+        subtree containing it) as its `left` operand, or has a `right` one whose left operand is a
+        constant that cannot throw. A constant reads no variable and runs nothing, so evaluating it
+        later leaves every other effect where it was, and hoisting the subexpressions before the
+        statement does not change what anything observes. That is the one place they may go when the
+        statement is a pipeline: its commands run after the whole of its input is evaluated, and
+        read what the input assigned.
         """
         child = node
         parent = node.parent
         while parent is not None:
             if isinstance(parent, Ps1BinaryExpression):
-                if parent.left is not child:
+                if parent.left is not child and not _is_constant(parent.left):
                     return False
             if isinstance(parent, (Ps1ExpressionStatement, Ps1Code, Block)):
                 break
@@ -116,11 +128,11 @@ class Ps1ExpandableStringHoist(Transformer):
             collected: list = []
             for sub in subs:
                 collected.extend(sub.body)
-            leftmost = self._is_leftmost(node)
+            first = self._runs_first(node)
             literal = make_string_literal(''.join(text_parts))
             if not substitute(node, literal, moved=collected):
                 continue
-            if leftmost:
+            if first:
                 before.extend(collected)
             else:
                 after.extend(collected)
