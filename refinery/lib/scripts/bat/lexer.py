@@ -340,6 +340,8 @@ class BatchLexer:
 
     def parse_env_variable(self, var: str):
         if var == '':
+            if self.state.cmdline:
+                raise MissingVariable
             return '%'
         name, _, modifier = var.partition(':')
         base = self.state.envar(name)

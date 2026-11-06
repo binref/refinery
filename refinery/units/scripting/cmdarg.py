@@ -3,9 +3,20 @@ from __future__ import annotations
 import base64
 import codecs
 import io
-import os
+import ntpath
 import re
 
+from typing import NamedTuple
+
+from refinery.lib.scripts.bat import BatchParser, BatchState
+from refinery.lib.scripts.bat.model import (
+    AstCommand,
+    AstPipeline,
+    AstSequence,
+    EmulatorException,
+    MissingVariable,
+)
+from refinery.lib.scripts.bat.util import cmd_unquote, parse_start_arguments, split_arguments
 from refinery.units import Unit
 
 
@@ -59,6 +70,57 @@ def _split_argv(cmdline: str) -> list[str]:
     return args
 
 
+def _split_program(cmdline: str) -> tuple[str, str]:
+    """
+    Split a command line into the name of the program and the text of its arguments. As when
+    Windows locates the program, a name that opens with a double quote ends at the next double
+    quote, and any other name ends at the first whitespace.
+    """
+    if cmdline.startswith('"'):
+        program, _, arguments = cmdline[1:].partition('"')
+        return program, arguments.lstrip()
+    program, *arguments = cmdline.split(None, 1)
+    return program, ''.join(arguments)
+
+
+class _UndefinedVariables(BatchState):
+    """
+    A command line state in which no variable is defined, so that parsing applies the syntax of
+    cmd but leaves every variable reference as written.
+    """
+    def envar(self, name: str, default: str | None = None):
+        if default is None:
+            raise MissingVariable
+        return default
+
+
+def _command_as_run(command: str) -> str | None:
+    """
+    The command line that cmd hands to the program when it runs the given text: its escapes are
+    removed and variable references stay as written. The result is `None` unless the text is one
+    command, rather than several commands, a pipeline, a block, a control statement, or a command
+    with redirected streams.
+    """
+    try:
+        statements = list(BatchParser(command, _UndefinedVariables(cmdline=True)).parse(0))
+    except EmulatorException:
+        return None
+    if len(statements) != 1:
+        return None
+    if not isinstance(sequence := statements[0], AstSequence) or sequence.tail:
+        return None
+    if not isinstance(pipeline := sequence.head, AstPipeline) or len(pipeline.parts) != 1:
+        return None
+    if not isinstance(part := pipeline.parts[0], AstCommand) or part.redirects:
+        return None
+    return ''.join(part.fragments)
+
+
+class _Layer(NamedTuple):
+    payload: str
+    final: bool = False
+
+
 _PS_EXECUTABLE_NAMES = frozenset({
     'powershell',
     'powershell.exe',
@@ -79,12 +141,6 @@ _CMD_EXECUTABLE_NAMES = frozenset({
 
 _START_EXECUTABLE_NAMES = frozenset({
     'start',
-})
-
-_START_SWITCHES_WITH_ARG = frozenset({
-    'd',
-    'node',
-    'affinity',
 })
 
 _PARAM_WITH_NEXT_ARG = {
@@ -146,8 +202,8 @@ def _match_switch(key: str) -> str | None:
     return None
 
 
-def _executable_name(token: str) -> str:
-    return os.path.basename(token.strip("'")).lower()
+def _executable_name(program: str) -> str:
+    return ntpath.basename(program.strip("'")).lower()
 
 
 def _strip_outer_quotes(text: str) -> str:
@@ -168,20 +224,16 @@ def _strip_outer_quotes(text: str) -> str:
 
 
 _RE_WMIC_CREATE = re.compile(r"""(?ix)
-    (?:\S+[\\/])?
-       (?P<quote0>["']?) wmic(?:\.exe)? (?P=quote0)\s+
     (?:/\S+\s+)*
-    (?:(?P<quote1>["']?) path           (?P=quote1)\s+)?
-       (?P<quote2>["']?) process        (?P=quote2)\s+
-       (?P<quote3>["']?) call           (?P=quote3)\s+
-       (?P<quote4>["']?) create         (?P=quote4)\s*
+    (?:(?P<quote1>["']?) path    (?P=quote1)\s+)?
+       (?P<quote2>["']?) process (?P=quote2)\s+
+       (?P<quote3>["']?) call    (?P=quote3)\s+
+       (?P<quote4>["']?) create  (?P=quote4)\s*
 """)
 
 _RE_CMD_RUN = re.compile(r"""(?ix)
-    (?:%comspec%|(?:\S+[\\/])?
-       cmd(?:\.exe)?)\s*
-    (?:/[a-z](?::\w+)?\s*)*?
-       /[ck](?=[\s"])[\s]*
+    (?P<switches>(?:/[a-z](?::\w+)?\s*)*?)
+    /[ck](?=[\s"])\s*
 """)
 
 
@@ -198,46 +250,42 @@ class cmdarg(Unit):
     - `powershell -EncodedCommand COMMAND`
     - `powershell -Command COMMAND`
 
-    Layers are peeled until the innermost recognizable payload is reached. This is useful
-    for extracting PowerShell code from obfuscated batch files and WMI-based launchers.
+    The program may be given by its full path, also in quotes. Layers are peeled until the
+    innermost recognizable payload is reached. This is useful for extracting PowerShell code from
+    obfuscated batch files and WMI-based launchers. The command that cmd runs has its escapes
+    removed, while variable references are left as written. When that command is a batch script
+    with more than one command, the script is the output; it can be emulated with `refinery.bat`.
     """
 
     def process(self, data: bytearray):
         text = codecs.decode(data, self.codec, errors='surrogateescape')
+        final = False
         for _ in range(10):
-            text = text.strip()
-            if not text:
+            if not (text := text.strip()):
                 raise ValueError('empty command line')
-            if result := self._dispatch(text):
-                text = result
-                self.log_info(F'unwrapped a layer, continuing with: {result}', clip=True)
-                continue
-            return codecs.encode(text, self.codec, errors='surrogateescape')
+            if final or (layer := self._dispatch(text)) is None:
+                return codecs.encode(text, self.codec, errors='surrogateescape')
+            text, final = layer
+            self.log_info(F'unwrapped a layer, continuing with: {text}', clip=True)
         raise ValueError('command chain exceeds maximum nesting depth')
 
-    def _dispatch(self, text: str) -> str | None:
-        first = text.split()[0]
-        name = _executable_name(first)
-        if name in _PS_EXECUTABLE_NAMES or re.fullmatch(
-            r'(?i)(?:.*[\\/])?(?:powershell|pwsh)(?:\.exe)?', first
-        ):
-            return self._extract_powershell(_split_argv(text), skip_executable=True)
-        if name in _WMIC_EXECUTABLE_NAMES or re.fullmatch(
-            r'(?i)(?:.*[\\/])?wmic(?:\.exe)?', first
-        ):
-            return self._extract_wmic(text)
-        if name in _CMD_EXECUTABLE_NAMES or re.fullmatch(
-            r'(?i)(?:.*[\\/])?cmd(?:\.exe)?', first
-        ):
-            return self._extract_cmd(text)
+    def _dispatch(self, text: str) -> _Layer | None:
+        program, arguments = _split_program(text)
+        name = _executable_name(program)
+        if name in _PS_EXECUTABLE_NAMES:
+            return _Layer(self._extract_powershell(_split_argv(arguments)))
+        if name in _WMIC_EXECUTABLE_NAMES:
+            return _Layer(self._extract_wmic(arguments))
+        if name in _CMD_EXECUTABLE_NAMES:
+            return self._extract_cmd(arguments)
         if name in _START_EXECUTABLE_NAMES:
-            return self._extract_start(_split_argv(text))
-        if first.startswith(('-', '/')):
-            return self._extract_powershell(_split_argv(text), skip_executable=False)
+            return _Layer(self._extract_start(arguments))
+        if program.startswith(('-', '/')):
+            return _Layer(self._extract_powershell(_split_argv(text)))
         return None
 
-    def _extract_powershell(self, argv: list[str], skip_executable: bool) -> str:
-        i = 1 if skip_executable else 0
+    def _extract_powershell(self, argv: list[str]) -> str:
+        i = 0
         command_args: list[str] = []
         while i < len(argv):
             arg = argv[i]
@@ -272,33 +320,23 @@ class cmdarg(Unit):
             return ' '.join(command_args)
         raise ValueError('no PowerShell code found in command line')
 
-    def _extract_wmic(self, text: str) -> str:
-        match = _RE_WMIC_CREATE.match(text)
-        if not match:
+    def _extract_wmic(self, arguments: str) -> str:
+        if not (match := _RE_WMIC_CREATE.match(arguments)):
             raise ValueError('not a recognized WMIC process create command')
-        return _strip_outer_quotes(text[match.end():])
+        return _strip_outer_quotes(arguments[match.end():])
 
-    def _extract_cmd(self, text: str) -> str:
-        match = _RE_CMD_RUN.match(text)
-        if not match:
+    def _extract_cmd(self, arguments: str) -> _Layer:
+        if not (match := _RE_CMD_RUN.match(arguments)):
             raise ValueError('CMD command line missing /c or /k switch')
-        return _strip_outer_quotes(text[match.end():])
+        strip = re.search(r'(?i)/s\b', match['switches']) is not None
+        executable = BatchState(cmdline=True).names_executable
+        command = cmd_unquote(arguments[match.end():], strip, executable)
+        if (run := _command_as_run(command)) is None:
+            return _Layer(command, final=True)
+        return _Layer(run)
 
-    def _extract_start(self, argv: list[str]) -> str:
-        i = 1
-        while i < len(argv):
-            arg = argv[i]
-            if not arg:
-                i += 1
-                continue
-            if arg.startswith('/'):
-                if arg[1:].lower() in _START_SWITCHES_WITH_ARG:
-                    i += 2
-                    continue
-                i += 1
-                continue
-            if ' ' in arg:
-                i += 1
-                continue
-            return ' '.join(argv[i:])
-        raise ValueError('no command found after start')
+    def _extract_start(self, arguments: str) -> str:
+        pieces = split_arguments(arguments)
+        if (start := parse_start_arguments(pieces)) is None:
+            raise ValueError('no command found after start')
+        return ''.join(pieces[start.program:])

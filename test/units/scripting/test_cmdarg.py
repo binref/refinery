@@ -209,3 +209,97 @@ class TestCmdArg(TestUnitBase):
         result = data | self.load() | str
         self.assertIn('-f', result)
         self.assertIn('&(', result)
+
+    def test_quoted_cmd_path_yields_the_batch_script(self):
+        data = (
+            b'"C:\\WINDOWS\\system32\\cmd.exe" /c timeout /t 1 >nul&for /f %p in'
+            b' (\'where powershell\')do start /min %p -sta "$a=\'x\';$a"'
+        )
+        result = data | self.load() | str
+        self.assertEqual(result, (
+            'timeout /t 1 >nul&for /f %p in (\'where powershell\')do start /min %p -sta "$a=\'x\';$a"'))
+
+    def test_quoted_program_path_with_spaces(self):
+        data = b'"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -c Write-Host hi'
+        result = data | self.load() | str
+        self.assertEqual(result, 'Write-Host hi')
+
+    def test_quoted_wmic_path(self):
+        data = b'"C:\\Windows\\System32\\wbem\\WMIC.exe" process call create "powershell -c whoami"'
+        result = data | self.load() | str
+        self.assertEqual(result, 'whoami')
+
+    def test_quoted_program_directly_followed_by_switch(self):
+        data = b'"C:\\Windows\\System32\\cmd.exe"/c echo hi'
+        result = data | self.load() | str
+        self.assertEqual(result, 'echo hi')
+
+    def test_cmd_body_with_several_commands_stays_whole(self):
+        data = b'cmd /c powershell -c whoami & del foo'
+        result = data | self.load() | str
+        self.assertEqual(result, 'powershell -c whoami & del foo')
+
+    def test_cmd_body_with_redirect_stays_whole(self):
+        data = b'cmd /c powershell -c whoami > out.txt'
+        result = data | self.load() | str
+        self.assertEqual(result, 'powershell -c whoami > out.txt')
+
+    def test_cmd_removes_leading_and_last_quote(self):
+        data = b'cmd /c "echo hi" & echo x'
+        result = data | self.load() | str
+        self.assertEqual(result, 'echo hi & echo x')
+
+    def test_cmd_keeps_quotes_around_program_path(self):
+        data = b'cmd /c "C:\\Program Files\\App\\app.exe"'
+        result = data | self.load() | str
+        self.assertEqual(result, '"C:\\Program Files\\App\\app.exe"')
+
+    def test_cmd_removes_escaping_carets(self):
+        data = b'cmd /c powershell -c Get-Process ^| Select -First 1'
+        result = data | self.load() | str
+        self.assertEqual(result, 'Get-Process | Select -First 1')
+
+    def test_cmd_removes_carets_inside_program_name(self):
+        b64 = 'VwByAGkAdABlAC0ASABvAHMAdAAgAGgAZQBsAGwAbwA='
+        data = F'cmd /c p^ower^shell -e^nc {b64}'.encode()
+        result = data | self.load() | str
+        self.assertEqual(result, 'Write-Host hello')
+
+    def test_cmd_keeps_carets_inside_quotes(self):
+        data = b'cmd /c powershell -c "Write-Host a^&b"'
+        result = data | self.load() | str
+        self.assertEqual(result, 'Write-Host a^&b')
+
+    def test_cmd_keeps_variable_references(self):
+        data = b'cmd /c powershell -c dir %TEMP% ^& dir %APPDATA%'
+        result = data | self.load() | str
+        self.assertEqual(result, 'dir %TEMP% & dir %APPDATA%')
+
+    def test_cmd_keeps_double_percent(self):
+        data = b'cmd /c powershell -c Write-Host 100%%'
+        result = data | self.load() | str
+        self.assertEqual(result, 'Write-Host 100%%')
+
+    def test_cmd_drops_echo_suppression(self):
+        data = b'cmd /c @powershell -c whoami'
+        result = data | self.load() | str
+        self.assertEqual(result, 'whoami')
+
+    def test_start_with_title_without_spaces(self):
+        data = b'start "x" powershell -c whoami'
+        result = data | self.load() | str
+        self.assertEqual(result, 'whoami')
+
+    def test_start_keeps_spaces_inside_quoted_code(self):
+        data = b'start /min powershell -c "Write-Host  \'a  b\'"'
+        result = data | self.load() | str
+        self.assertEqual(result, 'Write-Host  \'a  b\'')
+
+    def test_quoted_cmd_path_through_batch_emulation(self):
+        data = (
+            b'"C:\\WINDOWS\\system32\\cmd.exe" /c timeout /t 1 >nul&for /f %p in'
+            b' (\'where powershell\')do start /min %p -sta "$a=\'x\';$a"'
+        )
+        script = data | self.load() | bytes
+        commands = script | self.ldu('bat', cmdline=True) | [bytes]
+        self.assertEqual(commands[-1] | self.load() | str, '$a=\'x\';$a')

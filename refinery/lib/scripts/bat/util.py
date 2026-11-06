@@ -4,6 +4,8 @@ import codecs
 import re
 import typing
 
+from typing import Callable, NamedTuple, Sequence
+
 if typing.TYPE_CHECKING:
     from array import array
 
@@ -118,6 +120,73 @@ def enquote(token: str) -> str:
         token = '"""'.join(token.split('"'))
         token = F'"{token}"'
     return token.replace('%', '%%')
+
+
+def cmd_unquote(command: str, strip: bool, names_executable: Callable[[str], bool]) -> str:
+    """
+    The command that `cmd /c` or `cmd /k` runs, given the text after the switch. The quotes stay
+    when there is no `/S` switch, the text holds exactly two quotes, only whitespace follows the
+    second one, and the text between them contains whitespace, none of the characters `&<>()@^|`,
+    and names an executable file. Otherwise, the leading quote and the last quote are removed.
+    """
+    if (quoted := re.fullmatch('\\s*"(.*)"(.*)', command, re.DOTALL)) is None:
+        return command
+    inner, after = quoted.groups()
+    if (
+        not strip
+        and command.count('"') == 2
+        and not after.strip()
+        and re.search('\\s', inner)
+        and not re.search('[&<>()@^|]', inner)
+        and names_executable(inner)
+    ):
+        return command
+    return F'{inner}{after}'
+
+
+class StartArguments(NamedTuple):
+    """
+    The arguments of a START command. The member `program` is the index of the piece that names the
+    started program; all pieces after it are passed to that program.
+    """
+    title: str
+    directory: str | None
+    inherit_environment: bool
+    program: int
+
+
+def parse_start_arguments(pieces: Sequence[str]) -> StartArguments | None:
+    """
+    Read the arguments of a START command from pieces as returned by `split_arguments`: an optional
+    quoted window title, then switches, then the program. Returns `None` when no program follows.
+    """
+    title = None
+    directory = None
+    inherit = True
+    pending = None
+    for k, piece in enumerate(pieces):
+        if piece.isspace():
+            continue
+        if pending is not None:
+            if pending == '/D':
+                directory = unquote(piece)
+            pending = None
+            continue
+        if title is None:
+            if '"' in piece:
+                title = unquote(piece)
+                continue
+            title = ''
+        if not piece.startswith('/'):
+            return StartArguments(title, directory, inherit, k)
+        flag = piece.upper()
+        if flag in ('/D', '/NODE', '/AFFINITY', '/MACHINE'):
+            pending = flag
+        elif flag.startswith('/D'):
+            directory = unquote(piece[2:])
+        elif flag == '/I':
+            inherit = False
+    return None
 
 
 def uncaret(token: str, ignore_quotes: bool = False) -> tuple[bool, str]:

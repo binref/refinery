@@ -1572,10 +1572,23 @@ class TestBatchEmulator(TestBase):
         bat = BatchEmulator('set FOO=BAR\necho %FOO%\n', state)
         self.assertEqual(list(bat.emulate()), ['echo BAR'])
 
-    def test_cmdline_percent_escape(self):
+    def test_cmdline_keeps_double_percent(self):
         state = BatchState(cmdline=True)
-        bat = BatchEmulator('echo %%FOO%%\n', state)
-        self.assertEqual(list(bat.emulate()), ['echo %FOO%'])
+        bat = BatchEmulator('echo %%FOO%% %%\n', state)
+        self.assertEqual(list(bat.emulate()), ['echo %%FOO%% %%'])
+
+    def test_cmdline_expands_variable_between_double_percent(self):
+        state = BatchState(cmdline=True)
+        bat = BatchEmulator('set FOO=bar\necho %%FOO%% %%\n', state)
+        self.assertEqual(list(bat.emulate()), ['echo %bar% %%'])
+
+    def test_batch_file_double_percent_is_one_percent(self):
+        bat = BatchEmulator('set FOO=bar\necho %%FOO%% %%\n')
+        self.assertEqual(list(bat.emulate()), ['echo %FOO% %'])
+
+    def test_cmd_c_in_batch_file_keeps_double_percent(self):
+        bat = BatchEmulator('cmd /c echo %%%%FOO%%%%\n')
+        self.assertEqual(list(bat.emulate_commands()), ['cmd /c echo %%FOO%%', 'echo %%FOO%%'])
 
     def test_cmd_c_with_for_loop(self):
         @emulate
@@ -3051,3 +3064,92 @@ class TestBatchDeobfuscationDisplay(TestBase):
         bat.execute()
         self.assertEqual(bat.std.o.getvalue(), 'a.c\r\n')
         self.assertEqual(bat.state.ec, 0)
+
+
+class TestBatchPrograms(TestBase):
+    """
+    The emulated machine has the programs that Windows ships in the folders on its search path.
+    """
+
+    def _run(self, code: str, state: BatchState | None = None):
+        bat = BatchEmulator(F'{code}\n', state)
+        bat.execute()
+        return bat
+
+    def test_where_finds_powershell(self):
+        bat = self._run('where powershell')
+        self.assertEqual(bat.std.o.getvalue(), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\r\n')
+        self.assertEqual(bat.state.ec, 0)
+
+    def test_where_lists_system32_before_windows(self):
+        bat = self._run('where notepad')
+        self.assertEqual(bat.std.o.getvalue(), 'C:\\Windows\\System32\\notepad.exe\r\nC:\\Windows\\notepad.exe\r\n')
+
+    def test_where_matches_wildcards_within_a_folder(self):
+        bat = self._run('where powershell*')
+        self.assertEqual(bat.std.o.getvalue(), ''.join([
+            'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\r\n',
+            'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell_ise.exe\r\n',
+        ]))
+
+    def test_where_quotes_paths_with_f_switch(self):
+        bat = self._run('where /f cmd')
+        self.assertEqual(bat.std.o.getvalue(), '"C:\\Windows\\System32\\cmd.exe"\r\n')
+
+    def test_where_prints_nothing_with_q_switch(self):
+        bat = self._run('where /q cmd')
+        self.assertEqual(bat.std.o.getvalue(), '')
+        self.assertEqual(bat.state.ec, 0)
+
+    def test_where_fails_for_an_unknown_program(self):
+        bat = self._run('where nosuchprogram')
+        self.assertEqual(bat.std.o.getvalue(), '')
+        self.assertEqual(bat.std.e.getvalue(), 'INFO: Could not find files for the given pattern(s).\r\n')
+        self.assertEqual(bat.state.ec, 1)
+
+    def test_where_searches_the_current_directory_first(self):
+        state = BatchState()
+        state.create_file('cmd.bat', 'echo decoy')
+        bat = self._run('where cmd', state)
+        self.assertEqual(bat.std.o.getvalue().lower(), 'c:\\cmd.bat\r\nc:\\windows\\system32\\cmd.exe\r\n')
+
+    def test_where_follows_a_changed_path(self):
+        bat = self._run('set PATH=C:\\Windows\nwhere notepad')
+        self.assertEqual(bat.std.o.getvalue(), 'C:\\Windows\\notepad.exe\r\n')
+
+    def test_for_f_loop_runs_once_per_where_result(self):
+        bat = self._run("for /f %%p in ('where powershell') do echo [%%p]")
+        self.assertEqual(bat.std.o.getvalue(), '[C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe]\r\n')
+
+    def test_program_found_by_where_is_started(self):
+        bat = BatchEmulator("for /f %%p in ('where powershell') do start /min %%p -sta \"$a='x';$a\"\n")
+        self.assertEqual(list(bat.emulate())[-1], (
+            "start /min C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -sta \"$a='x';$a\""))
+
+    def test_if_exist_sees_a_system_program(self):
+        bat = self._run('if exist C:\\Windows\\System32\\cmd.exe echo yes')
+        self.assertEqual(bat.std.o.getvalue(), 'yes\r\n')
+
+    def test_del_does_not_remove_a_system_program(self):
+        bat = self._run('del C:\\Windows\\System32\\cmd.exe\nif exist C:\\Windows\\System32\\cmd.exe echo yes')
+        self.assertEqual(bat.std.o.getvalue(), 'yes\r\n')
+
+    def test_path_entries_end_in_at_most_one_backslash(self):
+        entries = BatchState().envar('PATH').split(';')
+        self.assertEqual([entry for entry in entries if entry.endswith('\\\\')], [])
+
+    def test_cmd_c_strips_quotes_around_a_command_that_is_no_program(self):
+        bat = self._run('cmd /c "echo hi there"')
+        self.assertEqual(bat.std.o.getvalue(), 'hi there\r\n')
+
+    def test_cmd_c_runs_a_quoted_powershell_command_line(self):
+        bat = BatchEmulator('cmd /c "powershell -c whoami"\n')
+        self.assertEqual(list(bat.emulate()), [
+            'cmd /c "powershell -c whoami"',
+            'powershell -c whoami',
+        ])
+
+    def test_cmd_c_keeps_quotes_around_a_program_path(self):
+        bat = BatchEmulator('cmd /c "C:\\Program Files\\App\\app.exe"\n')
+        verbs = [command.verb for command in bat.trace() if isinstance(command, SynCommand)]
+        self.assertEqual(verbs, ['cmd', 'C:\\Program Files\\App\\app.exe'])

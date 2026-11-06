@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ntpath
+import re
 
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from uuid import uuid4
 
 from refinery.lib.dt import date_from_timestamp, isodate
 from refinery.lib.scripts.bat.model import EmulatorException, MissingVariable
-from refinery.lib.scripts.win32const import make_win32_environment
+from refinery.lib.scripts.win32const import DEFAULT_PROGRAMS, make_win32_environment
 
 STATEMENT_BUDGET = 100_000
 """
@@ -25,6 +26,22 @@ The maximum nesting depth, counting both structural nesting (parentheses and blo
 sub-shells (CALL, START, CMD, FOR /F), that a single emulation may reach. Scripts nested past this
 bound are cut off instead of exhausting the Python call stack.
 """
+
+PROGRAM_FOLDERS: dict[str, dict[str, str]] = {
+    ntpath.normcase(folder): {ntpath.normcase(name): name for name in names}
+    for folder, names in DEFAULT_PROGRAMS.items()
+}
+"""
+The programs from `refinery.lib.scripts.win32const.DEFAULT_PROGRAMS`, keyed by folder the way
+`BatchState.resolve_path` normalizes paths; each folder maps normalized names to display names.
+These files exist on the emulated machine, cannot be deleted, and have no known content.
+"""
+
+
+def _wildcard(pattern: str) -> re.Pattern[str]:
+    return re.compile(''.join(
+        '.*' if c == '*' else '.' if c == '?' else re.escape(c) for c in pattern
+    ), re.DOTALL)
 
 
 @dataclass
@@ -244,7 +261,76 @@ class BatchState:
         return self.file_system.get(self.resolve_path(path))
 
     def exists_file(self, path: str) -> bool:
-        return self.resolve_path(path) in self.file_system
+        """
+        Whether `path` names a file: one that the script wrote, or one of the `PROGRAM_FOLDERS`.
+        """
+        path = self.resolve_path(path)
+        if path in self.file_system:
+            return True
+        folder, name = ntpath.split(path)
+        return name in PROGRAM_FOLDERS.get(folder, ())
+
+    @property
+    def pathext(self) -> list[str]:
+        return [ext for ext in self.envar('PATHEXT', '').upper().split(';') if ext]
+
+    def _folder_listing(self, folder: str) -> dict[str, str]:
+        listing = dict(PROGRAM_FOLDERS.get(folder, {}))
+        for path in self.file_system:
+            parent, name = ntpath.split(path)
+            if parent == folder:
+                listing.setdefault(name, name)
+        return listing
+
+    def locate(self, name: str) -> list[str]:
+        """
+        The paths of the files that `name` finds when WHERE searches for it: the name as given and
+        with every extension from PATHEXT appended, first in the current directory and then in each
+        directory on PATH, or only in its own directory when `name` has one. The wildcards `*` and
+        `?` match within a directory.
+        """
+        folder, name = ntpath.split(name)
+        if folder:
+            folders = [folder]
+        else:
+            folders = [self.cwd, *self.envar('PATH', '').split(';')]
+        candidates = [ntpath.normcase(F'{name}{ext}') for ext in ('', *self.pathext)]
+        searched: set[str] = set()
+        found: dict[str, str] = {}
+        for folder in folders:
+            if not folder:
+                continue
+            display = ntpath.normpath(ntpath.join(self.cwd, folder))
+            if (key := ntpath.normcase(display)) in searched:
+                continue
+            searched.add(key)
+            listing = self._folder_listing(key)
+            for candidate in candidates:
+                if '*' in candidate or '?' in candidate:
+                    regex = _wildcard(candidate)
+                    names = [listing[k] for k in sorted(listing) if regex.fullmatch(k)]
+                elif candidate in listing:
+                    names = [listing[candidate]]
+                else:
+                    continue
+                for shown in names:
+                    path = ntpath.join(display, shown)
+                    found.setdefault(ntpath.normcase(path), path)
+        return list(found.values())
+
+    def names_executable(self, name: str) -> bool:
+        """
+        Whether `name` names a program file. That is the case when `BatchState.locate` finds one,
+        and for a path ending in an extension from PATHEXT, which stands for a program outside the
+        folders the emulation knows.
+        """
+        if '*' in name or '?' in name:
+            return False
+        if self.locate(name):
+            return True
+        if not ntpath.dirname(name):
+            return False
+        return ntpath.splitext(name)[1].upper() in self.pathext
 
     def sizeof_file(self, path: str) -> int:
         if data := self.ingest_file(path):

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-import itertools
 import ntpath
 import operator
 import re
@@ -47,7 +46,9 @@ from refinery.lib.scripts.bat.synth import SynCommand, SynNodeBase, synthesize
 from refinery.lib.scripts.bat.util import (
     batchint,
     batchrange,
+    cmd_unquote,
     findstr_to_regex,
+    parse_start_arguments,
     split_arguments,
     uncaret,
     unquote,
@@ -1103,45 +1104,17 @@ class BatchEmulator:
     @_command('START')
     def execute_start(self, cmd: SynCommand, std: IO, *_):
         yield cmd
-        it = iter(cmd.ast.fragments)
-        it = itertools.islice(it, cmd.argument_offset, None)
-        title = None
-        start = None
-        cwd = self.state.cwd
-        env = ...
-        pending = None
-        for arg in it:
-            if arg.isspace():
-                continue
-            if pending is not None:
-                if pending == '/D':
-                    cwd = unquote(arg)
-                pending = None
-                continue
-            if title is None:
-                if '"' in arg:
-                    title = unquote(arg)
-                    continue
-                title = ''
-            if not arg.startswith('/'):
-                start = unquote(arg)
-                break
-            flag = arg.upper()
-            if flag == '/D':
-                pending = '/D'
-            elif len(flag) > 2 and flag.startswith('/D'):
-                cwd = unquote(arg[2:])
-            elif flag in ('/NODE', '/AFFINITY', '/MACHINE'):
-                pending = flag
-            elif flag == '/I':
-                env = None
-        if start is None or pending is not None:
+        pieces = cmd.ast.fragments[cmd.argument_offset:]
+        if (start := parse_start_arguments(pieces)) is None:
             return 1
-        if start and (batch := self.state.ingest_file(start)):
-            state = self.clone_state(environment=env, filename=start, delayexpand=False)
-            if not state.try_chdir(cwd):
+        program = unquote(pieces[start.program])
+        if program and (batch := self.state.ingest_file(program)):
+            environment = ... if start.inherit_environment else None
+            state = self.clone_state(environment=environment, filename=program, delayexpand=False)
+            directory = self.state.cwd if start.directory is None else start.directory
+            if not state.try_chdir(directory):
                 return
-            state.command_line = _fuse(it).strip()
+            state.command_line = _fuse(pieces[start.program + 1:]).strip()
             shell = self.spawn(batch, state, std)
             yield from shell.trace()
 
@@ -1194,17 +1167,7 @@ class BatchEmulator:
         else:
             return 0
 
-        if (
-            (stripped := re.search('^\\s*"(.*)"(.*)', command, re.DOTALL))
-            and (
-                strip
-                or command.count('"') != 2
-                or stripped[2].strip()
-                or re.search('[&<>()@^|]', stripped[1])
-                or re.search('\\s', stripped[1]) is None
-            )
-        ):
-            command = stripped[1] + stripped[2]
+        command = cmd_unquote(command, strip, self.state.names_executable)
 
         state = self.clone_state(
             delayexpand=False if delayexpand is None else delayexpand,
@@ -1218,6 +1181,36 @@ class BatchEmulator:
         for child in shell.trace():
             if not self.cfg.skip_call:
                 yield child
+
+    @_command('WHERE')
+    def execute_where(self, cmd: SynCommand, std: IO, *_):
+        yield cmd
+        quiet = False
+        quoted = False
+        patterns: list[str] = []
+        for arg in cmd.args:
+            flag = arg.upper()
+            if flag == '/Q':
+                quiet = True
+            elif flag == '/F':
+                quoted = True
+            elif arg.startswith('/') or ':' in arg or '\\' in arg:
+                return 0
+            else:
+                patterns.append(unquote(arg))
+        if not patterns:
+            return CommandFailure('ERROR: A search pattern must be specified.', 2)
+        missing = False
+        for pattern in patterns:
+            if not (paths := self.state.locate(pattern)):
+                missing = True
+            if quiet:
+                continue
+            for path in paths:
+                std.o.write(F'"{path}"\r\n' if quoted else F'{path}\r\n')
+        if missing:
+            return CommandFailure('INFO: Could not find files for the given pattern(s).', 1)
+        return 0
 
     @_command('ARP')
     @_command('AT')
@@ -1281,7 +1274,6 @@ class BatchEmulator:
     @_command('TRACERT')
     @_command('VSSADMIN')
     @_command('WBADMIN')
-    @_command('WHERE')
     @_command('WHOAMI')
     @_command('WINRM')
     @_command('WINRS')
