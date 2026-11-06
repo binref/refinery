@@ -6298,6 +6298,31 @@ A_DECODER_IN_A_SCRIPT_OF_THE_WINDOWS_SCRIPT_HOST = a_program("""
     """)
 
 
+#: A function storing into a name no declaration binds and calling a function of a namespace, in a
+#: classic script that reads the namespace before it stores one: a library the page loaded first
+#: may have stored it, as `var NS = NS || {}` expects.
+A_NAMESPACE_A_LIBRARY_MAY_HAVE_STORED_BEFORE_THE_FILE = a_program("""
+    var NS = NS || {};
+    function f(v) { rr = v; NS.go(); return rr; }
+    console.log(f(1));
+    """)
+
+
+class TestANameStaysWhereTheFileCallsANamespaceALibraryMayHaveStored(TestBase):
+    """
+    A name a function stores into without declaring it moves into that function only where the
+    file runs no code its text does not hold
+    (`refinery.lib.scripts.js.analysis.foreign.may_run_code_it_does_not_hold`); a global the file
+    defines counts as code it holds. `var NS = NS || {}` reads `NS` before the file stores into
+    it, and what it reads may be the namespace of a library, whose `go` may store into `rr`. The
+    store the file makes is taken as the only value the global holds, so `rr` moves into `f`.
+    """
+
+    @unittest.expectedFailure
+    def test_the_name_stays_where_it_is_stored(self):
+        self.assertIn('rr = v', folded(A_NAMESPACE_A_LIBRARY_MAY_HAVE_STORED_BEFORE_THE_FILE))
+
+
 class TestADecoderInAScriptOfTheWindowsScriptHostIsFolded(TestBase):
     """
     A name a function stores into without declaring it moves into that function only where the
@@ -6608,6 +6633,92 @@ class TestAGlobalObjectLockedOrHookedThroughAValueNotSeenAsItKeepsTheNamesStored
         for label, row in A_GLOBAL_OBJECT_LOCKED_OR_HOOKED_THROUGH_A_VALUE_NOT_SEEN_AS_IT.items():
             with self.subTest(label=label):
                 self.assertEqual(row.deobfuscated(), row.prints)
+
+
+#: Classic scripts storing into a name no declaration binds in the one function using it, where a
+#: store into the name finds something the analysis does not see installed under it, mapped to
+#: what Node prints for each: an installer called under a key only the run computes, and the
+#: `toString` of a frozen `Object.prototype`, which a store cannot replace.
+A_NAME_A_STORE_INTO_WHICH_FINDS_WHAT_IS_NOT_SEEN_INSTALLED = {
+    'an installer called under a key only the run computes': Program(
+        a_program("""
+            var k = ['defineProperty'][Date.now() * 0];
+            Object[k](Object.prototype, 'rr', {
+              get: function () { return 'kept'; },
+              set: function (v) { console.log('set ' + v); },
+              configurable: true
+            });
+            function f(v) { rr = v; return rr; }
+            console.log(f(1));
+            """),
+        prints('set 1', 'kept'),
+        Reading.SCRIPT,
+    ),
+    'a name of a frozen Object.prototype': Program(
+        a_program("""
+            Object.freeze(Object.prototype);
+            function f(v) { toString = v; return toString; }
+            console.log(typeof f(5));
+            """),
+        prints('function'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestANameAStoreIntoWhichFindsWhatIsNotSeenInstalledStays(TestBase):
+    """
+    A store into a name no declaration binds creates a property of the global object where nothing
+    is installed under the name
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.installed_under`). A call of an
+    installer under a key the analysis cannot read is taken for no install, as every reader of an
+    install takes it, and a frozen `Object.prototype` refuses a store into a name it holds without
+    anything installed under that name. The move of the name into the function storing into it
+    misses that the store runs a setter or stores nothing.
+    """
+
+    def test_a_host_prints_what_each_row_pins(self):
+        for label, row in A_NAME_A_STORE_INTO_WHICH_FINDS_WHAT_IS_NOT_SEEN_INSTALLED.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    @wontfix('no program installs under a key only its run computes, or freezes Object.prototype, and then stores into that name')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_NAME_A_STORE_INTO_WHICH_FINDS_WHAT_IS_NOT_SEEN_INSTALLED.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.deobfuscated(), row.prints)
+
+
+class TestANameStaysWhereTheProgramReachesTheGlobalObjectOrItsPrototypesUnseen(TestBase):
+    """
+    The analysis follows the global object where the file spells it or gives it a name. A `this` in
+    a function called with no receiver is the global object in sloppy code, but the `this` of a
+    method is its receiver, and reading every `this` as the global object would refuse every move;
+    `this.lib.go()` there calls a library's function unseen. A prototype set on
+    `EventTarget.prototype`, which a window inherits from, with a setter under the name is no
+    install the analysis follows either.
+    """
+
+    @wontfix('no program calls a library through the this of a function called with no receiver')
+    def test_a_name_stays_where_a_library_is_called_through_this(self):
+        source = a_program("""
+            function f(v) { rr = v; this.lib.go(); return rr; }
+            console.log(f(1));
+            """)
+        self.assertIn('rr = v', folded(source))
+
+    @wontfix('no program sets the prototype of a prototype of its window and then stores into a name it never declares')
+    def test_a_name_stays_where_the_prototype_of_a_prototype_of_the_window_is_set(self):
+        source = a_program("""
+            Object.setPrototypeOf(EventTarget.prototype, {
+              set rr(v) { console.log('set ' + v); },
+              get rr() { return 'kept'; }
+            });
+            function f(v) { rr = v; return rr; }
+            console.log(f(1));
+            """)
+        self.assertIn('rr = v', folded(source, environment=HostEnvironment.browser))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

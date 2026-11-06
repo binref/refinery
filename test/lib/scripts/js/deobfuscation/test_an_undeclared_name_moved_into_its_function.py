@@ -174,6 +174,34 @@ A_NAME_A_STORE_INTO_WHICH_DOES_MORE: dict[str, Program] = {
         Reading.WINDOW,
         HostEnvironment.browser,
     ),
+    'a setter Object.prototype carries, put there by an installer bound out of Object': Program(
+        a_program("""
+            const { defineProperty } = Object;
+            defineProperty(Object.prototype, 'rr', {
+              get: function () { return 'kept'; },
+              set: function (v) { console.log('set ' + v); },
+              configurable: true
+            });
+            function f(v) { rr = v; return rr; }
+            console.log(f(1));
+            """),
+        prints('set 1', 'kept'),
+        Reading.SCRIPT,
+    ),
+    'a setter Object.prototype carries, put there by a call spreading its arguments': Program(
+        a_program("""
+            var install = [Object.prototype, 'rr', {
+              get: function () { return 'kept'; },
+              set: function (v) { console.log('set ' + v); },
+              configurable: true
+            }];
+            Object.defineProperty(...install);
+            function f(v) { rr = v; return rr; }
+            console.log(f(1));
+            """),
+        prints('set 1', 'kept'),
+        Reading.SCRIPT,
+    ),
     'code run by vm storing into the name between the store and the read': Program(
         a_program("""
             function stage(code) {
@@ -205,6 +233,22 @@ A_NAME_A_STORE_INTO_WHICH_DOES_MORE: dict[str, Program] = {
 A_STORE_A_SETTER_THE_PROGRAM_INSTALLED_RUNS = Program(
     a_program("""
         globalThis.__defineSetter__('tmp', function (v) { console.log('set ' + v); });
+        function f(v) { tmp = v; return 1; }
+        console.log(f(2));
+        """),
+    prints('set 2', '1'),
+    Reading.SCRIPT,
+)
+
+#: A program storing into a name no declaration binds where a setter an installer bound out of
+#: `Object` put under it runs at the store, which nothing reads after, mapped to what a host prints.
+A_STORE_A_SETTER_AN_INSTALLER_BOUND_OUT_OF_OBJECT_INSTALLED_RUNS = Program(
+    a_program("""
+        const { defineProperty } = Object;
+        defineProperty(Object.prototype, 'tmp', {
+          set: function (v) { console.log('set ' + v); },
+          configurable: true
+        });
         function f(v) { tmp = v; return 1; }
         console.log(f(2));
         """),
@@ -264,35 +308,131 @@ class TestANameAStoreIntoWhichDoesMoreStays(TestBase):
         row = A_STORE_A_SETTER_THE_PROGRAM_INSTALLED_RUNS
         self.assertEqual(row.read(), row.required())
 
+    def test_a_store_a_setter_installed_by_an_installer_bound_out_of_object_runs_is_kept(self):
+        row = A_STORE_A_SETTER_AN_INSTALLER_BOUND_OUT_OF_OBJECT_INSTALLED_RUNS
+        self.assertEqual(row.read(), row.required())
+
 
 class TestAGlobalStaysWhereTheFileMayRunCodeItDoesNotHold(TestBase):
 
     def test_an_undeclared_name_stays_across_a_call_of_a_function_nothing_defines(self):
-        source = 'function f(v) { rr = v; run(); return rr; }\nconsole.log(f(1));\n'
+        source = a_program("""
+            function f(v) { rr = v; run(); return rr; }
+            console.log(f(1));
+            """)
         self.assertIn('rr = v', folded(source))
 
     def test_a_var_of_a_classic_script_stays_across_a_call_of_a_function_nothing_defines(self):
-        source = 'var rr;\nfunction f(v) { rr = v; run(); return rr; }\nconsole.log(f(1));\n'
+        source = a_program("""
+            var rr;
+            function f(v) { rr = v; run(); return rr; }
+            console.log(f(1));
+            """)
         self.assertIn('rr = v', folded(source))
 
     def test_a_var_of_a_commonjs_file_moves_across_a_call_of_a_function_nothing_defines(self):
-        source = 'var rr;\nfunction f(v) { rr = v; run(); return rr; }\nconsole.log(f(1));\n'
+        source = a_program("""
+            var rr;
+            function f(v) { rr = v; run(); return rr; }
+            console.log(f(1));
+            """)
         self.assertNotIn('rr = v', deobfuscate_source(source, execution=ExecutionModel.commonjs))
 
     def test_an_undeclared_name_stays_across_a_read_of_a_global_nothing_defines(self):
-        source = 'function f(v, o) { rr = v; o.x; return rr; }\nconsole.log(f(1, globalThis.o));\n'
+        source = a_program("""
+            function f(v, o) { rr = v; o.x; return rr; }
+            console.log(f(1, globalThis.o));
+            """)
         self.assertIn('rr = v', folded(source))
 
     def test_an_undeclared_name_stays_where_markup_written_into_the_document_may_read_it(self):
-        source = "function f(v) { rr = v; document.write('<script>console.log(rr)</' + 'script>'); return rr; }\nf(1);\n"
+        source = a_program("""
+            function f(v) { rr = v; document.write('<script>console.log(rr)</' + 'script>'); return rr; }
+            f(1);
+            """)
         self.assertIn('rr = v', folded(source))
 
     def test_a_var_of_a_classic_script_stays_where_markup_written_into_the_document_may_read_it(self):
-        source = "var rr;\nfunction f(v) { rr = v; document.write('<script>console.log(rr)</' + 'script>'); return rr; }\nf(1);\n"
+        source = a_program("""
+            var rr;
+            function f(v) { rr = v; document.write('<script>console.log(rr)</' + 'script>'); return rr; }
+            f(1);
+            """)
+        self.assertIn('rr = v', folded(source))
+
+    def test_an_undeclared_name_stays_where_markup_is_written_through_the_call_of_the_writer(self):
+        source = a_program("""
+            function f(v) { rr = v; document.write.call(document, '<script>rr = 5</' + 'script>'); return rr; }
+            console.log(f(1));
+            """)
+        self.assertIn('rr = v', folded(source))
+
+    def test_an_undeclared_name_stays_where_a_script_element_is_made_through_the_call_of_the_maker(self):
+        source = a_program("""
+            function f(v) {
+              rr = v;
+              var s = document.createElement.call(document, 'script');
+              s.text = 'rr = 5';
+              document.head.appendChild(s);
+              return rr;
+            }
+            console.log(f(1));
+            """)
+        self.assertIn('rr = v', folded(source))
+
+    def test_an_undeclared_name_stays_where_a_script_element_is_made_under_a_prefix(self):
+        source = a_program("""
+            function f(v) {
+              rr = v;
+              var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg:script');
+              s.textContent = 'rr = 5';
+              document.documentElement.appendChild(s);
+              return rr;
+            }
+            console.log(f(1));
+            """)
         self.assertIn('rr = v', folded(source))
 
     def test_an_undeclared_name_stays_where_a_javascript_address_may_read_it(self):
-        source = "function f(v) { rr = v; location.href = 'javascript:console.log(rr)'; return rr; }\nconsole.log(f(1));\n"
+        source = a_program("""
+            function f(v) { rr = v; location.href = 'javascript:console.log(rr)'; return rr; }
+            console.log(f(1));
+            """)
+        self.assertIn('rr = v', folded(source))
+
+    def test_an_undeclared_name_stays_where_a_javascript_address_split_by_a_tab_may_read_it(self):
+        source = a_program("""
+            function f(v) { rr = v; location.href = 'java\\tscript:console.log(rr)'; return rr; }
+            console.log(f(1));
+            """)
+        self.assertIn('rr = v', folded(source))
+
+    def test_an_undeclared_name_stays_where_a_computed_address_may_read_it(self):
+        source = a_program("""
+            function f(v, u) { rr = v; location.href = u; return rr; }
+            console.log(f(1, location.hash));
+            """)
+        self.assertIn('rr = v', folded(source))
+
+    def test_an_undeclared_name_stays_where_a_module_is_loaded_through_the_main_module(self):
+        source = a_program("""
+            function f(v) { rr = v; require.main.require('./x'); return rr; }
+            console.log(f(1));
+            """)
+        self.assertIn('rr = v', deobfuscate_source(source, execution=ExecutionModel.commonjs))
+
+    def test_an_undeclared_name_stays_where_require_is_handed_on(self):
+        source = a_program("""
+            function f(v) { rr = v; require.call(null, './x'); return rr; }
+            console.log(f(1));
+            """)
+        self.assertIn('rr = v', deobfuscate_source(source, execution=ExecutionModel.commonjs))
+
+    def test_an_undeclared_name_stays_where_the_listeners_of_an_event_run(self):
+        source = a_program("""
+            function f(v) { rr = v; window.dispatchEvent(new Event('go')); return rr; }
+            console.log(f(1));
+            """)
         self.assertIn('rr = v', folded(source))
 
 
@@ -307,8 +447,9 @@ class TestANameAHostInheritsWithoutASetterIsNoVariable(TestBase):
         self.assertIn('self = 1', folded(source))
 
     def test_a_name_with_an_accessor_on_the_prototype_of_a_window_stays(self):
-        source = (
-            "Object.defineProperty(EventTarget.prototype, 'rr', { set: function (v) { console.log('set ' + v); } });\n"
-            'function f(v) { rr = v; return rr; }\nconsole.log(f(1));\n'
-        )
+        source = a_program("""
+            Object.defineProperty(EventTarget.prototype, 'rr', { set: function (v) { console.log('set ' + v); } });
+            function f(v) { rr = v; return rr; }
+            console.log(f(1));
+            """)
         self.assertIn('rr = v', folded(source, environment=HostEnvironment.browser))

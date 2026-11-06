@@ -4849,7 +4849,7 @@ class SemanticModel:
         """
         Whether the file has the host load code its text does not hold before its body runs: an
         `import` or an `export … from` declaration (`_lets_another_module_run`) naming a module
-        that is not a built-in one running no code (`_specifier_loads_code`). The host links and
+        that is not a built-in one running no code (`specifier_loads_code`). The host links and
         evaluates every such module before the first statement of the file, wherever the
         declaration stands, so no point of the file is ordered before the load.
         """
@@ -4859,7 +4859,7 @@ class SemanticModel:
             if not _lets_another_module_run(statement):
                 continue
             source = statement.source
-            if self._specifier_loads_code(None if source is None else source.value):
+            if self.specifier_loads_code(None if source is None else source.value):
                 return True
         return False
 
@@ -4867,7 +4867,7 @@ class SemanticModel:
         """
         The call `require(m)` *node* is the callee of, where it calls the host's `require` and may
         load code the text does not hold: *m* is not a string naming a built-in module that runs no
-        code (`_specifier_loads_code`). The callee is the host's `require` where it is the name
+        code (`specifier_loads_code`). The callee is the host's `require` where it is the name
         `require` resolving to no binding or to the one the host passed that the file does not
         declare or assign, or the member `module.require` of such a `module`, which is the same
         function. `None` where *node* is no such callee. A `require` read for anything but a call
@@ -4879,22 +4879,22 @@ class SemanticModel:
             if (
                 not isinstance(base, JsIdentifier)
                 or base.name != 'module'
-                or not self._may_hold_what_the_host_passed(base)
+                or not self.may_hold_what_the_host_passed(base)
                 or not key_is(node, _REQUIRE, self.assumed_keys)
             ):
                 return None
-        elif node.name != 'require' or not self.is_reference(node) or not self._may_hold_what_the_host_passed(node):
+        elif node.name != 'require' or not self.is_reference(node) or not self.may_hold_what_the_host_passed(node):
             return None
         call = enclosing_operator(node)
         if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not node:
             return None
         arguments = call.arguments
         if len(arguments) == 1 and isinstance(module := strip_parens(arguments[0]), JsStringLiteral):
-            if not self._specifier_loads_code(module.value):
+            if not self.specifier_loads_code(module.value):
                 return None
         return call
 
-    def _may_hold_what_the_host_passed(self, name: JsIdentifier) -> bool:
+    def may_hold_what_the_host_passed(self, name: JsIdentifier) -> bool:
         """
         Whether the name *name* may read what the CommonJS host passed under it: it resolves to no
         binding, or to the one the host passed that the file does not declare or assign.
@@ -4902,7 +4902,7 @@ class SemanticModel:
         binding = self.resolve(name)
         return binding is None or (binding.supplied_by_host and not binding.declarations and not binding.writes)
 
-    def _specifier_loads_code(self, specifier: str | None) -> bool:
+    def specifier_loads_code(self, specifier: str | None) -> bool:
         """
         Whether loading the module *specifier* names runs code the file's text does not hold: it is
         not a built-in module that runs none (`node_require_runs_no_code`), nor `vm` under the

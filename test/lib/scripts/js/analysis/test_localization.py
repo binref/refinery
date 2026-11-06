@@ -193,7 +193,7 @@ class TestLocalization(TestBase):
         for source in (
             "Object.defineProperty(Object.prototype, 'x', { set: function (v) {} }); function f(v) { x = v; return x; }",
             "globalThis.__defineSetter__('x', function (v) {}); function f(v) { x = v; return x; }",
-            "__proto__ = { set x(v) {} }; function f(v) { x = v; return x; }",
+            '__proto__ = { set x(v) {} }; function f(v) { x = v; return x; }',
         ):
             with self.subTest(source=source):
                 self.assertStays(source)

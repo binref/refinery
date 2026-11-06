@@ -96,11 +96,13 @@ from refinery.lib.scripts.js.keys import (
     KeyAssumptions,
     accessor_install_method,
     accessor_installs,
+    call_argument,
     key_is,
     key_may_be,
     key_text,
 )
 from refinery.lib.scripts.js.model import (
+    ACCESSOR_INSTALL_METHODS,
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -119,6 +121,7 @@ from refinery.lib.scripts.js.model import (
     JsNullLiteral,
     JsNumericLiteral,
     JsObjectExpression,
+    JsObjectPattern,
     JsParenthesizedExpression,
     JsProperty,
     JsPropertyKind,
@@ -3531,7 +3534,9 @@ def _global_installs(model: SemanticModel, assumptions: KeyAssumptions) -> _Glob
     as a member or as the bare name no declaration binds. Only under this precondition may a read
     of a trusted global data property be treated as effect-free. An accessor installed under one
     key is found by a name of that key alone, so the keys of the installs are listed; a swapped
-    prototype, a call of an installer that is not the call of its member, and an install without
+    prototype, a call of an installer that is not the call of its member, an installer bound out
+    of an object by a pattern (`_destructures_an_installer`), a call that spreads its arguments
+    from the first one on, which names no object the install is made on, and an install without
     a key bound them by none.
 
     A computed key counts as an install, since `Object['define' + 'Property']` reaches the same method as
@@ -3552,12 +3557,16 @@ def _global_installs(model: SemanticModel, assumptions: KeyAssumptions) -> _Glob
     keys: set[str] = set()
     pristine = True
     for node in model.root.walk():
+        if _destructures_an_installer(node, assumptions):
+            return _ANY_INSTALL
         if not isinstance(node, JsMemberExpression):
             continue
         if accessor_install_method(node, assumptions) is not None:
             pristine = False
             call = enclosing_operator(node)
             if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not node:
+                return _ANY_INSTALL
+            if isinstance(call_argument(call, 0), JsSpreadElement):
                 return _ANY_INSTALL
             for install in accessor_installs(call):
                 if install.key is None:
@@ -3567,6 +3576,20 @@ def _global_installs(model: SemanticModel, assumptions: KeyAssumptions) -> _Glob
         if _writes_the_global_prototype(model, node, assumptions):
             return _ANY_INSTALL
     return _GlobalInstalls(pristine, frozenset(keys))
+
+
+def _destructures_an_installer(node: Node, assumptions: KeyAssumptions) -> bool:
+    """
+    Whether *node* is a property of an object pattern that binds an accessor installer
+    (`refinery.lib.scripts.js.model.ACCESSOR_INSTALL_METHODS`) out of the object it reads, as
+    `const { defineProperty } = Object` does: the name it binds is the installer, and a call of
+    that name installs on whatever it is handed.
+    """
+    return (
+        isinstance(node, JsProperty)
+        and isinstance(node.parent, JsObjectPattern)
+        and key_is(node, ACCESSOR_INSTALL_METHODS, assumptions)
+    )
 
 
 class AnchoredTrust:

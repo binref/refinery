@@ -1138,7 +1138,7 @@ class TestEffectModel(TestBase):
         self.assertTrue(effects.global_pristine)
 
     def test_a_prototype_swapped_in_through_the_bare_name_proto_voids_global_pristine(self):
-        _, effects = self._effects("__proto__ = { get Uint8Array() { return 0; } }; console.log(Uint8Array);")
+        _, effects = self._effects('__proto__ = { get Uint8Array() { return 0; } }; console.log(Uint8Array);')
         self.assertFalse(effects.global_pristine)
         self.assertTrue(effects.installed_under('Uint8Array'))
         self.assertTrue(effects.installed_under('zz'))
@@ -1172,6 +1172,23 @@ class TestEffectModel(TestBase):
                 _, effects = self._effects(source)
                 self.assertFalse(effects.global_pristine)
                 self.assertTrue(effects.installed_under('zz'))
+
+    def test_an_installer_bound_out_of_an_object_by_a_pattern_is_found_by_every_name(self):
+        for source in (
+            "const { defineProperty } = Object; defineProperty(Object.prototype, 'rr', { set: function (v) {} });",
+            "var { defineProperty: d } = Reflect; d(Object.prototype, 'rr', { set: function (v) {} });",
+            "var s; ({ __defineSetter__: s } = Object.prototype); s.call(Object.prototype, 'rr', function (v) {});",
+        ):
+            with self.subTest(source=source):
+                _, effects = self._effects(source)
+                self.assertFalse(effects.global_pristine)
+                self.assertTrue(effects.installed_under('zz'))
+
+    def test_an_install_spreading_its_arguments_from_the_first_on_is_found_by_every_name(self):
+        source = "var a = [Object.prototype, 'rr', { set: function (v) {} }]; Object.defineProperty(...a);"
+        _, effects = self._effects(source)
+        self.assertFalse(effects.global_pristine)
+        self.assertTrue(effects.installed_under('zz'))
 
     def test_a_data_property_installed_under_another_key_is_not_found_by_the_name(self):
         _, effects = self._effects("Object.defineProperty(exports, '__esModule', { value: true });")

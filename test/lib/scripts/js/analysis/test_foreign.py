@@ -55,6 +55,11 @@ class TestAFileRunningOnlyWhatItHoldsRunsNoForeignCode(TestBase):
             'var stream = { write: function () {} }; stream.write(1);',
             "var e = { createElement: function () {} }; e.createElement('div');",
             'console.log(globalThis.Math.PI, constructor, toString);',
+            "document.createElement('div');",
+            "document.createElementNS('http://www.w3.org/2000/svg', 'svg:path');",
+            "if (typeof importScripts === 'function') { console.log(1); }",
+            "if (typeof document.write === 'function') { console.log(1); }",
+            'globalThis.counter = 1;',
         ):
             with self.subTest(source=source):
                 self.assertFalse(_runs_foreign_code(source))
@@ -89,11 +94,17 @@ class TestAFileRunningWhatItDoesNotHoldRunsForeignCode(TestBase):
             "document.createElement('SCRIPT');",
             'var tag = location.hash; document.createElement(tag);',
             "document.createElementNS('http://www.w3.org/2000/svg', 'script');",
+            "document.createElementNS('http://www.w3.org/2000/svg', 'svg:script');",
+            "document.createElement.call(document, 'script');",
+            'var create = document.createElement.bind(document); create(location.hash);',
             "importScripts('a.js');",
             "self.importScripts('a.js');",
             "document.write('<p>');",
             "document.writeln('<p>');",
             "document.createRange().createContextualFragment('<p>');",
+            "document.write.call(document, '<p>');",
+            "document.write.apply(document, ['<p>']);",
+            "var write = document.write.bind(document); write('<p>');",
         ):
             for trust_eval in (False, True):
                 with self.subTest(source=source, trust_eval=trust_eval):
@@ -111,6 +122,10 @@ class TestAFileRunningWhatItDoesNotHoldRunsForeignCode(TestBase):
             "document.body.setAttribute('onclick', 'go()');",
             "document.body.setAttribute(location.hash, 'go()');",
             "document.body.setAttributeNS(null, 'onload', 'go()');",
+            "document.body.setAttribute.call(document.body, 'onclick', 'go()');",
+            "document.body.insertAdjacentHTML.call(document.body, 'beforeend', '<b>');",
+            "location.href = 'java\\tscript:alert(1)';",
+            "location.href = 'java\\nscript:alert(1)';",
         ):
             with self.subTest(source=source):
                 self.assertTrue(_runs_foreign_code(source))
@@ -139,3 +154,59 @@ class TestAFileRunningWhatItDoesNotHoldRunsForeignCode(TestBase):
         source = 'var o = 1; console.log(globalThis.o);'
         self.assertFalse(_runs_foreign_code(source))
         self.assertTrue(_runs_foreign_code(source, file_kind=FileKind.commonjs))
+
+    def test_a_require_the_load_sites_do_not_follow_runs_it(self):
+        for source in (
+            "require.call(null, './x');",
+            "require.apply(null, ['./x']);",
+            "var load = require; load('./x');",
+            "require.main.require('./x');",
+            "process.mainModule.require('./x');",
+            "process.mainModule.require.call(null, 'fs');",
+        ):
+            for trust_eval in (False, True):
+                with self.subTest(source=source, trust_eval=trust_eval):
+                    self.assertTrue(_runs_foreign_code(source, file_kind=FileKind.commonjs, trust_eval=trust_eval))
+
+    def test_a_require_of_a_built_in_module_running_no_code_runs_none(self):
+        for source in (
+            "require('fs');",
+            "process.mainModule.require('child_process');",
+            "require.main.require('node:path');",
+            "if (typeof require === 'function') { console.log(1); }",
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(_runs_foreign_code(source, file_kind=FileKind.commonjs))
+
+    def test_a_call_running_the_listeners_of_an_event_runs_it(self):
+        for source in (
+            "window.dispatchEvent(new Event('go'));",
+            "document.fireEvent('onclick');",
+            "var fire = document.dispatchEvent.bind(document); fire(new Event('go'));",
+        ):
+            for trust_eval in (False, True):
+                with self.subTest(source=source, trust_eval=trust_eval):
+                    self.assertTrue(_runs_foreign_code(source, trust_eval=trust_eval))
+
+    def test_a_navigation_to_a_computed_address_runs_it_only_under_the_suspecting_model(self):
+        for source in (
+            'var u = location.hash; location = u;',
+            'var u = location.hash; location.href = u;',
+            'var u = location.hash; window.location = u;',
+            'var u = location.hash; document.location.href = u;',
+            'var u = location.hash; location.assign(u);',
+            'var u = location.hash; location.replace(u);',
+            "location.href += '#x';",
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(_runs_foreign_code(source))
+                self.assertFalse(_runs_foreign_code(source, trust_eval=True))
+
+    def test_a_navigation_to_a_literal_address_or_a_store_into_a_local_runs_none(self):
+        for source in (
+            "location.href = 'https://example.test/';",
+            "location.assign('https://example.test/');",
+            'function f(u) { var location = {}; location = u; return location; }',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(_runs_foreign_code(source))
