@@ -168,6 +168,16 @@ class TestPs1CodeThatRunsInAScopeOfItsOwnKeepsIt(TestPs1):
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'Collection`1'")
 
 
+class TestPs1ABlockWhoseCommandNamesResolveIsSpliced(TestPs1):
+
+    @opportunity
+    def test_a_block_whose_computed_command_name_folds_is_spliced(self):
+        self._assertDeobfuscatesTo(
+            "& ([scriptblock]::Create(\"Write-Host one; & ('Write-' + 'Host') two\"))",
+            'Write-Host one\nWrite-Host two',
+        )
+
+
 class TestPs1IexInlining(TestPs1):
 
     def test_iex_single_statement(self):
@@ -365,6 +375,21 @@ class TestPs1IexInlining(TestPs1):
     def test_the_parameters_the_code_declares_keep_their_defaults(self):
         source = "$r = Invoke-Expression 'param($a = 5) $a'"
         self.assertEqual(self._apply(source, Ps1IexInlining), self._apply(source))
+
+    def test_a_return_in_the_code_leaves_only_the_code(self):
+        source = inspect.cleandoc("""
+            function f {
+              Invoke-Expression 'return 5'
+              Write-Host 'after'
+            }
+        """)
+        self.assertEqual(self._apply(source, Ps1IexInlining), self._apply(source))
+
+    def test_a_return_in_a_block_of_the_code_is_inlined_with_it(self):
+        self.assertEqual(
+            self._apply("Invoke-Expression '1 | ForEach-Object { return }'", Ps1IexInlining),
+            '1 | ForEach-Object {\n  return\n}',
+        )
 
     def test_a_using_statement_is_not_moved_to_the_middle_of_the_script(self):
         source = "Write-Host 1\nInvoke-Expression 'using namespace System.Text'"

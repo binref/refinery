@@ -397,18 +397,26 @@ def classify_block(
     )
 
 
-#: The variables a scope binds for the code it runs. A block reads these off its own invocation, and
-#: its statements standing in the code that runs it would read that code's instead. The path of the
-#: script is one of them: a block made from a string has none.
-_INVOCATION_VARIABLES = frozenset({
-    'args',
-    'input',
+#: The variables that tell code made from a string from code written in the script: the file it
+#: came from, which a string has none of, and the invocation that ran it.
+PROVENANCE_VARIABLES = frozenset({
     'myinvocation',
-    'psboundparameters',
-    'pscmdlet',
     'pscommandpath',
     'psscriptroot',
 })
+
+#: The variables a call binds for the code it runs out of what the call is handed: its arguments,
+#: its pipeline input, and what the parameter binder made of them.
+CALL_BOUND_VARIABLES = frozenset({
+    'args',
+    'input',
+    'psboundparameters',
+    'pscmdlet',
+})
+
+#: The variables a scope binds for the code it runs. A block reads these off its own invocation, and
+#: its statements standing in the code that runs it would read that code's instead.
+_INVOCATION_VARIABLES = PROVENANCE_VARIABLES | CALL_BOUND_VARIABLES
 
 #: The qualifiers under which a name means the binding of the scope the occurrence runs in before
 #: any other: a read finds that binding first, and a write lands in that scope.
@@ -527,14 +535,15 @@ def reads_one_of(node: Node, names: Collection[str]) -> bool:
     """
     Whether *node* itself reads one of *names*, lowercased, from the scope it runs in: as a variable
     under a qualifier that looks there first, or as a string that a command or the session state
-    looks up, which may also be every name at once.
+    looks up, which may also be every name at once. A session state handed on reads every name,
+    since whatever it is handed to may look any of them up.
     """
-    if isinstance(node, Ps1Variable):
-        return node.scope in _NAMES_OF_THE_OWN_SCOPE and node.name.lower() in names
-    if not isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember)):
+    if not isinstance(node, (Ps1Variable, Ps1CommandInvocation, Ps1InvokeMember)):
         return False
     if reads_unreadable_name(node):
         return True
+    if isinstance(node, Ps1Variable):
+        return node.scope in _NAMES_OF_THE_OWN_SCOPE and node.name.lower() in names
     return any(reference.key in names for reference in named_references(node))
 
 

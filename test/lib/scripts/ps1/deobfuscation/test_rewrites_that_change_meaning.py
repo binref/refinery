@@ -141,6 +141,13 @@ class TestPs1AStoreAVariableRefusesIsNotFoldedIntoItsReads(TestPs1):
         """))
         self.assertNotIn('Write-Host 9', output)
 
+    def test_the_declaring_store_a_validation_attribute_refuses_is_not_folded(self):
+        output = self._deobfuscate(cleandoc("""
+            [ValidateRange(1,5)][int]$x = 9
+            Write-Host "[$x]"
+        """))
+        self.assertNotIn("Write-Host '[9]'", output)
+
     @todo
     def test_a_store_into_a_read_only_variable_is_not_folded(self):
         output = self._deobfuscate(cleandoc("""

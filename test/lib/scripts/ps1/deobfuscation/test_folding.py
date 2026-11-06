@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from test import backlog, opportunity, todo
+from test import backlog, opportunity
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1ConstantFolding, Ps1ConstantInlining

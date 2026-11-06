@@ -712,6 +712,10 @@ class TestPs1ACommandThatRunsUnreadableCodeIsNotAlwaysAWorldOpener(TestPs1):
     def test_an_event_action_keeps_the_read(self):
         self._assertReadSurvivesBelow(_RUNS_UNREADABLE_CODE[4])
 
+    def test_a_cim_event_action_keeps_the_read(self):
+        self._assertReadSurvivesBelow(
+            'Register-CimIndicationEvent -ClassName Win32_ProcessStartTrace -Action $sb')
+
     @todo
     def test_a_command_this_analysis_cannot_resolve_keeps_the_read(self):
         self._assertReadSurvivesBelow(_RUNS_UNREADABLE_CODE[5])

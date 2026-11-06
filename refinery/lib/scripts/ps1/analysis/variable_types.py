@@ -28,7 +28,7 @@ from refinery.lib.scripts.ps1.analysis.values import (
     render,
     resolve_expression_type,
 )
-from refinery.lib.scripts.ps1.ast import assignment_of, stored_value
+from refinery.lib.scripts.ps1.ast import assignment_of, stored_value, target_constraints
 from refinery.lib.scripts.ps1.data import named_type, resolve_type
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.model import (
@@ -351,12 +351,17 @@ def _declared_constraint_type(write: Node) -> Ps1TypeName | None:
     The type a cast on *write*'s target constrains it to, when *write* is the target of a plain
     assignment that carries one — the `[string]` of `[string]$q = 5`. `None` for a target with no
     cast, or one reached through anything but a plain `=`: a compound assignment carries no fresh
-    constraint and is answered by the value it accumulates.
+    constraint and is answered by the value it accumulates. `None` as well for a target that names
+    more than one type or attribute, as `[ValidateRange(1,5)][int]$x = 9` does: an attribute may
+    refuse or transform what is stored, and a type further out converts the value first, neither
+    of which one conversion to the type next to the variable describes.
     """
     if not isinstance(write, Ps1Variable):
         return None
     stored = stored_value(write)
     if stored is None or stored.constraint is None:
+        return None
+    if len(target_constraints(write)) > 1:
         return None
     return resolve_type(stored.constraint)
 

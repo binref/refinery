@@ -431,8 +431,8 @@ def _written_variable_value(cmd: Ps1CommandInvocation | Ps1InvokeMember) -> Node
 
     Read as the named `-Value` where one is written, else the positional value the command binds
     after its subject: the name or path takes the first free positional unless an explicit `-Name`,
-    `-Path` or `-LiteralPath` moves it off, so the value is the free positional at index one when the subject is
-    positional and at index zero when it is not — the same reading
+    `-Path` or `-LiteralPath` moves it off, so the value is the free positional at index one when
+    the subject is positional and at index zero when it is not — the same reading
     `refinery.lib.scripts.ps1.analysis.naming` makes for the name, one place along.
     """
     if isinstance(cmd, Ps1InvokeMember):

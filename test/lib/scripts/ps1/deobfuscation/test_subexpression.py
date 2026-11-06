@@ -471,6 +471,15 @@ class TestPs1SubExpressionEvaluator(TestPs1):
         """), Ps1SubExpressionEvaluator)
 
     @backlog
+    def test_a_collection_the_value_holds_is_the_one_a_retained_name_holds(self):
+        source = '''
+            $x = $($a = 1, 2, 3; ,$a)
+            $a[0] = 9
+            Write-Host $x[0]
+        '''
+        self._assertDeobfuscatesToOneOf(source, source, 'Write-Host 9')
+
+    @backlog
     def test_a_retained_integer_keeps_its_declared_width(self):
         for producer, spelled, cast in [
             ("[Convert]::ToInt16('FF', 16)", '[int16]255', '[int16]'),

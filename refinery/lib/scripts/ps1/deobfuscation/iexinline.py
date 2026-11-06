@@ -12,7 +12,12 @@ import gzip
 import zlib
 
 from refinery.lib.scripts import Expression, Transformer
-from refinery.lib.scripts.ps1.analysis.blocks import reads_one_of, runs_alike_in_the_scope_around_it
+from refinery.lib.scripts.ps1.analysis.blocks import (
+    CALL_BOUND_VARIABLES,
+    PROVENANCE_VARIABLES,
+    reads_one_of,
+    runs_alike_in_the_scope_around_it,
+)
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.values import collect_byte_array
 from refinery.lib.scripts.ps1.ast import (
@@ -21,6 +26,7 @@ from refinery.lib.scripts.ps1.ast import (
     get_command_name,
     get_named_blocks,
     is_scriptblock_create,
+    is_using_statement,
     normalize_dotnet_type_name,
     resolve_command_name,
     string_value,
@@ -42,6 +48,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CastExpression,
+    Ps1Code,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
@@ -51,6 +58,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
+    Ps1ReturnStatement,
     Ps1Script,
     Ps1ScriptBlock,
     Ps1StringLiteral,
@@ -64,23 +72,6 @@ _IEX_NAMES = frozenset({'iex', 'invoke-expression'})
 _INVOKE_METHODS = frozenset({'invoke', 'invokereturnasis'})
 
 _INVOKE_COMMAND_NAMES = frozenset({'invoke-command', 'icm'})
-
-#: The variables that tell a block made from a string from one written in the script: the file it
-#: came from, which a string has none of, and the invocation that ran it.
-_PROVENANCE_VARIABLES = frozenset({
-    'myinvocation',
-    'pscommandpath',
-    'psscriptroot',
-})
-
-#: The variables a method call of a block binds otherwise than `&` does: it hands the block no
-#: pipeline, and it binds what it is given without the parameter binder.
-_BOUND_BY_THE_CALL_OPERATOR = frozenset({
-    'args',
-    'input',
-    'psboundparameters',
-    'pscmdlet',
-})
 
 
 def _runs_the_command_it_names(cmd: Ps1CommandInvocation, shadowed: frozenset[str]) -> bool:
@@ -100,10 +91,27 @@ def _holds_a_using_statement(script: Ps1Script) -> bool:
     """
     return any(
         isinstance(statement, Ps1ExpressionStatement)
-        and isinstance(statement.expression, Ps1CommandInvocation)
-        and (get_command_name(statement.expression) or '').lower() == 'using'
+        and is_using_statement(statement.expression)
         for statement in script.body
     )
+
+
+def _returns_from_the_code(script: Ps1Script) -> bool:
+    """
+    Whether *script*, code parsed from a string, holds a `return` that leaves the code itself: one
+    no script block of its own stands around, including one in a `trap` of the code. The code is
+    a block of its own where `Invoke-Expression` runs it, so such a `return` ends the code alone;
+    once the statements stand where the call stood, it ends whatever holds them.
+    """
+    for node in script.walk():
+        if not isinstance(node, Ps1ReturnStatement):
+            continue
+        cursor = node.parent
+        while cursor is not None and not isinstance(cursor, Ps1Code):
+            cursor = cursor.parent
+        if cursor is script:
+            return True
+    return False
 
 
 def _try_extract_invoke_command_body(
@@ -711,13 +719,13 @@ class Ps1IexInlining(Transformer):
         """
         The statements of code that `Invoke-Expression` runs where it stands, or `None` where the
         code parses to none or holds more than statements: a `param` block, which binds its
-        parameters where the code runs, or a `using` statement, which only the start of a script
-        may hold.
+        parameters where the code runs, a `using` statement, which only the start of a script
+        may hold, or a `return` that `_returns_from_the_code` reports.
         """
         parsed = cls._try_parse_script(code)
         if parsed is None or not parsed.body or parsed.param_block is not None:
             return None
-        if _holds_a_using_statement(parsed):
+        if _holds_a_using_statement(parsed) or _returns_from_the_code(parsed):
             return None
         return list(parsed.body)
 
@@ -743,11 +751,11 @@ class Ps1IexInlining(Transformer):
         is run by `&` as well; a method of the block runs only a body with no `param` block and no
         named blocks, and binds its variables otherwise, so the code may then read none of those.
         """
-        names = _PROVENANCE_VARIABLES
+        names = PROVENANCE_VARIABLES
         if not called:
             if parsed.param_block is not None or get_named_blocks(parsed):
                 return False
-            names = names | _BOUND_BY_THE_CALL_OPERATOR
+            names = names | CALL_BOUND_VARIABLES
         return not any(reads_one_of(node, names) for node in parsed.walk())
 
     @classmethod

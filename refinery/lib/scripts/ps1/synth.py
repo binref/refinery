@@ -194,8 +194,8 @@ class Ps1Synthesizer(Synthesizer):
         however much is written behind it, so `f [Math]::Max(2, 1)` passes text as well.
 
         Neither spelling can reach a word slot from a source — a dash or a bracket there begins a
-        word — so a numeral or a type standing in one is one a pass put there, and bracketing it is
-        what makes it mean what the pass meant.
+        word — so a numeral or a type standing in one is one a pass put there, and bracketing it
+        is what makes it mean what the pass meant.
         """
         if _opens_with_a_type(node) or _ends_elsewhere_as_a_word(node):
             self._emit_bracketed(node)

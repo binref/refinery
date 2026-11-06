@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import TestBase, wontfix, opportunity, todo
+from test import TestBase, wontfix, opportunity, backlog
 
 from refinery.lib.scripts import Node, Statement, set_body
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
@@ -1525,6 +1525,11 @@ class TestPs1AStrictModeArmingIsReadOverTheWholeScript(TestBase):
 
     def test_a_name_assembled_out_of_pieces_and_run_arms_strict_mode(self):
         script = "$c = 'Set-Strict' + 'Mode -Version 1'; Invoke-Expression $c"
+        self.assertEqual(self._armings([script]), {script: True})
+
+    @backlog
+    def test_a_name_joined_out_of_pieces_and_run_arms_strict_mode(self):
+        script = "Invoke-Expression (('Set-Strict', 'Mode -Version 1') -join '')"
         self.assertEqual(self._armings([script]), {script: True})
 
     def test_a_model_the_graphs_hold_no_script_for_refuses_the_grant(self):

@@ -365,6 +365,33 @@ class TestPs1FunctionEvaluator(TestPs1):
         """
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host '[x]'")
 
+    def test_a_dot_sourced_call_keeps_what_the_function_writes(self):
+        source = """
+            function f { $q = 'x'; 'r' }
+            . f
+            Write-Host "[$q]"
+        """
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host '[x]'")
+
+    def test_a_dot_sourced_trampoline_keeps_the_parameter_it_binds(self):
+        source = """
+            function W { Param([string]$c); Invoke-Expression $c }
+            . W 'Write-Host hi'
+            Write-Host "[$c]"
+        """
+        self._assertDeobfuscatesToOneOf(source, source, """
+            Write-Host hi
+            Write-Host '[Write-Host hi]'
+        """)
+
+    def test_iex_reading_a_local_through_a_session_state_it_keeps_is_not_moved_out(self):
+        source = """
+            function B { Param($c); $r = 'x'; Invoke-Expression $c }
+            $r = 'caller'
+            B '$v = $ExecutionContext.SessionState.PSVariable; Write-Host $v.GetValue(''r'')'
+        """
+        self._assertDeobfuscatesToOneOf(source, source)
+
     @wontfix('a working script does not call a function from outside the block that defines it')
     def test_a_function_defined_in_a_block_is_not_known_outside_it(self):
         source = """

@@ -186,6 +186,16 @@ def get_command_name(cmd: Ps1CommandInvocation) -> str | None:
     return None if literal is None else literal.value
 
 
+def is_using_statement(node: Node | None) -> TypeGuard[Ps1CommandInvocation]:
+    """
+    Whether *node* is a `using` statement, which the parser reads as a command of that name.
+    """
+    if not isinstance(node, Ps1CommandInvocation):
+        return False
+    literal = command_name_literal(node)
+    return literal is not None and literal.value.lower() == 'using'
+
+
 def has_wildcard(name: str) -> bool:
     """
     Whether `name` spells a wildcard pattern rather than one name. PowerShell reads `*`, `?` and

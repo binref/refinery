@@ -42,6 +42,7 @@ from refinery.lib.scripts.ps1.ast import (
     is_execution_context_invoke,
     is_opaque_dispatch,
     is_scriptblock_invoke,
+    is_using_statement,
     may_create_a_scriptblock,
     member_may_be,
     normalize_command_name,
@@ -109,6 +110,7 @@ _LEAK_CMDLETS = frozenset({
     'invoke-command',
     'invoke-expression',
     'invoke-history',
+    'register-cimindicationevent',
     'register-engineevent',
     'register-objectevent',
     'register-wmievent',
@@ -277,8 +279,7 @@ def _loaded_by_using(cmd: Ps1CommandInvocation) -> str | None:
     *cmd* is no such statement. A module brings its commands and types in as `Import-Module` does,
     and an assembly its types as `Add-Type` does; a `using namespace` only shortens type names.
     """
-    literal = command_name_literal(cmd)
-    if literal is None or literal.value.lower() != 'using' or not cmd.arguments:
+    if not is_using_statement(cmd) or not cmd.arguments:
         return None
     first = cmd.arguments[0]
     if not isinstance(first, Ps1CommandArgument):

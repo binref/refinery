@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import backlog, todo, wontfix
+from test import backlog, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1WildcardResolution

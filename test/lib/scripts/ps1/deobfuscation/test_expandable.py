@@ -79,3 +79,69 @@ class TestPs1ASubexpressionOfThePipelineInputRunsBeforeTheCommand(TestPs1):
             source,
             "'a' | ForEach-Object {\n  Write-Host 'b'\n}",
         )
+
+    @todo
+    def test_a_pipeline_body_reads_what_a_subexpression_after_a_variable_assigns(self):
+        source = '''$x = 'a'; $x + "$( $x = 'b' )" | ForEach-Object { Write-Host $x }'''
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'b'")
+
+
+class TestPs1ASubexpressionAStatementMayNotEvaluateStaysWhereItRuns(TestPs1):
+
+    def test_an_operand_a_false_and_skips_assigns_nothing(self):
+        source = """
+            $x = 'a'
+            $Null = $False -and "$($x = 'b')"
+            Write-Host $x
+        """
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'a'")
+
+    def test_an_operand_a_true_or_skips_assigns_nothing(self):
+        source = """
+            $x = 'a'
+            $Null = $True -or "$($x = 'b')"
+            Write-Host $x
+        """
+        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'a'")
+
+    def test_a_branch_that_is_not_taken_assigns_nothing(self):
+        source = """
+            $x = 'a'
+            $c = Read-Host
+            if ($c) { Write-Host "$($x = 'b')" }
+            Write-Host $x
+        """
+        self._assertDeobfuscatesToOneOf(source, source, """
+            $x = 'a'
+            $c = Read-Host
+            if ($c) {
+              $x = 'b'
+              Write-Host ''
+            }
+            Write-Host $x
+        """)
+
+    def test_a_block_that_never_runs_assigns_nothing(self):
+        source = """
+            $x = 'a'
+            $Null = { Write-Host "$($x = 'b')" }
+            Write-Host $x
+        """
+        self._assertDeobfuscatesToOneOf(source, source, """
+            $x = 'a'
+            $Null = {
+              $x = 'b'
+              Write-Host ''
+            }
+            Write-Host $x
+        """, "Write-Host 'a'")
+
+    def test_an_argument_ahead_of_the_string_reads_the_value_before_the_assignment(self):
+        source = """
+            $x = Read-Host
+            Write-Host $x "$($x = 'b')"
+        """
+        self._assertDeobfuscatesToOneOf(source, source, """
+            $x = Read-Host
+            Write-Host $x ''
+        """)

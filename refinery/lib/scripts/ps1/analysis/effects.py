@@ -65,7 +65,6 @@ from refinery.lib.scripts.ps1.ast import (
     MATCH_OPERATORS,
     assignment_target_is_all_variables,
     assignment_target_variables,
-    command_name_literal,
     extract_new_object,
     get_body,
     get_command_name,
@@ -76,6 +75,7 @@ from refinery.lib.scripts.ps1.ast import (
     is_builtin_variable,
     is_null_discard,
     is_reference_cast,
+    is_using_statement,
     is_void_cast,
     resolve_command_name,
     unwrap_assignment_target,
@@ -2593,7 +2593,7 @@ def _own_contribution(statement: Node, world: Ps1WorldReach, in_a_block: bool) -
     if not isinstance(statement, Ps1ExpressionStatement):
         return Contribution.ACTS
     expression = statement.expression
-    if expression is None or _is_using(expression):
+    if expression is None or is_using_statement(expression):
         return Contribution.NOTHING
     if _is_store(expression):
         if _expression_acts(expression, world):
@@ -2668,16 +2668,6 @@ def _stores_through_a_variable(expression: Node) -> bool:
         if not isinstance(slot, Ps1Variable):
             return False
     return True
-
-
-def _is_using(expression: Node) -> bool:
-    """
-    Whether `expression` is a `using` statement, which the parser reads as a command of that name.
-    """
-    if not isinstance(expression, Ps1CommandInvocation):
-        return False
-    name = command_name_literal(expression)
-    return name is not None and name.value.lower() == 'using'
 
 
 def _parameter_is_inert(
