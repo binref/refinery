@@ -1,9 +1,3 @@
-"""
-A fold that trusts a built-in asks at its own point whether the program changed it before: a
-`typeof` of a name the host lacks folds only where no code before it may create the name, and a
-method call on a literal only where no code before it may replace the method. Code that runs after
-the point does not hold the fold back.
-"""
 from __future__ import annotations
 
 import inspect
@@ -25,8 +19,6 @@ from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.options import ExecutionModel
 
 
-#: Programs that ask `typeof` of a name Node lacks where code before or after the question may
-#: create the name, each with what Node makes of it as a CommonJS file and as an ES module.
 A_TYPEOF_OF_A_NAME_THE_PROGRAM_MAY_CREATE = {
     'typeof of a name created later at a runtime key': FileProgram(
         a_program("""
@@ -249,9 +241,6 @@ class TestATypeofOfANameTheProgramMayCreateStillPrintsWhatItPrints(TestBase):
         each_reading_still_prints(self, A_TYPEOF_OF_A_NAME_THE_PROGRAM_MAY_CREATE, (Reading.COMMONJS,))
 
 
-#: Programs that create a name Node lacks on `Object.prototype` or on the prototype of the global
-#: object before a `typeof` of it, each with what Node makes of it as a CommonJS file and as an ES
-#: module.
 A_NAME_CREATED_ON_A_PROTOTYPE_OF_THE_GLOBAL_OBJECT = {
     'the name created on Object.prototype': FileProgram(
         a_program("""
@@ -326,8 +315,6 @@ class TestANameCreatedOnAPrototypeOfTheGlobalObject(TestBase):
         each_reading_still_prints(self, A_NAME_CREATED_ON_A_PROTOTYPE_OF_THE_GLOBAL_OBJECT, (Reading.COMMONJS,))
 
 
-#: Programs that call a method on a literal where code before or after the call may replace the
-#: method, each with what Node makes of it as a CommonJS file and as an ES module.
 A_METHOD_CALL_ON_A_LITERAL_THE_PROGRAM_MAY_REPLACE = {
     'a split before and after a runtime-keyed replacement': FileProgram(
         a_program("""
@@ -422,9 +409,6 @@ class TestAMethodCallOnALiteralStillPrintsWhatItPrints(TestBase):
         each_reading_still_prints(self, A_METHOD_CALL_ON_A_LITERAL_THE_PROGRAM_MAY_REPLACE, (Reading.COMMONJS,))
 
 
-#: Programs that replace a method of strings before calling it on a literal through a symbol on
-#: `Object.prototype` or through the prototype of a literal, each with what Node makes of it as a
-#: CommonJS file and as an ES module.
 A_METHOD_REPLACED_THROUGH_A_SYMBOL_OR_THE_PROTOTYPE_OF_A_LITERAL = {
     'Symbol.split on Object.prototype': FileProgram(
         a_program("""

@@ -1,19 +1,10 @@
 """
-The two comment delimiters script code has beyond `//` and `/*`, and whether the tool reads them
-where the language does.
-
 `<!--` opens a comment wherever a comment may open, the middle of an expression included, so
 `var y = x <!-- note` declares `y` and holds what `x` holds. `-->` opens one only where nothing but
 whitespace and comments precedes it on its line, the head of the file counting as such a line;
-anywhere else those three characters are the decrement operator and `>`, which is what makes
-`a-->b` the program `a-- > b`. Each runs to the end of its line the way `//` does (§B.1.1). Both
-are script grammar and nothing else: Node refuses every file holding one when it reads it as a
-module, with `SyntaxError: HTML comments are not allowed in modules`.
-
-Node decides every expectation here. The question put to it is whether it reads a text at all and
-what the text prints, and the law is that the tool answers the same: a file the host runs is a
-well-formed program that prints back to a file printing the same, and a file the host refuses is no
-program. The collector reports the delimiters under the module goal and nothing else does.
+anywhere else those three characters are the decrement operator and `>`, so `a-->b` is the program
+`a-- > b`. Each runs to the end of its line the way `//` does. Both belong to the script grammar
+only: Node refuses every file holding one when it reads it as a module.
 
 SECURITY: every snippet here is hand-authored and benign, and running it is what makes the engine
 the oracle. Nothing from `samples` may ever be fed to this.
@@ -34,11 +25,6 @@ from refinery.lib.scripts.js.model import JsErrorNode
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.strict import StrictViolation, collect_strict_violations
 
-#: A file holding one of the two delimiters where it opens a comment leading a statement of a
-#: statement list, mapped to what Node prints for it: at the head of the file, behind a statement,
-#: inside a function body, a block and a class body, in the middle of an expression, and behind
-#: whitespace, a comment, and a comment that spans lines. Every line terminator the language has
-#: ends such a comment.
 A_FILE_HOLDING_A_COMMENT_A_STATEMENT_CARRIES = {
     '<!-- note\nconsole.log(1);'                                : prints('1'),
     'var x = 1;\nvar y = x <!-- note\nconsole.log(y);'          : prints('1'),
@@ -58,10 +44,6 @@ A_FILE_HOLDING_A_COMMENT_A_STATEMENT_CARRIES = {
     'console.log(1);\u2028--> note\u2028console.log(2);'        : prints('1', '2'),
 }
 
-#: A file holding a comment that no statement of a list carries: one at the end of the file, which
-#: the file carries, and one leading the body of a clause, which the body's statement carries. Each
-#: prints back holding its comment, as `A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES_PRINTED`
-#: records, and the lexer records the delimiter, so the module rule reads it.
 A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES = {
     'console.log(1); <!-- note'                                 : prints('1'),
     'console.log(1);\n<!--'                                     : prints('1'),
@@ -76,10 +58,7 @@ A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES_PRINTED = {
     'console.log(1);\n--> note'                                   : 'console.log(1);\n--> note',
 }
 
-#: A file spelling the characters of a delimiter where they are no delimiter, mapped to what Node
-#: prints for it: `-->` behind a statement on its line is a decrement and a `>`, `<<!--` is a shift
-#: whose left operand the longest match takes both angle brackets for, and neither delimiter is
-#: read inside a string, a template, or a regular expression literal.
+#: In `a <<!--b` the longest match reads `<<` first, so what follows is `!--b` and no comment.
 A_FILE_SPELLING_THE_CHARACTERS_WHERE_THEY_OPEN_NO_COMMENT = {
     'var a = 2, b = 0;\nconsole.log(a-->b);'                    : prints('true'),
     'var a = 4, b = 1; console.log(a <<!--b);'                  : prints('8'),
@@ -90,9 +69,6 @@ A_FILE_SPELLING_THE_CHARACTERS_WHERE_THEY_OPEN_NO_COMMENT = {
     '\n/-->/.test("-->");\nconsole.log(/-->/.test("-->"));'     : prints('true'),
 }
 
-#: A file with `-->` behind a statement on its line where what follows it is no expression. Node
-#: refuses each with `SyntaxError: Unexpected token '>'`, a statement in front of the delimiter on
-#: its line being what the positional restriction is about.
 A_FILE_NODE_REFUSES_OVER_A_MISPLACED_CLOSER = [
     'console.log(1); --> note',
     'var a = 1; /* c */ --> note',
@@ -160,10 +136,6 @@ class TestTheVerdictAnswersAsNodeDoes(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAFileKeepsWhatItPrints(TestBase):
-    """
-    What each file prints is what the host prints for it, and the text the printer hands back has
-    to print the same, as does the text the deobfuscator hands back.
-    """
 
     def test_a_file_holding_a_comment_prints_the_same_through_printer_and_deobfuscator(self):
         rows = _every_file_holding_a_comment()
@@ -195,12 +167,6 @@ class TestPrintingAFileHoldingACommentIsIdempotent(TestBase):
 
 
 class TestTheCollectorReportsTheDelimitersUnderTheModuleGoal(TestBase):
-    """
-    A module refuses both delimiters and a script reads them, so the one rule the collector has
-    about them is reported only when the tree is read as module code, once per file at the first
-    delimiter the lexer read, whether or not a statement carries the comment, and about nothing
-    that spells the characters where they open no comment.
-    """
 
     def test_every_file_holding_a_comment_is_reported_on_as_a_module(self):
         rows = _every_file_holding_a_comment()
@@ -244,11 +210,6 @@ _GAMMA = 'c' * 36
 _DELTA = 'd' * 36
 _VALUE = 'z' * 60
 
-#: A list too long for one line whose second item begins with the closer, mapped to the text the
-#: printer writes for it. The item stays behind the item in front of it, because a line beginning
-#: with those three characters is a line whose rest is a comment. Node refuses each of these files
-#: and the text written for each: `SyntaxError: Unexpected token '>'` for the call and the array,
-#: and `Unexpected token '--'` for the parameter list and the object.
 A_WRAPPED_LIST_HOLDING_A_CLOSER = {
     F'f({_ALPHA}, --> 1, {_BETA}, {_GAMMA}, {_DELTA});':
         F'f(\n  {_ALPHA}, --> 1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n);',
@@ -260,9 +221,6 @@ A_WRAPPED_LIST_HOLDING_A_CLOSER = {
         F'x = {{ p1: {_VALUE}, p2: {_VALUE}, p3: {_VALUE}, --> 1,\n  p4: {_VALUE}\n}};',
 }
 
-#: The same four lists with an item the language reads where the closer stood, mapped to the text
-#: the printer writes for them. Node reads every one of these files and every text written for one,
-#: and the printer puts that item at the head of a line, which is the place the closer may not go.
 A_WRAPPED_LIST_HOLDING_A_READABLE_ITEM = {
     F'f({_ALPHA}, 1, {_BETA}, {_GAMMA}, {_DELTA});':
         F'f(\n  {_ALPHA},\n  1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n);',
@@ -276,12 +234,6 @@ A_WRAPPED_LIST_HOLDING_A_READABLE_ITEM = {
 
 
 class TestAWrappedListNeverPutsTheCloserAtALineHead(TestBase):
-    """
-    A list too long for one line is broken over several, and an item beginning with `-->` written
-    at the head of one of them opens a comment that swallows the rest of that line. The item is
-    written behind what precedes it instead, which is where those three characters are the
-    decrement operator and `>` and nothing is a comment.
-    """
 
     def test_wrapped_list_item_opening_html_close_comment_is_not_written_at_a_line_head(self):
         rows = A_WRAPPED_LIST_HOLDING_A_CLOSER

@@ -1,18 +1,8 @@
 """
-A second run over a tree whose write scan does not follow every write.
-
-A value a program reads off a built-in without spelling its owner, handed to code the scan cannot
-read, may write that built-in under no name, so every fold that reads a built-in's chain refuses:
-`console.log([][k])` stops the fold of `false + []` that would read `k`. Where a run ends on such a
-tree, the deobfuscation runs again on it, assuming that every write the scan does not follow writes
-nothing, and checks the assumption at every build of the scan. It keeps that run where a build
-follows every write without recording more than the one before it, and the tree of the first run
-everywhere else.
-
-Every program here is written so that a fold made under the assumption shows: one that writes a
-built-in through a value the assumption reads away, one whose result still hands such a value on,
-and one only the second run decodes. Every answer is Node's, under the deobfuscation that suspects
-code it cannot read (`-s`), the default one, and the default one in Node.
+A value read off a built-in and handed to code the deobfuscation cannot read may write that
+built-in, which blocks every fold that reads one. The deobfuscation then runs a second time,
+assuming such a hand-off writes nothing, and keeps that run only where no write it finds disproves
+the assumption.
 
 SECURITY: every program here is written out by the module itself and Node runs only those. Nothing
 from `samples` may ever be handed to the engine.
@@ -32,8 +22,6 @@ from refinery.units.scripting.djs import djs
 
 _K = "('constr' + ([] + []) + 'uctor')"
 
-#: A program whose only write the scan does not follow is a hand-off a fold reads away, mapped to
-#: what it prints and to the text every deobfuscation writes for it.
 _A_HAND_OFF_A_FOLD_READS_AWAY: dict[str, tuple[str, str]] = {
     "console.log([][(false + [])[0] + 'oo']);": (
         'undefined\n',
@@ -45,9 +33,6 @@ _A_HAND_OFF_A_FOLD_READS_AWAY: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: A program writing a built-in through a value the assumption would read away, mapped to what it
-#: prints and to the read the write decides: a fold made under the assumption writes the key the
-#: build after it records.
 _A_WRITE_THE_ASSUMPTION_WOULD_HIDE: dict[str, tuple[str, str]] = {
     F'function show(t) {{ console.log(t, [].x); }} [][{_K}].prototype.x = 5; show(1); show(2);': ('1 5\n2 5\n', '[].x'),
     F'for (var i = 0; i < 2; i++) {{ console.log(i, [].x); [][{_K}].prototype.x = 5; }}': ('0 undefined\n1 5\n', '[].x'),
@@ -60,8 +45,6 @@ _A_WRITE_THE_ASSUMPTION_WOULD_HIDE: dict[str, tuple[str, str]] = {
     "var P = Object.getPrototypeOf([]); (P['pus' + 'ah'[1]])(5); console.log([][0]);": ('5\n', '[][0]'),
 }
 
-#: A program whose result still hands a built-in to code that writes it, mapped to what it prints
-#: and to the read the write decides.
 _A_RESULT_THAT_STILL_HANDS_A_BUILT_IN_ON: dict[str, tuple[str, str]] = {
     inspect.cleandoc("""
         var h = {};
@@ -73,8 +56,6 @@ _A_RESULT_THAT_STILL_HANDS_A_BUILT_IN_ON: dict[str, tuple[str, str]] = {
     '[].at.constructor("return function (f) { f.__proto__.x = 5; }")()([]); console.log([].x);': ('5\n', '[].x'),
 }
 
-#: A program whose hand-off a fold of the first run proves unreachable, mapped to what it prints and
-#: to the text every deobfuscation writes for it.
 _A_HAND_OFF_NO_EXECUTION_REACHES: dict[str, tuple[str, str]] = {
     "var k = 'x'; if ([].x === void 0) { console.log(1, [].at.name); } else { h([][k]); }": (
         '1 at\n',
@@ -82,7 +63,6 @@ _A_HAND_OFF_NO_EXECUTION_REACHES: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: Each model and host a deobfuscation below is asked under.
 _EVERY_MODE = [
     (True, 'universal'),
     (False, 'universal'),
@@ -143,9 +123,6 @@ class TestTheSecondRunKeepsNoFoldTheWriteDisproves(TestBase):
 
 
 class _PassCounter(PipelineObserver):
-    """
-    Counts every transformer invocation of a run, the second run's included.
-    """
 
     def __init__(self):
         self.passes = 0
@@ -158,11 +135,6 @@ class _PassCounter(PipelineObserver):
 
 
 class TestASecondRunNoFoldCanUseIsNotRun(TestBase):
-    """
-    The two programs differ in a hand-off under a key the scan cannot read, which no fold of either
-    program asks about, so a second run started only where a fold was refused for that question
-    invokes the passes equally often for both.
-    """
 
     @staticmethod
     def _passes(source: str) -> int:

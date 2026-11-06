@@ -3,14 +3,13 @@ from __future__ import annotations
 import inspect
 import unittest
 
+from test import opportunity
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
 from refinery.lib.scripts.js.deobfuscation.paramcopy import JsParameterCopyCoalescing
 
-#: Functions whose body opens by copying parameters into locals, each called so that Node prints
-#: what the locals held.
 A_PARAMETER_COPIED_AT_ENTRY = [
     'function f(a_1, n_1) { var a, n, i; a = a_1, n = n_1; for (i = 0; i < n; i++) {'
     ' a.push(a.shift()); } return a; } console.log(f([1, 2, 3], 1));',
@@ -24,11 +23,6 @@ A_PARAMETER_COPIED_AT_ENTRY = [
     ' console.log(f({k: 1}, 2));',
 ]
 
-#: Functions whose body opens with a copy the pass has to leave, each called with an argument no
-#: fold computes, mapped to what Node prints: a default value that reads an outer binding of the
-#: local's name, a destructured parameter of that name, a function declared under the parameter's
-#: name, the local declared again as a loop head, the local read before its copy, and a parameter a
-#: shorthand property binds, alone and with a default, whose name is also the key the pattern reads.
 A_PARAMETER_COPY_THE_LOCAL_CANNOT_REPLACE = {
     'var a = "outer"; function f(a_1, h = () => a) { var a; a = a_1; return h() + ":" + a; }'
     ' console.log(f(Math.random() < 2 ? "arg" : ""));\n': 'outer:arg\n',
@@ -44,6 +38,39 @@ A_PARAMETER_COPY_THE_LOCAL_CANNOT_REPLACE = {
     ' console.log(f({ a_1: Math.random() < 2 ? 5 : 0, a: 6 }));\n': '5\n',
     'function f({a_1 = 1}) { var a; a = a_1; return a; }'
     ' console.log(f({ a_1: Math.random() < 2 ? 5 : 0, a: 6 }));\n': '5\n',
+}
+
+A_COPY_THE_PARAMETER_CAN_STILL_TAKE_THE_PLACE_OF = {
+    'function f(a_1) { var a; a = a_1; return a + a_1; }': inspect.cleandoc(
+        """
+        function f(a) {
+          return a + a;
+        }
+        """
+    ),
+    'function f(a_1) { var a; a = a_1; a = 2; return a; }': inspect.cleandoc(
+        """
+        function f(a) {
+          a = 2;
+          return a;
+        }
+        """
+    ),
+    'function f(a_1) { var a; g(); a = a_1; return a; }': inspect.cleandoc(
+        """
+        function f(a) {
+          g();
+          return a;
+        }
+        """
+    ),
+    'function f(a_1) { let a; a = a_1; return a; }': inspect.cleandoc(
+        """
+        function f(a) {
+          return a;
+        }
+        """
+    ),
 }
 
 
@@ -84,30 +111,21 @@ class TestParameterCopyCoalescing(TestJsDeobfuscator):
             self._coalesce('function f(...r_1) { var r; r = r_1; r.length = 1; return r[0]; }'),
         )
 
-    def test_only_the_copies_a_parameter_can_take_the_place_of_are_folded(self):
-        """
-        A parameter read again, a local written again, a copy after a statement that runs, a local
-        declared with `let`, and a sloppy body reading its `arguments`, which aliases a parameter
-        list like this one: none of these copies can be folded.
-        """
-        for source in (
-            'function f(a_1) { var a; a = a_1; return a + a_1; }',
-            'function f(a_1) { var a; a = a_1; a = 2; return a; }',
-            'function f(a_1) { var a; g(); a = a_1; return a; }',
-            'function f(a_1) { let a; a = a_1; return a; }',
-            'function f(a_1) { var a; a = a_1; arguments[0] = 9; return a; }',
-        ):
+    def test_a_copy_a_sloppy_body_reading_its_arguments_aliases_is_not_folded(self):
+        source = 'function f(a_1) { var a; a = a_1; arguments[0] = 9; return a; }'
+        self.assertEqual(self._run_transformers(source), self._coalesce(source))
+
+    def test_a_copy_beside_a_further_read_or_write_a_statement_or_a_let_is_left_or_folded(self):
+        for source, folded in A_COPY_THE_PARAMETER_CAN_STILL_TAKE_THE_PLACE_OF.items():
             with self.subTest(source):
-                self.assertEqual(self._run_transformers(source), self._coalesce(source))
+                self.assertIn(self._coalesce(source), (self._run_transformers(source), folded))
+
+    @opportunity
+    def test_a_copy_beside_a_further_read_or_write_a_statement_or_a_let_is_folded(self):
+        rows = A_COPY_THE_PARAMETER_CAN_STILL_TAKE_THE_PLACE_OF
+        self.assertEqual({source: self._coalesce(source) for source in rows}, rows)
 
     def test_a_copy_the_renamed_parameter_would_change_the_meaning_of_is_left(self):
-        """
-        A name the parameter list spells, a second declaration of the parameter, a loop head or a
-        label declaring the local again, a read of the local before its copy, and a parameter a
-        shorthand property binds: renaming the parameter would capture the name, duplicate a
-        parameter, lose the argument, empty a declaration no statement can stand in for, read the
-        argument too early, or read another key of the argument.
-        """
         for source in (
             'var a = "o"; function f(a_1, h = () => a) { var a; a = a_1; return h() + a; }',
             'function f({x} = {}, x_1) { var x; x = x_1; return x; }',

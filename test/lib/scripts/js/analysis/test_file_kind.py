@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from test import TestBase
+from test import TestBase, opportunity
 
 from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.model import (
@@ -156,13 +156,13 @@ class TestTheModelAnswersForTheFileKind(TestBase):
 
 class TestTheTopOfACommonJsFileBindsTheWrapper(TestBase):
 
-    def test_the_wrapper_binds_its_parameters_and_arguments_in_their_order(self):
-        names = ('exports', 'require', 'module', '__filename', '__dirname', 'arguments')
+    def test_the_wrapper_binds_its_parameters_and_arguments(self):
+        names = {'exports', 'require', 'module', '__filename', '__dirname', 'arguments'}
         for kind in FileKind:
             with self.subTest(kind.name):
                 bindings = _model('', kind).root_scope.bindings
-                bound = tuple(name for name in bindings if name in names)
-                self.assertEqual(bound, names if kind.may_be_commonjs else ())
+                bound = {name for name in bindings if name in names}
+                self.assertEqual(bound, names if kind.may_be_commonjs else set())
 
     def test_each_binding_the_host_supplies_has_no_declaration_and_is_flagged(self):
         bindings = _model('', FileKind.commonjs).root_scope.bindings
@@ -214,7 +214,7 @@ class TestTheTopOfACommonJsFileBindsTheWrapper(TestBase):
 
     def test_a_parameter_holds_what_the_host_passed_until_the_file_replaces_it(self):
         held = {}
-        for source in ('require("a");', 'require = 1;', 'var require;', 'eval(s);'):
+        for source in ('require("a");', 'require = 1;', 'var require = 1;', 'eval(s);'):
             model = _model(source, FileKind.commonjs)
             held[source] = model.holds_what_the_host_passed(model.root_scope.bindings['require'])
         self.assertEqual(
@@ -222,10 +222,21 @@ class TestTheTopOfACommonJsFileBindsTheWrapper(TestBase):
             {
                 'require("a");': True,
                 'require = 1;': False,
-                'var require;': False,
+                'var require = 1;': False,
                 'eval(s);': False,
             },
         )
+
+    @opportunity
+    def test_a_var_of_a_parameter_without_a_value_leaves_what_the_host_passed(self):
+        model = _model(
+            """
+            var require;
+            require("a");
+            """,
+            FileKind.commonjs,
+        )
+        self.assertTrue(model.holds_what_the_host_passed(model.root_scope.bindings['require']))
 
     def test_a_callee_the_host_passed_is_supplied_from_outside(self):
         model = _model('require("a"); var own = function () {}; own();', FileKind.commonjs)

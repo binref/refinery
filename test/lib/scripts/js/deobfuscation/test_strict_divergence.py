@@ -19,7 +19,7 @@ class TestStrictDivergence(TestBase):
         return diverges_under_strict(parsed, build_semantic_model(parsed))
 
     def test_direct_eval_diverges(self):
-        for source in ['eval("var zz = 1");', '(eval)("zz");']:
+        for source in ['eval("var zz = 1");', '(eval)("var zz = 1");']:
             with self.subTest(source=source):
                 self.assertTrue(self._diverges(source))
 
@@ -97,13 +97,6 @@ class TestStrictDivergence(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestStrictDivergenceDifferential(TestBase):
-    """
-    Cross-check the detector against Node: every payload the strict-vs-sloppy oracle shows behaving
-    differently — or that is a strict parse error — must be flagged. This guards the no-false-negative
-    property soundness rests on. A payload runs inside an immediately invoked function under both modes so
-    a function-level `this`, an `arguments` object, and an eval scope are exercised faithfully; over-refusal
-    (flagging a mode-invariant body) is permitted and not checked here.
-    """
 
     CORPUS = [
         'x = 5;',
@@ -166,11 +159,6 @@ class TestStrictDivergenceDifferential(TestBase):
                     self.assertTrue(self._diverges(source))
 
     def test_no_false_negative_in_nested_scopes(self):
-        """
-        The mode flip reaches every nested scope, so each divergent fragment must still be flagged when
-        wrapped in a nested function, a doubly nested function, or an arrow — a rule that stopped at a
-        scope boundary would inline an unsound body.
-        """
         for frag in self.DIVERGENT_FRAGMENTS:
             for context in self.NESTING_CONTEXTS:
                 source = context.format(frag=frag)

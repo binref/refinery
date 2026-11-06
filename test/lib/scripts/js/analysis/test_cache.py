@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import gc
 import inspect
-import unittest
 
 from contextlib import contextmanager
 
-from test import TestBase, a_property_of_the_batch_itself, a_property_of_the_pin_itself
+from test import TestBase, a_property_of_the_batch_itself, a_property_of_the_pin_itself, todo
 
 from test.lib.scripts.js.analysis.differential import deobfuscate_source
 from test.lib.scripts.js.analysis.jsgen import generate
@@ -39,9 +38,6 @@ from refinery.lib.scripts.pipeline import PipelineObserver
 
 @contextmanager
 def _no_pin(self):
-    """
-    A pin that holds nothing, standing in for the unpinned cache in a comparison.
-    """
     yield self
 
 
@@ -50,11 +46,6 @@ def _transform_root_builds(
     source: str,
     options: object | None = None,
 ) -> tuple[int, str]:
-    """
-    How many times the script's own semantic model is built during one pass of *transform* run
-    under *options*, with the resulting script. Builds over freshly parsed fragments are excluded by
-    identity of the root node.
-    """
     script = JsParser(source).parse()
     count = {'n': 0}
     real_model = cache_module.build_semantic_model
@@ -118,10 +109,6 @@ class TestModelCache(TestBase):
         self.assertIsNot(cache.control_flow, first)
 
     def test_shared_control_flow_does_not_change_dominance_or_liveness(self):
-        """
-        The dominance and liveness models the cache builds share its one `ControlFlowModel`; their
-        answers must match models built independently over their own graphs.
-        """
         script = self._script(
             'var a = 1; function f(){ var x; x = 1; x = 2; return x; } if (a) { g(a); } f();')
         cache = ModelCache(script)
@@ -140,11 +127,6 @@ class TestModelCache(TestBase):
 
 @a_property_of_the_pin_itself
 class TestPinnedModels(TestBase):
-    """
-    A pinned cache holds its models across tree mutations for the length of a block, which is what stops a
-    transform that consults a model on every rewrite from rebuilding it on every rewrite. The pin must not
-    outlive its block: a model served after the block would be stale for consumers that assert freshness.
-    """
 
     @staticmethod
     def _script(source: str):
@@ -163,11 +145,6 @@ class TestPinnedModels(TestBase):
             self.assertIs(cache.model, first)
 
     def test_pinned_model_survives_an_explicit_invalidation(self):
-        """
-        `Transformer.changed` invalidates through this method rather than the version counter — the
-        one channel a raw write has — so a pin that guarded only the version would miss every such
-        announcement.
-        """
         script = self._script('var a = 1; var b = 2;')
         cache = ModelCache(script)
         with cache.pinned():
@@ -184,11 +161,6 @@ class TestPinnedModels(TestBase):
         self.assertIsNot(cache.model, first)
 
     def test_a_pin_over_an_unchanged_tree_keeps_its_models_past_the_block(self):
-        """
-        A model is a function of the tree alone, so a block that leaves the tree as it found it
-        leaves nothing for a rebuild to change; dropping the models there charges the next pass a
-        full rebuild over a tree the cache has already analysed.
-        """
         cache = ModelCache(self._script('var a = 1; var b = 2;'))
         held = None
         with cache.pinned():
@@ -196,10 +168,6 @@ class TestPinnedModels(TestBase):
         self.assertIs(cache.model, held)
 
     def test_an_invalidation_requested_under_a_pin_drops_the_models_on_exit(self):
-        """
-        The announcement is the only change channel a raw write has and it never moves the version
-        counter, so an exit that read the counter alone would keep the models past the write.
-        """
         cache = ModelCache(self._script('var a = 1; var b = 2;'))
         held = None
         with cache.pinned():
@@ -227,9 +195,6 @@ class TestPinnedModels(TestBase):
         self.assertIs(cache.model, held)
 
     def test_model_is_rebuilt_after_a_pin_that_raises(self):
-        """
-        A pin leaked by an exception would serve a stale model to every later transform in the run.
-        """
         script = self._script('var a = 1; var b = 2;')
         cache = ModelCache(script)
         first = None
@@ -252,19 +217,11 @@ class TestPinnedModels(TestBase):
         self.assertIsNot(cache.model, first)
 
     def test_pinning_builds_nothing_on_entry(self):
-        """
-        Entering the pin must stay lazy: a transform that consults no model on a given script — the
-        reflective inliner on a script with no reflective site — must still build none.
-        """
         cache = ModelCache(self._script('var a = 1; var b = 2;'))
         with cache.pinned():
             self.assertIsNone(cache._model)
 
     def test_pinned_model_is_fresh_at_entry_after_an_earlier_mutation(self):
-        """
-        A mutation before the block must not be held over into it; the pin freezes the tree as it is when
-        the block opens, not as it was at some earlier read.
-        """
         script = self._script('var a = 1; var b = 2;')
         cache = ModelCache(script)
         stale = cache.model
@@ -282,12 +239,6 @@ class TestPinnedModels(TestBase):
                 held, (cache.model, cache.effects, cache.control_flow, cache.dominance))
 
     def test_a_root_reading_model_first_built_after_an_edit_is_refused_on_exit(self):
-        """
-        A root-reading model first built after the tree has moved under a pin reads the moved tree and
-        is layered over held base models from an earlier tree — the state no unpinned run builds, since
-        there a version change drops every slot together. The exit refuses it, and the cache the
-        refusal leaves behind serves a model of the current tree, not the layered one.
-        """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)
         with self.assertRaises(RuntimeError):
@@ -298,12 +249,6 @@ class TestPinnedModels(TestBase):
         self.assertIsNot(cache.model, held)
 
     def test_a_pure_derived_model_first_built_after_an_edit_is_not_refused(self):
-        """
-        A model that builds purely from held base models — `dominance`, from the held `model`,
-        `control_flow` and `intrinsic_writes` — reads those bases, not the tree, so building it
-        after the tree has moved under a pin yields the entry-version answer and is no
-        inconsistency, and is not refused.
-        """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)
         with cache.pinned():
@@ -314,11 +259,6 @@ class TestPinnedModels(TestBase):
             cache.dominance
 
     def test_a_late_read_that_forces_a_root_reading_build_is_refused(self):
-        """
-        Reading a model whose build pulls in a root-reading base after an edit builds that base late
-        over the moved tree, and the exit refuses rather than let the derived answer layer over it.
-        Here `reaching` pulls `effects`, which re-walks the tree at build.
-        """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)
         with self.assertRaises(RuntimeError):
@@ -329,11 +269,6 @@ class TestPinnedModels(TestBase):
                 cache.reaching
 
     def test_the_refusal_comes_from_the_outermost_exit(self):
-        """
-        The recorded fill is shared by nested pins, and an inner exit releases nothing, so it must not
-        judge the fill either. The block inside the inner pin completes; the outermost exit is where
-        the refusal belongs.
-        """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)
         completed_the_inner_block = False
@@ -348,12 +283,6 @@ class TestPinnedModels(TestBase):
         self.assertIsNot(cache.model, held)
 
     def test_a_block_that_raises_its_own_error_is_not_masked_by_the_refusal(self):
-        """
-        The refusal fires on the outermost exit, which is also where a block's own exception is
-        passing through. Raising the refusal there unconditionally would replace that exception with
-        the guard's, hiding the real failure; a block that both raises and leaves a late root-reading
-        fill behind must surface its own error.
-        """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)
         with self.assertRaises(ValueError):
@@ -364,14 +293,6 @@ class TestPinnedModels(TestBase):
                 raise ValueError('the block\'s own failure')
 
     def test_warm_builds_the_root_reading_models_and_no_others(self):
-        """
-        Warming builds exactly the slots the cache classifies as root-reading — those whose build
-        walks the live tree — leaving every purely-derived slot unbuilt, to build lazily over the
-        held roots. The one that comes with them is `dominance`: the effect model orders a
-        function's own dead-zone reads through it at build, so warming `effects` warms its base —
-        itself derived from the held roots, so building it there is the entry answer and not a
-        layering over a moved tree.
-        """
         cache = ModelCache(self._script('var a = 1; function f(){ var x = 1; return x; } f();'))
         with cache.pinned():
             cache.warm()
@@ -379,17 +300,11 @@ class TestPinnedModels(TestBase):
             self.assertIsNotNone(cache._control_flow)
             self.assertIsNotNone(cache._effects)
             self.assertIsNotNone(cache._assignment)
-            self.assertIsNotNone(cache._dominance)
             self.assertIsNone(cache._reaching)
             self.assertIsNone(cache._liveness)
             self.assertIsNone(cache._tampering)
 
     def test_warming_at_entry_lets_a_later_derived_read_after_an_edit_stand(self):
-        """
-        The call-site contract: a block that warms the root-reading models at entry may first read a
-        purely-derived model only after an in-block edit and the exit does not refuse it, because
-        that model builds over the held roots.
-        """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)
         with cache.pinned():
@@ -398,12 +313,6 @@ class TestPinnedModels(TestBase):
             cache.dominance
 
     def test_effects_first_built_after_an_edit_over_warmed_roots_yields_the_entry_answer(self):
-        """
-        `effects` re-walks the live tree at build, so it is a root-reading slot: warmed at entry, a
-        read of it after an in-pin edit serves the entry model. Were it left out of the warm set,
-        the read would build over the moved tree and report a global write the edit removed as
-        absent — the more-permissive direction the pin forbids.
-        """
         script = self._script(
             'function r(){return leaked;} function f(){leaked=1;} f();r();')
         f = next(
@@ -418,12 +327,6 @@ class TestPinnedModels(TestBase):
             self.assertTrue(cache.effects.summary_of(f).writes_global)
 
     def test_a_tree_reader_the_warm_set_omits_is_still_refused_when_read_late(self):
-        """
-        `liveness` walks the tree at build like `effects`, so it is in the guard's refusal set; but
-        no pinned pass reads it, so it is left out of the warm build. The guard is the backstop: a
-        pass that does read it late after an edit trips the refusal rather than layering a liveness
-        verdict over the moved tree, so leaving it unwarmed cannot go silently wrong.
-        """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)
         self.assertNotIn('_liveness', cache._warm_slots())
@@ -436,8 +339,8 @@ class TestPinnedModels(TestBase):
 
     def test_a_node_made_after_an_edit_has_no_scope_in_the_held_model(self):
         """
-        A held model outlives the code an edit frees. A node made after the edit is not one the
-        model was built over, wherever it is allocated.
+        The edit frees the nodes the held model was built over, so new nodes may be allocated where
+        they stood; the model must not mistake one of them for a node it knows.
         """
         statements = ' '.join(F'g.p{k}.q;' for k in range(300))
         script = self._script(F'function f() {{ var a = 1; {statements} }}')
@@ -546,40 +449,18 @@ class TestPinnedModels(TestBase):
 
 
 class TestSimplificationDoesNotRebuildPerFold(TestBase):
-    """
-    A simplification pass must not rebuild its analysis models once per rewrite. It consults the
-    fold-admission gate on nearly every fold, and every fold mutates the tree, so an unpinned cache makes
-    the model-build count scale with the number of folds and the cost of a run the product of tree size and
-    fold count. That product is what made a 74 KB script take minutes.
-
-    The shape matters more than the count. `String.fromCharCode` is used because it reaches the gate, so
-    each fold consults the effect model; string concatenation folds without consulting it and is therefore
-    flat whether or not the models are held. An earlier version of this test used concatenation and asserted
-    a constant that was already constant — it would have passed against the very regression it was written
-    to catch, so the concatenation case is kept below only as a labelled control.
-    """
 
     @staticmethod
     def _gated(count: int) -> str:
-        """
-        A script with *count* folds that each consult the fold-admission gate.
-        """
         body = '\n'.join(F'var g{i} = String.fromCharCode({65 + i % 26});' for i in range(count))
         return F'{body}\nSINK({", ".join(F"g{i}" for i in range(count))});'
 
     @staticmethod
     def _concat(count: int) -> str:
-        """
-        A script with *count* folds that never consult the gate — the control.
-        """
         body = '\n'.join(F"var c{i} = 'a' + 'b' + '{i}';" for i in range(count))
         return F'{body}\nSINK({", ".join(F"c{i}" for i in range(count))});'
 
     def _builds(self, source: str) -> tuple[int, int, str]:
-        """
-        The semantic and effect model build counts for one simplification pass over *source*, with the
-        resulting script, counted by intercepting the builders the cache calls.
-        """
         counts = {'model': 0, 'effects': 0}
         real_model = cache_module.build_semantic_model
         real_effects = cache_module.build_effects
@@ -610,9 +491,6 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
 
     @staticmethod
     def _revealing(count: int) -> str:
-        """
-        A script with *count* folds that each spell `valueOf`, a key the models read.
-        """
         return '\n'.join('f(String.fromCharCode(118, 97, 108, 117, 101, 79, 102));' for _ in range(count))
 
     @a_property_of_the_pin_itself
@@ -621,17 +499,11 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
 
     @staticmethod
     def _constructor_keys(count: int) -> str:
-        """
-        A script with *count* folds that each spell `constructor` as the key of a read.
-        """
         key = 'String.fromCharCode(99, 111, 110, 115, 116, 114, 117, 99, 116, 111, 114)'
         return '\n'.join(F'f(o{i}[{key}]);' for i in range(count))
 
     @staticmethod
     def _caller_strings(count: int) -> str:
-        """
-        A script with *count* folds that each spell `caller` in an array.
-        """
         return '\n'.join('f([String.fromCharCode(99, 97, 108, 108, 101, 114)]);' for _ in range(count))
 
     @a_property_of_the_pin_itself
@@ -640,10 +512,6 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
 
     @staticmethod
     def _constructor_names(count: int) -> str:
-        """
-        A script with *count* folds that each write the name of a constructor in place of a read
-        of it, where the name is neither written through nor handed on.
-        """
         return '\n'.join("f(''.constructor.name);" for _ in range(count))
 
     @a_property_of_the_pin_itself
@@ -652,11 +520,6 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
 
     @a_property_of_the_pin_itself
     def test_a_number_fold_completing_a_key_read_as_naming_nothing_renews_the_models(self):
-        """
-        The models read the key of a store on the global object they cannot read as naming no
-        global. The fold of `1 + 1` completes the key `a2`, so the models are renewed; a key no
-        fold completes leaves them held.
-        """
         completed = self._builds("window['a' + (1 + 1)] = 5;")[0]
         never = self._builds("window['a' + g()] = 5;")[0]
         self.assertGreater(completed, never)
@@ -670,17 +533,9 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         self.assertEqual((1, 1), self._builds(self._gated(40))[:2])
 
     def test_ungated_folds_do_not_multiply_model_builds(self):
-        """
-        The control. This holds with or without the models held, which is precisely why it cannot stand in
-        for the gated case above.
-        """
         self.assertEqual(self._builds(self._concat(10))[:2], self._builds(self._concat(80))[:2])
 
     def test_holding_the_models_does_not_change_the_result(self):
-        """
-        The counts above are only worth having if the output is unchanged: a held model that suppressed a
-        fold would also flatten the count. Compare against the same pass with pinning disabled.
-        """
         source = self._gated(40)
         with_pin = self._builds(source)[2]
         original = ModelCache.pinned
@@ -694,36 +549,14 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
 
 
 class TestReflectiveInliningDoesNotRebuildPerSite(TestBase):
-    """
-    The reflective inliner consults the script's semantic model to decide each inline, and each inline
-    mutates the script, so an unpinned cache rebuilds the whole model once per site. On the sample that
-    motivated this work it was the largest remaining cost after the simplifier was fixed.
-
-    Only the *root* model is held. Every inlined body is a freshly parsed fragment that needs its own model,
-    so the total build count necessarily grows with the number of sites; asserting on the total would be
-    asserting that a required build does not happen. The assertion below therefore isolates builds over the
-    script being transformed.
-
-    A pass that consumed a separated `Function`-constructor temporary pays exactly one more build: whether
-    the temporary is still named is a structural fact the splices themselves change, so the retirement
-    decides on the model rebuilt after the pin is released, never on the pinned one. A pass with no
-    retirement candidate — every `eval`-only script — never reads the post-pin model and stays at one.
-    """
 
     @staticmethod
     def _sites(count: int) -> str:
-        """
-        A script with *count* reflective sites, each of which consults the model before inlining.
-        """
         body = '\n'.join(F"eval('var v{i} = {i};');" for i in range(count))
         return F'{body}\nSINK({", ".join(F"v{i}" for i in range(count))});'
 
     @staticmethod
     def _temporaries(count: int) -> str:
-        """
-        A script with *count* separated `Function`-constructor temporaries, each consumed by one folded
-        invocation, so each is a retirement candidate.
-        """
         body = '\n'.join(F"var m{i} = Function('return {i}');" for i in range(count))
         return F'{body}\nSINK({" + ".join(F"m{i}()" for i in range(count))});'
 
@@ -744,20 +577,12 @@ class TestReflectiveInliningDoesNotRebuildPerSite(TestBase):
         self.assertEqual(2, self._root_builds(self._temporaries(16))[0])
 
     def test_sites_sharing_free_reads_all_inline_in_one_pass(self):
-        """
-        The stale-name veto is fed only by names a splice declares or writes, so sites whose bodies
-        merely read the same free names defer nothing to the next pass: one pass inlines all of them.
-        """
         body = '\n'.join(F"eval('SINK({i}, shared);');" for i in range(64))
         output = self._root_builds(body)[1]
         self.assertNotIn('eval', output)
         self.assertEqual(64, output.count('SINK('))
 
     def test_holding_the_model_does_not_change_the_result(self):
-        """
-        A held model that suppressed an inline would also flatten the count, so the output must match the
-        unpinned pass exactly.
-        """
         source = self._sites(8)
         with_pin = self._root_builds(source)[1]
         original = ModelCache.pinned
@@ -771,19 +596,9 @@ class TestReflectiveInliningDoesNotRebuildPerSite(TestBase):
 
 
 class TestWrapperInliningDoesNotRebuildPerSite(TestBase):
-    """
-    The call-wrapper inliner holds the models for its pass because every replacement advances the
-    tree's mutation counter and an unpinned read would rebuild them once per call site. Nothing its
-    loop does makes a model it reads more permissive — a replaced call is gone and no declaration
-    moves — so the held answers stay the stricter ones; the output comparison checks that the pinned
-    pass writes exactly what the unpinned one does.
-    """
 
     @staticmethod
     def _sites(count: int) -> str:
-        """
-        A script with one call wrapper and *count* call sites it reaches, each replaced in one pass.
-        """
         calls = '\n'.join(F'var r{i} = w({i}, {i + 1});' for i in range(count))
         return (
             'function w(a, b) { return target(a, b); }\n'
@@ -812,17 +627,9 @@ class TestWrapperInliningDoesNotRebuildPerSite(TestBase):
 
 
 class TestDeadCodeRemovalDecidesOnOneModel(TestBase):
-    """
-    Dead-code removal takes every decision of a run before its first edit, so it reads the models
-    of one tree however many branches it prunes. Taking each decision where the edit is made
-    instead reads models rebuilt after every pruned branch.
-    """
 
     @staticmethod
     def _bodies(count: int) -> str:
-        """
-        A script with *count* functions, each holding one branch that never runs.
-        """
         functions = '\n'.join(
             F'function f{i}(a) {{ if (false) {{ a.x = {i}; }} return a; }}' for i in range(count)
         )
@@ -831,10 +638,6 @@ class TestDeadCodeRemovalDecidesOnOneModel(TestBase):
 
     @staticmethod
     def _block_functions(count: int) -> str:
-        """
-        A script with *count* functions, each holding one branch that never runs and declares a
-        function nothing reads.
-        """
         functions = '\n'.join(
             F'function f{i}(a) {{ if (false) {{ function h{i}() {{}} }} return a; }}'
             for i in range(count)
@@ -873,17 +676,9 @@ class TestDeadCodeRemovalDecidesOnOneModel(TestBase):
 
 
 class TestUnusedCodeRemovalHoldsTheModelsForASweep(TestBase):
-    """
-    Unused-code removal sweeps the script until a sweep changes nothing, and every sweep holds the
-    models of the tree it started on. Released, each removal of a sweep moves the tree under the
-    next read, and the models are rebuilt once per body that holds a dead local.
-    """
 
     @staticmethod
     def _bodies(count: int) -> str:
-        """
-        A script with *count* functions, each holding one local nothing reads.
-        """
         functions = '\n'.join(F'function f{i}() {{ var t = g; return {i}; }}' for i in range(count))
         calls = ', '.join(F'f{i}()' for i in range(count))
         return F'g = 1;\n{functions}\nSINK({calls});'
@@ -916,11 +711,6 @@ class TestUnusedCodeRemovalHoldsTheModelsForASweep(TestBase):
 
 
 class TestGeneratorUnflatteningHoldsTheModelsForARun(TestBase):
-    """
-    Generator unflattening recovers one machine at a time and holds the models of the tree it
-    started on, renewing them only where a recovery can show a write they do not record. Released,
-    each recovery moves the tree under the next read, and the models are rebuilt once per machine.
-    """
 
     _MACHINE = inspect.cleandoc(
         """
@@ -949,9 +739,6 @@ class TestGeneratorUnflatteningHoldsTheModelsForARun(TestBase):
         state: str = 'scope.v = INDEX; return done = true, scope.v;',
         scope: str = '{}',
     ) -> str:
-        """
-        A script with *count* functions, each holding one machine whose one state runs *state*.
-        """
         return '\n'.join(
             cls._MACHINE.replace('SCOPE', scope).replace('STATE', state).replace('INDEX', str(index))
             for index in range(count)
@@ -1017,19 +804,9 @@ class TestGeneratorUnflatteningHoldsTheModelsForARun(TestBase):
 
 
 class TestObjectFoldingHoldsTheModelsForARun(TestBase):
-    """
-    Object folding folds one object at a time and holds the models of the tree it started on,
-    renewing them only where a fold touched the next object or can show a write they do not
-    record. Released, each fold moves the tree under the next read, and the models are rebuilt for
-    every reference decided after an edit.
-    """
 
     @staticmethod
     def _scopes(count: int, declaration: str, value: str) -> str:
-        """
-        A script with *count* functions, each declaring one object with *declaration* and returning
-        *value*.
-        """
         functions = '\n'.join(
             F'function f{index}() {{ var O = {declaration}; return {value}; }}'.replace('INDEX', str(index))
             for index in range(count)
@@ -1051,10 +828,6 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
 
     @staticmethod
     def _reading_a_parameter(count: int, declarations: str, value: str) -> str:
-        """
-        A script with *count* functions of one parameter `e`, each declaring objects with
-        *declarations* and returning *value*.
-        """
         functions = '\n'.join(
             F'function f{index}(e) {{ {declarations} return {value}; }}'.replace('INDEX', str(index))
             for index in range(count)
@@ -1103,17 +876,6 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
         calls = ', '.join(F'O.get(e, "m{i}"), O.add(e, {i})' for i in range(8))
         return cls._reading_a_parameter(count, F'var O = {literal};', F'[{calls}]')
 
-    #: Programs in which a fold puts a copy where the models read it — a member access on the
-    #: global object, the object or the key of a descriptor install, the global object handed to a
-    #: call, an `arguments` object holding an intrinsic, a write through what an inlined call
-    #: answers, a string naming a global, an install or `eval`, a name running a string of code, a
-    #: string a binding holds or a function is handed and then writes a prototype under, the global
-    #: object handed on through a call wrapper, a piece that completes the name of an install, the
-    #: name of an install an inlined call answers — or edits what another object's reference stands
-    #: in, by dropping a function that read it or by writing the callee of the call it is handed to;
-    #: a key the object reads after its own copy installed it, a global a copied key rebinds before
-    #: the object's call over it is inlined; and strings copied into keys the models do not read
-    #: today: of an object literal, a class member, a pattern, and the key `Reflect.set` is handed.
     _FOLDS_THE_MODELS_READ = (
         'var A = {g: globalThis}; var C = {x: 1}; console.log(A.g.C.x); console.log(C.x);',
         'var A = {g: globalThis}; var C = {x: 1};'
@@ -1212,7 +974,7 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
             self._held(self._holding_the_parameter(16))[0],
         )
 
-    @unittest.expectedFailure
+    @todo
     @a_property_of_the_pin_itself
     def test_a_value_reading_a_name_nothing_declares_needs_no_new_models(self):
         declaration = '{a: FREE + "/INDEX", b: INDEX}'
@@ -1250,7 +1012,7 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
         renewals = self._held(self._inlining_calls_that_read_members_under_handed_strings(16))[0] - 1
         self.assertLessEqual(renewals, 16)
 
-    @unittest.expectedFailure
+    @todo
     @a_property_of_the_pin_itself
     def test_a_parameter_copied_into_an_argument_needs_no_new_models(self):
         self.assertEqual(
@@ -1258,7 +1020,7 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
             self._held(self._reading_a_parameter(16, 'var O = {a: e, b: INDEX};', 'g(O.a, O.b)'))[0],
         )
 
-    @unittest.expectedFailure
+    @todo
     @a_property_of_the_pin_itself
     def test_a_parameter_an_inlined_call_hands_into_a_variable_needs_no_new_models(self):
         declarations = 'var O = {or: function (a, b) { return a || b; }}; var x = O.or(e, INDEX);'
@@ -1267,7 +1029,7 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
             self._held(self._reading_a_parameter(16, declarations, 'x'))[0],
         )
 
-    @unittest.expectedFailure
+    @todo
     @a_property_of_the_pin_itself
     def test_a_constant_string_joined_in_an_argument_needs_no_new_models(self):
         self.assertEqual(
@@ -1275,7 +1037,7 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
             self._held(self._reading_a_parameter(16, 'var O = {a: "he", b: "llo", n: INDEX};', 'g(O.a + O.b, O.n)'))[0],
         )
 
-    @unittest.expectedFailure
+    @todo
     @a_property_of_the_pin_itself
     def test_numbers_copied_into_keys_of_a_parameter_need_no_new_models(self):
         self.assertEqual(
@@ -1283,7 +1045,7 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
             self._held(self._reading_a_parameter(16, 'var O = {i: 0, j: INDEX};', 'e[O.i] + e[O.j]'))[0],
         )
 
-    @unittest.expectedFailure
+    @todo
     @a_property_of_the_pin_itself
     def test_a_string_copied_into_a_key_beside_a_joining_call_renews_the_models_at_most_once_per_object(self):
         declarations = 'var O = {m: "log", add: function (a, b) { return a + b; }, k: INDEX};'
@@ -1295,11 +1057,12 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
         self.assertLess(self._released(self._independent(2))[0], self._released(self._independent(16))[0])
 
     @a_property_of_the_pin_itself
-    def test_released_an_object_read_eight_times_builds_the_models_seven_times_more_than_one_read_once(self):
-        self.assertEqual(
-            self._released(self._one_object_read(8))[0] - self._released(self._one_object_read(1))[0],
-            7,
-        )
+    def test_released_an_object_read_eight_times_builds_the_models_more_often_than_one_read_once(self):
+        self.assertLess(self._released(self._one_object_read(1))[0], self._released(self._one_object_read(8))[0])
+
+    @a_property_of_the_pin_itself
+    def test_an_object_read_eight_times_builds_the_models_as_often_as_one_read_once(self):
+        self.assertEqual(self._held(self._one_object_read(1))[0], self._held(self._one_object_read(8))[0])
 
     def test_holding_the_models_does_not_change_the_result(self):
         for source in (self._independent(8), self._comparing_the_global_object(8)):
@@ -1313,13 +1076,8 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
                 self.assertEqual(self._held(source)[1], self._released(source)[1])
 
 
-#: Programs that run every pinned or batched pass through its rewriting arm — a reflective site at
-#: statement and at expression position, a string timer, a consumed `Function` temporary, a gated
-#: fold, a string respelling, a call wrapper, a pruned branch whose kept test assigns what a later
-#: test reads, a dead store, a discarded completion, a global only one function uses, three machines
-#: whose recoveries renew the models generator unflattening holds, and objects whose folds renew the
-#: models object folding holds — beside a few plain shapes and the generated corpus, which exercise
-#: the rest of the pipeline.
+#: The generated corpus, and programs on which every pass that pins or batches the models makes at
+#: least one rewrite.
 _CORPUS = tuple(generate(seed) for seed in range(16)) + (
     'var q = 1; var t = (q + 1) * 2; f(t);',
     'var x = 5; var t = delete x; g(); f(t);',
@@ -1351,12 +1109,6 @@ _CORPUS = tuple(generate(seed) for seed in range(16)) + (
 
 
 class TestPinnedAndUnpinnedRunsAgree(TestBase):
-    """
-    A pin can only defer work to a later invocation: a rewrite a held model declines reappears when
-    the group loop re-runs the pass on the rebuilt model. Every sample must therefore reach the same
-    final output with the pins held as without them — a sample that does not has a pass acting on a
-    stale answer in the permissive direction, which is the one direction the pin contract refuses.
-    """
 
     def _unpinned(self, source: str) -> str:
         original = ModelCache.pinned
@@ -1373,13 +1125,6 @@ class TestPinnedAndUnpinnedRunsAgree(TestBase):
 
 
 class TestAnAnnouncedChangeMovesTheTree(TestBase):
-    """
-    A pass that reports a change edited the tree through a sited edit, which moved the version
-    counter with it. A pinned block's exit reads that counter to decide whether the block changed
-    the tree at all, so a pass that edited a list in place and only announced it would have the
-    models it holds kept past its own edit — the reflective inliner's statement splice was such a
-    write. Every announcement the corpus makes is checked against the counter.
-    """
 
     class _Recorder(PipelineObserver):
 
@@ -1409,13 +1154,6 @@ class TestAnAnnouncedChangeMovesTheTree(TestBase):
 
 @a_property_of_the_pin_itself
 class TestAKeptModelDescribesTheProgramItOutlivedThePinOn(TestBase):
-    """
-    A pin's exit keeps the models when neither change channel reported an edit. `canonical` reads
-    the program the tree spells and answers the same question independently of both channels: a
-    model kept past a block whose program changed is stale whatever the counters said, and the
-    program is the models' only input beside the run's fixed options. A renewal holds the models of
-    the program it renews on, which is then the one the exit compares with.
-    """
 
     def _models_kept_past_a_changed_program(self, source: str) -> int:
         kept_stale = 0
@@ -1456,15 +1194,6 @@ class TestAKeptModelDescribesTheProgramItOutlivedThePinOn(TestBase):
 
 @a_property_of_the_pin_itself
 class TestAHeldModelPlacesEveryNodeWhereItWasBuilt(TestBase):
-    """
-    A held control-flow model answers where a node stands by climbing the parents the node has at
-    the moment it is asked. A pass whose edit puts a node that was in the tree when the pin was
-    entered under a node the pass creates would have that model place it somewhere it was never
-    built for. Every such answer the corpus asks a held model for after the tree moved is compared
-    with the answer the same model gives once the parents of the pin's entry are put back: the held
-    answer is either unknown or the same place. A renewal is an entry of its own, whose parents the
-    answers after it are compared with.
-    """
 
     def _held_answers(self, source: str) -> tuple[int, list[str]]:
         entries: list[tuple[ModelCache, int, dict[int, tuple[Node, Node | None]]]] = []

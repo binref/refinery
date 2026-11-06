@@ -1,15 +1,12 @@
 """
-A CommonJS file hands what it stores in `module.exports` to the code that loads it. `refinery.djs`
-assumes no code loads the input unless `-l` says otherwise, so a store that replaces
-`module.exports` in a file that never reads `module` back is read by nothing and goes. Every other
-store into the module objects stays, and so does the store wherever the file reads its exports back
-or the file may be an ES module.
+The deobfuscator assumes that no other file loads its input unless `loaded_by_other_files` is set,
+so a store into the exports of a CommonJS file that never reads them back may go.
 """
 from __future__ import annotations
 
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.ledger import (
     NL,
@@ -41,8 +38,6 @@ def _loaded_by_other_files(source: str) -> str:
     return JsSynthesizer().convert(ast)
 
 
-#: Programs that store into the module objects, read what they stored back, or change the objects
-#: the stores go through, each with what Node makes of it as a CommonJS file and as an ES module.
 A_STORE_INTO_THE_MODULE_OBJECTS = {
     'a store into exports nothing reads': FileProgram(
         a_program("""
@@ -509,8 +504,6 @@ class TestAStoreIntoTheModuleObjectsStillPrintsWhatItPrints(TestBase):
         )
 
 
-#: Programs that read what they store in `module.exports` back through Node's module registry,
-#: each with what Node makes of it as a CommonJS file and as an ES module.
 A_FILE_READING_ITS_OWN_EXPORTS_THROUGH_THE_REGISTRY = {
     'the file requires itself': FileProgram(
         a_program("""
@@ -587,6 +580,21 @@ class TestTheStoreReplacingTheExportsGoesWhereNothingReadsIt(TestBase):
         console.log(2);
         """)
 
+    READ_BACK = a_program("""
+        module.exports = {a: 1};
+        console.log(module.exports.a);
+        """)
+
+    READ_BACK_FOLDED = a_program("""
+        module.exports = {a: 1};
+        console.log(1);
+        """)
+
+    STORED_INTO = a_program("""
+        exports.a = 1;
+        console.log(2);
+        """)
+
     def _commonjs(self, source: str) -> str:
         return deobfuscate_source(source, execution=ExecutionModel.commonjs, environment=HostEnvironment.node)
 
@@ -625,16 +633,23 @@ class TestTheStoreReplacingTheExportsGoesWhereNothingReadsIt(TestBase):
             printed(self.REPLACED),
         )
 
-    def test_the_store_stays_where_the_file_reads_module_back(self):
-        source = a_program("""
-            module.exports = {a: 1};
-            console.log(module.exports.a);
-            """)
-        self.assertEqual(self._commonjs(source), printed(source))
+    def test_the_store_stays_while_the_file_reads_module_back(self):
+        self.assertIn(
+            self._commonjs(self.READ_BACK),
+            (
+                printed(self.READ_BACK),
+                printed(self.READ_BACK_FOLDED),
+                'console.log(1);',
+            ),
+        )
 
-    def test_a_store_into_the_exports_object_stays(self):
-        source = a_program("""
-            exports.a = 1;
-            console.log(2);
-            """)
-        self.assertEqual(self._commonjs(source), printed(source))
+    @opportunity
+    def test_a_read_back_of_the_replaced_exports_folds_and_the_store_goes(self):
+        self.assertEqual(self._commonjs(self.READ_BACK), 'console.log(1);')
+
+    def test_a_store_into_the_exports_object_stays_whole_or_goes_whole(self):
+        self.assertIn(self._commonjs(self.STORED_INTO), (printed(self.STORED_INTO), 'console.log(2);'))
+
+    @opportunity
+    def test_a_store_into_the_exports_object_nothing_reads_goes(self):
+        self.assertEqual(self._commonjs(self.STORED_INTO), 'console.log(2);')

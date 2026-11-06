@@ -1,7 +1,6 @@
 """
-An item the parser could not read, standing in every list position the grammar has, carried
-through the whole deobfuscator. SECURITY: every snippet here is hand-authored and benign, and
-nothing is run; the law is what the tool prints for a file it could not read entirely.
+SECURITY: every snippet here is hand-authored and benign. Nothing from `samples` may ever be fed to
+this.
 """
 from __future__ import annotations
 
@@ -15,11 +14,8 @@ from refinery.lib.scripts import is_well_formed
 from refinery.lib.scripts.js.parser import JsParser
 
 
-#: A file holding an unread item in one list position, mapped to what the deobfuscator prints for
-#: it. Node refuses every file: the item is text no grammar reads, and it is kept as that text,
-#: while everything around it is read, printed, and where a pass reaches it, rewritten. Unread
-#: text may read anything visible to it, and so may the missing tail of a file that ends inside a
-#: construct, so no declaration or store visible to either is taken for dead.
+#: Unread text may read anything visible to it, and so may the missing tail of a file that ends
+#: inside a construct, so no declaration or store visible to either is dead.
 AN_UNREAD_ITEM_IN_EVERY_LIST_POSITION = {
     'x = {a: 1 2, b: 3}; console.log(x.b);': 'x = { a: 1 2, b: 3 };\nconsole.log(x.b);',
     'x = {...a b, c: 1}; console.log(x.c);': 'x = { ...a b, c: 1 };\nconsole.log(x.c);',
@@ -69,12 +65,6 @@ AN_UNREAD_ITEM_IN_EVERY_LIST_POSITION = {
 
 
 class TestAnUnreadItemInEveryListPositionIsCarriedThroughTheDeobfuscator(TestBase):
-    """
-    Every consumer of the tree — the semantic model, the control-flow graph, the effect model and
-    each pass — meets an unread item wherever a list can hold one, and none of them may crash on
-    it or read past it: the item is text, the tree is not a program, and what comes back holds the
-    text where it stood.
-    """
 
     def test_no_file_is_a_program(self):
         rows = AN_UNREAD_ITEM_IN_EVERY_LIST_POSITION
@@ -88,10 +78,6 @@ class TestAnUnreadItemInEveryListPositionIsCarriedThroughTheDeobfuscator(TestBas
         self.assertEqual({source: deobfuscate_source(source) for source in rows}, rows)
 
 
-#: Files the parser refuses, each in a shape a pass over the tree could turn into a program: a
-#: fold beside a function the file ends inside, a function whose body holds unread text and that
-#: nothing before the end of the file calls, and a store whose value is the string the file ends
-#: inside. Node refuses all three with a `SyntaxError` and prints nothing.
 A_FILE_THE_PARSER_REFUSED_IN_A_SHAPE_A_PASS_REACHES = (
     'console.log(1 + 1); function f() { g(',
     'function f() { a; ret[urn b; } g();',
@@ -101,13 +87,6 @@ A_FILE_THE_PARSER_REFUSED_IN_A_SHAPE_A_PASS_REACHES = (
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAFileTheParserRefusedIsNotAnsweredWithAProgram(TestBase):
-    """
-    A file the parser refuses is kept as the text no engine agreed to read, and the passes run
-    over the tree around that text. What they may not do is answer with a program: the text, and
-    the missing tail of a file that ends inside a construct, may read anything visible to them, so
-    the function holding the text stays, the store the tail may read stays, and what comes back is
-    a file Node refuses exactly as it refused the one handed over.
-    """
 
     def test_a_file_the_parser_refused_is_refused(self):
         rows = A_FILE_THE_PARSER_REFUSED_IN_A_SHAPE_A_PASS_REACHES

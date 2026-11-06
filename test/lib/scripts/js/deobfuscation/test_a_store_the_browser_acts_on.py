@@ -1,11 +1,8 @@
 """
-A store into a property of the global object whose value a browser reads: a store into `location`
-navigates the window, and what is stored into `name` is kept for the next page. No read of the
-property shows in the file, so the store is never dead, and no pass may turn a variable of the
-program into such a property
-(`refinery.lib.scripts.js.analysis.model.SemanticModel.host_reaches_global`). Each program is
-written by hand, and each row says what Node prints for it run as a classic script in the window
-`test.lib.scripts.js.ledger` sets up.
+A store into `location` navigates the window, and what is stored into `name` is kept for the next
+page, so neither store is dead although nothing in the file reads it.
+
+Every program here is written by hand, and Node runs each of them.
 """
 from __future__ import annotations
 
@@ -18,8 +15,6 @@ from test.lib.scripts.js.ledger import Program, Reading, a_program, folded, prin
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 
-#: Classic scripts storing an address into `location`, mapped to what a browser window prints for
-#: each.
 A_NAVIGATION_A_WINDOW_MAKES: dict[str, Program] = {
     'an address stored at the top': Program(
         a_program("""
@@ -94,9 +89,6 @@ class TestANavigationIsKept(TestBase):
                 self.assertEqual(row.read(), row.required())
 
 
-#: Classic scripts keeping a value in a variable or key of their own named like a property whose
-#: value the window reads, mapped to what a browser window prints for each: the window never sees
-#: the value.
 A_VALUE_OF_ITS_OWN_NAMED_LIKE_A_PROPERTY_THE_WINDOW_READS: dict[str, Program] = {
     'an address stored under the key location': Program(
         a_program("""
@@ -270,8 +262,6 @@ class TestAValueOfItsOwnNamedLikeAPropertyTheWindowReadsIsStillFolded(TestBase):
         self.assertEqual(folded(source), 'console.log(2);')
 
 
-#: A classic script storing a number into `var name`, which a browser window keeps as a string,
-#: mapped to what a window prints for it.
 A_STORE_A_WINDOW_KEEPS_AS_A_STRING: dict[str, Program] = {
     'a number stored into the var name and read back': Program(
         a_program("""
@@ -326,12 +316,14 @@ class TestAStoreTheBrowserReadsIsKept(TestBase):
             """)
         self.assertEqual(folded(source, environment=HostEnvironment.node), '')
 
-    def test_a_function_stored_into_location_is_kept_once_its_calls_fold(self):
+    def test_a_function_stored_into_location_is_kept_and_its_call_is_not_answered_by_it(self):
         source = a_program("""
             var location = function (a) { return a + 1; };
             console.log(location(1));
             """)
-        self.assertIn('var location = function', folded(source, environment=HostEnvironment.browser))
+        output = folded(source, environment=HostEnvironment.browser)
+        self.assertIn('var location = function', output)
+        self.assertIn('console.log(location(1));', output)
 
     def test_a_function_declared_in_a_block_at_the_top_under_the_name_location_is_kept(self):
         source = a_program("""

@@ -45,7 +45,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     coerces_uninterceptably,
     converted_operand,
     denoted_value,
-    escape_js_string,
     folded_literal,
     is_literal,
     is_nullish,
@@ -101,7 +100,7 @@ from refinery.lib.scripts.js.numbers import canonical_array_index, exact_integer
 from refinery.lib.scripts.js.options import clock_window
 from refinery.lib.scripts.js.precedence import parens_required
 from refinery.lib.scripts.js.strict import joins_directive_prologue, spelling_states
-from refinery.lib.scripts.js.synth import JsSynthesizer
+from refinery.lib.scripts.js.synth import JsSynthesizer, escape_js_string
 from refinery.lib.scripts.js.values import (
     BINARY_OPS,
     BuiltinFunction,

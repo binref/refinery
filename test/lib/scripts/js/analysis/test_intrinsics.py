@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase, lines_executed
+from test import TestBase, lines_executed, opportunity
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.ledger import (
     Program,
@@ -112,10 +112,6 @@ class TestBindingsWhoseValuesDenoteARootTheScanWatches(TestBase):
 
 
 class TestAWriteThroughAFormThatForwardsItsValueWritesTheRoot(TestBase):
-    """
-    A comma, a logical or a conditional expression evaluates to one of its operands, so a property
-    written on what one of them evaluates to is written on each name an operand may be.
-    """
 
     @staticmethod
     def _written(source: str) -> frozenset[str]:
@@ -143,10 +139,6 @@ class TestAWriteThroughAFormThatForwardsItsValueWritesTheRoot(TestBase):
 
 
 class TestAFunctionStoringThroughItsParameterInAPatternWritesTheRoot(TestBase):
-    """
-    A pattern and the head of a `for`-`in` or `for`-`of` loop store through every member they hold,
-    so a function storing a property of its parameter there writes the root a call hands it.
-    """
 
     def test_a_root_handed_to_a_function_storing_through_a_pattern_or_a_loop_head_is_written(self):
         for source in (
@@ -159,8 +151,6 @@ class TestAFunctionStoringThroughItsParameterInAPatternWritesTheRoot(TestBase):
                 self.assertIn('Math', ModelCache(JsParser(source).parse()).intrinsic_writes.names)
 
 
-#: Programs replacing `Math.floor` through a comma, a logical or a conditional expression before
-#: calling it, mapped to what Node prints for them.
 A_METHOD_REPLACED_THROUGH_A_FORM_THAT_FORWARDS_ITS_VALUE = {
     inspect.cleandoc("""
         (0, Math).floor = function () { return 42; };
@@ -180,7 +170,7 @@ A_METHOD_REPLACED_THROUGH_A_FORM_THAT_FORWARDS_ITS_VALUE = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAMethodReplacedThroughAFormThatForwardsItsValue(TestBase):
 
-    def test_the_replaced_method_is_not_folded(self):
+    def test_each_program_still_prints_what_the_replaced_method_returns(self):
         rows = A_METHOD_REPLACED_THROUGH_A_FORM_THAT_FORWARDS_ITS_VALUE
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -190,8 +180,8 @@ class TestNodePrintsTheSameAboutAMethodReplacedThroughAFormThatForwardsItsValue(
 
 class TestTheTestOfABranchOrALoopHandsItsValueToNothing(TestBase):
     """
-    The test of an `if`, a loop or a conditional is converted to a boolean, which runs no code of
-    an object, so a value read there reaches nothing that could write a property on it.
+    A test converts its value to a boolean, which calls no method of an object, so the value it
+    reads reaches no code that could write a property on it.
     """
 
     @staticmethod
@@ -220,9 +210,6 @@ class TestTheTestOfABranchOrALoopHandsItsValueToNothing(TestBase):
                 self.assertIn('String', self._written(source))
 
 
-#: Programs reading `String.prototype` or a key of `String` as the test of a branch or a loop,
-#: alone, beside a call it is handed to, or beside a store of it, mapped to what Node prints for
-#: each run as a CommonJS file.
 AN_INTRINSIC_READ_AS_A_TEST: dict[str, Program] = {
     'an if test of String.prototype': Program(
         a_program("""
@@ -380,8 +367,6 @@ AN_INTRINSIC_READ_AS_A_TEST: dict[str, Program] = {
     ),
 }
 
-#: Programs of `AN_INTRINSIC_READ_AS_A_TEST` whose method of a string folds since the test hands
-#: the prototype to nothing, mapped to the text the deobfuscation writes for each.
 FOLDED_PAST_A_TEST: dict[str, str] = {
     'an if test of String.prototype': inspect.cleandoc(
         """
@@ -440,6 +425,14 @@ FOLDED_PAST_A_TEST: dict[str, str] = {
     ),
 }
 
+CLEANED_PAST_A_TEST: dict[str, str] = {
+    'an if test of String.prototype': "console.log('AB');",
+    'conditional test': "console.log('yQ');",
+    'comma in a test hands nothing': "console.log('C');",
+    'logical in a while test': "console.log('WW');",
+    'a computed key in a test': "console.log('a-b', 'a-b');",
+}
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAnIntrinsicReadAsATest(TestBase):
@@ -457,23 +450,25 @@ class TestNodePrintsTheSameAboutAnIntrinsicReadAsATest(TestBase):
 
 class TestAMethodOfAStringFoldsPastATestOfItsPrototype(TestBase):
 
-    def test_each_program_reads_as_pinned(self):
+    @staticmethod
+    def _deobfuscated(label: str) -> str:
+        text = AN_INTRINSIC_READ_AS_A_TEST[label].text
+        return deobfuscate_source(text, execution=ExecutionModel.commonjs)
+
+    def test_each_method_folds_and_the_program_reads_as_pinned_or_clean(self):
+        for label, folded in FOLDED_PAST_A_TEST.items():
+            with self.subTest(label=label):
+                self.assertIn(self._deobfuscated(label), (folded, CLEANED_PAST_A_TEST[label]))
+
+    @opportunity
+    def test_each_program_reads_as_the_clean_program(self):
         self.assertEqual(
-            {
-                label: deobfuscate_source(AN_INTRINSIC_READ_AS_A_TEST[label].text, execution=ExecutionModel.commonjs)
-                for label in FOLDED_PAST_A_TEST
-            },
-            FOLDED_PAST_A_TEST,
+            {label: self._deobfuscated(label) for label in CLEANED_PAST_A_TEST},
+            CLEANED_PAST_A_TEST,
         )
 
 
 class TestABuiltInReadAsAPropertyIsJudgedWhereTheAccessStands(TestBase):
-    """
-    `g.String` reads the built-in where `g` is the global object, and the value it reads is the
-    access, so where that value goes is decided at the access and not at the name of the property.
-    The base is not asked whether it is the global object: a name may hold the object where no
-    reading of the text says so.
-    """
 
     @staticmethod
     def _written(source: str) -> frozenset[str]:
@@ -492,21 +487,27 @@ class TestABuiltInReadAsAPropertyIsJudgedWhereTheAccessStands(TestBase):
 
     def test_a_built_in_read_as_a_property_and_handed_on_is_written(self):
         for source in (
-            "var s = {}; s.x = globalThis['String'];",
-            'var s = {}; s.x = globalThis.String;',
+            "var s = {}; s.x = globalThis['String']; s.x.fromCharCode = f;",
+            'var s = {}; s.x = globalThis.String; s.x.fromCharCode = f;',
             'f(globalThis.String);',
-            'var s = {}; s.x = o.String;',
+            'var s = {}; s.x = o.String; s.x.fromCharCode = f;',
             'globalThis.String.prototype.x = 1;',
         ):
             with self.subTest(source=source):
                 self.assertIn('String', self._written(source))
 
+    @opportunity
+    def test_a_built_in_read_as_a_property_and_stored_where_nothing_writes_it_is_not_written(self):
+        for source in (
+            "var s = {}; s.x = globalThis['String'];",
+            'var s = {}; s.x = globalThis.String;',
+            'var s = {}; s.x = o.String;',
+        ):
+            with self.subTest(source=source):
+                self.assertNotIn('String', self._written(source))
+
 
 class TestABuiltInReplacedThroughAKeyedMemberOfTheGlobalObjectIsWritten(TestBase):
-    """
-    A write through `globalThis['Date'].now` writes the built-in `Date`, as one through
-    `globalThis.Date.now` does.
-    """
 
     def test_a_write_through_a_keyed_member_of_the_global_object_writes_the_built_in(self):
         written = {
@@ -520,12 +521,6 @@ class TestABuiltInReplacedThroughAKeyedMemberOfTheGlobalObjectIsWritten(TestBase
 
 
 class TestABuiltInReturnedIsJudgedWhereEachCallStands(TestBase):
-    """
-    A function returning a built-in hands it to each of its calls, so where every call of the
-    function is shown, the built-in goes where each call's value goes. A call whose value is written
-    through hands the write to the built-in, and the scan attributes a write to the name at the foot
-    of the chain, which a call is not.
-    """
 
     @staticmethod
     def _written(source: str) -> frozenset[str]:
@@ -545,7 +540,7 @@ class TestABuiltInReturnedIsJudgedWhereEachCallStands(TestBase):
 
     def test_a_built_in_returned_to_a_call_handing_it_on_or_writing_through_it_is_written(self):
         for source in (
-            'function g() { return String; } var s = g();',
+            'function g() { return String; } var s = g(); s.fromCharCode = f;',
             'function g() { return String; } g().prototype.x = 1;',
             'function g() { return String; } g().fromCharCode = f;',
             'function g() { return String; } (0, g()).fromCharCode = f;',
@@ -561,17 +556,25 @@ class TestABuiltInReturnedIsJudgedWhereEachCallStands(TestBase):
     def test_a_built_in_returned_where_a_call_may_come_another_way_is_written(self):
         for source in (
             'function g() { return String; } h(g);',
+            'var o = { g() { return String; } }; o.g().fromCharCode(65); h(o);',
+            'async function g() { return String; } g().then(function (S) { S.fromCharCode = f; });',
+            'function* g() { return String; } g().next().value.fromCharCode = f;',
+        ):
+            with self.subTest(source=source):
+                self.assertIn('String', self._written(source))
+
+    @opportunity
+    def test_a_built_in_returned_where_nothing_writes_through_it_is_not_written(self):
+        for source in (
+            'function g() { return String; } var s = g();',
             'var o = { g() { return String; } }; o.g().fromCharCode(65);',
             'async function g() { return String; } g();',
             'function* g() { return String; } g().next();',
         ):
             with self.subTest(source=source):
-                self.assertIn('String', self._written(source))
+                self.assertNotIn('String', self._written(source))
 
 
-#: Programs reaching `String` through a property read off the global object or through what a
-#: function returns, each either reading from it or replacing `fromCharCode` through it before
-#: calling `String.fromCharCode`, mapped to what Node prints for them run as CommonJS files.
 A_BUILT_IN_REACHED_THROUGH_A_PROPERTY_OR_A_RETURN: dict[str, Program] = {
     'read off the global object and stored': Program(
         a_program("""
@@ -641,10 +644,8 @@ class TestABuiltInReturnedToACallThatReadsFromItStillFolds(TestBase):
         self.assertIn("'B'", deobfuscate_source(row.text, execution=ExecutionModel.commonjs))
 
 
-#: Programs calling a method that writes the object it is called on through a chain holding
-#: `Array.prototype`, reached through a property of the global object, through what a function
-#: returns, or through a parameter a function returns. Each stores an element every array then
-#: inherits, which `[][0]` reads.
+#: Each call stores `5` at index 0 of `Array.prototype`, which every array inherits, so `[][0]` then
+#: reads `5`.
 A_PROTOTYPE_WRITTEN_BY_ITS_OWN_METHOD = (
     'globalThis.Array.prototype.push(5);',
     "globalThis['Array'].prototype.unshift(5);",
@@ -663,10 +664,20 @@ class TestAMethodWritingItsReceiverCalledThroughAChainWritesTheBuiltIn(TestBase)
             with self.subTest(source=source):
                 self.assertIn('Array', ModelCache(JsParser(source).parse()).intrinsic_writes.names)
 
-    def test_a_read_of_the_element_it_stores_is_kept(self):
+    def test_a_read_of_the_element_it_stores_is_kept_or_folded_to_it(self):
         for source in A_PROTOTYPE_WRITTEN_BY_ITS_OWN_METHOD:
             with self.subTest(source=source):
-                self.assertIn('[][0]', deobfuscate_source(F'{source} console.log([][0]);'))
+                self.assertRegex(
+                    deobfuscate_source(F'{source} console.log([][0]);'),
+                    r'console\.log\((\[\]\[0\]|5)\);',
+                )
+
+    @opportunity
+    def test_a_read_of_the_element_it_stores_folds_to_it(self):
+        for source in A_PROTOTYPE_WRITTEN_BY_ITS_OWN_METHOD:
+            with self.subTest(source=source):
+                deobfuscated = deobfuscate_source(F'{source} console.log([][0]);')
+                self.assertIn('console.log(5);', deobfuscated)
 
 
 class TestAPropertyNamedLikeAParameterIsNoReadOfIt(TestBase):
@@ -677,12 +688,6 @@ class TestAPropertyNamedLikeAParameterIsNoReadOfIt(TestBase):
 
 
 class TestTheScanDecidesEachCalleeOnce(TestBase):
-    """
-    Whether a call hands a value to code that may write it unseen depends on the function it calls
-    alone, and deciding it for a function that returns its parameter walks every call of that
-    function. Each call handing such a function a built-in, or a value read under a key not known,
-    asks it again.
-    """
 
     @staticmethod
     def _work(argument: str):

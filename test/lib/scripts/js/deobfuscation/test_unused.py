@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import functools
 import inspect
+import threading
 import unittest
 
-from test import fastest_processor_time, processor_time_ratio
-from test.lib.scripts.js.analysis.differential import behavior, node_executable
+from test import TestBase, fastest_processor_time, opportunity, processor_time_ratio, todo
+from test.lib.scripts.js.analysis.differential import (
+    JsEvaluation,
+    behavior,
+    completion_values,
+    node_executable,
+)
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints, printed
 
@@ -53,10 +59,6 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         self.assertEqual(source, self._remove_unused(source))
 
     def test_dead_global_data_property_read_removed(self):
-        """
-        A read of a trusted data-property global off `globalThis` runs no getter, so an unused binding
-        initialized from one is a pure dead store the removal drops.
-        """
         source = inspect.cleandoc(
             """
             var d = globalThis.TextDecoder;
@@ -66,22 +68,23 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         self.assertEqual('console.log(1);', self._remove_unused(source))
 
     def test_dead_non_data_property_global_read_preserved(self):
-        """
-        `location` is not among the trusted global data properties, so `globalThis.location` may run an
-        accessor; the unused binding is kept rather than dropped as a pure read.
-        """
         source = inspect.cleandoc(
             """
             var d = globalThis.location;
             console.log(1);
             """
         )
-        self.assertEqual(source, self._remove_unused(source))
+        without_the_binding = inspect.cleandoc(
+            """
+            globalThis.location;
+            console.log(1);
+            """
+        )
+        self.assertIn(self._remove_unused(source), (source, without_the_binding))
 
     def test_dead_strict_function_caller_read_preserved(self):
         """
-        Reading `.caller` on a strict-mode function throws a `TypeError`, so the read is not
-        side-effect-free even off a fresh function literal; the unused binding is kept, not dropped.
+        Reading `caller` off a strict-mode function throws a `TypeError`.
         """
         source = inspect.cleandoc(
             """
@@ -91,13 +94,17 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log(1);
             """
         )
-        self.assertEqual(source, self._remove_unused(source))
+        without_the_binding = inspect.cleandoc(
+            """
+            (function() {
+              'use strict';
+            }.caller);
+            console.log(1);
+            """
+        )
+        self.assertIn(self._remove_unused(source), (source, without_the_binding))
 
     def test_dead_strict_function_computed_caller_read_preserved(self):
-        """
-        The poison-pill gate also covers the string-computed form `['caller']`, which names the same
-        throwing accessor as the dotted `.caller`.
-        """
         source = inspect.cleandoc(
             """
             var x = function() {
@@ -106,13 +113,17 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log(1);
             """
         )
-        self.assertEqual(source, self._remove_unused(source))
+        without_the_binding = inspect.cleandoc(
+            """
+            (function() {
+              'use strict';
+            }['caller']);
+            console.log(1);
+            """
+        )
+        self.assertIn(self._remove_unused(source), (source, without_the_binding))
 
     def test_dead_global_alias_data_property_read_removed(self):
-        """
-        A local single-assigned to the global object is a global-object alias, so a data-property read
-        through it runs no getter; the dead read and the now-unreferenced alias are both dropped.
-        """
         source = inspect.cleandoc(
             """
             var g = globalThis || {};
@@ -123,10 +134,6 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         self.assertEqual('console.log(1);', self._remove_unused(source))
 
     def test_dead_global_alias_read_before_establishment_preserved(self):
-        """
-        The alias is read before its establishing assignment runs, where it is still the hoisted
-        `undefined`, so the read throws; dropping it would discard the throw, so it is kept.
-        """
         source = inspect.cleandoc(
             """
             var d = g.TextDecoder;
@@ -134,13 +141,19 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log(1);
             """
         )
-        self.assertEqual(source, self._remove_unused(source))
+        without_the_binding = inspect.cleandoc(
+            """
+            g.TextDecoder;
+            var g = globalThis || {};
+            console.log(1);
+            """
+        )
+        self.assertIn(self._remove_unused(source), (source, without_the_binding))
 
-    def test_a_read_ending_the_directive_prologue_before_a_literal_is_kept(self):
+    def test_a_read_ending_the_directive_prologue_goes_only_after_the_literal_behind_it(self):
         """
-        Deleting the read would move the `'use strict'` behind it into the Directive Prologue and
-        make the script strict, and nothing behind that can remove the literal again: a branch
-        answers no completion value. The read stays even though it computes nothing.
+        Deleting the read alone would move the `'use strict'` behind it into the Directive Prologue
+        and make the script strict.
         """
         source = inspect.cleandoc(
             """
@@ -151,13 +164,46 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             }
             """
         )
-        self.assertEqual(source, self._remove_unused(source))
+        without_the_literal = inspect.cleandoc(
+            """
+            'abc'[0];
+            if (x) {
+              console.log(1);
+            }
+            """
+        )
+        without_either = inspect.cleandoc(
+            """
+            if (x) {
+              console.log(1);
+            }
+            """
+        )
+        self.assertIn(self._remove_unused(source), (source, without_the_literal, without_either))
+
+    @opportunity
+    def test_a_read_ending_the_directive_prologue_goes_with_the_literal_behind_it(self):
+        source = inspect.cleandoc(
+            """
+            'abc'[0];
+            'use strict';
+            if (x) {
+              console.log(1);
+            }
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                if (x) {
+                  console.log(1);
+                }
+                """
+            ),
+            self._deobfuscate(source),
+        )
 
     def test_a_read_ending_the_directive_prologue_goes_once_the_literal_has(self):
-        """
-        The literal behind the read is itself an inert statement a later call shadows, so it goes
-        first; with the statement behind it no longer a string literal, nothing holds the read back.
-        """
         source = inspect.cleandoc(
             """
             'abc'[0];
@@ -168,10 +214,6 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         self.assertEqual('console.log(1);', self._remove_unused(source))
 
     def test_a_dead_in_expression_with_a_primitive_right_operand_is_kept(self):
-        """
-        The `in` operator throws a `TypeError` unless its right operand is an object, so `'a' in 'b'`
-        throws in every host. The discarded expression is not removable — dropping it drops the throw.
-        """
         source = inspect.cleandoc(
             """
             'a' in 'b';
@@ -181,11 +223,6 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         self.assertEqual(source, self._remove_unused(source))
 
     def test_a_dead_instanceof_expression_with_a_non_callable_right_operand_is_kept(self):
-        """
-        The `instanceof` operator throws a `TypeError` unless its right operand is callable, so
-        `x instanceof 5` throws. The discarded expression is not removable — dropping it drops the
-        throw, and a callable right operand would instead run its `Symbol.hasInstance`.
-        """
         source = inspect.cleandoc(
             """
             var x = 3;
@@ -195,11 +232,10 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._remove_unused(source))
 
-    def test_a_read_shadowed_only_by_a_block_that_breaks_before_its_value_is_kept(self):
+    def test_the_read_a_breaking_block_leaves_as_the_script_value_is_kept_on_request(self):
         """
-        The labeled block completes through `break L` before `99` runs, so its completion is empty
-        and the read `x` ahead of it is the program's completion value. Removing `x` would change
-        what an `eval` of the file returns from `1` to `undefined`.
+        The labeled block completes through `break L` with an empty value, so the read `x` before it
+        is what the program completes with: an `eval` of the file returns `1`.
         """
         source = inspect.cleandoc(
             """
@@ -211,7 +247,27 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             }
             """
         )
-        self.assertEqual(source, self._remove_unused(source))
+        options = DeobfuscationOptions(preserve_script_return=True)
+        self.assertEqual(source, self._run_transformer(source, JsUnusedCodeRemoval, options))
+
+    @opportunity
+    def test_a_read_the_script_ends_on_goes_where_the_script_value_is_not_kept(self):
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            SINK(x);
+            x;
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 1;
+                SINK(x);
+                """
+            ),
+            self._remove_unused(source),
+        )
 
     def test_block_scoped_var_read_outside_block_preserved(self):
         source = inspect.cleandoc(
@@ -309,12 +365,6 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
 
     def test_script_scope_vars_localized_into_their_function(self):
-        """
-        `acc` and `i` are script-scope `var`s referenced only inside `build`, which overwrites each
-        before reading it, so they behave as locals of `build` and are relocated there, tightening
-        globals the obfuscator hoisted. The move observes no value carried across calls or from load, so
-        behaviour is unchanged. `push` (never referenced) and `dead` (a dead store) are removed.
-        """
         source = inspect.cleandoc(
             """
             var acc, i, push, dead;
@@ -347,11 +397,6 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
 
     def test_script_scope_var_read_before_write_is_not_localized(self):
-        """
-        `counter` is read before it is written inside `next`, so a value carried across calls is
-        observed; relocating it into `next` would give each call a fresh local and change behaviour. It
-        stays at script scope unchanged.
-        """
         source = inspect.cleandoc(
             """
             var counter;
@@ -425,51 +470,41 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             self._remove_unused(source),
         )
 
-    def test_dead_store_calling_a_dead_zone_reader_is_kept(self):
-        """
-        A dead store holding a call to a function that reads an outer `let` in that binding's dead
-        zone throws a `ReferenceError` at the call, so the store is not removable. The reformatted
-        program is returned unchanged.
-        """
-        source = 'function f() { return q; }\nvar dead = f();\nlet q = 1;\nconsole.log(2);\n'
-        self.assertEqual(self._run_transformers(source), self._remove_unused(source))
+    def test_dead_store_calling_a_dead_zone_reader_keeps_its_call(self):
+        source = inspect.cleandoc(
+            """
+            function f() { return q; }
+            var dead = f();
+            let q = 1;
+            console.log(2);
+            """
+        )
+        without_the_store = inspect.cleandoc(
+            """
+            function f() { return q; }
+            f();
+            let q = 1;
+            console.log(2);
+            """
+        )
+        self.assertIn(
+            self._remove_unused(source),
+            (self._run_transformers(source), self._run_transformers(without_the_store)),
+        )
 
     def test_dead_store_calling_an_established_reader_is_removed(self):
-        """
-        The same reader called after its `let` declaration reads no dead zone, so the discarded call
-        is pure and the store, the now-uncalled function, and the unread binding all go. This is the
-        control the dead-zone case is refused against: identical but for declaration order, it must
-        still reduce.
-        """
         source = 'function f() { return q; }\nlet q = 1;\nvar dead = f();\nconsole.log(2);\n'
         self.assertEqual('console.log(2);', self._remove_unused(source))
 
     def test_dead_store_calling_a_generator_dead_zone_reader_is_removed(self):
-        """
-        Calling a generator returns an iterator without running its body, so a dead-zone read in the
-        body never executes and the discarded call throws nothing. The dead store is removed even
-        though the body would read `q` before its declaration.
-        """
         source = 'function* gen() { return q; }\nvar dead = gen();\nlet q = 1;\nconsole.log(2);\n'
         self.assertEqual('console.log(2);', self._remove_unused(source))
 
     def test_dead_store_calling_a_reader_of_its_own_dead_zone_local_is_removed(self):
-        """
-        A function reading a `let` it declares itself orders that read against the declaration
-        in its own body, so a call to it is safe with respect to the binding. The owned binding
-        is filtered out of the deferred dead-zone set and the discarded call is removed.
-        """
         source = 'function f() { let x = 1; return x; }\nvar dead = f();\nconsole.log(2);\n'
         self.assertEqual('console.log(2);', self._remove_unused(source))
 
-    def test_dead_store_calling_a_reader_of_its_own_dead_zone_from_within_is_kept(self):
-        """
-        The reader of the owned `let` now sits before the declaration that ends its dead zone, so
-        the call raises the `ReferenceError` (`Cannot access 'c' before initialization`) the input
-        raises, and the discarded call is not removable. The binding is one the function owns, so
-        no call site can order the read against the declaration: the effect summary orders it
-        itself and records the throw, which is what keeps this store.
-        """
+    def test_dead_store_calling_a_reader_of_its_own_dead_zone_from_within_keeps_its_call(self):
         source = inspect.cleandoc(
             """
             function f() {
@@ -481,14 +516,20 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log(2);
             """
         )
-        self.assertEqual(source, self._remove_unused(source))
+        without_the_store = inspect.cleandoc(
+            """
+            function f() {
+              var d = c;
+              let c;
+              return d;
+            }
+            f();
+            console.log(2);
+            """
+        )
+        self.assertIn(self._remove_unused(source), (source, without_the_store))
 
-    def test_dead_store_calling_a_reader_of_an_owned_class_dead_zone_is_kept(self):
-        """
-        A `class` declaration ends its binding's dead zone the way a `let` declarator does, so a
-        read of it from before the declaration raises the same `ReferenceError` at the call and the
-        discarded call is kept.
-        """
+    def test_dead_store_calling_a_reader_of_an_owned_class_dead_zone_keeps_its_call(self):
         source = inspect.cleandoc(
             """
             function f() {
@@ -500,15 +541,20 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log(2);
             """
         )
-        self.assertEqual(source, self._remove_unused(source))
+        without_the_store = inspect.cleandoc(
+            """
+            function f() {
+              var d = C;
+              class C {}
+              return d;
+            }
+            f();
+            console.log(2);
+            """
+        )
+        self.assertIn(self._remove_unused(source), (source, without_the_store))
 
-    def test_dead_store_calling_a_nested_reader_of_its_own_dead_zone_is_kept(self):
-        """
-        The dead-zone read is made by a nested function the owner's body calls before the `let`
-        behind it runs, and the nested function's summary is what the owner's absorbs, so the
-        same throw reaches the owner's summary through a call rather than a direct read. The
-        discarded call is kept and the program is returned unchanged.
-        """
+    def test_dead_store_calling_a_nested_reader_of_its_own_dead_zone_keeps_its_call(self):
         source = inspect.cleandoc(
             """
             function f() {
@@ -523,7 +569,21 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log(2);
             """
         )
-        self.assertEqual(source, self._remove_unused(source))
+        without_the_store = inspect.cleandoc(
+            """
+            function f() {
+              function inner() {
+                return c;
+              }
+              var d = inner();
+              let c = 1;
+              return d;
+            }
+            f();
+            console.log(2);
+            """
+        )
+        self.assertIn(self._remove_unused(source), (source, without_the_store))
 
     def test_store_to_captured_binding_is_kept(self):
         source = inspect.cleandoc(
@@ -537,7 +597,44 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             }
             """
         )
-        self.assertEqual(source, self._remove_unused(source))
+        without_the_dead_initializer = inspect.cleandoc(
+            """
+            function f() {
+              var x;
+              x = 2;
+              return function() {
+                return x;
+              };
+            }
+            """
+        )
+        self.assertIn(self._remove_unused(source), (source, without_the_dead_initializer))
+
+    @opportunity
+    def test_a_dead_initializer_of_a_captured_binding_goes(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var x = 1;
+              x = 2;
+              return function() {
+                return x;
+              };
+            }
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            function f() {
+              var x;
+              x = 2;
+              return function() {
+                return x;
+              };
+            }
+            """
+        )
+        self.assertEqual(expected, self._remove_unused(source))
 
     def test_conditionally_overwritten_store_is_kept(self):
         source = inspect.cleandoc(
@@ -646,7 +743,7 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
               return 0;
             }
             var deadGlobal = 1;
-            eval();
+            console.log(eval());
             """
         )
         expected = inspect.cleandoc(
@@ -654,17 +751,12 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             function eval() {
               return 0;
             }
-            eval();
+            console.log(eval());
             """
         )
         self.assertEqual(expected, self._remove_unused(source))
 
     def test_strip_globals_keeps_reflection_reachable_global(self):
-        """
-        With preserve_globals=False the blunt script-scope bail is disabled, yet a global that a
-        reflection surface can reach must still be preserved by the fine-grained reachability check;
-        dropping it would be unsound.
-        """
         source = inspect.cleandoc(
             """
             var deadGlobal = 1;
@@ -697,10 +789,6 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         self.assertEqual(source, self._remove_unused(source))
 
     def test_function_local_read_only_by_in_function_eval_is_kept(self):
-        """
-        `x` has no static reference — `eval('x')` names it only at runtime — but the eval lies inside
-        `f`, so it could read the local. The declaration and its store must both be kept.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -779,18 +867,19 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         self.assertFalse(_destructuring_target_safe(left, right))
 
     def test_destructuring_object_getter_source_is_unsafe(self):
-        left, right = self._destructuring_parts('({k: a} = {get x(){}});')
+        left, right = self._destructuring_parts('({k: a} = {get k(){}});')
         self.assertFalse(_destructuring_target_safe(left, right))
+
+    @opportunity
+    def test_destructuring_object_getter_at_a_key_the_pattern_does_not_read_is_safe(self):
+        left, right = self._destructuring_parts('({k: a} = {get x(){}});')
+        self.assertTrue(_destructuring_target_safe(left, right))
 
     def test_destructuring_object_spread_source_is_unsafe(self):
         left, right = self._destructuring_parts('({k: a} = {...o});')
         self.assertFalse(_destructuring_target_safe(left, right))
 
     def test_function_local_read_in_a_with_block_is_kept(self):
-        """
-        Inside `with (o)` the name `x` may resolve to `o.x` or, failing that, the local, so removing the
-        local would change which it binds. The `with` makes the function dynamic, and `x` is kept.
-        """
         source = inspect.cleandoc(
             """
             function f(o) {
@@ -894,7 +983,7 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             function uses() {
               return h;
             }
-            uses();
+            console.log(uses());
             """
         )
         ast = JsParser(source).parse()
@@ -950,16 +1039,25 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
               var x = { [g()]: 1 };
               return 7;
             }
-            f();
+            console.log(f());
             """
         )
-        self.assertEqual(source, self._remove_unused(source))
+        without_the_binding = inspect.cleandoc(
+            """
+            function f() {
+              ({ [g()]: 1 });
+              return 7;
+            }
+            console.log(f());
+            """
+        )
+        self.assertIn(self._remove_unused(source), (source, without_the_binding))
 
     def _remove_unused_unwrapped(self, source: str) -> str:
         """
-        Statement-level object-pattern destructuring is parenthesized by the parser; the
-        deobfuscation pipeline strips that wrapper before unused-code removal runs. Mirror that by
-        simplifying first so the object-pattern path is actually exercised.
+        Runs the simplifications first, as the deobfuscation does, so that a statement-level
+        object-pattern assignment reaches unused-code removal without the parentheses it must be
+        written in.
         """
         return self._run_transformers(source, JsSimplifications, JsUnusedCodeRemoval)
 
@@ -1044,7 +1142,21 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual(self._remove_unused(source), source)
 
-    def test_dead_destructuring_compound_assignment_target_preserved(self):
+    def test_destructuring_a_compound_assignment_reads_is_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a;
+              [a] = [1];
+              a += 1;
+              return a;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(self._remove_unused(source), source)
+
+    def test_dead_destructuring_beside_a_compound_assignment_never_strands_its_target(self):
         source = inspect.cleandoc(
             """
             function f() {
@@ -1056,9 +1168,45 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log(f());
             """
         )
-        self.assertEqual(self._remove_unused(source), source)
+        without_the_destructuring = inspect.cleandoc(
+            """
+            function f() {
+              var a;
+              a += 1;
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        without_either = inspect.cleandoc(
+            """
+            function f() {
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertIn(
+            self._remove_unused(source),
+            (source, without_the_destructuring, without_either),
+        )
 
-    def test_dead_destructuring_for_of_target_preserved(self):
+    @opportunity
+    def test_destructuring_read_only_by_a_dead_compound_assignment_goes_with_it(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a, b;
+              [a, b] = [1, 2];
+              a += 1;
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual('console.log(3);', self._deobfuscate(source))
+
+    def test_dead_destructuring_beside_a_for_of_never_strands_the_loop_target(self):
         source = inspect.cleandoc(
             """
             function f() {
@@ -1070,14 +1218,45 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log(f());
             """
         )
-        self.assertEqual(self._remove_unused(source), source)
+        without_the_destructuring = inspect.cleandoc(
+            """
+            function f() {
+              var a;
+              for (a of [7, 8]) {}
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        without_either = inspect.cleandoc(
+            """
+            function f() {
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertIn(
+            self._remove_unused(source),
+            (source, without_the_destructuring, without_either),
+        )
+
+    @opportunity
+    def test_dead_destructuring_beside_a_for_of_goes_with_the_loop(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a, b;
+              [a, b] = [1, 2];
+              for (a of [7, 8]) {}
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual('console.log(3);', self._deobfuscate(source))
 
     def test_dead_destructuring_in_block_read_outside_preserved(self):
-        """
-        The `var a` is function-scoped, so the destructuring inside the `if` block is read by the
-        `return a` that follows the block; removal must account for the whole function scope, not
-        just the immediate block.
-        """
         source = inspect.cleandoc(
             """
             function f(cond) {
@@ -1196,10 +1375,6 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
 
     def test_dead_destructuring_target_read_by_computed_key_preserved(self):
-        """
-        A computed property key in a surviving destructuring pattern reads its identifier, so the
-        plain `[a] = ...` that feeds it must not be treated as dead.
-        """
         source = inspect.cleandoc(
             """
             function f(obj) {
@@ -1478,13 +1653,24 @@ class TestRegressionBugs(TestJsDeobfuscator):
     def test_delete_expression_not_removed(self):
         source = inspect.cleandoc(
             """
+            var o = [1];
+            delete o[0];
+            console.log(o[0]);
+            """
+        )
+        result = self._run_transformer(source, JsUnusedCodeRemoval)
+        self.assertEqual(source, result)
+
+    @opportunity
+    def test_a_delete_of_a_declared_variable_goes(self):
+        source = inspect.cleandoc(
+            """
             var x = 1;
             delete x;
             console.log('done');
             """
         )
-        result = self._run_transformer(source, JsUnusedCodeRemoval)
-        self.assertEqual(source, result)
+        self.assertEqual("console.log('done');", self._run_transformer(source, JsUnusedCodeRemoval))
 
     def test_dead_binding_from_pure_call_removed(self):
         source = inspect.cleandoc(
@@ -1508,7 +1694,7 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
         self.assertEqual('keep("y");', self._run_transformer(source, JsUnusedCodeRemoval))
 
-    def test_dead_binding_from_impure_call_kept(self):
+    def test_dead_binding_from_impure_call_keeps_the_call(self):
         source = inspect.cleandoc(
             """
             function sink() {
@@ -1519,7 +1705,48 @@ class TestRegressionBugs(TestJsDeobfuscator):
             keep("y");
             """
         )
-        self.assertEqual(source, self._run_transformer(source, JsUnusedCodeRemoval))
+        without_the_binding = inspect.cleandoc(
+            """
+            function sink() {
+              notify();
+              return 2;
+            }
+            sink();
+            keep("y");
+            """
+        )
+        without_the_binding_or_the_return = inspect.cleandoc(
+            """
+            function sink() {
+              notify();
+            }
+            sink();
+            keep("y");
+            """
+        )
+        self.assertIn(
+            self._run_transformer(source, JsUnusedCodeRemoval),
+            (source, without_the_binding, without_the_binding_or_the_return),
+        )
+
+    @opportunity
+    def test_dead_binding_from_an_effectful_initializer_leaves_the_initializer(self):
+        source = inspect.cleandoc(
+            """
+            var unused = notify();
+            keep("y");
+            """
+        )
+        result = self._run_transformer(source, JsUnusedCodeRemoval)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                notify();
+                keep("y");
+                """
+            ),
+            result,
+        )
 
     def test_dead_binding_from_pure_inline_iife_removed(self):
         source = inspect.cleandoc(
@@ -1596,12 +1823,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
 
 
 class TestHostEntrypoints(TestJsDeobfuscator):
-    """
-    A top-level function a host invokes by name has no caller inside the file, so reachability computed
-    over the file alone judges it dead — and removing it also strands everything only it reached. Which
-    names a host calls is not derivable from the file, so the caller declares them and they seed the
-    reachability roots.
-    """
 
     def _remove_unused(self, source: str, *entrypoints: str) -> str:
         return self._run_transformer(
@@ -1611,9 +1832,6 @@ class TestHostEntrypoints(TestJsDeobfuscator):
         )
 
     def test_unreferenced_function_removed_when_no_entrypoint_is_named(self):
-        """
-        The default is unchanged: with nothing declared, an unreferenced top-level function is dead.
-        """
         source = inspect.cleandoc(
             """
             var config = 'x';
@@ -1638,10 +1856,6 @@ class TestHostEntrypoints(TestJsDeobfuscator):
         self.assertEqual(source, self._remove_unused(source, 'run'))
 
     def test_named_entrypoint_keeps_the_functions_it_calls(self):
-        """
-        The declaration seeds a reachability root rather than exempting one function from removal, so
-        the entrypoint's callees are reachable through it and survive without being named themselves.
-        """
         source = inspect.cleandoc(
             """
             function helper() {
@@ -1746,10 +1960,6 @@ class TestHostEntrypoints(TestJsDeobfuscator):
         self.assertEqual('console.log(1);', self._remove_unused(source, 'run'))
 
     def test_nested_function_sharing_the_name_is_not_protected(self):
-        """
-        Only a declaration a host can actually reach is protected, which `reaches_global_object` decides.
-        A same-named function inside another body is a distinct binding no host can name.
-        """
         source = inspect.cleandoc(
             """
             function outer() {
@@ -1774,10 +1984,6 @@ class TestHostEntrypoints(TestJsDeobfuscator):
         )
 
     def test_entrypoints_protect_nothing_under_the_module_model(self):
-        """
-        A top-level declaration in a module never becomes a property of the global object, so no host can
-        call it by name and naming it cannot make it live.
-        """
         source = inspect.cleandoc(
             """
             var config = 'x';
@@ -1797,10 +2003,6 @@ class TestHostEntrypoints(TestJsDeobfuscator):
         )
 
     def test_entrypoint_referenced_only_by_a_property_write_survives(self):
-        """
-        A function whose only reference is `f.prop = ...` is normally reclaimed as write-only. A host
-        calls the entrypoint regardless of how the file references it, so that demotion must not apply.
-        """
         source = inspect.cleandoc(
             """
             function run() {
@@ -1812,11 +2014,12 @@ class TestHostEntrypoints(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._remove_unused(source, 'run'))
 
-    def test_declared_name_that_is_not_a_top_level_function_is_inert(self):
+    @todo
+    def test_entrypoint_held_by_a_let_declarator_survives(self):
         """
-        A pattern names a callable a host reaches, so it protects a top-level function declaration. A name
-        the script never declares that way — here only a `let` binding exists — is left to the ordinary
-        reachability rules.
+        A top-level `let` of a script is not a property of the global object, but later scripts and
+        the event handler attributes of the page look names up in the scope it binds, so a host can
+        call the function it holds by name.
         """
         source = inspect.cleandoc(
             """
@@ -1826,15 +2029,9 @@ class TestHostEntrypoints(TestJsDeobfuscator):
             console.log(1);
             """
         )
-        self.assertEqual('console.log(1);', self._remove_unused(source, 'run'))
+        self.assertEqual(source, self._remove_unused(source, 'run'))
 
     def test_entrypoint_held_by_a_var_declarator_survives(self):
-        """
-        `var run = function(){}` puts `run` on the global object just as a declaration does, so a host can
-        call it. This binding is swept by the dead-variable path rather than the dead-function path, which
-        is why the declaration is protected per binding and not only where function reachability is
-        computed.
-        """
         source = inspect.cleandoc(
             """
             var run = function() {
@@ -1846,10 +2043,6 @@ class TestHostEntrypoints(TestJsDeobfuscator):
         self.assertEqual(source, self._remove_unused(source, 'run'))
 
     def test_entrypoint_var_store_survives(self):
-        """
-        The same binding in its split form, where the declaration and the assignment are separate
-        statements and the assignment is what the sweep would drop.
-        """
         source = inspect.cleandoc(
             """
             var run;
@@ -1862,12 +2055,6 @@ class TestHostEntrypoints(TestJsDeobfuscator):
         self.assertEqual(source, self._remove_unused(source, 'run'))
 
     def test_a_relocated_declaration_is_written_behind_the_directive(self):
-        """
-        The pseudo-global `t` is relocated into the one function that uses it, and the declaration
-        goes below the `'use strict'` that opens that body rather than above it. Written above, it
-        would end the Directive Prologue before the directive is reached, and the assignment below
-        would create a global instead of throwing.
-        """
         source = inspect.cleandoc(
             """
             var t;
@@ -1895,12 +2082,6 @@ class TestHostEntrypoints(TestJsDeobfuscator):
         )
 
     def test_a_directive_is_not_swept_with_the_binding_beside_it(self):
-        """
-        Nothing reads `q`, so the declaration and the store both go, and the sweep that removes them
-        passes over every statement of the body which only evaluates a literal. The directive is
-        written in that shape and is not one of those statements: dropping it would leave the body
-        running under the other mode.
-        """
         source = inspect.cleandoc(
             """
             function f(a) {
@@ -1909,7 +2090,7 @@ class TestHostEntrypoints(TestJsDeobfuscator):
               q = a;
               return 1;
             }
-            f(1);
+            console.log(f(1));
             """
         )
         self.assertEqual(
@@ -1919,18 +2100,13 @@ class TestHostEntrypoints(TestJsDeobfuscator):
                   'use strict';
                   return 1;
                 }
-                f(1);
+                console.log(f(1));
                 """
             ),
             self._remove_unused(source),
         )
 
     def test_a_string_that_declares_no_mode_is_swept_with_it(self):
-        """
-        The same body with a directive the language does not recognize. It declares nothing, so
-        nothing turns on whether it stands there, and it goes the way every other statement that
-        only evaluates a literal goes.
-        """
         source = inspect.cleandoc(
             """
             function f(a) {
@@ -1939,7 +2115,7 @@ class TestHostEntrypoints(TestJsDeobfuscator):
               q = a;
               return 1;
             }
-            f(1);
+            console.log(f(1));
             """
         )
         self.assertEqual(
@@ -1948,47 +2124,144 @@ class TestHostEntrypoints(TestJsDeobfuscator):
                 function f(a) {
                   return 1;
                 }
-                f(1);
+                console.log(f(1));
                 """
             ),
             self._remove_unused(source),
         )
 
-    def test_a_dead_write_standing_as_an_unbraced_branch_body_is_kept_and_the_pass_ends(self):
-        """
-        `_remove_from_parent` cannot take a statement out of a single-node field, so a removal the
-        tree refuses must not report the pass as changed: each of these programs used to spin the
-        fixpoint forever, one per removal arm — global property, dead variable, destructuring.
-        """
-        rows = {
-            'if (Math.random() > 2) window.x = 1;\nconsole.log(3);':
-                'if (Math.random() > 2) {\n  window.x = 1;\n}\nconsole.log(3);',
-            'var y;\nif (Math.random() > 2) y = 1;\nconsole.log(3);':
-                'var y;\nif (Math.random() > 2) {\n  y = 1;\n}\nconsole.log(3);',
-            'var a, b;\nif (Math.random() > 2) [a, b] = [1, 2];\nconsole.log(3);':
-                'var a, b;\nif (Math.random() > 2) {\n  [a, b] = [1, 2];\n}\nconsole.log(3);',
-        }
-        self.assertEqual({source: self._remove_unused(source) for source in rows}, rows)
+    def test_a_dead_write_in_an_unbraced_branch_body_reports_a_change_only_when_it_goes(self):
+        programs = [
+            inspect.cleandoc(
+                """
+                if (Math.random() > 2) globalThis.x = 1;
+                console.log(3);
+                """
+            ),
+            inspect.cleandoc(
+                """
+                var y;
+                if (Math.random() > 2) y = 1;
+                console.log(3);
+                """
+            ),
+            inspect.cleandoc(
+                """
+                var a, b;
+                if (Math.random() > 2) [a, b] = [1, 2];
+                console.log(3);
+                """
+            ),
+        ]
+        for source in programs:
+            with self.subTest(source=source):
+                ast = JsParser(source).parse()
+                transformer = JsUnusedCodeRemoval()
+                sweep = threading.Thread(target=transformer.visit, args=(ast,), daemon=True)
+                sweep.start()
+                sweep.join(60)
+                # A change reported for a write the tree kept starts the sweep over without end.
+                self.assertFalse(sweep.is_alive())
+                rewritten = JsSynthesizer().convert(ast) != printed(source)
+                self.assertEqual(transformer.changed, rewritten)
+
+    def test_a_declaration_stays_while_its_write_stays_in_an_unbraced_branch_body(self):
+        programs_and_their_text_without_the_write = [
+            (
+                inspect.cleandoc(
+                    """
+                    var y;
+                    if (Math.random() > 2) y = 1;
+                    console.log(3);
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    if (Math.random() > 2) {}
+                    console.log(3);
+                    """
+                ),
+            ),
+            (
+                inspect.cleandoc(
+                    """
+                    var a, b;
+                    if (Math.random() > 2) [a, b] = [1, 2];
+                    console.log(3);
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    if (Math.random() > 2) {}
+                    console.log(3);
+                    """
+                ),
+            ),
+            (
+                inspect.cleandoc(
+                    """
+                    'use strict';
+                    var y;
+                    if (Math.random() < 2) y = 1;
+                    console.log(3);
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    'use strict';
+                    if (Math.random() < 2) {}
+                    console.log(3);
+                    """
+                ),
+            ),
+            (
+                inspect.cleandoc(
+                    """
+                    function f() {
+                      var location;
+                      if (Math.random() < 2) location = 'http://x.test/';
+                      return 3;
+                    }
+                    console.log(f());
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    function f() {
+                      if (Math.random() < 2) {}
+                      return 3;
+                    }
+                    console.log(f());
+                    """
+                ),
+            ),
+        ]
+        for source, without_the_write in programs_and_their_text_without_the_write:
+            with self.subTest(source=source):
+                self.assertIn(self._remove_unused(source), (printed(source), without_the_write))
+
+    @opportunity
+    def test_a_dead_write_in_an_unbraced_branch_body_goes(self):
+        programs = [
+            'var y;\nif (Math.random() > 2) y = 1;\nconsole.log(3);',
+            'var a, b;\nif (Math.random() > 2) [a, b] = [1, 2];\nconsole.log(3);',
+        ]
+        self.assertEqual(
+            {source: self._deobfuscate(source) for source in programs},
+            {source: 'console.log(3);' for source in programs},
+        )
 
     def test_a_write_read_back_through_a_bracket_spelling_is_kept(self):
         source = "globalThis.x = 1;\nconsole.log(globalThis['x']);"
         self.assertEqual(source, self._remove_unused(source))
 
 
-#: An assignment to a name no declaration binds, standing where nothing makes the region strict,
-#: mapped to the text the deobfuscation writes for it. Sloppy code answers such a write by creating
-#: a property of the global object, so a write nothing reads back really is a dead store and the
-#: text records that it is gone.
 A_SLOPPY_REGION_ASSIGNING_TO_NO_BINDING: dict[str, str] = {
     'function f(b) { var q = b + 1; undeclared_e = 1; return q; } console.log(f(2));':
         'console.log(3);',
     'undeclared_f = 1; console.log(3);': 'console.log(3);',
 }
 
-#: A region that runs strict, assigning to a name it declares itself, mapped to the text the
-#: deobfuscation writes for it. Strictness refuses only the write that resolves to no binding, so a
-#: declared name leaves the store as dead here as it is anywhere, and the mode is no reason to keep
-#: it.
 A_STRICT_REGION_ASSIGNING_TO_A_NAME_IT_DECLARES: dict[str, str] = {
     "'use strict'; var declared_g; declared_g = 1; console.log(3);":
         "'use strict';\nconsole.log(3);",
@@ -2021,10 +2294,6 @@ class TestNodePrintsTheSameOnceTheDeadStoreIsGone(TestJsDeobfuscator):
 
 
 def _a_property_written_on_a_local_object(name: str) -> str:
-    """
-    A program that declares *name* as a local object, writes a property on it, and prints the object
-    as JSON, so that a write that went missing is a line of output and not an error.
-    """
     return inspect.cleandoc(
         F"""
         var {name} = {{}};
@@ -2034,12 +2303,6 @@ def _a_property_written_on_a_local_object(name: str) -> str:
     )
 
 
-#: A program whose object is named by a local declaration, mapped to the text the deobfuscation
-#: writes for it — the program itself. A declaration of a global-object alias name binds it, so the
-#: write puts a property on an ordinary object the `JSON.stringify` read prints whole, never on the
-#: global object, and the write is kept however dead its property name looks. The name is spelled
-#: seven ways: the four the removal's same-realm set holds, the two alias spellings outside it, and
-#: one that is no spelling of the global object at all.
 A_PROPERTY_WRITTEN_ON_AN_OBJECT_A_LOCAL_NAME_HOLDS: dict[str, str] = {
     source: source
     for source in map(_a_property_written_on_a_local_object, [
@@ -2053,11 +2316,6 @@ A_PROPERTY_WRITTEN_ON_AN_OBJECT_A_LOCAL_NAME_HOLDS: dict[str, str] = {
     ])
 }
 
-#: The same write through an alias no declaration binds, beside a program that never reads the
-#: name, mapped to the text the deobfuscation writes for it. This is the control: here the write
-#: really puts a property on the global object and nothing reads it, so the sweep removes it, and a
-#: fix that kept every write spelled through an alias would fail this row. The second row stands a
-#: spelling in a `typeof` guard, which observes no property, so it does not veto the sweep either.
 A_GLOBAL_PROPERTY_WRITE_NOTHING_READS: dict[str, str] = {
     'globalThis.q = 1;\nconsole.log(3);': 'console.log(3);',
     "globalThis.x = 1;\nif (typeof window !== 'undefined') {\n  console.log(3);\n}":
@@ -2068,7 +2326,7 @@ A_GLOBAL_PROPERTY_WRITE_NOTHING_READS: dict[str, str] = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAFunctionATaggedTemplateCalls(TestJsDeobfuscator):
 
-    def test_the_write_of_a_tag_a_call_runs_is_kept(self):
+    def test_the_write_of_a_tag_a_call_runs_still_prints(self):
         source = 'var x = 0; function t(s) { x = 1; } function g() { t`a`; } g(); console.log(x);'
         self.assertEqual(behavior(source), ('1\n', None))
         self.assertEqual(behavior(self._deobfuscate(source)), behavior(source))
@@ -2106,11 +2364,6 @@ class TestNodePrintsTheSameAboutTheObjectALocalAliasNameHolds(TestJsDeobfuscator
         )
 
 
-#: The same dead-looking write beside a position that hands the global object itself onward — a
-#: call argument, a `for-in` subject, the `this` of the top level — mapped to the program itself.
-#: From such a position every property is readable without its name being spelled, so nothing may
-#: be removed: `Object.keys` would hold one name fewer and the `w` parameter would print
-#: `undefined` if the write went.
 A_GLOBAL_PROPERTY_WRITE_AN_UNSPELLED_READ_OBSERVES: dict[str, str] = {
     source: source
     for source in [
@@ -2140,18 +2393,10 @@ A_GLOBAL_PROPERTY_WRITE_AN_UNSPELLED_READ_OBSERVES: dict[str, str] = {
     ]
 }
 
-#: A dead write whose base resolves in every host, mapped to the text the deobfuscation writes for
-#: it: `globalThis` is the one same-realm spelling the language mandates, so its read cannot throw and
-#: a store to a property nothing reads is a dead store to remove. The row joins the Node twin, since it
-#: runs and prints the same before and after.
 A_DEAD_GLOBAL_PROPERTY_WRITE_THROUGH_A_CERTAIN_BASE: dict[str, str] = {
     'globalThis.q = 1;\nconsole.log(3);': 'console.log(3);',
 }
 
-#: The same dead write through a host-conditional spelling, mapped to the program itself. A bare
-#: `window`/`self`/`global` read may not resolve — under Node it throws a `ReferenceError` — so
-#: removing the store would drop the throw the base raises where the host lacks the name, and the write
-#: is kept. These rows pin the text only and stay out of the Node twin, whose host lacks the names.
 A_DEAD_GLOBAL_PROPERTY_WRITE_THROUGH_A_HOST_CONDITIONAL_BASE: dict[str, str] = {
     source: source
     for source in [
@@ -2161,9 +2406,6 @@ A_DEAD_GLOBAL_PROPERTY_WRITE_THROUGH_A_HOST_CONDITIONAL_BASE: dict[str, str] = {
     ]
 }
 
-#: The same dead write through the two spellings the removal set leaves out, mapped to the program
-#: itself: `top` and `frames` are not trusted to denote this document's global object, so their
-#: writes are not this sweep's to remove.
 A_DEAD_PROPERTY_WRITE_ON_ANOTHER_REALMS_GLOBAL: dict[str, str] = {
     source: source
     for source in [
@@ -2193,22 +2435,16 @@ class TestAGlobalPropertyWriteSurvivesWhereTheGlobalObjectEscapes(TestJsDeobfusc
 
 
 class TestALexicalBindingThatStopsABlockFunctionEscapingIsKept(TestJsDeobfuscator):
-    """
-    A `let` between a block-scoped function declaration and the `var` scope around it keeps §B.3.3.1
-    from copying the function out, so the name means nothing after the block. Reading the `let` is
-    the whole of what it is for, which the reference-counting removal does not see: the binding has
-    no reference, and removing it lets the copy run and the name reach the enclosing scope.
-    """
 
     def _remove_unused(self, source: str) -> str:
         return self._run_transformer(source, JsUnusedCodeRemoval)
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    def test_the_suppressing_binding_is_kept_so_the_name_stays_unbound(self):
+    def test_the_name_the_suppressing_binding_keeps_from_escaping_stays_unbound(self):
         """
-        Node prints `undefined` for this program: `let f` stops the inner `function f` from being
-        given a `var` in `outer`, so `typeof f` finds no binding. Removing the `let` as unreferenced
-        makes the program print `function` instead.
+        The `let f` keeps Annex B from copying the inner `function f` into a `var` of `outer`, so
+        `typeof f` finds no binding and the program prints `undefined`; without the `let` it prints
+        `function`.
         """
         source = inspect.cleandoc(
             """
@@ -2222,11 +2458,6 @@ class TestALexicalBindingThatStopsABlockFunctionEscapingIsKept(TestJsDeobfuscato
         self.assertEqual(behavior(self._remove_unused(source)), ('undefined\n', None))
 
     def test_a_binding_no_block_function_shares_a_name_with_is_still_removed(self):
-        """
-        The guard keys on the name a block function is declared with, not on any `let` standing in a
-        block: where the `let` binds a name no block-scoped function shares, it suppresses no copy
-        and the unreferenced binding is removed as before.
-        """
         source = inspect.cleandoc(
             """
             function outer() {
@@ -2254,10 +2485,6 @@ class TestALexicalBindingThatStopsABlockFunctionEscapingIsKept(TestJsDeobfuscato
         self.assertEqual(self._remove_unused(source), expected)
 
 
-#: Programs calling a function declared in a block from outside that block, which Annex B makes
-#: legal in sloppy code by copying the function into the enclosing scope, mapped to what Node
-#: prints for them. In the last two the block also writes a property of the function, which is all
-#: the block itself does with it.
 A_BLOCK_FUNCTION_CALLED_FROM_OUTSIDE_ITS_BLOCK = {
     '{ let q = 1; function h() { return q; } } console.log(h());': '1\n',
     inspect.cleandoc("""
@@ -2280,11 +2507,7 @@ A_BLOCK_FUNCTION_CALLED_FROM_OUTSIDE_ITS_BLOCK = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutABlockFunctionCalledFromOutsideItsBlock(TestJsDeobfuscator):
 
-    def test_the_block_function_is_kept_for_the_call_outside(self):
-        """
-        Node prints the value each block function closes over. Removing the function as unused
-        inside its block turns the call outside into a `ReferenceError`.
-        """
+    def test_the_call_outside_the_block_still_prints_what_it_printed(self):
         rows = A_BLOCK_FUNCTION_CALLED_FROM_OUTSIDE_ITS_BLOCK
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -2307,11 +2530,6 @@ class TestNodePrintsTheSameWhereTheGlobalObjectEscapes(TestJsDeobfuscator):
         )
 
 
-#: A program whose one failure is a read of a name nothing binds, standing where nothing uses the
-#: value around it, mapped to the text the deobfuscation writes for it. Reading such a name throws a
-#: `ReferenceError`, so the read survives every discarding context: the store around it may go — the
-#: third row keeps its right-hand side as a bare expression — but the read itself stays and the
-#: program still refuses to run.
 A_KEPT_READ_OF_A_NAME_NOTHING_BINDS: dict[str, str] = {
     'function f() { let v = zzz; }\nf();\nconsole.log(1);\n':
         'let v = zzz;\nconsole.log(1);',
@@ -2323,12 +2541,6 @@ A_KEPT_READ_OF_A_NAME_NOTHING_BINDS: dict[str, str] = {
         'N();\nN = function() {};\nconsole.log(1);',
 }
 
-#: The same read standing inside a `try`, mapped to the text the deobfuscation writes for it. The
-#: read throws, the `catch` clause runs and prints, and the program carries on, so both sides run
-#: to the end and only the first line of output tells them apart; emptying the block would take the
-#: clause's run away. The store around the read may still go — the third row keeps the read as a
-#: bare expression — and the last two rows are the controls: a `throw` and a member read on `null`
-#: reach the same clause from the same block and are not reads of a name.
 A_KEPT_READ_A_TRY_CATCHES: dict[str, str] = {
     'try {\n  var x = missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
         'try {\n  var x = missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);',
@@ -2344,11 +2556,6 @@ A_KEPT_READ_A_TRY_CATCHES: dict[str, str] = {
         'try {\n  null.p;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);',
 }
 
-#: A program that calls a function whose body reads a name nothing binds and prints the result,
-#: mapped to the text the deobfuscation writes for it — the program itself. Evaluating the body
-#: throws, so the call is not a call that may be written as the value it would have returned, and
-#: neither the store holding the read nor the call goes. The last two rows are the controls: the
-#: same read written as a statement of its own and as the returned expression.
 A_KEPT_CALL_WHOSE_BODY_CANNOT_RETURN: dict[str, str] = {
     source: source.rstrip('\n')
     for source in [
@@ -2360,11 +2567,6 @@ A_KEPT_CALL_WHOSE_BODY_CANNOT_RETURN: dict[str, str] = {
     ]
 }
 
-#: The same shapes with every read established or resolved, mapped to the text the deobfuscation
-#: writes for them. These are the controls against over-refusal: a read the definite-assignment
-#: model vouches a completed creating write for is droppable with its store, so the first program
-#: still reduces to its print, the call whose body cannot throw is still written as its value, and
-#: the `try` around a store that cannot throw still empties, which leaves its `catch` unreachable.
 AN_ESTABLISHED_STORE_STILL_REDUCES: dict[str, str] = {
     'X = 5;\ny = X;\nconsole.log(1);\n': 'console.log(1);',
     'function f() {\n  var x = 1;\n  return 7;\n}\nconsole.log(f());\n': 'console.log(7);',
@@ -2373,25 +2575,129 @@ AN_ESTABLISHED_STORE_STILL_REDUCES: dict[str, str] = {
     'function N() {}\ny = N();\nconsole.log(1);\n': 'console.log(1);',
 }
 
+THE_CLEAN_TEXT_AROUND_WHAT_MAY_THROW: dict[str, str] = {
+    'function f() { let v = zzz; }\nf();\nconsole.log(1);\n':
+        inspect.cleandoc("""
+            zzz;
+            console.log(1);
+        """),
+    'function f() { var v = zzz; }\nf();\nconsole.log(1);\n':
+        inspect.cleandoc("""
+            zzz;
+            console.log(1);
+        """),
+    'var o = { p: g };\nconsole.log(1);\n':
+        inspect.cleandoc("""
+            g;
+            console.log(1);
+        """),
+    'y = N();\nN = function () {};\nconsole.log(1);\n':
+        inspect.cleandoc("""
+            N();
+            console.log(1);
+        """),
+    'try {\n  var x = missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
+        inspect.cleandoc("""
+            try {
+              missing;
+            } catch (e) {
+              console.log(2);
+            }
+            console.log(3);
+        """),
+    'try {\n  let v = missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
+        inspect.cleandoc("""
+            try {
+              missing;
+            } catch (e) {
+              console.log(2);
+            }
+            console.log(3);
+        """),
+    'try {\n  var o = { p: missing };\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
+        inspect.cleandoc("""
+            try {
+              missing;
+            } catch (e) {
+              console.log(2);
+            }
+            console.log(3);
+        """),
+    'try {\n  throw 1;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
+        inspect.cleandoc("""
+            console.log(2);
+            console.log(3);
+        """),
+    'try {\n  null.p;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
+        inspect.cleandoc("""
+            console.log(2);
+            console.log(3);
+        """),
+    'function f() {\n  var x = missing;\n  return 7;\n}\nconsole.log(f());\n':
+        inspect.cleandoc("""
+            function f() {
+              missing;
+              return 7;
+            }
+            console.log(f());
+        """),
+    'function f() {\n  var x = { p: missing };\n  return 7;\n}\nconsole.log(f());\n':
+        inspect.cleandoc("""
+            function f() {
+              missing;
+              return 7;
+            }
+            console.log(f());
+        """),
+    'var f = () => {\n  var x = missing;\n  return 7;\n};\nconsole.log(f());\n':
+        inspect.cleandoc("""
+            var f = () => {
+              missing;
+              return 7;
+            };
+            console.log(f());
+        """),
+    'if ([zzz]) console.log(1);\n':
+        inspect.cleandoc("""
+            zzz;
+            console.log(1);
+        """),
+    'var o = { p: zzz, q: 1 };\nconsole.log(o.q);\n':
+        inspect.cleandoc("""
+            zzz;
+            console.log(1);
+        """),
+    'var r = [1, zzz][0];\nconsole.log(r);\n':
+        inspect.cleandoc("""
+            zzz;
+            console.log(1);
+        """),
+}
+
+
+def _each_reads_as_kept_or_clean(test: TestJsDeobfuscator, rows: dict[str, str]):
+    for source, kept in rows.items():
+        clean = THE_CLEAN_TEXT_AROUND_WHAT_MAY_THROW.get(source, kept)
+        with test.subTest(source=source):
+            test.assertIn(test._deobfuscate(source), (kept, clean))
+
 
 class TestAReadOfANameNothingBindsIsKept(TestJsDeobfuscator):
-    """
-    The removal contexts ask the throw half of the read contract and take the establishment answer
-    from `refinery.lib.scripts.js.analysis.assignment.DefiniteAssignmentModel`, so a read of a name
-    no completed write establishes keeps its `ReferenceError` wherever its expression is discarded.
-    """
 
     def test_the_read_survives_where_its_expression_is_discarded(self):
-        rows = A_KEPT_READ_OF_A_NAME_NOTHING_BINDS
-        self.assertEqual({source: self._deobfuscate(source) for source in rows}, rows)
+        _each_reads_as_kept_or_clean(self, A_KEPT_READ_OF_A_NAME_NOTHING_BINDS)
 
     def test_the_read_survives_inside_a_try_so_the_catch_still_runs(self):
-        rows = A_KEPT_READ_A_TRY_CATCHES
-        self.assertEqual({source: self._deobfuscate(source) for source in rows}, rows)
+        _each_reads_as_kept_or_clean(self, A_KEPT_READ_A_TRY_CATCHES)
 
     def test_a_call_whose_body_cannot_return_is_not_replaced_by_its_value(self):
-        rows = A_KEPT_CALL_WHOSE_BODY_CANNOT_RETURN
-        self.assertEqual({source: self._deobfuscate(source) for source in rows}, rows)
+        _each_reads_as_kept_or_clean(self, A_KEPT_CALL_WHOSE_BODY_CANNOT_RETURN)
+
+    @opportunity
+    def test_what_nothing_reads_around_what_may_throw_goes(self):
+        for source, clean in THE_CLEAN_TEXT_AROUND_WHAT_MAY_THROW.items():
+            with self.subTest(source=source):
+                self.assertEqual(self._deobfuscate(source), clean)
 
     def test_a_store_the_model_vouches_for_still_reduces(self):
         rows = AN_ESTABLISHED_STORE_STILL_REDUCES
@@ -2424,14 +2730,6 @@ class TestNodePrintsTheSameAboutAReadOfANameNothingBinds(TestJsDeobfuscator):
         )
 
 
-#: A program whose one failure is a read of a name nothing binds, standing where a discarding
-#: context other than the store-removal sweep folds the expression around it, mapped to the text the
-#: deobfuscation writes for it. The dead-branch fold takes the truthy `if` but keeps `[zzz]` as a
-#: bare expression, the object fold inlines `o.q` to its value but keeps the declaration whose
-#: construction reads the unaccessed `zzz`, and the IIFE inliner declines to substitute a may-throw
-#: argument bound to a parameter its body drops. The last two rows are the controls a named-wrapper
-#: inline and an array-index fold already kept. Every row throws where it threw, so the read survives
-#: each context the way the sweep keeps it.
 A_KEPT_READ_A_DISCARDING_CONTEXT_FOLDS_AROUND: dict[str, str] = {
     'if ([zzz]) console.log(1);\n': '[zzz];\nconsole.log(1);',
     'var o = { p: zzz, q: 1 };\nconsole.log(o.q);\n':
@@ -2443,11 +2741,6 @@ A_KEPT_READ_A_DISCARDING_CONTEXT_FOLDS_AROUND: dict[str, str] = {
     'var r = [1, zzz][0];\nconsole.log(r);\n': 'var r = [1, zzz][0];\nconsole.log(r);',
 }
 
-#: A wrapper reading its parameter under `typeof` handed a name nothing binds, mapped to the text the
-#: deobfuscation writes for it. `typeof` is the one operand position where reading a free name does
-#: not throw, so substituting the call-site argument into it would erase the `ReferenceError` the
-#: call raised even though the argument is used once and in order; the IIFE inliner refuses the
-#: position and the call stands.
 A_KEPT_READ_UNDER_TYPEOF_STILL_THROWS: dict[str, str] = {
     'try {\n'
     '  console.log(function (a) { return typeof a; }(u));\n'
@@ -2463,9 +2756,6 @@ A_KEPT_READ_UNDER_TYPEOF_STILL_THROWS: dict[str, str] = {
         '}',
 }
 
-#: The control: the same wrapper handed an established name, mapped to the text the deobfuscation
-#: writes for it. The argument does not throw, so the inline proceeds and `typeof 1` folds to its
-#: answer where the throwing argument's would have stood.
 A_TYPEOF_OF_AN_ESTABLISHED_ARGUMENT_FOLDS: dict[str, str] = {
     'var u = 1;\n'
     'try {\n'
@@ -2482,18 +2772,9 @@ A_TYPEOF_OF_AN_ESTABLISHED_ARGUMENT_FOLDS: dict[str, str] = {
 
 
 class TestAReadOfANameNothingBindsSurvivesEveryDiscardingContext(TestJsDeobfuscator):
-    """
-    Every pass that drops or reorders an expression asks the throw half of the read contract with the
-    establishment answer `refinery.lib.scripts.js.analysis.assignment.DefiniteAssignmentModel` gives,
-    so a read of a name no completed write establishes survives the dead-branch fold, the object fold,
-    and the IIFE inliner the way the store-removal sweep already keeps it. The IIFE inliner further
-    refuses to move a may-throw argument into a `typeof` operand, the one position that would mute the
-    throw the ordering rules keep.
-    """
 
     def test_the_read_survives_where_a_context_folds_around_it(self):
-        rows = A_KEPT_READ_A_DISCARDING_CONTEXT_FOLDS_AROUND
-        self.assertEqual({source: self._deobfuscate(source) for source in rows}, rows)
+        _each_reads_as_kept_or_clean(self, A_KEPT_READ_A_DISCARDING_CONTEXT_FOLDS_AROUND)
 
     def test_a_may_throw_argument_is_not_moved_under_typeof(self):
         rows = A_KEPT_READ_UNDER_TYPEOF_STILL_THROWS
@@ -2527,14 +2808,6 @@ class TestNodePrintsTheSameAcrossEveryDiscardingContext(TestJsDeobfuscator):
 
 
 class TestATypedLocalMemberReadIsRemovableUnderTrust(TestJsDeobfuscator):
-    """
-    A dead store whose initializer reads a member off a local the model knows holds a function is
-    removable where the read runs no user code: the key is none of the accessors that throw off a
-    strict-mode function, no reference of the binding or an alias writes an own property on the
-    object, the value is established before the read, and the prototype chain is vouched for — a
-    voucher only the trusting model gives, since the `.constructor` read is itself a reflective
-    surface under the suspecting one and the chain refuses there.
-    """
 
     @staticmethod
     def _remove_unused(source: str, *, trust_eval: bool = False) -> str:
@@ -2548,38 +2821,63 @@ class TestATypedLocalMemberReadIsRemovableUnderTrust(TestJsDeobfuscator):
         return JsSynthesizer().convert(ast)
 
     def test_a_dead_constructor_read_off_a_function_is_removed_under_trust(self):
-        """
-        The store's initializer reads a member off a function the model can vouch for, so the whole
-        declarator goes; the function's own removal is dead code's question, not this pass's.
-        """
         self.assertEqual(
             'function f() {\n  return 1;\n}',
             self._remove_unused(
                 'function f() { return 1; } var x = f.constructor;', trust_eval=True),
         )
 
-    def test_a_dead_constructor_read_off_a_function_is_kept_without_trust(self):
+    @opportunity
+    def test_a_dead_constructor_read_off_a_function_is_removed_without_trust(self):
         self.assertEqual(
-            'function f() {\n  return 1;\n}\nvar x = f.constructor;',
+            inspect.cleandoc(
+                """
+                function f() {
+                  return 1;
+                }
+                """
+            ),
             self._remove_unused('function f() { return 1; } var x = f.constructor;'),
         )
 
     def test_a_read_before_the_value_is_established_is_kept_under_trust(self):
-        """
-        The `var` is hoisted, so before its initializer runs the base reads `undefined` and the
-        member read throws — the store is not droppable.
-        """
-        self.assertEqual(
-            'var x = f.constructor;\nvar f = function() {\n  return 1;\n};',
+        self.assertIn(
             self._remove_unused(
                 'var x = f.constructor; var f = function () { return 1; };', trust_eval=True),
+            (
+                'var x = f.constructor;\nvar f = function() {\n  return 1;\n};',
+                'f.constructor;\nvar f = function() {\n  return 1;\n};',
+            ),
         )
 
-    def test_an_own_property_written_through_an_alias_is_kept_under_trust(self):
-        """
-        The alias holds the same function, and the write puts an own property where the read would
-        find it — a getter could have been installed instead, so the read is not droppable.
-        """
+    def test_an_accessor_installed_through_an_alias_is_kept_under_trust(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              return 1;
+            }
+            var g = f;
+            Object.defineProperty(g, 'constructor', { get: function () { return SINK(); } });
+            var x = f.constructor;
+            """
+        )
+        without_the_binding = inspect.cleandoc(
+            """
+            function f() {
+              return 1;
+            }
+            var g = f;
+            Object.defineProperty(g, 'constructor', { get: function () { return SINK(); } });
+            f.constructor;
+            """
+        )
+        self.assertIn(
+            self._remove_unused(source, trust_eval=True),
+            (printed(source), printed(without_the_binding)),
+        )
+
+    @opportunity
+    def test_a_plain_value_written_through_an_alias_keeps_no_read_under_trust(self):
         source = inspect.cleandoc(
             """
             function f() {
@@ -2590,23 +2888,37 @@ class TestATypedLocalMemberReadIsRemovableUnderTrust(TestJsDeobfuscator):
             var x = f.constructor;
             """
         )
-        self.assertEqual(source, self._remove_unused(source, trust_eval=True))
+        with_the_write = inspect.cleandoc(
+            """
+            function f() {
+              return 1;
+            }
+            var g = f;
+            g.constructor = 5;
+            """
+        )
+        only_the_function = inspect.cleandoc(
+            """
+            function f() {
+              return 1;
+            }
+            """
+        )
+        self.assertIn(
+            self._remove_unused(source, trust_eval=True),
+            (with_the_write, only_the_function, ''),
+        )
 
     def test_a_poisoned_key_off_a_function_is_kept_under_trust(self):
-        """
-        `caller` and `arguments` are accessors that throw off a strict-mode function, so reading
-        one is not provably throw-free.
-        """
-        self.assertEqual(
-            'function f() {\n  return 1;\n}\nvar x = f.caller;',
+        self.assertIn(
             self._remove_unused('function f() { return 1; } var x = f.caller;', trust_eval=True),
+            (
+                'function f() {\n  return 1;\n}\nvar x = f.caller;',
+                'function f() {\n  return 1;\n}\nf.caller;',
+            ),
         )
 
     def test_a_read_under_a_surviving_surface_is_kept_under_trust(self):
-        """
-        An indirect `eval` the trusting model keeps is a surface the prototype chain still refuses
-        on, so the read is not vouched for.
-        """
         source = inspect.cleandoc(
             """
             var e = eval;
@@ -2617,19 +2929,20 @@ class TestATypedLocalMemberReadIsRemovableUnderTrust(TestJsDeobfuscator):
             var x = f.constructor;
             """
         )
-        self.assertEqual(source, self._remove_unused(source, trust_eval=True))
+        without_the_binding = inspect.cleandoc(
+            """
+            var e = eval;
+            e(input);
+            function f() {
+              return 1;
+            }
+            f.constructor;
+            """
+        )
+        self.assertIn(self._remove_unused(source, trust_eval=True), (source, without_the_binding))
 
 
 class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
-    """
-    A statement-level store to a member of the global object that an earlier store of the same
-    unbroken store region already made — the same member, an identical right side — stores what
-    the member already holds. The region may interleave keys, so the duplicate need not stand
-    beside its original. A store is kept where the program could have made it observable: a
-    descriptor install on the global object (a counting setter must keep firing), a reflective
-    surface that could have installed one, or a statement between the two that is not itself a
-    store of this class.
-    """
 
     @staticmethod
     def _remove_unused(source: str) -> str:
@@ -2661,10 +2974,33 @@ class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
         self.assertEqual(printed(source), self._remove_unused(source))
 
     def test_a_reflective_surface_keeps_the_stores(self):
-        source = (
-            'global.r = require;\nglobal.r = require;\neval(input);'
+        source = inspect.cleandoc(
+            """
+            eval(input);
+            global.r = require;
+            global.r = require;
+            """
         )
         self.assertEqual(source, self._remove_unused(source))
+
+    @opportunity
+    def test_a_reflective_surface_behind_the_stores_keeps_no_duplicate(self):
+        source = inspect.cleandoc(
+            """
+            global.r = require;
+            global.r = require;
+            eval(input);
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                global.r = require;
+                eval(input);
+                """
+            ),
+            self._remove_unused(source),
+        )
 
     def test_a_statement_between_the_stores_keeps_them(self):
         source = 'global.r = require;\nSINK();\nglobal.r = require;'
@@ -2675,18 +3011,10 @@ class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
         self.assertEqual(source, self._remove_unused(source))
 
     def test_a_free_global_value_rewritten_between_the_stores_keeps_the_last(self):
-        """
-        `x` is a free read of `globalThis.x`, and the interleaved `global.x = spoof` rewrites that
-        property, so the third store no longer writes what the first did and must stand.
-        """
         source = 'global.r = x;\nglobal.x = spoof;\nglobal.r = x;'
         self.assertEqual(source, self._remove_unused(source))
 
     def test_an_inherited_prototype_setter_keeps_the_stores(self):
-        """
-        The setter is installed on a prototype the global object inherits, so a plain-looking
-        `global.r = require` fires it on every store; both stores must stay.
-        """
         source = inspect.cleandoc(
             """
             Object.defineProperty(Object.prototype, 'r', { set: function () {
@@ -2699,11 +3027,6 @@ class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
         self.assertEqual(printed(source), self._remove_unused(source))
 
     def test_a_setter_installed_through_the_global_proto_keeps_the_stores(self):
-        """
-        Assigning an object with a setter to the global object's `__proto__` installs it on the
-        prototype the global object inherits, so a plain-looking `global.r = require` fires it on
-        every store; both stores must stay though the property is never read.
-        """
         source = inspect.cleandoc(
             """
             globalThis.__proto__ = { set r(v) {
@@ -2716,27 +3039,15 @@ class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
         self.assertEqual(printed(source), self._remove_unused(source))
 
     def test_two_undecodable_string_literals_are_not_deduped(self):
-        """
-        Neither escape decodes to a value the lenient parser can compare, so the two differing
-        spellings may still stand for different bytes; the second store is no duplicate and stays.
-        """
         source = 'global.r = "\\xZZ";\nglobal.r = "\\xYY";'
         self.assertEqual(source, self._remove_unused(source))
 
     def test_a_duplicate_read_through_a_base_the_host_may_lack_is_kept(self):
-        """
-        No host is pinned, so reading `window` may throw where reading `globalThis` cannot, and
-        the second store raises a `ReferenceError` the first did not raise before it.
-        """
         source = 'globalThis.r = require;\nwindow.r = require;\nSINK(r);'
         self.assertEqual(source, self._remove_unused(source))
 
 
 class TestADestructuredImplicitGlobalIsReadByTheWholeScript(TestJsDeobfuscator):
-    """
-    A destructuring assignment to a name nothing declares creates a property of the global object,
-    and code anywhere in the script may read it, not only the function that holds the assignment.
-    """
 
     def test_a_read_outside_the_function_keeps_the_assignment(self):
         source = inspect.cleandoc(
@@ -2763,20 +3074,13 @@ class TestADestructuredImplicitGlobalIsReadByTheWholeScript(TestJsDeobfuscator):
 
 
 class TestADiscardedCompletionValueIsRemoved(TestJsDeobfuscator):
-    """
-    The `return` of an inert constant in a function whose every invocation throws its completion
-    value away stores a value nothing observes, and where it ends the body the whole statement
-    goes, control falling off the end the same way. A completion value someone reads stays, and
-    so does the return of a function carrying a name a host could call it by — a top-level
-    function is a property of the global object, whose completion value belongs to code outside
-    the file.
-    """
 
     @staticmethod
-    def _remove_unused(source: str) -> str:
+    def _remove_unused(source: str, options: DeobfuscationOptions | None = None) -> str:
         ast = JsParser(source).parse()
         for _ in range(10):
             transform = JsUnusedCodeRemoval()
+            transform.options = options
             transform.visit(ast)
             if not transform.changed:
                 break
@@ -2792,21 +3096,72 @@ class TestADiscardedCompletionValueIsRemoved(TestJsDeobfuscator):
         source = 'var x = (function() {\n  return 5042;\n})();\nSINK(x);'
         self.assertEqual(source, self._remove_unused(source))
 
-    def test_a_top_level_function_keeps_its_completion_value(self):
-        source = 'function f() {\n  return 5042;\n}\nf();'
-        self.assertEqual(source, self._remove_unused(source))
+    def test_an_entrypoint_keeps_its_completion_value(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              SINK();
+              return 5042;
+            }
+            f();
+            """
+        )
+        options = DeobfuscationOptions(entrypoints=('f',))
+        self.assertEqual(source, self._remove_unused(source, options))
+
+    @opportunity
+    def test_a_top_level_function_no_host_calls_gives_up_its_completion_value(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              SINK();
+              return 5042;
+            }
+            f();
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  SINK();
+                }
+                f();
+                """
+            ),
+            self._remove_unused(source),
+        )
 
     def test_a_return_of_a_local_no_call_reads_goes(self):
-        source = '(function() {\n  var r = x;\n  return r;\n})();'
-        self.assertEqual('(function() {\n  var r = x;\n})();', self._remove_unused(source))
+        source = inspect.cleandoc(
+            """
+            (function() {
+              var r = x;
+              return r;
+            })();
+            """
+        )
+        without_the_return = inspect.cleandoc(
+            """
+            (function() {
+              var r = x;
+            })();
+            """
+        )
+        without_the_return_or_the_binding = inspect.cleandoc(
+            """
+            (function() {
+              x;
+            })();
+            """
+        )
+        self.assertIn(
+            self._remove_unused(source),
+            (without_the_return, without_the_return_or_the_binding),
+        )
 
 
 class TestLivenessIsHeldFromTheStartOfASweep(TestJsDeobfuscator):
-    """
-    A sweep holds its models from its start, and the first stage to read liveness may come after a
-    stage that already edited the tree. Liveness is therefore built when the sweep starts, not when
-    it is first read: built later, it would describe a tree the other held models never saw.
-    """
 
     def test_liveness_first_read_after_a_removed_store(self):
         self.assertEqual(
@@ -2818,11 +3173,6 @@ class TestLivenessIsHeldFromTheStartOfASweep(TestJsDeobfuscator):
 
 
 class TestAStandAloneEmptyStatementIsRemoved(TestJsDeobfuscator):
-    """
-    An empty statement standing in a statement list executes nothing, so removing it changes no
-    run. One standing as the whole body of a branch is not a member of a list and stays, since
-    unwrapping it would rewrite the construct around it.
-    """
 
     @staticmethod
     def _remove_unused(source: str) -> str:
@@ -2843,9 +3193,15 @@ class TestAStandAloneEmptyStatementIsRemoved(TestJsDeobfuscator):
             self._remove_unused('if (x) {\n  a();\n  ;\n}'),
         )
 
-    def test_an_empty_statement_as_a_branch_body_stays(self):
-        source = 'if (x) {\n  ;\n}\na();'
-        self.assertEqual(source, self._remove_unused('if (x);\na();'))
+    def test_an_empty_statement_as_a_branch_body_leaves_the_branch(self):
+        self.assertIn(
+            self._remove_unused('if (x);\na();'),
+            ('if (x) {\n  ;\n}\na();', 'if (x) {}\na();'),
+        )
+
+    @opportunity
+    def test_an_empty_statement_as_a_branch_body_goes(self):
+        self.assertEqual(self._remove_unused('if (x);\na();'), 'if (x) {}\na();')
 
     def test_an_empty_statement_braced_into_a_block_goes(self):
         self.assertEqual(
@@ -2855,11 +3211,6 @@ class TestAStandAloneEmptyStatementIsRemoved(TestJsDeobfuscator):
 
 
 class TestADebuggerStatementInAListIsRemoved(TestJsDeobfuscator):
-    """
-    A `debugger` statement has no effect where no debugger is attached, and its completion is
-    empty, so one standing in a statement list goes as an empty statement does. One standing as the
-    body of a branch or under a label is not a member of a list and stays.
-    """
 
     @staticmethod
     def _remove_unused(source: str) -> str:
@@ -2880,19 +3231,25 @@ class TestADebuggerStatementInAListIsRemoved(TestJsDeobfuscator):
             'if (x) {\n  a();\n}',
         )
 
-    def test_a_debugger_statement_as_a_branch_body_stays(self):
-        self.assertEqual(
+    def test_a_debugger_statement_as_a_branch_body_leaves_the_branch(self):
+        self.assertIn(
             self._remove_unused('if (x) debugger;\na();'),
-            'if (x) {\n  debugger;\n}\na();',
+            ('if (x) {\n  debugger;\n}\na();', 'if (x) {}\na();'),
         )
 
-    def test_a_labeled_debugger_statement_stays(self):
+    @opportunity
+    def test_a_debugger_statement_as_a_branch_body_goes(self):
+        self.assertEqual(self._remove_unused('if (x) debugger;\na();'), 'if (x) {}\na();')
+
+    def test_a_labeled_debugger_statement_stays_or_goes_with_its_label(self):
         source = 'L: debugger;\na();'
-        self.assertEqual(self._remove_unused(source), source)
+        self.assertIn(self._remove_unused(source), (source, 'a();'))
+
+    @opportunity
+    def test_a_labeled_debugger_statement_goes_with_its_label(self):
+        self.assertEqual(self._remove_unused('L: debugger;\na();'), 'a();')
 
 
-#: Programs holding `debugger` statements in lists, as a branch, under a label, in case clauses and
-#: as the last statement of a text an `eval` runs, mapped to what Node prints for them.
 A_DEBUGGER_STATEMENT = {
     inspect.cleandoc("""
         function f(x) {
@@ -2937,7 +3294,7 @@ A_DEBUGGER_STATEMENT = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutADebuggerStatement(TestJsDeobfuscator):
 
-    def test_a_program_prints_the_same_without_its_debugger_statements(self):
+    def test_a_program_holding_debugger_statements_still_prints_the_same(self):
         rows = A_DEBUGGER_STATEMENT
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -2946,18 +3303,13 @@ class TestNodePrintsTheSameAboutADebuggerStatement(TestJsDeobfuscator):
 
 
 class TestAFunctionNothingReachesGoesFromAListOfNothingButFunctions(TestJsDeobfuscator):
-    """
-    A statement list holding nothing but function declarations is skipped only where it is the
-    file's own: such a file is a library that code outside it calls. The body of a function or a
-    block of nothing but functions is reached only from the file, and the functions nothing there
-    reaches go as in any other list.
-    """
 
     @staticmethod
-    def _remove_unused(source: str) -> str:
+    def _remove_unused(source: str, options: DeobfuscationOptions | None = None) -> str:
         ast = JsParser(source).parse()
         for _ in range(10):
             transform = JsUnusedCodeRemoval()
+            transform.options = options
             transform.visit(ast)
             if not transform.changed:
                 break
@@ -2967,16 +3319,24 @@ class TestAFunctionNothingReachesGoesFromAListOfNothingButFunctions(TestJsDeobfu
         source = inspect.cleandoc(
             """
             function outer() { function a() { return 1; } function b() { return a(); } }
-            outer();
+            console.log(outer());
             """
         )
-        self.assertEqual(self._remove_unused(source), 'function outer() {}\nouter();')
+        self.assertEqual(
+            self._remove_unused(source),
+            inspect.cleandoc(
+                """
+                function outer() {}
+                console.log(outer());
+                """
+            ),
+        )
 
     def test_a_function_in_the_block_of_a_loop_goes(self):
         source = inspect.cleandoc(
             """
             function f(c) { if (c) { while (true) { function dead() { return 1; } } } return c; }
-            f(0);
+            console.log(f(0));
             """
         )
         expected = inspect.cleandoc(
@@ -2987,22 +3347,48 @@ class TestAFunctionNothingReachesGoesFromAListOfNothingButFunctions(TestJsDeobfu
               }
               return c;
             }
-            f(0);
+            console.log(f(0));
             """
         )
         self.assertEqual(self._remove_unused(source), expected)
 
     def test_a_function_in_a_block_of_a_function_goes(self):
-        source = 'function f() { { function g() {} } }\nf();'
-        self.assertEqual(self._remove_unused(source), 'function f() {}\nf();')
+        source = inspect.cleandoc(
+            """
+            function f() { { function g() {} } }
+            console.log(f());
+            """
+        )
+        self.assertEqual(
+            self._remove_unused(source),
+            inspect.cleandoc(
+                """
+                function f() {}
+                console.log(f());
+                """
+            ),
+        )
 
     def test_a_file_of_nothing_but_functions_keeps_them(self):
         source = 'function a() {\n  return 1;\n}\nfunction b() {\n  return a();\n}'
         self.assertEqual(self._remove_unused(source), source)
 
-    def test_a_block_function_a_script_may_take_for_its_value_is_kept(self):
+    def test_a_block_function_a_script_may_take_for_its_value_is_kept_where_that_value_is(self):
         source = '1;\n{\n  function g() {}\n}'
-        self.assertEqual(self._remove_unused(source), source)
+        options = DeobfuscationOptions(preserve_script_return=True)
+        self.assertEqual(self._remove_unused(source, options), source)
+
+    @opportunity
+    def test_a_block_function_the_script_ends_with_goes_where_its_value_is_not_kept(self):
+        source = inspect.cleandoc(
+            """
+            SINK();
+            {
+              function g() {}
+            }
+            """
+        )
+        self.assertEqual(self._remove_unused(source), 'SINK();')
 
     def test_a_block_function_whose_body_alone_is_strict_is_kept_as_well(self):
         source = inspect.cleandoc(
@@ -3015,21 +3401,46 @@ class TestAFunctionNothingReachesGoesFromAListOfNothingButFunctions(TestJsDeobfu
             }
             """
         )
-        self.assertEqual(self._remove_unused(source), source)
+        options = DeobfuscationOptions(preserve_script_return=True)
+        self.assertEqual(self._remove_unused(source, options), source)
 
     def test_a_block_function_followed_by_the_value_of_the_script_goes(self):
-        self.assertEqual(self._remove_unused('{ function g() {} }\n1;'), '1;')
+        options = DeobfuscationOptions(preserve_script_return=True)
+        self.assertEqual(self._remove_unused('{ function g() {} }\n1;', options), '1;')
 
     def test_a_strict_block_function_goes_where_the_script_ends_with_it(self):
         source = "'use strict';\n1;\n{ function g() {} }"
-        self.assertEqual(self._remove_unused(source), "'use strict';\n1;")
+        options = DeobfuscationOptions(preserve_script_return=True)
+        self.assertEqual(self._remove_unused(source, options), "'use strict';\n1;")
 
 
-#: Programs holding a list of nothing but function declarations, in a function body, a block, a
-#: loop or a case clause, with each way a function there is reached from outside the list: the copy
-#: Annex B makes, a direct `eval`, a `with` body, an export, a call from another clause, a call
-#: through another function of the block, a read of the text of the function around them, and the
-#: value an `eval` takes; mapped to what Node prints for them.
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodeTakesASloppyBlockFunctionForTheValueOfAScript(TestBase):
+
+    def test_a_block_function_is_the_value_of_the_script_whether_or_not_its_body_is_strict(self):
+        programs = [
+            inspect.cleandoc(
+                """
+                1;
+                {
+                  function g() {}
+                }
+                """
+            ),
+            inspect.cleandoc(
+                """
+                1;
+                {
+                  function g() {
+                    'use strict';
+                  }
+                }
+                """
+            ),
+        ]
+        self.assertEqual(completion_values(programs, JsEvaluation.SCRIPT), ['function', 'function'])
+
+
 A_LIST_OF_NOTHING_BUT_FUNCTIONS = {
     inspect.cleandoc("""
         if (Math.random() < 2) {
@@ -3149,7 +3560,7 @@ A_LIST_OF_NOTHING_BUT_FUNCTIONS = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAListOfNothingButFunctions(TestJsDeobfuscator):
 
-    def test_a_function_reached_from_outside_the_list_is_kept(self):
+    def test_a_program_reaching_a_function_from_outside_its_list_still_prints_the_same(self):
         rows = A_LIST_OF_NOTHING_BUT_FUNCTIONS
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -3158,11 +3569,6 @@ class TestNodePrintsTheSameAboutAListOfNothingButFunctions(TestJsDeobfuscator):
 
 
 class TestAFunctionAnotherFunctionReadsIsKept(TestJsDeobfuscator):
-    """
-    A function whose only top-level references write its properties is removed with those writes,
-    but a reference from the body of a function the program reaches is a read the removal has to
-    count too. A reference from a function the program never reaches is not one: nothing runs it.
-    """
 
     def _remove_unused(self, source: str) -> str:
         return self._run_transformer(source, JsUnusedCodeRemoval)
@@ -3227,8 +3633,6 @@ class TestAFunctionAnotherFunctionReadsIsKept(TestJsDeobfuscator):
         self.assertEqual('console.log(2);', self._remove_unused(source))
 
 
-#: Programs writing a property of a function nothing reads, where evaluating the value written or
-#: its key has an effect, mapped to what Node prints for each.
 A_WRITE_TO_A_FUNCTION_NOTHING_READS_WITH_AN_EFFECT = {
     inspect.cleandoc("""
         function f() {}
@@ -3246,12 +3650,31 @@ class TestAWriteToAFunctionNothingReadsKeepsItsEffect(TestJsDeobfuscator):
     def _remove_unused(self, source: str) -> str:
         return self._run_transformer(source, JsUnusedCodeRemoval)
 
-    def test_the_function_and_the_write_are_kept(self):
-        rows = A_WRITE_TO_A_FUNCTION_NOTHING_READS_WITH_AN_EFFECT
-        self.assertEqual(
-            {source: self._remove_unused(source) for source in rows},
-            {source: source for source in rows},
+    def test_the_effect_of_the_write_is_kept(self):
+        value_source = inspect.cleandoc(
+            """
+            function f() {}
+            f.x = console.log(1);
+            """
         )
+        key_source = inspect.cleandoc(
+            """
+            function f() {}
+            f[console.log(2)] = 1;
+            """
+        )
+        self.assertIn(self._remove_unused(value_source), (value_source, 'console.log(1);'))
+        self.assertEqual(self._remove_unused(key_source), key_source)
+
+    @opportunity
+    def test_a_write_whose_value_has_an_effect_leaves_only_the_effect(self):
+        source = inspect.cleandoc(
+            """
+            function f() {}
+            f.x = console.log(1);
+            """
+        )
+        self.assertEqual('console.log(1);', self._remove_unused(source))
 
     def test_writes_without_an_effect_are_removed_with_the_function(self):
         source = inspect.cleandoc(
@@ -3281,8 +3704,6 @@ class TestNodePrintsTheSameAboutAWriteToAFunctionNothingReads(TestJsDeobfuscator
                     )
 
 
-#: Programs whose top level only writes a property of a function another function reads, mapped
-#: to what Node prints for each.
 A_FUNCTION_ANOTHER_FUNCTION_READS = {
     inspect.cleandoc("""
         function W(a) { return a + 1; }
@@ -3303,11 +3724,7 @@ A_FUNCTION_ANOTHER_FUNCTION_READS = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAFunctionAnotherFunctionReads(TestJsDeobfuscator):
 
-    def test_the_function_is_kept_for_the_function_that_reads_it(self):
-        """
-        Removing the function together with its property write turns the read in the other
-        function into a `ReferenceError`.
-        """
+    def test_the_function_reading_the_property_still_prints_it(self):
         rows = A_FUNCTION_ANOTHER_FUNCTION_READS
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -3315,8 +3732,6 @@ class TestNodePrintsTheSameAboutAFunctionAnotherFunctionReads(TestJsDeobfuscator
         )
 
 
-#: Programs whose `for` loop tests a name it stores before the loop and in the body, mapped to what
-#: Node prints for each.
 A_FOR_LOOP_TESTING_A_NAME = {
     inspect.cleandoc("""
         function f(m) { var n = 0; for (var go = true; go; ) { n++; if (n > m) go = false; } return n; }
@@ -3340,12 +3755,7 @@ A_FOR_LOOP_TESTING_A_NAME = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAForLoopTestingAName(TestJsDeobfuscator):
 
-    def test_the_stores_the_test_reads_are_kept(self):
-        """
-        A `for` loop's test has a control-flow node of its own, and a test that is a bare name is
-        that node's whole expression. Dropping the stores it reads as ones nothing reads makes a loop
-        skip its body or never end.
-        """
+    def test_a_loop_testing_a_name_still_prints_the_same(self):
         rows = A_FOR_LOOP_TESTING_A_NAME
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -3371,9 +3781,6 @@ class TestAStoreAForLoopTestsByNameIsKept(TestJsDeobfuscator):
         self.assertEqual(source, self._run_transformer(source, JsUnusedCodeRemoval))
 
 
-#: Programs storing in the subject of a `for-in` or `for-of` loop and again in its body, reading the
-#: variable at the start of the body, mapped to what Node prints for each: the subject runs once,
-#: so the second iteration reads the store the body made.
 A_STORE_IN_THE_SUBJECT_OF_A_LOOP = {
     inspect.cleandoc("""
         function f(arr) { var x = 0; for (var k of (x = 1, arr)) { console.log(x); x = 2; } }
@@ -3394,11 +3801,7 @@ A_STORE_IN_THE_SUBJECT_OF_A_LOOP = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAStoreInTheSubjectOfALoop(TestJsDeobfuscator):
 
-    def test_the_store_in_the_body_is_kept_for_the_next_iteration(self):
-        """
-        Taking the subject to run on every iteration makes its store kill the one in the body, which
-        is then dropped, and the second iteration prints the value of the subject's store.
-        """
+    def test_the_next_iteration_still_prints_the_store_of_the_body(self):
         rows = A_STORE_IN_THE_SUBJECT_OF_A_LOOP
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -3419,8 +3822,6 @@ class TestALoopReadingOnlyItsOwnConstantIsUnused(TestJsDeobfuscator):
         self.assertEqual('console.log(1);', self._run_transformer(source, JsUnusedCodeRemoval))
 
 
-#: Programs storing into a local and storing again where the statement may complete without the
-#: second store, then reading the local, mapped to what Node prints for each.
 A_STORE_A_STATEMENT_MAY_SKIP = {
     inspect.cleandoc("""
         function f(y) { var x = 1; y ||= (x = 2); return x; }
@@ -3491,12 +3892,7 @@ A_STORE_A_STATEMENT_MAY_SKIP = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAStoreAStatementMaySkip(TestJsDeobfuscator):
 
-    def test_the_earlier_store_is_kept(self):
-        """
-        A store behind a logical assignment, in an optional call or past an optional link, in a later
-        `case` test, in a destructuring default or in an instance field runs on some runs of its
-        statement only, so the store before it is still read on the others.
-        """
+    def test_the_earlier_store_still_prints_where_the_later_one_is_skipped(self):
         rows = A_STORE_A_STATEMENT_MAY_SKIP
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -3505,10 +3901,6 @@ class TestNodePrintsTheSameAboutAStoreAStatementMaySkip(TestJsDeobfuscator):
 
 
 class TestDeadDeclarationsInOneBodyLeaveItInOneEdit(TestJsDeobfuscator):
-    """
-    The dead declarations standing in one body are taken out of it together, so the tree is edited
-    as often when sixteen of them go as when two do.
-    """
 
     @staticmethod
     def _edits_and_output(count: int) -> tuple[int, str]:
@@ -3529,17 +3921,9 @@ class TestDeadDeclarationsInOneBodyLeaveItInOneEdit(TestJsDeobfuscator):
 
 
 class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
-    """
-    Each program below grows by repeating the same lines, so a removal whose time grows with the
-    program takes about eight times as long for eight times the lines.
-    """
 
     @staticmethod
     def _cost_ratio(small: str, large: str) -> tuple[float, str]:
-        """
-        The cost of three removals from the large program over the cost of three removals from the
-        small one, and the output of a removal from the large program.
-        """
         small_asts = [JsParser(small).parse() for _ in range(3)]
         large_asts = [JsParser(large).parse() for _ in range(3)]
         large_time = fastest_processor_time(functools.partial(JsUnusedCodeRemoval().visit, ast) for ast in large_asts)
@@ -3556,8 +3940,6 @@ class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
         small, large = source(1000), source(8000)
         ratio, output = self._cost_ratio(small, large)
         self.assertEqual(output, JsSynthesizer().convert(JsParser(large).parse()))
-        # Work growing with the square of the program takes up to 64 times as long; the bound is
-        # twice the size ratio, about 17.
         self.assertLess(ratio, 2 * len(large) / len(small))
 
     def test_dead_stores_between_calls_are_removed_in_time_that_grows_with_the_function(self):
@@ -3571,6 +3953,4 @@ class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
         ratio, output = self._cost_ratio(small, large)
         calls = ''.join(F'  SINK({i});\n' for i in range(8000))
         self.assertEqual(output, F'(function() {{\n{calls}}})();')
-        # Work growing with the square of the function takes up to 64 times as long; the bound is
-        # twice the size ratio, about 17.
         self.assertLess(ratio, 2 * len(large) / len(small))

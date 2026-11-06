@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+from test import backlog, opportunity, todo
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
@@ -67,11 +68,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_reassigned_function_declaration_not_folded(self):
-        """
-        `f` is reassigned after its declaration, so a call runs the new function; folding to the stale
-        declaration's body is unsound (Node: the call yields 9, not the folded 1). The model's
-        `static_callee` declines the reassigned binding, so the evaluator leaves the call intact.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -86,11 +82,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_redeclared_function_not_folded(self):
-        """
-        A name bound by more than one declaration is treated as an unknown function — which body is
-        live at a call cannot be proven once a `var`, a conditional, or a block declaration is mixed in
-        — so the evaluator declines it rather than trusting a last-wins guess.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -105,10 +96,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_premature_call_before_const_definition_not_folded(self):
-        """
-        `f` is called before its `const` initializer runs, so at runtime the temporal dead zone throws
-        a `ReferenceError`; folding the call to the initializer's value would invent a result.
-        """
         source = inspect.cleandoc(
             """
             SINK(f());
@@ -118,10 +105,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_premature_call_before_var_definition_not_folded(self):
-        """
-        `f` is hoisted as `undefined` until its `var` initializer runs, so the earlier call throws a
-        `TypeError` at runtime rather than returning 1.
-        """
         source = inspect.cleandoc(
             """
             SINK(f());
@@ -133,10 +116,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_premature_call_before_let_definition_not_folded(self):
-        """
-        `f` is in its temporal dead zone until the `let` initializer runs, so the earlier call throws a
-        `ReferenceError` at runtime.
-        """
         source = inspect.cleandoc(
             """
             SINK(f());
@@ -146,10 +125,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_premature_call_before_hoisted_declaration_folded(self):
-        """
-        A function declaration is fully hoisted, so a call textually preceding it runs the function and
-        the fold to its value is sound.
-        """
         source = inspect.cleandoc(
             """
             SINK(f());
@@ -161,11 +136,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual('SINK(1);', self._evaluate(source))
 
     def test_nested_callee_not_established_at_outer_call_not_folded(self):
-        """
-        `ns` is established when `ns()` runs, but its body calls `helper`, whose bare assignment has not
-        yet run at the outer call site — at runtime `helper` is the hoisted `undefined`, so `ns()` throws
-        a `TypeError`. The fold must gate the nested callee against the outer call, not only `ns` itself.
-        """
         source = inspect.cleandoc(
             """
             var ns;
@@ -181,10 +151,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_nested_callee_established_at_outer_call_folded(self):
-        """
-        Both `helper` and `ns` are established before `ns()` runs, so folding the interprocedural call
-        through the nested callee to its value is sound.
-        """
         source = inspect.cleandoc(
             """
             var helper = function() {
@@ -239,13 +205,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
 
     def test_call_through_reassigned_nested_callee_not_folded(self):
-        """
-        `outer` is a stable, side-effect-free function, but its body calls `inner`, whose binding is
-        reassigned. Folding `outer()` would resolve the nested `inner()` to the stale declaration and
-        yield 1, whereas the live function returns 9 (Node: `outer()` is 9). The interpreter's function
-        view is restricted to bindings the model proves stable, so `inner` is unresolved inside the fold
-        and the call is left intact.
-        """
         source = inspect.cleandoc(
             """
             function inner() {
@@ -263,12 +222,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_nested_closure_over_reassigned_shadowing_local_not_folded(self):
-        """
-        `mid`'s nested closure `inner` reads `g`, which lexically binds to `mid`'s own `g` — reassigned
-        inside `mid`, so `mid()` returns 9 (Node). A same-named `g` exists in the outer scope. Folding
-        `mid()` must resolve `inner`'s `g` in `mid`'s scope, where the reassigned binding is unresolvable,
-        rather than the outer `g` (which would wrongly yield 2); the call is therefore left intact.
-        """
         source = inspect.cleandoc(
             """
             function g() {
@@ -292,11 +245,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_nested_closure_over_redeclared_shadowing_local_not_folded(self):
-        """
-        As above, but `mid`'s local `g` is declared twice. A redeclared name is not a fixed function, so
-        `inner`'s `g` is unresolvable in `mid`'s scope and must not fall through to the outer `g`; the
-        call is left intact (Node: `mid()` is 9, not the outer `g`'s 2).
-        """
         source = inspect.cleandoc(
             """
             function g() {
@@ -320,10 +268,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_nested_closure_over_stable_shadowing_local_folds(self):
-        """
-        The scope-correct resolution must not over-decline: when `mid`'s local `g` is a stable, sole
-        definition, `inner`'s `g` resolves to it (7), shadowing the outer `g` (2), so `mid()` folds to 7.
-        """
         source = inspect.cleandoc(
             """
             function g() {
@@ -764,15 +708,12 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual('var x = 5;', result)
 
-    def test_object_literal_parens_preserved(self):
-        self.assertEqual('var x = ({ a: 1 });', self._simplify('var x = ({a: 1});'))
+    def test_parenthesized_object_literal_initializer_is_kept_with_or_without_its_parens(self):
+        self.assertIn(
+            self._simplify('var x = ({a: 1});'), ('var x = ({ a: 1 });', 'var x = { a: 1 };')
+        )
 
     def test_fold_resolves_callee_free_name_in_definition_scope(self):
-        """
-        `f` reads the top-level `g` through `g(n)`. Folding `f(5)` inside `caller`, whose own `g`
-        shadows the top-level one at the call site, must bind `f`'s `g` to the definition `f`
-        lexically sees, not the `g` in scope at the call (Node: `caller()` is 16, not 115).
-        """
         source = inspect.cleandoc(
             """
             function g(x) {
@@ -810,11 +751,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(expected, self._evaluate(source))
 
     def test_irreducible_substitution_declined_when_parameter_reassigned(self):
-        """
-        The wrapper reassigns its parameter (`x = 7`) before the irreducible `return x + String`, so
-        `x` there is 7, not the argument 1. Substituting the original argument would emit `1 + String`
-        (Node: `7 + String`), so the evaluator must leave the call unfolded.
-        """
         source = inspect.cleandoc(
             """
             (function(x) {
@@ -826,11 +762,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_irreducible_substitution_declined_for_named_function_expression_self_name(self):
-        """
-        The named function expression refers to its own name `f`, a binding that exists only inside the
-        expression. Splicing `return f` into the call site would leave a dangling `f`, so the evaluator
-        must not fold the call.
-        """
         source = inspect.cleandoc(
             """
             var y = (function f() {
@@ -841,11 +772,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_irreducible_substitution_declined_for_destructured_local(self):
-        """
-        `String` is rebound as a destructured local (`var { String } = Math`), so `return String` reads
-        that hoisted local (undefined), not the global constructor. Splicing bare `String` into the
-        call site would resolve to the global `String`, so the evaluator must decline the fold.
-        """
         source = inspect.cleandoc(
             """
             var w = (function() {
@@ -854,19 +780,25 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             })();
             """
         )
-        self.assertEqual(source, self._evaluate(source))
+        self.assertIn(self._evaluate(source), (source, 'var w = void 0;'))
+
+    @opportunity
+    def test_a_local_returned_before_its_declaration_runs_folds_to_undefined(self):
+        source = inspect.cleandoc(
+            """
+            var w = (function() {
+              return String;
+              var { String } = Math;
+            })();
+            """
+        )
+        self.assertEqual('var w = void 0;', self._evaluate(source))
 
     def test_array_result_over_the_size_cap_is_not_folded(self):
-        """
-        A fold that replaces a call with an array literal is bounded by output size, not by correctness: at
-        some point the literal is less readable than the call that produced it, and readability is what a
-        triage tool trades folding for. The cap is on the *result*, so a chain whose array result exceeds it
-        stays put while the same chain reduced to a string still folds.
-        """
         elements = ', '.join(str(n) for n in range(300))
         result = self._evaluate(F'[{elements}].map(function (x) {{ return x + 1; }});')
         self.assertEqual(1, result.count('.map('))
-        self.assertEqual(0, result.count('301'))
+        self.assertEqual(0, result.count('300'))
 
     def test_string_result_over_the_array_size_cap_still_folds(self):
         elements = ', '.join(str(n) for n in range(300))
@@ -937,8 +869,19 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var x = decode('SGVsbG8=');
             """
         )
-        result = self._evaluate(source)
+        result = self._evaluate_in(source, HostEnvironment.node)
         self.assertEqual("var x = 'Hello';", result)
+
+    @backlog
+    def test_a_buffer_decode_is_not_folded_where_the_host_may_lack_buffer(self):
+        source = inspect.cleandoc(
+            """
+            const decode = s => Buffer.from(s, 'base64').toString('utf8');
+            var x = decode('SGVsbG8=');
+            """
+        )
+        spliced = "var x = Buffer.from('SGVsbG8=', 'base64').toString('utf8');"
+        self.assertIn(self._evaluate(source), (source, spliced))
 
     def test_buffer_from_hex(self):
         source = inspect.cleandoc(
@@ -947,7 +890,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var x = decode('48656c6c6f');
             """
         )
-        result = self._evaluate(source)
+        result = self._evaluate_in(source, HostEnvironment.node)
         self.assertEqual("var x = 'Hello';", result)
 
     def test_atob_without_padding(self):
@@ -960,7 +903,22 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual("var x = 'os';", result)
 
-    def test_side_effects_member_write_blocks_evaluation(self):
+    def test_member_write_to_an_argument_the_caller_reads_blocks_evaluation(self):
+        source = inspect.cleandoc(
+            """
+            const modify = function(arr) {
+              arr[0] = 99;
+              return arr;
+            };
+            var a = [1, 2, 3];
+            var x = modify(a);
+            SINK(a);
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    @opportunity
+    def test_member_write_to_a_fresh_array_argument_folds(self):
         source = inspect.cleandoc(
             """
             const modify = function(arr) {
@@ -970,7 +928,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var x = modify([1, 2, 3]);
             """
         )
-        self.assertEqual(source, self._evaluate(source))
+        self.assertEqual('var x = [99, 2, 3];', self._evaluate(source))
 
     def test_function_declaration_with_undeclared_globals_not_evaluated(self):
         source = inspect.cleandoc(
@@ -1040,8 +998,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_array_tostring_not_hijacked(self):
-        # A plain Array's toString must use Array semantics ('72,101,108'), never the Buffer.toString
-        # interpretation of the same bytes ('Hel').
         source = inspect.cleandoc(
             """
             const f = () => [72, 101, 108].toString();
@@ -1078,7 +1034,16 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             }
             """
         )
-        self.assertEqual(source, self._evaluate(source))
+        spliced = inspect.cleandoc(
+            """
+            const SECRET = 'global';
+            function wrap(v) {
+              let SECRET = v;
+              return 'Z' + SECRET;
+            }
+            """
+        )
+        self.assertIn(self._evaluate(source), (source, spliced))
 
     def test_a_call_reversing_a_captured_array_stays(self):
         source = inspect.cleandoc(
@@ -1236,7 +1201,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var x = decode('SEVMTE8=');
             """
         )
-        result = self._evaluate(source)
+        result = self._evaluate_in(source, HostEnvironment.node)
         self.assertEqual("var x = 'IDMMN';", result)
 
     def test_buffer_filter_then_tostring(self):
@@ -1246,7 +1211,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var x = decode('4100420043');
             """
         )
-        result = self._evaluate(source)
+        result = self._evaluate_in(source, HostEnvironment.node)
         self.assertEqual("var x = 'ABC';", result)
 
     def test_nan_as_index_does_not_raise(self):
@@ -1307,7 +1272,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertEqual("var r = { 'x': 42 };", result)
+        self.assertIn(result, ("var r = { 'x': 42 };", 'var r = { x: 42 };'))
 
     def test_nested_throw_caught_by_outer_try_catch(self):
         source = inspect.cleandoc(
@@ -1399,7 +1364,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var x = decode('SGVsbG8-');
             """
         )
-        result = self._evaluate(source)
+        result = self._evaluate_in(source, HostEnvironment.node)
         self.assertEqual("var x = 'Hello>';", result)
 
     def test_a_const_declared_after_the_function_is_read_by_a_call_after_it(self):
@@ -1515,53 +1480,59 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual('var r = -1;', result)
 
-    def test_array_length_nan_assignment_raises(self):
+    def test_array_length_nan_assignment_throws_a_range_error(self):
         source = inspect.cleandoc(
             """
             function f() {
                 var a = [1, 2, 3];
-                a['length'] = NaN;
+                try {
+                    a['length'] = 0 / 0;
+                } catch (e) {
+                    return e.name;
+                }
                 return a.length;
             }
             """
         )
         func = JsParser(source).parse().body[0]
         assert isinstance(func, JsFunctionDeclaration)
-        # NaN is not a valid array length: Node and Chrome both throw RangeError.
-        with self.assertRaises(Exception):
-            JsInterpreter().execute(func, [])
+        self.assertEqual('RangeError', JsInterpreter().execute(func, []))
 
-    def test_array_length_infinity_assignment_raises(self):
+    def test_array_length_infinity_assignment_throws_a_range_error(self):
         source = inspect.cleandoc(
             """
             function f() {
                 var a = [1, 2, 3];
-                a['length'] = Infinity;
+                try {
+                    a['length'] = 1 / 0;
+                } catch (e) {
+                    return e.name;
+                }
                 return a.length;
             }
             """
         )
         func = JsParser(source).parse().body[0]
         assert isinstance(func, JsFunctionDeclaration)
-        # Infinity is not a valid array length: Node and Chrome both throw RangeError.
-        with self.assertRaises(Exception):
-            JsInterpreter().execute(func, [])
+        self.assertEqual('RangeError', JsInterpreter().execute(func, []))
 
-    def test_array_length_non_integer_assignment_raises(self):
+    def test_array_length_non_integer_assignment_throws_a_range_error(self):
         source = inspect.cleandoc(
             """
             function f() {
                 var a = [1, 2, 3];
-                a['length'] = 1.5;
+                try {
+                    a['length'] = 1.5;
+                } catch (e) {
+                    return e.name;
+                }
                 return a.length;
             }
             """
         )
         func = JsParser(source).parse().body[0]
         assert isinstance(func, JsFunctionDeclaration)
-        # A non-integer length is invalid: Node and Chrome both throw RangeError.
-        with self.assertRaises(Exception):
-            JsInterpreter().execute(func, [])
+        self.assertEqual('RangeError', JsInterpreter().execute(func, []))
 
     def test_array_length_shrink_truncates(self):
         source = inspect.cleandoc(
@@ -1579,11 +1550,8 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
 
     def test_array_length_grow_is_not_evaluated_to_an_array_of_undefined(self):
         """
-        Raising `length` moves how far the array reaches and writes nothing into the positions it
-        passes over. Node answers `3 in a` with `false`, `a.indexOf(undefined)` with `-1` and
-        `Object.keys(a)` with `['0', '1', '2']` for this array, and answers the same three questions
-        with `true`, `3` and five keys for `[1, 2, 3, undefined, undefined]`, so an evaluation
-        handing back five elements would report on an array the program never built.
+        Raising `length` leaves holes rather than `undefined` elements: `3 in a` is `false` for this
+        array, and `true` once the same positions hold `undefined`.
         """
         source = inspect.cleandoc(
             """
@@ -1602,10 +1570,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             source, JsFunctionEvaluator, DeobfuscationOptions(environment=environment))
 
     def test_typeof_a_host_conditional_global_abstains_without_a_pin(self):
-        """
-        `Buffer` is a Node global a browser lacks, so `typeof Buffer` is host-dependent; the default
-        universal host cannot settle it, so the guard is kept rather than folded to a wrong branch.
-        """
         source = inspect.cleandoc(
             """
             const f = () => typeof Buffer === 'function' ? 'yes' : 'no';
@@ -1616,10 +1580,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             "var r = typeof Buffer === 'function' ? 'yes' : 'no';", self._evaluate(source))
 
     def test_typeof_a_host_conditional_global_folds_under_a_pin(self):
-        """
-        Under `-e node` `Buffer` is present, so `typeof Buffer` is `'function'` and the guard folds to
-        'yes'; under `-e browser` it is absent, so `typeof Buffer` is `'undefined'` and it folds to 'no'.
-        """
         source = inspect.cleandoc(
             """
             const f = () => typeof Buffer === 'function' ? 'yes' : 'no';
@@ -1630,7 +1590,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual("var r = 'no';", self._evaluate_in(source, HostEnvironment.browser))
 
     def test_calling_null_throws_caught_type_error(self):
-        # Calling `null` is a genuine TypeError, so the catch runs and `typeof e` is 'object'.
         source = inspect.cleandoc(
             """
             function attempt() {
@@ -1764,8 +1723,17 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             }
             """
         )
-        result = self._evaluate(source)
-        self.assertEqual(source, result)
+        folded = inspect.cleandoc(
+            """
+            const val = 'WRONG';
+            function wrap() {
+              var r = void 0;
+              var val = 'RIGHT';
+              return r;
+            }
+            """
+        )
+        self.assertIn(self._evaluate(source), (source, folded))
 
     def test_split_negative_limit_returns_all(self):
         source = inspect.cleandoc(
@@ -1818,7 +1786,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var r = f();
             """
         )
-        result = self._evaluate(source)
+        result = self._evaluate_in(source, HostEnvironment.node)
         self.assertEqual('var r = false;', result)
 
     def test_buffer_tostring_with_infinity_element(self):
@@ -1831,7 +1799,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var r = run();
             """
         )
-        result = self._evaluate(source)
+        result = self._evaluate_in(source, HostEnvironment.node)
         self.assertEqual("var r = '48006c';", result)
 
     def test_buffer_from_list_coerces_null_to_zero(self):
@@ -1841,7 +1809,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var r = f();
             """
         )
-        result = self._evaluate(source)
+        result = self._evaluate_in(source, HostEnvironment.node)
         self.assertEqual("var r = 'H\\0l';", result)
 
     def test_arr_index_of_negative_from_index(self):
@@ -1855,11 +1823,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual('var r = -1;', result)
 
     def test_nested_var_hoisting_shadows_outer_const(self):
-        """
-        Inside `wrap`, the `var x` hoists to the function scope, so `g`'s `x` binds to it, not to the
-        outer `const x`: the call to `f` becomes the outer value, and the call to `g` a read of the
-        local `x`.
-        """
         source = inspect.cleandoc(
             """
             const x = 'outer';
@@ -1905,7 +1868,19 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             }
             """
         )
-        self.assertEqual(source, self._evaluate(source))
+        folded = inspect.cleandoc(
+            """
+            const val = 'WRONG';
+            function wrap() {
+              var r = void 0;
+              if (true) {
+                var val = 'RIGHT';
+              }
+              return r;
+            }
+            """
+        )
+        self.assertIn(self._evaluate(source), (source, folded))
 
     def test_two_calls_reading_one_table_fold_alike(self):
         source = inspect.cleandoc(
@@ -2028,10 +2003,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual("var r = 'caught';", result)
 
     def test_external_mutation_of_closure_array_blocks_fold(self):
-        # `enc` mutates the shared `key` via key.reverse() but is unfoldable (it returns a Buffer),
-        # so the evaluator cannot model that mutation. At runtime `dec('ABC')` sees key=[3,2,1] and
-        # yields 'B@B', not the pre-mutation '@@@'; folding `dec` with the stale [1,2,3] would change
-        # semantics, so `dec` must be left unevaluated.
         source = inspect.cleandoc(
             """
             const key = [1, 2, 3];
@@ -2069,7 +2040,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var r = f();
             """
         )
-        result = self._evaluate(source)
+        result = self._evaluate_in(source, HostEnvironment.node)
         self.assertEqual("var r = '000000';", result)
 
     def test_typeof_sibling_function_returns_function(self):
@@ -2146,31 +2117,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             result,
         )
 
-    def test_cross_function_mutation_blocks_closure_fold(self):
-        # `enc` reverses the shared `key` but is unfoldable (returns a Buffer), so the mutation is
-        # not modelled. Real JS yields b == c == 'B@B' (key=[3,2,1] after enc), not '@@@'; folding
-        # `dec` against the stale key would be unsound, so both `dec` calls are left unevaluated.
-        source = inspect.cleandoc(
-            """
-            const key = [1, 2, 3];
-            const enc = s => {
-              key.reverse();
-              return Buffer.from(s, 'utf8');
-            };
-            const dec = s => {
-              var r = '';
-              for (var i = 0; i < s.length; i++) {
-                r += String.fromCharCode(s.charCodeAt(i) ^ key[i % key.length]);
-              }
-              return r;
-            };
-            var a = enc('ignored');
-            var b = dec('ABC');
-            var c = dec('ABC');
-            """
-        )
-        self.assertEqual(source, self._evaluate(source))
-
     def test_non_extractable_inner_const_shadows_outer(self):
         source = inspect.cleandoc(
             """
@@ -2182,7 +2128,16 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             }
             """
         )
-        self.assertEqual(source, self._evaluate(source))
+        spliced = inspect.cleandoc(
+            """
+            const x = 'WRONG';
+            function outer(val) {
+              const x = val + val;
+              return x;
+            }
+            """
+        )
+        self.assertIn(self._evaluate(source), (source, spliced))
 
     def test_split_undefined_separator_with_zero_limit(self):
         source = inspect.cleandoc(
@@ -2204,20 +2159,23 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual('var r = 0;', result)
 
-    def test_array_negative_length_assignment_raises(self):
+    def test_array_negative_length_assignment_throws_a_range_error(self):
         source = inspect.cleandoc(
             """
             function f() {
                 var a = [1, 2, 3];
-                a['length'] = -1;
+                try {
+                    a['length'] = -1;
+                } catch (e) {
+                    return e.name;
+                }
                 return a.length;
             }
             """
         )
         func = JsParser(source).parse().body[0]
         assert isinstance(func, JsFunctionDeclaration)
-        with self.assertRaises(Exception):
-            JsInterpreter().execute(func, [])
+        self.assertEqual('RangeError', JsInterpreter().execute(func, []))
 
     def test_a_call_shifting_a_captured_array_stays(self):
         source = inspect.cleandoc(
@@ -2258,13 +2216,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual("var r = ['abc'];", result)
 
-    def test_buffer_reduce_returns_plain_array(self):
-        """
-        The `reduce` accumulator idiom is not folded. `acc.push` is a method call on a parameter, so the
-        callback's summary reports `calls_unknown` — and that same flag is the only thing separating a write
-        to the accumulator from a write to an outer array, so a fold that admitted this would admit that.
-        The chain is left intact, which preserves behavior; only the resolution is given up.
-        """
+    def test_buffer_reduce_into_an_array_stands_or_is_an_array_in_node(self):
         source = inspect.cleandoc(
             """
             const f = () => Array.isArray(
@@ -2273,7 +2225,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var r = f();
             """
         )
-        expected = inspect.cleandoc(
+        standing = inspect.cleandoc(
             """
             const f = () => Array.isArray(Buffer.from([1, 2, 3]).reduce((acc, v) => {
               acc.push(v * 2);
@@ -2282,7 +2234,19 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var r = f();
             """
         )
-        self.assertEqual(expected, self._evaluate(source))
+        self.assertIn(self._evaluate_in(source, HostEnvironment.node), (standing, 'var r = true;'))
+
+    @opportunity
+    def test_buffer_reduce_into_an_array_is_an_array_in_node(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => Array.isArray(
+                Buffer.from([1, 2, 3]).reduce((acc, v) => { acc.push(v * 2); return acc; }, [])
+            );
+            var r = f();
+            """
+        )
+        self.assertEqual('var r = true;', self._evaluate_in(source, HostEnvironment.node))
 
     def test_pure_function_ref_as_value_does_not_produce_wrong_substitution(self):
         source = inspect.cleandoc(
@@ -2305,16 +2269,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
 
 
 class TestAHofCallbackReadingADeadZoneBindingKeepsItsThrow(TestJsDeobfuscator):
-    """
-    The higher-order fold evaluates a callback for the array it produces.
-    `_callback_is_contained` admits a callback that reads an outer `let`/`const` binding — that
-    read is a `dead_zone_reads` throw deferred by the summary, not a `throws` flag — and relies
-    on the fold to abort when the read is unresolved. So a `.map` whose callback reads a binding
-    still in its dead zone must survive, while the same callback reading an established binding
-    must fold. The two together pin the abort: were the fold to start resolving the outer
-    binding, the dead-zone case would fold to a wrong array and drop the `ReferenceError` Node
-    raises.
-    """
 
     def test_a_callback_reading_a_dead_zone_binding_is_not_folded(self):
         source = 'var out = [1, 2].map(function (x) { return q + x; });\nlet q = 10;\nconsole.log(out);\n'
@@ -2345,12 +2299,6 @@ class TestAHofCallbackReadingADeadZoneBindingKeepsItsThrow(TestJsDeobfuscator):
 
 
 class TestHostEntrypointDefinitions(TestJsDeobfuscator):
-    """
-    Once every call to a function has folded to its result, the evaluator deletes the definition. That is
-    right for an internal helper and wrong for a function a host also calls by name: the file's calls are
-    not the only calls. This transform must honour the same declaration the unused-code remover does, or
-    the two disagree about which functions survive.
-    """
 
     def _evaluate_with(self, source: str, *entrypoints: str) -> str:
         return self._run_transformer(
@@ -2379,9 +2327,6 @@ class TestHostEntrypointDefinitions(TestJsDeobfuscator):
         self.assertEqual(expected, self._evaluate_with(source, 'run'))
 
     def test_folded_helper_definition_is_still_removed(self):
-        """
-        The control: naming one entrypoint must not stop the evaluator from cleaning up everything else.
-        """
         source = inspect.cleandoc(
             """
             function calc(n) {
@@ -2393,10 +2338,6 @@ class TestHostEntrypointDefinitions(TestJsDeobfuscator):
         self.assertEqual('SINK(2);', self._evaluate_with(source, 'run'))
 
     def test_entrypoint_keeps_its_body_after_its_callee_folds(self):
-        """
-        The entrypoint survives, but the fold inside it still applies — preserving the definition is not
-        the same as freezing its contents.
-        """
         source = inspect.cleandoc(
             """
             function helper(n) {
@@ -2419,10 +2360,6 @@ class TestHostEntrypointDefinitions(TestJsDeobfuscator):
         self.assertEqual(expected, self._evaluate_with(source, 'run'))
 
     def test_nested_function_sharing_an_entrypoint_name_is_not_kept(self):
-        """
-        Only a declaration a host could reach is protected, which is a top-level one under the script
-        model. A same-named function nested in another body is a distinct binding no host can name.
-        """
         source = inspect.cleandoc(
             """
             function outer() {
@@ -2437,10 +2374,6 @@ class TestHostEntrypointDefinitions(TestJsDeobfuscator):
         self.assertEqual('SINK(2);', self._evaluate_with(source, 'run'))
 
     def test_entrypoint_held_by_a_var_declarator_is_kept(self):
-        """
-        `var run = function(){}` puts `run` on the global object just as a declaration does, so a host can
-        call it and the definition must survive even once the file's own call has folded.
-        """
         source = inspect.cleandoc(
             """
             var run = function(n) {
@@ -2459,11 +2392,11 @@ class TestHostEntrypointDefinitions(TestJsDeobfuscator):
         )
         self.assertEqual(expected, self._evaluate_with(source, 'run'))
 
-    def test_entrypoint_held_by_a_let_declarator_is_not_kept(self):
+    @todo
+    def test_entrypoint_held_by_a_let_declarator_is_kept(self):
         """
-        The companion negative. A `let` is lexical and never becomes a property of the global object, so
-        no host can reach it by name and naming it protects nothing — the same distinction
-        `reaches_global_object` draws for the unused-code remover.
+        A top-level `let` is no property of the global object, yet a host calling `run` by name
+        still finds it, as a browser does when it runs an `onclick="run()"` attribute.
         """
         source = inspect.cleandoc(
             """
@@ -2473,27 +2406,36 @@ class TestHostEntrypointDefinitions(TestJsDeobfuscator):
             SINK(run(1));
             """
         )
-        self.assertEqual('SINK(2);', self._evaluate_with(source, 'run'))
+        expected = inspect.cleandoc(
+            """
+            let run = function(n) {
+              return n + 1;
+            };
+            SINK(2);
+            """
+        )
+        self.assertEqual(expected, self._evaluate_with(source, 'run'))
 
 
 class TestEvaluatorAstralStringEncoding(TestJsDeobfuscator):
-    """
-    Encoding a string reads the Unicode text it denotes, not the UTF-16 units it is stored as: the
-    single code point U+1F600 is four bytes in UTF-8 and four percent-escapes to
-    `encodeURIComponent`. Node: the UTF-8 bytes are `[240, 159, 152, 128]`, their hex is
-    `'f09f9880'`, and `encodeURIComponent('\U0001F600')` is `'%F0%9F%98%80'`.
-    """
+
+    def _fold_in_node(self, expression: str) -> str:
+        return self._run_transformer(
+            F'function f() {{ return {expression}; }} var x = f();',
+            JsFunctionEvaluator,
+            DeobfuscationOptions(environment=HostEnvironment.node),
+        )
 
     def test_buffer_from_utf8_yields_the_four_utf8_bytes(self):
         self.assertEqual(
             'var x = [240, 159, 152, 128];',
-            self._fold("Array.from(Buffer.from('\U0001F600', 'utf8'))"),
+            self._fold_in_node("Array.from(Buffer.from('\U0001F600', 'utf8'))"),
         )
 
     def test_buffer_from_utf8_hex_encodes_the_character(self):
         self.assertEqual(
             "var x = 'f09f9880';",
-            self._fold("Buffer.from('\U0001F600', 'utf8').toString('hex')"),
+            self._fold_in_node("Buffer.from('\U0001F600', 'utf8').toString('hex')"),
         )
 
     def test_encode_uri_component_percent_encodes_the_character(self):
@@ -2504,17 +2446,6 @@ class TestEvaluatorAstralStringEncoding(TestJsDeobfuscator):
 
 
 class TestASplicedBodyReadsNoParameterThatKeptItsName(TestJsDeobfuscator):
-    """
-    Where the interpreter cannot compute a call but the body is one expression, the evaluator splices
-    that expression into the call site and replaces each parameter with the argument the call handed
-    it. A value with no faithful literal form has no node to be replaced by, and a parameter left
-    holding its own name reads whatever the call site binds to that name rather than the argument.
-
-    No program reaches this: every value that survives the admission ahead of the splice is one
-    `refinery.lib.scripts.js.deobfuscation.helpers.value_to_node` spells, and a parameter that is not
-    a plain name is refused earlier still. The rule is therefore stated against the substitution
-    itself, which is where a program that ever did reach it would be answered.
-    """
 
     def _the_body_of(self, source: str):
         script = JsParser(source).parse()

@@ -16,33 +16,18 @@ from test.lib.scripts.js.analysis.jsgen import (
     generate,
 )
 
-#: The seeds whose programs the sweep deobfuscates, once it has seen each of them run cleanly.
 _SWEPT_SEEDS = range(176)
 
-#: The seeds beyond the sweep whose programs must run cleanly too.
 _UNSWEPT_SEEDS = range(_SWEPT_SEEDS.stop, 256)
 
 
 class TestFuzzGenerator(TestBase):
-    """
-    Self-validation for the seeded program generator that feeds the differential fuzzer. A
-    divergence between a program and its deobfuscation is only trustworthy as a deobfuscator bug
-    when the program is itself sound, so these tests pin the generator's invariants rather than any
-    deobfuscation behavior. Generation being a pure function of the seed needs no Node.js and is
-    checked here; the runtime invariants that require an engine live in the Node-gated class below.
-    """
 
     def test_generation_is_deterministic(self):
         for seed in range(256):
             self.assertEqual(generate(seed), generate(seed))
 
     def test_mutate_call_passes_only_a_compatible_container(self):
-        """
-        A mutator runs array-only methods on its parameter, so `_stmt_mutate_call` must hand it an
-        array-kind container. With an array and an object both in scope and one array-mutator, every
-        emitted call passes the array across many RNG states; a kind-blind draw would eventually pass
-        the object and throw in Node.
-        """
         for seed in range(256):
             scope = _Scope()
             scope.objects.append(('arr', 'array'))
@@ -54,11 +39,6 @@ class TestFuzzGenerator(TestBase):
             )
 
     def test_mutator_without_a_compatible_container_is_not_callable(self):
-        """
-        An array-mutator is a candidate only when an array is in scope. With only an object-kind
-        container present no candidate exists, so the dispatcher never offers a `mutate_call` and can
-        never feed the mutator a non-array.
-        """
         scope = _Scope()
         scope.objects.append(('obj', 'object'))
         scope.mutators.append(('mut', 'array'))
@@ -67,10 +47,6 @@ class TestFuzzGenerator(TestBase):
         self.assertEqual(scope.mutator_candidates(), [('mut', 'array')])
 
     def test_objfunc_registers_its_mutator_requiring_an_array(self):
-        """
-        The only mutator producer treats its parameter as an array, so it must register the argument
-        kind it requires as `array`; dropping that kind is what let a caller pass an object.
-        """
         scope = _Scope()
         _Generator(0)._stmt_objfunc(scope, 0)
         self.assertEqual(len(scope.mutators), 1)
@@ -79,15 +55,6 @@ class TestFuzzGenerator(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestFuzzGeneratorRunsInNode(TestBase):
-    """
-    A generated program is a sound oracle input only if Node.js runs it without an uncaught
-    exception, so a future divergence cannot be a spurious `SyntaxError` or `ReferenceError`, and
-    only if it is deterministic, so comparing an original against its deobfuscation is meaningful. A
-    failure here is a generator regression to fix before the fuzzer can be trusted, never a
-    deobfuscator bug. The sweep runs every program it deobfuscates and asserts that it ran cleanly,
-    each seed on its own whatever became of the others, so the programs of the swept seeds are not
-    run here again.
-    """
 
     def test_generated_programs_beyond_the_sweep_run_cleanly(self):
         for seed in _UNSWEPT_SEEDS:
@@ -114,15 +81,6 @@ class TestFuzzGeneratorRunsInNode(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestDeobfuscationFuzzSweep(TestBase):
-    """
-    The differential sweep itself: over a fixed seed range, a generated program and its deobfuscation
-    must behave identically in Node.js, and deobfuscation must not raise. Node is the oracle — no
-    expected output is asserted. This is the permanent regression gate that keeps the three fixed
-    semantics-preservation P0s closed (an effectful `if` test, negative zero, and an effectful call
-    dropped with a dead store). Generator soundness is the precondition: a program that does not run
-    cleanly is a generator regression, reported as such before its deobfuscation is compared, and
-    any other failure here is a deobfuscator bug, not a spurious input.
-    """
 
     def test_deobfuscation_preserves_behavior_across_seeds(self):
         for seed in _SWEPT_SEEDS:
@@ -314,21 +272,6 @@ diverging. The seed is recorded as the provenance of the text and nothing genera
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestTheProgramsWhoseDivergenceWasFixed(TestBase):
-    """
-    Programs the tool once deobfuscated into something Node said printed different things. None of
-    them does any longer, and each is kept here because the sweep does not reach the seed that
-    produced it: nothing else in this file would notice the day one of them diverges again.
-
-    The text of each program is frozen rather than generated. The generator is expected to change,
-    and a change to it repoints a seed at a different program, which would leave a regression named
-    after a divergence exercising a program that never had one — a substitution no assertion here
-    could fail on.
-
-    Node is the oracle for these exactly as it is for the sweep, so no expected output is written
-    down. Whether a divergence is a deobfuscator bug at all rests on the program being a sound
-    oracle input, which is a claim about the generator rather than about the tool, so it is asserted
-    on its own.
-    """
 
     def test_each_program_is_a_sound_oracle_input(self):
         for seed, source in _PROGRAMS_THAT_ONCE_DIVERGED.items():

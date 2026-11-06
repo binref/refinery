@@ -1,10 +1,3 @@
-"""
-Converting a function to a string answers the source it was written with. The parser records the
-span of every function it reads, and the value domain hands that text back for `String(fn)`, for a
-concatenation, and for the join an array performs on its elements; the length of one is the length
-of that text. A function a transform built instead carries no span and is written back the way the
-synthesizer would write it. Retired from the JavaScript defect ledger.
-"""
 from __future__ import annotations
 
 import inspect
@@ -12,18 +5,20 @@ import unittest
 
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import node_executable
-from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints, folded
+from test.lib.scripts.js.ledger import (
+    Program,
+    Reading,
+    before_and_after,
+    each_program_still_prints,
+    folded,
+    on_separate_lines,
+    prints,
+)
 
 from refinery.lib.scripts.js.values import function_source
 from refinery.lib.scripts.js.model import JsFunctionExpression, JsMethodDefinition
 from refinery.lib.scripts.js.parser import JsParser
 
-#: A program reading the text of a function value, mapped to the file `refinery.djs` folds it to.
-#: The read is written inside a function body, which is where the tool answers it at all; the folded
-#: text holds the source the function was written with, character for character, as a string
-#: literal. Each expected value was confirmed against Node: `String` of a declaration keeps its
-#: name, a function expression drops it, an arrow is the arrow, and a method keeps its name; a loose
-#: `==` against that text coerces the function to it and matches.
 A_FUNCTION_STRINGIFIES_TO_ITS_WRITTEN_SOURCE = {
     'a declaration handed to String': (
         'function W(a) { return a + 1; }\n'
@@ -129,12 +124,8 @@ class TestTheStringifiedFunctionRunsTheSameBeforeAndAfter(TestBase):
                 self.assertEqual(before, after)
 
 
-#: A class member's function stringifies to its MethodDefinition source, which excludes a leading
-#: `static` token — the one token V8 drops from a class-body member, whether it is the modifier or
-#: the method's own name (`static() {}` stringifies without it). A `get`, `set`, `async` or `*` is
-#: kept. Each expected value was confirmed against Node's `Function.prototype.toString`. The fold
-#: does not resolve a class-member read to its function, so the recorded span is read through
-#: `function_source` on the parsed method value rather than through a deobfuscation.
+#: Node leaves a leading `static` out of the text of a class member, even where it is the method's
+#: own name: `static() {}` converts to `() {}`.
 A_CLASS_MEMBER_EXCLUDES_A_LEADING_STATIC = {
     'a static method': (
         'class C { static m(a) { return a + 1; } }',
@@ -185,10 +176,26 @@ class TestAClassMemberExcludesALeadingStatic(TestBase):
                 self.assertEqual(function_source(_first_method_value(source)), expected)
 
 
-#: Programs that give a function a `toString` of its own before converting it, each through a
-#: route that reaches the function somewhere other than the conversion, mapped to what Node prints
-#: for each. The text the function was written with is not what such a conversion answers. An
-#: assignment that is not a statement of its own is such a route: its value is the function.
+_PRINT_THE_MEMBER_OF_C = inspect.cleandoc('''
+    for (const o of [C, C.prototype]) {
+      for (const k of Object.getOwnPropertyNames(o)) {
+        if (['length', 'name', 'prototype', 'constructor'].includes(k)) continue;
+        const d = Object.getOwnPropertyDescriptor(o, k);
+        console.log(String(d.value || d.get || d.set));
+      }
+    }
+''')
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodeStringifiesAClassMemberAsEachRowPins(TestBase):
+    def test_node_prints_what_each_row_pins(self):
+        for label, (source, expected) in A_CLASS_MEMBER_EXCLUDES_A_LEADING_STATIC.items():
+            row = Program(on_separate_lines(source, _PRINT_THE_MEMBER_OF_C), prints(expected), Reading.COMMONJS)
+            with self.subTest(label):
+                self.assertEqual(row.behaves(), row.prints)
+
+
 A_FUNCTION_GIVEN_A_TOSTRING_OF_ITS_OWN = {
     'function W(a) { return a + 1; }\n'
     'W.toString = function () { return "x"; };\n'
@@ -278,11 +285,6 @@ class TestAFunctionGivenAToStringOfItsOwnIsConvertedByIt(TestBase):
         )
 
 
-#: Programs that keep a function in an array and give it a conversion of its own through a
-#: reference the function itself holds, mapped to what Node prints: its `this` as a method,
-#: `arguments.callee`, `new.target`, the `constructor` of an instance of a bound copy or of its
-#: prototype, a parameter it is handed to, also by a helper that reads its own `arguments`, a
-#: name copied from the array, or its own name.
 A_FUNCTION_GIVEN_A_CONVERSION_THROUGH_ITS_OWN_REFERENCES = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -408,11 +410,6 @@ class TestAFunctionGivenAConversionThroughItsOwnReferencesIsConvertedByIt(TestBa
         )
 
 
-#: Programs that keep a function in an array and give it a `toString`, `valueOf` or
-#: `Symbol.toPrimitive` of its own or a new prototype through code that never names it, mapped to
-#: what Node prints: a write in any form under a key spelled in any form, an installer however it
-#: is reached (an alias, `call`, `apply`, `Reflect`, destructuring, `with`, a fallback, a spread
-#: of its arguments), a class static block, and code the program builds at runtime.
 A_FUNCTION_GIVEN_A_CONVERSION_BY_AN_INSTALL = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -743,13 +740,6 @@ class TestAFunctionGivenAConversionByAnInstallIsConvertedByIt(TestBase):
         self.assertEqual(before_and_after(source), (('', 'TypeError'), ('', 'TypeError')))
 
 
-#: Programs that give a function kept in an array a conversion of its own under a key the run can
-#: read although no write spells it, mapped to what Node prints: a key or a symbol a name holds, a
-#: key a helper is called with (also where the helper may be called in other ways, forwards the
-#: key through its own recursion, has a parameter with a default, reads its own `arguments`, or
-#: is the constructor of a class, also through `super`), a key a conditional chooses, a key a
-#: constant object, a constant array, a string table or a decoder holds, also where a self-check
-#: or a conversion holds up the decoding, and a key computed from the text of another function.
 A_FUNCTION_GIVEN_A_CONVERSION_UNDER_A_KEY_THE_RUN_CAN_READ = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -1106,11 +1096,6 @@ class TestAFunctionGivenAConversionUnderAKeyTheRunCanReadIsConvertedByIt(TestBas
         )
 
 
-#: Programs that copy a conversion method onto a function kept in an array from a source that
-#: carries one, mapped to what Node prints: a literal spreading a mixin, a mixin built by writes,
-#: filled by a function, made by a factory or by a constructor, a prototype, a class instance, the
-#: methods and fields of a class, the descriptors of an object, a copy loop also through a name or
-#: a descriptor, a target spread from an array, and a source handed to a helper.
 A_FUNCTION_GIVEN_A_CONVERSION_COPIED_FROM_A_SOURCE = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -1326,15 +1311,6 @@ class TestAFunctionGivenAConversionCopiedFromASourceIsConvertedByIt(TestBase):
         )
 
 
-#: Programs that give a function a conversion of its own through a value that may hold it, mapped
-#: to what Node prints: a callback parameter, a name holding it or another function, a map, a
-#: destructured name, a caught value, a closure, the `arguments` object, an object property, a
-#: property named `prototype`, a function expression, an arrow or a method in an array, and the
-#: parameter of a helper that receives it through a call the text does not show as a call of the
-#: helper: `arguments.callee`, `caller`, `call`, a callback, a sequence, an object, a spread, its
-#: own name, a tagged template, `new`, `Reflect.apply`, a method on `Object.prototype`,
-#: `new.target`, the `constructor` of an instance, and a class that constructs itself in a static
-#: block.
 A_FUNCTION_GIVEN_A_CONVERSION_THROUGH_A_VALUE_THAT_MAY_HOLD_IT = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -1657,11 +1633,6 @@ class TestAFunctionGivenAConversionThroughAValueThatMayHoldItIsConvertedByIt(Tes
         )
 
 
-#: Programs that run a constructor writing `this.toString` on a function kept in an array, mapped
-#: to what Node prints: called on it directly or as a copy, a method, a parent class, the
-#: `constructor` of a prototype or of an instance, taken by destructuring, with `Reflect.get`,
-#: from a descriptor or under a key a name holds, and through `arguments.callee`, `new.target` or
-#: `caller`.
 A_FUNCTION_GIVEN_A_CONVERSION_BY_A_CONSTRUCTOR_RUN_ON_IT = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -1833,10 +1804,6 @@ class TestAFunctionGivenAConversionByAConstructorRunOnItIsConvertedByIt(TestBase
         )
 
 
-#: Programs that give `Function.prototype` or `Object.prototype` a conversion while a function
-#: is kept in an array, mapped to what Node prints: through the prototype of the function, an
-#: accessor writing `this`, an alias of `Function`, an installer, a constructor reached from the
-#: array, a getter or a function returning it.
 A_FUNCTION_WHOSE_PROTOTYPES_ARE_GIVEN_A_CONVERSION = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -1987,9 +1954,6 @@ class TestAFunctionWhosePrototypesAreGivenAConversionIsConvertedByIt(TestBase):
         )
 
 
-#: Programs converting a function no code gives a conversion of its own, after handing it to code
-#: that could, mapped to what Node prints: the text the function was written with. Keeping the
-#: conversion would print the text the deobfuscation wrote instead, so each one is folded.
 A_FUNCTION_HANDED_ON_AND_CONVERTED_TO_ITS_WRITTEN_TEXT = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }

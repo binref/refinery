@@ -1,11 +1,3 @@
-"""
-Programs that read a constant inside recursive code: a function that calls itself, two that call
-each other, and a function only such code calls. A function on a call cycle is invoked first
-through a read of it from outside the cycle, so the constant reaches every invocation exactly when
-it is defined before every such read. Also the three names `undefined`, `NaN` and `Infinity` as
-constant values, a long string read many times inside recursive code, and one read once beside a
-nested function that binds the same name.
-"""
 from __future__ import annotations
 
 import unittest
@@ -20,8 +12,6 @@ from test.lib.scripts.js.ledger import (
 
 from refinery.lib.scripts.js.options import ExecutionModel
 
-#: Programs that define an array before the first call into recursive code reading it, mapped to
-#: what Node prints for them.
 AN_ARRAY_DEFINED_BEFORE_RECURSIVE_CODE_RUNS = {
     a_program("""
         const a = [7, 8, 9];
@@ -47,8 +37,6 @@ AN_ARRAY_DEFINED_BEFORE_RECURSIVE_CODE_RUNS = {
         """): '23\n',
 }
 
-#: Programs that call into recursive code reading an array before the array is defined, mapped to
-#: the error Node ends them with.
 AN_ARRAY_DEFINED_AFTER_RECURSIVE_CODE_RUNS = {
     a_program("""
         function f(n) { return n > 0 ? f(n - 1) : a[0]; }
@@ -68,8 +56,6 @@ AN_ARRAY_DEFINED_AFTER_RECURSIVE_CODE_RUNS = {
         """): 'ReferenceError',
 }
 
-#: Programs holding `undefined`, `NaN` and `Infinity` in constants and reading them inside a
-#: function whose own parameters carry those names, mapped to what Node prints for them.
 A_GLOBAL_VALUE_READ_WHERE_ITS_NAME_MEANS_A_PARAMETER = {
     a_program("""
         const u = [undefined, NaN, Infinity];
@@ -83,8 +69,6 @@ A_GLOBAL_VALUE_READ_WHERE_ITS_NAME_MEANS_A_PARAMETER = {
         """): '[ undefined, NaN, Infinity ]\n',
 }
 
-#: A program whose array holds a parameter named `undefined`, which is no constant, mapped to what
-#: Node prints for it.
 AN_ELEMENT_NAMING_A_PARAMETER_CALLED_UNDEFINED = {
     a_program("""
         function g(undefined) {
@@ -96,8 +80,6 @@ AN_ELEMENT_NAMING_A_PARAMETER_CALLED_UNDEFINED = {
         """): '5\n',
 }
 
-#: A program reading a string longer than the inliner pastes five times inside a recursive
-#: function, called with an argument the file cannot know, mapped to what Node prints for it.
 A_LONG_STRING_READ_OFTEN_IN_RECURSIVE_CODE = {
     a_program("""
         const s = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/=_';
@@ -108,8 +90,6 @@ A_LONG_STRING_READ_OFTEN_IN_RECURSIVE_CODE = {
         """): 'bb6625acc6625a\n',
 }
 
-#: A program reading a string longer than the inliner pastes once, beside a nested function whose
-#: parameter carries the same name, mapped to what Node prints for it.
 A_LONG_STRING_READ_ONCE_BESIDE_A_PARAMETER_OF_ITS_NAME = {
     a_program("""
         function main(x) {

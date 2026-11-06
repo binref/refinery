@@ -258,51 +258,26 @@ class TestJsTemplateValue(TemplateLiteralTest):
                 self.assertEqual(self._text(source), text)
 
     def test_template_the_language_refuses_denotes_nothing(self):
-        """
-        Node refuses to evaluate any of these literals, and a tag reading one is handed `undefined`
-        for the run rather than text. No string is what they denote, so no string may be reported
-        as the text they carry.
-        """
         for source in REFUSED_BY_THE_LANGUAGE:
             with self.subTest(source=source):
                 self.assertEqual(self._runs(self._template(source)), [None])
 
     def test_astral_character_denotes_one_string_however_it_is_spelled(self):
-        """
-        Node reports the two literals equal, each two units long: the escape naming the code point
-        and the pair of escapes naming its surrogates denote the same string.
-        """
         self.assertEqual(self._text(SURROGATE_PAIR), self._text(BRACED_ASTRAL))
 
     def test_a_string_reads_the_escape_that_leaves_a_template_denoting_nothing(self):
-        """
-        Node evaluates each string here to the text in the third column and refuses each template
-        beside it. Which literal the escape is written in is the whole of the difference, so a
-        reader that answers the same for both has one of the two wrong.
-        """
         for string, template, text in A_STRING_READS_WHAT_A_TEMPLATE_REFUSES:
             with self.subTest(string=string, template=template):
                 self.assertEqual(self._string_text(string), text)
                 self.assertEqual(self._runs(self._template(template)), [None])
 
     def test_an_escape_the_grammar_does_not_have_leaves_neither_literal_denoting_anything(self):
-        """
-        Node refuses both spellings of each of these, so neither literal names any text: reporting
-        one is inventing a string the file could never have carried. A string keeps the legacy
-        escapes a template refuses, so the escape that leaves it too denoting nothing is a `\\x` or
-        `\\u` naming no character, which is the whole of what parts this table from the one above.
-        """
         for string, template in AN_ESCAPE_NEITHER_LITERAL_HAS:
             with self.subTest(string=string, template=template):
                 self.assertEqual(self._string_text(string), None)
                 self.assertEqual(self._runs(self._template(template)), [None])
 
     def test_the_run_carrying_the_refused_escape_is_the_only_one_denoting_nothing(self):
-        """
-        A tag reading these is handed `undefined` for the run whose escape the grammar has no rule
-        for and the text for every other run, so one refused escape does not cost the literal the
-        runs written beside it.
-        """
         for source, runs in RUNS_THE_LANGUAGE_REFUSES:
             with self.subTest(source=source):
                 self.assertEqual(self._runs(self._template(source)), runs)

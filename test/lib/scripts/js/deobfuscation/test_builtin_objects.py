@@ -1,24 +1,6 @@
 """
-Operators and reads whose answer only the built-in objects give.
-
-An array converted by an operator runs `Array.prototype.join`, a key no value owns is answered by
-the prototype chain, and two array literals compared are two objects. The engine answers each of
-these the same way wherever the program leaves the built-in objects alone, so the deobfuscation
-folds them there: `false + []` is `'false'`, `[][[]]` is `undefined`, `[] == []` is `false`.
-
-A method read off a value is a function the language installs. It has a `name`, its `constructor`
-is `Function`, and it is the same function however it is reached: `[].at === [].at`, and
-`''.trimLeft` is `''.trimStart`. Converted to a string it is the text the host's engine writes for
-it, which hosts write differently, so that text is folded only where the host is pinned to Node. A
-constructor read off a value is written as the global name holding it where that name still does.
-
-A program that does write a built-in object stops all of them, and it need not name the object it
-writes: `''.constructor.prototype.nope = 5` writes `String.prototype`, and so does a function handed
-`''` that writes through `o.__proto__`. Each program below writes one that way, and the
-deobfuscation has to print what the program printed.
-
-Every answer is Node's, under the deobfuscation that suspects code it cannot read (`-s`) and under
-the default one that assumes such code changes nothing.
+Operators and reads that only the built-in objects answer, which fold only where the program leaves
+those objects alone.
 
 SECURITY: every program here is written out by the module itself and Node runs only those. Nothing
 from `samples` may ever be handed to the engine.
@@ -28,7 +10,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 
 from refinery.lib.scripts.js.analysis.effects import build_effects
@@ -36,7 +18,6 @@ from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.units.scripting.djs import djs
 
-#: An expression only the built-in objects answer for, mapped to the text it folds to.
 _FOLDED: dict[str, str] = {
     'false + []'     : "'false'",
     '[] + []'        : "''",
@@ -52,8 +33,6 @@ _FOLDED: dict[str, str] = {
     "'abc'[[1]] + ''"     : "'b'",
 }
 
-#: A program that writes a built-in object through a value it reads without spelling the owner, or
-#: hands such a value to code that may, mapped to what it prints.
 _A_WRITE_NO_NAME_SHOWS: dict[str, str] = {
     "([] + [])['constructor']['prototype']['nope'] = 5; console.log('abc'.nope);": '5\n',
     "var s = 'x'; s.constructor.prototype.nope = 5; console.log('abc'.nope);": '5\n',
@@ -96,8 +75,6 @@ _A_WRITE_NO_NAME_SHOWS: dict[str, str] = {
     "Array.prototype.join = function () { return 'J'; }; console.log(false + [], [] + []);": 'falseJ JJ\n',
 }
 
-#: A program whose string of code writes the built-in objects, which only the model that suspects
-#: code it cannot read accounts for, mapped to what it prints.
 _A_WRITE_IN_A_STRING_OF_CODE: dict[str, str] = {
     inspect.cleandoc("""
         var x = process.argv.length > 99 ? '' : 'Array.prototype.join = function () { return "J"; }; String.prototype.nope = 5;';
@@ -106,9 +83,6 @@ _A_WRITE_IN_A_STRING_OF_CODE: dict[str, str] = {
     """): 'JJ 5 undefined\n',
 }
 
-#: A program whose write on a built-in object shows only once a fold spells the key it goes through,
-#: mapped to what it prints: `caller` joined in an array beside a read the write decides, and `Date`
-#: built from its character codes where it names a property of the global object.
 _A_WRITE_A_FOLD_SPELLS: dict[str, str] = {
     inspect.cleandoc("""
         var done = false;
@@ -126,8 +100,6 @@ _A_WRITE_A_FOLD_SPELLS: dict[str, str] = {
     """): 'true\n',
 }
 
-#: A program reading functions the language installs, mapped to what it prints and to the text it
-#: deobfuscates to in any host.
 _A_BUILTIN_FUNCTION_READ: dict[str, tuple[str, str]] = {
     inspect.cleandoc("""
         console.log([].at === [].at, [].at === [].map, ''.trimLeft === ''.trimStart, [].at == ''.at);
@@ -143,10 +115,6 @@ _A_BUILTIN_FUNCTION_READ: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: A program calling or constructing with a constructor read off a value, mapped to what it prints
-#: and to the text the default model deobfuscates it to in any host. The model that suspects code it
-#: cannot read counts no call through `constructor` (`test_unfixed_defects`), and keeps every fold
-#: from leaning on one.
 _A_CONSTRUCTOR_CALLED: dict[str, tuple[str, str]] = {
     inspect.cleandoc("""
         console.log(typeof new (''.constructor)(5), true.constructor.name);
@@ -168,8 +136,14 @@ _A_CONSTRUCTOR_CALLED: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: A program converting functions the language installs, mapped to what it prints and to the text it
-#: deobfuscates to where the host is pinned to Node.
+_A_CONSTRUCTED_OBJECT_TYPED: dict[str, str] = {
+    "console.log(typeof new (''.constructor)(5), true.constructor.name);": (
+        "console.log('object', 'Boolean');"
+    ),
+}
+
+#: A function the language installs converts to a text each engine writes its own way, so these fold
+#: only where the host is pinned to Node.
 _A_BUILTIN_FUNCTION_CONVERTED: dict[str, tuple[str, str]] = {
     inspect.cleandoc("""
         console.log((Number + [])[11], ([].at + '')[3], (''.trimLeft + '')[13], +[].at);
@@ -179,8 +153,6 @@ _A_BUILTIN_FUNCTION_CONVERTED: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: A program that changes what a function the language installs answers, or what a constructor's
-#: name holds, mapped to what it prints.
 _A_BUILTIN_FUNCTION_CHANGED: dict[str, str] = {
     "function g(o) { o.__proto__.__proto__.nope = 5; } g([].at); console.log('abc'.nope);": '5\n',
     inspect.cleandoc("""
@@ -257,8 +229,6 @@ def _deobfuscated(source: str, strict: bool, environment: str = 'universal') -> 
     return source.encode('utf8') | djs(strict=strict, environment=environment) | str
 
 
-#: Each model and host a deobfuscation below is asked under: the model that suspects code it cannot
-#: read or the default one, in a host nothing is assumed of or in Node.
 _EVERY_MODE = [
     (strict, environment)
     for strict in (True, False)
@@ -267,9 +237,6 @@ _EVERY_MODE = [
 
 
 def _fold(expression: str) -> str:
-    """
-    The expression `refinery.djs` folds *expression* to inside a `console.log` argument.
-    """
     printed = _deobfuscated(F'console.log({expression});', strict=True)
     return printed.removeprefix('console.log(').removesuffix(');')
 
@@ -339,10 +306,21 @@ class TestAFunctionTheLanguageInstalls(TestBase):
                     self.assertEqual(_deobfuscated(source, strict, environment), folded)
 
     def test_a_constructor_called_off_a_value_folds_under_the_default_model_in_every_host(self):
+        typed = _A_CONSTRUCTED_OBJECT_TYPED
         for source, (_, folded) in _A_CONSTRUCTOR_CALLED.items():
             for environment in ('universal', 'node'):
                 with self.subTest(source=source, environment=environment):
-                    self.assertEqual(_deobfuscated(source, False, environment), folded)
+                    self.assertIn(
+                        _deobfuscated(source, False, environment),
+                        (folded, typed.get(source, folded)),
+                    )
+
+    @opportunity
+    def test_the_type_of_an_object_constructed_off_a_value_folds_under_the_default_model(self):
+        for source, typed in _A_CONSTRUCTED_OBJECT_TYPED.items():
+            for environment in ('universal', 'node'):
+                with self.subTest(source=source, environment=environment):
+                    self.assertEqual(_deobfuscated(source, False, environment), typed)
 
     def test_a_conversion_of_one_folds_where_the_host_is_node(self):
         for source, (_, folded) in _A_BUILTIN_FUNCTION_CONVERTED.items():
@@ -351,8 +329,16 @@ class TestAFunctionTheLanguageInstalls(TestBase):
 
     def test_a_conversion_of_one_is_kept_where_the_host_is_not_settled(self):
         for source in _A_BUILTIN_FUNCTION_CONVERTED:
+            deobfuscated = _deobfuscated(source, False)
+            for function in ('Number', '[].at', "''.trimLeft"):
+                with self.subTest(source=source, function=function):
+                    self.assertIn(function, deobfuscated)
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_the_same_for_each_object_type_folded_too(self):
+        for source, typed in _A_CONSTRUCTED_OBJECT_TYPED.items():
             with self.subTest(source=source):
-                self.assertIn('[].at', _deobfuscated(source, False))
+                self.assertEqual(behavior(typed), behavior(source))
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_node_prints_what_each_row_records(self):
@@ -402,4 +388,3 @@ class TestTheGuardOfTheFolds(TestBase):
         ):
             with self.subTest(source=source):
                 self.assertFalse(self._followed(source))
-

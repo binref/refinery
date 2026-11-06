@@ -1,9 +1,9 @@
 """
 Programs declaring a function in a block outside strict code. Such a function has two bindings: the
-block's, holding the function from the moment the block is entered, and a variable of the enclosing
-function or script, which receives what the block's binding holds when the declaration runs (Annex
-B.3.3). A fold reading either name has to read the one the program reads, from the point at which
-it holds what the fold assumes.
+block's, which holds the function from the moment the block is entered, and a variable of the
+enclosing function or script, which exists from the start of that function even on a run that never
+enters the block, and receives what the block's binding holds when the declaration runs (Annex
+B.3.3).
 
 SECURITY: every program here is hand-authored and benign. No sample and no stored obfuscator fixture
 may be fed to this.
@@ -21,9 +21,6 @@ from test.lib.scripts.js.ledger import (
     each_program_still_prints,
 )
 
-#: Programs calling or reading a function declared in a block through either of its names,
-#: before and after the block, on runs that enter the block and on runs that do not, mapped
-#: to what Node prints for them.
 A_CALL_ORDERED_BY_THE_NAME_IT_READS = {
     a_program("""
         function outer(c) {
@@ -254,9 +251,6 @@ A_CALL_ORDERED_BY_THE_NAME_IT_READS = {
         """): 'TypeError\n1\n',
 }
 
-#: Programs declaring a variable named like a function declared in a block, which holds its
-#: own values until the declaration runs and the function from then on, mapped to what Node
-#: prints for them.
 A_VARIABLE_NAMED_LIKE_A_BLOCK_FUNCTION = {
     a_program("""
         function outer() {
@@ -352,9 +346,6 @@ A_VARIABLE_NAMED_LIKE_A_BLOCK_FUNCTION = {
         """): 'abc\nfunction\n',
 }
 
-#: Programs writing the name of a function declared in a block inside the block, directly or
-#: through a closure, before or after the declaration runs and hands what the name holds to
-#: the variable outside the block, mapped to what Node prints for them.
 A_BLOCK_NAME_WRITTEN_BEFORE_THE_COPY = {
     a_program("""
         function outer() {
@@ -552,9 +543,6 @@ A_BLOCK_NAME_WRITTEN_BEFORE_THE_COPY = {
         """): 'function 1\n',
 }
 
-#: Programs reaching one function declared in a block through both of its names: calling,
-#: constructing and handing it on, and storing, deleting or asking for its properties through
-#: one name and reading them through the other, mapped to what Node prints for them.
 ONE_FUNCTION_THROUGH_TWO_NAMES = {
     a_program("""
         function outer() {
@@ -701,9 +689,6 @@ ONE_FUNCTION_THROUGH_TWO_NAMES = {
         """): '3,1\n',
 }
 
-#: Programs whose deobfuscation moves code into, out of or next to a block declaring a
-#: function, by inlining, flattening a namespace, unwrapping a dispatcher or recovering a
-#: generator, where a name may mean the other binding, mapped to what Node prints for them.
 CODE_MOVED_ACROSS_A_BLOCK_FUNCTION = {
     a_program("""
         function outer() {
@@ -1036,9 +1021,6 @@ CODE_MOVED_ACROSS_A_BLOCK_FUNCTION = {
         """): '3\nblock:2\n',
 }
 
-#: Programs declaring a function in a block of a shape of its own: under a label, as the
-#: clause of an `if`, in a block holding one of its name, named `arguments` or like a
-#: parameter, in a dead branch, mapped to what Node prints for them.
 A_BLOCK_FUNCTION_IN_A_SHAPE_OF_ITS_OWN = {
     a_program("""
         function o() {
@@ -1171,9 +1153,6 @@ A_BLOCK_FUNCTION_IN_A_SHAPE_OF_ITS_OWN = {
         """): '1,function\n',
 }
 
-#: Scripts writing the name of a function declared in a block at the top level before the
-#: declaration runs, and reading the variable it is copied into through the global object,
-#: mapped to what Node prints for them when it runs them as classic scripts.
 A_TOP_LEVEL_BLOCK_NAME_READ_THROUGH_THE_GLOBAL_OBJECT = {
     a_program("""
         { f = 9; function f() {} }
@@ -1187,10 +1166,6 @@ A_TOP_LEVEL_BLOCK_NAME_READ_THROUGH_THE_GLOBAL_OBJECT = {
 }
 
 
-#: Programs declaring a function in a block that nothing calls, while a statement of the function
-#: around the block writes or reads the variable the copy of Annex B gives the name, mapped to what
-#: Node prints for them. The variable exists only while the declaration does: without it the write
-#: lands on the outer name and the read finds the outer value.
 A_VARIABLE_ONLY_A_BLOCK_FUNCTION_DECLARES = {
     a_program("""
         var g = 'outer';
@@ -1267,7 +1242,7 @@ class TestNodePrintsTheSameAboutAFunctionDeclaredInABlock(TestBase):
             each_program_still_prints(rows),
         )
 
-    def test_a_variable_only_a_block_function_declares_is_kept_with_the_function(self):
+    def test_the_variable_a_block_function_declares_shadows_the_outer_name(self):
         rows = A_VARIABLE_ONLY_A_BLOCK_FUNCTION_DECLARES
         self.assertEqual(
             {source: before_and_after(source) for source in rows},

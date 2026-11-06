@@ -1,18 +1,14 @@
 """
-How Node's answers are remembered within a run of the test suite and kept between runs, so that a
-later run starts Node only for the programs it has not seen. A run is what `answers_kept_in` makes
-active: the configuration of the test suite enters one in each process, with the folder it names,
-and a process that enters none, such as a script, remembers answers and keeps none.
+Node's answers, remembered within a run of the test suite and kept between runs, so that a later run
+starts Node only for the programs it has not seen. The configuration of the test suite makes a run
+active in each process with `answers_kept_in`; a process that makes none, such as a script,
+remembers answers and keeps none.
 
-A run remembers the latest 1024 answers: tests often ask about the same program a few questions
-apart, and starting Node costs far more than running the program. The bound keeps a process that
-asks about many programs only once, like a fuzzing sweep, from holding all of them. Answers are
-remembered per locale and time zone, because a program can print something else in another one.
+Answers are remembered per locale and time zone, because a program can print something else in
+another one.
 
-The answers that end without an error are also kept for later runs, as `KeptAnswers` says. An answer
-that ends in an error is not kept: a run that fails for a reason unrelated to the program, such as a
-machine that ran out of memory, can then never be given again as what the program does, at the price
-of running every program that throws each time a run asks about it.
+An answer that ends in an error is never kept: a failure unrelated to the program, such as a machine
+that ran out of memory, must never be given again as what the program does.
 """
 from __future__ import annotations
 
@@ -46,21 +42,14 @@ _DEFINITION = (
 #: file without a table, hence 31 bits and never 0.
 _FORMAT = zlib.crc32(_DEFINITION.encode('ascii')) & 0x7FFFFFFF or 1
 
-#: The days a kept answer may go unused before it is removed.
 _UNUSED_DAYS = 30
 
-#: The seconds a process waits for others to finish with the store before it does without.
 _BUSY_SECONDS = 30
 
-#: The number of answers a run remembers.
 _REMEMBERED = 1024
 
 
 def _today() -> int:
-    """
-    The number of the current day, counted in UTC from the start of 1970: the unit in which the last
-    use of a kept answer is recorded.
-    """
     return int(time.time() // 86400)
 
 
@@ -69,9 +58,6 @@ def _digest(key: bytes, answer: bytes) -> bytes:
 
 
 def _rejected(error: sqlite3.Error) -> bool:
-    """
-    Whether *error* is SQLite's verdict that a file is damaged or is not a database at all.
-    """
     code = getattr(error, 'sqlite_errorcode', None)
     return code is not None and (code & 0xFF) in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB)
 
@@ -79,26 +65,19 @@ def _rejected(error: sqlite3.Error) -> bool:
 class KeptAnswers:
     """
     What Node printed for programs that ran without an error, kept in the file `answers.sqlite` of a
-    folder. The key of an answer is a digest of the question and of the identity of the Node that
-    gave it, so that the answers of every Node share the file and none is ever given for another.
+    folder.
 
-    No process holds the file open while its tests run. A process reads the whole file at its first
-    question and writes it once, when `close` is called; on Windows, a file held open would keep
-    pytest from emptying its cache folder. When the file is read, it is also tidied:
+    No process holds the file open while its tests run: it is read whole at the first question and
+    written once, by `close`. On Windows, a file held open would keep pytest from emptying its cache
+    folder.
 
-    - a file that SQLite rejects as damaged or as not a database is deleted
-    - a file of another format has its table made again, empty
-    - answers no run used for `_UNUSED_DAYS` days are removed, where the file can be written
+    Each row holds a digest of its key and answer, checked every time the answer is given: the
+    journal of a killed writer, applied to the file that took the place of its own, mixes the rows
+    of two files without SQLite reporting damage. A row whose fields are not of the types its table
+    declares is skipped, because SQLite does not enforce them.
 
-    The format of the file is the definition of its table, so that a change to what a row holds is a
-    change of the format. Each row also holds a digest of its key and answer, which is checked every
-    time the answer is given: an answer that does not match it is not kept. This covers the one way
-    SQLite can mix the rows of two files without reporting damage, which is the journal of a writer
-    that was killed being applied to the file that took the place of its own.
-
-    A store that cannot be read or written is only a store that keeps nothing: every `OSError` and
-    `sqlite3.Error` means that an answer is not kept, and Node is asked. So does a row whose fields
-    are not of the types its table declares, which SQLite does not enforce.
+    A store that cannot be read or written keeps nothing: every `OSError` and `sqlite3.Error` means
+    that an answer is not kept, and Node is asked.
     """
 
     def __init__(self, folder: Path):
@@ -151,9 +130,6 @@ class KeptAnswers:
         return {key: (answer, digest, used) for key, answer, digest, used in rows}
 
     def answer(self, key: bytes) -> str | None:
-        """
-        The standard output kept under *key*, or `None` when none is kept.
-        """
         with self.lock:
             if (new := self.new.get(key)) is not None:
                 return new.decode('utf-8')
@@ -169,18 +145,10 @@ class KeptAnswers:
             return answer.decode('utf-8')
 
     def keep(self, key: bytes, stdout: str) -> None:
-        """
-        Keep *stdout* under *key*; it is written when the store is closed.
-        """
         with self.lock:
             self.new[key] = stdout.encode('utf-8')
 
     def close(self) -> None:
-        """
-        Write the answers kept since the store was opened, and that the answers it gave were used
-        today. A file that does not exist, as after `--cache-clear` in a worker that started later
-        than the others, is made again; a file of another format is left as it is.
-        """
         with self.lock:
             if self.new or self.used:
                 with suppress(OSError, sqlite3.Error):
@@ -211,11 +179,10 @@ class KeptAnswers:
 
 class _Run:
     """
-    What one run knows about Node's answers: the latest answers it gave, what each Node it asked
-    says it is, and the store it keeps answers in, if any. The store's folder is asked of *where*
-    at the run's first question, and never before: under `--cache-clear`, each xdist worker empties
-    pytest's cache folder as it starts, and a folder that one worker makes while another empties it
-    can fail to be made or to be emptied. No test runs before every worker has started.
+    The store's folder is asked of *where* at the run's first question, never before: under
+    `--cache-clear`, each xdist worker empties pytest's cache folder as it starts, and a folder that
+    one worker makes while another empties it can fail to be made or to be emptied. No test runs
+    before every worker has started.
     """
 
     def __init__(self, where: Callable[[], Path | None] | None):

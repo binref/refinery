@@ -180,11 +180,6 @@ class TestJsParserStatements(TestBase):
         self.assertIsInstance(stmt.init.left, JsArrayPattern)
 
     def test_every_node_in_a_parsed_tree_names_its_holder(self):
-        """
-        A declarator appended to a declaration the loop head already built — the second and later
-        names of `for (var a = 1, b = 2; ...)` — is adopted where it is appended, since everything
-        that walks up parent pointers, removal included, walks out of the tree otherwise.
-        """
         script = self._parse_all('for (var a = 1, b = 2; a < 5; a++) { x(a, b); }')
         self.assertEqual([node for node in script.walk() if node.parent is None], [script])
 
@@ -305,10 +300,16 @@ class TestJsParserStatements(TestBase):
         self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsStaticBlock)]), 1)
         self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
 
-    def test_class_static_field_named_static_still_parses(self):
+    def test_a_static_field_is_one_static_field_and_no_static_block(self):
         ast = JsParser('class C { static x = 1; }').parse()
         self.assertEqual([n for n in ast.walk() if isinstance(n, JsStaticBlock)], [])
         self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
+        fields = [n for n in ast.walk() if isinstance(n, JsPropertyDefinition)]
+        self.assertEqual(len(fields), 1)
+        key = fields[0].key
+        assert isinstance(key, JsIdentifier)
+        self.assertEqual(key.name, 'x')
+        self.assertTrue(fields[0].is_static)
 
     def test_class_field_named_contextual_keyword(self):
         for name in ('static', 'get', 'set', 'async'):
@@ -590,21 +591,12 @@ class TestJsParserStatements(TestBase):
         self.assertIsInstance(script.body[1], JsExpressionStatement)
 
     def _shapes(self, statements: list) -> list[type | tuple[str, str]]:
-        """
-        The statements as their node types, with an unread span as its text and message instead:
-        the one shape whose identity is the text it holds.
-        """
         return [
             (statement.text, statement.message) if isinstance(statement, JsErrorNode) else type(statement)
             for statement in statements
         ]
 
     def test_garbage_before_a_statement_is_unread_text_up_to_the_semicolon(self):
-        """
-        Node refuses `@@@ var x = 1;`. A statement begins where the garbage stands, and a statement
-        no grammar reads runs to the semicolon that ends it, so the declaration written behind the
-        garbage is inside the unread text and not a declaration the file holds.
-        """
         script = self._parse_all('@@@ var x = 1;')
         self.assertEqual(self._shapes(script.body), [('@@@ var x = 1;', 'unexpected token')])
 
@@ -643,29 +635,17 @@ class TestJsParserStatements(TestBase):
         self.assertIsInstance(stmt, JsForInStatement)
 
     def test_newline_before_paren_continues_call(self):
-        """
-        ASI does not insert a semicolon before `(`, so the string on the first line is called as a
-        function: this parses as one statement (a runtime TypeError), matching V8.
-        """
         source = 'global["VERSION"] = "9.4533"\n\n(async () => {\n  const c = global;\n})()'
         body = self._parse_all(source).body
         self.assertEqual(len(body), 1)
         self.assertIsInstance(body[0], JsExpressionStatement)
 
     def test_newline_before_bracket_continues_member(self):
-        """
-        ASI does not insert a semicolon before `[`, so `[0]` on the next line continues the array as a
-        computed member access `[10, 20][0]`: one statement, matching V8.
-        """
         body = self._parse_all('var a = [10, 20]\n[0]').body
         self.assertEqual(len(body), 1)
         self.assertIsInstance(body[0], JsVariableDeclaration)
 
     def test_newline_before_template_continues_tagged_template(self):
-        """
-        ASI does not insert a semicolon before a template literal, so the template on the next line
-        continues `foo` as a tagged template: one statement, matching V8.
-        """
         body = self._parse_all('var x = foo\n`template`').body
         self.assertEqual(len(body), 1)
         self.assertIsInstance(body[0], JsVariableDeclaration)

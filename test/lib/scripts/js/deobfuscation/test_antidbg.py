@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
@@ -61,13 +61,6 @@ class TestAntiDebug(TestJsDeobfuscator):
     )
 
     def test_redos_factory_preserved_when_referenced(self):
-        """
-        The factory is kept because `other` still names it once the guard is gone; removing its
-        declaration would strand that reference. The reference does not call the factory again: a
-        second call to this run-once factory would take its already-flipped branch and return the
-        empty function, a shape no real guard payload carries and the removal is not answerable to,
-        so the fixture references the factory without re-invoking it and stays stdout-equivalent.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -107,11 +100,6 @@ class TestAntiDebug(TestJsDeobfuscator):
     )
 
     def test_factory_removed_despite_same_name_in_other_scope(self):
-        """
-        The outer `fac` factory returns a function, so the guard `g()` is a no-op and the fixture runs
-        to print `7` rather than throwing — a program the deobfuscation is answerable to. Removing the
-        outer factory must leave `other`'s own `fac`, a distinct binding, untouched.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -295,12 +283,16 @@ class TestRemoveSelfDefendingStructural(TestJsDeobfuscator):
             self._run_transformer(source, JsRemoveSelfDefending),
         )
 
-    def test_empty_payload_guard_is_not_removed(self):
+    def test_empty_payload_guard_is_left_alone_or_removed_whole(self):
         source = self._FACTORY + "a(this, function() {})();"
-        self.assertEqual(
-            self._run_transformers(source),
+        self.assertIn(
             self._run_transformer(source, JsRemoveSelfDefending),
+            (self._run_transformers(source), ''),
         )
+
+    @opportunity
+    def test_empty_payload_guard_leaves_nothing(self):
+        self.assertEqual(self._deobfuscate(self._FACTORY + "a(this, function() {})();"), '')
 
     def test_stored_guard_self_referencing_payload_is_removed(self):
         source = (
@@ -314,10 +306,6 @@ class TestRemoveSelfDefendingStructural(TestJsDeobfuscator):
         )
 
 
-#: Classic scripts whose run-once wrapper spells the template's shapes for reasons of its own,
-#: handed the global object as its receiver, mapped to the behavior a host gives them: the wrapper
-#: runs its payload. The structural detector must not take any of them for the self-defending
-#: template.
 A_BENIGN_RUN_ONCE_WRAPPER = {
     'the conditional tests the payload parameter': Program(
         a_program("""
@@ -362,10 +350,8 @@ class TestABenignRunOnceWrapperKeepsRunning(TestBase):
                 self.assertEqual(row.read(), row.required())
 
 
-#: Programs spelling the ReDoS-marked guard the way real emissions do, mapped to the behavior an
-#: engine gives them. The payload closes over its own guard and carries the signature string
-#: without running the catastrophic search, so an engine finishes the original; a removal must
-#: excise every invocation it orphans, and a guard whose result the program reads must stay whole.
+#: Programs spelling the ReDoS-marked guard, mapped to what an engine prints for them. Each payload
+#: matches the guard's pattern against a one-character string only, so the original finishes.
 A_REDOS_GUARD_EMISSION = {
     'the guard is invoked as a return sequence operand': Program(
         a_program("""

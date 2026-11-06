@@ -1,11 +1,3 @@
-"""
-Programs that call a function reading a constant before the constant exists, through a channel
-other than a read of the function's own name: a method reached through the object that holds it, a
-host calling a declared entry point, and an importer calling an export. JavaScript throws
-`ReferenceError` at the read, and a deobfuscation that folds the constant into the function returns
-a value where the input threw. Each program has a twin making the same call after the constant
-exists, where the constant must still fold.
-"""
 from __future__ import annotations
 
 import inspect
@@ -27,9 +19,6 @@ from test.lib.scripts.js.ledger import (
 
 from refinery.lib.scripts.js.options import ExecutionModel
 
-#: Programs that hand the object holding `NS.g` to code before `a` exists, where that code calls
-#: `NS.g` without the text spelling a read of it: a method call passes the object as `this`, and an
-#: accessor on the object, on its prototype, or on `Object.prototype` runs with it as `this`.
 A_METHOD_CALLED_THROUGH_ITS_OBJECT_BEFORE_THE_CONSTANT = {
     'a sibling method called on the object': a_program("""
         var NS = {h: 1};
@@ -217,8 +206,6 @@ A_METHOD_CALLED_THROUGH_ITS_OBJECT_BEFORE_THE_CONSTANT = {
         """),
 }
 
-#: The programs of `A_METHOD_CALLED_THROUGH_ITS_OBJECT_BEFORE_THE_CONSTANT` with `a` declared first,
-#: mapped to what Node prints for them: every call now runs after `a` exists.
 THE_SAME_CALLS_AFTER_THE_CONSTANT = {
     a_program("""
         const a = [7, 8];
@@ -407,8 +394,6 @@ THE_SAME_CALLS_AFTER_THE_CONSTANT = {
 }
 
 
-#: Programs that hand the object holding `NS.g` to code before `a` exists but store `NS.g` only
-#: after it, mapped to what Node prints for them: no call can reach `NS.g` before it is stored.
 A_METHOD_STORED_AFTER_THE_CONSTANT_ON_AN_OBJECT_HANDED_OVER_BEFORE = {
     a_program("""
         var NS = {h: 1};
@@ -429,8 +414,6 @@ A_METHOD_STORED_AFTER_THE_CONSTANT_ON_AN_OBJECT_HANDED_OVER_BEFORE = {
 }
 
 
-#: Modules that export a function reading `x` before `x` exists, mapped to a module in a cycle with
-#: each: the exporter imports it, so it runs first, and it imports the function back and calls it.
 AN_EXPORT_AN_IMPORTER_IN_A_CYCLE_CALLS_BEFORE_THE_CONSTANT = {
     a_program("""
         import { g } from './b.mjs';
@@ -470,8 +453,6 @@ AN_EXPORT_AN_IMPORTER_IN_A_CYCLE_CALLS_BEFORE_THE_CONSTANT = {
 }
 
 
-#: Modules that import nothing and export a function reading `y`, which only some runs of their body
-#: define, mapped to a module importing the function that calls it once the exporter has finished.
 AN_EXPORT_AN_IMPORTER_CALLS_AFTER_A_BODY_THAT_SKIPPED_THE_CONSTANT = {
     a_program("""
         export function f() { return y; }
@@ -491,12 +472,6 @@ def run_by_a_host_that_fires(
     entrypoint: str,
     method: str | None = None,
 ) -> tuple[str, str | None]:
-    """
-    What Node makes of *source* run as a classic global script by a host that offers it one
-    function, `fire`, which calls the global function *entrypoint* at once, or with *method* the
-    function stored at that key of the global object *entrypoint*: an event the host dispatches
-    while the script is still running, as Windows Script Host does for a connected object.
-    """
     target = F'globalThis[{json.dumps(entrypoint)}]'
     if method is not None:
         target = F'{target}[{json.dumps(method)}]'
@@ -587,10 +562,6 @@ class TestAFunctionCalledFromOutsideTheFile(TestBase):
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_an_importer_calling_an_export_after_a_body_that_skipped_the_constant_reads_it_unset(self):
-        """
-        An importer outside every import cycle calls the export once the exporter has finished, and
-        the run of the exporter it follows never defined `y`.
-        """
         rows = AN_EXPORT_AN_IMPORTER_CALLS_AFTER_A_BODY_THAT_SKIPPED_THE_CONSTANT
         results = {}
         for exporter, importer in rows.items():
@@ -605,10 +576,6 @@ class TestAFunctionCalledFromOutsideTheFile(TestBase):
         )
 
     def test_an_entrypoint_no_host_reaches_by_name_reads_the_constant_folded(self):
-        """
-        Under the module model a top-level declaration is no property of the global object, so a
-        declared entry point is called only where the file calls it.
-        """
         source = a_program("""
             function OnEvent() { console.log(K[0]); }
             const K = ['x'];
@@ -620,9 +587,9 @@ class TestAFunctionCalledFromOutsideTheFile(TestBase):
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_an_importer_calling_an_export_before_the_constant_still_throws(self):
         """
-        A function declaration crosses a module boundary at link time: a module the exporter
-        imports, and which imports the exporter back, runs first and can call the function while a
-        `const` it reads is still in its dead zone.
+        A function declaration is initialized when its module is linked. The importer runs first,
+        because the exporter imports it, and calls the function while the `const` it reads is still
+        in its dead zone.
         """
         rows = AN_EXPORT_AN_IMPORTER_IN_A_CYCLE_CALLS_BEFORE_THE_CONSTANT
         results = {}
@@ -639,10 +606,6 @@ class TestAFunctionCalledFromOutsideTheFile(TestBase):
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_an_export_of_a_module_that_imports_nothing_reads_the_constant_folded(self):
-        """
-        A module that imports nothing is in no cycle, so it runs its whole body before any importer
-        calls into it.
-        """
         exporter = a_program("""
             export function f() { return x[0]; }
             const x = [1];

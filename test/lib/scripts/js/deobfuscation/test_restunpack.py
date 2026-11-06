@@ -301,11 +301,6 @@ class TestVariableDemasking(TestJsDeobfuscator):
         return self._REST_LENGTH_BEFORE_AN_UNRELATED_ONE.replace('LENGTH', length)
 
     def test_binds_the_first_length_written_to_the_rest_array(self):
-        """
-        The control the refusals below are read against. Two is a parameter count, so the rest array
-        is unpacked into two parameters and the unrelated chain is left exactly where it was. Node
-        prints `8 [7]` for both programs with `NS.F.stk` starting as `[7, 8, 9]` and `f(1, 2, 3)`.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -319,11 +314,6 @@ class TestVariableDemasking(TestJsDeobfuscator):
         )
 
     def test_skips_oversized_truncation_without_binding_a_later_length_assignment(self):
-        """
-        A million is no parameter list, so the pattern is not this one. Reading on until some other
-        `.length =` fits would unpack the function around a stack it never had, dropping the rest
-        parameter that the surviving statements still name.
-        """
         source = self._rest_length_before_an_unrelated_one('1000000')
         self.assertEqual(source, self._demask(source))
 
@@ -336,18 +326,10 @@ class TestVariableDemasking(TestJsDeobfuscator):
         self.assertEqual(source, self._demask(source))
 
     def test_skips_unreadable_truncation_without_binding_a_later_length_assignment(self):
-        """
-        The count is a name rather than a number, so nothing about it is known. That is the same
-        answer as an unusable number and not a reason to look for a different statement.
-        """
         source = self._rest_length_before_an_unrelated_one('n')
         self.assertEqual(source, self._demask(source))
 
     def test_skips_oversized_frame_truncation_without_binding_a_later_length_assignment(self):
-        """
-        The same refusal when the oversized truncation is the frame-qualified form, where the
-        candidate that follows is another chain rather than the rest parameter.
-        """
         source = inspect.cleandoc(
             """
             var g = function(...r) {
@@ -361,23 +343,11 @@ class TestVariableDemasking(TestJsDeobfuscator):
 
 
 class TestStackKeysThatOnlyLookLikeIndices(TestJsDeobfuscator):
-    """
-    A stack key is a property name, and only the canonical decimal spelling of an index names the
-    element a parameter stands in for. `str.isdigit` answers a different question: it is true of every
-    Unicode decimal digit and of the superscripts, so it accepts names that index nothing. Restricting
-    it to ASCII answers a different question still: a run of ASCII digits behind a zero is a name no
-    element of any array has.
-    """
 
     def _demask(self, source: str) -> str:
         return self._run_transformer(source, JsRestArrayUnpacking)
 
     def test_an_arabic_indic_digit_names_a_property_and_not_a_parameter(self):
-        """
-        `s['٢']` and `s[2]` are two properties in JavaScript, so a rewrite that gives them one
-        name computes a different sum: with the arguments `(0, 0, 5)` the function returns `14`
-        where the rewritten one returns `18`.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -395,10 +365,6 @@ class TestStackKeysThatOnlyLookLikeIndices(TestJsDeobfuscator):
         )
 
     def test_a_superscript_two_names_a_property_and_does_not_end_the_pass(self):
-        """
-        `s['²']` and `s[0]` are two properties, and the superscript is a name no index has, so the
-        one parameter stays alone and the key becomes a local beside it.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -416,11 +382,6 @@ class TestStackKeysThatOnlyLookLikeIndices(TestJsDeobfuscator):
         )
 
     def test_a_leading_zero_names_a_property_and_not_the_index_its_digits_spell(self):
-        """
-        `s['01']` and `s[1]` are two properties in JavaScript — `Object.keys` of the array reports
-        `0`, `1` and `01` — so a rewrite that gives them one name computes a different sum: with
-        the arguments `(0, 5)` the function returns `14` where the rewritten one returns `18`.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -438,13 +399,11 @@ class TestStackKeysThatOnlyLookLikeIndices(TestJsDeobfuscator):
         )
 
 
-#: A sloppy program whose single rest parameter would become a list of plain names, mapped to the
-#: program that rewrite would produce, to the rest pattern the pass writes instead, and to what Node
-#: prints for the program and for the plain names. A rest parameter is not a simple parameter list,
-#: so the `arguments` object such a function has holds a copy of the call's arguments; a list of
-#: plain names makes its elements alias the parameters instead, and the write each program makes is
-#: then read back under the other name. No pair here agrees, which is why the names stay inside a
-#: rest pattern, which is not a simple list either.
+#: A sloppy program whose rest parameter would become a list of plain names, mapped to that rewrite,
+#: to the rest pattern the pass writes instead, to what Node prints for the program and to what it
+#: prints for the rewrite. The `arguments` object of a function with a rest parameter holds a copy
+#: of the call's arguments, while that of a sloppy function with plain names aliases its parameters,
+#: so a write under one name is read back under the other.
 _A_REWRITE_THE_ARGUMENTS_OBJECT_WOULD_OBSERVE: dict[str, tuple[str, str, str, str]] = {
     'function f(...s) { s.length = 1; s[0] = 9; return arguments[0]; } console.log(f(3));': (
         'function f(p0) { p0 = 9; return arguments[0]; } console.log(f(3));',
@@ -554,10 +513,8 @@ _A_REWRITE_THE_ARGUMENTS_OBJECT_WOULD_OBSERVE: dict[str, tuple[str, str, str, st
     ),
 }
 
-#: A program whose rest array the pass unpacks, mapped to the text it writes for it and to what Node
-#: prints for the program either way. Every function here either runs in a mode where no `arguments`
-#: object aliases anything, or names none of its own, so a list of plain names observes nothing the
-#: rest parameter did not.
+#: In each function no element of an `arguments` object can alias a parameter: the function is
+#: strict, reads no `arguments` object of its own, or is left with no parameter.
 _A_REST_ARRAY_THE_PASS_UNPACKS: dict[str, tuple[str, str]] = {
     "'use strict';"
     ' function f(...s) { s.length = 1; s[0] = 9; return arguments[0] + s[0]; }'
@@ -732,15 +689,8 @@ class TestARestArrayThePassUnpacks(TestJsDeobfuscator):
 
 class TestABodyThatOpensWithADirective(TestJsDeobfuscator):
     """
-    The locals the unpacking mints are declared behind the body's Directive Prologue and not ahead
-    of it. A statement written above the prologue ends it, so a declaration at the head of the body
-    takes the directive out of the prologue and leaves what was written as a mode declaration as an
-    expression whose value is discarded.
-
-    Which mode that costs cannot be asked of the source: a Use Strict Directive may not stand under
-    a parameter list that is not simple, so the function this pass takes in is one no engine reads.
-    The function it hands back has a list of plain names and is a program, and the mode it runs in
-    is the question the engine can answer.
+    A body under a rest parameter may not open with `'use strict'`, so the program the pass is given
+    is a `SyntaxError`, and only the unpacked function can tell Node which mode it runs in.
     """
 
     def _demask(self, source: str) -> str:
@@ -798,11 +748,6 @@ class TestABodyThatOpensWithADirective(TestJsDeobfuscator):
         )
 
 
-#: Programs whose rest array a nested function reads or writes, or whose key is no slot of it,
-#: mapped to what Node prints for each. The pass unpacks an array every reference of which, nested
-#: functions included, is a slot read after the truncation, and keeps one with a deleted slot, a key
-#: the array inherits, a parameter slot called with the array as its receiver, a `with` body or a
-#: direct `eval` reaching it, a slot read before the truncation, or a `var` declaring it again.
 _A_REST_ARRAY_NAMED_BEYOND_ITS_OWN_BODY = {
     (
         'function f(...m) { m.length = 0; m[3] = function () { return m[4]; }; m[4] = "v"; return m[3](); }\n'
@@ -894,11 +839,6 @@ class TestARestArrayNamedBeyondItsOwnBody(TestJsDeobfuscator):
         )
 
 
-#: Programs whose function stores its rest array into an object it creates and works through the
-#: object, mapped to what Node prints for each. In every one the array is read or written as a
-#: whole, so it has to stay the object's: the first has a call write an element through the object
-#: it was handed, the second joins the array, and the third has a call read an element under a key
-#: only the runtime knows.
 _A_REST_ARRAY_AN_OBJECT_HOLDS = {
     (
         'function h(o) { o.k[0] = 10; }\n'
@@ -920,12 +860,6 @@ _A_REST_ARRAY_AN_OBJECT_HOLDS = {
 
 
 class TestARestArrayAnObjectHoldsIsNotTheRestParameter(TestJsDeobfuscator):
-    """
-    A function may store its rest array into an object and truncate and index it there. Whether the
-    array the object holds is the rest array is a question of what the object holds, which the
-    passes that take such objects apart answer; this pass rewrites the rest parameter itself and
-    leaves a function whose only truncation is written on an object as it is.
-    """
 
     def _demask(self, source: str) -> str:
         return self._run_transformer(source, JsRestArrayUnpacking)
@@ -955,13 +889,6 @@ class TestARestArrayAnObjectHoldsIsNotTheRestParameter(TestJsDeobfuscator):
         )
 
 
-#: Programs whose function reads its variables out of a stack hanging off an object rather than out
-#: of the rest parameter it declares, mapped to what Node prints for each. The truncation is written
-#: on the qualified name and the rest parameter is named nowhere but in the parameter list. The
-#: elements reach the function through the object: one program stores them after the declaration,
-#: one writes them into the object literal, one reaches the stack through a chain of two names, one
-#: holds two of them, one calls the function twice, and one has the body write an element back for
-#: the file to read after the call.
 A_STACK_REACHED_THROUGH_A_QUALIFIED_NAME = {
     'var NS = { F: {} };\n'
     'function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }\n'
@@ -991,11 +918,6 @@ A_STACK_REACHED_THROUGH_A_QUALIFIED_NAME = {
 }
 
 
-#: Programs whose function stores into a stack reached through a qualified name under a key that is
-#: no parameter's index, mapped to what Node prints for each. The keys are an identifier, a string,
-#: a negative index, and a decimal that is not the canonical spelling of the one it resembles; the
-#: chain is two names long or one; and the last two ask, in a file with no directive in it, how many
-#: properties the run left on the global object.
 A_QUALIFIED_STACK_KEY_THAT_NAMES_NO_PARAMETER = {
     "'use strict';\n"
     'var NS = { F: { stk: [] } };\n'
@@ -1047,9 +969,6 @@ A_QUALIFIED_STACK_KEY_THAT_NAMES_NO_PARAMETER = {
 }
 
 
-#: Programs calling a member of a rest parameter's array through a chain of members whose length
-#: is written for the rest array, run as a CommonJS file, mapped to what Node prints for each: the
-#: array stored on a local object, and another object's array.
 A_REST_ARRAY_READ_THROUGH_A_CHAIN_OF_MEMBERS = {
     'the rest array stored on a local object': Program(
         a_program("""
@@ -1081,11 +1000,6 @@ A_REST_ARRAY_READ_THROUGH_A_CHAIN_OF_MEMBERS = {
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAStackHangingOffAnObjectIsNotTheArgumentsOfACall(TestBase):
-    """
-    A function can pack its variables into an array reached through a qualified name instead of into
-    the rest parameter it declares. That array belongs to the object, so what it holds is whatever
-    the program put there, and the call that runs the function need pass nothing at all.
-    """
 
     def test_the_elements_the_object_holds_survive_the_unpacking(self):
         rows = A_STACK_REACHED_THROUGH_A_QUALIFIED_NAME
@@ -1097,11 +1011,6 @@ class TestAStackHangingOffAnObjectIsNotTheArgumentsOfACall(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAKeyOfAStackHangingOffAnObjectStaysAKeyOfTheStack(TestBase):
-    """
-    A key of a stack reached through a qualified name that is no parameter's index names a property
-    of the array the object holds, never a variable: none is declared for it, and in sloppy code
-    none lands on the global object.
-    """
 
     def test_each_program_still_prints_what_it_prints(self):
         rows = A_QUALIFIED_STACK_KEY_THAT_NAMES_NO_PARAMETER

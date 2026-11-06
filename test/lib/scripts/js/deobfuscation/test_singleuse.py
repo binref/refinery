@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+from test import opportunity
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.singleuse import JsSingleUseFunctionInliner
@@ -24,9 +25,24 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
             self._singleuse('var g = 1;\nfunction w() {\n  print(g);\n}\nw();'))
 
     def test_a_trailing_return_becomes_the_expression_its_value_fed(self):
+        source = inspect.cleandoc(
+            """
+            function w() {
+              print(1);
+              return print(2);
+            }
+            w();
+            """
+        )
         self.assertEqual(
-            'print(1);\n2;',
-            self._singleuse('function w() {\n  print(1);\n  return 2;\n}\nw();'))
+            inspect.cleandoc(
+                """
+                print(1);
+                print(2);
+                """
+            ),
+            self._singleuse(source),
+        )
 
     def test_a_valueless_trailing_return_is_dropped(self):
         self.assertEqual(
@@ -48,13 +64,25 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
                 '}\n'
                 'w();'))
 
-    def test_two_wrappers_fold_one_per_pass(self):
+    def test_two_wrappers_fold_within_two_passes(self):
         once = self._singleuse(
             'function a() {\n'
             '  print(1);\n'
             '}\n'
-            'a();')
-        self.assertEqual('print(1);', self._singleuse(once))
+            'a();\n'
+            'function b() {\n'
+            '  print(2);\n'
+            '}\n'
+            'b();')
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                print(1);
+                print(2);
+                """
+            ),
+            self._singleuse(once),
+        )
 
     def test_a_commonjs_wrapper_name_declared_in_the_body_keeps_the_wrapper(self):
         rows = [
@@ -108,9 +136,38 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
             ),
         )
 
-    def test_a_reflection_surface_refuses_the_fold(self):
-        source = 'var e = eval;\nfunction w() {\n  print(1);\n}\nw();'
+    def test_a_reflection_surface_that_runs_unread_code_refuses_the_fold(self):
+        source = inspect.cleandoc(
+            """
+            var e = eval;
+            function w() {
+              print(1);
+            }
+            w();
+            e(code);
+            """
+        )
         self.assertEqual(source, self._singleuse(source))
+
+    @opportunity
+    def test_an_eval_alias_nothing_calls_does_not_refuse_the_fold(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var e = eval;
+                print(1);
+                """
+            ),
+            self._singleuse(inspect.cleandoc(
+                """
+                var e = eval;
+                function w() {
+                  print(1);
+                }
+                w();
+                """
+            )),
+        )
 
     def test_a_wrapper_invoked_before_its_declaration_folds(self):
         self.assertEqual(
@@ -179,9 +236,14 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
         source = 'function w() {\n  print(arguments);\n}\nw();'
         self.assertEqual(source, self._singleuse(source))
 
-    def test_a_body_reading_this_refuses_the_fold(self):
+    def test_a_body_reading_this_refuses_the_fold_in_a_commonjs_file(self):
         source = 'function w() {\n  print(this);\n}\nw();'
-        self.assertEqual(source, self._singleuse(source))
+        options = DeobfuscationOptions(execution=ExecutionModel.commonjs)
+        self.assertEqual(source, self._run_transformer(source, JsSingleUseFunctionInliner, options))
+
+    @opportunity
+    def test_a_body_reading_this_folds_into_a_classic_script(self):
+        self.assertEqual('print(this);', self._singleuse('function w() {\n  print(this);\n}\nw();'))
 
     def test_a_body_reading_new_target_refuses_the_fold(self):
         source = 'function w() {\n  print(new.target);\n}\nw();'
@@ -202,8 +264,15 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
             'w();')
         self.assertEqual(source, self._singleuse(source))
 
-    def test_a_direct_eval_in_the_body_refuses_the_fold(self):
-        source = 'function w() {\n  eval(\'print(1);\');\n}\nw();'
+    def test_a_direct_eval_of_unread_code_in_the_body_refuses_the_fold(self):
+        source = inspect.cleandoc(
+            """
+            function w() {
+              eval(code);
+            }
+            w();
+            """
+        )
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_body_declaration_clashing_at_the_script_refuses_the_fold(self):
@@ -224,15 +293,39 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
             'w();')
         self.assertEqual(source, self._singleuse(source))
 
-    def test_a_body_declaration_under_a_reflection_surface_refuses_the_fold(self):
+    def test_a_body_declaration_under_a_surface_running_unread_code_refuses_the_fold(self):
         source = (
             'var e = eval;\n'
             'function w() {\n'
             '  var q = 1;\n'
             '  print(q);\n'
             '}\n'
-            'w();')
+            'w();\n'
+            'e(code);')
         self.assertEqual(source, self._singleuse(source))
+
+    @opportunity
+    def test_a_body_declaration_beside_an_eval_alias_nothing_calls_folds(self):
+        source = inspect.cleandoc(
+            """
+            var e = eval;
+            function w() {
+              var q = 1;
+              print(q);
+            }
+            w();
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var e = eval;
+                var q = 1;
+                print(q);
+                """
+            ),
+            self._singleuse(source),
+        )
 
     def test_an_effectful_invocation_argument_refuses_the_fold(self):
         source = 'function w() {\n  print(1);\n}\nw(print(2));'

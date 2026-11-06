@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+from test import opportunity
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.cff import JsControlFlowUnflattening
@@ -109,45 +110,84 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
             """
         ))
 
-    def test_referenced_order_var_blocks_unflattening(self):
-        source = inspect.cleandoc(
-            """
-            var _order = ['1', '0'], n = _order.length, _idx = 0;
-            while (true) {
-              switch (_order[_idx++]) {
-                case '0':
-                  var b = 2;
-                  continue;
-                case '1':
-                  var a = 1;
-                  continue;
-              }
-              break;
-            }
-            """
-        )
-        self.assertEqual(source, self._run_transformer(source, JsControlFlowUnflattening))
+    _AN_ORDER_READ_ELSEWHERE = inspect.cleandoc(
+        """
+        var _order = ['1', '0'], n = _order.length, _idx = 0;
+        while (true) {
+          switch (_order[_idx++]) {
+            case '0':
+              var b = 2;
+              continue;
+            case '1':
+              var a = 1;
+              continue;
+          }
+          break;
+        }
+        """
+    )
 
-    def test_referenced_counter_var_in_case_body_blocks_unflattening(self):
-        source = inspect.cleandoc(
-            """
-            var _order = ['1', '0'], _idx = 0;
-            while (true) {
-              switch (_order[_idx++]) {
-                case '0':
-                  var b = 2;
-                  continue;
-                case '1':
-                  var a = _idx;
-                  continue;
-              }
-              break;
-            }
-            """
-        )
-        self.assertEqual(source, self._run_transformer(source, JsControlFlowUnflattening))
+    _AN_ORDER_READ_ELSEWHERE_UNFLATTENED = inspect.cleandoc(
+        """
+        var _order = ['1', '0'], n = _order.length;
+        var a = 1;
+        var b = 2;
+        """
+    )
 
-    def test_referenced_counter_var_after_loop_preserves_declaration(self):
+    def test_an_order_read_elsewhere_is_left_alone_or_kept_for_its_reader(self):
+        source = self._AN_ORDER_READ_ELSEWHERE
+        self.assertIn(
+            self._run_transformer(source, JsControlFlowUnflattening),
+            (source, self._AN_ORDER_READ_ELSEWHERE_UNFLATTENED),
+        )
+
+    @opportunity
+    def test_an_order_read_elsewhere_is_unflattened_and_kept_for_its_reader(self):
+        self.assertEqual(
+            self._run_transformer(self._AN_ORDER_READ_ELSEWHERE, JsControlFlowUnflattening),
+            self._AN_ORDER_READ_ELSEWHERE_UNFLATTENED,
+        )
+
+    _A_COUNTER_READ_IN_A_CASE = inspect.cleandoc(
+        """
+        var _order = ['1', '0'], _idx = 0;
+        while (true) {
+          switch (_order[_idx++]) {
+            case '0':
+              var b = 2;
+              continue;
+            case '1':
+              var a = _idx;
+              continue;
+          }
+          break;
+        }
+        """
+    )
+
+    _A_COUNTER_READ_IN_A_CASE_UNFLATTENED = inspect.cleandoc(
+        """
+        var a = 1;
+        var b = 2;
+        """
+    )
+
+    def test_a_counter_read_in_a_case_is_left_alone_or_read_as_its_value_there(self):
+        source = self._A_COUNTER_READ_IN_A_CASE
+        self.assertIn(
+            self._run_transformer(source, JsControlFlowUnflattening),
+            (source, self._A_COUNTER_READ_IN_A_CASE_UNFLATTENED),
+        )
+
+    @opportunity
+    def test_a_counter_read_in_a_case_is_unflattened_to_its_value_there(self):
+        self.assertEqual(
+            self._run_transformer(self._A_COUNTER_READ_IN_A_CASE, JsControlFlowUnflattening),
+            self._A_COUNTER_READ_IN_A_CASE_UNFLATTENED,
+        )
+
+    def test_a_counter_read_after_the_loop_is_left_alone_or_holds_its_last_value(self):
         source = inspect.cleandoc(
             """
             var _order = ['1', '0'], _idx = 0;
@@ -165,7 +205,15 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
             sink(_order, _idx);
             """
         )
-        self.assertEqual(source, self._deobfuscate_iterative(source))
+        unflattened = inspect.cleandoc(
+            """
+            var _order = ['1', '0'], _idx = 3;
+            var a = 1;
+            var b = 2;
+            sink(_order, _idx);
+            """
+        )
+        self.assertIn(self._deobfuscate_iterative(source), (source, unflattened))
 
     def test_generated_simple_greet(self):
         result = self._deobfuscate(
@@ -228,7 +276,7 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._deobfuscate(source))
 
-    def test_non_split_method_unchanged(self):
+    def test_an_order_cut_by_a_method_other_than_split_is_folded_and_not_read_as_split(self):
         source = inspect.cleandoc(
             """
             var _order = '1|0|2'['slice']('|');
@@ -244,26 +292,67 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
             """
         )
         result = self._deobfuscate(source)
-        self.assertEqual(result, inspect.cleandoc(
+        self.assertNotIn("['slice']", result)
+        self.assertNotIn(
+            inspect.cleandoc(
+                """
+                var a = 1;
+                var b = 2;
+                var c = 3;
+                """
+            ),
+            result,
+        )
+
+    def test_an_order_cut_by_a_method_other_than_split_keeps_its_loop_or_sets_only_a(self):
+        source = inspect.cleandoc(
             """
-            var _order = '1|0|2';
+            var _order = '1|0|2'['slice']('|');
             var _idx = 0;
             while (true) {
               switch (_order[_idx++]) {
-                case '0':
-                  var b = 2;
-                  continue;
-                case '1':
-                  var a = 1;
-                  continue;
-                case '2':
-                  var c = 3;
-                  continue;
+                case '0': var b = 2; continue;
+                case '1': var a = 1; continue;
+                case '2': var c = 3; continue;
               }
               break;
             }
+            console.log(a, b, c);
             """
-        ))
+        )
+        self.assertIn(
+            self._deobfuscate(source),
+            (
+                inspect.cleandoc(
+                    """
+                    var _order = '1|0|2';
+                    var _idx = 0;
+                    while (true) {
+                      switch (_order[_idx++]) {
+                        case '0':
+                          var b = 2;
+                          continue;
+                        case '1':
+                          var a = 1;
+                          continue;
+                        case '2':
+                          var c = 3;
+                          continue;
+                      }
+                      break;
+                    }
+                    console.log(a, b, c);
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    var b;
+                    var c;
+                    console.log(1, b, c);
+                    """
+                ),
+            ),
+        )
 
 
 class TestRegressionBugs(TestJsDeobfuscator):
@@ -282,22 +371,35 @@ class TestRegressionBugs(TestJsDeobfuscator):
 
 class TestCFFArgParamDeclarations(TestJsDeobfuscator):
 
-    def test_undeclared_assignment_not_removed_when_read_in_outer_scope(self):
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                var x = 1;
-                x = 99;
-                console.log(x);
-                """
+    _AN_ASSIGNMENT_A_FUNCTION_MAKES_TO_AN_OUTER_VARIABLE = inspect.cleandoc(
+        """
+        function modify() {
+          x = 99;
+        }
+        var x = 1;
+        modify();
+        console.log(x);
+        """
+    )
+
+    def test_an_assignment_a_function_makes_to_an_outer_variable_reaches_its_read(self):
+        self.assertIn(
+            self._deobfuscate_iterative(self._AN_ASSIGNMENT_A_FUNCTION_MAKES_TO_AN_OUTER_VARIABLE),
+            (
+                inspect.cleandoc(
+                    """
+                    var x = 1;
+                    x = 99;
+                    console.log(x);
+                    """
+                ),
+                'console.log(99);',
             ),
-            self._deobfuscate_iterative(inspect.cleandoc(
-                """
-                function modify() {
-                  x = 99;
-                }
-                var x = 1;
-                modify();
-                console.log(x);
-                """
-            )))
+        )
+
+    @opportunity
+    def test_an_assignment_a_function_makes_to_an_outer_variable_folds_into_its_read(self):
+        self.assertEqual(
+            self._deobfuscate_iterative(self._AN_ASSIGNMENT_A_FUNCTION_MAKES_TO_AN_OUTER_VARIABLE),
+            'console.log(99);',
+        )

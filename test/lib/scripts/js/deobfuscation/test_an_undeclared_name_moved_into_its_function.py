@@ -1,11 +1,6 @@
 """
-A name a function stores into without declaring it, and that nothing else uses, behaves as a local
-of that function where every run stores before it reads, and it moves into the function as a
-file-level `var` does (`refinery.lib.scripts.js.analysis.localization`). A store into it creates a
-property of the global object, so it stays where a store may do anything else: throw in strict
-code, run a setter, or be read by code the file does not hold
-(`refinery.lib.scripts.js.analysis.foreign`). Each program is written by hand, and each row says
-what Node prints for it.
+SECURITY: the programs here run in Node, and every one is written by hand in this file. No sample
+and no stored obfuscator fixture may ever be added here.
 """
 from __future__ import annotations
 
@@ -28,8 +23,6 @@ _A_DECODER = """
     };
     """
 
-#: Programs a function of which stores into a name no declaration binds and then reads it, where
-#: nothing but that function uses the name, mapped to what a host prints for each.
 A_NAME_ONLY_ONE_FUNCTION_USES: dict[str, Program] = {
     'a decoder': Program(
         a_program(_A_DECODER + """
@@ -56,8 +49,6 @@ A_NAME_ONLY_ONE_FUNCTION_USES: dict[str, Program] = {
     ),
 }
 
-#: Programs a function of which stores into a name no declaration binds and then reads it, where a
-#: store into the name does something a store into a local does not, mapped to what a host prints.
 A_NAME_A_STORE_INTO_WHICH_DOES_MORE: dict[str, Program] = {
     'a store in strict code': Program(
         a_program("""
@@ -228,8 +219,6 @@ A_NAME_A_STORE_INTO_WHICH_DOES_MORE: dict[str, Program] = {
     ),
 }
 
-#: A program storing into a name no declaration binds where a setter the program installed under it
-#: runs at the store, which nothing reads after, mapped to what a host prints.
 A_STORE_A_SETTER_THE_PROGRAM_INSTALLED_RUNS = Program(
     a_program("""
         globalThis.__defineSetter__('tmp', function (v) { console.log('set ' + v); });
@@ -240,8 +229,6 @@ A_STORE_A_SETTER_THE_PROGRAM_INSTALLED_RUNS = Program(
     Reading.SCRIPT,
 )
 
-#: A program storing into a name no declaration binds where a setter an installer bound out of
-#: `Object` put under it runs at the store, which nothing reads after, mapped to what a host prints.
 A_STORE_A_SETTER_AN_INSTALLER_BOUND_OUT_OF_OBJECT_INSTALLED_RUNS = Program(
     a_program("""
         const { defineProperty } = Object;

@@ -180,12 +180,8 @@ A_DECLARATION_NO_SINGLE_STATEMENT_BODY_TAKES = [
     'l: class C {}',
 ]
 
-#: A function written as the single statement of every body position that governs one, mapped to
-#: whether the file is a program. Annex B admits a function there in exactly two positions and for
-#: exactly one kind: a plain function as the clause of an `if` and as the body of a label. A loop
-#: body and a `with` body take no function at all, and a generator or an async function stands in no
-#: single-statement position, so each of those reads as the declaration it opens with the repair
-#: recorded. The accepted rows are the control the refusals must not reach.
+#: Annex B admits a function as a single statement only as the clause of an `if` or the body of a
+#: label, and only a plain function: a generator or an async function is refused there as well.
 A_FUNCTION_IN_A_SINGLE_STATEMENT_BODY = {
     'while (0) function f() {}': False,
     'do function f() {} while (0);': False,
@@ -223,14 +219,6 @@ class TestJsLetDeclarationOrName(TestBase):
         return [NOT_A_BINDING_TARGET]
 
     def _let_readings(self, source: str) -> list[str]:
-        """
-        What the parser made of every `let`, `var` and `const` in the source, in the order they are
-        written. A word that introduced a declaration is named by the keyword it spelled together
-        with the names that declaration binds, a word that was read as an ordinary identifier is
-        named by itself, and a place where the parser gave up by `PARSE_ERROR`. No two of those
-        readings can compare equal, so neither a swapped reading nor a declaration that binds the
-        wrong name can pass for the one that was meant.
-        """
         tree = JsParser(source).parse()
         readings: list[tuple[int, str]] = []
         bound: set[int] = set()
@@ -297,21 +285,15 @@ class TestJsLetDeclarationOrName(TestBase):
 
     def test_a_single_statement_body_reads_let_as_a_name(self):
         """
-        A position the grammar hands a Statement rather than a StatementListItem takes no lexical
-        declaration, so `let` there is the name it spells whatever follows it. Node runs every file
-        of `LET_IN_A_SINGLE_STATEMENT_BODY`: where a binding seemed to follow the word, a line
-        terminator lets automatic semicolon insertion end the body at the name, and the assignment
-        behind it is the next statement, outside the body.
+        A single-statement body takes no lexical declaration, so `let` there is a name. Where a line
+        break follows it, automatic semicolon insertion ends the body at the name, and the
+        assignment after it is the next statement.
         """
         for source, expected in LET_IN_A_SINGLE_STATEMENT_BODY:
             with self.subTest(source=source):
                 self.assertEqual(self._let_readings(source), expected)
 
     def test_the_assignment_a_split_body_leaves_is_the_next_statement(self):
-        """
-        Node runs `if (0) let` and a line break and `x = 1;` leaving `x` at `1`: the branch holds
-        only the name, and the assignment runs unconditionally after the `if`.
-        """
         script = JsParser('if (0) let\nx = 1;').parse()
         self.assertEqual(is_well_formed(script), True)
         self.assertEqual(len(script.body), 2)
@@ -319,32 +301,19 @@ class TestJsLetDeclarationOrName(TestBase):
 
     def test_a_let_binding_no_single_statement_body_takes_is_refused(self):
         """
-        Node refuses each file of `A_LET_BINDING_NO_SINGLE_STATEMENT_BODY_TAKES` with `SyntaxError:
-        Lexical declaration cannot appear in a single-statement context`. The bracket rows are the
-        one spelling an ExpressionStatement may not open with, `let [`, which no line terminator
-        frees; the others are the name with nothing left to end the statement at it.
+        Without a line break after `let`, nothing ends the body at the name; and an expression
+        statement may not open with `let [`, so before a bracket not even a line break does.
         """
         for source in A_LET_BINDING_NO_SINGLE_STATEMENT_BODY_TAKES:
             with self.subTest(source=source):
                 self.assertEqual(is_well_formed(JsParser(source).parse()), False)
 
     def test_a_const_or_a_class_in_a_single_statement_body_is_refused(self):
-        """
-        Node refuses each file of `A_DECLARATION_NO_SINGLE_STATEMENT_BODY_TAKES` with a
-        `SyntaxError` naming the keyword as an unexpected token.
-        """
         for source in A_DECLARATION_NO_SINGLE_STATEMENT_BODY_TAKES:
             with self.subTest(source=source):
                 self.assertEqual(is_well_formed(JsParser(source).parse()), False)
 
     def test_only_an_if_clause_or_a_label_takes_a_plain_function_as_a_single_statement(self):
-        """
-        Node refuses every `False` file of `A_FUNCTION_IN_A_SINGLE_STATEMENT_BODY` with a
-        `SyntaxError` and runs every `True` one: a loop or `with` body takes no function, a generator
-        or async function stands in no single-statement position, and only a plain function in an
-        `if` clause or a label body is a program. Reading them together keeps a refusal from reaching
-        the two positions Annex B admits.
-        """
         self.assertEqual(
             {
                 source: is_well_formed(JsParser(source).parse())

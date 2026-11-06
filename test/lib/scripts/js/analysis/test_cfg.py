@@ -226,11 +226,6 @@ class TestControlFlowGraph(TestBase):
         self.assertFalse(cfg.is_exceptional(na, nc))
 
     def test_do_while_body_starting_with_try_loops_to_guarded_statement(self):
-        """
-        The do-while back-edge must target the first guarded statement, not the catch handler the try
-        builds before it; otherwise a backward walk from an in-loop use cannot reach barriers that run
-        on the back-edge path.
-        """
         ast, cfg = self._cfg('do { try { a; } catch (e) {} } while (x);')
         test = cfg.node_of(self._first(ast, JsDoWhileStatement))
         guarded = cfg.node_of(self._first(ast, JsExpressionStatement))
@@ -240,10 +235,6 @@ class TestControlFlowGraph(TestBase):
         self.assertNotIn(handler, test.successors)
 
     def test_for_without_test_body_starting_with_try_stays_on_the_cycle(self):
-        """
-        A for-without-test whose body opens with a try must keep the guarded statement on the loop
-        cycle; a back-edge targeting the handler instead would strip it from the cycle.
-        """
         ast, cfg = self._cfg('for (;;) { try { a; } catch (e) {} }')
         guarded = cfg.node_of(self._first(ast, JsExpressionStatement))
         assert guarded is not None
@@ -267,9 +258,8 @@ class TestControlFlowGraph(TestBase):
 
     def test_destructuring_catch_parameter_passes_a_throw_to_the_enclosing_handler(self):
         """
-        A pattern parameter binds the caught value by destructuring it, and destructuring a thrown
-        `null` throws while binding; that second throw escapes the inner construct, so the outer
-        clause is reachable for an error raised in the inner guarded block.
+        Binding a pattern parameter destructures the caught value, and destructuring a thrown `null`
+        throws; that throw escapes the clause to the enclosing handler.
         """
         for source in [
             'try { try { t; } catch ({ p }) {} } catch (r) { u; }',
@@ -362,30 +352,21 @@ class TestControlFlowGraph(TestBase):
 
 
 class TestTheLookupOfAStatementStopsAtTheBodyItIsWrittenIn(TestBase):
-    """
-    No node of the graph of a function's body stands for a loop without a test, so the shared lookup
-    has no place for it: the statement of the body around the function that makes it is not the
-    point the loop runs at.
-    """
 
-    def _place_of_the_loop(self, source: str):
+    def _is_placed_in_the_script(self, source: str) -> bool:
         root = JsParser(source).parse()
         loop = next(node for node in root.walk() if isinstance(node, JsForStatement))
-        return ElementLocator(build_control_flow(root), evaluated_later).locate(loop)
+        place = ElementLocator(build_control_flow(root), evaluated_later).locate(loop)
+        return place is not None and place[0].owner is root
 
-    def test_a_loop_in_a_function_expression_has_no_place(self):
-        self.assertIsNone(self._place_of_the_loop('var f = function () { for (;;) { a; } };'))
+    def test_a_loop_in_a_function_expression_is_not_placed_in_the_script(self):
+        self.assertFalse(self._is_placed_in_the_script('var f = function () { for (;;) { a; } };'))
 
-    def test_a_loop_in_a_declared_function_has_no_place(self):
-        self.assertIsNone(self._place_of_the_loop('function f() { for (;;) { a; } }'))
+    def test_a_loop_in_a_declared_function_is_not_placed_in_the_script(self):
+        self.assertFalse(self._is_placed_in_the_script('function f() { for (;;) { a; } }'))
 
 
 class TestTheInitializerOfAFieldIsLocatedInAGraphOfItsOwn(TestBase):
-    """
-    The initializer of a field written without `static` runs each time an instance is constructed,
-    so it is evaluated in a graph of its own; the computed key of the field and the initializer of
-    a static field are evaluated once, by the class statement.
-    """
 
     @staticmethod
     def _place_of(source: str, name: str):

@@ -1,25 +1,16 @@
 """
-The JavaScript the js tests are quantified over, and what the language says about the shape of a
-tree that spells it.
-
-Everything here is hand-authored and nothing is read from disk, downloaded, or derived from a
-sample. The snippets were checked against a real engine before they were written down — V8 was
-asked to compile each one, which parses without running anything — so that a snippet is JavaScript
-because an engine says so and not because our own parser accepted it. The one entry V8 refuses is
-`JsDecorator`: decorators are a proposal that has not shipped, and the model reads them anyway.
-
-Nothing in this module may ever be executed. Compiling a snippet is not running it, and the
-fidelity harness only ever parses and prints.
+Every snippet is written by hand and is a program a JavaScript engine compiles, not merely one the
+parser accepts; the one exception is `JsDecorator`, since decorators are a proposal that has not
+shipped. Nothing here may be read from disk, downloaded or derived from a sample, and nothing here
+is ever run.
 """
 from __future__ import annotations
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.model import JsTemplateLiteral
 
-#: One program per node class, written by hand rather than generated, and kept minimal so that a
-#: failure names the construct it is about. Where a node has a child list, the snippet fills it with
-#: two entries: the fidelity generator truncates from there, and a rendering that is only correct at
-#: the cardinality its author had in mind is what that is looking for.
+#: One minimal program per node class. Where the node has a child list, its snippet fills the list
+#: with two entries, which the fidelity test cuts to each shorter length.
 SNIPPETS: dict[str, str] = {
     'JsArrayExpression'          : '[1, 2];',
     'JsArrayPattern'             : 'var [a, b] = c;',
@@ -100,10 +91,8 @@ SNIPPETS: dict[str, str] = {
     'JsYieldExpression'          : 'function* g(h) { yield 1; yield* h(); }',
 }
 
-#: The shortest a child list may be and still spell something. A list absent from here may be empty,
-#: which is most of them: a call with no arguments, an array with no elements and a class with no
-#: members are all programs. The two that are not are the ones a pass reaches by removing the last
-#: entry of a list it was editing.
+#: The fewest entries a child list must hold for the tree to spell a program. A child list not named
+#: here may be empty.
 SHORTEST_LIST: dict[str, dict[str, int]] = {
     'JsSequenceExpression'  : {'expressions': 2},
     'JsVariableDeclaration' : {'declarations': 1},
@@ -111,21 +100,6 @@ SHORTEST_LIST: dict[str, dict[str, int]] = {
 
 
 def shapes_the_grammar_forbids(root: Node) -> list[str]:
-    """
-    Every part of the tree at `root` that no JavaScript text spells, named one at a time.
-
-    This is what `refinery.lib.scripts.Node.has_spelling` answers for a model that declares it, and
-    the js model declares it only for a literal the source left unclosed. Until it says more, the
-    rules live here, stated from the grammar rather than from the parser: a `var` declares at least
-    one name, a comma expression joins at least two, a template's runs and holes alternate so there
-    is exactly one more run than there are holes, and a name is at least one character.
-
-    Two callers need the answer for opposite reasons. The generators use it to avoid manufacturing a
-    tree that is not a program, since printing one says nothing about whether printing is faithful.
-    The parser is held to it, because a shape with no text is one no parser may hand back: the
-    synthesizer would have to invent a spelling for it, and inventing one is how a script quietly
-    starts meaning something else.
-    """
     found: list[str] = []
     for node in root.walk():
         name = type(node).__name__

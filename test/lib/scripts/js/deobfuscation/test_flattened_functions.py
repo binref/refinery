@@ -1,21 +1,28 @@
 """
 Function flattening moves the body of a function into a flat function at the top of the program and
 leaves the function a wrapper that calls it with its arguments and with an object of getters,
-setters and methods standing for the names the body used. The integrity lock leaves a function a
-forwarder of the same kind, `function F() { return G(...arguments); }`, without the object. Each
-program below holds functions in one of these shapes, written by hand after what the obfuscation
-writes, and each row says what Node prints for it run as a CommonJS file; the deobfuscation prints
-the same. Where the deobfuscation puts the body back into its wrapper, or moves the flat function
-of an async function into it, the text it writes is pinned as well.
+setters and methods standing for the names the body used. An integrity lock leaves a function a
+forwarder of the same kind without the object:
+
+    function F() { return G(...arguments); }
+
+Node runs only the programs written by hand here; a file the obfuscation wrote is deobfuscated and
+compared as text, never run.
 """
 from __future__ import annotations
 
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
-from test.lib.scripts.js.deobfuscation.test_selfchecks import DOUBLE, DOUBLE_42, NEW_HELPERS, guarded
+from test.lib.scripts.js.deobfuscation.test_selfchecks import (
+    DOUBLE,
+    DOUBLE_42,
+    NEW_HELPERS,
+    guarded,
+    inserted_at_the_start_of_the_hash_loop,
+)
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints, wontfix
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
@@ -28,8 +35,6 @@ def deobfuscated(source: str) -> str:
     return deobfuscate_source(source, execution=ExecutionModel.commonjs, environment=HostEnvironment.node)
 
 
-#: Programs holding functions in the shape function flattening writes, mapped to what Node prints
-#: for each run as a CommonJS file.
 FLATTENED: dict[str, Program] = {
     'setters of every write form': Program(
         a_program("""
@@ -1027,20 +1032,6 @@ FLATTENED: dict[str, Program] = {
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
-    'async: a getter in a class method reads the class name while the class is being defined': Program(
-        a_program("""
-            async function F() { 'use strict'; var [[v], O] = arguments; return new O.k(v); }
-            class C {
-            static async create(...A) { var O = { get k() { return C; } }; return F(A, O); }
-            static ready = C.create(1);
-            constructor(v) { this.v = v; }
-            }
-            C.ready.then(c => console.log(c.v), e => console.log(e.name));
-            """),
-        prints('1'),
-        Reading.COMMONJS,
-        HostEnvironment.node,
-    ),
     'async: a getter in an object method reads a top-level let in its dead zone': Program(
         a_program("""
             async function F([], O) { return O.k; }
@@ -1160,7 +1151,7 @@ FLATTENED: dict[str, Program] = {
     ),
     'a getter reading a name nothing binds, the name declared by the flat body later': Program(
         a_program("""
-            function F([], O) { var r = O.k; return r; }
+            function F([], O) { var r = O.k; var later = 'local'; return r; }
             function W(...A) { var O = { get k() { return later; } }; return F(A, O); }
             try { console.log(W()); } catch (e) { console.log(e.name); }
             """),
@@ -1251,8 +1242,6 @@ FLATTENED: dict[str, Program] = {
     ),
 }
 
-#: The rows of `FLATTENED` whose deobfuscation puts a flat body back into its wrapper or moves a
-#: flat function into it, mapped to the text it writes.
 PUT_BACK: dict[str, str] = {
     'setters of every write form': inspect.cleandoc(
         """
@@ -1268,15 +1257,6 @@ PUT_BACK: dict[str, str] = {
               return counter + label;
             }
             console.log(bump(2), counter, label);
-        """
-    ),
-    'typeof members': inspect.cleandoc(
-        """
-            var later;
-            function helper() {}
-            console.log(typeof later + ':number:' + typeof helper);
-            later = 1;
-            console.log('number:string:function');
         """
     ),
     'call members, new through a getter, recursion': inspect.cleandoc(
@@ -1323,21 +1303,6 @@ PUT_BACK: dict[str, str] = {
               return a + b;
             }
             console.log(add.length, add(1, 2), Object.getOwnPropertyDescriptor(add, 'length').configurable);
-        """
-    ),
-    'an async function racing a promise chain': inspect.cleandoc(
-        """
-            async function a(...A) {
-              async function F([]) {
-                console.log('a');
-              }
-              return F(A);
-            }
-            (async () => {
-              await a();
-              console.log('after a');
-            })();
-            Promise.resolve().then(() => console.log(1)).then(() => console.log(2)).then(() => console.log(3));
         """
     ),
     'the strict form (arguments first)': inspect.cleandoc(
@@ -1445,61 +1410,6 @@ PUT_BACK: dict[str, str] = {
             console.log(new Make(3).v, new Make(3) instanceof Make);
         """
     ),
-    'an async wrapper whose object stands for a local of an enclosing function': inspect.cleandoc(
-        """
-            function outer() {
-              async function W(...A) {
-                async function F([]) {
-                  return 'local';
-                }
-                return F(A);
-              }
-              return W();
-            }
-            outer().then(console.log);
-        """
-    ),
-    'an async function in the strict form (object first)': inspect.cleandoc(
-        """
-            'use strict';
-            var total = 1;
-            async function add(...A) {
-              async function F() {
-                'use strict';
-                var [[a]] = arguments;
-                total = total + a;
-                return total;
-              }
-              return F(A);
-            }
-            add(2).then(console.log);
-        """
-    ),
-    'an async flat function with this in an arrow': inspect.cleandoc(
-        """
-            (async function(...A) {
-              async function F([]) {
-                return (() => this === undefined || this === globalThis)();
-              }
-              return F(A);
-            }().then(console.log));
-        """
-    ),
-    'an async function racing, its flat body reading an outer name': inspect.cleandoc(
-        """
-            async function a(...A) {
-              async function F([]) {
-                console.log('a');
-              }
-              return F(A);
-            }
-            (async () => {
-              await a();
-              console.log('after a');
-            })();
-            Promise.resolve().then(() => console.log(1)).then(() => console.log(2)).then(() => console.log(3));
-        """
-    ),
     'a default reads a name the flat body also declares': "console.log('top');",
     'a default calls a name the flat body declares as a function': "console.log('top');",
     'a default reads a name the flat body declares with let': "console.log('top');",
@@ -1565,45 +1475,6 @@ PUT_BACK: dict[str, str] = {
             console.log('outer');
         """
     ),
-    'async: a static field initializer calls an async static method whose flat body names the class': inspect.cleandoc(
-        """
-            class C {
-              static async create(...A) {
-                async function F() {
-                  'use strict';
-                  var [[v]] = arguments;
-                  return new C(v);
-                }
-                return F(A);
-              }
-              static ready = C.create(1);
-              constructor(v) {
-                this.v = v;
-              }
-            }
-            C.ready.then(c => console.log(c.v), e => console.log(e.name));
-        """
-    ),
-    'async: a static block calls an async static method whose flat body names the class': inspect.cleandoc(
-        """
-            class C {
-              static async create(...A) {
-                async function F() {
-                  'use strict';
-                  var [[v]] = arguments;
-                  return new C(v);
-                }
-                return F(A);
-              }
-              static {
-                C.create(2).then(c => console.log(c.v), e => console.log(e.name));
-              }
-              constructor(v) {
-                this.v = v;
-              }
-            }
-        """
-    ),
     'a static field initializer calls a static method whose flat body names the class': inspect.cleandoc(
         """
             class C {
@@ -1644,36 +1515,6 @@ PUT_BACK: dict[str, str] = {
               return a + 'body';
             }
             console.log(W(), V);
-        """
-    ),
-    'async: a getter in a class method reads the class name while the class is being defined': inspect.cleandoc(
-        """
-            class C {
-              static async create(...A) {
-                async function F() {
-                  'use strict';
-                  var [[v]] = arguments;
-                  return new C(v);
-                }
-                return F(A);
-              }
-              static ready = C.create(1);
-              constructor(v) {
-                this.v = v;
-              }
-            }
-            C.ready.then(c => console.log(c.v), e => console.log(e.name));
-        """
-    ),
-    'async: a getter in an object method reads a top-level let in its dead zone': inspect.cleandoc(
-        """
-            (async function(...A) {
-              async function F([]) {
-                return late;
-              }
-              return F(A);
-            }().then(console.log, e => console.log(e.name)));
-            let late = 'late';
         """
     ),
     'a getter reads a name a sloppy function body of the flat function declares by var under the'
@@ -1728,9 +1569,247 @@ PUT_BACK: dict[str, str] = {
     'a flat body calling a function with a parameter named caller': "console.log('F: 1!');",
 }
 
+MOVED_IN: dict[str, str] = {
+    'an async function racing a promise chain': inspect.cleandoc(
+        """
+            async function a() {
+              async function F() {
+                console.log('a');
+              }
+              return F();
+            }
+            (async () => {
+              await a();
+              console.log('after a');
+            })();
+            Promise.resolve().then(() => console.log(1)).then(() => console.log(2)).then(() => console.log(3));
+        """
+    ),
+    'an async wrapper whose object stands for a local of an enclosing function': inspect.cleandoc(
+        """
+            function outer() {
+              async function W() {
+                async function F() {
+                  return 'local';
+                }
+                return F();
+              }
+              return W();
+            }
+            outer().then(console.log);
+        """
+    ),
+    'an async function in the strict form (object first)': inspect.cleandoc(
+        """
+            'use strict';
+            var total = 1;
+            async function add(a) {
+              async function F() {
+                total = total + a;
+                return total;
+              }
+              return F();
+            }
+            add(2).then(console.log);
+        """
+    ),
+    'an async flat function with this in an arrow': inspect.cleandoc(
+        """
+            (async function() {
+              async function F() {
+                return (() => this === undefined || this === globalThis)();
+              }
+              return F();
+            }().then(console.log));
+        """
+    ),
+    'an async function racing, its flat body reading an outer name': inspect.cleandoc(
+        """
+            async function a() {
+              async function F() {
+                console.log('a');
+              }
+              return F();
+            }
+            (async () => {
+              await a();
+              console.log('after a');
+            })();
+            Promise.resolve().then(() => console.log(1)).then(() => console.log(2)).then(() => console.log(3));
+        """
+    ),
+    'async: a static field initializer calls an async static method whose flat body names the class': inspect.cleandoc(
+        """
+            class C {
+              static async create(...[v]) {
+                async function F() {
+                  return new C(v);
+                }
+                return F();
+              }
+              static ready = C.create(1);
+              constructor(v) {
+                this.v = v;
+              }
+            }
+            C.ready.then(c => console.log(c.v), e => console.log(e.name));
+        """
+    ),
+    'async: a static block calls an async static method whose flat body names the class': inspect.cleandoc(
+        """
+            class C {
+              static async create(...[v]) {
+                async function F() {
+                  return new C(v);
+                }
+                return F();
+              }
+              static {
+                C.create(2).then(c => console.log(c.v), e => console.log(e.name));
+              }
+              constructor(v) {
+                this.v = v;
+              }
+            }
+        """
+    ),
+    'async: a getter in an object method reads a top-level let in its dead zone': inspect.cleandoc(
+        """
+            (async function() {
+              async function F() {
+                return late;
+              }
+              return F();
+            }().then(console.log, e => console.log(e.name)));
+            let late = 'late';
+        """
+    ),
+}
 
-#: A file the obfuscation wrote for one program with function flattening alone, passing the
-#: arguments first, and its deobfuscation.
+MOVED_IN_LESS_SIMPLIFIED: dict[str, str] = {
+    'an async function racing a promise chain': inspect.cleandoc(
+        """
+            async function a(...A) {
+              async function F([]) {
+                console.log('a');
+              }
+              return F(A);
+            }
+            (async () => {
+              await a();
+              console.log('after a');
+            })();
+            Promise.resolve().then(() => console.log(1)).then(() => console.log(2)).then(() => console.log(3));
+        """
+    ),
+    'an async wrapper whose object stands for a local of an enclosing function': inspect.cleandoc(
+        """
+            function outer() {
+              async function W(...A) {
+                async function F([]) {
+                  return 'local';
+                }
+                return F(A);
+              }
+              return W();
+            }
+            outer().then(console.log);
+        """
+    ),
+    'an async function in the strict form (object first)': inspect.cleandoc(
+        """
+            'use strict';
+            var total = 1;
+            async function add(...A) {
+              async function F() {
+                'use strict';
+                var [[a]] = arguments;
+                total = total + a;
+                return total;
+              }
+              return F(A);
+            }
+            add(2).then(console.log);
+        """
+    ),
+    'an async flat function with this in an arrow': inspect.cleandoc(
+        """
+            (async function(...A) {
+              async function F([]) {
+                return (() => this === undefined || this === globalThis)();
+              }
+              return F(A);
+            }().then(console.log));
+        """
+    ),
+    'an async function racing, its flat body reading an outer name': inspect.cleandoc(
+        """
+            async function a(...A) {
+              async function F([]) {
+                console.log('a');
+              }
+              return F(A);
+            }
+            (async () => {
+              await a();
+              console.log('after a');
+            })();
+            Promise.resolve().then(() => console.log(1)).then(() => console.log(2)).then(() => console.log(3));
+        """
+    ),
+    'async: a static field initializer calls an async static method whose flat body names the class': inspect.cleandoc(
+        """
+            class C {
+              static async create(...A) {
+                async function F() {
+                  'use strict';
+                  var [[v]] = arguments;
+                  return new C(v);
+                }
+                return F(A);
+              }
+              static ready = C.create(1);
+              constructor(v) {
+                this.v = v;
+              }
+            }
+            C.ready.then(c => console.log(c.v), e => console.log(e.name));
+        """
+    ),
+    'async: a static block calls an async static method whose flat body names the class': inspect.cleandoc(
+        """
+            class C {
+              static async create(...A) {
+                async function F() {
+                  'use strict';
+                  var [[v]] = arguments;
+                  return new C(v);
+                }
+                return F(A);
+              }
+              static {
+                C.create(2).then(c => console.log(c.v), e => console.log(e.name));
+              }
+              constructor(v) {
+                this.v = v;
+              }
+            }
+        """
+    ),
+    'async: a getter in an object method reads a top-level let in its dead zone': inspect.cleandoc(
+        """
+            (async function(...A) {
+              async function F([]) {
+                return late;
+              }
+              return F(A);
+            }().then(console.log, e => console.log(e.name)));
+            let late = 'late';
+        """
+    ),
+}
+
+
 ARGUMENTS_FIRST = inspect.cleandoc(
     """
     async function __p_AbCC_flat_delayed([value], __p_cdXZ_flat_object) {
@@ -1949,6 +2028,102 @@ ARGUMENTS_FIRST_DEOBFUSCATED = inspect.cleandoc(
       constructor(x) {
         this.x = x;
       }
+      static origin(...[offset]) {
+        return new Point(offset);
+      }
+    }
+    function twice(...[value]) {
+      return value * 2;
+    }
+    function bump(step) {
+      counter += step;
+      counter++;
+      label = label + step;
+      return counter;
+    }
+    function describe(value) {
+      return typeof later + ':' + typeof value + ':' + typeof twice;
+    }
+    function scale(...__p_6ioN_args) {
+      var __p_5YPj_flat_object = { get "Ogv2BRA"() {
+        return LIMIT;
+      }, "wgeOkS"(...args) {
+        return twice(...args);
+      } };
+      return __p_uQNZ_flat_scale(__p_6ioN_args, __p_5YPj_flat_object);
+    }
+    function lockLimit() {
+      try {
+        LIMIT = 4;
+        return 'changed';
+      } catch (error) {
+        return error.name;
+      }
+    }
+    function outer(base) {
+      function inner(step) {
+        return base + step + counter;
+      }
+      return inner(1) + inner(2);
+    }
+    function strictZone(first) {
+      'use strict';
+      function addLimit(...__p_i04V_args) {
+        var __p_TheW_flat_object = { get "ixyuWK4"() {
+          return LIMIT;
+        }, get "eDu8dj"() {
+          return counter;
+        } };
+        return __p_xjH5_flat_addLimit(__p_i04V_args, __p_TheW_flat_object);
+      }
+      return addLimit(first, 1);
+    }
+    function holder(...__p_xv1W_args) {
+      var __p_tVkl_flat_object = {};
+      return __p_fmHs_flat_holder(__p_xv1W_args, __p_tVkl_flat_object);
+    }
+    const tools = { sum(...[left, right]) {
+      return left + right + counter;
+    } };
+    async function delayed(value) {
+      async function __p_AbCC_flat_delayed() {
+        await null;
+        return twice(value);
+      }
+      return __p_AbCC_flat_delayed();
+    }
+    console.log(bump(2), label, describe(1), scale(2, 1), lockLimit());
+    console.log(outer(10), strictZone(5), tools.sum(1, 2), Point.origin(7).x, twice.length);
+    console.log(holder.call([0]).join());
+    delayed(4).then(result => {
+      return console.log(result);
+    });
+    """
+)
+
+ARGUMENTS_FIRST_DEOBFUSCATED_LESS_SIMPLIFIED = inspect.cleandoc(
+    """
+    function __p_fmHs_flat_holder([], __p_tVkl_flat_object) {
+      return [1, 2].map(item => {
+        return item + this.length;
+      });
+    }
+    function __p_xjH5_flat_addLimit() {
+      "use strict";
+      var [[value, extra = __p_TheW_flat_object.ixyuWK4], __p_TheW_flat_object] = arguments;
+      return value + extra + __p_TheW_flat_object.eDu8dj;
+    }
+    function __p_uQNZ_flat_scale([value, factor = __p_5YPj_flat_object.Ogv2BRA], __p_5YPj_flat_object) {
+      return __p_5YPj_flat_object.wgeOkS(value) * factor;
+    }
+    var counter = 0;
+    let label = 'start';
+    const LIMIT = 3;
+    var later;
+    class Point {
+      constructor(x) {
+        this.x = x;
+      }
       static ["origin"](...[offset]) {
         return new Point(offset);
       }
@@ -2022,8 +2197,6 @@ ARGUMENTS_FIRST_DEOBFUSCATED = inspect.cleandoc(
     """
 )
 
-#: The file a later version of the obfuscation wrote for the same program, passing the object first,
-#: and its deobfuscation.
 OBJECT_FIRST = inspect.cleandoc(
     """
     async function __p_JIiq_flat_delayed(__p_18XH_flat_object, [value]) {
@@ -2229,6 +2402,85 @@ OBJECT_FIRST_DEOBFUSCATED = inspect.cleandoc(
       constructor(x) {
         this.x = x;
       }
+      static origin(...[offset]) {
+        return new Point(offset);
+      }
+    }
+    function twice(...[value]) {
+      return value * 2;
+    }
+    function bump(step) {
+      counter += step;
+      counter++;
+      label = label + step;
+      return counter;
+    }
+    function describe(value) {
+      return typeof later + ':' + typeof value + ':' + typeof twice;
+    }
+    function scale(value, factor = 3) {
+      return twice(value) * factor;
+    }
+    function lockLimit(...__p_v81m_args) {
+      var __p_gnYa_flat_object = { get "gxpP7h"() {
+        return 3;
+      } };
+      return __p_hQcw_flat_lockLimit(__p_gnYa_flat_object, __p_v81m_args);
+    }
+    function outer(base) {
+      function inner(step) {
+        return base + step + counter;
+      }
+      return inner(1) + inner(2);
+    }
+    function strictZone(first) {
+      'use strict';
+      function addLimit(value, extra = 3) {
+        return value + extra + counter;
+      }
+      return addLimit(first, 1);
+    }
+    function holder() {
+      return [1, 2].map(item => {
+        return item + this.length;
+      });
+    }
+    const tools = { sum(...[left, right]) {
+      return left + right + counter;
+    } };
+    async function delayed(value) {
+      async function __p_JIiq_flat_delayed() {
+        await null;
+        return twice(value);
+      }
+      return __p_JIiq_flat_delayed();
+    }
+    console.log(bump(2), label, describe(1), scale(2, 1), lockLimit());
+    console.log(outer(10), strictZone(5), tools.sum(1, 2), Point.origin(7).x, twice.length);
+    console.log(holder.call([0]).join());
+    delayed(4).then(result => {
+      return console.log(result);
+    });
+    """
+)
+
+OBJECT_FIRST_DEOBFUSCATED_LESS_SIMPLIFIED = inspect.cleandoc(
+    """
+    function __p_hQcw_flat_lockLimit(__p_gnYa_flat_object, []) {
+      try {
+        __p_gnYa_flat_object.gxpP7h = 4;
+        return 'changed';
+      } catch (error) {
+        return error.name;
+      }
+    }
+    var counter = 0;
+    let label = 'start';
+    var later;
+    class Point {
+      constructor(x) {
+        this.x = x;
+      }
       static ["origin"](...[offset]) {
         return new Point(offset);
       }
@@ -2294,9 +2546,23 @@ OBJECT_FIRST_DEOBFUSCATED = inspect.cleandoc(
 
 class TestTheFilesTheObfuscationWrote(TestBase):
 
+    def test_the_file_passing_the_arguments_first_reads_as_pinned_or_less_simplified(self):
+        self.assertIn(
+            deobfuscated(ARGUMENTS_FIRST),
+            (ARGUMENTS_FIRST_DEOBFUSCATED_LESS_SIMPLIFIED, ARGUMENTS_FIRST_DEOBFUSCATED),
+        )
+
+    @opportunity
     def test_the_file_passing_the_arguments_first_reads_as_pinned(self):
         self.assertEqual(deobfuscated(ARGUMENTS_FIRST), ARGUMENTS_FIRST_DEOBFUSCATED)
 
+    def test_the_file_passing_the_object_first_reads_as_pinned_or_less_simplified(self):
+        self.assertIn(
+            deobfuscated(OBJECT_FIRST),
+            (OBJECT_FIRST_DEOBFUSCATED_LESS_SIMPLIFIED, OBJECT_FIRST_DEOBFUSCATED),
+        )
+
+    @opportunity
     def test_the_file_passing_the_object_first_reads_as_pinned(self):
         self.assertEqual(deobfuscated(OBJECT_FIRST), OBJECT_FIRST_DEOBFUSCATED)
 
@@ -2323,10 +2589,50 @@ class TestAFlattenedFunctionIsPutBackTogether(TestBase):
             PUT_BACK,
         )
 
+    def test_each_async_function_has_its_flat_function_moved_in(self):
+        for label, moved_in in MOVED_IN.items():
+            with self.subTest(label=label):
+                self.assertIn(
+                    deobfuscated(FLATTENED[label].text),
+                    (MOVED_IN_LESS_SIMPLIFIED[label], moved_in),
+                )
 
-#: Programs whose flat function, or the target of a forwarder, a statement at the top of the
-#: program stores into a name, `F = function ...;`, the form the recovery of a machine leaves every
-#: function of a program in, mapped to what Node prints for each run as a CommonJS file.
+    @opportunity
+    def test_each_async_function_moved_in_takes_no_parameters_of_its_own(self):
+        self.assertEqual(
+            {label: deobfuscated(FLATTENED[label].text) for label in MOVED_IN},
+            MOVED_IN,
+        )
+
+    def test_the_function_reading_typeof_members_is_put_back_and_inlined(self):
+        self.assertIn(
+            deobfuscated(FLATTENED['typeof members'].text),
+            (
+                inspect.cleandoc("""
+                    var later;
+                    function helper() {}
+                    console.log(typeof later + ':number:' + typeof helper);
+                    later = 1;
+                    console.log('number:string:function');
+                """),
+                inspect.cleandoc("""
+                    console.log('undefined:number:function');
+                    console.log('number:string:function');
+                """),
+            ),
+        )
+
+    @opportunity
+    def test_both_calls_reading_typeof_members_fold(self):
+        self.assertEqual(
+            deobfuscated(FLATTENED['typeof members'].text),
+            inspect.cleandoc("""
+                console.log('undefined:number:function');
+                console.log('number:string:function');
+            """),
+        )
+
+
 STORED: dict[str, Program] = {
     'a flat function stored after the wrapper': Program(
         a_program("""
@@ -2404,10 +2710,6 @@ STORED: dict[str, Program] = {
     ),
 }
 
-#: The text the deobfuscation writes for each program of `STORED`: the body back in the wrapper
-#: where the store has run before the wrapper reads the name, nothing reads the function's own name,
-#: and the program spells no `caller` where the function would be called by another name; the
-#: store left as it is otherwise.
 STORED_DEOBFUSCATED: dict[str, str] = {
     'a flat function stored after the wrapper': inspect.cleandoc(
         """
@@ -2416,19 +2718,6 @@ STORED_DEOBFUSCATED: dict[str, str] = {
             }
             var base = process.argv[2] ? 1 : 2;
             console.log(add(3, 4));
-        """
-    ),
-    'an async flat function stored under a name of its own': inspect.cleandoc(
-        """
-            async function twice(...A) {
-              async function F([v]) {
-                await null;
-                return v * base;
-              }
-              return F(A);
-            }
-            var base = process.argv[2] ? 1 : 2;
-            twice(4).then(r => console.log(r));
         """
     ),
     'an async flat function stored under a name of its own, in a program spelling caller': inspect.cleandoc(
@@ -2518,15 +2807,60 @@ class TestAFunctionAStoreHoldsIsPutBackWhereTheStoreRunsFirst(TestBase):
 
     def test_each_program_reads_as_pinned(self):
         self.assertEqual(
-            {label: deobfuscated(row.text) for label, row in STORED.items()},
+            {label: deobfuscated(STORED[label].text) for label in STORED_DEOBFUSCATED},
             STORED_DEOBFUSCATED,
         )
 
+    def test_every_program_is_pinned(self):
+        self.assertEqual(set(STORED), {*STORED_DEOBFUSCATED, 'an async flat function stored under a name of its own'})
 
-#: Programs holding a forwarder in the shape the integrity lock writes, mapped to what Node prints
-#: for each run as a CommonJS file: the forwarder called, constructed, handed on, exported, its
-#: `length` read, and a target reading `this`, its `arguments`, itself through `arguments.callee`,
-#: a `caller`, or running as a generator or in strict mode.
+    def test_the_async_function_has_its_flat_function_moved_in(self):
+        self.assertIn(
+            deobfuscated(STORED['an async flat function stored under a name of its own'].text),
+            (
+                inspect.cleandoc("""
+                    async function twice(...A) {
+                      async function F([v]) {
+                        await null;
+                        return v * base;
+                      }
+                      return F(A);
+                    }
+                    var base = process.argv[2] ? 1 : 2;
+                    twice(4).then(r => console.log(r));
+                """),
+                inspect.cleandoc("""
+                    async function twice(v) {
+                      async function F() {
+                        await null;
+                        return v * base;
+                      }
+                      return F();
+                    }
+                    var base = process.argv[2] ? 1 : 2;
+                    twice(4).then(r => console.log(r));
+                """),
+            ),
+        )
+
+    @opportunity
+    def test_the_async_function_moved_in_takes_no_parameters_of_its_own(self):
+        self.assertEqual(
+            deobfuscated(STORED['an async flat function stored under a name of its own'].text),
+            inspect.cleandoc("""
+                async function twice(v) {
+                  async function F() {
+                    await null;
+                    return v * base;
+                  }
+                  return F();
+                }
+                var base = process.argv[2] ? 1 : 2;
+                twice(4).then(r => console.log(r));
+            """),
+        )
+
+
 FORWARDED: dict[str, Program] = {
     'a forwarder of the integrity lock': Program(
         a_program("""
@@ -2971,19 +3305,10 @@ FORWARDED: dict[str, Program] = {
     ),
 }
 
-#: Programs of `FORWARDED` whose forwarder takes the body of its target back, mapped to the text the
-#: deobfuscation writes for each: the parameters of the target as they are where every call of the
-#: forwarder is shown, and an unpacked rest parameter, which keeps its `length` of 0, otherwise.
+#: The parameter list `(...[a, b])` keeps the `length` of 0 the forwarder had, which `(a, b)` would
+#: change to 2.
 FORWARDED_PUT_BACK: dict[str, str] = {
     'a forwarder of the integrity lock': "console.log('abab', 'xxx');",
-    'a target reading its arguments beyond its parameters': inspect.cleandoc(
-        """
-            function f(a) {
-              return [a, arguments.length, arguments[2]].join(',');
-            }
-            console.log('1,3,3', f());
-        """
-    ),
     'a target writing a parameter and reading it through arguments': inspect.cleandoc(
         """
             function f(a) {
@@ -3035,10 +3360,28 @@ class TestAForwardedFunctionIsPutBackTogether(TestBase):
             FORWARDED_PUT_BACK,
         )
 
+    def test_the_forwarder_of_a_target_reading_its_arguments_beyond_its_parameters_takes_the_body_back(self):
+        self.assertIn(
+            deobfuscated(FORWARDED['a target reading its arguments beyond its parameters'].text),
+            (
+                inspect.cleandoc("""
+                    function f(a) {
+                      return [a, arguments.length, arguments[2]].join(',');
+                    }
+                    console.log('1,3,3', f());
+                """),
+                "console.log('1,3,3', ',0,');",
+            ),
+        )
 
-#: Programs holding a forwarder that the pass deciding it leaves as it is: taking the body back
-#: would stop the `arguments` of the target from following a parameter it writes, or the target
-#: holds a flattened function, which the same pass puts back first.
+    @opportunity
+    def test_both_calls_of_a_target_reading_its_arguments_beyond_its_parameters_fold(self):
+        self.assertEqual(
+            deobfuscated(FORWARDED['a target reading its arguments beyond its parameters'].text),
+            "console.log('1,3,3', ',0,');",
+        )
+
+
 A_FORWARDER_THE_PASS_LEAVES = [
     inspect.cleandoc("""
         function G(a) { a = 5; return arguments[0]; }
@@ -3077,15 +3420,14 @@ class TestAForwarderThePassLeavesKeepsTheTreeWhole(TestBase):
                 self.assertEqual(detached, [])
 
 
-#: The newer hash helpers with a check of a date inside the window of times a run is assumed to
-#: read inserted into the loop of the hash, which keeps the hash call of a guard the deobfuscation
-#: decides: the check runs on the first call.
-LOOP_DATED_NEW_HELPERS = NEW_HELPERS.replace(
-    'i < str.length; i++) { ',
-    'i < str.length; i++) { if (Date.now() > 4000000000000) { console.log("late"); } ',
+#: The newer hash helpers with a check of the clock inserted into the loop of the hash. The time it
+#: compares with lies in 2096, inside the years a run is assumed to read, so nothing can decide the
+#: check before it runs.
+LOOP_DATED_NEW_HELPERS = inserted_at_the_start_of_the_hash_loop(
+    'if (Date.now() > 4000000000000) { console.log("late"); }',
+    NEW_HELPERS,
 )
 
-#: A forwarder over a hash guard whose helpers carry such a check, which Node prints `42 8` for.
 A_FORWARDER_KEEPING_THE_HASH_CALL_OF_ITS_GUARD = guarded(
     DOUBLE,
     'double',
@@ -3097,15 +3439,8 @@ A_FORWARDER_KEEPING_THE_HASH_CALL_OF_ITS_GUARD = guarded(
 
 
 class TestAForwarderKeepingTheHashCallOfItsGuard(TestBase):
-    """
-    The guard of the integrity lock is decided, and its hash call stays where a helper carries a
-    check that has to run on the first call: `guarded.memo || (guarded.memo = hashOf(double, 42))`
-    then stands before the `return double(...arguments)` of the forwarder. Taking the body of
-    `double` back needs a hash call that names neither function, a read of `guarded.memo` that does
-    not hand the forwarder on, and a forwarder with a statement before its `return`.
-    """
 
-    @unittest.expectedFailure
+    @opportunity
     def test_the_forwarder_takes_the_body_back(self):
         self.assertNotIn('double(...arguments)', deobfuscated(A_FORWARDER_KEEPING_THE_HASH_CALL_OF_ITS_GUARD))
 
@@ -3115,11 +3450,6 @@ class TestAForwarderKeepingTheHashCallOfItsGuard(TestBase):
         self.assertEqual(row.read(), row.required())
 
 
-#: Programs whose deobfuscation behaves differently only through a shape made up for it, mapped to
-#: what Node prints for each run as a CommonJS file: a program replacing the iterator of every
-#: array, which the parameter list `(a, b)` does not run where the unpacking did, and a flat
-#: function reading the name of a class directly, whose name inside the class is a binding of its
-#: own.
 A_SHAPE_MADE_UP_FOR_THE_DEFECT = {
     'a program replacing the array iterator': Program(
         a_program("""

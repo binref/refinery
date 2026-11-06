@@ -12,14 +12,6 @@ from test.lib.scripts.js.analysis.differential import (
 
 @unittest.skipUnless(node_executable() is not None, 'node.js is required')
 class TestLiteralReceiverWriteTargets(TestBase):
-    """
-    A member or index access whose object is an array literal or a string literal is a value the tool is
-    otherwise free to fold: `[1, 2, 3][0]` denotes `1`. In a write position it may not, because the access
-    is not read but assigned, incremented, decremented, or deleted, and replacing it with the value it
-    would read turns an assignment target into a constant. Each case below places such an access in a write
-    position and asserts that deobfuscation preserves what the program does, with Node — not our own reading
-    of the semantics — deciding what that is for the original and the deobfuscated form alike.
-    """
 
     def _preserves(self, source: str):
         deobfuscated = deobfuscate_source(source)

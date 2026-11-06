@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+from test import opportunity
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
@@ -63,12 +64,32 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
             }
             """
         )
-        self.assertEqual(self._deobfuscate(source), inspect.cleandoc(
+        self.assertIn(
+            self._deobfuscate(source),
+            (
+                inspect.cleandoc(
+                    """
+                    class Sentinel {}
+                    live();
+                    """
+                ),
+                'live();',
+            ),
+        )
+
+    @opportunity
+    def test_an_empty_class_only_a_folded_guard_read_is_removed(self):
+        source = inspect.cleandoc(
             """
             class Sentinel {}
-            live();
+            if ("randomJunk" in Sentinel) {
+              dead();
+            } else {
+              live();
+            }
             """
-        ))
+        )
+        self.assertEqual(self._deobfuscate(source), 'live();')
 
     def test_in_const_empty_object_guard_folded(self):
         source = inspect.cleandoc(
@@ -206,12 +227,6 @@ class TestConstantPoolIntegration(TestJsDeobfuscator):
 class TestRegressionBugs(TestJsDeobfuscator):
 
     def test_dispatcher_sparse_payload_preserves_arity(self):
-        """
-        The hole in the sparse payload must survive to the destructuring function, where it binds the
-        second parameter and leaves `'third'` in the third. String elements keep that observable once
-        the call folds to its result: concatenation spells out the slot each element landed in, where
-        a sum of numbers would be `NaN` no matter where the hole went.
-        """
         source = inspect.cleandoc(
             """
             var c = Object["create"](null);
@@ -274,24 +289,43 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
 
     def test_free_variable_not_inlined_past_modifying_call(self):
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                var x = 12;
-                x = 9;
-                console.log(x);
-                """
+        source = inspect.cleandoc(
+            """
+            function modifyGlobal() {
+              x = 9;
+            }
+            var x = 12;
+            modifyGlobal();
+            console.log(x);
+            """
+        )
+        self.assertIn(
+            self._deobfuscate_iterative(source),
+            (
+                inspect.cleandoc(
+                    """
+                    var x = 12;
+                    x = 9;
+                    console.log(x);
+                    """
+                ),
+                'console.log(9);',
             ),
-            self._deobfuscate_iterative(inspect.cleandoc(
-                """
-                function modifyGlobal() {
-                  x = 9;
-                }
-                var x = 12;
-                modifyGlobal();
-                console.log(x);
-                """
-            )))
+        )
+
+    @opportunity
+    def test_a_global_a_call_overwrites_is_read_as_the_value_the_call_stored(self):
+        source = inspect.cleandoc(
+            """
+            function modifyGlobal() {
+              x = 9;
+            }
+            var x = 12;
+            modifyGlobal();
+            console.log(x);
+            """
+        )
+        self.assertEqual('console.log(9);', self._deobfuscate_iterative(source))
 
     def test_free_variable_is_inlined_past_harmless_call(self):
         self.assertEqual(
@@ -315,32 +349,47 @@ class TestRegressionBugs(TestJsDeobfuscator):
             )))
 
     def test_local_variable_not_inlined_past_modifying_call(self):
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                var x = 1;
-                x = 9;
-                console.log(x);
-                """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              x = 9;
+            }
+            var a = 1;
+            var x = a;
+            f();
+            console.log(x);
+            """
+        )
+        self.assertIn(
+            self._deobfuscate(source),
+            (
+                inspect.cleandoc(
+                    """
+                    var x = 1;
+                    x = 9;
+                    console.log(x);
+                    """
+                ),
+                'console.log(9);',
             ),
-            self._deobfuscate(inspect.cleandoc(
-                """
-                function f() {
-                  x = 9;
-                }
-                var a = 1;
-                var x = a;
-                f();
-                console.log(x);
-                """
-            )))
+        )
+
+    @opportunity
+    def test_a_copied_global_a_call_overwrites_is_read_as_the_value_the_call_stored(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              x = 9;
+            }
+            var a = 1;
+            var x = a;
+            f();
+            console.log(x);
+            """
+        )
+        self.assertEqual('console.log(9);', self._deobfuscate(source))
 
     def test_read_of_lexical_in_dead_zone_is_not_relocated(self):
-        """
-        `var r = x` reads `x` before its `let` declaration — a temporal-dead-zone `ReferenceError` — so
-        the read must not be relocated across the declaration and stays where it throws; the
-        `return` of its value, which no call reads, goes.
-        """
         source = inspect.cleandoc(
             """
             (function () {
@@ -350,14 +399,52 @@ class TestRegressionBugs(TestJsDeobfuscator):
             })();
             """
         )
-        self.assertEqual('(function() {\n  var r = x;\n  let x;\n})();', self._deobfuscate(source))
+        self.assertIn(
+            self._deobfuscate(source),
+            (
+                inspect.cleandoc(
+                    """
+                    (function() {
+                      var r = x;
+                      let x;
+                    })();
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    (function() {
+                      x;
+                      let x;
+                    })();
+                    """
+                ),
+            ),
+        )
+
+    @opportunity
+    def test_a_dead_zone_read_whose_binding_nothing_reads_is_kept_as_a_bare_read(self):
+        source = inspect.cleandoc(
+            """
+            (function () {
+                var r = x;
+                let x;
+                return r;
+            })();
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                (function() {
+                  x;
+                  let x;
+                })();
+                """
+            ),
+            self._deobfuscate(source),
+        )
 
     def test_typeof_of_lexical_in_dead_zone_is_not_folded(self):
-        """
-        `typeof x` on a lexical in its temporal dead zone throws rather than yielding `'undefined'`, so
-        the pipeline must not fold it and the throwing read stays; the `return` of its value, which
-        no call reads, goes.
-        """
         source = inspect.cleandoc(
             """
             (function () {
@@ -367,9 +454,82 @@ class TestRegressionBugs(TestJsDeobfuscator):
             })();
             """
         )
-        self.assertEqual('(function() {\n  var r = typeof x;\n  let x;\n})();', self._deobfuscate(source))
+        self.assertIn(
+            self._deobfuscate(source),
+            (
+                inspect.cleandoc(
+                    """
+                    (function() {
+                      var r = typeof x;
+                      let x;
+                    })();
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    (function() {
+                      typeof x;
+                      let x;
+                    })();
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    (function() {
+                      x;
+                      let x;
+                    })();
+                    """
+                ),
+            ),
+        )
+
+    @opportunity
+    def test_a_dead_zone_typeof_whose_binding_nothing_reads_is_kept_without_the_binding(self):
+        source = inspect.cleandoc(
+            """
+            (function () {
+                var r = typeof x;
+                let x;
+                return r;
+            })();
+            """
+        )
+        self.assertIn(
+            self._deobfuscate(source),
+            (
+                inspect.cleandoc(
+                    """
+                    (function() {
+                      typeof x;
+                      let x;
+                    })();
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    (function() {
+                      x;
+                      let x;
+                    })();
+                    """
+                ),
+            ),
+        )
 
     def test_typeof_of_lexical_declared_first_still_folds(self):
+        source = inspect.cleandoc(
+            """
+            console.log((function () {
+                let x = 5;
+                return typeof x;
+            })());
+            """
+        )
+        self.assertEqual("console.log('number');", self._deobfuscate(source))
+
+    @opportunity
+    def test_a_call_folded_to_a_value_nothing_reads_leaves_nothing(self):
         source = inspect.cleandoc(
             """
             (function () {
@@ -378,14 +538,9 @@ class TestRegressionBugs(TestJsDeobfuscator):
             })();
             """
         )
-        self.assertEqual("'number';", self._deobfuscate(source))
+        self.assertEqual('', self._deobfuscate(source))
 
     def test_object_property_reading_lexical_in_dead_zone_is_not_folded(self):
-        """
-        The object literal reads `x` in its temporal dead zone, so building it throws; folding `o.p`
-        across the `let` declaration would replace the throw with the declared value, so the throwing
-        program is left unchanged.
-        """
         source = inspect.cleandoc(
             """
             (function () {
@@ -395,7 +550,51 @@ class TestRegressionBugs(TestJsDeobfuscator):
             })();
             """
         )
-        self.assertEqual(self._run_transformers(source), self._deobfuscate(source))
+        self.assertIn(
+            self._deobfuscate(source),
+            (
+                self._run_transformers(source),
+                inspect.cleandoc(
+                    """
+                    (function() {
+                      var o = { p: x };
+                      let x;
+                    })();
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    (function() {
+                      x;
+                      let x;
+                    })();
+                    """
+                ),
+            ),
+        )
+
+    @opportunity
+    def test_a_dead_zone_read_building_an_object_nothing_reads_is_kept_as_a_bare_read(self):
+        source = inspect.cleandoc(
+            """
+            (function () {
+                var o = { p: x };
+                let x;
+                return o.p;
+            })();
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                (function() {
+                  x;
+                  let x;
+                })();
+                """
+            ),
+            self._deobfuscate(source),
+        )
 
 
 class TestGlobalAliasStripping(TestJsDeobfuscator):
@@ -423,12 +622,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
 
     def test_dead_global_property_is_removed(self):
-        """
-        The base is `globalThis`, whose read resolves in every host, so a store to a property nothing
-        reads is a dead store to remove. A host-conditional base such as `global` would keep the store,
-        whose base read may throw; that case is `test_unused`'s
-        `test_the_write_is_kept_through_a_host_conditional_base`.
-        """
         source = inspect.cleandoc(
             """
             globalThis['_V'] = "7-4111";

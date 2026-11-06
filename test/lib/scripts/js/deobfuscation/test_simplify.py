@@ -5,7 +5,7 @@ import unittest
 
 import refinery.lib.scripts as scripts
 
-from test import TestBase, lines_executed
+from test import TestBase, lines_executed, opportunity
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import a_program, before_and_after, each_program_still_prints
@@ -31,11 +31,6 @@ while Python sees three code points, so every offset past the middle character d
 
 
 def _folded_value(expression: str) -> str:
-    """
-    The text `refinery.djs` prints for *expression* once it has folded it. The expression is placed
-    in the argument of a `console.log` call, which survives because it is a side effect, so nothing
-    but the fold decides what comes back.
-    """
     printed = F'console.log({expression});'.encode('utf8') | djs(strict=True) | str
     return printed.removeprefix('console.log(').removesuffix(');')
 
@@ -95,11 +90,6 @@ class TestBasicSimplifications(TestJsDeobfuscator):
         self.assertEqual("'c';", self._simplify("'a', 'b', 'c';"))
 
     def test_tuple_side_effect_free(self):
-        """
-        A resolved read cannot throw and carries no other effect, so the middle operand is dropped;
-        a free `x` would throw a `ReferenceError` and is kept by
-        `TestASequenceOperandThatMayThrowIsKept`.
-        """
         self.assertEqual("var x = 0;\n'c';", self._simplify("var x = 0;\n'a', x, 'c';"))
 
     def test_tuple_with_side_effect(self):
@@ -118,11 +108,6 @@ class TestBasicSimplifications(TestJsDeobfuscator):
         self.assertEqual('obj["a-b"];', self._simplify('obj["a-b"];'))
 
     def test_bracket_reserved_word_to_dot(self):
-        """
-        No word is reserved in the member position, so a key the identifier check would refuse
-        still folds: `obj.class` and `Array.from` are spellings the language accepts, in a call's
-        callee position as in any other.
-        """
         self.assertEqual('obj.class;', self._simplify('obj["class"];'))
         self.assertEqual('Array.from(x);', self._simplify('Array["from"](x);'))
 
@@ -138,8 +123,18 @@ class TestBasicSimplifications(TestJsDeobfuscator):
     def test_computed_accessor_proto_key_to_identifier(self):
         self.assertEqual('({ get __proto__() {} });', self._simplify('({ get ["__proto__"]() {} });'))
 
-    def test_computed_property_non_identifier_unchanged(self):
-        self.assertEqual('({ ["a-b"]: 1 });', self._simplify('({ ["a-b"]: 1 });'))
+    def test_computed_property_non_identifier_left_alone_or_written_as_a_string_key(self):
+        self.assertIn(
+            self._simplify('({ ["a-b"]: 1 });'),
+            (
+                '({ ["a-b"]: 1 });',
+                '({ "a-b": 1 });',
+            ),
+        )
+
+    @opportunity
+    def test_computed_property_non_identifier_written_as_a_string_key(self):
+        self.assertEqual('({ "a-b": 1 });', self._simplify('({ ["a-b"]: 1 });'))
 
     def test_computed_property_proto_unchanged(self):
         self.assertEqual('({ ["__proto__"]: 1 });', self._simplify('({ ["__proto__"]: 1 });'))
@@ -419,10 +414,6 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
         self.assertEqual('3379;', self._simplify("parseInt('3379kkQfix');"))
 
     def test_parseint_no_leading_digits_folds_to_the_not_a_number_it_names(self):
-        """
-        Node prints `NaN` for `parseInt('abc')`: a string whose first character is not a digit of
-        the radix names no number, which is a result the language settles as fully as any other.
-        """
         self.assertEqual('0 / 0;', self._simplify("parseInt('abc');"))
 
     def test_parseint_hex_radix_folded(self):
@@ -439,8 +430,8 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
 
     def test_iife_inline_comparison(self):
         self.assertEqual(
-            'false;',
-            self._deobfuscate("(function(a, b) { return a === b; })('x', 'y');"),
+            'console.log(false);',
+            self._deobfuscate("console.log((function(a, b) { return a === b; })('x', 'y'));"),
         )
 
     def test_iife_inline_nested(self):
@@ -535,10 +526,8 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
 
     def test_pure_call_argument_used_twice_not_duplicated(self):
         """
-        `x` is used twice, so substituting would duplicate the argument. Only a simple literal or
-        identifier may be duplicated; a call (or a fresh array/object) could split one value into
-        distinct copies — flipping an identity comparison — so the IIFE is left intact even though `p`
-        here is pure.
+        Substituting `p()` for both reads of `x` would call `p` twice, and a call may return a new
+        object each time.
         """
         source = inspect.cleandoc(
             """
@@ -553,11 +542,6 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
         self.assertEqual(source, self._simplify(source))
 
     def test_iife_does_not_duplicate_array_argument_used_twice(self):
-        """
-        `a` is used twice and the argument `[1]` is a fresh array, so substituting it would compare two
-        distinct arrays (`[1] === [1]` is false) instead of one array with itself; the IIFE is left
-        intact.
-        """
         source = inspect.cleandoc(
             """
             var r = (function(a) {
@@ -821,10 +805,6 @@ class TestParenthesisPreservation(TestJsDeobfuscator):
 class TestGlobalAliasStripping(TestJsDeobfuscator):
 
     def test_free_name_alias_member_not_stripped(self):
-        """
-        `X` is free — a bare read would throw where `globalThis.X` yields `undefined` — so the alias
-        member is preserved rather than collapsed into a `ReferenceError`.
-        """
         self.assertEqual('y = globalThis.X;', self._simplify('y = globalThis.X;'))
 
     def test_guaranteed_global_alias_member_stripped(self):
@@ -848,10 +828,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
 
     def test_implicit_global_alias_member_not_stripped_before_its_write(self):
-        """
-        `globalThis.X` is read before the write that makes `X` an implicit global, so a bare read there
-        would throw where the member read is `undefined`; the alias member is preserved.
-        """
         source = inspect.cleandoc(
             """
             f(globalThis.X);
@@ -861,11 +837,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         self.assertEqual(source, self._simplify(source))
 
     def test_implicit_global_alias_member_stripped_inside_a_function_called_after_the_write(self):
-        """
-        The read stands in a body no statement order relates to the write, but every call of `f` runs
-        after it, so the definite-assignment model carries the fact through the call site into the
-        body and the alias member collapses there too.
-        """
         source = inspect.cleandoc(
             """
             X = 5;
@@ -889,10 +860,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
 
     def test_implicit_global_alias_member_stripped_after_a_member_spelled_write(self):
-        """
-        `globalThis.X = 5` creates the property in either mode, so the later read collapses; the
-        write itself keeps its member spelling, being a write and not a read.
-        """
         source = inspect.cleandoc(
             """
             globalThis.X = 5;
@@ -910,21 +877,12 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
 
     def test_implicit_global_alias_member_not_stripped_where_a_delete_addresses_the_name(self):
-        """
-        A `delete` anywhere in the program can unbind the name between the write and the read, so no
-        fact about it may be trusted; both spellings of the delete refuse the collapse.
-        """
         for spelling in ['delete globalThis.X;', 'delete X;']:
             source = F'X = 5;\n{spelling}\ny = globalThis.X;'
             with self.subTest(spelling=spelling):
                 self.assertEqual(source, self._simplify(source))
 
     def test_implicit_global_alias_member_not_stripped_where_a_computed_delete_hides_its_base(self):
-        """
-        `someObj` is a name nothing pins, so it may hold the global object and the delete may unbind
-        `X` with a key no scan reads; the collapse fails closed. The control allocates the base in
-        the file, which provably is not the global object, so the same delete forgets nothing.
-        """
         source = inspect.cleandoc(
             """
             X = 5;
@@ -954,10 +912,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
 
     def test_implicit_global_alias_member_stripped_after_a_destructuring_write(self):
-        """
-        A destructuring assignment that completes normally has assigned every target it holds, so
-        the later read collapses exactly as it does behind a plain store.
-        """
         source = inspect.cleandoc(
             """
             [X] = [5];
@@ -975,11 +929,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
 
     def test_implicit_global_alias_member_not_stripped_inside_a_host_entrypoint(self):
-        """
-        With `f` declared a host entrypoint, the host calls it from outside the file, so the guarded
-        in-file call does not bound when the body runs and the member read must keep answering
-        `undefined` there.
-        """
         source = inspect.cleandoc(
             """
             var c = 0;
@@ -999,10 +948,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
 
     def test_implicit_global_alias_member_not_stripped_where_the_global_object_is_handed_out(self):
-        """
-        The body `d` runs deletes the property the read would find, and the file names that body
-        only through the object it hands over, so the write vouches for nothing after the call.
-        """
         source = inspect.cleandoc(
             """
             function d(o) {
@@ -1016,10 +961,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         self.assertEqual(source, self._simplify(source))
 
     def test_implicit_global_alias_member_not_stripped_where_the_write_is_strict(self):
-        """
-        In strict code an assignment to an undeclared name throws instead of creating the property,
-        so the write establishes nothing and the alias member is preserved.
-        """
         source = inspect.cleandoc(
             """
             function s() {
@@ -1033,10 +974,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         self.assertEqual(source, self._simplify(source))
 
     def test_implicit_global_alias_member_not_stripped_under_a_reflection_surface(self):
-        """
-        A direct `eval` between the write and the read can unbind the name with code no scan reads,
-        so a reflection-reachable binding is never vouched for.
-        """
         source = inspect.cleandoc(
             """
             X = 5;
@@ -1047,19 +984,35 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         self.assertEqual(source, self._simplify(source))
 
     def test_implicit_global_alias_member_not_stripped_after_another_realms_write(self):
-        """
-        `top` and `frames` name another document's global object, so a write through either creates
-        no property a bare name in this file reads.
-        """
-        for alias in ['top', 'frames']:
-            source = F'{alias}.X = 5;\ny = globalThis.X;'
-            with self.subTest(alias=alias):
-                self.assertEqual(source, self._simplify(source))
+        source = inspect.cleandoc(
+            """
+            top.X = 5;
+            y = globalThis.X;
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
+    def test_implicit_global_alias_member_after_a_write_through_frames_left_alone_or_stripped(self):
+        source = inspect.cleandoc(
+            """
+            frames.X = 5;
+            y = globalThis.X;
+            """
+        )
+        self.assertIn(
+            self._simplify(source),
+            (
+                source,
+                inspect.cleandoc(
+                    """
+                    frames.X = 5;
+                    y = X;
+                    """
+                ),
+            ),
+        )
 
     def test_implicit_global_alias_member_not_stripped_after_a_conditional_write(self):
-        """
-        The write completes only on the branch its guard takes, so no fact holds at the read.
-        """
         source = inspect.cleandoc(
             """
             cond && (X = 5);
@@ -1071,10 +1024,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
     def test_implicit_global_alias_member_not_stripped_after_a_write_an_empty_finally_returns_past(
         self
     ):
-        """
-        `w()` returns without writing whenever `cond` is falsy, so the read may find no property and
-        the member spelling is what keeps it answering `undefined` instead of throwing.
-        """
         source = inspect.cleandoc(
             """
             function w() {
@@ -1095,17 +1044,33 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
     def test_global_alias_preserved_when_locally_shadowed(self):
         source = inspect.cleandoc(
             """
-            var X = 1;
-            y = globalThis.X;
+            function f() {
+              var X = 1;
+              return globalThis.X;
+            }
             """
         )
         self.assertEqual(source, self._simplify(source))
 
+    @opportunity
+    def test_global_alias_of_a_script_var_stripped(self):
+        source = inspect.cleandoc(
+            """
+            var X = 1;
+            y = globalThis.X;
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var X = 1;
+                y = X;
+                """
+            ),
+            self._simplify(source),
+        )
+
     def test_host_global_alias_member_not_stripped(self):
-        """
-        `console` exists in every mainstream host but is not spec-mandated, so the analyzer cannot prove
-        a bare read resolves; the alias member is conservatively preserved.
-        """
         self.assertEqual('y = window.console;', self._simplify('y = window.console;'))
 
     def test_global_object_existence_guard_folded(self):
@@ -1118,10 +1083,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         self.assertEqual('var g = window || {};', self._simplify('var g = window || {};'))
 
     def test_falsy_global_existence_guard_answers_from_the_value_not_the_existence(self):
-        """
-        `NaN` exists, so the existence shortcut that folds `String || String` to its left operand would
-        answer `NaN` here. `NaN` is also falsy, so the operator answers `5`.
-        """
         self.assertEqual('var s = 5;', self._simplify('var s = NaN || 5;'))
 
     def test_local_global_object_alias_member_stripped(self):
@@ -1195,11 +1156,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
 
     def test_in_operator_not_folded_before_object_initializer_runs(self):
-        """
-        At the `in`, `obj` is still its hoisted `undefined`, so `'x' in obj` throws a `TypeError` at
-        runtime rather than reading an empty object. Folding it to `false` would delete that throw, so the
-        establishment gate must decline until the declarator runs.
-        """
         source = inspect.cleandoc(
             """
             var a = 'x' in obj;
@@ -1208,11 +1164,7 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._simplify(source))
 
-    def test_in_operator_not_folded_for_store_after_read(self):
-        """
-        The `obj.x = 1` store runs after the read, so the property is absent when `'x' in obj` evaluates;
-        the store cannot make the key present at the read and must not fold the membership to `true`.
-        """
+    def test_in_operator_before_a_later_store_left_alone_or_folded_to_false(self):
         source = inspect.cleandoc(
             """
             var obj = {};
@@ -1220,13 +1172,41 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
             obj.x = 1;
             """
         )
-        self.assertEqual(source, self._simplify(source))
+        self.assertIn(
+            self._simplify(source),
+            (
+                source,
+                inspect.cleandoc(
+                    """
+                    var obj = {};
+                    var a = false;
+                    obj.x = 1;
+                    """
+                ),
+            ),
+        )
 
-    def test_in_operator_not_folded_when_key_deleted_before_read(self):
-        """
-        The property is stored then deleted before the read, so it is absent when `'x' in obj` evaluates;
-        a store the membership check trusts must not be one a `delete` can remove first.
-        """
+    @opportunity
+    def test_in_operator_before_a_later_store_folded_to_false(self):
+        source = inspect.cleandoc(
+            """
+            var obj = {};
+            var a = 'x' in obj;
+            obj.x = 1;
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var obj = {};
+                var a = false;
+                obj.x = 1;
+                """
+            ),
+            self._simplify(source),
+        )
+
+    def test_in_operator_after_a_key_deleted_before_read_left_alone_or_folded_to_false(self):
         source = inspect.cleandoc(
             """
             var obj = {};
@@ -1235,7 +1215,42 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
             var a = 'x' in obj;
             """
         )
-        self.assertEqual(source, self._simplify(source))
+        self.assertIn(
+            self._simplify(source),
+            (
+                source,
+                inspect.cleandoc(
+                    """
+                    var obj = {};
+                    obj.x = 1;
+                    delete obj.x;
+                    var a = false;
+                    """
+                ),
+            ),
+        )
+
+    @opportunity
+    def test_in_operator_after_a_key_deleted_before_read_folded_to_false(self):
+        source = inspect.cleandoc(
+            """
+            var obj = {};
+            obj.x = 1;
+            delete obj.x;
+            var a = 'x' in obj;
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var obj = {};
+                obj.x = 1;
+                delete obj.x;
+                var a = false;
+                """
+            ),
+            self._simplify(source),
+        )
 
     def test_delete_of_an_element_an_array_method_reads_is_kept(self):
         for call in [
@@ -1323,11 +1338,31 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
     def test_global_alias_preserved_when_shadowed_by_destructuring(self):
         source = inspect.cleandoc(
             """
+            function f() {
+              var { X } = obj;
+              return globalThis.X;
+            }
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
+    @opportunity
+    def test_global_alias_of_a_script_var_bound_by_destructuring_stripped(self):
+        source = inspect.cleandoc(
+            """
             var { X } = obj;
             y = globalThis.X;
             """
         )
-        self.assertEqual(source, self._simplify(source))
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var { X } = obj;
+                y = X;
+                """
+            ),
+            self._simplify(source),
+        )
 
     def test_global_alias_preserved_when_shadowed_by_class(self):
         source = inspect.cleandoc(
@@ -1339,10 +1374,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         self.assertEqual(source, self._simplify(source))
 
     def test_shadowed_base_via_param_not_stripped(self):
-        """
-        The base `self` is a parameter, not the global object, so `self.foo` reads that argument's
-        property; stripping to bare `foo` would read a different (global) name.
-        """
         source = inspect.cleandoc(
             """
             function f(self) {
@@ -1362,11 +1393,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         self.assertEqual(source, self._simplify(source))
 
     def test_const_aliased_base_not_stripped(self):
-        """
-        A base reached only through a `const` alias of the global object is conservatively preserved:
-        proving the alias equals the global is a value-provenance question this syntactic collapse no
-        longer attempts.
-        """
         source = inspect.cleandoc(
             """
             const w = window;
@@ -1379,30 +1405,15 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         self.assertEqual('f(globalThis.X);', self._simplify('f(globalThis.X);'))
 
     def test_global_alias_not_stripped_from_call_callee(self):
-        """
-        Stripping `window` from the callee of `window.foo()` would call `foo` with no receiver instead
-        of with `window` as `this`, so the alias is kept in callee position even though it is stripped
-        from a value position.
-        """
         self.assertEqual('window.foo();', self._simplify('window.foo();'))
 
     def test_alias_eval_callee_not_de_indirected(self):
-        """
-        `window.eval(code)` is an indirect eval evaluated in the global scope; stripping the alias to
-        `eval(code)` would make it a direct eval evaluated in the caller's scope, so the alias is kept.
-        """
         self.assertEqual("window.eval('x');", self._simplify("window.eval('x');"))
 
 
 class TestMembershipOverAWrittenPrototypeChain(TestJsDeobfuscator):
-    """
-    `in` asks whether a key is reachable on the receiver or anywhere up its prototype chain, so a
-    receiver whose own keys the pass can read whole decides the question only while the chain behind
-    it is one the program has not written. Each test below is that pair: the same receiver and the
-    same key, folded where nothing wrote the chain and left standing where something did.
-    """
 
-    def test_absent_key_over_a_function_folds_only_while_its_chain_is_untouched(self):
+    def test_absent_key_over_a_function_folds_to_false_only_while_its_chain_lacks_it(self):
         untouched = inspect.cleandoc(
             """
             function g() {}
@@ -1420,14 +1431,26 @@ class TestMembershipOverAWrittenPrototypeChain(TestJsDeobfuscator):
         )
         written = inspect.cleandoc(
             """
-            Object.prototype.qq = 'X';
+            Object.prototype.zz = 'X';
             function g() {}
             var a = 'zz' in g;
             """
         )
-        self.assertEqual(written, self._simplify(written))
+        self.assertIn(
+            self._simplify(written),
+            (
+                written,
+                inspect.cleandoc(
+                    """
+                    Object.prototype.zz = 'X';
+                    function g() {}
+                    var a = true;
+                    """
+                ),
+            ),
+        )
 
-    def test_absent_key_over_a_class_folds_only_while_its_chain_is_untouched(self):
+    def test_absent_key_over_a_class_folds_to_false_only_while_its_chain_lacks_it(self):
         untouched = inspect.cleandoc(
             """
             class C {}
@@ -1445,14 +1468,26 @@ class TestMembershipOverAWrittenPrototypeChain(TestJsDeobfuscator):
         )
         written = inspect.cleandoc(
             """
-            Object.prototype.qq = 'X';
+            Object.prototype.zz = 'X';
             class C {}
             var a = 'zz' in C;
             """
         )
-        self.assertEqual(written, self._simplify(written))
+        self.assertIn(
+            self._simplify(written),
+            (
+                written,
+                inspect.cleandoc(
+                    """
+                    Object.prototype.zz = 'X';
+                    class C {}
+                    var a = true;
+                    """
+                ),
+            ),
+        )
 
-    def test_absent_key_over_an_object_literal_folds_only_while_its_chain_is_untouched(self):
+    def test_absent_key_over_an_object_literal_folds_to_false_only_while_its_chain_lacks_it(self):
         untouched = inspect.cleandoc(
             """
             var obj = {};
@@ -1470,19 +1505,26 @@ class TestMembershipOverAWrittenPrototypeChain(TestJsDeobfuscator):
         )
         written = inspect.cleandoc(
             """
-            Object.prototype.qq = 'X';
+            Object.prototype.zz = 'X';
             var obj = {};
             var a = 'zz' in obj;
             """
         )
-        self.assertEqual(written, self._simplify(written))
+        self.assertIn(
+            self._simplify(written),
+            (
+                written,
+                inspect.cleandoc(
+                    """
+                    Object.prototype.zz = 'X';
+                    var obj = {};
+                    var a = true;
+                    """
+                ),
+            ),
+        )
 
     def test_absent_key_over_an_object_literal_folds_past_a_write_to_another_chain(self):
-        """
-        `Array.prototype` is not on a plain object's chain, so a write to it cannot answer `'zz' in
-        obj` and cannot be a reason to decline. Refusing here would make any prototype write
-        anywhere in the file the end of this fold rather than a write to the chain that decides it.
-        """
         source = inspect.cleandoc(
             """
             Array.prototype.qq = 'X';
@@ -1502,8 +1544,6 @@ class TestMembershipOverAWrittenPrototypeChain(TestJsDeobfuscator):
         )
 
 
-#: Programs giving an empty object literal a key in a way other than a plain store of it, or
-#: storing one only on some runs, and asking for the key with `in`, mapped to what Node prints.
 A_KEY_AN_OBJECT_GAINS_OTHERWISE = {
     a_program("""
         var o = {};
@@ -1566,13 +1606,6 @@ A_KEY_AN_OBJECT_GAINS_OTHERWISE = {
 
 
 class TestMembershipOverAnObjectGainingAKeyOtherwiseIsLeftStanding(TestJsDeobfuscator):
-    """
-    `in` over an empty object literal is decided from the keys the file stores into it, which
-    holds only where every use of the object is one the pass reads: a store, a `delete`, a read
-    of a key, or another `in`. An object handed to a call, aliased, called through, updated,
-    destructured into, or stored into behind a logical assignment may hold a key the pass
-    cannot see, so the question is left to the program.
-    """
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_node_prints_the_same_about_each_key_gained_otherwise(self):
@@ -1612,8 +1645,6 @@ class TestMembershipOverAnObjectGainingAKeyOtherwiseIsLeftStanding(TestJsDeobfus
         self.assertEqual(source, self._simplify(source))
 
 
-#: Programs replacing the prototype of an empty object literal, or writing a key into it through
-#: `__proto__`, and asking for a key with `in`, mapped to what Node prints.
 A_PROTOTYPE_AN_OBJECT_REPLACES_OR_HANDS_OUT = {
     a_program("""
         var o = {};
@@ -1637,12 +1668,6 @@ A_PROTOTYPE_AN_OBJECT_REPLACES_OR_HANDS_OUT = {
 
 
 class TestMembershipOverAReplacedOrHandedOutPrototypeIsLeftStanding(TestJsDeobfuscator):
-    """
-    The keys an empty object literal inherits are the ones its prototype holds only while the
-    object keeps the prototype it was created with and the file writes no key into that prototype
-    through the object. `__proto__` names the prototype, so a store to it replaces the chain and a
-    read of it, or of a key a computed name may spell as `__proto__`, hands the chain out.
-    """
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_node_prints_the_same_about_each_prototype_replaced_or_handed_out(self):
@@ -1652,7 +1677,7 @@ class TestMembershipOverAReplacedOrHandedOutPrototypeIsLeftStanding(TestJsDeobfu
             each_program_still_prints(rows),
         )
 
-    def test_an_inherited_key_is_not_folded_for_an_object_given_a_null_prototype(self):
+    def test_an_inherited_key_after_a_null_prototype_left_alone_or_folded_to_false(self):
         source = inspect.cleandoc(
             """
             var obj = {};
@@ -1660,9 +1685,21 @@ class TestMembershipOverAReplacedOrHandedOutPrototypeIsLeftStanding(TestJsDeobfu
             var a = 'toString' in obj;
             """
         )
-        self.assertEqual(source, self._simplify(source))
+        self.assertIn(
+            self._simplify(source),
+            (
+                source,
+                inspect.cleandoc(
+                    """
+                    var obj = {};
+                    obj.__proto__ = null;
+                    var a = false;
+                    """
+                ),
+            ),
+        )
 
-    def test_an_absent_key_is_not_folded_for_an_object_whose_prototype_is_written(self):
+    def test_a_key_written_into_the_prototype_of_an_object_left_alone_or_folded_to_true(self):
         source = inspect.cleandoc(
             """
             var obj = {};
@@ -1670,7 +1707,19 @@ class TestMembershipOverAReplacedOrHandedOutPrototypeIsLeftStanding(TestJsDeobfu
             var a = 'x' in obj;
             """
         )
-        self.assertEqual(source, self._simplify(source))
+        self.assertIn(
+            self._simplify(source),
+            (
+                source,
+                inspect.cleandoc(
+                    """
+                    var obj = {};
+                    obj.__proto__.x = 1;
+                    var a = true;
+                    """
+                ),
+            ),
+        )
 
 
 class TestCalleeSequencePreserved(TestJsDeobfuscator):
@@ -1679,18 +1728,9 @@ class TestCalleeSequencePreserved(TestJsDeobfuscator):
         self.assertEqual('x;', self._simplify('(0, x);'))
 
     def test_sequence_callee_not_collapsed_for_indirect_eval(self):
-        """
-        `(0, eval)(code)` is an indirect eval evaluated in the global scope; collapsing the callee
-        sequence to `eval(code)` would make it a direct eval evaluated in the caller's scope, so the
-        sequence is kept.
-        """
         self.assertEqual("(0, eval)('x');", self._simplify("(0, eval)('x');"))
 
     def test_sequence_callee_not_collapsed_for_method_receiver(self):
-        """
-        `(0, o.m)()` invokes `o.m` with no receiver; collapsing the callee sequence to `o.m()` would
-        bind `this` to `o`, so the sequence is kept.
-        """
         self.assertEqual('(0, o.m)();', self._simplify('(0, o.m)();'))
 
     def test_sequence_callee_collapsed_for_plain_identifier(self):
@@ -1698,8 +1738,8 @@ class TestCalleeSequencePreserved(TestJsDeobfuscator):
 
     def test_sequence_callee_not_collapsed_for_a_name_in_a_with_body(self):
         """
-        A bare `f()` in a `with` body binds `this` to the statement's object when that object holds
-        `f`; `(0, f)()` invokes with no receiver, so the sequence is kept, also in a closure there.
+        In a `with` body, a bare call `f()` that finds `f` on the object passes that object as
+        `this`; `(0, f)()` passes none.
         """
         self.assertEqual('with (o) {\n  (0, f)();\n}', self._simplify('with (o) { (0, f)(); }'))
         self.assertEqual(
@@ -1708,10 +1748,6 @@ class TestCalleeSequencePreserved(TestJsDeobfuscator):
         )
 
     def test_an_inlined_callee_in_a_with_body_is_reached_without_a_receiver(self):
-        """
-        The identity call answers the value of `f` and calls it with no receiver; a bare `f()` in
-        the `with` body would bind `this` to the statement's object.
-        """
         self.assertEqual(
             'with (o) {\n  (0, f)();\n}',
             self._simplify('with (o) { (function (g) { return g; })(f)(); }'),
@@ -1738,18 +1774,8 @@ class TestCalleeSequencePreserved(TestJsDeobfuscator):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestASequenceOperandThatMayThrowIsKept(TestJsDeobfuscator):
-    """
-    Every operand of a sequence is evaluated in order and every one but the last has its value
-    discarded, but discarding the value is not licence to skip the evaluation: a bare read of a
-    name no binding resolves throws a `ReferenceError` before the operands behind it, so dropping
-    it lets a program that ended there run on.
-    """
 
     def test_a_throwing_operand_is_kept_at_the_head_of_a_statement(self):
-        """
-        Node refuses `missing, console.log(1);` with a `ReferenceError` and prints nothing; the
-        simplification has to throw the same way rather than come back printing `1`.
-        """
         self.assertEqual(
             behavior(self._simplify('missing, console.log(1);')),
             ('', 'ReferenceError'),
@@ -1762,10 +1788,6 @@ class TestASequenceOperandThatMayThrowIsKept(TestJsDeobfuscator):
         )
 
     def test_a_resolved_operand_is_still_dropped(self):
-        """
-        A read that resolves cannot throw and carries no other effect, so the operand is dropped
-        and the sequence collapses to the value the last operand decides.
-        """
         self.assertEqual(
             'var x = 1;\nconsole.log(1);',
             self._simplify('var x = 1;\nx, console.log(1);'),
@@ -1773,14 +1795,6 @@ class TestASequenceOperandThatMayThrowIsKept(TestJsDeobfuscator):
 
 
 class TestAnAllocationDiscardedForItsShapeKeepsWhatBuildingItThrows(TestJsDeobfuscator):
-    """
-    The type and the truthiness of an object are read from the way it is written, without the
-    object, which is discarded along with every element in it. Discarding it is licence only where
-    building it does nothing observable and cannot throw: a name no binding resolves throws a
-    `ReferenceError` as its element is evaluated, so an allocation holding one is left standing where
-    its shape would otherwise have answered. `TestASequenceOperandThatMayThrowIsKept` keeps the same
-    throw one indirection out, at the operand of a sequence.
-    """
 
     def test_a_typeof_over_a_throwing_allocation_is_left_standing(self):
         self.assertEqual(
@@ -1789,22 +1803,12 @@ class TestAnAllocationDiscardedForItsShapeKeepsWhatBuildingItThrows(TestJsDeobfu
             'console.log(!{ p: zzz });', self._simplify('console.log(!{p: zzz});'))
 
     def test_a_branch_a_throwing_allocation_picks_keeps_the_allocation(self):
-        """
-        The fold answers the branch from the object's truthiness and drops the test, so the throw the
-        test raised is kept in front of the branch as a sequence: `({ p: zzz }, 1)` evaluates the
-        object and throws before it reaches `1`, exactly as `{p: zzz} ? 1 : 2` does.
-        """
         self.assertEqual(
             'console.log(({ p: zzz }, 1));', self._simplify('console.log({p: zzz} ? 1 : 2);'))
         self.assertEqual(
             'console.log(([zzz], 1));', self._simplify('console.log([zzz] ? 1 : 2);'))
 
     def test_an_allocation_nothing_in_which_throws_is_still_discarded_for_its_shape(self):
-        """
-        The control: a literal, a global value name, a function expression, and a resolved local each
-        build without throwing, so the object is discarded and its shape answers. A refusal reached
-        for every allocation rather than only a throwing one would fold none of these.
-        """
         self.assertEqual("console.log('object');", self._simplify('console.log(typeof {p: 1});'))
         self.assertEqual('console.log(false);', self._simplify('console.log(!{p: 1});'))
         self.assertEqual(
@@ -1831,12 +1835,6 @@ class TestAnAllocationDiscardedForItsShapeKeepsWhatBuildingItThrows(TestJsDeobfu
 
 
 class TestConcatReassociation(TestJsDeobfuscator):
-    """
-    A `+` chain whose left end is not a literal still has adjacent literals in it, and splitting a
-    string across such a chain is a common concealment. Because `+` is left-associative, `x + 'a' + 'b'`
-    nests as `(x + 'a') + 'b'`, so no single node has two literal operands and pairwise folding alone
-    never touches it.
-    """
 
     def test_literal_tail_merged_after_identifier(self):
         self.assertEqual(
@@ -1869,55 +1867,37 @@ class TestConcatReassociation(TestJsDeobfuscator):
         )
 
     def test_numeric_pair_not_merged(self):
-        """
-        `x + 1 + 2` adds when `x` is numeric and concatenates when `x` is a string, so the pair cannot
-        be reduced without knowing `x`: merging to `x + 3` gives `10` where `7` gives `712`, and merging
-        to `x + '12'` breaks the numeric case instead.
-        """
         self.assertEqual('f(x + 1 + 2);', self._simplify('f(x + 1 + 2);'))
 
     def test_number_before_string_not_merged(self):
-        """
-        In `x + 1 + 'b'` the `1` binds to `x` first, so it is `8b` for `x = 7` — merging the trailing
-        pair into `'1b'` would yield `71b`.
-        """
         self.assertEqual("f(x + 1 + 'b');", self._simplify("f(x + 1 + 'b');"))
 
     def test_leading_literal_pair_still_folded_wholly(self):
         self.assertEqual("f('ab' + x);", self._simplify("f('a' + 'b' + x);"))
 
     def test_parenthesized_right_operand_not_reassociated(self):
-        """
-        `x + ('a' + 'b')` already groups the literals, and the inner fold handles it; the outer node
-        must not then merge `'ab'` into a left operand it does not have.
-        """
         self.assertEqual("f(x + 'ab');", self._simplify("f(x + ('a' + 'b'));"))
 
     def test_subtraction_not_reassociated(self):
         self.assertEqual("f(x - 'a' - 'b');", self._simplify("f(x - 'a' - 'b');"))
 
     def test_multiplication_inner_not_reassociated(self):
-        """
-        Only a `+` may absorb the literal on its left. For `x = 4`, `x * '1' + '2'` multiplies and then
-        concatenates, giving `'42'`; merging the literals across the `*` would compute `4 * '12'` and give
-        `48`. A subtraction chain alone does not witness this — it is `NaN` either way.
-        """
         self.assertEqual("f(x * '1' + '2');", self._simplify("f(x * '1' + '2');"))
 
-    def test_array_tail_not_merged(self):
-        """
-        An array converts through `Array.prototype.join`, which a program can replace, so its string form
-        is not a property of the syntax: after `Array.prototype.join = ...`, `x + 'a' + [1, 2]` is not
-        `x + 'a1,2'`. Primitives have no such hook and are merged.
-        """
-        self.assertEqual("f(x + 'a' + [1, 2]);", self._simplify("f(x + 'a' + [1, 2]);"))
+    def test_array_tail_not_merged_where_the_program_replaces_join(self):
+        source = inspect.cleandoc(
+            """
+            Array.prototype.join = function () { return 'J'; };
+            f(x + 'a' + [1, 2]);
+            """
+        )
+        self.assertEqual(JsSynthesizer().convert(JsParser(source).parse()), self._simplify(source))
+
+    @opportunity
+    def test_array_tail_merged_as_the_text_join_gives(self):
+        self.assertEqual("f(x + 'a1,2');", self._simplify("f(x + 'a' + [1, 2]);"))
 
     def test_imprecise_integer_tail_merged_as_the_double_it_denotes(self):
-        """
-        A JS number is a double, so `9007199254740993` denotes `9007199254740992` and Node agrees that
-        `'a' + 9007199254740993` is `'a9007199254740992'`. The literal is a primitive like any other and
-        merges; what it must never contribute is the digit string it was written with.
-        """
         self.assertEqual(
             "f(x + 'a9007199254740992');",
             self._simplify("f(x + 'a' + 9007199254740993);"),
@@ -1929,17 +1909,21 @@ class TestConcatReassociation(TestJsDeobfuscator):
             self._simplify("f(x + 'a' + 9007199254740992);"),
         )
 
-    def test_template_literal_not_merged(self):
-        self.assertEqual("f(x + `a` + 'b');", self._simplify("f(x + `a` + 'b');"))
+    def test_template_literal_left_alone_or_merged(self):
+        self.assertIn(
+            self._simplify("f(x + `a` + 'b');"),
+            (
+                "f(x + `a` + 'b');",
+                "f(x + 'ab');",
+            ),
+        )
+
+    @opportunity
+    def test_template_literal_without_substitutions_merged(self):
+        self.assertEqual("f(x + 'ab');", self._simplify("f(x + `a` + 'b');"))
 
 
 class TestGlobalValueNameOperands(TestJsDeobfuscator):
-    """
-    `undefined`, `NaN` and `Infinity` name values that the tool already reads through a call, and it
-    already spells them back as `void 0`, `0 / 0` and `1e999`. An operand written with one of the
-    names is therefore as constant as one written with those expressions, and an arithmetic or a
-    concatenation reading it is folded the same way. Node says what each expression here denotes.
-    """
 
     def test_the_same_operands_spelled_without_a_name_are_folded(self):
         self.assertEqual('1e999;', self._simplify('1e999 + 1;'))
@@ -1948,26 +1932,15 @@ class TestGlobalValueNameOperands(TestJsDeobfuscator):
         self.assertEqual("f(x + 'aNaN');", self._simplify("f(x + 'a' + (0 / 0));"))
 
     def test_arithmetic_reading_a_global_value_name_is_folded(self):
-        """
-        Node: `Infinity` and `0`.
-        """
         self.assertEqual('1e999;', self._simplify('Infinity + 1;'))
         self.assertEqual('0;', self._simplify('1 / Infinity;'))
 
     def test_a_global_value_name_concatenated_onto_a_string_is_merged(self):
-        """
-        Node: `aundefined`, `aNaN` and `aInfinity`.
-        """
         self.assertEqual("f(x + 'aundefined');", self._simplify("f(x + 'a' + undefined);"))
         self.assertEqual("f(x + 'aNaN');", self._simplify("f(x + 'a' + NaN);"))
         self.assertEqual("f(x + 'aInfinity');", self._simplify("f(x + 'a' + Infinity);"))
 
 
-#: Operands that each spell a primitive the way a program writes it: numbers at the edges of the
-#: 32-bit conversions and past the largest double, strings that `ToNumber` reads in one of its
-#: grammars or refuses, strings that compare by their code units, the literals `true`, `false` and
-#: `null`, the global value names and the expressions they are spelled back as, and unary operators
-#: over literals.
 _PRIMITIVE_OPERANDS = (
     '0',
     '-0',
@@ -2030,9 +2003,6 @@ _BINARY_OPERATORS = (
 
 
 def _sunk(printed: str) -> list[Expression]:
-    """
-    The argument of each `SINK` call that makes up the program *printed*.
-    """
     arguments = []
     for statement in JsParser(printed).parse().body:
         assert isinstance(statement, JsExpressionStatement)
@@ -2044,12 +2014,6 @@ def _sunk(printed: str) -> list[Expression]:
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestABinaryOperatorOverTwoPrimitivesIsFoldedToTheValueNodeComputes(TestJsDeobfuscator):
-    """
-    A primitive converts by an operation no program can replace, so the value of a binary operator
-    over two operands that each spell one is decided by the operands alone. For every operator and
-    every pair of `_PRIMITIVE_OPERANDS` the fold writes a literal, and Node reads that literal as
-    the value it computes for the expression. A power the language leaves to the engine stays.
-    """
 
     def test_each_operator_folds_to_the_value_node_computes(self):
         for operator in _BINARY_OPERATORS:
@@ -2067,10 +2031,9 @@ class TestABinaryOperatorOverTwoPrimitivesIsFoldedToTheValueNodeComputes(TestJsD
 
 class TestAPowerTheEngineApproximatesIsNotFolded(TestJsDeobfuscator):
     """
-    The language fixes the value of a power only in a few cases and otherwise leaves it to the
-    engine, and engines differ in the last digit: Node computes `16677181699666570` for `9 ** 17`,
-    where the nearest double to the power is `16677181699666568`. Such a power stays, and one whose
-    value is a double exactly is folded.
+    The language leaves the value of most powers to the engine, and engines differ in the last
+    digit: Node computes `16677181699666570` for `9 ** 17`, where the nearest double to the power is
+    `16677181699666568`.
     """
 
     def test_a_power_the_engine_approximates_stays(self):
@@ -2105,19 +2068,8 @@ class TestAPowerTheEngineApproximatesIsNotFolded(TestJsDeobfuscator):
 
 
 class TestTypeofAGuaranteedGlobalIsFolded(TestJsDeobfuscator):
-    """
-    `typeof` of a name the specification mandates on the global object is host-independent — the name
-    resolves in every host to a value of a fixed type — so it folds to a constant string. Node says
-    what `typeof` answers for each below. A host-conditional alias (`window`) and a name a conformant
-    host may withhold (`SharedArrayBuffer`) are left standing, since their `typeof` is `'undefined'`
-    where the name is absent; a name the program reassigns or shadows is left standing too, since the
-    value it now holds may be of another type.
-    """
 
     def test_a_pristine_guaranteed_global_folds_to_its_type_string(self):
-        """
-        Node: `object`, `function`, `object`, `object`, `function`, `undefined`.
-        """
         self.assertEqual("'object';", self._simplify('typeof globalThis;'))
         self.assertEqual("'function';", self._simplify('typeof Object;'))
         self.assertEqual("'object';", self._simplify('typeof Math;'))
@@ -2131,11 +2083,6 @@ class TestTypeofAGuaranteedGlobalIsFolded(TestJsDeobfuscator):
                 self.assertEqual(F'typeof {name};', self._simplify(F'typeof {name};'))
 
     def test_a_host_conditional_typeof_folds_under_a_pin(self):
-        """
-        Pinning the host settles a host-conditional `typeof` the same way the interpreter's fold does,
-        so a top-level guard folds too: `-e node` proves `Buffer` present (`'function'`) and `window`
-        absent (`'undefined'`); `-e browser` proves the reverse.
-        """
         pinned = DeobfuscationOptions(environment=HostEnvironment.node)
         self.assertEqual("'function';", self._run_transformer('typeof Buffer;', JsSimplifications, pinned))
         self.assertEqual("'undefined';", self._run_transformer('typeof window;', JsSimplifications, pinned))
@@ -2144,10 +2091,6 @@ class TestTypeofAGuaranteedGlobalIsFolded(TestJsDeobfuscator):
         self.assertEqual("'object';", self._run_transformer('typeof window;', JsSimplifications, browser))
 
     def test_a_reassigned_or_shadowed_global_is_left_standing(self):
-        """
-        Node: after `Object = 5`, `typeof Object` is `number`, not `function`, and a parameter named
-        `Object` holds whatever the caller passed.
-        """
         self.assertEqual('Object = 5;\ntypeof Object;', self._simplify('Object = 5;\ntypeof Object;'))
         self.assertEqual(
             'function f(Object) {\n  return typeof Object;\n}',
@@ -2156,19 +2099,8 @@ class TestTypeofAGuaranteedGlobalIsFolded(TestJsDeobfuscator):
 
 
 class TestStringMethodsIndexInUtf16CodeUnits(TestJsDeobfuscator):
-    """
-    A `String.prototype` method that takes or returns an index or a length counts in UTF-16 code
-    units, so over `_SPANNING` every offset past the middle character is one greater than the count
-    of Python code points. Each call here is folded, so the offset the method read is written into
-    the deobfuscated file as a constant, where nothing recalls what the source said.
-    """
 
     def test_char_at_returns_one_code_unit(self):
-        """
-        Node answers with the high surrogate 0xD83D at index 1 and the low surrogate 0xDE00 at
-        index 2. `charAt` names a single code unit, so it can never answer with a whole character
-        that spans two of them, and it can never run out of string before index 3.
-        """
         self.assertEqual(
             (
                 _folded_value(F'{_SPANNING}.charAt(1)'),
@@ -2178,11 +2110,6 @@ class TestStringMethodsIndexInUtf16CodeUnits(TestJsDeobfuscator):
         )
 
     def test_at_indexes_code_units_from_either_end(self):
-        """
-        Node answers with the high surrogate 0xD83D at index 1 and the low surrogate 0xDE00 at
-        index -2. A negative index counts back from a length that is also measured in code units,
-        so the two ends of the string have to agree about where the middle character sits.
-        """
         self.assertEqual(
             (
                 _folded_value(F'{_SPANNING}.at(1)'),
@@ -2192,10 +2119,6 @@ class TestStringMethodsIndexInUtf16CodeUnits(TestJsDeobfuscator):
         )
 
     def test_substring_cuts_between_code_units(self):
-        """
-        Node answers with the high surrogate 0xD83D for `substring(1, 2)` and with the low
-        surrogate 0xDE00 followed by `b` for `substring(2)`.
-        """
         self.assertEqual(
             (
                 _folded_value(F'{_SPANNING}.substring(1, 2)'),
@@ -2205,11 +2128,6 @@ class TestStringMethodsIndexInUtf16CodeUnits(TestJsDeobfuscator):
         )
 
     def test_index_of_reports_a_code_unit_offset(self):
-        """
-        Node answers `3` for both, since `b` follows two surrogates. The returned offset is what a
-        caller feeds back into an index, so reporting it one short misplaces every later cut, and
-        searching from position 3 must still find the character that sits there.
-        """
         self.assertEqual(
             (
                 _folded_value(F"{_SPANNING}.indexOf('b')"),
@@ -2219,41 +2137,21 @@ class TestStringMethodsIndexInUtf16CodeUnits(TestJsDeobfuscator):
         )
 
     def test_last_index_of_reports_a_code_unit_offset(self):
-        """
-        Node answers `3`, the same offset the forward search reports for the only `b` in the
-        string.
-        """
         self.assertEqual(_folded_value(F"{_SPANNING}.lastIndexOf('b')"), '3')
 
     def test_includes_takes_a_code_unit_position(self):
-        """
-        Node answers `true`: the search starts at code unit 3, which is where `b` is. A position
-        measured in code points starts the search past the end of the string and finds nothing.
-        """
         self.assertEqual(_folded_value(F"{_SPANNING}.includes('b', 3)"), 'true')
 
     def test_starts_with_takes_a_code_unit_position(self):
-        """
-        Node answers `true`, because the string does start with `b` when read from code unit 3.
-        """
         self.assertEqual(_folded_value(F"{_SPANNING}.startsWith('b', 3)"), 'true')
 
     def test_ends_with_takes_a_code_unit_end_position(self):
-        """
-        Node answers `true`: the first three code units end with the two that spell the astral
-        character. An end position read as a code point cuts one unit short of it.
-        """
         self.assertEqual(
             _folded_value(F"{_SPANNING}.endsWith('{_ASTRAL}', 3)"),
             'true',
         )
 
     def test_slice_cuts_between_code_units(self):
-        """
-        Node answers with the astral character for `slice(1, 3)` and with the low surrogate 0xDE00
-        followed by `b` for both `slice(2)` and `slice(-2)`. A cut may fall between the two halves
-        of a character, and a slice that starts on the second half begins with a lone surrogate.
-        """
         self.assertEqual(
             (
                 _folded_value(F'{_SPANNING}.slice(1, 3)'),
@@ -2264,11 +2162,6 @@ class TestStringMethodsIndexInUtf16CodeUnits(TestJsDeobfuscator):
         )
 
     def test_substr_counts_its_length_in_code_units(self):
-        """
-        Node answers with the astral character for `substr(1, 2)` and with the low surrogate 0xDE00
-        for `substr(2, 1)`. The second argument is a count of code units and not of characters, so
-        two of them are what it takes to name the middle character.
-        """
         self.assertEqual(
             (
                 _folded_value(F'{_SPANNING}.substr(1, 2)'),
@@ -2278,21 +2171,12 @@ class TestStringMethodsIndexInUtf16CodeUnits(TestJsDeobfuscator):
         )
 
     def test_pad_start_measures_the_target_length_in_code_units(self):
-        """
-        Node answers with two dashes before the string. The target length is compared against a
-        length of four, so exactly two units are wanted; counting the astral character once asks
-        for one dash too many and changes what the padded string says.
-        """
         self.assertEqual(
             _folded_value(F"{_SPANNING}.padStart(6, '-')"),
             F"'--a{_ASTRAL}b'",
         )
 
     def test_pad_end_measures_the_target_length_in_code_units(self):
-        """
-        Node answers with two dashes after the string, for the reason `padStart` gets two before
-        it.
-        """
         self.assertEqual(
             _folded_value(F"{_SPANNING}.padEnd(6, '-')"),
             F"'a{_ASTRAL}b--'",
@@ -2301,10 +2185,8 @@ class TestStringMethodsIndexInUtf16CodeUnits(TestJsDeobfuscator):
 
 class TestARespellingMovesTheTreeVersion(TestBase):
     """
-    A string literal respelled to its shortest form changes the program the tree spells — the
-    spelling is what decides whether a line is a directive — and the version counter every model
-    cache reads has to move with it: a cache whose pin read no change on exit keeps the models built
-    over the earlier spelling.
+    `'use strict'` spelled with an escape in it does not make code strict, so respelling a string
+    literal can change what the program means, and the tree version has to advance with it.
     """
 
     def test_respelling_an_escaped_string_literal_advances_the_counter(self):
@@ -2316,10 +2198,6 @@ class TestARespellingMovesTheTreeVersion(TestBase):
 
 
 class TestAFoldWritesNoListLongerThanTheCap(TestJsDeobfuscator):
-    """
-    A fold of `split` or of a call computing a list writes the list into the text only where it
-    holds at most `MAX_RESULT_ARRAY_LEN` items, as every fold of a computed value does.
-    """
 
     @staticmethod
     def _programs(count: int) -> tuple[str, ...]:
@@ -2343,10 +2221,6 @@ class TestAFoldWritesNoListLongerThanTheCap(TestJsDeobfuscator):
 
 
 class TestFoldingTheItemsOfAListCostsTheirNumber(TestBase):
-    """
-    The work of the pass on a list whose every item folds to a string grows with the number of
-    items: a fold that shows the models nothing leaves writing its replacement to the walk.
-    """
 
     @staticmethod
     def _work(count: int) -> int:

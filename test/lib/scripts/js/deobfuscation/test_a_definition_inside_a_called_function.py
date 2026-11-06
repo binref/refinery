@@ -1,10 +1,3 @@
-"""
-A function expression the program calls where it writes it has run the definitions it holds by the
-time the call returns, on every run that returns rather than throws, so the call orders them for
-the code after it: a table or an accessor such a function sets up is in place for every function
-the program calls later. A definition the call may skip, a read the call itself makes before the
-definition, and a function that returns before its body has run are ordered by nothing.
-"""
 from __future__ import annotations
 
 import unittest
@@ -24,8 +17,6 @@ from test.lib.scripts.js.ledger import (
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 
 
-#: Programs that define a name inside a function called where it is written and read it inside and
-#: after the call, each with what Node makes of it as a CommonJS file and as an ES module.
 A_DEFINITION_INSIDE_A_FUNCTION_CALLED_WHERE_IT_IS_WRITTEN = {
     'an accessor installed by a function called where it is written': FileProgram(
         a_program("""

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test import TestBase
+from test import TestBase, opportunity
 
 from refinery.lib.scripts.analysis.cfg import Projection
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
@@ -58,10 +58,6 @@ class TestDominance(TestBase):
         self.assertFalse(dom.dominates(decl, use))
 
     def test_definition_after_throwing_statement_does_not_dominate_catch(self):
-        """
-        `f()` may throw before `var a = 1` runs, so a path reaches the handler without the definition;
-        the definition therefore does not dominate the catch-bound use.
-        """
         ast, dom = self._dominance('try { f(); var a = 1; } catch (e) { a; }')
         decl = self._idents(ast, 'a')[0]
         use = self._idents(ast, 'a')[1]
@@ -101,10 +97,6 @@ class TestDominance(TestBase):
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
     def test_runs_before_nested_call_when_caller_runs_after_definition(self):
-        """
-        `f` is called only inside `main`, and `main` is called after the definition, so every
-        invocation of `f` runs after it — the lookup-table-read-in-a-callee shape the b91 sample uses.
-        """
         ast, dom = self._dominance(
             'const c = 5; function f(){ return c; } function main(){ return f(); } main();')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
@@ -115,29 +107,14 @@ class TestDominance(TestBase):
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
     def test_runs_before_function_passed_as_argument_after_definition(self):
-        """
-        `f` escapes into `g`, which may call it at any later point, but the value it captures is
-        established before `f` is even passed — so every invocation still runs after the definition.
-        """
         ast, dom = self._dominance('const c = 5; function f(){ return c; } g(f);')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
     def test_does_not_run_before_function_passed_before_definition(self):
-        """
-        `f` is handed to `g` before the definition runs, so `g` could invoke it while the value is
-        still unset; the reference that lets it escape is not dominated by the definition.
-        """
         ast, dom = self._dominance('function f(){ return c; } g(f); const c = 5;')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
     def test_does_not_run_before_function_invoked_through_with(self):
-        """
-        `f` is invoked inside a `with` body — a call site no static reference records, since the name
-        may denote a property of the `with` object — and that call runs before the definition. The
-        with-body reference makes the points unorderable (mirroring `function_escapes`), so the
-        definition is not judged to run before every invocation; ordering it against the static
-        references alone would miss the earlier dynamic call.
-        """
         ast, dom = self._dominance('function f(){ return c; } with (o) { f(); } const c = 5;')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
@@ -146,10 +123,6 @@ class TestDominance(TestBase):
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
     def test_mutual_recursion_entered_after_the_definition_is_ordered(self):
-        """
-        `f` and `g` call each other, so neither can be invoked before one of them is read from
-        outside the pair; the one such read, `f()`, runs after the definition.
-        """
         ast, dom = self._dominance(
             'const c = 5; function f(){ return g(); } function g(){ return f(); } f();')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
@@ -165,10 +138,6 @@ class TestDominance(TestBase):
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'g')))
 
     def test_a_reader_only_its_own_recursion_calls_is_not_entered(self):
-        """
-        A recursive function nothing else calls is invoked by nothing in the file: every one of its
-        invocations follows the definition vacuously, but none is entered from it.
-        """
         ast, dom = self._dominance('var c = 5; function f(n){ return n ? f(n - 1) : c; }')
         definition, function = self._def(ast, 'c'), self._func(ast, 'f')
         self.assertTrue(dom.runs_before_function(definition, function))
@@ -184,8 +153,8 @@ class TestDominance(TestBase):
 
     def test_a_long_chain_of_callers_is_ordered(self):
         """
-        The walk up the callers of `f0` passes three thousand functions, more than the interpreter
-        would let a recursive walk nest.
+        The chain holds three times as many callers as Python's default recursion limit lets a
+        recursive walk nest.
         """
         count = 3000
         functions = ' '.join(F'function f{k}(){{ return f{k + 1}(); }}' for k in range(count))
@@ -221,92 +190,48 @@ class TestDominance(TestBase):
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func_expr(ast)))
 
     def test_runs_before_callback_created_after_definition(self):
-        """
-        A callback escapes into `forEach`, which invokes it synchronously or not at all, but the value
-        it reads is established before the callback is even created — so no invocation precedes it.
-        """
         ast, dom = self._dominance('const c = 5; [0].forEach(function(){ return c; });')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func_expr(ast)))
 
     def test_does_not_run_before_callback_created_before_definition(self):
-        """
-        The callback is created — and could be invoked — before the definition runs, so the value it
-        reads is not yet established; its creation point is not dominated by the definition.
-        """
         ast, dom = self._dominance('[0].forEach(function(){ return c; }); const c = 5;')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func_expr(ast)))
 
     def test_does_not_run_before_call_sharing_the_definition_statement(self):
-        """
-        The earlier declarator `x = f()` calls `f` before the later `c = 5` runs, so `f` reads `c` while
-        it is unset; the declarator holding the call runs before the one holding the definition, so
-        the definition must not be treated as running before the call.
-        """
         ast, dom = self._dominance('var x = f(), c = 5; function f(){ return c; }')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
     def test_does_not_run_before_caller_default_parameter_evaluated_before_definition(self):
-        """
-        `f` is referenced only in `inner`'s default parameter, which runs when `inner` is invoked; the
-        hoisted `inner()` runs before the definition, so that invocation reads `c` early.
-        """
         ast, dom = self._dominance(
             'inner(); const c = 5; function f(){ return c; } function inner(a = f()){ return a; }')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
     def test_runs_before_caller_default_parameter_evaluated_after_definition(self):
-        """
-        `f` is referenced only in `inner`'s default parameter, and `inner` is called after the
-        definition, so every evaluation of that parameter — and hence every call of `f` — runs after it.
-        """
         ast, dom = self._dominance(
             'const c = 5; function f(){ return c; } function inner(a = f()){ return a; } inner();')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
     def test_runs_before_namespace_method_called_after_definition(self):
-        """
-        `NS.f` is stored as a method of a non-escaping local object and invoked only after `c` is
-        assigned; the method's invocation is ordered by that call site, not by its earlier creation, so
-        the definition runs before every call even though it is written after the method is created.
-        """
         ast, dom = self._dominance(
             'var NS = {}; NS.f = function(){ return c; }; var c = 5; NS.f();')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'f')))
 
     def test_does_not_run_before_namespace_method_called_before_definition(self):
-        """
-        The `NS.f()` call precedes `var c = 5`, so the method reads `c` while it is still unset; the
-        property read that pins the call runs before the definition, so it is not judged to run before.
-        """
         ast, dom = self._dominance(
             'var NS = {}; NS.f = function(){ return c; }; NS.f(); var c = 5;')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'f')))
 
     def test_does_not_run_before_method_when_object_escapes(self):
-        """
-        `NS` is passed to `sink`, which could invoke `NS.f()` before `c` is assigned; because the object
-        escapes, the method's call sites are no longer enumerable through property reads alone, so the
-        definition is not judged to run before every invocation despite the later in-scope call.
-        """
         ast, dom = self._dominance(
             'var NS = {}; NS.f = function(){ return c; }; sink(NS); var c = 5; NS.f();')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'f')))
 
     def test_a_destructuring_write_to_a_namespace_method_does_not_obtain_it(self):
-        """
-        A destructuring target writes `NS.f` without reading it, so the write before the definition
-        hands the method to nothing, and the one read that does obtain it runs after.
-        """
         ast, dom = self._dominance(
             'var NS = {}; NS.f = function(){ return c; }; [NS.f] = [1]; var c = 5; console.log(NS.f);')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'f')))
 
     def test_a_method_call_on_the_object_hands_it_to_the_callee(self):
-        """
-        A method call on `NS` runs its callee with `NS` as `this`, and the callee can call `NS.g`
-        through it without spelling `NS.g` anywhere. Every call form that passes the receiver is
-        such a point, so a call before the definition refuses and the same call after it does not.
-        """
         forms = [
             'NS.f()',
             '(NS.f)()',
@@ -332,10 +257,6 @@ class TestDominance(TestBase):
                     self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), method), expected)
 
     def test_a_call_detaching_the_receiver_hands_the_object_to_nothing(self):
-        """
-        `(0, NS.f)()` calls `f` with no receiver, so `f` cannot reach `NS.g` through `this` and the
-        call before the definition orders nothing about `NS.g`.
-        """
         ast, dom = self._dominance(
             'var NS = {}; NS.g = function(){ return c; }; NS.f = function(){ return 1; };'
             ' (0, NS.f)(); var c = 5; NS.g();')
@@ -364,10 +285,6 @@ class TestDominance(TestBase):
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'g')))
 
     def test_the_establishing_write_is_a_point_where_a_setter_may_run(self):
-        """
-        A setter installed on `Object.prototype` receives the function the write stores, and may
-        call it right there; the write itself precedes the definition, so nothing orders the call.
-        """
         ast, dom = self._dominance(
             'Object.defineProperty(Object.prototype, "g", { set: function(v){ v(); } });'
             ' var NS = {}; NS.g = function(){ return c; }; var c = 5;')
@@ -383,9 +300,9 @@ class TestDominance(TestBase):
 
     def test_a_declared_host_entrypoint_has_no_orderable_invocations(self):
         """
-        A host calls an entry point by name whenever the script hands it control, which the call to
-        `fire` may do before the definition runs. Under the module model the declaration never
-        becomes a property of the global object, so the host cannot reach it by name.
+        A host may call an entry point by name whenever the script hands it control, as `fire()`
+        may. In a CommonJS file a top-level declaration is no property of the global object, so no
+        host can call `OnEvent` by name there.
         """
         source = 'function OnEvent(){ return c; } fire(); var c = 5;'
         for kind, expected in ((FileKind.script, False), (FileKind.commonjs, True)):
@@ -401,10 +318,9 @@ class TestDominance(TestBase):
 
     def test_an_export_of_a_module_in_an_import_cycle_has_no_orderable_invocations(self):
         """
-        A module that imports another can be in a cycle with it, and the other module can then call
-        an exported declaration before the body that defines `c` has run. A module that imports
-        nothing runs its whole body before any importer calls into it, and so does one that awaits:
-        an importer waits for it to finish.
+        Only a module in an import cycle with this one can call an export before the body defining
+        `c` has run, and a module that imports nothing is in no cycle. A module that awaits at the
+        top level also finishes before any importer runs.
         """
         cases = {
             'import "./b.mjs"; export function f(){ return c; } const c = 5;': False,
@@ -432,10 +348,6 @@ class TestDominance(TestBase):
                 self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), function), expected)
 
     def test_a_method_the_value_of_its_install_hands_on_is_ordered_by_its_creation(self):
-        """
-        `f = NS.g = function(){}` stores the method in `f` as well as in `NS.g`, so the call
-        through `f` reads no member of `NS`; the function is invoked no earlier than it is created.
-        """
         cases = {
             'var NS = {}; var f = NS.g = function(){ return c; }; f(); var c = 5; NS.g();': False,
             'var NS = {}; (NS.g = function(){ return c; })(); var c = 5; NS.g();': False,
@@ -463,11 +375,6 @@ class TestDominance(TestBase):
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func_expr(ast)))
 
     def test_code_this_file_cannot_read_gives_every_access_an_accessor(self):
-        """
-        The surface may install a getter on `Object.prototype` that calls `NS.g` through `this`,
-        and the read of `NS.k` before `c` exists would run it. A surface in the global scope cannot
-        name the local `NS`, so it is no point of the object's own.
-        """
         cases = {
             'function main(code){ var NS = {}; NS.g = function(){ return c; };'
             ' (0, eval)(code); NS.k; const c = 5; }': False,
@@ -481,10 +388,6 @@ class TestDominance(TestBase):
                 self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), method), expected)
 
     def test_an_access_reaching_the_prototype_gives_every_access_an_accessor(self):
-        """
-        What the access yields leads to `Object.prototype`, so a getter installed through it runs
-        on every later access of any plain object: here one read before `c` exists.
-        """
         reaches = [
             'NS.constructor.prototype',
             'NS["constructor"].prototype',
@@ -503,11 +406,6 @@ class TestDominance(TestBase):
                 self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), method))
 
     def test_an_accessor_an_earlier_call_installed_is_ordered_against_the_next_call(self):
-        """
-        The getter lands on `Object.prototype`, which the object of the second call inherits, so
-        the read of `NS.k` in that call runs it before its own `c` exists, although every access
-        of the first call that installs it comes after `c`.
-        """
         ast, dom = self._dominance(
             'function main(){ var NS = {}; NS.g = function(){ return c; }; NS.k; const c = 5;'
             ' NS.__proto__.__defineGetter__("k", function(){ return this.g(); }); }'
@@ -518,9 +416,9 @@ class TestDominance(TestBase):
 
     def test_a_method_of_an_object_a_host_reaches_is_ordered_by_its_creation(self):
         """
-        A host holding the declared object may call its method whenever the script hands it
-        control, as it may during `fire()`. Under the module model the declaration is no property
-        of the global object, and no host reaches it by name.
+        A host may call a method of `handlers` whenever the script hands it control, as `fire()`
+        may. In a CommonJS file a top-level declaration is no property of the global object, so no
+        host reaches `handlers` there.
         """
         source = 'var handlers = {}; handlers.onload = function(){ return c; }; fire(); var c = 5;'
         for kind, expected in ((FileKind.script, False), (FileKind.commonjs, True)):
@@ -536,10 +434,9 @@ class TestDominance(TestBase):
 
     def test_a_method_of_an_object_an_importer_in_an_import_cycle_reaches_is_ordered_by_its_creation(self):
         """
-        A module in an import cycle can run code of the other module before its own body has
-        finished, as it may during `fire()`, and that code can call a method of an object the
-        module exports. A module that imports nothing is in no cycle, and an object it does not
-        export is reached by no importer.
+        A module in an import cycle can call a method of an object this module exports before its
+        body has finished, as it may during `fire()`. A module that imports nothing is in no cycle,
+        and an object it does not export is reached by no importer.
         """
         cases = {
             'import "./b.mjs"; export var handlers = {}; handlers.onload = function(){ return c; }; fire(); const c = 5;': False,
@@ -555,9 +452,8 @@ class TestDominance(TestBase):
 
     def test_a_store_before_the_one_call_of_a_library_function_does_not_precede_the_calls_of_its_loader(self):
         """
-        A file of nothing but function declarations is a library: code that loads it calls `use`
-        by name once the file has run, without running `main` first. Where the file calls `main`
-        itself, it is no library, and the call of `use` in `main` is the only one.
+        A file of nothing but function declarations is a library: code that loads it may call `use`
+        by name without calling `main` first. A file that calls `main` itself is no library.
         """
         cases = {
             'function main() { G = 5; use(); } function use() { return G; }': False,
@@ -572,8 +468,8 @@ class TestDominance(TestBase):
 
     def test_a_function_installed_as_the_prototype_is_ordered_by_its_creation(self):
         """
-        A function stored at `o.__proto__` becomes the prototype of `o`, so the inherited read
-        `o.prototype.constructor` hands it out without reading `o.__proto__`.
+        A function stored at `o.__proto__` becomes the prototype of `o`, so
+        `o.prototype.constructor` is that function, reached without reading `o.__proto__`.
         """
         ast, dom = self._dominance(
             'var o = {}; o.__proto__ = function(){ return c; };'
@@ -584,8 +480,8 @@ class TestDominance(TestBase):
 
     def test_an_export_of_a_module_that_imports_nothing_is_ordered_against_its_end(self):
         """
-        An importer outside every cycle calls the export once the module has finished, on every
-        run that finishes it, including the runs that skip the definition.
+        An importer calls the export once the module has finished, also on a run where `c` is falsy
+        and `y` is never assigned.
         """
         cases = {
             'export function f(){ return y; } if (c) { var y = 5; f(); }': False,
@@ -598,11 +494,6 @@ class TestDominance(TestBase):
                 self.assertEqual(ordered, expected)
 
     def test_a_method_stored_after_the_definition_is_ordered_whatever_hands_its_object_over(self):
-        """
-        The call of `NS.f` hands `NS` to its callee before `c` exists, but `NS.g` is created only
-        after `c`, so no call can reach it earlier. A function declaration exists from the start of
-        the script and has no such bound.
-        """
         cases = {
             'var NS = {}; NS.f = function(){}; NS.f();'
             ' const c = 5; NS.g = function(){ return c; };': True,
@@ -618,11 +509,6 @@ class TestDominance(TestBase):
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'g')))
 
     def test_a_method_no_code_obtains_is_not_entered_through_its_object(self):
-        """
-        Every access of `NS` may run the getter, and a call of `NS.f` hands `NS` over, but nothing
-        in the file reads `NS.g`: its object reaching code enters it no more than a function
-        declaration nothing calls is entered.
-        """
         sources = [
             'var c = 5; var NS = { get k(){ return 1; } }; NS.g = function(){ return c; }; NS.k;',
             'var c = 5; var NS = {}; NS.f = function(){}; NS.g = function(){ return c; }; NS.f();',
@@ -639,10 +525,6 @@ class TestDominance(TestBase):
         self.assertTrue(dom.runs_before_every_invocation(self._def(ast, 'c'), method))
 
     def test_the_methods_of_a_namespace_calling_each_other_are_ordered_by_their_installs(self):
-        """
-        Each method calls the next one through `NS`, which hands `NS` to every method; the calls
-        at the top run after every install, so each install runs before every read of its key.
-        """
         count = 300
         methods = [
             F'NS.f{k} = function(a){{ return NS.f{(k + 1) % count}(a) + {k}; }};'
@@ -681,10 +563,6 @@ class TestDominance(TestBase):
         self.assertFalse(dom.strictly_dominates(b, a))
 
     def test_strictly_dominates_refuses_same_statement(self):
-        """
-        The operands of a comma expression share one control-flow node, so strict dominance refuses
-        a pair across them — where the reflexive `dominates` accepts the same pair.
-        """
         ast, dom = self._dominance('var a, b; a = 1, b = a;')
         _, store, use = self._idents(ast, 'a')
         self.assertTrue(dom.dominates(store, use))
@@ -713,11 +591,6 @@ class TestDominance(TestBase):
         self.assertFalse(dom.runs_before(decl, use))
 
     def test_runs_before_is_strict_within_a_statement(self):
-        """
-        A reference sharing the definition's control-flow node, as the operands of a comma
-        expression do, cannot be ordered, so strict `runs_before` refuses it — where reflexive
-        `dominates` accepts the same pair.
-        """
         ast, dom = self._dominance('var a, b; a = 1, b = a;')
         _, store, use = self._idents(ast, 'a')
         self.assertTrue(dom.dominates(store, use))
@@ -766,10 +639,6 @@ class TestDominance(TestBase):
         self.assertTrue(dom.runs_before_all(self._def(ast, 'c'), []))
 
     def test_a_store_that_may_throw_is_entered_but_not_completed_before_its_handler(self):
-        """
-        Reading `window` may throw, and the handler runs exactly on that run, so the statement of
-        the store dominates the read in the handler without having completed before it.
-        """
         ast, dom = self._dominance('var r; try { r = window; } catch (e) { r; }')
         _, store, read = self._idents(ast, 'r')
         self.assertTrue(dom.strictly_dominates(store, read))
@@ -793,10 +662,6 @@ class TestDominance(TestBase):
         self.assertTrue(dom.runs_before_function(self._def(ast, 'w'), self._func(ast, 'g')))
 
     def test_a_function_declared_in_a_try_block_in_a_loop_is_in_place_for_a_call_after_it(self):
-        """
-        A run that throws in the `try` block loops back past the declaration, and reaching a
-        function declaration throws on no run, so every run reaching the call has passed it.
-        """
         ast, dom = self._dominance(
             'function g() { for (var i = 0; i < 2; i++) { try { function f() { return i; } f(); } catch (e) {} } }')
         declaration, call = self._idents(ast, 'f')
@@ -819,10 +684,17 @@ class TestDominance(TestBase):
 
     def test_a_function_declared_in_a_try_block_in_a_loop_is_not_in_place_after_the_loop(self):
         ast, dom = self._dominance(
-            'function g() { for (var i = 0; i < 2; i++) { try { function f() { return i; } f(); } catch (e) {} } f(); }')
+            'function g(n) { for (var i = 0; i < n; i++) { try { function f() { return i; } f(); } catch (e) {} } f(); }')
         _, call, after = self._idents(ast, 'f')
         self.assertTrue(dom.binding_established_before(dom.model.resolve(call), call))
         self.assertFalse(dom.binding_established_before(dom.model.resolve(after), after))
+
+    @opportunity
+    def test_a_function_declared_in_a_try_block_of_a_loop_that_runs_is_in_place_after_the_loop(self):
+        ast, dom = self._dominance(
+            'function g() { for (var i = 0; i < 2; i++) { try { function f() { return i; } f(); } catch (e) {} } f(); }')
+        _, _, after = self._idents(ast, 'f')
+        self.assertTrue(dom.binding_established_before(dom.model.resolve(after), after))
 
     def test_a_call_through_the_block_name_is_in_place_before_the_declaration_runs(self):
         ast, dom = self._dominance('function g() { { f(); function f() {} } }')
@@ -854,12 +726,6 @@ class TestDominance(TestBase):
 
 
 class TestAStoreItsStatementMaySkip(TestBase):
-    """
-    A store in a part of a statement that runs on some runs of the statement only has not run when
-    the statement has completed: every ordering query refuses it, against a read after the
-    statement and against a function called after it. Only `cannot_precede`, which asks whether
-    anything can run before a node on a run on which the node runs, holds.
-    """
 
     SKIPPED = (
         'x && (c = 5);',
@@ -949,12 +815,6 @@ class TestAStoreItsStatementMaySkip(TestBase):
 
 
 class TestADefinitionInsideAFunctionCalledWhereItIsWritten(TestBase):
-    """
-    A function expression the program calls where it writes it has run the definitions it holds by
-    the time the call returns, on every run that returns rather than throws, so the call orders them
-    for the code after it. Each question that orders a definition against a read answers alike: the
-    one per read, the two per function, and whether the name is established before the read.
-    """
 
     @staticmethod
     def _answers(source: str) -> tuple[bool, bool, bool, bool]:
@@ -1008,6 +868,11 @@ class TestADefinitionInsideAFunctionCalledWhereItIsWritten(TestBase):
         source = 'var T; function f() { return T[0]; } (function () { f(); T = ["a"]; })(); f();'
         self.assertEqual(self._answers(source), (False, False, False, False))
 
-    def test_a_function_called_later_but_not_where_it_is_written_orders_nothing(self):
+    def test_a_function_called_later_but_not_where_it_is_written_orders_all_or_nothing(self):
         source = 'var T; var g = function () { T = ["a"]; }; g(); function f() { return T[0]; } f();'
-        self.assertEqual(self._answers(source), (False, False, False, False))
+        self.assertIn(self._answers(source), ((False, False, False, False), (True, True, True, True)))
+
+    @opportunity
+    def test_a_function_called_later_through_the_name_holding_it_orders_the_definition(self):
+        source = 'var T; var g = function () { T = ["a"]; }; g(); function f() { return T[0]; } f();'
+        self.assertEqual(self._answers(source), (True, True, True, True))

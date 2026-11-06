@@ -1,87 +1,19 @@
 """
-A seeded generator of small, benign JavaScript programs for differential fuzzing of the
-deobfuscator. Each program is the *input* to the differential oracle in `differential`; the
-deobfuscator must preserve its observable behavior, and Node.js, never this generator, decides
-what that behavior is. The generator only has to produce programs well suited to *finding*
-divergences; it never asserts what a program should print.
+A seeded generator of small, benign JavaScript programs, the input of the differential test that
+compares what Node prints for a program and for its deobfuscation. A divergence must always mean a
+deobfuscator defect and never a flaw of the program, so every generated program has to be:
 
-For a reported divergence to always mean a deobfuscator bug rather than a generator artifact,
-every generated program upholds four invariants:
+- valid: it parses, and every name it reads is in scope;
+- terminating: loops have a constant bound their body cannot change, and the call graph is acyclic,
+  since a function calls only functions declared before it and a reassigned function calls nothing;
+- deterministic: it reads no clock, no randomness and no host object, and uses `this` only where its
+  value is fixed;
+- observable: its effects are pushed to the array `SINK`, which is printed at the end.
 
-- **Valid**: it is syntactically correct and every identifier reference resolves to a name in
-  scope, so it neither fails to parse nor throws a spurious `ReferenceError`.
-- **Terminating**: loops have a constant bound (a `while` carries an explicit terminating
-  increment), and a declared function body calls only functions already in scope, while a function
-  that is reassigned or passed to an array method is given a call-free body, so the call graph stays
-  acyclic and no recursion can diverge.
-- **Deterministic**: it reads no clock and no randomness, names no host object, and writes no bare
-  context-dependent `this`, so two runs of the same source always agree. The reflective constructs
-  it does emit — an indirect `eval`, a `Function` body, the `Function('return this')` global idiom,
-  and a `globalThis` round-trip — are each used in a form whose value is fixed, so they do not break
-  that agreement; that is the precondition the self-test checks before trusting any
-  original-versus-deobfuscated comparison.
-- **Observable**: a shared `SINK` array accumulates values that statements and impure functions
-  push, and it is logged at the end, so a dropped effect, a mis-evaluation, or a reorder shows up.
-
-The observable output deliberately excludes three things a deobfuscator may change without altering
-meaning, so they cannot masquerade as divergences: a function's source text (a function is never
-logged or kept as data — it is only called, including a function returned by another function, which
-is invoked immediately, since `Function.prototype.toString` reflects the very source the deobfuscator
-rewrites), a self-referential structure (`SINK` is only pushed to and joined once at the end, never
-nested into itself), and a caught exception (a `catch` binding is never referenced, since an error's
-`.stack` and message encode the source positions the deobfuscator relocates).
-
-Control also leaves a block abnormally: a `try` body may `throw` partway through, so control transfers
-to the handler and the statements after the throw are dead, and an optional `finally` runs whether or
-not the throw fires. The thrown value is caught and never observed, so only what runs before the throw,
-in the handler, and in the finalizer reaches `SINK` — a dropped finalizer, a handler skipped, or a
-statement after the throw wrongly kept would change the output.
-
-The generator also builds objects and arrays and mutates them in place, so the deobfuscator's
-member-write reasoning is exercised: a fresh array or object is bound to a local, its elements are
-assigned, incremented, and deleted, and the object is aliased to a second binding, passed to a
-function that mutates it, and stored inside another object — the escape and aliasing shapes under
-which a member-write is observable. A stored property may hold another object, so an object
-reference can itself reach `SINK`; the final `join` stringifies it identically on both runs, so it
-cannot masquerade as a divergence, and `SINK` — never one of the pooled objects — is still never
-nested into itself. A function remains something only ever called: it may be reassigned to a new
-body, aliased to another call-only binding, or passed to an array method (`map`/`filter`) that
-invokes it, yet every function-valued binding is kept out of the readable pool, so it is never
-referenced where it could be stringified.
-
-Some objects carry shapes whose observable behavior the deobfuscator's object analysis must read
-precisely: an accessor property whose getter and setter run code (the setter pushes to `SINK`), a
-prototype set through a literal `__proto__:` — distinguished from the computed `['__proto__']` form,
-which makes an ordinary own property and inherits nothing — a method called through the object, and a
-function-valued property that reads the object through its own binding (a self-reference). Each object
-is self-contained and its distinguishing effect reaches `SINK`, so a fold that treats an accessor as a
-data property, conflates the two `__proto__` forms, or mishandles the self-reference shows up.
-
-A function may also capture an outer variable that is reassigned between two calls of it, so the two
-calls observe different values (`var x = a; function g() { return x; } SINK.push(g()); x = b;
-SINK.push(g());`), and a function may read and write a variable confined to it across a self-observing
-sequence (`function f() { SINK.push(x); x = e; SINK.push(x); }`). These are the cross-function ordering
-and confined-write shapes the deobfuscator must not collapse by folding the captured variable to its
-declared value, dropping the confined write as unread, or reordering a reassignment past a call.
-
-A `with (obj) { ... }` block exercises dynamic scoping: inside it a bare name resolves to a property of
-*obj* when it has one and to a lexical binding otherwise, so the deobfuscator cannot statically decide
-whether `m = e` writes an object property or rebinds the outer variable *m*. The block reads and writes
-the object's own keys as bare names and writes an outer variable the program also reads before and after
-the block, so treating that variable as a stable constant across the block — rather than possibly rebound
-through the dynamic scope — changes the output. The object may also shadow a reflection primitive with an
-own getter — a bare `eval`, an indirect `(0, eval)`, or the base of a constructor chain resolving to user
-code rather than the global — so folding the constant string as a real eval or `Function` drops the
-observable getter read the shadowed callee performs.
-
-A `for-of` loop also reassigns outer bindings by destructuring each element of a constant array of
-arrays through a rest target in its head (`for ([w0, ...w1] of ...)`). Because the head carries no
-`var`/`let`/`const`, the rest target is an assignment target that parses as an array literal with a
-spread — a different node shape than the array pattern a plain `[w0, ...w1] = xs` uses — so the
-deobfuscator's write-target classification of a spread in a literal-shaped for-head is exercised.
-
-`generate(seed)` is a pure function of its integer seed, so any divergence reproduces from its
-seed.
+Nothing whose printed form depends on source text may reach the output: a function never enters the
+pool of readable names, so it is only ever called or handed to a call, and a caught exception is
+never read, since its message and stack carry source positions the deobfuscator moves. `SINK` is
+never pushed into itself.
 """
 from __future__ import annotations
 
@@ -98,13 +30,10 @@ _WORDS = ('ab', 'cd', 'ef', 'gh', 'ij', 'kl', 'mn', 'op')
 @dataclass
 class _Scope:
     """
-    The names visible while generating one lexical region. `readable` is every name that may be
-    referenced; `mutable` is the subset a plain assignment may target, so a `const` is never
-    reassigned; `funcs` maps a callable function name to its arity. `objects` records each name bound
-    to a fresh array or object together with its kind, so member accesses pick a valid key; `mutators`
-    lists functions that mutate a container argument, paired with the kind that argument must be,
-    so a call site only ever passes a compatible container. A child scope sees its parent's names
-    through `parent`, modelling JS closure so nested functions may read outer variables.
+    The names visible while generating one lexical region. `mutable` is the part of `readable` an
+    assignment may target, `funcs` pairs each callable name with its arity, `objects` pairs each
+    container name with its kind, `array` or `object`, and `mutators` pairs each function that
+    changes its argument with the kind of container it must be passed.
     """
     parent: _Scope | None = None
     readable: list[str] = field(default_factory=list)
@@ -147,12 +76,6 @@ class _Scope:
         return items
 
     def mutator_candidates(self) -> list[tuple[str, str]]:
-        """
-        The in-scope mutators callable here, each paired with the container kind it requires. A
-        mutator runs array-only methods on its parameter, so it is callable only when a container
-        of that kind is in scope to receive it; the dispatcher's gate and the call site both draw
-        from this one set, so a mutator is never offered without a compatible argument.
-        """
         kinds = {kind for _, kind in self.all_objects()}
         return [(name, kind) for name, kind in self.all_mutators() if kind in kinds]
 
@@ -177,12 +100,6 @@ class _Generator:
         return name
 
     def _global_name(self) -> str:
-        """
-        A fresh global-property name (`g0`, `g1`, ...), disjoint from the `v`-prefixed local names, for
-        a value written to and read back through the global object. Globals are only ever touched
-        through a `globalThis` member access or an indirect-eval assignment, never a bare read, so an
-        unwritten one reads as `undefined` rather than throwing a `ReferenceError`.
-        """
         name = F'g{self._global_counter}'
         self._global_counter += 1
         return name
@@ -224,13 +141,6 @@ class _Generator:
         return [F'{keyword} {name} = {value};']
 
     def _stmt_assign(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A simple, compound, or logical assignment to a mutable binding (`name = e`, `name += e`,
-        `name ||= e`, ...). A compound form makes *name* a READWRITE reference — read and written in
-        one operation — and a logical form (`||=`/`&&=`/`??=`) writes it only conditionally
-        (short-circuit), exercising the deobfuscator's classification of a target that is read and
-        (maybe) written, which a plain `=` (write-only) does not.
-        """
         name = self.rng.choice(scope.all_mutable())
         op = self.rng.choice((
             '=', '=', '+=', '-=', '*=', '|=', '&=', '**=', '<<=', '||=', '&&=', '??=',
@@ -238,25 +148,12 @@ class _Generator:
         return [F'{name} {op} {self._expr(scope, 2)};']
 
     def _stmt_destructure(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        An array-destructuring assignment with a default, `[name = d] = [items];`, exercising the
-        deobfuscator's write-target classification of a destructuring default: *name* is reassigned to
-        the first element of the fresh array, or to *d* when the array is too short, and a later read of
-        the mutable *name* observes whichever it became.
-        """
         name = self.rng.choice(scope.all_mutable())
         default = self._expr(scope, 1)
         items = [self._expr(scope, 1) for _ in range(self.rng.randint(0, 2))]
         return [F'[{name} = {default}] = [{", ".join(items)}];']
 
     def _stmt_object_destructure(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        An object-destructuring assignment with a shorthand default, `({name = d} = src);`,
-        exercising the parser's CoverInitializedName handling and the synthesizer's
-        shorthand-default emission: *name* is reassigned to the source's matching property, or to
-        *d* when the property is absent, and a later read of the mutable *name* observes whichever
-        it became.
-        """
         name = self.rng.choice(scope.all_mutable())
         default = self._expr(scope, 1)
         if self.rng.random() < 0.5:
@@ -266,13 +163,6 @@ class _Generator:
         return [F'({{{name} = {default}}} = {source});']
 
     def _stmt_object_destructure_decl(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A destructuring DECLARATION with a shorthand default that re-declares (with `var`) a name
-        first bound to a constant — `var name = <lit>; var {name = d} = src;` — exercising
-        constant-inlining's handling of a constant rebound by a destructuring binding target (rather
-        than an assignment target). The re-declaration sets *name* to the source's property or to
-        *d*, which a later read of the mutable *name* observes.
-        """
         name = self._fresh()
         scope.readable.append(name)
         scope.mutable.add(name)
@@ -316,12 +206,6 @@ class _Generator:
         return lines
 
     def _stmt_while(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A `while` loop over a bounded counter that terminates via an explicit increment at the end of
-        the body, so the generated program always halts. The counter is read-only to the body (it is
-        not in *mutable*), so only the trailing increment advances it. Exercises the control-flow and
-        dead-code transforms on a loop form other than `for`.
-        """
         counter = self._fresh()
         bound = self.rng.randint(0, 4)
         inner = scope.child()
@@ -334,14 +218,6 @@ class _Generator:
         return lines
 
     def _stmt_for_destructure(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A `for-of` loop whose head is a destructuring-assignment target ending in a rest element,
-        `for ([w0, ...w1] of [[..], ..]) { ... }`. The head carries no `var`/`let`/`const`, so its
-        targets are assignment targets that parse as an array literal with a spread — the literal-shaped
-        form whose write-target classification the deobfuscator must get right — and each iteration
-        reassigns the outer bindings. The rest binding is tracked as an array so it is only ever read
-        through a member, and a body read of an element and of the rest observes the writes.
-        """
         leading = [self._fresh() for _ in range(self.rng.randint(0, 2))]
         rest = self._fresh()
         rows: list[str] = []
@@ -364,15 +240,6 @@ class _Generator:
         return lines
 
     def _stmt_try(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A `try`/`catch` whose handler body runs ordinary statements but never references the caught
-        value. Once another construct — a `with` body that deletes a property it then reads — makes the
-        try actually throw, the handler runs, and a caught exception is a position- and
-        environment-dependent value: stringifying or coercing it exposes a `.stack` or message that
-        encodes the very source locations the deobfuscator rewrites, so observing it would read as a
-        divergence when the two runs merely differ in layout. The catch binding is therefore kept out of
-        the readable pool, exactly as a function is, so it is never logged, pushed, or coerced.
-        """
         lines = ['try {']
         lines += self._indent(self._body(scope.child(), depth + 1))
         lines.append('} catch (e) {')
@@ -381,13 +248,6 @@ class _Generator:
         return lines
 
     def _stmt_throw(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A `try` whose body throws partway through, so control transfers to the `catch` and every
-        statement after the `throw` is dead. An optional `finally` runs whether or not the throw fires.
-        The catch binding is never referenced — a caught value is non-observable — so the effect is
-        seen only through what runs before the throw, in the handler, and in the finalizer. Exercises
-        the catch-taken path, finalizer ordering, and dead-code elimination across a `throw`.
-        """
         body = self._body(scope.child(), depth + 1)
         body.append(F'throw {self._atom(scope)};')
         body.append(F'SINK.push({self._atom(scope)});')
@@ -402,13 +262,6 @@ class _Generator:
         return lines
 
     def _stmt_switch(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A `switch` over a constant integer selector with several integer cases and a `default`. A case
-        without a `break` falls through to the next, so which statements run depends on both the matched
-        case and fallthrough — the control-flow shape the deobfuscator must not collapse. Each case body
-        is generated in its own child scope, so no declaration is referenced across a case boundary
-        where the selector could have skipped it.
-        """
         selector = self.rng.randint(0, 4)
         lines = [F'switch ({selector}) {{']
         for value in range(4):
@@ -423,11 +276,6 @@ class _Generator:
         return lines
 
     def _stmt_do_while(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A `do`/`while` over a bounded counter, so the body always runs at least once and the loop
-        terminates via the trailing increment. The counter is read-only to the body, so only that
-        increment advances it. Exercises the control-flow transforms on the run-once-then-test loop.
-        """
         counter = self._fresh()
         bound = self.rng.randint(0, 3)
         inner = scope.child()
@@ -440,11 +288,6 @@ class _Generator:
         return lines
 
     def _stmt_for_in(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A `for-in` over a fresh object, iterating its keys in insertion order; the body reads the key
-        and the value at it through a computed member. The key is read-only, and the object is local to
-        this block, so the iteration is deterministic and every reference resolves.
-        """
         obj = self._fresh()
         key = self._fresh()
         init = ', '.join(F'{name}: {self._expr(scope, 1)}' for name in ('p0', 'p1', 'p2'))
@@ -458,14 +301,6 @@ class _Generator:
         return lines
 
     def _stmt_func(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        One named function declaration, or — with low odds — two declarations of the same name and
-        arity. A redeclaration is legal: the later body wins at runtime (function declarations hoist and
-        the second overwrites the binding), so a call to the name runs the second body, while the name
-        is bound more than once. This is the shape the deobfuscator must not pin to a single body: the
-        effect model treats a call through a multiply-declared name as an unknown callee, and constant
-        inlining must reject a candidate such a body could mutate rather than trust the first definition.
-        """
         name = self._fresh()
         arity = self.rng.randint(0, 2)
         lines = self._one_function(scope, depth, name, arity)
@@ -495,13 +330,6 @@ class _Generator:
         return lines
 
     def _stmt_func_reassign(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        Reassign an existing function binding to a fresh function expression, `f = function (p) {
-        return e; };`. A function declaration creates a mutable binding, so a later call to *f* runs
-        the new body — the reassigned-callee shape the deobfuscator must not fold to a stale
-        definition. The new body is generated in an isolated scope with only its parameters visible,
-        so it calls nothing and cannot close a call cycle through the name it rebinds.
-        """
         name, arity = self.rng.choice(scope.all_funcs())
         params = [self._fresh() for _ in range(arity)]
         body_scope = _Scope()
@@ -512,24 +340,12 @@ class _Generator:
         return [F'{name} = function ({", ".join(params)}) {{ return {body}; }};']
 
     def _stmt_func_alias(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        Alias an existing function to a second call-only binding, `var h = f;`, then track *h* as a
-        callable of the same arity so it is only ever invoked, never read as a value. The alias
-        captures the current function, so if *f* is later reassigned the two names diverge — the
-        deobfuscator must not conflate them.
-        """
         name, arity = self.rng.choice(scope.all_funcs())
         alias = self._fresh()
         scope.funcs.append((alias, arity))
         return [F'var {alias} = {name};']
 
     def _stmt_callback(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        Pass a function as a value to an array higher-order method that invokes it, `[items].map(f)` /
-        `.filter(f)`, and observe the result through `SINK`. The function is only ever called (by the
-        method), never stringified, so it stays a valid oracle input while exercising the interpreter's
-        array-callback and escaping-closure paths.
-        """
         candidates = [(name, arity) for name, arity in scope.all_funcs() if arity >= 1]
         name, _ = self.rng.choice(candidates)
         items = ', '.join(self._atom(scope) for _ in range(self.rng.randint(1, 3)))
@@ -538,11 +354,6 @@ class _Generator:
         return [F'SINK.push([{items}].filter({name}).length);']
 
     def _stmt_arrow_callback(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        An array higher-order method invoked with an inline arrow function. The arrow body is generated
-        in an isolated scope, so it returns a constant expression over its parameter and calls nothing,
-        and the arrow is only ever invoked by the method, never stringified.
-        """
         param = self._fresh()
         body_scope = _Scope()
         body_scope.readable.append(param)
@@ -554,11 +365,6 @@ class _Generator:
         return [F'SINK.push([{items}].filter(({param}) => {body}).length);']
 
     def _stmt_arrow_func(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        An arrow function bound to a name and called through it. The arrow is tracked as a callable of
-        arity one, so later code invokes it like any function, and its body is an isolated constant
-        expression over its parameter, so the call is deterministic and closes no cycle.
-        """
         name = self._fresh()
         param = self._fresh()
         body_scope = _Scope()
@@ -569,12 +375,6 @@ class _Generator:
         return [F'var {name} = ({param}) => {body};', F'SINK.push({name}({self._atom(scope)}));']
 
     def _stmt_construct(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A constructor that initializes `this` and an instance built with `new`. The constructor is used
-        only through `new`, so `this` is always the fresh instance, and the instance's properties are
-        read afterward. Exercises the deobfuscator's handling of `new`, `this` in a constructor, and the
-        object it produces.
-        """
         ctor = self._fresh()
         obj = self._fresh()
         param = self._fresh()
@@ -586,14 +386,6 @@ class _Generator:
         ]
 
     def _stmt_cross_call(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A variable captured by a function and reassigned between calls of it, so the calls must
-        observe different values: `var x = a; function g() { return x; } SINK.push(g()); x = b;
-        SINK.push(g());`. The function closes over the binding rather than a copy, so folding `x` to
-        its declared value inside `g`, or reordering a reassignment past a call, changes the
-        observable result — the cross-function ordering shape constant-inlining must not collapse.
-        The captured variable and the function are local to this block, read and written only here.
-        """
         var = self._fresh()
         func = self._fresh()
         if self.rng.random() < 0.5:
@@ -607,14 +399,6 @@ class _Generator:
         return lines
 
     def _stmt_confined_write(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A variable read and written only inside one function across a self-observing sequence:
-        `var x = a; function f() { SINK.push(x); x = e; SINK.push(x); } f();`. The write to `x` is
-        confined to `f` yet observable through `SINK`, and `e` may itself read `x`, so `f` both reads
-        and writes the binding it captures. Dropping the write as dead — because no other function
-        reads `x` — or folding `x` to its declared value loses the effect. The binding and the
-        function are local to this block.
-        """
         var = self._fresh()
         func = self._fresh()
         body_scope = _Scope()
@@ -635,17 +419,6 @@ class _Generator:
         return lines
 
     def _stmt_chain_across_writes(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A binding two functions write, read into a chain of single-use locals between their calls:
-
-            var x = 1; function s() { x = 2; } function f() { x = 9; }
-            s(); var t0 = x + 1; var t1 = t0 * 3; f(); SINK.push(t1);
-
-        The chain's value is fixed where it is computed, before `f` runs, so a fold that carries the
-        read of `x` down the chain to the push reads it after the write instead. Two writers keep
-        `x` from folding to a constant first, which would take the read of `x` out of the chain
-        before it could move.
-        """
         var = self._fresh()
         setter = self._fresh()
         writer = self._fresh()
@@ -666,33 +439,6 @@ class _Generator:
         return lines
 
     def _stmt_with(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A `with (obj) { ... }` block whose body references names by bare identifier, so each resolves
-        dynamically — to a property of *obj* when it has one, otherwise to a lexical binding. The body
-        reads and writes the object's own keys (p0/p1/p2) as bare names and also writes an outer
-        variable *m* as a bare name, the assignment whose target the deobfuscator cannot statically pin
-        to either *obj* or *m*: it must treat *m* as possibly rebound through the dynamic scope rather
-        than fold it to its declared value. The object's member writes and *m*'s value are observed
-        after the block, and *m* is read before it too, so folding *m* across the block changes output.
-        The keys are readable but never mutated through a value expression, so a bare read always
-        resolves: a `delete` of one would make a later bare read of it fall through to an undefined
-        lexical name and throw.
-
-        Sometimes the object also carries an accessor key whose name is *also* a lexical binding, read
-        by bare name in a droppable position (a sequence operand, an unused IIFE argument, a pruned `if`
-        test). Reading it fires the getter — an observable side effect the deobfuscator must not drop,
-        even though the lexical binding of the same name makes the read look like a pure, droppable
-        operand. This is the case a plain deleted-property read cannot exercise: there the read *throws*,
-        which the deobfuscator already keeps, whereas the getter read looks pure.
-
-        The object may instead, or additionally, shadow a reflection primitive with an own getter: a
-        getter named `eval`, or a getter whose string value bases a constructor chain. Inside the
-        block a bare `eval(...)`, an indirect `(0, eval)(...)`, or a constructor-chain call then
-        resolves through the dynamic scope to the getter, not the global primitive, so the getter read
-        is observable and the call runs user code. Folding the constant string as a real eval or
-        `Function` — rather than recognizing the `with` may shadow the callee — drops that effect and
-        changes the output.
-        """
         obj = self._fresh()
         var = self._fresh()
         keys = ('p0', 'p1', 'p2')
@@ -729,12 +475,6 @@ class _Generator:
         return lines
 
     def _with_getter_read(self, name: str) -> list[str]:
-        """
-        A bare read of *name* in a droppable position: a non-final sequence operand, an unused IIFE
-        argument, or a pruned `if` test. Inside a `with` body whose object defines *name* as a getter the
-        read fires that getter — an observable side effect a sound deobfuscator must keep even though a
-        lexical binding of the same name would make the read look pure and droppable.
-        """
         literal = self.rng.randint(0, 9)
         form = self.rng.choice(('sequence', 'iife', 'iftest'))
         if form == 'sequence':
@@ -745,15 +485,6 @@ class _Generator:
         return [F'if ([{name}]) SINK.push({literal});']
 
     def _with_reflect(self) -> tuple[str, list[str]]:
-        """
-        A reflection primitive shadowed by an own getter of the `with` object, paired with the body
-        statement that fires it. Inside the block a bare `eval`, an indirect `(0, eval)`, or the base
-        of a constructor chain resolves through the dynamic scope to the object's getter rather than
-        the global primitive, so reading the name is an observable side effect and the call runs the
-        getter's return value. Folding the constant string as a real eval or `Function` — instead of
-        recognizing that the `with` may shadow the callee — drops the getter effect and changes the
-        value, so a divergence surfaces.
-        """
         left = self.rng.randint(0, 9)
         right = self.rng.randint(1, 9)
         op = self.rng.choice(('+', '-', '*'))
@@ -771,12 +502,9 @@ class _Generator:
 
     def _with_stmt(self, scope: _Scope, keys: tuple[str, ...]) -> list[str]:
         """
-        One statement for a `with` body: a bare-name read observed through `SINK`, a bare-name write or
-        compound write to an object key or a mutable binding, or a call. Read names are drawn from the
-        body scope — the object's keys, the outer variable, and inherited outer names — so each resolves,
-        whether the dynamic scope routes it to the object or to a lexical binding. A write targets an
-        object *key* or a mutable binding; the keys are write targets here but not in the value scope, so
-        a value expression never deletes or rebinds one and every bare read of a key stays valid.
+        One statement of a `with` body. The keys of the object are write targets here but never
+        enter `mutable`: a value expression may `delete` a mutable name, and once a key is deleted
+        from the object, a later bare read of it throws.
         """
         kinds = ['read', 'write', 'compound']
         funcs = scope.all_funcs()
@@ -796,15 +524,6 @@ class _Generator:
         return [F'{target} = {self._expr(scope, 1)};']
 
     def _stmt_reflect(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        A reflective construct — `eval`, the `Function` constructor, or a `globalThis` access — the
-        deobfuscator's reflection analysis must recognize without breaking behavior. Each template is a
-        fixed, deterministic string: a direct or indirect `eval` of a constant expression or an
-        assignment, a `Function`-built function that is only ever called, the `Function('return this')`
-        global-object idiom, or a plain `globalThis` property round-trip. A global is written and then
-        read back only through `globalThis`, so the value is observable and no bare-name global read can
-        throw.
-        """
         kinds = ['eval_expr', 'eval_global', 'function_ctor', 'return_this', 'global_write_read']
         if scope.all_mutable():
             kinds.append('eval_assign_local')
@@ -823,12 +542,6 @@ class _Generator:
         return [F'eval("{name} = {value}");', F'SINK.push({name});']
 
     def _reflect_eval_global(self, scope: _Scope) -> list[str]:
-        """
-        An indirect `eval` that assigns a global property, read back through `globalThis`. The
-        assignment is bare (`g = v`), which creates a global property; the `var g = v` variant, which
-        creates a global binding, is deliberately not generated because it deterministically hits one
-        already-recorded deobfuscator bug and would mask every other reflection finding.
-        """
         name = self._global_name()
         value = self.rng.randint(0, 12)
         return [F'(0, eval)("{name} = {value};");', F'SINK.push(globalThis.{name});']
@@ -915,12 +628,6 @@ class _Generator:
         return lines
 
     def _stmt_mutate_call(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        Call a mutator with a container of the kind it requires and observe the mutation. The
-        mutator runs array-only methods on its parameter, so the argument is drawn only from
-        containers of the matching kind; passing another kind would throw before any comparison
-        and poison the oracle.
-        """
         mutator, kind = self.rng.choice(scope.mutator_candidates())
         name = self.rng.choice([n for n, k in scope.all_objects() if k == kind])
         return [
@@ -929,21 +636,10 @@ class _Generator:
         ]
 
     def _stmt_objadv(self, scope: _Scope, depth: int) -> list[str]:
-        """
-        An object whose shape the objectfold analysis must read precisely: an accessor property, a
-        prototype set through `__proto__`, a method, or a self-reference. Each is self-contained and
-        deterministic, and its distinguishing behavior — running accessor code, inheriting through the
-        prototype, calling a method, reading the object from inside its own member — reaches `SINK`.
-        """
         kind = self.rng.choice(('accessor', 'proto', 'method', 'self_ref'))
         return getattr(self, F'_obj_{kind}')(scope)
 
     def _obj_accessor(self, scope: _Scope) -> list[str]:
-        """
-        An object with a `get`/`set` accessor over a backing variable plus a data property. Reading the
-        accessor runs the getter, assigning it runs the setter (which pushes to `SINK`), and a compound
-        assignment runs both, so folding the member access or dropping the assignment loses an effect.
-        """
         obj = self._fresh()
         store = self._fresh()
         return [
@@ -960,12 +656,6 @@ class _Generator:
         ]
 
     def _obj_proto(self, scope: _Scope) -> list[str]:
-        """
-        An object that either sets its prototype through a literal `__proto__:` or, with the computed
-        `['__proto__']` form, creates an ordinary own property of that name and leaves the prototype
-        unchanged. The distinction is observable: a prototype-linked object inherits the base's `p1`,
-        whereas the computed form does not, so a fold that conflates the two forms changes the output.
-        """
         base = self._fresh()
         obj = self._fresh()
         base_init = ', '.join(F'{key}: {self._atom(scope)}' for key in ('p0', 'p1', 'p2'))
@@ -981,11 +671,6 @@ class _Generator:
         return lines
 
     def _obj_method(self, scope: _Scope) -> list[str]:
-        """
-        An object with a method property called through the object. The method body is generated in an
-        isolated scope, so it returns a constant expression and calls nothing, and the call is only ever
-        made through `obj.m0()`, never by reading the method as a value.
-        """
         obj = self._fresh()
         body = self._expr(_Scope(), 2)
         return [
@@ -995,11 +680,6 @@ class _Generator:
         ]
 
     def _obj_self_ref(self, scope: _Scope) -> list[str]:
-        """
-        An object with a function-valued property that reads the object through its own binding, so the
-        object is referenced from inside itself. The function is only ever called (`obj.f()`), after the
-        object is fully constructed, and it returns the object's own data property.
-        """
         obj = self._fresh()
         return [
             F'var {obj} = {{',
@@ -1089,16 +769,6 @@ class _Generator:
         return F'{name}({", ".join(args)})'
 
     def _builtin_call(self, scope: _Scope, depth: int) -> str:
-        """
-        A call to a deterministic built-in: a one- or two-argument `Math` function, a `String`/`Number`/
-        `Boolean` conversion, a method on a pooled array (`join`/`indexOf`/`slice`/`map`/`filter`), or a
-        `String.fromCharCode` decoder chain. No source of nondeterminism (`Math.random`, `Date`) is used,
-        so the result is a pure function of the seed. Every array method drawn here is non-mutating, and
-        the higher-order ones take a self-contained callback, so a pooled array's contents stay whatever
-        the mutator statements made them — the generator's container invariants are unaffected.
-        `Math.sign` is deliberately excluded: it deterministically hits one already-recorded
-        deobfuscator bug (it folds a `NaN` argument to `0`) and would mask other findings.
-        """
         arrays = [name for name, kind in scope.all_objects() if kind == 'array']
         kinds = ['math2', 'math1', 'convert', 'decode']
         if arrays:
@@ -1130,13 +800,6 @@ class _Generator:
         return F"{arr}.slice(1).join(',')"
 
     def _decoder_chain(self) -> str:
-        """
-        The string-obfuscation idiom this generator otherwise never produces: a literal array of character
-        codes mapped through `String.fromCharCode` and joined, optionally XOR-masked, or a reversed split.
-        Written over literals rather than pooled names so no container invariant is involved. These shapes
-        are what obfuscators emit to conceal capability strings, and folding them is the whole point of the
-        constant-folding path, so the sweep should cover them.
-        """
         form = self.rng.choice(('xor', 'plain', 'reverse', 'indexed'))
         if form == 'reverse':
             word = self.rng.choice(_WORDS)
@@ -1156,22 +819,11 @@ class _Generator:
 
 
     def _computed_member(self, name: str, kind: str) -> str:
-        """
-        A computed member access `name[key]` — a bracketed integer index for an array, a bracketed
-        string literal for an object — the computed-key form the deobfuscator must read like the dotted
-        access it is equivalent to.
-        """
         if kind == 'array':
             return F'{name}[{self.rng.randint(0, 2)}]'
         return F"{name}['{self.rng.choice(('p0', 'p1', 'p2'))}']"
 
     def _curry(self, scope: _Scope, depth: int) -> str:
-        """
-        A curried IIFE `(function (p) { return function (q) { return BODY; }; })(arg)(arg)`. With even
-        odds the inner parameter reuses the outer's name, so the inner function shadows it: inlining
-        must keep the inner binding distinct. The returned function is invoked immediately, so only the
-        final value — never a function — is observed.
-        """
         outer = self._fresh()
         inner = outer if self.rng.random() < 0.5 else self._fresh()
         outer_scope = scope.child()
@@ -1188,11 +840,6 @@ class _Generator:
             F'({arg1})({arg2})')
 
     def _member(self, name: str, kind: str) -> str:
-        """
-        A member access on object *name*: a bracketed integer index for an array, a dotted property
-        for an object. Reads and writes share this one small key space, so a write to a name is
-        observable through a later read of the same name.
-        """
         if kind == 'array':
             return F'{name}[{self.rng.randint(0, 2)}]'
         return F'{name}.{self.rng.choice(("p0", "p1", "p2"))}'

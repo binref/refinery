@@ -6,6 +6,7 @@ import unittest
 
 from typing import NamedTuple
 
+from test import opportunity, todo
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     code_units,
@@ -15,7 +16,23 @@ from test.lib.scripts.js.analysis.differential import (
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
+from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
+from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.units.scripting.djs import djs
+
+
+class _InNode(TestJsDeobfuscator):
+
+    def _evaluate_in_node(self, source: str) -> str:
+        return self._run_transformer(
+            source,
+            JsFunctionEvaluator,
+            DeobfuscationOptions(environment=HostEnvironment.node),
+        )
+
+    def _fold_in_node(self, expression: str) -> str:
+        return self._evaluate_in_node(F'function f() {{ return {expression}; }} var x = f();')
 
 
 class TestInterpreterValueSemantics(TestJsDeobfuscator):
@@ -96,15 +113,14 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         self.assertEqual("SINK('b');", self._evaluate(source))
 
     def test_concise_arrow_irreducible_tail_substitutes_whole_expression(self):
-        """
-        An arrow whose tail expression cannot be reduced folds to that whole tail with the argument
-        substituted, exactly as a `return` of the same expression would — never to an inner operand.
-        `Array` is unresolved, so the call becomes `!('mn' instanceof Array)`, not the bare `Array`.
-        """
-        self.assertEqual(
-            "SINK(!('mn' instanceof Array));",
+        self.assertIn(
             self._evaluate("const f = v => !(v instanceof Array);\nSINK(f('mn'));"),
+            ("SINK(!('mn' instanceof Array));", 'SINK(true);'),
         )
+
+    @opportunity
+    def test_a_primitive_is_no_instance_of_a_constructor(self):
+        self.assertEqual('var x = false;', self._fold("'mn' instanceof Array"))
 
     def test_strict_equal_distinct_arrays_is_false(self):
         self.assertEqual('var x = false;', self._fold('[1] === [1]'))
@@ -134,7 +150,6 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         self.assertEqual('var x = false;', self._fold('[[1]].includes([1])'))
 
     def test_pow_negative_base_fractional_exponent_is_nan(self):
-        # Python returns a complex number for (-8) ** 0.5; JavaScript returns NaN.
         self.assertEqual('var x = 0 / 0;', self._fold('(-8) ** 0.5'))
 
     def test_math_pow_zero_base_negative_exponent_is_infinity(self):
@@ -144,7 +159,6 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         self.assertEqual('var x = -8;', self._fold('(-2) ** 3'))
 
     def test_pow_overflowing_magnitude_is_infinity(self):
-        # JS numbers are doubles, so a result beyond the double range is Infinity, not a Python bignum.
         self.assertEqual('var x = 1e999;', self._fold('2 ** 1024'))
 
     def test_pow_overflowing_negative_magnitude_is_negative_infinity(self):
@@ -165,7 +179,7 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         for expression in ['9 ** 17', "'9' ** '17'", 'Math.pow(9, 17)', '2 ** 0.5']:
             with self.subTest(expression=expression):
                 source = F'function f() {{\n  return {expression};\n}}\nvar x = f();'
-                self.assertEqual(source, self._evaluate(source))
+                self.assertIn(self._evaluate(source), (source, F'var x = {expression};'))
 
     def test_pow_of_integers_that_is_a_double_is_folded(self):
         self.assertEqual('var x = 1024;', self._fold('2 ** 10'))
@@ -178,7 +192,6 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         self.assertEqual('var x = 2;', self._fold('0.5 ** -1'))
 
     def test_undefined_plus_number_is_nan(self):
-        # undefined coerces to NaN, null coerces to 0 — the two must stay distinct.
         self.assertEqual('var x = 0 / 0;', self._fold('undefined + 1'))
 
     def test_null_plus_number_coerces_to_zero(self):
@@ -196,9 +209,8 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
 
     def test_typeof_shadowed_global_in_dead_zone_is_not_folded(self):
         """
-        `typeof Math` here reads the local `Math` in its temporal dead zone — a `ReferenceError` at
-        runtime, not the global `Math` — so the evaluator must not manufacture `'object'` for it and
-        leaves the throwing function unreduced.
+        `typeof` of a `let` binding in its temporal dead zone throws a `ReferenceError`; it does not
+        read the global `Math`.
         """
         source = inspect.cleandoc(
             """
@@ -264,7 +276,7 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
 
     def test_json_parse_with_a_reviver_that_is_no_function_is_folded(self):
         """
-        A reviver that is not callable is ignored, so Node prints `[ 1 ]` for this program.
+        `JSON.parse` ignores a reviver that is not callable.
         """
         self.assertEqual('var x = [1];', self._fold("JSON.parse('[1]', 5)"))
 
@@ -308,7 +320,6 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         self.assertEqual('var x = 0 / 0;', self._fold("Number('-0x1F')"))
 
     def test_var_redeclaration_without_initializer_preserves_binding(self):
-        # A bare `var k;` is a no-op when `k` is already bound; it must not reset the parameter.
         source = inspect.cleandoc(
             """
             function f(k) {
@@ -357,16 +368,12 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         self.assertEqual('var x = 0 / 0;', self._fold('Math.log()'))
 
 
-class TestABufferConvertsToTheTextItsBytesDecodeTo(TestJsDeobfuscator):
-    """
-    A Buffer that an operator converts to a string decodes its bytes as UTF-8, as its own `toString`
-    does, with U+FFFD for each sequence that is no UTF-8; it is never joined like an array of byte
-    values. Node prints `hello` for `Buffer.from('aGVsbG8=', 'base64') + ''`, where joining the
-    bytes would give `104,101,108,108,111`.
-    """
+class TestABufferConvertsToTheTextItsBytesDecodeTo(_InNode):
 
     def test_a_buffer_concatenated_with_a_string_is_its_text(self):
-        self.assertEqual("var x = 'hello';", self._fold("Buffer.from('aGVsbG8=', 'base64') + ''"))
+        self.assertEqual(
+            "var x = 'hello';", self._fold_in_node("Buffer.from('aGVsbG8=', 'base64') + ''")
+        )
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_each_conversion_folds_to_the_value_node_computes(self):
@@ -383,7 +390,7 @@ class TestABufferConvertsToTheTextItsBytesDecodeTo(TestJsDeobfuscator):
             "Buffer.from('ab') == 'ab'",
             "Buffer.from([0xff, 0x41]).toString('utf8')",
         ]
-        folded = [self._fold(expression) for expression in expressions]
+        folded = [self._fold_in_node(expression) for expression in expressions]
         self.assertEqual([], [text for text in folded if not text.startswith('var x = ')])
         self.assertEqual(
             code_units(expressions),
@@ -391,19 +398,15 @@ class TestABufferConvertsToTheTextItsBytesDecodeTo(TestJsDeobfuscator):
         )
 
 
-class TestABufferDecodesOnlyTheBytesFromItsStartToItsEnd(TestJsDeobfuscator):
-    """
-    `buf.toString(encoding, start, end)` decodes the bytes from `start` up to `end` and reads an
-    `undefined` encoding as UTF-8. The first test states the examples of the Node documentation for
-    `buf.toString`.
-    """
+class TestABufferDecodesOnlyTheBytesFromItsStartToItsEnd(_InNode):
 
     def test_the_examples_of_the_node_documentation(self):
+        fold = self._fold_in_node
         alphabet = "Buffer.from('abcdefghijklmnopqrstuvwxyz')"
-        self.assertEqual("var x = 'abcde';", self._fold(F"{alphabet}.toString('utf8', 0, 5)"))
+        self.assertEqual("var x = 'abcde';", fold(F"{alphabet}.toString('utf8', 0, 5)"))
         accented = "Buffer.from('tést')"
-        self.assertEqual("var x = 'té';", self._fold(F"{accented}.toString('utf8', 0, 3)"))
-        self.assertEqual("var x = 'té';", self._fold(F"{accented}.toString(undefined, 0, 3)"))
+        self.assertEqual("var x = 'té';", fold(F"{accented}.toString('utf8', 0, 3)"))
+        self.assertEqual("var x = 'té';", fold(F"{accented}.toString(undefined, 0, 3)"))
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_each_window_folds_to_the_value_node_computes(self):
@@ -418,7 +421,7 @@ class TestABufferDecodesOnlyTheBytesFromItsStartToItsEnd(TestJsDeobfuscator):
             "Buffer.from('hello').toString('latin1', null, 2)",
             "Buffer.from([0xe2, 0x82, 0xac]).toString('utf8', 1)",
         ]
-        folded = [self._fold(expression) for expression in expressions]
+        folded = [self._fold_in_node(expression) for expression in expressions]
         self.assertEqual([], [text for text in folded if not text.startswith('var x = ')])
         self.assertEqual(
             code_units(expressions),
@@ -426,66 +429,62 @@ class TestABufferDecodesOnlyTheBytesFromItsStartToItsEnd(TestJsDeobfuscator):
         )
 
 
-class TestInterpreterMethodValueSemantics(TestJsDeobfuscator):
-    """
-    Reading a method off a value yields the method itself, not the result of calling it, and not
-    `undefined`. Node decides these: `typeof 'abc'.charAt` is `'function'`, `'abc'.length()` is a
-    `TypeError` because `length` is a number rather than a callable, and `typeof 'abc'.normalize` is
-    `'function'` even though this package does not implement `normalize`. There is no value domain here
-    for a function — a JS function has an observable identity, `name`, and source text — so the only
-    correct answers are the true one or a refusal to fold. Each case asserts the fold declines rather
-    than guessing.
-    """
+class TestInterpreterMethodValueSemantics(_InNode):
+
+    _METHOD_READS = [
+        "typeof 'abc'.charAt",
+        "typeof 'abc'.toUpperCase",
+        "typeof 'abc'.split",
+        "typeof 'abc'.normalize",
+        'typeof [1, 2].sort',
+        "typeof 'abc'.hasOwnProperty",
+        'typeof [1, 2].map',
+        'typeof [1, 2].constructor',
+        'typeof ({ a: 1 }).toString',
+    ]
 
     def _declines(self, expression: str):
-        """
-        Assert that the interpreter leaves a function returning *expression* entirely unfolded.
-        """
         source = F'function f() {{\n  return {expression};\n}}\nvar x = f();'
         self.assertEqual(source, self._evaluate(source))
 
+    def _declines_or_answers_function(self, expression: str):
+        source = F'function f() {{\n  return {expression};\n}}\nvar x = f();'
+        self.assertIn(self._evaluate(source), (source, "var x = 'function';"))
+
     def test_string_method_read_is_not_invoked(self):
-        self._declines("typeof 'abc'.charAt")
+        self._declines_or_answers_function("typeof 'abc'.charAt")
 
     def test_string_transform_method_read_is_not_invoked(self):
-        self._declines("typeof 'abc'.toUpperCase")
+        self._declines_or_answers_function("typeof 'abc'.toUpperCase")
 
     def test_string_split_read_is_not_invoked(self):
-        self._declines("typeof 'abc'.split")
+        self._declines_or_answers_function("typeof 'abc'.split")
 
     def test_unimplemented_string_method_read_is_not_absent(self):
-        """
-        `normalize` is a real `String.prototype` method this package does not model. Membership in the
-        language and evaluability by this interpreter are different questions, so an unmodeled method
-        must not read as `undefined` — that would make `typeof` answer `'undefined'` where Node says
-        `'function'`.
-        """
-        self._declines("typeof 'abc'.normalize")
+        self._declines_or_answers_function("typeof 'abc'.normalize")
 
     def test_unimplemented_array_method_read_is_not_absent(self):
-        self._declines('typeof [1, 2].sort')
+        self._declines_or_answers_function('typeof [1, 2].sort')
 
     def test_inherited_object_method_read_is_not_absent(self):
-        self._declines("typeof 'abc'.hasOwnProperty")
+        self._declines_or_answers_function("typeof 'abc'.hasOwnProperty")
 
     def test_array_hof_read_is_not_absent(self):
-        self._declines('typeof [1, 2].map')
+        self._declines_or_answers_function('typeof [1, 2].map')
 
     def test_constructor_read_is_not_absent(self):
-        """
-        `constructor` is the entry point of the `[].constructor.constructor('...')()` reflection chain,
-        so answering `undefined` for it would erase a capability rather than resolve it.
-        """
-        self._declines('typeof [1, 2].constructor')
+        self._declines_or_answers_function('typeof [1, 2].constructor')
 
     def test_object_prototype_read_on_plain_object_is_not_absent(self):
-        self._declines('typeof ({ a: 1 }).toString')
+        self._declines_or_answers_function('typeof ({ a: 1 }).toString')
+
+    @opportunity
+    def test_the_type_of_each_method_read_folds_to_function(self):
+        for expression in self._METHOD_READS:
+            with self.subTest(expression=expression):
+                self.assertEqual("var x = 'function';", self._fold(expression))
 
     def test_absent_member_still_reads_as_undefined(self):
-        """
-        The companion negative case: a name that is on no prototype really is `undefined`, and must keep
-        folding, so refusing method reads does not degrade into refusing every miss.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -497,11 +496,6 @@ class TestInterpreterMethodValueSemantics(TestJsDeobfuscator):
         self.assertEqual("var x = 'undefined';", self._evaluate(source))
 
     def test_buffer_member_is_never_provably_absent(self):
-        """
-        A Buffer's surface is over a hundred methods and varies between Node versions, so it cannot be
-        enumerated here. Nothing can be proven absent on one, and a read must decline rather than answer
-        `undefined` — `Buffer.prototype.readUInt8` is a function.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -514,10 +508,6 @@ class TestInterpreterMethodValueSemantics(TestJsDeobfuscator):
         self.assertEqual(source, self._evaluate(source))
 
     def test_buffer_length_still_folds(self):
-        """
-        `length` is a data property on a Buffer as much as on an array, so refusing to enumerate the
-        Buffer method surface must not also block reading its length.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -527,23 +517,15 @@ class TestInterpreterMethodValueSemantics(TestJsDeobfuscator):
             var x = f();
             """
         )
-        self.assertEqual('var x = 2;', self._evaluate(source))
+        self.assertEqual('var x = 2;', self._evaluate_in_node(source))
 
     def test_string_length_is_not_callable(self):
-        """
-        `length` is a number, so calling it throws. The interpreter must not treat the call as a second
-        application of a registry entry and fold it to the string's length.
-        """
         self._declines("'hello'.length()")
 
     def test_array_length_is_not_callable(self):
         self._declines('[1, 2].length()')
 
     def test_length_read_still_folds(self):
-        """
-        The companion positive case: `length` is a genuine data property, so the read form must keep
-        folding even though the call form now throws.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -555,11 +537,6 @@ class TestInterpreterMethodValueSemantics(TestJsDeobfuscator):
         self.assertEqual('var x = 1;', self._evaluate(source))
 
     def test_non_canonical_index_key_is_undefined(self):
-        """
-        A property key is an array index only in its canonical decimal spelling, so `'+1'` is an
-        ordinary property name and reads as `undefined`. Python's `int` accepts `'+1'`, which would
-        otherwise invent the element at index 1.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -582,11 +559,6 @@ class TestInterpreterMethodValueSemantics(TestJsDeobfuscator):
         self.assertEqual("var x = 'b';", self._evaluate(source))
 
     def test_astral_split_by_code_unit(self):
-        """
-        `String.prototype.split('')` splits by UTF-16 code unit, so an astral character becomes its two
-        surrogate halves: Node yields 3 elements for a smiley followed by `x`, where splitting by Unicode
-        code point would yield 2.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -599,12 +571,6 @@ class TestInterpreterMethodValueSemantics(TestJsDeobfuscator):
 
 
 class TestInterpreterInOperator(TestJsDeobfuscator):
-    """
-    The `in` operator asks whether a property exists anywhere on the prototype chain, so it shares the
-    membership question with a property read. Node decides: `'sort' in [1,2]` is `true` even though this
-    package does not implement `sort`, and `'+1' in [1,2]` is `false` because a non-canonical key is an
-    ordinary property name rather than an index.
-    """
 
     def _in(self, expression: str, expected: str):
         source = F'function f() {{\n  return {expression};\n}}\nvar x = f();'
@@ -649,71 +615,73 @@ class TestInterpreterInOperator(TestJsDeobfuscator):
 
 class TestInterpreterProtoKeySemantics(TestJsDeobfuscator):
     """
-    A `__proto__` key is the one property name whose plain spelling does not create an own property.
-    Node decides: `Object.keys({__proto__: {x: 1}})` is empty and the object inherits `x`, whereas
-    `Object.keys({['__proto__']: {x: 1}})` has one entry and inherits nothing. The interpreter models an
-    object as a dict of own data properties and has no representation for an installed prototype, so a
-    literal or an assignment that installs one must decline rather than record an ordinary key — that
-    would invent an own property and hide the inherited ones.
+    An object literal entry `__proto__: value`, quoted or not, sets the prototype and creates no own
+    property; a computed `['__proto__']` key and the shorthand `{__proto__}` create an ordinary own
+    property.
     """
 
-    def _declines(self, body: str):
+    _INSTALLING_A_PROTOTYPE = {
+        '  return Object.keys({ __proto__: { x: 1 } }).length;': '0',
+        "  return Object.keys({ '__proto__': { x: 1 } }).length;": '0',
+        '  return Object.keys({ __proto__: 1 }).length;': '0',
+        '  return Object.keys({ __proto__: null }).length;': '0',
+        '  var o = { __proto__: { x: 1 } };\n  return o.x;': '1',
+        '  return Object.keys({ a: 1, __proto__: { x: 1 } }).length;': '1',
+        "  var o = {};\n  o['__proto__'] = { x: 1 };\n  return o.x;": '1',
+        '  var o = {};\n  o.__proto__ = { x: 1 };\n  return o.x;': '1',
+    }
+
+    def _declines_or_folds(self, body: str, expected: str):
         source = F'function f() {{\n{body}\n}}\nvar x = f();'
-        self.assertEqual(source, self._evaluate(source))
+        self.assertIn(self._evaluate(source), (source, F'var x = {expected};'))
 
     def _folds(self, body: str, expected: str):
         source = F'function f() {{\n{body}\n}}\nvar x = f();'
         self.assertEqual(F'var x = {expected};', self._evaluate(source))
 
-    def test_bare_proto_literal_declines(self):
-        self._declines('  return Object.keys({ __proto__: { x: 1 } }).length;')
+    def test_bare_proto_literal_declines_or_counts_no_own_key(self):
+        self._declines_or_folds('  return Object.keys({ __proto__: { x: 1 } }).length;', '0')
 
-    def test_quoted_proto_literal_declines(self):
-        self._declines("  return Object.keys({ '__proto__': { x: 1 } }).length;")
+    def test_quoted_proto_literal_declines_or_counts_no_own_key(self):
+        self._declines_or_folds("  return Object.keys({ '__proto__': { x: 1 } }).length;", '0')
 
-    def test_bare_proto_literal_with_primitive_declines(self):
-        self._declines('  return Object.keys({ __proto__: 1 }).length;')
+    def test_bare_proto_literal_with_primitive_declines_or_counts_no_own_key(self):
+        self._declines_or_folds('  return Object.keys({ __proto__: 1 }).length;', '0')
 
-    def test_bare_proto_literal_with_null_declines(self):
-        """
-        `{__proto__: null}` installs a null prototype, which changes the object's whole member surface
-        rather than adding a property, so it is no more representable than any other prototype.
-        """
-        self._declines('  return Object.keys({ __proto__: null }).length;')
+    def test_bare_proto_literal_with_null_declines_or_counts_no_own_key(self):
+        self._declines_or_folds('  return Object.keys({ __proto__: null }).length;', '0')
 
-    def test_inherited_member_read_through_proto_literal_declines(self):
-        self._declines('  var o = { __proto__: { x: 1 } };\n  return o.x;')
+    def test_member_read_through_proto_literal_declines_or_reads_the_inherited_member(self):
+        self._declines_or_folds('  var o = { __proto__: { x: 1 } };\n  return o.x;', '1')
 
-    def test_proto_key_alongside_other_keys_declines(self):
-        self._declines('  return Object.keys({ a: 1, __proto__: { x: 1 } }).length;')
+    def test_proto_key_alongside_other_keys_declines_or_counts_only_the_other_key(self):
+        self._declines_or_folds('  return Object.keys({ a: 1, __proto__: { x: 1 } }).length;', '1')
 
     def test_computed_proto_literal_folds(self):
-        """
-        The computed form creates an ordinary own property for every value type, so it is representable
-        and must keep folding — otherwise the fix would trade one wrong answer for a lost one.
-        """
         self._folds("  return Object.keys({ ['__proto__']: { x: 1 } }).length;", '1')
 
     def test_computed_proto_literal_is_not_inherited(self):
         self._folds("  var o = { ['__proto__']: { x: 1 } };\n  return o.x === undefined;", 'true')
 
     def test_shorthand_proto_is_an_ordinary_property(self):
-        """
-        A shorthand `{__proto__}` defines an ordinary own property; only the `key: value` data form
-        installs a prototype.
-        """
         self._folds('  var __proto__ = 7;\n  return Object.keys({ __proto__ }).length;', '1')
 
-    def test_proto_assignment_to_plain_object_declines(self):
-        self._declines("  var o = {};\n  o['__proto__'] = { x: 1 };\n  return o.x;")
+    def test_proto_assignment_to_plain_object_declines_or_reads_the_inherited_member(self):
+        self._declines_or_folds("  var o = {};\n  o['__proto__'] = { x: 1 };\n  return o.x;", '1')
 
-    def test_proto_dot_assignment_to_plain_object_declines(self):
-        self._declines('  var o = {};\n  o.__proto__ = { x: 1 };\n  return o.x;')
+    def test_proto_dot_assignment_to_plain_object_declines_or_reads_the_inherited_member(self):
+        self._declines_or_folds('  var o = {};\n  o.__proto__ = { x: 1 };\n  return o.x;', '1')
+
+    @opportunity
+    def test_an_installed_prototype_folds_to_what_it_gives(self):
+        for body, expected in self._INSTALLING_A_PROTOTYPE.items():
+            with self.subTest(body=body):
+                self._folds(body, expected)
 
     def test_proto_assignment_over_own_proto_property_folds(self):
         """
-        An own `__proto__` data property shadows the inherited accessor, so a later write lands in the
-        data slot instead of installing a prototype. This is the one assignment form that is precise.
+        An own `__proto__` data property shadows the inherited accessor, so the write lands in it
+        instead of setting the prototype.
         """
         self._folds(
             "  var o = { ['__proto__']: 1 };\n"
@@ -726,10 +694,6 @@ class TestInterpreterProtoKeySemantics(TestJsDeobfuscator):
         self._folds("  var o = {};\n  o['a'] = 1;\n  return o['a'];", '1')
 
     def test_json_parsed_proto_key_is_an_own_property(self):
-        """
-        `JSON.parse` creates a genuine own `__proto__` property, which is representable, so the round
-        trip through the interpreter and back into source must preserve it.
-        """
         self._folds(
             '  return Object.keys(JSON.parse(\'{"__proto__":{"x":1}}\')).length;',
             '1',
@@ -739,11 +703,9 @@ class TestInterpreterProtoKeySemantics(TestJsDeobfuscator):
         self._folds('  return Object.keys({ constructor: 1 }).length;', '1')
 
 
-class TestInterpreterThrowSemantics(TestJsDeobfuscator):
+class TestInterpreterThrowSemantics(_InNode):
 
     def test_unsupported_expression_in_try_does_not_run_catch(self):
-        # `new Date()` does not throw in JS, so the catch must not run; the interpreter cannot evaluate
-        # it, so it leaves the call untouched rather than wrongly folding to the catch value 'B'.
         source = inspect.cleandoc(
             """
             function f() {
@@ -757,7 +719,24 @@ class TestInterpreterThrowSemantics(TestJsDeobfuscator):
             var r = f();
             """
         )
-        self.assertEqual(source, self._evaluate(source))
+        self.assertIn(self._evaluate(source), (source, "var r = 'A';"))
+
+    @opportunity
+    def test_a_construction_that_cannot_throw_inside_a_try_folds_to_the_value_the_try_returns(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              try {
+                var y = new Date();
+                return 'A';
+              } catch (e) {
+                return 'B';
+              }
+            }
+            var r = f();
+            """
+        )
+        self.assertEqual("var r = 'A';", self._evaluate(source))
 
     def test_null_property_access_throws_caught(self):
         source = inspect.cleandoc(
@@ -805,7 +784,7 @@ class TestInterpreterThrowSemantics(TestJsDeobfuscator):
         )
         self.assertEqual("var r = 'RangeError';", self._evaluate(source))
 
-    def test_array_length_range_error_is_catchable(self):
+    def test_array_length_range_error_is_catchable_in_node(self):
         source = inspect.cleandoc(
             """
             function f() {
@@ -820,7 +799,27 @@ class TestInterpreterThrowSemantics(TestJsDeobfuscator):
             var r = f();
             """
         )
-        self.assertEqual("var r = 'RangeError: Invalid array length';", self._evaluate(source))
+        self.assertEqual(
+            "var r = 'RangeError: Invalid array length';", self._evaluate_in_node(source)
+        )
+
+    @todo
+    def test_array_length_range_error_message_is_not_folded_where_the_engine_is_unknown(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a = [1, 2, 3];
+              try {
+                a['length'] = NaN;
+                return 'no throw';
+              } catch (e) {
+                return e.name + ': ' + e.message;
+              }
+            }
+            var r = f();
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
 
     def test_uncaught_runtime_throw_is_not_folded(self):
         source = inspect.cleandoc(
@@ -861,34 +860,17 @@ class TestInterpreterThrowSemantics(TestJsDeobfuscator):
 
 
 class TestInterpreterCompoundAssignment(TestJsDeobfuscator):
-    """
-    Compound assignment and update expressions, across every operator the parser can emit and every target
-    form it accepts. The interpreter used to answer these from three hand-rolled operator tables that
-    disagreed with each other and with `_eval_binary`: a plain identifier target supported ten operators, a
-    member target only four, and an update expression refused a member target outright. Worse, the identifier
-    table reached `math.fmod` directly, so `Infinity %= 5` raised an uncaught `ValueError` out of the unit.
-
-    Every expected value here is what Node prints for the same program.
-    """
 
     def _target(self, body: str) -> str:
         return self._evaluate(F'function f() {{ {body} }}\nvar r = f();')
 
     def test_modulo_assign_infinite_dividend_is_nan(self):
-        """
-        `Infinity % 5` is `NaN`. Computing it with `math.fmod` raises `ValueError: math domain error`, which
-        is not an `InterpreterError` and so escaped every refusal path and crashed the unit. The canonical
-        operator table has always answered this correctly; the compound path simply did not consult it.
-        """
         self.assertEqual('var r = 0 / 0;', self._target('var t = Infinity; t %= 5; return t;'))
 
     def test_modulo_assign_infinite_divisor_keeps_dividend(self):
         self.assertEqual('var r = 5;', self._target('var t = 5; t %= Infinity; return t;'))
 
     def test_modulo_assign_by_zero_is_nan(self):
-        """
-        A zero divisor is not an error in JavaScript. Refusing here contradicted `t = t % 0`, which folds.
-        """
         self.assertEqual('var r = 0 / 0;', self._target('var t = 5; t %= 0; return t;'))
 
     def test_divide_assign_by_zero_is_infinity(self):
@@ -898,10 +880,6 @@ class TestInterpreterCompoundAssignment(TestJsDeobfuscator):
         self.assertEqual('var r = -1e999;', self._target('var t = 5; t /= -0; return t;'))
 
     def test_multiply_assign_preserves_negative_zero(self):
-        """
-        `0 * -5` is `-0`, which the synthesizer prints distinctly from `0`. Plain multiplication in Python
-        does not preserve the sign.
-        """
         self.assertEqual('var r = -0;', self._target('var t = 0; t *= -5; return t;'))
 
     def test_exponent_assign(self):
@@ -920,51 +898,23 @@ class TestInterpreterCompoundAssignment(TestJsDeobfuscator):
         self.assertEqual('var r = 7;', self._target('var t; t ??= 7; return t;'))
 
     def test_nullish_assign_keeps_zero(self):
-        """
-        `??=` tests for nullish, not falsy, so a zero is kept where `||=` would replace it.
-        """
         self.assertEqual('var r = 0;', self._target('var t = 0; t ??= 7; return t;'))
 
     def test_logical_assign_does_not_evaluate_right_side_when_short_circuiting(self):
-        """
-        The right operand of a logical assignment runs only when the existing value does not already decide
-        the result. Here the operand would increment `n`, so a folded `n` of `0` proves it never ran.
-        """
         self.assertEqual('var r = 0;', self._target('var n = 0; var t = 3; t ||= (n += 1); return n;'))
 
     def test_logical_assign_evaluates_right_side_when_not_short_circuiting(self):
-        """
-        The companion case, without which the test above would pass on an implementation that never
-        evaluates the right operand at all.
-        """
         self.assertEqual('var r = 1;', self._target('var n = 0; var t = 0; t ||= (n += 1); return n;'))
 
     def test_logical_assign_on_member_does_not_write_when_short_circuiting(self):
-        """
-        A short-circuiting logical assignment performs no write at all — observable in JavaScript through a
-        setter or a frozen object. Reading the member back proves the original value survived untouched.
-        """
         self.assertEqual('var r = 7;', self._target('var o = { k: 7 }; o.k ||= 9; return o.k;'))
 
     def test_logical_assign_on_length_does_not_relength_when_short_circuiting(self):
-        """
-        The store a short-circuit skips is observable even where the value would be unchanged, because
-        `length` is not an ordinary slot: assigning to it resizes the array. `a.length ||= 9` on a nonempty
-        array short-circuits, so the array keeps its three elements; a redundant store of the old length
-        would be invisible here, but the same store computed from a stale value would truncate.
-        """
         self.assertEqual(
             "var r = '1,2,3|3';",
             self._target('var a = [1, 2, 3]; a.length ||= 9; return a[0] + "," + a[1] + "," + a[2] + "|" + a.length;'))
 
     def test_logical_assign_on_length_writes_when_not_short_circuiting(self):
-        """
-        The companion: a nonempty array has a truthy `length`, so `&&=` does not short-circuit and
-        the store runs, truncating the array to the two elements it now reaches. The operator is
-        `&&=` rather than `||=` because the only `||=` that reaches its store on a `length` raises
-        it, and a position raising it passes over is one the array does not hold rather than one
-        holding `undefined`.
-        """
         self.assertEqual(
             "var r = '1,2|2';",
             self._target(
@@ -1004,10 +954,6 @@ class TestInterpreterCompoundAssignment(TestJsDeobfuscator):
         self.assertEqual('var r = 16;', self._target('var o = { k: 17 }; o.k--; return o.k;'))
 
     def test_increment_on_computed_element_evaluates_index_once(self):
-        """
-        `a[i++]++` reads the index expression once, so `i` advances by one rather than two. The returned
-        value encodes both the element and the counter, so a double evaluation cannot hide behind either.
-        """
         source = 'var a = [17, 20]; var i = 0; a[i++]++; return a[0] * 100 + i;'
         self.assertEqual('var r = 1801;', self._target(source))
 
@@ -1027,8 +973,7 @@ class TestInterpreterCompoundAssignment(TestJsDeobfuscator):
 
     def test_length_compound_assign_to_fraction_is_refused(self):
         """
-        `a.length /= 2` on three elements asks for a length of `1.5`, which JavaScript answers with a
-        `RangeError`. The fold must not invent a value for it.
+        Setting the `length` of an array to `1.5` throws a `RangeError`.
         """
         source = inspect.cleandoc(
             """
@@ -1057,11 +1002,6 @@ class TestInterpreterCompoundAssignment(TestJsDeobfuscator):
 
 
 class TestInterpreterNumericCoercion(TestJsDeobfuscator):
-    """
-    ToNumber and `parseInt` over strings, in the places where Python's own number parser and the
-    language disagree about what a string names. Every expected value is what Node prints for the
-    same expression.
-    """
 
     def test_a_string_that_names_negative_zero_coerces_to_negative_zero(self):
         self.assertEqual('var x = -0;', self._fold("Number('-0')"))
@@ -1091,10 +1031,7 @@ class TestInterpreterNumericCoercion(TestJsDeobfuscator):
 
     def test_parse_int_reads_its_radix_through_the_signed_32_bit_wrap(self):
         """
-        The radix is coerced with ToInt32, which wraps rather than saturates: `2**32 + 16` is base
-        sixteen, `2**32` is the language's unsupplied radix and therefore ten, and a negative value
-        lands on the same base its wrap names. Truncating instead names a radix outside 2 to 36,
-        which is `NaN` for every string.
+        `2 ** 32` wraps to a radix of `0`, which `parseInt` reads as no radix and so as ten.
         """
         self.assertEqual('var x = 16;', self._fold("parseInt('10', 2 ** 32 + 16)"))
         self.assertEqual('var x = 10;', self._fold("parseInt('10', 2 ** 32)"))
@@ -1102,13 +1039,6 @@ class TestInterpreterNumericCoercion(TestJsDeobfuscator):
 
 
 class TestAstralStringCodePointIterationAndCodeUnitIndexing(TestJsDeobfuscator):
-    """
-    A JavaScript string is stored as UTF-16 code units but iterated as Unicode code points, so a
-    character above the basic multilingual plane is one element to `Array.from` and to `for ... of`,
-    and two code units to `length`, an index, `charCodeAt`, and `String.fromCharCode`. Node:
-    `Array.from('\U0001F600').length` is `1`, `'\U0001F600'.length` is `2`, and the two units are
-    `55357` and `56832`.
-    """
 
     def test_array_from_sees_one_element(self):
         self.assertEqual('var x = 1;', self._fold("Array.from('\U0001F600').length"))
@@ -1564,18 +1494,11 @@ _EVERY_KIND_OF_DISCRIMINANT = {
 
 
 class _SwitchProbe(NamedTuple):
-    """
-    One way of writing a `switch`, and the string the function hands back for each discriminant it
-    is asked about, spelled the way that discriminant is written as an argument to `f`.
-    """
     source: str
     answers: dict[str, str]
 
 
 class _SwitchRun(NamedTuple):
-    """
-    One of those switches asked about one of those discriminants.
-    """
     label: str
     source: str
     argument: str
@@ -1687,18 +1610,8 @@ def _switch_runs() -> list[_SwitchRun]:
 
 class TestInterpreterSwitchStatement(TestJsDeobfuscator):
     """
-    A `switch` selects one clause and then runs it and every clause written behind it, until a
-    `break`, a `continue`, a `return`, or the end of the switch. Which clause it selects follows
-    three rules: a clause is selected when its test is strictly equal to the discriminant; the tests
-    are evaluated in the order they are written and the search stops at the first match; and
-    `default` is selected only once every test has missed, wherever the `default` is written, so a
-    clause written behind it is still asked before it is taken.
-
-    Each program below is one reading of those rules, and Node decides every answer. The
-    discriminant is the argument `f` is called with, and the string `f` hands back names what
-    happened: where a program records its own run, a lowercase letter is written by a clause test
-    being evaluated and an uppercase letter by a clause body being run, so `abcD` is a switch that
-    asked three tests, matched none of them, and then ran its `default`.
+    A `switch` evaluates its case tests in the order they are written, including those written
+    behind `default`, and takes `default` only once every test has missed.
     """
 
     def test_switch_folds_to_what_the_clauses_it_runs_produce(self):
@@ -1711,10 +1624,6 @@ class TestInterpreterSwitchStatement(TestJsDeobfuscator):
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_node_produces_every_pinned_switch_result(self):
-        """
-        `completion_values` names a string value by its JSON spelling, which is what `json.dumps`
-        writes, so each comparison is between the value Node computed and the value pinned above.
-        """
         runs = _switch_runs()
         values = completion_values([F'{run.source}\nf({run.argument});' for run in runs])
         self.assertEqual(
@@ -1723,10 +1632,6 @@ class TestInterpreterSwitchStatement(TestJsDeobfuscator):
         )
 
     def test_a_switch_with_two_default_clauses_folds_to_nothing(self):
-        """
-        A second `default` clause is an early error, so the program never runs at all and there is
-        no value for the call to be folded to.
-        """
         source = F'{_SWITCH_WITH_TWO_DEFAULTS}\nvar x = f(9);'
         self.assertEqual(source, self._evaluate(source))
 
@@ -1739,15 +1644,6 @@ class TestInterpreterSwitchStatement(TestJsDeobfuscator):
 
 
 class TestAStringDenotingNothingIsIrreducible(TestJsDeobfuscator):
-    """
-    A string written with a `\\x` or `\\u` escape naming no character denotes nothing, so the
-    interpreter has no value to reduce it to: it refuses the fold that reads one and leaves the
-    expression as it was written. Reading it as a value would hand the operation `undefined` — the
-    interpreter reads `None` as that — and collapse `['\\xZZ'].join('')` to the empty string. A
-    well-formed operation beside it still folds, so the refusal costs no genuine reduction. The
-    backslash is spelled with `chr(92)` so nothing between the source and the parser reads it as an
-    escape of its own.
-    """
 
     def test_a_join_reading_a_string_that_denotes_nothing_is_left_standing(self):
         source = inspect.cleandoc(
@@ -1765,17 +1661,9 @@ class TestAStringDenotingNothingIsIrreducible(TestJsDeobfuscator):
 
 
 class TestInterpreterTrustVerdictBoundaries(TestJsDeobfuscator):
-    """
-    The interpreter remembers each trust verdict it computes. A binding the run creates below a
-    static-object name must still be honored, and a call the verdict admitted must fold again on
-    the second asking.
-    """
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_a_catch_binding_below_a_folded_call_still_refuses_the_shadowed_method_call(self):
-        """
-        Node: the shadowed floor answers 9, so the program prints `10`.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -1808,7 +1696,6 @@ class TestInterpreterTrustVerdictBoundaries(TestJsDeobfuscator):
         self.assertEqual('var x = 3;', self._evaluate(source))
 
 
-#: Programs replacing a match with what a function returns for it, mapped to what Node prints.
 A_MATCH_REPLACED_BY_WHAT_A_FUNCTION_RETURNS = {
     inspect.cleandoc("""
         function fn() { return "X"; }

@@ -14,7 +14,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     Landing,
     binding_has_references,
     declares_a_watched_name,
-    escape_js_string,
     extract_literal_value,
     insert_after_prologue,
     make_numeric_literal,
@@ -42,7 +41,7 @@ from refinery.lib.scripts.js.model import (
     JsVarKind,
 )
 from refinery.lib.scripts.js.parser import JsParser
-from refinery.lib.scripts.js.synth import JsSynthesizer
+from refinery.lib.scripts.js.synth import JsSynthesizer, escape_js_string
 from refinery.lib.scripts.js.values import JS_NULL, JsBuffer
 
 
@@ -78,12 +77,6 @@ class TestDeobfuscationHelpers(TestJsDeobfuscator):
 
 
 class TestValueToNode(TestJsDeobfuscator):
-    """
-    `value_to_node` renders an interpreter value back into source. Every value it accepts must denote
-    exactly the same thing once re-parsed, so these tests pin the rendered text for the cases where a
-    plausible-looking rendering would mean something else, and pin refusal for the values that have no
-    faithful literal form at all.
-    """
 
     def _render(self, value: object) -> str | None:
         node = value_to_node(value)
@@ -116,8 +109,8 @@ class TestValueToNode(TestJsDeobfuscator):
 
     def test_renders_proto_key_as_computed(self):
         """
-        A `__proto__` entry in the value is an own data property. Only the computed key form creates
-        one; the bare and quoted forms install a prototype and leave no own property behind.
+        A bare or quoted `__proto__` key sets the prototype of the object; only the computed key
+        `['__proto__']` makes an own property.
         """
         self.assertEqual("{ ['__proto__']: 1 }", self._render({'__proto__': 1}))
 
@@ -128,19 +121,11 @@ class TestValueToNode(TestJsDeobfuscator):
         )
 
     def test_renders_ordinary_prototype_member_names_plainly(self):
-        """
-        Only `__proto__` is special. The other inherited member names are ordinary own properties when
-        written as plain keys, so forcing them computed would be needless noise.
-        """
         self.assertEqual("{ 'constructor': 1 }", self._render({'constructor': 1}))
         self.assertEqual("{ 'toString': 1 }", self._render({'toString': 1}))
         self.assertEqual("{ 'hasOwnProperty': 1 }", self._render({'hasOwnProperty': 1}))
 
     def test_refuses_buffer(self):
-        """
-        A Buffer has no literal form. Rendering its bytes as an array would produce a value of a
-        different type, silently dropping `Buffer.isBuffer` and `.toString('hex')`.
-        """
         self.assertIsNone(value_to_node(JsBuffer([65, 66])))
         self.assertIsNone(value_to_node(JsBuffer([])))
 
@@ -209,13 +194,6 @@ NUMBER_BITS_IN_NODE = inspect.cleandoc("""
 
 
 class TestNumericLiteralRoundTrip(TestJsDeobfuscator):
-    """
-    `make_numeric_literal` writes a Number as source text and `extract_literal_value` reads source
-    text back into a value; the module declares the two inverses of each other. Whether they are is
-    decided by what the text means, and neither of them may answer that: every spelling below goes
-    to Node, which reports the 64 bits of the Number it read, and through `JsParser`, so that the
-    reader is handed the tree the text really produces rather than the one the writer built.
-    """
 
     def _bits(self, value: float) -> str:
         return struct.pack('>d', value).hex()
@@ -230,12 +208,6 @@ class TestNumericLiteralRoundTrip(TestJsDeobfuscator):
         return [(value, self._spelling(value)) for value in JS_NUMBERS]
 
     def _node_reads(self, expressions: list[str]) -> list[str]:
-        """
-        The 64 bits of the Number Node reads from each of *expressions*, as hexadecimal. A bit
-        pattern is the whole Number and nothing besides it, which is what makes it the thing to
-        compare: it separates the two zeros, and it is not a printed form, so no spelling is ever
-        measured against a reading of itself.
-        """
         script = [NUMBER_BITS_IN_NODE]
         script.extend(F'console.log(bits({expression}));' for expression in expressions)
         output, error = behavior('\n'.join(script))
@@ -272,12 +244,6 @@ class TestNumericLiteralRoundTrip(TestJsDeobfuscator):
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_every_spelling_denotes_the_same_number_where_the_value_names_are_rebound(self):
-        """
-        `NaN`, `Infinity` and `undefined` are ordinary identifiers that any scope may bind to
-        something else, so a spelling that reached a Number through one of those names would mean
-        whatever the scope supplies. A literal denotes its value in every scope, which is what this
-        asks of each spelling by reading it inside a function that binds all three to other numbers.
-        """
         spelled = self._spellings()
         reads = self._node_reads([
             F'(function (NaN, Infinity, undefined) {{ return ({text}); }})(1, 2, 3)'
@@ -290,12 +256,6 @@ class TestNumericLiteralRoundTrip(TestJsDeobfuscator):
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_an_integer_is_spelled_as_the_number_its_own_digits_denote(self):
-        """
-        A Python integer is not a Number, and what it names is what its digits round to: past 2^53 a
-        different integer, and past the double range an infinity. Those digits are themselves a
-        JavaScript numeric literal, so what Node reads from them is what the spelling has to agree
-        with, without a Python-side Number entering the comparison at all.
-        """
         integers = [
             2 ** 53 + 1,
             2 ** 60,
@@ -311,20 +271,13 @@ class TestNumericLiteralRoundTrip(TestJsDeobfuscator):
         )
 
     def test_the_one_number_with_no_literal_is_refused(self):
-        """
-        Every other Number has a literal that denotes it, the infinities included. NaN has none, so
-        the writer answers nothing rather than a spelling that would mean something else.
-        """
         self.assertIsNone(make_numeric_literal(float('nan')))
 
 
 class TestNulFollowedByDigitSurvivesPrinting(TestJsDeobfuscator):
     """
-    A NUL immediately before an ASCII digit is the one place the compact NUL escape cannot be used:
-    before a 0 through 7 it joins the digit into a single legacy octal escape, a different character
-    (Node reads a NUL written before a 7 that way as the one character U+0007), and before an 8 or 9
-    it is an escape strict code refuses. Printing the value must keep the NUL and the digit apart,
-    while a NUL that no digit follows keeps the compact escape it had.
+    The compact NUL escape followed by a digit from 0 to 7 is read as one legacy octal escape, a
+    different character, and followed by an 8 or a 9 it is an escape strict code refuses.
     """
 
     def _printed_then_read(self, value: str) -> str:
@@ -357,12 +310,6 @@ class TestNulFollowedByDigitSurvivesPrinting(TestJsDeobfuscator):
 
 
 class TestEscapeAndDecodeInvertOnNulFollowedByDigit(TestJsDeobfuscator):
-    """
-    Escaping a value into a literal body and decoding a literal body are inverse operations, so a
-    string put through both comes back unchanged. The case a naive escape would corrupt is a NUL
-    immediately before a digit, where the compact NUL escape would merge with the digit into one
-    character; every ASCII digit is checked here, the 8 and 9 that form no octal escape included.
-    """
 
     def _round_trip(self, value: str) -> str:
         decoded = decode_js_string_body(escape_js_string(value))
@@ -383,16 +330,6 @@ class TestEscapeAndDecodeInvertOnNulFollowedByDigit(TestJsDeobfuscator):
 
 
 class TestHoistingBehindADirectivePrologue(TestJsDeobfuscator):
-    """
-    `insert_after_prologue` puts statements at the head of a host's body, behind whatever Directive
-    Prologue the body opens with. Which nodes are prologue hosts is
-    `refinery.lib.scripts.js.strict.is_prologue_host`, and a class static block is one of them: it
-    holds a statement list of its own that a prologue can open, whatever a prologue there decides.
-
-    A hoist that lands nowhere is worse than one that is declined. The caller has already rewritten
-    the references the hoisted declaration is supposed to bind, so a silent no-op leaves those
-    references bound to nothing.
-    """
 
     @staticmethod
     def _hoisted_into(source: str, host: type) -> str:
@@ -450,14 +387,6 @@ class TestHoistingBehindADirectivePrologue(TestJsDeobfuscator):
         )
 
 
-#: A program naming something in a position no value may be put in. Between them the thirteen reach
-#: every such position the language has: the member after a dot, a key of an object literal, the
-#: name of a class method and of a class field, the key of an import attribute, a label and the two
-#: jumps to one, the name a module is re-exported under, both halves of an import specifier, the
-#: local of a default and of a namespace import, the name a binding is exported under, and the
-#: local of an export list carrying a `from` clause. The local of a sourceless list is the one
-#: specifier position missing here: it reads, and
-#: `AN_EXPORT_LIST_READ_BUT_NEVER_TAKING_THE_VALUE` holds it.
 A_NAME_NO_VALUE_MAY_BE_PUT_IN_THE_PLACE_OF = (
     'console.log(q.zz);',
     'console.log({ zz: 1 });',
@@ -474,9 +403,6 @@ A_NAME_NO_VALUE_MAY_BE_PUT_IN_THE_PLACE_OF = (
     "export { zz } from 'm';",
 )
 
-#: The parent node classes the corpus above stands under, which is what says the law over it is
-#: quantified over every kind of position rather than over whichever ones a program happened to
-#: hold.
 THE_KINDS_OF_POSITION_THAT_CORPUS_REACHES = [
     'JsBreakStatement',
     'JsContinueStatement',
@@ -493,28 +419,19 @@ THE_KINDS_OF_POSITION_THAT_CORPUS_REACHES = [
     'JsPropertyDefinition',
 ]
 
-#: A shorthand property whose one identifier is read and which is still not written out. `{ x }` is
-#: `{ x: x }` for every name but `__proto__`, which written with the colon sets the object's
-#: prototype and gives it no property of that name at all; and a shorthand carrying a computed key
-#: is a shape no source spells, so there is no one program that writing it out could be said to
-#: mean.
+#: Neither shorthand has a written-out form that means the same: `__proto__: __proto__` sets the
+#: prototype of the object where the shorthand `{ __proto__ }` makes an own property, and `{ [zz] }`
+#: is no valid source.
 A_SHORTHAND_READ_BUT_NOT_WRITTEN_OUT = (
     'var __proto__ = 1; console.log({ __proto__ });',
     'console.log({ [zz] });',
 )
 
-#: A module whose export list is the only reader of the name `zz`. The local half of a sourceless
-#: list stands where `is_use_position` says a value is read, and there is still no program that a
-#: value put there could mean: a list exports bindings and never values, and `export { 5 };` is a
-#: module no engine links.
 AN_EXPORT_LIST_READ_BUT_NEVER_TAKING_THE_VALUE = (
     'var zz = 1; export { zz };',
     'var zz = 1; export { zz as q };',
 )
 
-#: A program naming something a value may stand in the place of, mapped to the program that stands
-#: once it does. The shorthand is the one written out rather than replaced, since its one identifier
-#: is the key as much as it is the read and only the read may move.
 A_NAME_A_VALUE_STANDS_IN_THE_PLACE_OF = {
     'console.log(zz);': 'console.log(5);',
     'var q = {}; console.log(q[zz]);': 'var q = {};\nconsole.log(q[5]);',
@@ -525,29 +442,12 @@ A_NAME_A_VALUE_STANDS_IN_THE_PLACE_OF = {
 
 
 class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
-    """
-    `refinery.lib.scripts.js.deobfuscation.helpers.substitute_use_position` is where every pass puts
-    a substitution, and what it decides is whether the position reads a value at all.
-    `refinery.lib.scripts.js.analysis.model.is_use_position` is the statement of that, and the gate
-    refuses everything it refuses: text standing in one of those positions names a property, a label
-    or a module binding, and a value put there is not a rename but a different program — `o.5`,
-    `{ -2: 1 }`, `5: while (0) break 5;`, `import { 5 } from 'm'`.
-
-    Whether a name in a use position is a *reference* is the caller's question and not this one: a
-    name bound by a destructuring pattern is written like a read and no syntactic test tells the two
-    apart, so a declarator id is answered here exactly as a read of it would be.
-
-    The answer is what a caller announcing a change reads, so a declined substitution has to leave
-    the tree it was handed: a pass that reports a change it did not make reports one every round,
-    and the fixpoint it sits in never arrives.
-    """
 
     @staticmethod
     def _identifiers(source: str) -> list[JsIdentifier]:
         """
-        Every identifier of *source*, once each and in the order a walk reaches them. A shorthand
-        property is one node filling two slots of its parent and a walk arrives at it through both,
-        so counting nodes rather than visits is what keeps `{ q }` from reading as two identifiers.
+        Every identifier of *source* once, in walk order; a walk visits the one node of a shorthand
+        property like `{ q }` twice.
         """
         found: dict[int, JsIdentifier] = {}
         for node in JsParser(source).parse().walk():
@@ -556,12 +456,6 @@ class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
         return list(found.values())
 
     def _substituted(self, source: str, index: int) -> tuple[bool, str]:
-        """
-        What the gate answers for the identifier standing at *index* in *source*, and the program
-        that stands afterwards. The source is parsed afresh for every question, since the gate
-        rewrites the tree it is given and a second question asked of that tree is a question about
-        some other program.
-        """
         tree = JsParser(source).parse()
         found: dict[int, JsIdentifier] = {}
         for node in tree.walk():
@@ -578,10 +472,6 @@ class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
         return self._substituted(source, indices[0])
 
     def _substituted_shorthand(self, source: str) -> tuple[bool, bool, str]:
-        """
-        Whether the value half of the one shorthand property of *source* reads a value, what the
-        gate answers for it, and the program that stands afterwards.
-        """
         tree = JsParser(source).parse()
         shorthand = [
             node for node in tree.walk()
@@ -607,11 +497,6 @@ class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
         )
 
     def test_a_position_the_model_says_reads_nothing_is_refused_and_nothing_moves(self):
-        """
-        Every identifier of `A_NAME_NO_VALUE_MAY_BE_PUT_IN_THE_PLACE_OF` that `is_use_position`
-        refuses, handed to the gate one at a time: the answer is `False` and the program that stands
-        afterwards is the one that stood before.
-        """
         rows = self._refused_positions()
         self.assertEqual(
             {key: self._substituted(*key) for key in rows},
@@ -619,11 +504,6 @@ class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
         )
 
     def test_a_shorthand_the_gate_may_not_write_out_is_refused_although_it_is_read(self):
-        """
-        The two shorthand properties of `A_SHORTHAND_READ_BUT_NOT_WRITTEN_OUT` stand where
-        `is_use_position` says a value is read, and the gate declines both, leaving each program as
-        it found it.
-        """
         rows = A_SHORTHAND_READ_BUT_NOT_WRITTEN_OUT
         self.assertEqual(
             {source: self._substituted_shorthand(source) for source in rows},
@@ -631,10 +511,6 @@ class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
         )
 
     def _substituted_export_local(self, source: str) -> tuple[bool, bool, str]:
-        """
-        Whether the local half of the one export specifier of *source* reads a value, what the gate
-        answers for it, and the program that stands afterwards.
-        """
         tree = JsParser(source).parse()
         specifier = [
             node for node in tree.walk()
@@ -646,11 +522,6 @@ class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
         return is_use_position(node), answer, JsSynthesizer().convert(tree)
 
     def test_an_export_list_is_refused_although_it_is_read(self):
-        """
-        The export lists of `AN_EXPORT_LIST_READ_BUT_NEVER_TAKING_THE_VALUE` stand where
-        `is_use_position` says a value is read, and the gate declines both, leaving each program as
-        it found it.
-        """
         rows = AN_EXPORT_LIST_READ_BUT_NEVER_TAKING_THE_VALUE
         self.assertEqual(
             {source: self._substituted_export_local(source) for source in rows},
@@ -658,10 +529,6 @@ class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
         )
 
     def test_a_position_that_reads_a_value_takes_the_replacement(self):
-        """
-        Each program of `A_NAME_A_VALUE_STANDS_IN_THE_PLACE_OF` with the numeral `5` put where `zz`
-        stood, the gate answering `True` for every one of them.
-        """
         rows = A_NAME_A_VALUE_STANDS_IN_THE_PLACE_OF
         self.assertEqual(
             {source: self._substituted_by_name(source, 'zz') for source in rows},
@@ -669,12 +536,6 @@ class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
         )
 
     def test_a_shorthand_whose_halves_are_two_nodes_is_written_out_once(self):
-        """
-        A parse builds one node for both halves of `{ a }` and a clone builds two, so a caller
-        walking a cloned tree offers the gate the key and the value separately and in whichever
-        order it reaches them. `substitute_params` is such a caller: inlining `5` for `a` writes the
-        property out once, and the numeral lands in the half that reads it.
-        """
         source = 'function f(a) { return { a }; }'
         function = [
             node for node in JsParser(source).parse().walk()
@@ -693,14 +554,6 @@ class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
 
 
 class TestASubstitutedCalleeKeepsTheCallTheNameMade(TestJsDeobfuscator):
-    """
-    A name standing as a callee invoked its value with no receiver and no direct-eval effect, so a
-    value put in its place whose own spelling as a callee means more — a member access binds
-    `this` to its object, a bare `eval` runs its text in the caller's scope — is called behind
-    `(0, ...)` instead. A caller that re-spells the reference itself asks for the form it wrote with
-    `as_spelled=True`: the flattening recovery qualifies a name to the namespaced home it was
-    recovered from, and the member call is the call the input made there.
-    """
 
     @staticmethod
     def _substituting_the_callee_of(source: str, replacement: str, **kwargs) -> str:
@@ -727,9 +580,6 @@ class TestASubstitutedCalleeKeepsTheCallTheNameMade(TestJsDeobfuscator):
         self.assertEqual('typeof ns.f;', self._substituting_the_callee_of('typeof f;', 'ns.f'))
 
 
-#: A string written with a `\x` or `\u` escape naming no character, whose `value` is `None`, and a
-#: well-formed string beside it. The backslash is spelled with `chr(92)` so that no tool between the
-#: source and the parser reads it as an escape of its own.
 _BS = chr(92)
 A_STRING_AND_THE_VALUE_IT_HOLDS = {
     F'"{_BS}xZZ"': (False, None),
@@ -742,13 +592,6 @@ A_STRING_AND_THE_VALUE_IT_HOLDS = {
 
 
 class TestExtractLiteralValueRefusesAStringDenotingNothing(TestJsDeobfuscator):
-    """
-    A string written with a `\\x` or `\\u` escape naming no character denotes nothing, so it holds
-    no value to extract. Reporting `(True, None)` for it would hand the caller the value `undefined`
-    — the interpreter and `value_to_node` both read `None` as that — folding a run the file could
-    never have carried into a value it never named. A well-formed string beside it is read as the
-    text it denotes, so the refusal costs no genuine literal its value.
-    """
 
     @staticmethod
     def _expression(source: str) -> Expression:

@@ -226,9 +226,6 @@ A_YIELD_WHOSE_STAR_STANDS_ON_THE_NEXT_LINE = inspect.cleandoc("""
     }
 """)
 
-#: A file that ends before the slash it opened is closed. Everything behind the slash is the body
-#: of the literal, the brackets standing in it included, so what the file ends inside is the
-#: literal and every construct the literal left open. Node refuses each of them.
 A_REGEXP_THE_FILE_ENDS_INSIDE = [
     '/ zzz',
     'var x = / zzz',
@@ -238,8 +235,6 @@ A_REGEXP_THE_FILE_ENDS_INSIDE = [
     'function f(){ return / zzz }',
 ]
 
-#: The same files with a line behind them, where the line ends the scan instead: no literal begins
-#: at the slash, and the statement it stands in is text the parser could not read.
 A_REGEXP_THAT_NEVER_CLOSES = [F'{source}\nqqq;' for source in A_REGEXP_THE_FILE_ENDS_INSIDE]
 
 A_CLOSING_SLASH_ON_THE_NEXT_LINE = inspect.cleandoc("""
@@ -256,12 +251,6 @@ A_BACKSLASH_BEFORE_THE_LINE_BREAK = inspect.cleandoc(R"""
 class TestJsRegExpOrDivision(TestBase):
 
     def _slash_readings(self, source: str) -> list[str]:
-        """
-        What the parser made of every slash in the source, in the order the slashes are written.
-        A regular expression is named by the literal it spells, a quotient by the operator that
-        divides, and a place where the parser gave up by `PARSE_ERROR`; no two of the three
-        readings can compare equal, so a swapped reading cannot pass for the one that was meant.
-        """
         readings: list[tuple[int, str]] = []
         for node in JsParser(source).parse().walk():
             if isinstance(node, JsRegExpLiteral):
@@ -340,10 +329,6 @@ class TestJsRegExpOrDivision(TestBase):
                 self.assertEqual(self._slash_readings(source), expected)
 
     def _yields(self, source: str) -> list[tuple[bool, str | None]]:
-        """
-        Every yield in the source, as the star it was written with and the source of the argument
-        it took, in the order the yields are written.
-        """
         yields: list[tuple[bool, str | None]] = []
         for node in JsParser(source).parse().walk_in_order():
             if isinstance(node, JsYieldExpression):
@@ -407,23 +392,11 @@ class TestJsRegExpOrDivision(TestBase):
             self._slash_readings(A_CLOSING_SLASH_ON_THE_NEXT_LINE), [PARSE_ERROR, DIVISION])
 
     def test_a_backslash_does_not_carry_a_regexp_over_the_end_of_its_line(self):
-        """
-        A backslash before a line break continues a string literal, and node reads the two lines it
-        joins as one. It continues no regular expression, so there are two readings and not one:
-        the statement whose slash opened nothing, which is kept as the text of its line, and the
-        slash on the next line, which divides.
-        """
         self.assertEqual(
             self._slash_readings(A_BACKSLASH_BEFORE_THE_LINE_BREAK),
             [PARSE_ERROR, DIVISION])
 
     def test_a_slash_that_spells_no_regexp_prints_a_source_that_reads_back_as_itself(self):
-        """
-        None of these sources is a program any parser accepts, so what the parser makes of one is a
-        recovery rather than a reading. Printing that recovery and reading it again must stand
-        still: a round trip that keeps changing the text is one that loses a little of it each time
-        a tool prints what it read.
-        """
         for source in [
             *A_REGEXP_THAT_NEVER_CLOSES,
             A_CLOSING_SLASH_ON_THE_NEXT_LINE,

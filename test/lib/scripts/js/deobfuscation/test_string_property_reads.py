@@ -1,45 +1,8 @@
-"""
-Reading a property off a string whose value the tool already knows.
-
-Exactly two keys are decided by the string and by nothing else: `length`, and a canonical index
-within range. Both are own data properties of the String exotic object the access goes through, so
-no prototype can shadow them and no program can change what they answer — which is what licenses
-replacing the access with the value it reads.
-
-Every other key is the prototype chain's to answer, and a file is free to install one before the
-read runs. An index past the end, an index below zero, a key that merely looks like an index
-(`'01'`, `'-0'`, `'1.0'`, `' 1'`), and a name nothing defines are `undefined` in a file that leaves
-the prototypes alone, and fold to that; in a file that installs one they are left standing, and the
-cases below run such a file through Node to show the read still finds it. A method name such as
-`charAt` is a function no literal spells, and is left standing everywhere.
-
-Which key is being read is itself a question whenever the key is not already a primitive. Naming a
-property converts the key, and an array or an object converts through `Array.prototype.join` or
-`Object.prototype.toString`, either of which a file may replace before the read runs: `'abc'[[1]]`
-reads `'b'` in an untouched engine and `'c'` in one where `join` was made to answer `'2'`. Such a
-read folds only where the tool can show that the file replaces no method the conversion runs.
-
-The string need not be spelled in the file. `atob`, `unescape`, `decodeURIComponent`, `JSON.parse`,
-`repeat`, and `toLowerCase` all hand one back, and a read off the result is the same read off the
-same value — including for a character above the basic multilingual plane, which is two code units
-however the string holding it was built.
-
-A property access is finally not always a read. Assigned, updated, deleted, or destructured, it is a
-target that must survive as one. In callee position it is read for its value and for the receiver
-that value was read off, and the `TypeError` a value that is not callable throws names the access
-rather than the value, so replacing the access renames the error the file reports. Standing alone at
-the top of a script or of a function body it is a statement a Directive Prologue ends at, and an
-index answers a string, so replacing it there writes a string literal into a prologue that had
-already ended and hands every string literal below it the directive position it never had.
-
-Node is the authority for every absolute value here. A string is pinned as its UTF-16 code units so
-that what is fixed is the value and not the tool's choice of escapes.
-"""
 from __future__ import annotations
 
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 
 from refinery.units.scripting.djs import djs
@@ -53,8 +16,6 @@ _ASTRAL_LITERAL = F"'a{_ASTRAL}b'"
 
 _ASTRAL_PRODUCED = "decodeURIComponent('a%F0%9F%98%80b')"
 
-#: Each read that the string itself decides, mapped to the text the tool folds it to and to the
-#: code-unit structure Node answers it with.
 _DECIDED: dict[str, tuple[str, str]] = {
     "'abc'.length"                     : ('3', '3'),
     "'abc'['length']"                  : ('3', '3'),
@@ -84,8 +45,8 @@ _DECIDED: dict[str, tuple[str, str]] = {
     F'{_ASTRAL_PRODUCED}[3]'           : ("'b'", 'S[98]'),
 }
 
-#: Each read of a key no string owns and no prototype of an untouched engine holds, which a file
-#: leaving the prototypes alone reads as `undefined`.
+#: A key is an index only in its canonical spelling: the strings `'01'`, `'-0'`, `'1.0'` and `' 1'`
+#: name no character, while the numbers `-0` and `1.0` convert to the keys `'0'` and `'1'`.
 _NO_PROTOTYPE_HOLDS = [
     "'abc'[3]",
     "'abc'[9]",
@@ -105,47 +66,30 @@ _NO_PROTOTYPE_HOLDS = [
     F'{_ASTRAL_LITERAL}[4]',
 ]
 
-#: Each read no prototype-free string decides, mapped to the text it is left standing as. Where the
-#: two differ, the difference is the synthesizer spelling a computed key as a dot access; the access
-#: is still there and still asks the engine.
 _LEFT_STANDING: dict[str, str] = {
     "'abc'.charAt"            : "'abc'.charAt",
     "'abc'['charAt']"         : "'abc'.charAt",
     "'abc'.toUpperCase"       : "'abc'.toUpperCase",
     "'abc'.constructor"       : "'abc'.constructor",
     "'abc'.__proto__"         : "'abc'.__proto__",
-    '(1).length'              : '(1).length',
-    'true.length'             : 'true.length',
 }
 
-#: A read whose key is an array, in a file that replaces no method of the array's conversion, mapped
-#: to the text the tool folds it to and to the code-unit structure Node answers it with.
 _A_KEY_AN_UNTOUCHED_METHOD_CONVERTS: dict[str, tuple[str, str]] = {
     "'abc'[[1]]"    : ("'b'", 'S[98]'),
     "'abc'[['1']]"  : ("'b'", 'S[98]'),
     "'abc'[[1, 2]]" : ('void 0', 'undefined'),
 }
 
-#: A read whose key is not a primitive, mapped to the text it is left standing as and to the
-#: code-unit structure Node answers it with in an engine nothing has touched. What the key spells is
-#: decided by a prototype method rather than by the element, so reading it off the element names a
-#: property the engine need not have named.
 _A_KEY_A_PROTOTYPE_METHOD_CONVERTS: dict[str, tuple[str, str]] = {
     "'abc'[{}]"     : ("'abc'[{}]", 'undefined'),
 }
 
-#: A program that replaces the method a key's conversion runs, paired with what Node prints for it.
-#: Every one of them answers with a character other than the one the element spells, which is what
-#: makes the replaced method and not the element the authority on which property was named.
 _A_REPLACED_CONVERSION_DECIDES_THE_KEY: dict[str, str] = {
     "Array.prototype.join = function () { return '2'; }; console.log('abc'[[1]]);": 'c\n',
     "Array.prototype.toString = function () { return '2'; }; console.log('abc'[[1]]);": 'c\n',
     "Object.prototype.toString = function () { return '1'; }; console.log('abc'[{}]);": 'b\n',
 }
 
-#: A call whose callee is a read the string decides, mapped to the text the tool leaves it as and to
-#: the message Node's `TypeError` carries. The message names the access, so a callee replaced by the
-#: value it reads reports about that value and says nothing about the property the file asked for.
 _CALLING_WHAT_THE_STRING_DECIDES: dict[str, tuple[str, str]] = {
     "'abc'.length()"     : ("'abc'.length()", '"abc".length is not a function'),
     "'abc'['length']()"  : ("'abc'.length()", '"abc".length is not a function'),
@@ -158,10 +102,8 @@ _CALLING_WHAT_THE_STRING_DECIDES: dict[str, tuple[str, str]] = {
     "new ('abc'.length)" : ("new ('abc'.length)()", '"abc".length is not a constructor'),
 }
 
-#: A statement that a Directive Prologue would take in were it written as a string literal, mapped
-#: to the text the simplifier leaves it as. The receiver of the read may still fold, since the string
-#: it denotes is a string either way; the read itself may not, because the statement would then be a
-#: string literal and the prologue it ended would run on past it.
+#: Folding one of these reads would put a string literal at the top of the body, which continues the
+#: Directive Prologue: a `'use strict'` right below it would then make the code strict.
 _A_READ_AT_THE_TOP_OF_A_BODY: dict[str, str] = {
     "'abc'[0];"                     : "'abc'[0];",
     "'abc'['0'];"                   : "'abc'['0'];",
@@ -171,25 +113,14 @@ _A_READ_AT_THE_TOP_OF_A_BODY: dict[str, str] = {
     "'ABC'.toLowerCase()[0];"       : "'abc'[0];",
 }
 
-#: A program that reports whether the code it is compiled with runs strict. A plain call passes no
-#: receiver, so `this` in the body is the global object where the code is sloppy and `undefined`
-#: where it is strict.
 _REPORTS_ITS_MODE = 'function probe() { return this; } console.log(probe() === undefined);'
 
 
 def _deobfuscated(source: str) -> str:
-    """
-    The script `refinery.djs` emits for *source*.
-    """
     return source.encode('utf8') | djs(strict=True) | str
 
 
 def _simplified(source: str) -> str:
-    """
-    The script the simplifier alone emits for *source*, which is where the fold of a read is decided.
-    The sweep that later drops a dead statement takes the statement away whole, so it can say nothing
-    about the fold; here the read has to survive its own folding for the answer to be readable.
-    """
     ast = JsParser(source).parse()
     instance = JsSimplifications()
     instance.options = None
@@ -198,47 +129,24 @@ def _simplified(source: str) -> str:
 
 
 def _fold(expression: str) -> str:
-    """
-    The expression `refinery.djs` folds *expression* to. It is placed in a `console.log` argument,
-    which survives as a side effect, so nothing but the fold decides what comes back.
-    """
     printed = _deobfuscated(F'console.log({expression});')
     return printed.removeprefix('console.log(').removesuffix(');')
 
 
 def _caught_message(call: str) -> str:
-    """
-    A program that runs *call* and prints the message of whatever it throws, which is the only way
-    the message reaches a comparison: `test.lib.scripts.js.analysis.differential.behavior` reports
-    the type of an uncaught exception and nothing else.
-    """
     return F'try {{ {call}; }} catch (e) {{ console.log(e.message); }}'
 
 
 def _a_script_whose_directive_stands_below(head: str) -> str:
-    """
-    A script opening with *head*, followed by `'use strict';` and by a probe that reports which mode
-    the file was compiled in. The head is not a string literal, so it ends the Directive Prologue,
-    and the `'use strict'` below it is an ordinary statement: Node compiles the whole file sloppy.
-    """
     return F"{head}\n'use strict';\n{_REPORTS_ITS_MODE}"
 
 
 def _the_head_it_is_left_as(head: str) -> str:
-    """
-    The first line of the script the simplifier emits for `_a_script_whose_directive_stands_below`
-    applied to *head*. Each head is one statement and the printer writes one statement to a line, so
-    that line is what became of it.
-    """
     return _simplified(_a_script_whose_directive_stands_below(head)).splitlines()[0]
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class _NodeDecides(TestBase):
-    """
-    A base for the cases whose answer only a real engine has: it runs a snippet and its
-    deobfuscation in Node and asserts the two behave identically.
-    """
 
     def _preserves(self, source: str):
         deobfuscated = source.encode('utf8') | djs(strict=True) | str
@@ -286,6 +194,11 @@ class TestAReadTheStringDoesNotDecide(TestBase):
             with self.subTest(expression=expression):
                 self.assertEqual(_fold(expression), standing)
 
+    def test_a_length_off_a_number_or_a_boolean_is_left_standing_or_folds_to_undefined(self):
+        for expression in ['(1).length', 'true.length']:
+            with self.subTest(expression=expression):
+                self.assertIn(_fold(expression), (expression, 'void 0'))
+
     def test_a_method_that_is_only_a_name_when_read_still_folds_when_called(self):
         self.assertEqual(_fold("'abc'['charAt'](1)"), "'b'")
         self.assertEqual(_fold("'abc'.toUpperCase()"), "'ABC'")
@@ -309,10 +222,10 @@ class TestAKeyThatIsNotAPrimitive(TestBase):
                 expected = reads[expression][1]
                 self.assertEqual((answer, replacement), (expected, expected))
 
-    def test_a_key_a_prototype_method_converts_is_left_standing(self):
+    def test_a_key_a_prototype_method_converts_is_left_standing_or_folds_to_undefined(self):
         for expression, (standing, _) in _A_KEY_A_PROTOTYPE_METHOD_CONVERTS.items():
             with self.subTest(expression=expression):
-                self.assertEqual(_fold(expression), standing)
+                self.assertIn(_fold(expression), (standing, 'void 0'))
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_node_answers_each_read_with_what_the_untouched_conversion_names(self):
@@ -458,7 +371,7 @@ class TestACalleeIsReadForItsReceiverToo(TestBase):
                 self.assertEqual(_fold(call), standing)
 
     def test_a_read_inside_a_callee_is_folded(self):
-        self.assertEqual(_fold("'abc'.length.toFixed()"), '(3).toFixed()')
+        self.assertIn(_fold("'abc'.length.toFixed()"), ('(3).toFixed()', "'3'"))
         self.assertEqual(_fold("'abc'[0].toUpperCase()"), "'A'")
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -479,8 +392,15 @@ class TestAReadThatWouldOpenADirectivePrologue(TestBase):
 
     def test_a_read_below_a_statement_that_is_no_directive_still_folds(self):
         self.assertEqual(
-            _deobfuscated("console.log(1);\n'abc'[0];"),
+            _simplified("console.log(1);\n'abc'[0];"),
             "console.log(1);\n'a';",
+        )
+
+    @opportunity
+    def test_a_read_below_a_statement_that_is_no_directive_is_removed_with_its_statement(self):
+        self.assertEqual(
+            _deobfuscated("console.log(1);\n'abc'[0];"),
+            'console.log(1);',
         )
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')

@@ -1,10 +1,3 @@
-"""
-A write to a variable every reference of which lies in one function, which another run of that
-function reads: its next call, the run that called it again, or a later run calling a closure an
-earlier one made. A call making such a write does something its caller can see, and stays
-(`refinery.lib.scripts.js.analysis.effects.EffectModel`). Each program is written by hand, and each
-row says what Node prints for it run as a CommonJS file.
-"""
 from __future__ import annotations
 
 import unittest
@@ -13,8 +6,6 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 
-#: Programs whose function writes a variable that only it references, which another run of the
-#: function reads, mapped to what Node prints for each.
 ANOTHER_RUN_READS: dict[str, Program] = {
     'a guard running the function once': Program(
         a_program("""
@@ -92,9 +83,6 @@ ANOTHER_RUN_READS: dict[str, Program] = {
     ),
 }
 
-#: Programs whose function has a local a function nested in it writes, mapped to what Node prints
-#: for each: a nested function the run calls writes the local of that run, and a closure an earlier
-#: run stored writes the local of the run that made it, while a later run is under way.
 A_NESTED_FUNCTION_WRITES_A_LOCAL: dict[str, Program] = {
     'a nested function incrementing the local of the run calling it': Program(
         a_program("""
@@ -151,7 +139,6 @@ A_NESTED_FUNCTION_WRITES_A_LOCAL: dict[str, Program] = {
 
 EVERY_PROGRAM = {**ANOTHER_RUN_READS, **A_NESTED_FUNCTION_WRITES_A_LOCAL}
 
-#: A script whose function writes a variable a host reads by name once the script has run.
 A_WRITE_A_HOST_READS = a_program("""
     var a;
     var f = function () { a = 2; return a; };

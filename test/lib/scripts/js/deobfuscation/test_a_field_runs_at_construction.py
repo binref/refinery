@@ -1,22 +1,15 @@
 """
-Programs with a field whose initializer reads or writes state. The initializer of a field written
-without `static` runs each time an instance is constructed, after `super()` returns in a derived
-class, as the body of a function the class calls then; the class statement only creates it. A
-read in it sees what the program stored before the construction, and a write in it happens at the
-construction, so neither may be ordered as if it ran where the class is written. Each program is
-written by hand, and each row says what Node prints for it.
+Every program here is written by hand, and Node runs each of them.
 """
 from __future__ import annotations
 
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import Program, Reading, a_program, folded, prints
 
-#: Programs calling a decoder in a field initializer and replacing the built-in it calls after the
-#: class statement, mapped to what Node prints for them.
 A_DECODER_CALLED_IN_A_FIELD: dict[str, Program] = {
     'a built-in replaced through a computed global name': Program(
         a_program("""
@@ -65,8 +58,6 @@ A_DECODER_CALLED_IN_A_FIELD: dict[str, Program] = {
     ),
 }
 
-#: Programs reading a variable in a field initializer, mapped to what Node prints for them: the
-#: value the variable holds when the instance is constructed.
 A_VARIABLE_A_FIELD_READS: dict[str, Program] = {
     'a var reassigned after the class': Program(
         a_program("""
@@ -237,8 +228,6 @@ A_VARIABLE_A_FIELD_READS: dict[str, Program] = {
     ),
 }
 
-#: Programs constructing an instance whose field initializer or constructor writes a variable that
-#: code around the construction reads, mapped to what Node prints for them.
 A_VARIABLE_A_CONSTRUCTION_WRITES: dict[str, Program] = {
     'a var a field writes and a function reads across a construction': Program(
         a_program("""
@@ -457,9 +446,6 @@ A_VARIABLE_A_CONSTRUCTION_WRITES: dict[str, Program] = {
     ),
 }
 
-#: Programs that show when each part of a class runs, mapped to what Node prints for them: a static
-#: field, a static block and a computed key run with the class statement, an instance field at each
-#: construction, which a static block may make while the class statement runs.
 WHEN_THE_PARTS_OF_A_CLASS_RUN: dict[str, Program] = {
     'a field of a derived class runs after super returns': Program(
         a_program("""
@@ -586,17 +572,37 @@ class TestEachPartOfAClassRunsWhenTheLanguageSays(TestBase):
 
 class TestWhatAFieldReadsIsStillFolded(TestBase):
 
+    A_FIELD_DECODING_ITS_VALUE_AND_ITS_KEY = a_program("""
+        var t = ['hello', 'world', 'key'];
+        var d = function (i) { return t[i]; };
+        class A { greeting = d(0); [d(2)] = d(1); }
+        console.log(new A().greeting);
+        """)
+
     def test_a_decoder_call_in_the_initializer_and_the_computed_key_of_a_field_is_decoded(self):
-        source = a_program("""
-            var t = ['hello', 'world', 'key'];
-            var d = function (i) { return t[i]; };
-            class A { greeting = d(0); [d(2)] = d(1); }
-            console.log(new A().greeting);
-            """)
-        self.assertEqual(folded(source), inspect.cleandoc("""
+        self.assertIn(folded(self.A_FIELD_DECODING_ITS_VALUE_AND_ITS_KEY), (
+            inspect.cleandoc("""
+                class A {
+                  greeting = 'hello';
+                  ['key'] = 'world';
+                }
+                console.log(new A().greeting);
+                """),
+            inspect.cleandoc("""
+                class A {
+                  greeting = 'hello';
+                  key = 'world';
+                }
+                console.log(new A().greeting);
+                """),
+        ))
+
+    @opportunity
+    def test_a_computed_key_decoded_to_a_name_is_written_as_the_name(self):
+        self.assertEqual(folded(self.A_FIELD_DECODING_ITS_VALUE_AND_ITS_KEY), inspect.cleandoc("""
             class A {
               greeting = 'hello';
-              ['key'] = 'world';
+              key = 'world';
             }
             console.log(new A().greeting);
             """))

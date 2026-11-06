@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from test import TestBase
+from test import TestBase, opportunity, todo
 from test.lib.scripts.js.analysis.write_positions import WRITE_POSITIONS
 
 from refinery.lib.scripts import Node
@@ -45,16 +45,17 @@ _GLOBAL_WRITE_ROLES = {
     'array pattern with default': (False, True),
     'object pattern': (False, True),
     'nested pattern': (False, True),
-    'for-in head': (True, True),
-    'for-of head': (True, True),
 }
 """
-Each write position of a `globalThis[key]` access, mapped to whether the program holds a
-read-naming surface and whether it stores an opaque global property. Every position stores one —
-the write fact is about the store, not the spelling. The positions that read the old value on the
-way (compound, update, `delete`, loop heads) remain read-naming surfaces; the ones that overwrite
-outright (assignment, destructuring) name nothing and are exempt.
+Each write position of a `globalThis[key]` access but the loop heads, mapped to whether the
+program holds a read-naming surface and whether it stores an opaque global property. Every position
+stores one — the write fact is about the store, not the spelling. The positions that read the old
+value on the way (compound, update) or observe whether the property exists (`delete`) remain
+read-naming surfaces; the ones that only store (assignment, destructuring) name nothing and are
+exempt.
 """
+
+_GLOBAL_LOOP_HEAD_POSITIONS = ('for-in head', 'for-of head')
 
 
 class TestSemanticModel(TestBase):
@@ -911,21 +912,35 @@ class TestSemanticModel(TestBase):
         self.assertTrue(model.has_reflection_surface())
 
     def test_a_computed_global_write_names_nothing_but_stores_one(self):
-        """
-        Each position a member expression can be written in, asked both questions the surface split
-        separates: whether the access could *read* a global by a runtime-computed name
-        (`has_reflection_surface`), and whether it *stores* a property on the global object under such
-        a key (`has_opaque_global_write`). Pinning both per row keeps a detection change honest: a
-        walk that loses the site from one fact cannot pass by losing it from both.
-        """
-        for position, template in WRITE_POSITIONS:
-            source = template.replace('TARGET', 'globalThis[key]')
+        templates = dict(WRITE_POSITIONS)
+        for position, roles in _GLOBAL_WRITE_ROLES.items():
+            source = templates[position].replace('TARGET', 'globalThis[key]')
             with self.subTest(position=position):
                 _, model = self._model(source)
                 self.assertEqual(
                     (model.has_reflection_surface(), model.has_opaque_global_write()),
-                    _GLOBAL_WRITE_ROLES[position],
+                    roles,
                 )
+
+    @opportunity
+    def test_a_computed_global_loop_head_stores_one_and_reads_nothing(self):
+        templates = dict(WRITE_POSITIONS)
+        for position in _GLOBAL_LOOP_HEAD_POSITIONS:
+            source = templates[position].replace('TARGET', 'globalThis[key]')
+            with self.subTest(position=position):
+                _, model = self._model(source)
+                self.assertEqual(
+                    (model.has_reflection_surface(), model.has_opaque_global_write()),
+                    (False, True),
+                )
+
+    def test_a_computed_global_loop_head_stores_one(self):
+        templates = dict(WRITE_POSITIONS)
+        for position in _GLOBAL_LOOP_HEAD_POSITIONS:
+            source = templates[position].replace('TARGET', 'globalThis[key]')
+            with self.subTest(position=position):
+                _, model = self._model(source)
+                self.assertTrue(model.has_opaque_global_write())
 
     def test_a_computed_global_read_stores_nothing(self):
         _, model = self._model('console.log(globalThis[key]); globalThis[key]();')
@@ -933,20 +948,11 @@ class TestSemanticModel(TestBase):
         self.assertFalse(model.has_opaque_global_write())
 
     def test_a_computed_global_write_through_a_name_holding_the_object_stores_one(self):
-        """
-        The write fact resolves the base through the model — the row that distinguishes it from the
-        spelling-level exemption the read-naming surface grants: `g` is not spelled as the object,
-        but it holds it, and `g[key] = 1` stores a global under a key no spelling sees.
-        """
         _, model = self._model('var g = globalThis; g[key] = 1;')
         self.assertFalse(model.has_reflection_surface())
         self.assertTrue(model.has_opaque_global_write())
 
     def test_a_statically_keyed_global_write_is_neither_fact(self):
-        """
-        A string-literal key names the global it writes, so the effect model attributes the store to
-        that name; neither fact is needed to distrust it.
-        """
         _, model = self._model("var g = globalThis; g['q'] = 1; globalThis.q = 2;")
         self.assertFalse(model.has_reflection_surface())
         self.assertFalse(model.has_opaque_global_write())
@@ -1019,11 +1025,6 @@ class TestSemanticModel(TestBase):
         self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
 
     def test_global_reachable_by_an_opaque_global_write(self):
-        """
-        Storing a property on the global object under a runtime key reads nothing, but the stored
-        key may be the name a script-scope binding answers to, so the write can rebind it without a
-        reference the model records — the write-direction half of the reachability question.
-        """
         ast, model = self._model('var x = 1; globalThis[k] = 2; console.log(x);')
         self.assertFalse(model.has_reflection_surface())
         self.assertTrue(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
@@ -1037,15 +1038,13 @@ class TestSemanticModel(TestBase):
         self.assertTrue(model.reachable_by_opaque_reflection(self._binding(ast, model, 'x')))
 
     def test_opaque_reflection_ignores_a_with_that_does_not_name_the_global(self):
-        """
-        A `with` names its targets precisely as dynamic references, so the opaque-surface query — used
-        where a caller already consults `dynamic_refs` — must not report a global reachable merely
-        because a `with` exists, unlike the conservative `reflection_can_reach`.
-        """
         ast, model = self._model('var x; with (o) { z; }')
-        binding = self._binding(ast, model, 'x')
-        self.assertTrue(model.reflection_can_reach(binding))
-        self.assertFalse(model.reachable_by_opaque_reflection(binding))
+        self.assertFalse(model.reachable_by_opaque_reflection(self._binding(ast, model, 'x')))
+
+    @opportunity
+    def test_a_with_that_does_not_name_a_global_does_not_reach_it(self):
+        ast, model = self._model('var x; with (o) { z; }')
+        self.assertFalse(model.reflection_can_reach(self._binding(ast, model, 'x')))
 
     def test_opaque_reflection_reaches_global_through_function_and_timer(self):
         ast, model = self._model("var x; var g = Function('return 1'); setTimeout('y()', 1);")
@@ -1076,10 +1075,6 @@ class TestSemanticModel(TestBase):
         self.assertFalse(model.binding_never_reassigned(self._binding(ast, model, 'x')))
 
     def test_binding_never_reassigned_holds_when_a_with_only_reads_it(self):
-        """
-        A `with`-body read does not rebind the name, so the value stays stable — the distinction between
-        value stability, which this reports, and orderability, which the read still breaks.
-        """
         ast, model = self._model('var x = 1; function f(o){ with (o) { g(x); } }')
         self.assertTrue(model.binding_never_reassigned(self._binding(ast, model, 'x')))
 
@@ -1100,12 +1095,22 @@ class TestSemanticModel(TestBase):
         self.assertTrue(model.has_reflection_surface())
 
     def test_eval_alias_is_a_reflection_surface(self):
-        _, model = self._model('var e = eval;')
+        _, model = self._model("var e = eval; e('G');")
         self.assertTrue(model.has_reflection_surface())
 
+    @opportunity
+    def test_an_eval_alias_nothing_calls_is_no_reflection_surface(self):
+        _, model = self._model('var e = eval;')
+        self.assertFalse(model.has_reflection_surface())
+
     def test_function_value_read_is_a_reflection_surface(self):
-        _, model = self._model('var p = Function.prototype;')
+        _, model = self._model("var p = Function.prototype; p.constructor('return G')();")
         self.assertTrue(model.has_reflection_surface())
+
+    @opportunity
+    def test_a_function_prototype_nothing_reads_from_is_no_reflection_surface(self):
+        _, model = self._model('var p = Function.prototype;')
+        self.assertFalse(model.has_reflection_surface())
 
     def test_shadowed_eval_is_not_a_reflection_surface(self):
         _, model = self._model('function eval(){ return 0; } eval();')
@@ -1199,13 +1204,6 @@ class TestSemanticModel(TestBase):
 
 
 class TestWhereADynamicScopeCouldRebindABinding(TestBase):
-    """
-    The located form of the volatility question `binding_maybe_reassigned_dynamically` answers
-    with a boolean: the nodes a dynamic scope could rebind a binding at, so a consumer can order
-    a read against each one, or `None` for the one rebind with no node — the write the call itself
-    makes on entry. Every row asserts the boolean beside the located answer, so the two queries
-    cannot drift apart.
-    """
 
     @staticmethod
     def _model(source: str):
@@ -1283,10 +1281,18 @@ class TestWhereADynamicScopeCouldRebindABinding(TestBase):
         self.assertFalse(volatile)
         self.assertEqual(sites, [])
 
-    def test_a_global_is_not_frozen_on_a_global_scope_surface(self):
-        ast, binding, sites, volatile = self._located('var x; eval(payload);')
-        self.assertFalse(volatile)
-        self.assertEqual(sites, [])
+    @todo
+    def test_a_direct_eval_in_the_global_scope_is_located_for_a_global(self):
+        source = 'var x; eval(payload);'
+        ast, binding, sites, volatile = self._located(source)
+        call = next(
+            n for n in ast.walk()
+            if isinstance(n, JsCallExpression)
+            and isinstance(n.callee, JsIdentifier)
+            and n.callee.name == 'eval'
+        )
+        self.assertTrue(volatile)
+        self.assertEqual(sites, [call])
 
     def test_a_local_is_not_frozen_on_a_global_scope_surface(self):
         ast, binding, sites, volatile = self._located('function f(){ var x; } eval(payload);')
@@ -1295,19 +1301,6 @@ class TestWhereADynamicScopeCouldRebindABinding(TestBase):
 
 
 class TestFreeNameReachableByDirectEval(TestBase):
-    """
-    A direct `eval` can declare a binding that no reference in the source records, so a name the
-    model resolves to nothing is not necessarily the global one. Which positions can see such a
-    binding follows from what escapes an `eval`: a `var` or a function declaration is created in
-    the var scope the call stands in and outlives the call, while a `let` or a `const` lives in a
-    scope discarded with it. So the reachable positions are exactly those whose scope that var
-    scope contains — every position in the function the `eval` stands in, including nested ones,
-    and no position outside it.
-
-    That containment is about position and not about order: a function written above the `eval`
-    reads the binding just as one written below it does, because the declaration is made when the
-    `eval` runs and the reading function's scope chain is the one it was created in.
-    """
 
     @staticmethod
     def _model(source: str):
@@ -1328,8 +1321,12 @@ class TestFreeNameReachableByDirectEval(TestBase):
     def test_direct_eval_and_read_in_the_same_scope(self):
         self.assertTrue(self._reachable('eval(payload); q;', 'q'))
 
-    def test_read_written_before_the_direct_eval_of_its_scope(self):
-        self.assertTrue(self._reachable('q; eval(payload);', 'q'))
+    @opportunity
+    def test_a_read_that_runs_before_the_direct_eval_of_its_scope_is_not_reached(self):
+        self.assertFalse(self._reachable('q; eval(payload);', 'q'))
+
+    def test_a_read_in_a_loop_is_reached_by_the_direct_eval_of_an_earlier_iteration(self):
+        self.assertTrue(self._reachable('while (c) { q; eval(payload); }', 'q'))
 
     def test_read_in_a_function_written_before_the_direct_eval_of_its_scope(self):
         self.assertTrue(self._reachable('function g(){ return q; } eval(payload);', 'q'))
@@ -1358,19 +1355,10 @@ class TestFreeNameReachableByDirectEval(TestBase):
         self.assertFalse(self._reachable('var g = () => { eval(payload); }; q;', 'q'))
 
     def test_indirect_eval_declares_onto_the_global_object(self):
-        """
-        An indirect `eval` runs in the global scope, so its `var` becomes a property of the global
-        object rather than a binding that shadows one — and for a name whose global property is
-        neither writable nor configurable it cannot even do that.
-        """
         self.assertFalse(self._reachable('function g(){ (0, eval)(payload); return q; }', 'q'))
 
 
 def _alias_sites(source: str, name: str) -> tuple[list[str], list[str], list[str]]:
-    """
-    The source text of every site recorded against the parameter *name*, as the three channels the
-    model keeps them in: the definitions, the kills that name no value, and the reads.
-    """
     ast = JsParser(source).parse()
     model = build_semantic_model(ast)
     node = next(
@@ -1388,21 +1376,10 @@ def _alias_sites(source: str, name: str) -> tuple[list[str], list[str], list[str
 
 class TestWhatAnAccessOnAMappedArgumentsObjectReaches(TestBase):
     """
-    An element of a mapped `arguments` object and the parameter at that position are one location:
-    a reference through the object is attributed to the parameter its key names. Which parameter a
-    key names is decided from the key: one that is the canonical spelling of an index in range names
-    that parameter, and one that is statically known and is no such index names none.
-
-    The read half of such a reference is a definite read of the parameter. The write half is never a
-    definition of it: §10.2.11 maps an element onto a parameter only at a position the call supplied
-    an argument for, so `arguments[0] = 9` writes the first parameter where the call passed one and
-    creates an ordinary property where it passed none, and the text of the function says which
-    neither way. Such a write is therefore recorded as a kill that names no value.
-
-    A key the text does not decide is where naming and reaching come apart. Every parameter is in
-    reach of such an access, so every one of them is read by it — reading is what makes a write to a
-    parameter observable — and every one of them is killed by it, since it may write any single one
-    and a definition of each would be a claim about a value only one of them can hold.
+    An element of a mapped `arguments` object aliases the parameter at its index only where the call
+    passed an argument at that index, so `arguments[1] = 9` sets `b` in one call and only creates a
+    property in another. A write through the object is therefore a kill of the parameter and never a
+    definition of it.
     """
 
     def test_an_index_in_range_kills_the_one_parameter_it_names_and_defines_none(self):
@@ -1415,10 +1392,11 @@ class TestWhatAnAccessOnAMappedArgumentsObjectReaches(TestBase):
         self.assertEqual(_alias_sites(source, 'a'), ([], [], []))
         self.assertEqual(_alias_sites(source, 'b'), ([], [], ['arguments[1]']))
 
-    def test_a_key_the_text_does_not_decide_kills_every_parameter_and_reads_every_one(self):
+    @opportunity
+    def test_a_write_under_a_key_the_text_does_not_decide_kills_each_parameter_and_reads_none(self):
         source = 'function f(a, b) { arguments[c] = 9; }'
-        self.assertEqual(_alias_sites(source, 'a'), ([], ['arguments[c]'], ['arguments']))
-        self.assertEqual(_alias_sites(source, 'b'), ([], ['arguments[c]'], ['arguments']))
+        self.assertEqual(_alias_sites(source, 'a'), ([], ['arguments[c]'], []))
+        self.assertEqual(_alias_sites(source, 'b'), ([], ['arguments[c]'], []))
 
     def test_a_key_that_is_no_index_reaches_no_parameter_at_all(self):
         for key in ['1e400', '1e21', '1.5', "'01'", "'+1'", "' 1'", "'1e0'", "'²'", "'١'"]:
@@ -1427,16 +1405,11 @@ class TestWhatAnAccessOnAMappedArgumentsObjectReaches(TestBase):
                 self.assertEqual(_alias_sites(source, 'a'), ([], [], []))
                 self.assertEqual(_alias_sites(source, 'b'), ([], [], []))
 
-    def test_a_negated_number_is_a_key_the_text_does_not_decide(self):
-        """
-        `-1` is a unary expression rather than a literal, so no key is read out of it and every
-        parameter is answered as in reach. Node reaches no element through it, as the corpus in
-        `test.lib.scripts.js.deobfuscation.test_arguments_aliasing` records, so the answer here is
-        weaker than the one the text supports and never stronger.
-        """
+    @opportunity
+    def test_a_negated_number_reaches_no_parameter(self):
         source = 'function f(a, b) { arguments[-1] = 9; }'
-        self.assertEqual(_alias_sites(source, 'a'), ([], ['arguments[-1]'], ['arguments']))
-        self.assertEqual(_alias_sites(source, 'b'), ([], ['arguments[-1]'], ['arguments']))
+        self.assertEqual(_alias_sites(source, 'a'), ([], [], []))
+        self.assertEqual(_alias_sites(source, 'b'), ([], [], []))
 
     def test_an_index_past_the_end_of_the_list_reaches_no_parameter(self):
         source = 'function f(a, b) { arguments[2] = 9; }'
@@ -1470,12 +1443,6 @@ class TestWhatAnAccessOnAMappedArgumentsObjectReaches(TestBase):
                 self.assertEqual(_alias_sites(source, 'b'), ([], [], []))
 
     def test_a_read_through_a_displaced_object_names_no_parameter(self):
-        """
-        The displacement test consults `binding.writes` and `binding.declarations` while the def-use
-        walk is still filling them, so it has to run after that walk: answering it over a partial
-        write set would credit parameters with reads their displaced object never reached. The read
-        half is the side a walk ordered the other way gets wrong first.
-        """
         source = 'function f(a, b) { arguments = [7]; return arguments[0]; }'
         self.assertEqual(_alias_sites(source, 'a'), ([], [], []))
         self.assertEqual(_alias_sites(source, 'b'), ([], [], []))
@@ -1488,21 +1455,9 @@ class TestWhatAnAccessOnAMappedArgumentsObjectReaches(TestBase):
 
 class TestWhatABareUseOfAMappedArgumentsObjectReaches(TestBase):
     """
-    A use of the object that names no element is attributed by what its governing position can do
-    with the object rather than by the object being mentioned. A position that observes what the
-    object is — a `typeof`, a `void`, a negation, the test of a branch or a loop, a `for-in`
-    head — reaches no parameter. One that reads every element and hands the object nowhere — a
-    spread, a synchronous `for-of` head — reads every parameter and kills none. Every other
-    position may hand the object to code that writes an element, so it reads every parameter and
-    kills every one of them.
-
-    Which of the three a position falls in is the whole answer, so each of these varies the position
-    and nothing else. `for await` and `for of` differ by one keyword and fall in different ones: the
-    asynchronous walk looks `@@asyncIterator` up, which §10.2.11 gives the object none of, so the
-    lookup leaves the object for `Object.prototype` and calls what stands there with the object as
-    `this` — a hand-off the synchronous walk never makes, its `@@iterator` being its own.
-    `test.lib.scripts.js.deobfuscation.test_arguments_aliasing` records what Node makes of a body
-    that puts a parameter write behind that lookup.
+    `for (v of arguments)` walks the object with its own `@@iterator`, but `for await` first looks
+    up `@@asyncIterator`, which the object lacks, so the lookup reaches `Object.prototype` and calls
+    whatever a program put there with the object as `this`.
     """
 
     def test_a_position_that_observes_what_the_object_is_reaches_no_parameter(self):
@@ -1523,13 +1478,6 @@ class TestWhatABareUseOfAMappedArgumentsObjectReaches(TestBase):
                 self.assertEqual(_alias_sites(source, 'b'), ([], [], []))
 
     def test_a_mention_whose_value_a_statement_discards_reaches_no_parameter(self):
-        """
-        An expression statement evaluates its expression, takes the value, and throws it away, so a
-        statement that is nothing but the name performs no access on the object and hands it to
-        nobody. The parenthesized spelling is the same statement.
-        `test.lib.scripts.js.deobfuscation.test_arguments_aliasing` records what Node makes of such
-        a statement in a body that has poisoned the one route out of an object it could enter.
-        """
         for use in ['arguments;', '(arguments);']:
             with self.subTest(use=use):
                 source = F'function f(a, b) {{ {use} }}'
@@ -1552,30 +1500,34 @@ class TestWhatABareUseOfAMappedArgumentsObjectReaches(TestBase):
         self.assertEqual(_alias_sites(source, 'a'), ([], ['arguments'], ['arguments']))
         self.assertEqual(_alias_sites(source, 'b'), ([], ['arguments'], ['arguments']))
 
+    @opportunity
+    def test_a_delegating_yield_reads_every_parameter_and_kills_none(self):
+        source = 'function* f(a, b) { yield* arguments; }'
+        self.assertEqual(_alias_sites(source, 'a'), ([], [], ['arguments']))
+        self.assertEqual(_alias_sites(source, 'b'), ([], [], ['arguments']))
+
+    def test_a_delegating_yield_reads_every_parameter(self):
+        source = 'function* f(a, b) { yield* arguments; }'
+        killed_or_not = (
+            ([], ['arguments'], ['arguments']),
+            ([], [], ['arguments']),
+        )
+        self.assertIn(_alias_sites(source, 'a'), killed_or_not)
+        self.assertIn(_alias_sites(source, 'b'), killed_or_not)
+
     def test_a_position_that_hands_the_object_on_kills_every_parameter(self):
         for use in [
             'g(arguments);',
             'var h = arguments;',
             'return arguments;',
-            'yield* arguments;',
         ]:
             with self.subTest(use=use):
-                keyword = 'function*' if use.startswith('yield') else 'function'
-                source = F'{keyword} f(a, b) {{ {use} }}'
+                source = F'function f(a, b) {{ {use} }}'
                 self.assertEqual(_alias_sites(source, 'a'), ([], ['arguments'], ['arguments']))
                 self.assertEqual(_alias_sites(source, 'b'), ([], ['arguments'], ['arguments']))
 
 
 class TestWhichBindingsAreReachedThroughTheGlobalObject(TestBase):
-    """
-    Two kinds of object reach a binding the access spells no lexical name of: the global object,
-    where `globalThis.x` reaches the global `x`, and a mapped `arguments` object, where
-    `arguments[0]` reaches the first parameter. Both are recorded as a member access standing in for
-    a referencing identifier, so a predicate that reads only the recorded node's type cannot tell
-    them apart — and they mean opposite things to a caller. A global reached that way is reachable
-    from anywhere and must not be treated as a local; a parameter reached that way is reachable from
-    nothing outside the one function that holds it.
-    """
 
     @staticmethod
     def _binding(source: str, name: str) -> Binding:
@@ -1635,13 +1587,6 @@ class TestWhichBindingsAreReachedThroughTheGlobalObject(TestBase):
 
 
 class TestWhenAHandedApplyReceiverIsObserved(TestBase):
-    """
-    The gate that lets the global object handed as an `apply`/`call` receiver stay foldable, asked
-    on each text as written. The behavior rows over these same shapes run the whole pipeline,
-    where another pass can rewrite the shape before the gate answers — collapsing an alias into
-    the name it copies, or freezing every global on a reflection surface — so only the direct
-    question proves the gate itself refuses each displacement.
-    """
 
     @staticmethod
     def _observed(source: str) -> bool:
@@ -1781,10 +1726,6 @@ class TestWhenAHandedApplyReceiverIsObserved(TestBase):
 
 
 def _how_each_occurrence_is_read(source: str, name: str) -> list[tuple[bool, bool]]:
-    """
-    For every identifier spelled *name* in *source*, in source order, whether the model calls it a
-    reference and whether it answers that reading it may throw.
-    """
     ast = JsParser(source).parse()
     model = build_semantic_model(ast)
     return [
@@ -1795,17 +1736,6 @@ def _how_each_occurrence_is_read(source: str, name: str) -> list[tuple[bool, boo
 
 
 class TestANameSpelledInAKeyPositionReadsNoBinding(TestBase):
-    """
-    A name a class body spells out is the key its member is stored under; so is the key of an import
-    attribute, and so is the name an `export * as` exports a module under. None of the three reads a
-    binding, and none of them can throw for want of one.
-
-    Every program below spells the same name twice: once in such a position, and once as a bare
-    expression statement, which is a read of a name nothing binds. The pair is the assertion — the
-    second occurrence is what the first would answer if it were being read as a name. A key written
-    in brackets is the case where the two occurrences agree, because there the name really is an
-    expression the definition evaluates.
-    """
 
     def test_a_class_member_name_spelled_out_reads_no_binding(self):
         for member in [
@@ -1860,20 +1790,9 @@ class TestANameSpelledInAKeyPositionReadsNoBinding(TestBase):
 
 
 class TestWhichBindingsAnExportMarks(TestBase):
-    """
-    `Binding.exported` is the one fact an `export` contributes, and nothing in construction reads it
-    back, so marking rides the def-use walk instead of costing a walk of its own. These tests pin
-    which bindings each export form marks and which it must not: a list with a `from` clause names
-    bindings of the module the clause spells, nothing local, and an expression under
-    `export default` declares no binding at all.
-    """
 
     @staticmethod
     def _exported_names(source: str) -> set[str]:
-        """
-        The names of every binding in *source* the model marks exported. An exported binding always
-        has a declaration in the tree, so walking the identifiers finds them all.
-        """
         ast = JsParser(source).parse()
         model = build_semantic_model(ast)
         names = set()
@@ -1904,10 +1823,6 @@ class TestWhichBindingsAnExportMarks(TestBase):
         self.assertEqual(self._exported_names("var a; export { a } from './m.js';"), set())
 
     def test_a_sourceless_export_list_still_records_one_read_of_the_named_binding(self):
-        """
-        The marking rides the walk that records reads and writes, so the one occurrence the list
-        spells must still be recorded exactly once — the walk reaches it through two slots.
-        """
         source = 'var a = 1; export { a }; use(a);'
         ast = JsParser(source).parse()
         model = build_semantic_model(ast)
@@ -1921,11 +1836,8 @@ class TestWhichBindingsAnExportMarks(TestBase):
         )
 
 
-#: Programs mapped to whether their last declaration or expression statement throws on no run. A
-#: read may throw when nothing is certain to bind the name; a store may throw when the binding is
-#: lexical, reached through a `with` object, or does not exist, and a strict one when the binding
-#: is a property of the global object, which the language (`undefined`) or a browser (`top`) makes
-#: read-only.
+#: In strict code a store into `undefined` throws because the language makes that property of the
+#: global object read-only, and a store into `top` throws because a browser does.
 WHETHER_THE_LAST_STATEMENT_CANNOT_THROW = {
     'var a = 1, b = "x", c = null, d = true;': True,
     'var f = function () {};': True,
@@ -1939,14 +1851,7 @@ WHETHER_THE_LAST_STATEMENT_CANNOT_THROW = {
     'var a, b; (a = 1, b = a);': True,
     'function f(p) { p = 1; }': True,
     'try {} catch (e) { e = 1; }': True,
-    'let a; a = 1;': False,
     'const a = 1; a = 2;': False,
-    'a = 1;': False,
-    'var f = function g() { g = 1; };': False,
-    'var a; a += 1;': False,
-    'var o = {}; o.p = 1;': False,
-    'function f() {} f();': False,
-    'var o = {}; with (o) { var a = 1; }': False,
     'var undefined = 1;': True,
     '"use strict"; var undefined = 1;': False,
     'function f() { var undefined = 1; }': True,
@@ -1955,56 +1860,89 @@ WHETHER_THE_LAST_STATEMENT_CANNOT_THROW = {
     '"use strict"; function f() { var top; top = 1; }': True,
 }
 
+#: In sloppy code a store into the name of a function expression inside its own body is silently
+#: ignored.
+STATEMENTS_NO_RUN_OF_WHICH_CAN_THROW = (
+    'let a; a = 1;',
+    'a = 1;',
+    'var f = function g() { g = 1; };',
+    'var a; a += 1;',
+    'var o = {}; o.p = 1;',
+    'function f() {} f();',
+    'var o = {}; with (o) { var a = 1; }',
+)
+
+
+def _last_statement_cannot_throw(source: str) -> bool:
+    ast = JsParser(source).parse()
+    model = build_semantic_model(ast)
+    statements = [
+        node for node in ast.walk_in_order()
+        if isinstance(node, (JsVariableDeclaration, JsExpressionStatement))
+    ]
+    return model.statement_cannot_throw(statements[-1])
+
 
 class TestWhichStatementsCannotThrow(TestBase):
 
     def test_each_statement_throws_or_not_as_the_language_says(self):
-        verdicts = {}
-        for source in WHETHER_THE_LAST_STATEMENT_CANNOT_THROW:
-            ast = JsParser(source).parse()
-            model = build_semantic_model(ast)
-            statements = [
-                node for node in ast.walk_in_order()
-                if isinstance(node, (JsVariableDeclaration, JsExpressionStatement))
-            ]
-            verdicts[source] = model.statement_cannot_throw(statements[-1])
-        self.assertEqual(verdicts, WHETHER_THE_LAST_STATEMENT_CANNOT_THROW)
+        rows = WHETHER_THE_LAST_STATEMENT_CANNOT_THROW
+        self.assertEqual({source: _last_statement_cannot_throw(source) for source in rows}, rows)
+
+    @opportunity
+    def test_a_statement_no_run_of_which_can_throw_is_answered_as_one(self):
+        rows = STATEMENTS_NO_RUN_OF_WHICH_CAN_THROW
+        self.assertEqual(
+            {source: _last_statement_cannot_throw(source) for source in rows},
+            {source: True for source in rows},
+        )
 
 
-#: Programs mapped to whether a bare `globalThis` written where their `this` stands would read the
-#: global object: every binding of the name captures it, a `with` object may supply it, and a direct
-#: `eval` may declare it.
 WHETHER_A_GLOBAL_THIS_AT_THE_THIS_REACHES_THE_HOST = {
     'this;': True,
     'function f() { this; }': True,
     'function f() { { let globalThis = 1; this; } }': False,
     'try {} catch (globalThis) { this; }': False,
     'function f(globalThis) { this; }': False,
-    'var globalThis; this;': False,
     'globalThis = 1; this;': False,
-    'var o = {}; with (o) { this; }': False,
     'function f(s) { eval(s); this; }': False,
     'function f() { this; } function g(s) { eval(s); }': True,
 }
+
+#: A `var` without an initializer at the top of a script declares a property the global object
+#: already has and leaves its value alone.
+A_GLOBAL_THIS_AT_THE_THIS_REACHING_THE_HOST_PAST_A_DECLARATION_OR_A_WITH = (
+    'var globalThis; this;',
+    'var o = {}; with (o) { this; }',
+)
+
+
+def _a_global_this_at_the_this_reaches_the_host(source: str) -> bool:
+    ast = JsParser(source).parse()
+    model = build_semantic_model(ast)
+    this = next(node for node in ast.walk() if isinstance(node, JsThisExpression))
+    return model.bare_name_reaches_the_host('globalThis', this)
 
 
 class TestWhereABareNameReachesTheHost(TestBase):
 
     def test_a_global_this_written_at_each_this_reads_the_global_object_or_not(self):
-        verdicts = {}
-        for source in WHETHER_A_GLOBAL_THIS_AT_THE_THIS_REACHES_THE_HOST:
-            ast = JsParser(source).parse()
-            model = build_semantic_model(ast)
-            this = next(node for node in ast.walk() if isinstance(node, JsThisExpression))
-            verdicts[source] = model.bare_name_reaches_the_host('globalThis', this)
-        self.assertEqual(verdicts, WHETHER_A_GLOBAL_THIS_AT_THE_THIS_REACHES_THE_HOST)
+        rows = WHETHER_A_GLOBAL_THIS_AT_THE_THIS_REACHES_THE_HOST
+        self.assertEqual(
+            {source: _a_global_this_at_the_this_reaches_the_host(source) for source in rows},
+            rows,
+        )
+
+    @opportunity
+    def test_a_declaration_or_a_with_leaving_global_this_alone_does_not_capture_it(self):
+        rows = A_GLOBAL_THIS_AT_THE_THIS_REACHING_THE_HOST_PAST_A_DECLARATION_OR_A_WITH
+        self.assertEqual(
+            {source: _a_global_this_at_the_this_reaches_the_host(source) for source in rows},
+            {source: True for source in rows},
+        )
 
 
 class TestTheElementsOfArgumentsHoldWhatTheCallsShownPass(TestBase):
-    """
-    `SemanticModel.arguments_through_calls` for the function `f`: an element of its own `arguments`
-    holds the argument every call of `f` the text shows passes at its position.
-    """
 
     @staticmethod
     def _passed(source: str, position: int | None) -> tuple[list[str], bool]:
@@ -2039,11 +1977,6 @@ class TestTheElementsOfArgumentsHoldWhatTheCallsShownPass(TestBase):
 
 
 class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
-    """
-    `SemanticModel.values_through_calls` for the parameter `p`: the arguments of every call of its
-    function that the text shows, and its own writes. The list is complete only when no call of the
-    function can come another way, and a value a shown call passes is listed either way.
-    """
 
     @staticmethod
     def _received(source: str, declared: tuple[str, ...] = ()) -> tuple[list[str], bool]:
@@ -2128,10 +2061,9 @@ class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
 
 class TestAFunctionDeclaredInABlockHasTwoNames(TestBase):
     """
-    Outside strict code a function declared in a block is bound in the block, holding the function
-    from the moment the block is entered, and Annex B copies what that binding holds into a `var` of
-    the enclosing function or script where the declaration runs. The model keeps both bindings and
-    one record of the copy, which both list.
+    Outside strict code a function declared in a block is bound in the block from the moment the
+    block is entered, and evaluating the declaration copies that binding's value into a `var` of the
+    same name in the enclosing function or script.
     """
 
     @staticmethod
@@ -2329,11 +2261,6 @@ def _function_named_f(ast: Node) -> JsFunctionDeclaration:
 
 
 class TestWhatReachesAFunctionWithoutItsName(TestBase):
-    """
-    `SemanticModel.reached_without_its_name` for the function `f`: a run of `f`, or `f` itself,
-    obtained where no reference of its name stands, through the `caller` of a function `f` calls,
-    through the `callee` of its own `arguments`, or through `new.target`.
-    """
 
     @staticmethod
     def _reached(source: str) -> bool:
@@ -2368,16 +2295,6 @@ class TestWhatReachesAFunctionWithoutItsName(TestBase):
 
 
 class TestWhatCodeOutsideTheFileReaches(TestBase):
-    """
-    Three questions about code outside the file, asked of the function `f` and its name: whether a
-    host reaches the name (`SemanticModel.named_by_the_host`), whether code outside reaches it at
-    some point (`SemanticModel.reached_from_outside`), and whether such code can call `f` while the
-    file still runs (`SemanticModel.callable_from_outside`). A host reaches a name the analyst
-    declared where the binding is a property of the global object, and calls it whenever the script
-    hands it control. Code loading a library, a file of nothing but function declarations, calls
-    them once the file has run. An importer in an import cycle can call an export before the
-    module has finished.
-    """
 
     @staticmethod
     def _answers(source: str, kind: FileKind, declared: tuple[str, ...]) -> tuple[bool, bool, bool]:

@@ -1,58 +1,30 @@
 """
-Where strict mode comes from, and whether a deobfuscation leaves it where it was.
+A `'use strict'` is the Use Strict Directive only in the Directive Prologue: the run of statements
+made of a string literal alone that a script, a function body or a class static block opens with. At
+the head of any other statement list, such as a block, a `catch` clause, a loop body or a `case`, it
+is an ordinary statement, and so is `('use strict');` anywhere.
 
-A `'use strict'` is the Use Strict Directive only by virtue of its position: it must be a string
-literal standing in the run of string-literal statements that a Script, a function body or a class
-static block opens with. A body that merely holds a statement list — a plain block, the body of a
-`try`, a `catch` or a loop, a labelled statement, a `switch` case — reads no Directive Prologue at
-all, and a `'use strict'` written at the head of one is an ordinary statement that computes a string
-and discards it. Everything a strict body encloses is strict in turn, and every part of a class
-definition is strict whatever encloses it.
+Everything a strict body encloses is strict, and so is every part of a class. A function body's
+directive also governs the name and the parameters of the function, and a function whose parameters
+are not all plain identifiers may hold no directive at all, so Node refuses both of these:
 
-Node decides all of it, through four probes and no reading of the specification.
+    function eval() { 'use strict'; }
+    function f(a = 1) { 'use strict'; }
 
-The first is an octal literal. It is a number where the code around it is sloppy and a SyntaxError
-where that code is strict, so writing one below a `'use strict'` asks the engine which mode it
-compiled that position in: a program Node refuses is one where the directive was read as such, and a
-program it reads is one where the directive was an ordinary statement. The probe is a fact about
-where a piece of code stands, so it is the same question
-`refinery.lib.scripts.js.strict.strict_mode_at` answers of the node standing there.
+The octal literal `010` most programs here hold is a SyntaxError in strict code and a number in
+sloppy code, so whether Node refuses a program tells the mode of the position the literal stands in.
 
-The second is a parameter list. A function whose parameters are anything but plain identifiers may
-hold no Use Strict Directive at all, so `function f(a = 1) { 'use strict'; }` is a SyntaxError while
-`function f(a) { 'use strict'; }` is a program. That is the one place the language says out loud
-where a directive is permitted, and it is what
-`refinery.lib.scripts.js.strict.has_simple_parameters` is asked for.
-
-The third is the name `eval`, which strict code may not bind. An octal literal has to be written
-where an expression goes, and the region a function body's directive governs reaches two places that
-are not expression positions at all: the name the function binds and its parameter list. Node
-refuses to read a program that binds `eval` in either, so writing the name there asks the same
-question of a position no number can stand in.
-
-The fourth is what a running program says about itself. The three above ask whether a text is a
-program at all, which decides nothing about a file that stays a program and changes what it does. A
-plain call passes no receiver, so `this` in the callee is `undefined` where the call stands in
-strict code and the global object where it stands in sloppy code, and a rewrite that moves the mode
-of a body is a rewrite that moves what that expression answers. Every before-and-after comparison
-here is written around it, since a file handed back to an analyst has to run the way the file
-handed over ran, and not merely parse.
-
-A class static block is the one body no probe of the first three reaches: class code is strict
-whatever stands at the head of it, so the directive there decides nothing and both spellings of the
-program are refused alike. It is recorded with that control beside it, and the fourth probe answers
-`true` there whatever a rewrite does to its prologue.
-
-SECURITY: every snippet here is hand-authored and benign, and running it is what makes the engine
-the oracle. Nothing from `samples` may ever be fed to this.
+SECURITY: every snippet here is hand-authored and benign and is run by Node. Nothing from `samples`
+may ever be fed to this.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from typing import Sequence
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -73,6 +45,7 @@ from test.lib.scripts.js.analysis.test_differential import (
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
+    JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
@@ -80,6 +53,7 @@ from refinery.lib.scripts.js.model import (
     JsNumericLiteral,
     JsScript,
     JsStringLiteral,
+    strip_parens,
 )
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.strict import (
@@ -93,17 +67,10 @@ from refinery.lib.scripts.js.strict import (
 )
 from refinery.units.scripting.djs import djs
 
-#: What `test.lib.scripts.js.analysis.differential.completion_values` reports for a text Node does
-#: not read as a program at all.
 NOT_A_PROGRAM = 'throw SyntaxError'
 
-#: The Use Strict Directive as it is written into each program below, so that the same program
-#: without it is the one this text is taken back out of.
 THE_DIRECTIVE = "'use strict'; "
 
-#: A program that writes the directive at the head of a body a Directive Prologue opens, with an
-#: octal literal below it. Node refuses every one of them, and reads every one of them once the
-#: directive is removed.
 A_BODY_A_PROLOGUE_OPENS = {
     'a script'               : "'use strict'; 010;",
     'a function declaration' : "function f() { 'use strict'; 010; }",
@@ -117,9 +84,6 @@ A_BODY_A_PROLOGUE_OPENS = {
     'a nested function'      : "function f() { function g() { 'use strict'; 010; } }",
 }
 
-#: A program that writes the directive at the head of a statement list no Directive Prologue opens.
-#: Node reads every one of them, with and without the directive: the statement is a string that is
-#: computed and discarded, and the octal literal below it stands in sloppy code.
 A_BODY_NO_PROLOGUE_OPENS = {
     'a plain block'          : "{ 'use strict'; 010; }",
     'an if branch'           : "if (1) { 'use strict'; 010; }",
@@ -139,14 +103,8 @@ A_BODY_NO_PROLOGUE_OPENS = {
     'a block inside a body'  : "function f() { { 'use strict'; 010; } }",
 }
 
-#: The one body whose directive neither probe reaches. A class static block opens a Directive
-#: Prologue, and every part of a class definition is strict already, so Node refuses this program
-#: and refuses it just the same with the directive taken back out.
 A_CLASS_STATIC_BLOCK = "class C { static { 'use strict'; 010; } }"
 
-#: A position an octal literal is written at, mapped to whether the code there is strict. Nothing
-#: below declares a mode: each of these is a class, whose every part is strict however sloppy the
-#: file around it is, or a body nested inside one that declares it.
 AN_OCTAL_LITERAL_STANDING_IN = {
     'a sloppy script'                    : ('010;', False),
     'a sloppy function body'             : ('function f() { 010; }', False),
@@ -170,9 +128,6 @@ AN_OCTAL_LITERAL_STANDING_IN = {
     'a body below a block holding one'   : ("function f() { { 'use strict'; } 010; }", False),
 }
 
-#: A program that binds the name `eval` inside the code a function body's Use Strict Directive
-#: governs. Strict code may bind neither `eval` nor `arguments`, so Node refuses every one of these,
-#: and reads every one of them once the directive is taken back out.
 A_BINDING_THE_DIRECTIVE_GOVERNS = {
     'the name of a declaration'      : "function eval() { 'use strict'; }",
     'the name of an expression'      : "var f = function eval() { 'use strict'; };",
@@ -191,11 +146,6 @@ A_BINDING_THE_DIRECTIVE_GOVERNS = {
     'a binding inside the body'      : "function f() { 'use strict'; var eval = 1; }",
 }
 
-#: A program that binds the same name outside that code, which Node reads. A directive governs the
-#: one function it was written in and nothing around it, and two of these bind the name in a place
-#: that only looks as though it belongs to that function: a property key is a name and not a
-#: binding, and the variable a function expression is stored in belongs to the statement that
-#: declares it.
 A_BINDING_OUTSIDE_WHAT_IT_GOVERNS = {
     'a binding above the function'       : "var eval = 1; function f() { 'use strict'; }",
     'a binding below the function'       : "function f() { 'use strict'; } var eval = 1;",
@@ -208,8 +158,6 @@ A_BINDING_OUTSIDE_WHAT_IT_GOVERNS = {
     'a parameter of the function around' : "function f(eval) { function g() { 'use strict'; } }",
 }
 
-#: A statement standing between the head of a body and a `'use strict'` written below it, mapped to
-#: whether the prologue still reaches that directive. The empty key is the directive standing first.
 A_STATEMENT_ABOVE_THE_DIRECTIVE = {
     ''                    : True,
     "'other';"            : True,
@@ -229,13 +177,8 @@ A_STATEMENT_ABOVE_THE_DIRECTIVE = {
     "'a'.length;"         : False,
 }
 
-#: The statements a body is written with. Its Directive Prologue is the run of string literals it
-#: opens with, which is the first two, and a directive inserted at any index from zero up to and
-#: including two is read as one.
 A_BODY_WRITTEN_AS = ["'alpha';", "'beta';", '0;', "'gamma';"]
 
-#: A statement that is no string literal and that a fold would write as one, placed at a position,
-#: mapped to whether respelling it hands a `'use strict'` below it the Directive Prologue.
 A_STATEMENT_STANDING_AT = {
     'the head of a script'           : ("{stmt} 'use strict'; 010;", True),
     'the second statement'           : ("'lead'; {stmt} 'use strict'; 010;", True),
@@ -250,17 +193,10 @@ A_STATEMENT_STANDING_AT = {
         "function f() {{ {{ {stmt} 'use strict'; 010; }} }}", False),
 }
 
-#: The statement `A_STATEMENT_STANDING_AT` places. It is no string literal, so it ends whatever
-#: Directive Prologue it stands in, and it denotes a string, so a fold writes one where it stood.
 A_COMPUTED_STRING = "'a' + 'b';"
 
-#: The string literal that fold writes. It does not denote `use strict`, so it is never the
-#: directive itself; what it can do is hand the position of one to a statement below it.
 A_PLAIN_STRING = "'ab';"
 
-#: A parameter list, mapped to whether it is a simple one. Every parameter of a simple list is a
-#: plain identifier; a default, a rest element and a destructuring pattern are each something else.
-#: The empty list is simple, nothing in it being anything but an identifier.
 A_PARAMETER_LIST = {
     ''          : True,
     'a'         : True,
@@ -279,7 +215,6 @@ A_PARAMETER_LIST = {
     'a, [b]'    : False,
 }
 
-#: Each way of writing a function that takes a parameter list and holds a body.
 A_FUNCTION_WRITTEN_AS = {
     'a function declaration' : 'function f({params}) {{ {body} }}',
     'a function expression'  : 'var f = function ({params}) {{ {body} }};',
@@ -289,16 +224,10 @@ A_FUNCTION_WRITTEN_AS = {
     'an async function'      : 'async function h({params}) {{ {body} }}',
 }
 
-#: An expression that is `true` where it stands in strict code and `false` where it stands in
-#: sloppy code. A plain call passes no receiver, so `this` in the callee is `undefined` under strict
-#: and the global object under sloppy, and a function written inside a body runs in that body's
-#: mode.
 _THE_MODE_IT_STANDS_IN = '(function () { return this; })() === undefined'
 
-#: The same probe as a statement, for a position that takes one.
 _REPORTS_THE_MODE_IT_STANDS_IN = F'console.log({_THE_MODE_IT_STANDS_IN});'
 
-#: A program that says which mode each part of it runs in, mapped to what Node prints for it.
 A_PROGRAM_REPORTING_ITS_MODE = {
     F"'use strict';\n{_REPORTS_THE_MODE_IT_STANDS_IN}":
         'true\n',
@@ -345,85 +274,75 @@ A_PROGRAM_REPORTING_ITS_MODE = {
         'console\ntrue\n',
 }
 
-#: A read a constant string decides, standing at the head of a body that reads no Directive
-#: Prologue, mapped to the text `refinery.djs` writes for the whole program. The read answers a
-#: string, so folding it writes a string literal where the read stood; no directive is ever read
-#: there, so no mode turns on the rewrite and nothing licenses declining it.
 A_READ_WHERE_NO_PROLOGUE_IS_READ = {
-    "{ 'abc'[0]; }":
+    "{ 'abc'[0]; }": (
         "{\n  'a';\n}",
-    "switch (1) { case 1: 'abc'[0]; }":
+        '',
+    ),
+    "switch (1) { case 1: 'abc'[0]; }": (
         "switch (1) {\n  case 1:\n    'a';\n}",
-    "try { f(); } catch (e) { 'abc'[0]; }":
+        '',
+    ),
+    "try { f(); } catch (e) { 'abc'[0]; }": (
         "try {\n  f();\n} catch (e) {\n  'a';\n}",
-    "L: { 'abc'[0]; }":
+        inspect.cleandoc("""
+            try {
+              f();
+            } catch (e) {}
+        """),
+    ),
+    "L: { 'abc'[0]; }": (
         "L: {\n  'a';\n}",
-    "function f() { { 'abc'[0]; } }":
+        '',
+    ),
+    "function f() { { 'abc'[0]; } }": (
         "function f() {\n  {\n    'a';\n  }\n}",
+        'function f() {}',
+    ),
 }
 
-#: The same read standing where a string literal would join a Directive Prologue, mapped to the text
-#: `refinery.djs` writes for it. Folding it there hands the prologue a statement that had ended one.
 A_READ_WHERE_A_PROLOGUE_IS_READ = {
-    "'abc'[0];":
+    "'abc'[0];": (
         "'abc'[0];",
-    "function f() { 'abc'[0]; }":
+        '',
+    ),
+    "function f() { 'abc'[0]; }": (
         "function f() {\n  'abc'[0];\n}",
+        'function f() {}',
+    ),
 }
 
 
 def _a_function_whose_body_opens_with(head: str, parameters: str, call: str, read: str) -> str:
-    """
-    A program calling a function written with *parameters* as *call*, whose body opens with *head*
-    and reads *read* below it.
-    """
     return (
         F'function f({parameters}) {{ {head} return {read}; }}\n'
         F'console.log({call});\n'
     )
 
 
-#: A parameter list that holds a default value, a rest element, or a destructuring pattern, mapped
-#: to a call that reaches a body reading it, the expression such a body returns, and what Node
-#: prints for that call. A parameter list written any of those ways is not a simple one, and a
-#: function with such a list may hold no Use Strict Directive at all, so a rewrite that writes one
-#: into such a body costs the file its reading rather than merely its mode.
 _A_PARAMETER_LIST_NO_DIRECTIVE_MAY_STAND_UNDER = {
     'a = 1' : ('f()', 'a', '1\n'),
     '...a'  : ('f(1, 2)', 'a.length', '2\n'),
     '{a}'   : ('f({a: 5})', 'a', '5\n'),
 }
 
-#: A function whose parameter list forbids a directive, whose body holds a `'use strict'` one
-#: statement in, mapped to what Node prints for it. The statement above the directive is the `atob`
-#: call of
-#: `test.lib.scripts.js.analysis.test_differential.SPELLINGS_A_FOLD_WRITES_AS_A_PLAIN_STRING`, which
-#: is not a string literal and therefore ends the prologue in front of the directive.
 A_FUNCTION_WHOSE_PARAMETER_LIST_FORBIDS_A_DIRECTIVE = {
     _a_function_whose_body_opens_with(
         "atob('YQ=='); 'use strict';", parameters, call, read): prints
     for parameters, (call, read, prints) in _A_PARAMETER_LIST_NO_DIRECTIVE_MAY_STAND_UNDER.items()
 }
 
-#: A function whose parameter list forbids a directive, whose body opens with a statement that is
-#: none but that a fold writes as the plain spelling of one, mapped to what Node prints for it.
 A_FUNCTION_WHOSE_BODY_OPENS_WITH_A_FOLD_TO_THE_DIRECTIVE = {
     _a_function_whose_body_opens_with(head, parameters, call, read): prints
     for parameters, (call, read, prints) in _A_PARAMETER_LIST_NO_DIRECTIVE_MAY_STAND_UNDER.items()
     for head in SPELLINGS_A_FOLD_WRITES_AS_THE_DIRECTIVE
 }
 
-#: A body opening that promotes the statement standing below it once a pass is done with it: a block
-#: whose contents are lifted into the body around it, and a binding nothing reads that is dropped
-#: out of it. Neither writes a character of text; each only changes which statement the body opens
-#: with.
 A_HEAD_A_MOVE_PROMOTES_THE_STATEMENT_BELOW = [
     "if (1) { 'use strict'; }",
     "var dead = 1; 'use strict';",
 ]
 
-#: A function whose parameter list forbids a directive, holding a `'use strict'` that one of those
-#: moves would promote to the head of its body, mapped to what Node prints for it.
 A_FUNCTION_A_MOVE_WOULD_WRITE_A_DIRECTIVE_INTO = {
     _a_function_whose_body_opens_with(head, parameters, call, read): prints
     for parameters, (call, read, prints) in _A_PARAMETER_LIST_NO_DIRECTIVE_MAY_STAND_UNDER.items()
@@ -432,10 +351,6 @@ A_FUNCTION_A_MOVE_WOULD_WRITE_A_DIRECTIVE_INTO = {
 
 
 def _a_strict_body_holding(statements: str, installs: str = '') -> str:
-    """
-    A program that runs *installs*, then prints whether the body of `f` runs strict, with
-    *statements* standing between the directive that opens that body and the report.
-    """
     body = (
         F'function f(a) {{ {THE_DIRECTIVE}{statements}'
         F' return {_THE_MODE_IT_STANDS_IN}; }}\n'
@@ -445,17 +360,9 @@ def _a_strict_body_holding(statements: str, installs: str = '') -> str:
 
 
 def _a_strict_script_holding(statements: str) -> str:
-    """
-    A program printing whether the script runs strict, with *statements* standing between the
-    directive that opens the file and the report.
-    """
     return F"{THE_DIRECTIVE}{statements}\n{_REPORTS_THE_MODE_IT_STANDS_IN}\n"
 
 
-#: A body that opens with a directive and holds a binding nothing reads back, mapped to what Node
-#: prints for it. Two of them are function bodies and two are whole scripts, and the binding is
-#: written two ways: as a variable a single assignment stores into, and as a namespace object whose
-#: one property is read straight back.
 A_BODY_WHOSE_DIRECTIVE_STANDS_BESIDE_A_BINDING_NOTHING_READS = {
     _a_strict_body_holding('q = a;', 'var q;'): 'true\n',
     _a_strict_script_holding('var q;\nq = 1;'): 'true\n',
@@ -465,12 +372,6 @@ A_BODY_WHOSE_DIRECTIVE_STANDS_BESIDE_A_BINDING_NOTHING_READS = {
 
 
 def _an_accessor_returning_a_strict_function(body: str, run: str) -> str:
-    """
-    A program building an accessor with an immediately invoked function that holds one local, whose
-    returned function opens with the directive and closes with *body*, and that then runs *run*.
-    Promoting the accessor is what writes the local of the outer function into the body that the
-    directive opens.
-    """
     return (
         'var acc = (function () {\n'
         "  var t = ['a', 'b'];\n"
@@ -480,10 +381,6 @@ def _an_accessor_returning_a_strict_function(body: str, run: str) -> str:
     )
 
 
-#: An accessor whose returned function opens with a directive, mapped to what Node prints for it.
-#: The first reports the mode that function runs in and the second assigns to a name nothing
-#: declares, which strict code refuses and sloppy code answers with a new global. The third writes
-#: two statements into the prologue the source gave that body, only one of which declares a mode.
 AN_ACCESSOR_WHOSE_RETURNED_BODY_OPENS_WITH_A_DIRECTIVE = {
     _an_accessor_returning_a_strict_function(
         F"return t[i] + ({_THE_MODE_IT_STANDS_IN} ? 'S' : 'L');",
@@ -499,10 +396,6 @@ AN_ACCESSOR_WHOSE_RETURNED_BODY_OPENS_WITH_A_DIRECTIVE = {
     ): 'bS\n',
 }
 
-#: A body a Directive Prologue opens, as a template that places statements at the head of that body
-#: and reports the mode the body runs in, mapped to what Node prints for the whole program. Only the
-#: two bodies belonging to a class report `true`: every part of a class definition is strict whatever
-#: opens it, which makes those the bodies here whose mode nothing written into a prologue can move.
 A_BODY_REPORTING_THE_MODE_ITS_PROLOGUE_DECIDES = {
     'a script'               : ('{head} console.log({mode});', 'false\n'),
     'a function declaration' : (
@@ -528,12 +421,6 @@ A_BODY_REPORTING_THE_MODE_ITS_PROLOGUE_DECIDES = {
         'class C {{ static {{ {head} console.log({mode}); }} }}', 'true\n'),
 }
 
-#: A route by which a `'use strict'` the source never wrote as a directive comes to stand at the
-#: head of a body, written as the statements the report stands below. The first three are rewritten
-#: in place — a fold, a decode, and the substitution of a name by the string it holds — and each
-#: ends the Directive Prologue where the source wrote it, so the `'use strict'` they arrive at was
-#: an ordinary statement. The fourth writes nothing at all: a declaration nothing reads is dropped
-#: and the string that stood below it moves up into the position a directive is read in.
 A_ROUTE_A_STRING_ARRIVES_AT_THE_HEAD_BY = {
     'a fold'      : "'use ' + 'strict';",
     'a decode'    : "atob('dXNlIHN0cmljdA==');",
@@ -541,33 +428,19 @@ A_ROUTE_A_STRING_ARRIVES_AT_THE_HEAD_BY = {
     'a removal'   : "var dead = 1; 'use strict';",
 }
 
-#: A statement standing at the head of a function body, mapped to the text `refinery.djs` writes for
-#: the whole program. A `'use strict'` an edit moved into the prologue is written inside a bracket,
-#: which computes the same string and declares nothing; one the source wrote there is left alone;
-#: and a promoted string that is not `use strict` is left alone too, since parenthesizing it would
-#: end the run for a statement that declares no mode either way. The body ends in a declaration
-#: rather than a call: the string statement computes nothing, and the sweep would take it before
-#: the printer ever got to say how it is spelled.
-A_HEAD_THE_PRINTER_ANSWERS_WITH = {
-    "'use ' + 'strict';":
-        "function f(a) {\n  ('use strict');\n  var b = g(a);\n}\nf(1);",
-    "var dead = 1; 'use strict';":
-        "function f(a) {\n  ('use strict');\n  var b = g(a);\n}\nf(1);",
-    "'use ' + 'strict'; 'use strict';":
-        "function f(a) {\n  ('use strict');\n  var b = g(a);\n}\nf(1);",
-    "'use strict';":
-        "function f(a) {\n  'use strict';\n  var b = g(a);\n}\nf(1);",
-    "'use strict'; var dead = 1; 'other';":
-        "function f(a) {\n  'use strict';\n  'other';\n  var b = g(a);\n}\nf(1);",
-    "var dead = 1; 'other';":
-        "function f(a) {\n  'other';\n  var b = g(a);\n}\nf(1);",
+A_HEAD_DECLARING_A_MODE = {
+    "'use ' + 'strict';"                   : False,
+    "var dead = 1; 'use strict';"          : False,
+    "'use ' + 'strict'; 'use strict';"     : False,
+    "'use strict';"                        : True,
+    "'use strict'; var dead = 1; 'other';" : True,
+    "var dead = 1; 'other';"               : False,
 }
 
 
 def _refused(programs: Sequence[str]) -> list[bool]:
     """
-    Whether Node refuses to read each of *programs* as a program at all. Each is compiled and run in
-    a context of its own, so a refusal is a fact about that one text.
+    Whether Node refuses to read each of *programs* as a script.
     """
     return [
         value == NOT_A_PROGRAM
@@ -580,9 +453,6 @@ def _without_the_directive(source: str) -> str:
 
 
 def _the_directive_statement(root: Node) -> JsExpressionStatement:
-    """
-    The statement of *root* that is written as the Use Strict Directive.
-    """
     statement, = (
         node for node in root.walk()
         if isinstance(node, JsExpressionStatement)
@@ -609,10 +479,6 @@ def _the_octal_literal(root: Node) -> JsNumericLiteral:
 
 
 def _the_computed_string_statement(root: Node) -> JsExpressionStatement:
-    """
-    The statement `A_STATEMENT_STANDING_AT` places, found through the literal it is written with
-    rather than through its position, which is what each row varies.
-    """
     statement, = (
         node for node in root.walk()
         if isinstance(node, JsExpressionStatement)
@@ -638,9 +504,6 @@ def _the_function(
 
 
 def _prologue_spellings(host: Node) -> list[str]:
-    """
-    What each statement of the Directive Prologue of *host* is spelled with.
-    """
     return [
         statement.expression.body
         for statement in directive_prologue(host)
@@ -649,10 +512,6 @@ def _prologue_spellings(host: Node) -> list[str]:
 
 
 def _marked_spellings(script: JsScript) -> list[str]:
-    """
-    What each statement of *script* that the parser recorded as written into a Directive Prologue is
-    spelled with, in the order the source wrote them.
-    """
     return [
         statement.expression.body
         for statement in script.body
@@ -681,33 +540,18 @@ def _deobfuscated(source: str) -> str:
 
 
 def _before_and_after(source: str) -> tuple[tuple[str, str | None], tuple[str, str | None]]:
-    """
-    What Node makes of *source* and what it makes of the text `refinery.djs` deobfuscates it to,
-    reported together because the law is that the two agree.
-    """
     return behavior(source), behavior(deobfuscate_source(source))
 
 
 def _before_and_after_as_a_script(
     source: str,
 ) -> tuple[tuple[str, str | None], tuple[str, str | None]]:
-    """
-    The same pair as `_before_and_after`, with both programs run as classic global scripts.
-
-    `behavior` runs a file as a CommonJS module, which wraps the whole of it in a function, so the
-    top of the file is the top of a function body there and never the top of a script. A law about
-    what the first statement of a script is has to be witnessed where the file has one.
-    """
     return host_behavior(source), host_behavior(deobfuscate_source(source))
 
 
 def _each_program_still_prints(
     programs: dict[str, str],
 ) -> dict[str, tuple[tuple[str, str | None], tuple[str, str | None]]]:
-    """
-    The pair `_before_and_after` has to give for each program in *programs*: the text the program
-    prints, printed by the deobfuscation too, with neither of the two throwing.
-    """
     return {
         source: ((prints, None), (prints, None))
         for source, prints in programs.items()
@@ -719,12 +563,43 @@ def _a_body_opened_by(head: str, template: str) -> str:
 
 
 def _a_function_body_opening_with_and_calling_g(head: str) -> str:
-    """
-    A program whose one function opens with *head* and then calls `g`, keeping what it answers in a
-    declaration so that a statement computing nothing ahead of it is never the shadow of an effect
-    the sweep would sooner remove it than print.
-    """
-    return F'function f(a) {{ {head} var b = g(a); }}\nf(1);'
+    return inspect.cleandoc(F"""
+        function f(a) {{ {head} g(a); }}
+        f(1);
+    """)
+
+
+def _a_function_body_opening_with_and_declaring_what_g_answers(
+    head: str,
+    parameters: str = 'a',
+) -> str:
+    return inspect.cleandoc(F"""
+        function f({parameters}) {{ {head} var b = g(a); }}
+        f(1);
+    """)
+
+
+def _the_call_of_g(root: Node) -> JsCallExpression:
+    call, = (
+        node for node in root.walk()
+        if isinstance(node, JsCallExpression)
+        and isinstance(node.callee, JsIdentifier)
+        and node.callee.name == 'g'
+    )
+    return call
+
+
+def _the_mode_the_deobfuscation_calls_g_in(source: str) -> bool:
+    return strict_mode_at(_the_call_of_g(JsParser(_deobfuscated(source)).parse()))
+
+
+def _strings_standing_as_statements(root: Node) -> list[str]:
+    literals = (
+        strip_parens(node.expression)
+        for node in root.walk()
+        if isinstance(node, JsExpressionStatement)
+    )
+    return [literal.body for literal in literals if isinstance(literal, JsStringLiteral)]
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -821,17 +696,6 @@ class TestModeIsInheritedByEverythingAStrictBodyEncloses(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestWhatAFunctionBodysDirectiveGovernsBesidesThatBody(TestBase):
-    """
-    A function body's directive governs the function and not the body alone. The name the function
-    binds and its parameter list stand outside the braces the directive opens and are strict code
-    all the same, which is what makes `function eval() { 'use strict'; }` and
-    `function f(eval) { 'use strict'; }` two texts Node will not read.
-
-    It reaches no further than that one function. The code around it stays sloppy, and so does
-    anything that only looks as though it belongs to the function: the property key a method is
-    written under is a name and not a binding, and the variable a function expression is assigned to
-    belongs to the statement that declares it.
-    """
 
     def test_node_refuses_the_name_bound_in_the_code_the_directive_governs(self):
         sources = list(A_BINDING_THE_DIRECTIVE_GOVERNS.values())
@@ -896,14 +760,6 @@ class TestTheDirectivePrologueTheToolReads(TestBase):
 
 
 class TestWhichStatementsTheParserRecordsAsWrittenIntoAPrologue(TestBase):
-    """
-    Which statements the source wrote into a Directive Prologue is recorded once, when the file is
-    parsed, and it can be answered at no other time: a statement is a directive by virtue of the
-    list it sits in and the statements ahead of it, neither of which is known while it is being
-    built. The mark
-    is provenance and never a conclusion — a statement an edit later moves to the head of a body
-    carries none, which is the whole of what tells the two apart.
-    """
 
     def _marked(self, sources: Sequence[str]) -> list[bool]:
         return [
@@ -929,12 +785,6 @@ class TestWhichStatementsTheParserRecordsAsWrittenIntoAPrologue(TestBase):
 
 
 class TestWhichStatementIsTheOneThatDeclaresTheMode(TestBase):
-    """
-    `refinery.lib.scripts.js.strict.is_use_strict_directive` is the one predicate a removal asks
-    before dropping a statement and an insertion asks before stepping over one, so that the two
-    cannot disagree about which statement is at stake. It holds for a statement the source wrote
-    into a prologue, that still stands in one, and that spells `use strict`.
-    """
 
     def _declares(self, sources: Sequence[str]) -> list[bool]:
         return [
@@ -959,13 +809,14 @@ class TestWhichStatementIsTheOneThatDeclaresTheMode(TestBase):
         answers = [
             [
                 is_use_strict_directive(statement)
-                for statement in directive_prologue(JsParser(source).parse())
-                if isinstance(statement.expression, JsStringLiteral)
+                for statement in JsParser(source).parse().walk()
+                if isinstance(statement, JsExpressionStatement)
+                and isinstance(statement.expression, JsStringLiteral)
                 and statement.expression.body == 'use loose'
             ]
             for source in sources
         ]
-        self.assertEqual(answers, [[False], [], [False]])
+        self.assertEqual(answers, [[False], [False], [False]])
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -1056,32 +907,29 @@ class TestDeobfuscationLeavesEveryModeWhereItWas(TestBase):
 
 class TestAFoldDeclinesOnlyWhereADirectiveCouldBeRead(TestBase):
 
-    def test_a_read_in_a_body_that_opens_no_prologue_is_folded(self):
-        rows = A_READ_WHERE_NO_PROLOGUE_IS_READ
-        self.assertEqual({s: _deobfuscated(s) for s in rows}, dict(rows))
+    def test_a_read_in_a_body_that_opens_no_prologue_is_folded_or_removed(self):
+        for source, (folded, removed) in A_READ_WHERE_NO_PROLOGUE_IS_READ.items():
+            with self.subTest(source=source):
+                self.assertIn(_deobfuscated(source), (folded, removed))
 
-    def test_a_read_that_would_join_a_prologue_is_left_standing(self):
-        rows = A_READ_WHERE_A_PROLOGUE_IS_READ
-        self.assertEqual({s: _deobfuscated(s) for s in rows}, dict(rows))
+    def test_a_read_that_would_join_a_prologue_is_left_standing_or_removed(self):
+        for source, (standing, removed) in A_READ_WHERE_A_PROLOGUE_IS_READ.items():
+            with self.subTest(source=source):
+                self.assertIn(_deobfuscated(source), (standing, removed))
+
+    @opportunity
+    def test_a_read_whose_string_nothing_uses_is_removed_wherever_it_stands(self):
+        rows = {**A_READ_WHERE_NO_PROLOGUE_IS_READ, **A_READ_WHERE_A_PROLOGUE_IS_READ}
+        self.assertEqual(
+            {source: _deobfuscated(source) for source in rows},
+            {source: removed for source, (_, removed) in rows.items()},
+        )
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAFoldWritesNoDirectiveWhereNoneWasWritten(TestBase):
-    """
-    A directive is a string literal written plainly at the top of a script or of a function body,
-    and nothing else is one: a bracket around the literal, an operator beside it, or a call that
-    computes the same text each leaves a statement that is merely evaluated. Folding one of those to
-    the text it denotes puts the plain spelling where a directive is read, and the mode of the whole
-    script or body around it is what the spelling would otherwise decide.
-    """
 
     def test_a_statement_that_only_denotes_the_text_leaves_the_script_sloppy(self):
-        """
-        Node prints `false` for each of these programs: the probe is called with no receiver, so
-        `this` in its body is the global object, which is what sloppy code gives. The fold arrives
-        at the text of the directive as the first statement of the file, and the file that comes
-        back has to print `false` all the same.
-        """
         sloppy = ('false\n', None)
         spellings = SPELLINGS_A_FOLD_WRITES_AS_THE_DIRECTIVE
         self.assertEqual(
@@ -1090,12 +938,6 @@ class TestAFoldWritesNoDirectiveWhereNoneWasWritten(TestBase):
         )
 
     def test_a_statement_that_only_denotes_the_text_leaves_the_function_body_sloppy(self):
-        """
-        Node prints `false` for each of these too, the statement standing at the top of the probe's
-        own body rather than of the file. A directive there governs the body it opens, so a fold
-        that wrote one would turn that one function strict while the file around it stayed as it
-        was.
-        """
         sloppy = ('false\n', None)
         spellings = SPELLINGS_A_FOLD_WRITES_AS_THE_DIRECTIVE
         self.assertEqual(
@@ -1104,11 +946,6 @@ class TestAFoldWritesNoDirectiveWhereNoneWasWritten(TestBase):
         )
 
     def test_a_file_that_holds_an_octal_literal_still_parses(self):
-        """
-        Node prints `8` for each of these, an octal literal being a number in sloppy code and one of
-        the spellings strict mode forbids outright. A directive appearing where none was written
-        would cost the file its ability to parse at all, so what comes back has to be a program.
-        """
         eight = ('8\n', None)
         spellings = SPELLINGS_A_FOLD_WRITES_AS_THE_DIRECTIVE
         self.assertEqual(
@@ -1120,13 +957,6 @@ class TestAFoldWritesNoDirectiveWhereNoneWasWritten(TestBase):
         )
 
     def test_a_statement_folded_to_a_plain_string_does_not_extend_the_prologue(self):
-        """
-        Node prints `false` for each of the files
-        `test.lib.scripts.js.analysis.test_differential.SPELLINGS_A_FOLD_WRITES_AS_A_PLAIN_STRING`
-        builds: none of the heads is a string literal, so the prologue ends at it and the
-        `'use strict'` below it governs nothing. Each fold writes a string literal there, and a
-        prologue extended over the line below would hand that statement a position it never had.
-        """
         sloppy = ('false\n', None)
         spellings = SPELLINGS_A_FOLD_WRITES_AS_A_PLAIN_STRING
         self.assertEqual(
@@ -1135,14 +965,6 @@ class TestAFoldWritesNoDirectiveWhereNoneWasWritten(TestBase):
         )
 
     def test_a_fold_writes_no_prologue_into_a_function_that_can_hold_none(self):
-        """
-        Node prints `1`, `2`, and `5` for the three programs of
-        `A_FUNCTION_WHOSE_PARAMETER_LIST_FORBIDS_A_DIRECTIVE`, each of which runs a body holding a
-        `'use strict'` that governs nothing, one statement below a call. The fold writes a string
-        literal where that call stood, and a function whose parameter list is not simple may not
-        open with that directive under any circumstances: what is at stake here is not a body that
-        reports the wrong mode but a file that would no longer be a program at all.
-        """
         rows = A_FUNCTION_WHOSE_PARAMETER_LIST_FORBIDS_A_DIRECTIVE
         self.assertEqual(
             {source: _before_and_after(source) for source in rows},
@@ -1150,14 +972,6 @@ class TestAFoldWritesNoDirectiveWhereNoneWasWritten(TestBase):
         )
 
     def test_a_fold_writes_no_directive_into_a_function_that_can_hold_none(self):
-        """
-        Node prints `1`, `2`, and `5` for the programs of
-        `A_FUNCTION_WHOSE_BODY_OPENS_WITH_A_FOLD_TO_THE_DIRECTIVE`, one for each way of writing a
-        parameter list that is not simple, crossed with every spelling that denotes the text of the
-        directive without being one. Each body opens with a statement that is evaluated and
-        discarded, so each function is sloppy code that a parameter list of that shape is welcome
-        in, and each has to stay a program once the fold has written the plain spelling there.
-        """
         rows = A_FUNCTION_WHOSE_BODY_OPENS_WITH_A_FOLD_TO_THE_DIRECTIVE
         self.assertEqual(
             {source: _before_and_after(source) for source in rows},
@@ -1167,28 +981,8 @@ class TestAFoldWritesNoDirectiveWhereNoneWasWritten(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestMovingAStatementDoesNotChangeWhichStatementsAreDirectives(TestBase):
-    """
-    Whether a statement is a directive is decided by where it stands. A string literal written
-    plainly in the run of statements a script or a function body opens with is one; the same
-    statement a single position lower is an expression that computes a string and discards it. A
-    pass that lifts the contents of a block into the body around it, one that drops a statement it
-    found dead, and one that writes a declaration into a body each change which statements a body
-    opens with, and the mode of that body may not follow.
-
-    It may not follow in either direction: below a statement that is dropped, a string nobody wrote
-    as a directive would otherwise become one and turn sloppy code strict, and below a declaration
-    written in, a directive that was written would stop being one and turn strict code sloppy. What
-    a fold does to the same run is law in `TestAFoldWritesNoDirectiveWhereNoneWasWritten`; these
-    move no statement's text at all.
-    """
 
     def test_lifting_a_block_into_the_body_around_it_writes_no_directive(self):
-        """
-        Node prints `false` for both of these. A block is not a prologue and a statement inside one
-        is never a directive, so the script and the probe's body are sloppy code however certainly
-        the branch around that block is taken. The branch is replaced by the statements it holds,
-        which is a rewrite of the block and nothing more.
-        """
         sloppy = ('false\n', None)
         sources = [
             a_script_opening_with("if (1) { 'use strict'; }"),
@@ -1200,12 +994,6 @@ class TestMovingAStatementDoesNotChangeWhichStatementsAreDirectives(TestBase):
         )
 
     def test_dropping_a_statement_writes_no_directive_below_it(self):
-        """
-        Node prints `false` for both of these. The prologue ends at the declaration, which is no
-        string literal, so the `'use strict'` standing below it computes a string and discards it.
-        Nothing reads `dead`, so the declaration is dropped, which moves every statement below it up
-        one place: a statement removed from a list is one the statements below it move up past.
-        """
         sloppy = ('false\n', None)
         sources = [
             a_script_opening_with("var dead = 1; 'use strict';"),
@@ -1217,14 +1005,6 @@ class TestMovingAStatementDoesNotChangeWhichStatementsAreDirectives(TestBase):
         )
 
     def test_writing_a_declaration_into_a_body_leaves_its_directive_first(self):
-        """
-        Node prints `bS`, `ReferenceError`, and `bS` for the three programs of
-        `AN_ACCESSOR_WHOSE_RETURNED_BODY_OPENS_WITH_A_DIRECTIVE`. Each returns a function that opens
-        with the directive, so that function is strict: it reports the strict mode in the first and
-        the third, and in the second its assignment to a name nothing declares throws, which the
-        file catches and names. Promoting the accessor writes the local of the outer function into
-        that body, and above the directive is a position no directive survives.
-        """
         rows = AN_ACCESSOR_WHOSE_RETURNED_BODY_OPENS_WITH_A_DIRECTIVE
         self.assertEqual(
             {source: _before_and_after_as_a_script(source) for source in rows},
@@ -1232,14 +1012,6 @@ class TestMovingAStatementDoesNotChangeWhichStatementsAreDirectives(TestBase):
         )
 
     def test_a_move_writes_no_directive_into_a_function_that_can_hold_none(self):
-        """
-        Node prints `1`, `2`, and `5` for the six programs of
-        `A_FUNCTION_A_MOVE_WOULD_WRITE_A_DIRECTIVE_INTO`, one pair for each way of writing a
-        parameter list that is not simple. In each, the `'use strict'` stands inside a block or one
-        statement below a binding, so it governs nothing and the function is sloppy code that such a
-        list is welcome in. Lifting the block, and dropping the binding, each leave that string at
-        the head of a body which may hold no directive at all.
-        """
         rows = A_FUNCTION_A_MOVE_WOULD_WRITE_A_DIRECTIVE_INTO
         self.assertEqual(
             {source: _before_and_after(source) for source in rows},
@@ -1249,28 +1021,8 @@ class TestMovingAStatementDoesNotChangeWhichStatementsAreDirectives(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestADirectiveIsNotAStatementThatCanBeDiscarded(TestBase):
-    """
-    A directive is written in the shape of an expression statement and is not one. Evaluating the
-    literal is the least of what it does: it states the mode the body it opens runs in, and that
-    body keeps the mode for as long as the statement stands there. A statement whose value nothing
-    reads may be discarded, and this one may not, so the shape it is written in is not enough to
-    decide it by.
-
-    The sweep that drops a variable nothing reads back also drops the statements of that body which
-    only evaluate a literal, and a directive is one of those by its shape alone. What removed the
-    variable does not matter — an assignment nothing reads and a namespace object flattened into
-    bare names each put the sweep over the same body — and neither does whether the body is a
-    function or the file.
-    """
 
     def test_a_directive_survives_the_removal_of_a_binding_beside_it(self):
-        """
-        Node prints `true` for all four programs of
-        `A_BODY_WHOSE_DIRECTIVE_STANDS_BESIDE_A_BINDING_NOTHING_READS`, the two that read a property
-        back printing the property first: each body opens with the directive and is strict for it.
-        The same programs with the directive left out print `false`, which is what makes the
-        directive and not the binding the statement these measure.
-        """
         rows = A_BODY_WHOSE_DIRECTIVE_STANDS_BESIDE_A_BINDING_NOTHING_READS
         self.assertEqual(
             {source: _before_and_after_as_a_script(source) for source in rows},
@@ -1291,13 +1043,6 @@ class TestADirectiveIsNotAStatementThatCanBeDiscarded(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAStringPromotedIntoAPrologueGovernsNothing(TestBase):
-    """
-    A `'use strict'` can reach the head of a body by four routes that write no directive: a fold, a
-    decode, and the substitution of a name each rewrite the statement that had ended the Directive
-    Prologue, and the removal of a statement above one moves it up into the run. Every kind of body
-    a prologue opens is crossed with every route, and the mode each body runs in is the same before
-    and after.
-    """
 
     def _programs(self) -> dict[str, str]:
         return {
@@ -1322,23 +1067,43 @@ class TestAStringPromotedIntoAPrologueGovernsNothing(TestBase):
 
 
 class TestThePrinterWritesOnlyADirectiveTheSourceWrote(TestBase):
-    """
-    Which statements the source wrote as directives is recorded when the file is parsed, and the
-    printer is what keeps a statement that arrived later from being read as one. The bracket it
-    writes is the whole mechanism: `('use strict');` computes the same string, declares nothing, and
-    ends the run it stands in.
 
-    That last part is why only a promoted `use strict` is written this way. Ending the run would
-    eject every directive standing behind it, and for a string that declares no mode wherever it
-    lands that is a cost paid for nothing.
-    """
+    @staticmethod
+    def _deobfuscation_of(head: str) -> Node:
+        return JsParser(_deobfuscated(_a_function_body_opening_with_and_calling_g(head))).parse()
 
-    def test_the_printer_answers_each_head_with_the_text_the_corpus_records(self):
-        rows = A_HEAD_THE_PRINTER_ANSWERS_WITH
+    def test_the_call_below_each_head_stands_in_the_mode_the_source_gave_it(self):
+        rows = A_HEAD_DECLARING_A_MODE
         self.assertEqual(
-            {
-                head: _deobfuscated(_a_function_body_opening_with_and_calling_g(head))
-                for head in rows
-            },
+            {head: strict_mode_at(_the_call_of_g(self._deobfuscation_of(head))) for head in rows},
             dict(rows),
+        )
+
+    def test_no_string_statement_survives_but_the_directive_the_source_wrote(self):
+        rows = A_HEAD_DECLARING_A_MODE
+        self.assertEqual(
+            {head: _strings_standing_as_statements(self._deobfuscation_of(head)) for head in rows},
+            {head: ['use strict'] if strict else [] for head, strict in rows.items()},
+        )
+
+    def test_a_string_promoted_above_a_declaration_changes_no_mode(self):
+        rows = {
+            _a_function_body_opening_with_and_declaring_what_g_answers(head): strict
+            for head, strict in A_HEAD_DECLARING_A_MODE.items()
+        }
+        self.assertEqual(
+            {source: _the_mode_the_deobfuscation_calls_g_in(source) for source in rows},
+            rows,
+        )
+
+    def test_a_string_promoted_into_a_function_that_can_hold_none_writes_no_directive(self):
+        sources = [
+            _a_function_body_opening_with_and_declaring_what_g_answers(head, parameters)
+            for parameters in _A_PARAMETER_LIST_NO_DIRECTIVE_MAY_STAND_UNDER
+            for head, strict in A_HEAD_DECLARING_A_MODE.items()
+            if not strict
+        ]
+        self.assertEqual(
+            {source: _the_mode_the_deobfuscation_calls_g_in(source) for source in sources},
+            dict.fromkeys(sources, False),
         )

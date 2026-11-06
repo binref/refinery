@@ -1,18 +1,8 @@
 """
-The analyses read every property key through `refinery.lib.scripts.js.keys`.
-
-A reader that reads a key it cannot read as no match, and does so outside the key reader, records
-nothing, so a fold that spells the name there leaves a held answer stale with no renewal due. The
-guard below reads the source of every analysis module and of the syntax tree module and fails on
-each way of reading a key around the key reader:
-
-- a call of a function that reads a key's text without recording anything (`static_string`,
-  `static_property_key`, `member_property_name`, `_property_key_name`, `_certain_key`,
-  `_primitive_literal_text`, `static_concatenation`), except inside those functions themselves;
-- the text of a literal read off a key (`member.property.value`, `prop.key.name`), also through a
-  name holding the key, and a test of a key's literal type (`isinstance(member.property, ...)`);
-- a comparison of the text the key reader gives (`key_text`) with a string or a table of names,
-  which is what the questions `key_may_be` and `key_is` are for.
+Every analysis module and `refinery.lib.scripts.js.model` read a property key only through
+`refinery.lib.scripts.js.keys`. A read around it records nothing, so when a fold spells that key, an
+answer that depends on it goes stale without renewal. A key is compared with names through
+`key_may_be` and `key_is`, never by comparing `key_text` with them.
 """
 from __future__ import annotations
 

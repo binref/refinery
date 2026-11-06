@@ -36,10 +36,6 @@ ROOT = Path(__file__).resolve().parents[5]
 
 
 def an_impostor(folder: str) -> str:
-    """
-    A program in *folder* that prints `AN_IMPOSTORS_REPORT` whatever it is asked, as a program in
-    the place of Node would print something that is not Node's answer.
-    """
     impostor = os.path.join(folder, 'impostor.cmd' if os.name == 'nt' else 'impostor')
     with open(impostor, 'w') as script:
         if os.name == 'nt':
@@ -54,9 +50,6 @@ def an_impostor(folder: str) -> str:
 
 
 def a_wrapper_around_node(path: Path, *options: str) -> None:
-    """
-    Write a program at *path* that runs the real Node with *options* and whatever it is given.
-    """
     arguments = ' '.join([F'"{node_executable()}"', *options])
     if os.name == 'nt':
         path.write_text(F'@{arguments} %*\n')

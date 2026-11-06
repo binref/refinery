@@ -1,9 +1,5 @@
 """
-A lookup by key: a function whose body opens with a switch on its parameter whose every case returns
-an expression, which `refinery.lib.scripts.js.deobfuscation.evaluator.JsFunctionEvaluator` folds
-into each call. The statements after the switch run where no case matches, and the call is folded
-only where every name they read has an answer. Each program is written by hand, and each row says
-what Node prints for it.
+SECURITY: Node runs every program here. Each is written by hand; never add one taken from a sample.
 """
 from __future__ import annotations
 
@@ -15,11 +11,6 @@ from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 
-#: Lookups by key followed by statements of their own, mapped to what Node prints for each run as a
-#: CommonJS file: a return of `undefined`, of a parameter named `undefined`, of an `undefined` a
-#: `with` body supplies, of a name the program changes, a store, a case returning a local the
-#: statements after the switch assign, and a discriminant and a case test reading a name the program
-#: changes.
 LOOKUPS_BY_KEY: dict[str, Program] = {
     'a return of undefined after the switch': Program(
         a_program("""

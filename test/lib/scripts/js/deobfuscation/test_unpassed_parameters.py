@@ -1,10 +1,7 @@
 """
 Parameters no call passes, which an obfuscation that moves the declarations of a function into its
-parameter list leaves at the end of the list: a function stored under `if (!p)`, a `var` whose
-value is made of literals as a default, and any other `var` as a plain parameter.
-`refinery.lib.scripts.js.deobfuscation.unpassed` makes them declarations of the body again where
-every call of the function is shown. Each program is written by hand, and each row says what Node
-prints for it run as a CommonJS file.
+parameter list leaves at the end of the list: a function stored under `if (!p)`, a `var` whose value
+is made of literals as a default, and any other `var` as a plain parameter.
 
 SECURITY: every program run through Node here is hand-authored and benign. The file read from the
 sample store is deobfuscated and compared as text, and never run.
@@ -14,7 +11,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_source, node_executable
 from test.lib.scripts.js.deobfuscation.test_a_table_read_through_an_accessor import deobfuscated_by_the_unit
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
@@ -33,6 +30,12 @@ from refinery.lib.scripts.js.parser import JsParser
 
 def deobfuscated(source: str) -> str:
     return deobfuscate_source(source, execution=ExecutionModel.commonjs, environment=HostEnvironment.node)
+
+
+A_PROGRAM_CALLING_OR_READING_A_PROPERTY_OF_FUNCTION = (
+    'new Function("return this")(); function f(a, p) {} f.call(null, 1);',
+    'Function.prototype.toString.call(g); function f(a, p) {} f.call(null, 1);',
+)
 
 
 class TestTheModelAnswersWhetherACallPassesAParameter(TestBase):
@@ -99,14 +102,16 @@ class TestTheModelAnswersWhetherACallPassesAParameter(TestBase):
                 with self.subTest(source=source, trusting=trusting):
                     self.assertEqual(self._never_passed(source, trusting), {'a': False, 'p': False})
 
-    def test_a_program_calling_or_reading_a_property_of_function_shows_the_call(self):
-        for source in (
-            'new Function("return this")(); function f(a, p) {} f.call(null, 1);',
-            'Function.prototype.toString.call(g); function f(a, p) {} f.call(null, 1);',
-        ):
-            for trusting in (False, True):
-                with self.subTest(source=source, trusting=trusting):
-                    self.assertEqual(self._never_passed(source, trusting), {'a': False, 'p': trusting})
+    def test_calling_or_reading_a_property_of_function_shows_the_call_to_the_trusting_model(self):
+        for source in A_PROGRAM_CALLING_OR_READING_A_PROPERTY_OF_FUNCTION:
+            with self.subTest(source=source):
+                self.assertEqual(self._never_passed(source, True), {'a': False, 'p': True})
+
+    @opportunity
+    def test_calling_or_reading_a_property_of_function_shows_the_call_to_the_suspecting_model(self):
+        for source in A_PROGRAM_CALLING_OR_READING_A_PROPERTY_OF_FUNCTION:
+            with self.subTest(source=source):
+                self.assertEqual(self._never_passed(source, False), {'a': False, 'p': True})
 
 
 class TestTheModelAnswersWhetherACallThroughATablePassesAParameter(TestBase):
@@ -138,7 +143,7 @@ class TestTheModelAnswersWhetherACallThroughATablePassesAParameter(TestBase):
     def test_an_entry_a_call_through_its_table_may_pass_an_argument_to_is_passed(self):
         for source in (
             'var t = {f: function (p) {}}; function d(k, v) { return t[k](v); } d("f");',
-            'var t = {f: function (p) {}}; function d(k, v) { return t[k].apply(null, v); } d("f", []);',
+            'var t = {f: function (p) {}}; function d(k, v) { return t[k].apply(null, v); } d("f", [1]);',
             'var t = {f: function (p) {}}; function d(k, v) { return t[k].call(null, v); } d("f");',
             'var t = {f: function (p) {}}; t.f(); new t.f(1);',
         ):
@@ -161,25 +166,33 @@ class TestTheModelAnswersWhetherACallThroughATablePassesAParameter(TestBase):
     def test_an_entry_of_a_table_that_may_be_handed_on_has_calls_the_text_does_not_show(self):
         for source in (
             'var t = {f: function (p) {}}; t.f(); g(t);',
+            'var t = {f: function (p) {}}; t.f(); var h = t.f; g(h);',
+            'var t = {f: function (p) {}}; t.f(); g(t.valueOf());',
+            'var t = {f: function (p) {}, g: function () { return this; }}; t.f(); h(t.g());',
+            'var t = {f: function (p) {}, g() { return super.valueOf(); }}; t.f(); h(t.g());',
+            'var t = {f: function (p) {}, get g() { return this; }}; t.f(); h(t.g);',
+            'var t = {f: function (p) {}, ...o}; t.f();',
+            'var t = {f: function (p) {}, g: h}; t.f();',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._never_passed(source))
+
+    @opportunity
+    def test_an_entry_of_a_table_no_code_can_hand_on_with_an_argument_is_never_passed(self):
+        for source in (
             'var t = {f: function (p) {}}; t.f(); var h = t.f;',
             'var t = {f: function (p) {}}; t.f(); t.f.x = 1;',
             'var t = {f: function (p) {}}; t.f(); t.valueOf();',
             'var t = {f: function (p) {}, g: function () { return this; }}; t.f();',
             'var t = {f: function (p) {}, g() { return super.valueOf(); }}; t.f();',
             'var t = {f: function (p) {}, get g() { return 1; }}; t.f();',
-            'var t = {f: function (p) {}, ...o}; t.f();',
-            'var t = {f: function (p) {}, g: h}; t.f();',
             'g({f: function (p) {}}.f());',
+            'var t = {f: function (p) {}}; function d(k, v) { return t[k].apply(null, v); } d("f", []);',
         ):
             with self.subTest(source=source):
-                self.assertFalse(self._never_passed(source))
+                self.assertTrue(self._never_passed(source))
 
 
-#: Programs holding a function whose parameter list ends in parameters no call passes, the shape
-#: moved declarations leave, mapped to what Node prints for each run as a CommonJS file: the stored
-#: function read before its store, by a closure, by a default, by `eval`, through `arguments`, the
-#: function called through `call`, `apply`, as a callback, recursively, constructed, as a
-#: generator, in strict mode, with its `length` read, and a name the body declares again.
 UNPASSED: dict[str, Program] = {
     'a moved function declaration': Program(
         a_program("""
@@ -840,8 +853,6 @@ UNPASSED: dict[str, Program] = {
     ),
 }
 
-#: Programs of `UNPASSED` whose parameters no call passes become declarations of the body, mapped
-#: to the text the deobfuscation writes for each.
 RESTORED: dict[str, str] = {
     'a moved function declaration': inspect.cleandoc(
         """
@@ -951,11 +962,6 @@ class TestAParameterNoCallPassesIsADeclarationAgain(TestBase):
 
 
 class TestAFunctionAHostCallsKeepsItsParameters(TestBase):
-    """
-    A function a host calls by name may be passed every argument its list names, so a parameter of
-    it is never known to be unpassed, whatever stands before it in the list. So may every function
-    of a script that holds nothing but function declarations, a library that code outside it calls.
-    """
 
     def test_the_parameters_of_a_function_of_a_library_stay(self):
         source = inspect.cleandoc("""
@@ -1002,9 +1008,6 @@ class TestAFunctionAHostCallsKeepsItsParameters(TestBase):
                 self.assertIn(kept, text)
 
 
-#: The entry of a table every program of `THROUGH_A_TABLE` holds, an object literal whose name is
-#: read only to call one of its entries, which ends its parameter list in a function stored under
-#: `if (!p)`; called without an argument it says `own`, and it calls the function it is handed.
 ENTRY = inspect.cleandoc("""
     run: function (p) {
       if (!p) {
@@ -1024,10 +1027,6 @@ PASSED = inspect.cleandoc("""
 
 
 def holding_the_entry(text: str) -> str:
-    """
-    The program *text* with the line `ENTRY` replaced by the entry `ENTRY` holds, indented as the
-    line is, and the line `PASSED` by the function `PASSED` declares.
-    """
     lines = []
     for line in a_program(text).splitlines():
         indent = line[:len(line) - len(line.lstrip())]
@@ -1040,13 +1039,6 @@ def holding_the_entry(text: str) -> str:
     return a_program('\n'.join(lines))
 
 
-#: Programs calling an entry of a table, mapped to what Node prints for each run as a CommonJS
-#: file: the entry selected by a key only the run knows and called directly, through `apply` or
-#: `call`, with or without an argument, from a table a parameter holds, and the table handed back,
-#: by an entry reading its `this`, by the `valueOf` it inherits, by a method or an accessor reading
-#: it through `super`, by its prototype, through a mapped `arguments`, or by a `call` the program
-#: replaced; and a function called through `call` and `apply` alone, by its name or where it is
-#: written.
 THROUGH_A_TABLE: dict[str, Program] = {
     'a table an inherited method hands back under a key the program computes': Program(
         a_program("""
@@ -1356,7 +1348,7 @@ class TestAFunctionCalledThroughATableOrCallBehavesAsItDid(TestBase):
 
 class TestAFunctionEveryCallOfWhichATableOrCallShowsDeclaresWhatWasMoved(TestBase):
 
-    def test_an_entry_no_call_through_its_table_hands_an_argument_declares_its_function(self):
+    def test_an_entry_no_call_through_its_table_hands_an_argument_loses_its_parameter_and_store(self):
         for label in (
             'an entry selected by a key only the run knows',
             'an entry selected through apply and call',
@@ -1378,11 +1370,26 @@ class TestAFunctionEveryCallOfWhichATableOrCallShowsDeclaresWhatWasMoved(TestBas
                 self.assertIn('function p() {', text)
 
 
-#: The deobfuscation of the file the obfuscation wrote for one program with its declarations moved
-#: into parameter lists, dead code, and the locks of integrity, of a debugger and of an end date,
-#: read from the sample store under `MOVED_DECLARATIONS_AND_LOCKS_SHA256`. It reads as the program
-#: does: no check, no hash, no forwarder and no moved parameter is left.
+#: The deobfuscation of the file this module reads from the sample store, which the obfuscation
+#: wrote for one program with its declarations moved into parameter lists, dead code, an integrity
+#: lock, a debugger lock and an end date lock.
 MOVED_DECLARATIONS_AND_LOCKS_DEOBFUSCATED = inspect.cleandoc(
+    """
+    function* countdown(n) {
+      while (n > 0) {
+        yield n--;
+      }
+    }
+    var counter = 0;
+    for (const value of countdown(3)) {
+      counter += value;
+    }
+    console.log('<alpha>', '<beta>', '<none>');
+    console.log(60, counter);
+    """
+)
+
+MOVED_DECLARATIONS_AND_LOCKS_DEOBFUSCATED_WITH_THE_COUNTER_DECLARED_APART = inspect.cleandoc(
     """
     function* countdown(n) {
       while (n > 0) {
@@ -1404,9 +1411,19 @@ MOVED_DECLARATIONS_AND_LOCKS_SHA256 = 'b33e21334d1dd86e5fd8786d0c7fd4385fe5f288e
 
 class TestTheFileTheObfuscationWrote(TestBase):
 
-    def test_the_file_with_moved_declarations_and_locks_reads_as_pinned(self):
+    def _deobfuscated(self) -> str:
         source = self.download_sample(MOVED_DECLARATIONS_AND_LOCKS_SHA256).decode('utf-8')
-        self.assertEqual(
-            deobfuscate_source(source, execution=ExecutionModel.commonjs),
-            MOVED_DECLARATIONS_AND_LOCKS_DEOBFUSCATED,
+        return deobfuscate_source(source, execution=ExecutionModel.commonjs)
+
+    def test_the_file_with_moved_declarations_and_locks_reads_as_pinned(self):
+        self.assertIn(
+            self._deobfuscated(),
+            (
+                MOVED_DECLARATIONS_AND_LOCKS_DEOBFUSCATED,
+                MOVED_DECLARATIONS_AND_LOCKS_DEOBFUSCATED_WITH_THE_COUNTER_DECLARED_APART,
+            ),
         )
+
+    @opportunity
+    def test_the_file_with_moved_declarations_and_locks_declares_its_counter_with_its_value(self):
+        self.assertEqual(self._deobfuscated(), MOVED_DECLARATIONS_AND_LOCKS_DEOBFUSCATED)

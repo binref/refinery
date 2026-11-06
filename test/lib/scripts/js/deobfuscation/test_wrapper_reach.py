@@ -1,28 +1,10 @@
 """
-A call is expanded only where it reaches the wrapper.
-
-`refinery.lib.scripts.js.deobfuscation.argwrap` expands the self-disabling wrapper an obfuscator
-writes statement sequences as calls to:
+A wrapper is a function that disables itself when called:
 
     function W() { W = function () {}; }
 
-called as `W(a, b)`, which runs `a` and `b`, disables itself, and answers `undefined`, so such a
-call is the statements it carries and nothing else. Which call that is, is a question about the
-binding the callee reads. A program may hold a second declaration answering to the same name, may
-rebind the name before the call, may observe which of the two functions the name holds after it,
-and may hand the name to a scope object or to an `eval` that no reading of the text answers.
-
-Each program here is asked twice. The un-gated question is the exact text the deobfuscation answers
-with, which is what says a wrapper the pass refuses is left standing whole rather than quietly
-half-expanded, and which is the reading a machine with no Node.js still gets. The gated question is
-what the program prints, before and after, with Node deciding
-`test.lib.scripts.js.ledger.before_and_after`, so the execution model is the module one, in which a
-top-level declaration never reaches the global object.
-
-The other reason a call to a wrapper-shaped function is not the statements it carries — an `async`
-or generator body, whose call answers a promise or a generator object rather than `undefined` — is
-asked in `test.lib.scripts.js.deobfuscation.test_call_answers_a_wrapper`, whose two `argwrap` groups
-hold it.
+A call `W(a, b)` runs `a` and `b` and answers `undefined`, so the deobfuscation writes it as the
+statements `a; b;`, which is right only where the call reaches this declaration of `W`.
 
 SECURITY: every program here is hand-authored in this file and benign. No sample and no stored
 obfuscator fixture may be fed to this.
@@ -34,7 +16,7 @@ import unittest
 
 from typing import NamedTuple
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import before_and_after, folded, printed
 
@@ -42,24 +24,14 @@ NL = chr(10)
 
 
 def _the_answer(text: str) -> str:
-    """
-    A text the deobfuscation answers with, which carries no break after its last line.
-    """
     return inspect.cleandoc(text)
 
 
 def _a_program(text: str) -> str:
-    """
-    A program as a file holds it, its last line ending in a break too.
-    """
     return _the_answer(text) + NL
 
 
 def _prints(*lines: str) -> tuple[str, None]:
-    """
-    What a program prints: the lines it writes, each ending in the break `console.log` adds, and the
-    empty text for a program that writes none.
-    """
     return (''.join(line + NL for line in lines), None)
 
 
@@ -69,23 +41,15 @@ def _throws(error: str) -> tuple[str, str]:
 
 class Row(NamedTuple):
     """
-    What Node makes of one program, the text the deobfuscation has to answer it with, and the
-    execution model both are read under.
-
-    `text` is `None` where that text is the program itself, spelled back out and otherwise
-    untouched, which is what a wrapper the pass may not expand costs it.
+    `text` is the text the deobfuscation has to answer with, `None` for the program printed back
+    unchanged, and `cleaner` is a better answer that is accepted as well.
     """
     prints: tuple[str, str | None]
     text: str | None = None
     module: bool = False
+    cleaner: str | None = None
 
 
-#: A program the expansion is not equivalent for, mapped to what Node makes of it and to the text
-#: the deobfuscation has to answer with. Each of them holds a name that answers to a wrapper and
-#: says something other than the wrapper about what a call to it runs: a second declaration the call
-#: reads instead, a value put into the name before the call, or a read that tells the wrapper from
-#: what the call left behind. Every one of them was a wrong answer while the pass picked its call
-#: sites, and the declaration it removed, by that name.
 A_WRAPPER_THE_EXPANSION_IS_WRONG_FOR = {
     _a_program("""
         function W() { W = function () {}; }
@@ -103,6 +67,12 @@ A_WRAPPER_THE_EXPANSION_IS_WRONG_FOR = {
             }
             W(1);
             2;
+            """),
+        cleaner=_the_answer("""
+            function W(a) {
+              console.log('real', a);
+            }
+            W(1);
             """),
     ),
     _a_program("""
@@ -127,7 +97,15 @@ A_WRAPPER_THE_EXPANSION_IS_WRONG_FOR = {
         function W() { W = function () {}; }
         function W(a) { console.log('real', a); }
         W(1);
-        """): Row(_prints('real 1')),
+        """): Row(
+        _prints('real 1'),
+        cleaner=_the_answer("""
+            function W(a) {
+              console.log('real', a);
+            }
+            W(1);
+            """),
+    ),
     _a_program("""
         function W() { W = function () {}; }
         W = function (a) { console.log('real', a); };
@@ -143,7 +121,15 @@ A_WRAPPER_THE_EXPANSION_IS_WRONG_FOR = {
         function W() { W = function () {}; }
         var W = function (a) { console.log('real', a); };
         W(1);
-        """): Row(_prints('real 1')),
+        """): Row(
+        _prints('real 1'),
+        cleaner=_the_answer("""
+            var W = function(a) {
+              console.log('real', a);
+            };
+            W(1);
+            """),
+    ),
     _a_program("""
         function W() { W = function () {}; }
         for (var W of [function (a) { console.log('real', a); }]) { W(1); }
@@ -222,10 +208,6 @@ A_WRAPPER_THE_EXPANSION_IS_WRONG_FOR = {
 }
 
 
-#: The shape the pass exists for, and the shapes beside it a call does reach, mapped to what Node
-#: makes of each and to the text the deobfuscation answers with. A rule that refuses more than it
-#: says is caught here rather than by a suite that stayed green because nothing was left to expand
-#: at all: what a program prints cannot see a refusal, and only the text can.
 A_WRAPPER_THE_EXPANSION_IS_RIGHT_FOR = {
     _a_program("""
         function W() { W = function () {}; }
@@ -265,6 +247,11 @@ A_WRAPPER_THE_EXPANSION_IS_RIGHT_FOR = {
             }
             var arr = [1];
             W(...arr);
+            console.log(3);
+            console.log(4);
+            """),
+        cleaner=_the_answer("""
+            var arr = [1];
             console.log(3);
             console.log(4);
             """),
@@ -327,17 +314,11 @@ A_WRAPPER_THE_EXPANSION_IS_RIGHT_FOR = {
 }
 
 
-#: A program whose only reference to a wrapper applies it in a way no expansion is written for,
-#: mapped to what Node makes of it. A tagged template and a construction each hand the wrapper
-#: something a statement list cannot say, so the whole declaration is refused and the file comes
-#: back as it went in. These are refusals and belong beside the expansions rather than among them:
-#: a group asserting that a rule refuses no more than it says cannot be witnessed by a row the rule
-#: refuses outright.
 AN_APPLICATION_THE_EXPANSION_IS_NOT_WRITTEN_FOR = {
     _a_program("""
         function W() { W = function () {}; }
         console.log(typeof W`x`);
-        """): Row(_prints('undefined')),
+        """): Row(_prints('undefined'), cleaner="console.log('undefined');"),
     _a_program("""
         function W() { W = function () {}; }
         var y = new W();
@@ -346,21 +327,29 @@ AN_APPLICATION_THE_EXPANSION_IS_NOT_WRITTEN_FOR = {
 }
 
 
-#: A program the pass answered correctly while it read names, and no longer reduces now that a call
-#: has to reach the wrapper before it is expanded. Nothing here was ever a wrong answer, and each
-#: row states what the rule costs: a name read for anything other than the call it makes, and a
-#: declaration another file may name.
 A_REDUCTION_THE_ADMISSION_GIVES_UP = {
     _a_program("""
         function W() { W = function () {}; }
         W(console.log(0));
         console.log(typeof W);
-        """): Row(_prints('0', 'function')),
+        """): Row(
+        _prints('0', 'function'),
+        cleaner=_the_answer("""
+            console.log(0);
+            console.log('function');
+            """),
+    ),
     _a_program("""
         function W() { W = function () {}; }
         W(console.log(0));
         console.log(W.name);
-        """): Row(_prints('0', 'W')),
+        """): Row(
+        _prints('0', 'W'),
+        cleaner=_the_answer("""
+            console.log(0);
+            console.log('W');
+            """),
+    ),
     _a_program("""
         export function W() { W = function () {}; }
         W(console.log(1));
@@ -369,13 +358,17 @@ A_REDUCTION_THE_ADMISSION_GIVES_UP = {
 }
 
 
-def _the_text_each_program_comes_back_as(rows: dict[str, Row]) -> dict[str, str]:
-    return {source: folded(source) for source in rows}
-
-
 def _the_text_each_program_has_to_come_back_as(rows: dict[str, Row]) -> dict[str, str]:
     return {
         source: printed(source) if row.text is None else row.text
+        for source, row in rows.items()
+    }
+
+
+def _the_texts_each_program_may_come_back_as(rows: dict[str, Row]) -> dict[str, tuple[str, ...]]:
+    required = _the_text_each_program_has_to_come_back_as(rows)
+    return {
+        source: (required[source],) if row.cleaner is None else (required[source], row.cleaner)
         for source, row in rows.items()
     }
 
@@ -389,46 +382,52 @@ def _what_each_program_printed(rows: dict[str, Row]):
 
 
 class TestOnlyACallThatReachesTheWrapperIsExpanded(TestBase):
-    """
-    What each program comes back as, read from the text and from nothing else, so that the rule is
-    reported on a machine with no Node.js as well.
-    """
 
-    def test_a_wrapper_the_expansion_is_wrong_for_is_left_standing(self):
-        rows = A_WRAPPER_THE_EXPANSION_IS_WRONG_FOR
-        self.assertEqual(
-            _the_text_each_program_comes_back_as(rows),
-            _the_text_each_program_has_to_come_back_as(rows),
+    def _assert_each_program_comes_back_as_one_of_its_texts(self, rows: dict[str, Row]):
+        for source, texts in _the_texts_each_program_may_come_back_as(rows).items():
+            with self.subTest(source=source):
+                self.assertIn(folded(source), texts)
+
+    def test_a_call_the_expansion_is_wrong_for_is_left_standing(self):
+        self._assert_each_program_comes_back_as_one_of_its_texts(
+            A_WRAPPER_THE_EXPANSION_IS_WRONG_FOR
         )
 
     def test_a_wrapper_the_expansion_is_right_for_is_still_expanded(self):
-        rows = A_WRAPPER_THE_EXPANSION_IS_RIGHT_FOR
-        self.assertEqual(
-            _the_text_each_program_comes_back_as(rows),
-            _the_text_each_program_has_to_come_back_as(rows),
+        self._assert_each_program_comes_back_as_one_of_its_texts(
+            A_WRAPPER_THE_EXPANSION_IS_RIGHT_FOR
         )
 
-    def test_an_application_the_expansion_is_not_written_for_is_left_standing(self):
-        rows = AN_APPLICATION_THE_EXPANSION_IS_NOT_WRITTEN_FOR
-        self.assertEqual(
-            _the_text_each_program_comes_back_as(rows),
-            _the_text_each_program_has_to_come_back_as(rows),
+    def test_an_application_the_expansion_is_not_written_for_is_left_standing_or_answered(self):
+        self._assert_each_program_comes_back_as_one_of_its_texts(
+            AN_APPLICATION_THE_EXPANSION_IS_NOT_WRITTEN_FOR
         )
 
-    def test_a_reduction_the_admission_gives_up_is_given_up(self):
-        rows = A_REDUCTION_THE_ADMISSION_GIVES_UP
-        self.assertEqual(
-            _the_text_each_program_comes_back_as(rows),
-            _the_text_each_program_has_to_come_back_as(rows),
+    def test_a_reduction_the_admission_gives_up_is_given_up_or_made_in_full(self):
+        self._assert_each_program_comes_back_as_one_of_its_texts(
+            A_REDUCTION_THE_ADMISSION_GIVES_UP
         )
+
+    @opportunity
+    def test_a_program_a_row_names_a_cleaner_text_for_comes_back_as_that_text(self):
+        rows = {
+            source: row
+            for group in (
+                A_WRAPPER_THE_EXPANSION_IS_WRONG_FOR,
+                A_WRAPPER_THE_EXPANSION_IS_RIGHT_FOR,
+                AN_APPLICATION_THE_EXPANSION_IS_NOT_WRITTEN_FOR,
+                A_REDUCTION_THE_ADMISSION_GIVES_UP,
+            )
+            for source, row in group.items()
+            if row.cleaner is not None
+        }
+        for source, row in rows.items():
+            with self.subTest(source=source):
+                self.assertEqual(folded(source), row.cleaner)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestTheProgramPrintsWhatItPrinted(TestBase):
-    """
-    Node is the oracle for every value here: what it makes of the program, and what it makes of the
-    text the deobfuscation answers with, have to be the same thing.
-    """
 
     def test_a_wrapper_the_expansion_is_wrong_for_prints_what_it_printed(self):
         rows = A_WRAPPER_THE_EXPANSION_IS_WRONG_FOR

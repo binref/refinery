@@ -1,16 +1,6 @@
 """
-A comment in every position the grammar lets one stand, and what the tool writes for the file
-holding it. Every comment has a carrier. A statement, a class element and a switch clause carry the
-comments that led them; a block, a class body, a switch and the file carry the comments standing
-behind their last item; the file carries the `#!` line it opens with. A comment standing where no
-carrier does — inside an expression, between a keyword and a brace — is carried by the next
-statement or by the end of the file, so its position is kept to the statement and no closer. With
-comments stripped, every carried comment is gone; a comment inside text the parser could not read
-stays, since such text is written as it was written.
-
-Node decides which files are programs, reading each as a script and running none of them.
-SECURITY: every snippet here is hand-authored and benign, and nothing is run. Nothing from
-`samples` may ever be fed to this.
+SECURITY: every snippet here is hand-authored and benign, and Node only reads each one as a script,
+running none of them. Nothing from `samples` may ever be fed to this.
 """
 from __future__ import annotations
 
@@ -27,10 +17,6 @@ from test.lib.scripts.js.ledger import dropped_source_characters, printed, well_
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
-#: A file with a comment leading a statement, a class element or a switch clause, or the body of a
-#: labeled statement, mapped to what the printer writes for it with comments kept and with them
-#: stripped. The comment comes back on a line of its own in front of what it led — on the line of
-#: a label's body, where it is a block comment.
 A_COMMENT_LEADING_A_STATEMENT = {
     '/* a */ x = 1;': (
         '/* a */\nx = 1;',
@@ -90,9 +76,6 @@ A_COMMENT_LEADING_A_STATEMENT = {
     ),
 }
 
-#: A file with a comment leading the body of a clause. A body that is no block is printed as one,
-#: and the comment leads the statement inside it; a body that is a block keeps the comment in front
-#: of its brace, on the clause's line where it is a block comment.
 A_COMMENT_LEADING_A_CLAUSE_BODY = {
     'if (a) /* c */ x = 1;': (
         'if (a) {\n  /* c */\n  x = 1;\n}',
@@ -140,9 +123,6 @@ A_COMMENT_LEADING_A_CLAUSE_BODY = {
     ),
 }
 
-#: A file with a comment behind the last item of a block, a class body, a switch, a static block or
-#: the file itself, which is where the parser used to drop it. It comes back on a line of its own
-#: at the end of the list, and a file holding nothing but comments comes back as those.
 A_COMMENT_BEHIND_THE_LAST_ITEM = {
     'x = 1; /* a */': (
         'x = 1;\n/* a */',
@@ -230,10 +210,8 @@ A_COMMENT_BEHIND_THE_LAST_ITEM = {
     ),
 }
 
-#: A file with a comment standing where no carrier does: inside an expression, between a keyword
-#: and the brace it opens, behind the `export` keyword. Such a comment is carried by the next
-#: statement — the first one of a block opening behind it, or the one on the next line — or by the
-#: end of the file, and comes back there: its position is kept to the statement and no closer.
+#: A comment standing where no carrier does is carried by the next statement, which may be the first
+#: one of a block opening behind it, or by the end of the file, and comes back there.
 A_COMMENT_NO_CARRIER_STANDS_AT = {
     'try /* c */ { x; } catch (e) /* d */ { y; } finally /* e */ { z; }': (
         'try {\n  /* c */\n  x;\n} catch (e) {\n  /* d */\n  y;\n} finally {\n  /* e */\n  z;\n}',
@@ -293,8 +271,6 @@ A_COMMENT_NO_CARRIER_STANDS_AT = {
     ),
 }
 
-#: A file opening with a `#!` line, which is a comment the file carries (§12.5): it comes back at
-#: the head of the file, and stripping comments strips it.
 A_HASH_BANG_LINE = {
     '#!/usr/bin/env node\nx = 1;': (
         '#!/usr/bin/env node\nx = 1;',
@@ -318,9 +294,9 @@ A_HASH_BANG_LINE = {
     ),
 }
 
-#: A file spelling `/*` where it opens no comment: the slash begins the regular expression `/ /`.
-#: Node reads the first file as `x = / / * c`, and refuses the second, whose last slash opens a
-#: regular expression nothing closes; each comes back as read, and neither ends inside a comment.
+#: In `x = / /* c` the two slashes are the regular expression `/ /`, so `/*` opens no comment: the
+#: first file reads as `x = / / * c`, and the second is refused, since its last slash opens a
+#: regular expression nothing closes.
 A_SLASH_THAT_OPENS_NO_COMMENT = {
     'x = / /* c': (
         'x = / / * c;',
@@ -332,10 +308,8 @@ A_SLASH_THAT_OPENS_NO_COMMENT = {
     ),
 }
 
-#: A file with a comment leading text the parser could not read. Text opening with `-->` is
-#: written on the line of what precedes it, since at the head of a line it would open a comment,
-#: and so are the comments leading it. A comment inside the unread text is part of the text and
-#: stays when comments are stripped.
+#: Unread text opening with `-->` is written on the line of what precedes it, together with the
+#: comments leading it, because at the head of a line `-->` opens a comment.
 A_COMMENT_LEADING_UNREAD_TEXT = {
     'var a = 1; /* c */ --> note': (
         'var a = 1; /* c */ --> note',
@@ -371,10 +345,8 @@ A_COMMENT_LEADING_UNREAD_TEXT = {
     ),
 }
 
-#: A file that ends inside a block comment, which Node refuses. The comment is the last thing the
-#: file holds and comes back last, whatever the file ended inside besides — and comes back even
-#: where comments are stripped, since it is the file's cut and a print without it would be a
-#: program the file is not.
+#: The unclosed comment comes back even with comments stripped: without it the print would be a
+#: program, and the file is not one.
 A_COMMENT_THE_FILE_ENDS_INSIDE = {
     'x = 1; /* a': (
         'x = 1;\n/* a',
@@ -394,10 +366,6 @@ A_COMMENT_THE_FILE_ENDS_INSIDE = {
     ),
 }
 
-#: A file that ends inside a list or a template hole, with a comment standing between the last
-#: item and the end. The list has no closer to carry the comment, and may yet be refused along
-#: with the statement it stands in, so the end of the file carries it: the printer stops where the
-#: file ended and writes the comment behind that.
 A_COMMENT_BEFORE_THE_END_OF_A_LIST_THE_FILE_ENDS_INSIDE = {
     'function f() { x; /* a */': (
         'function f() {\n  x;\n/* a */',
@@ -433,8 +401,6 @@ A_COMMENT_BEFORE_THE_END_OF_A_LIST_THE_FILE_ENDS_INSIDE = {
     ),
 }
 
-#: A file already in the form the printer writes, holding a comment behind its last statement:
-#: each prints back exactly as written. These were the rows of the ledger entry this module retired.
 A_FILE_ALREADY_IN_THE_PRINTERS_FORM = (
     'x = 1;\n/* note */',
     'x = 1;\n// note',
@@ -534,10 +500,6 @@ class TestAFileIsAProgramWhereNodeReadsOne(TestBase):
 
 
 class TestTheDeobfuscatorKeepsTheCarriers(TestBase):
-    """
-    A pass rewrites statements and never a carrier: the `#!` line, a comment behind the last
-    statement of a body or of the file, and the comment the file ended inside all come back.
-    """
 
     def test_each_carried_comment_comes_back_where_it_stood(self):
         rows = {

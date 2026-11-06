@@ -1,18 +1,11 @@
 """
-Where a `for await` head is read, and whether the tool reads it where the language does.
+A `for await` head is read only where `await` is the operator: in the body of an `async` function,
+arrow or method itself, never in a plain function, arrow, class field or static block, even one
+nested in async code, and at the top level of a module but not of a script. The tool does not know
+which of the two a file is, so it reads the head at the top level as a module does.
 
-The head stands where `await` is the operator: the body of an `async` function, arrow or method.
-A plain function, a non-async arrow, a class field initializer and a static block have no reading
-for it, whatever encloses them, and neither goal symbol changes that. The top level of a file is
-the one place the goal decides: a module reads the head there and a script refuses it, and the
-parser, which does not know the goal, reads it.
-
-Node decides every expectation here. The question put to it is whether it reads a text at all, as
-a script and as a module, and the law is that `refinery.lib.scripts.is_well_formed` answers as
-both readings do below the top level and as the module reading does at it.
-
-SECURITY: every snippet here is hand-authored and benign, and running it is what makes the engine
-the oracle. Nothing from `samples` may ever be fed to this.
+SECURITY: every snippet here is hand-authored and benign, and Node runs it. Nothing from `samples`
+may ever be fed to this.
 """
 from __future__ import annotations
 
@@ -23,8 +16,6 @@ from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.ledger import each_well_formed, prints
 from test.lib.scripts.js.test_parameter_grammar import every_one_of, refused
 
-#: A `for await` head below the top level of a file, where `await` is not the operator. Node
-#: refuses each as a script and as a module.
 A_FOR_AWAIT_HEAD_OUTSIDE_ASYNC_CODE = [
     'function f() { for await (const x of []) {} }',
     'async function f() { function g() { for await (const x of []) {} } }',
@@ -34,7 +25,6 @@ A_FOR_AWAIT_HEAD_OUTSIDE_ASYNC_CODE = [
     'var o = { m() { for await (const x of []) {} } };',
 ]
 
-#: The head where `await` is the operator, mapped to what Node prints for each file.
 A_FOR_AWAIT_HEAD_IN_ASYNC_CODE = {
     'async function f() { for await (const x of [1]) console.log(x); } f();':
         prints('1'),
@@ -48,7 +38,6 @@ A_FOR_AWAIT_HEAD_IN_ASYNC_CODE = {
         prints('5'),
 }
 
-#: The head at the top level of a file, which Node refuses as a script and reads as a module.
 A_FOR_AWAIT_HEAD_AT_THE_TOP_LEVEL = 'for await (const x of [6]) console.log(x);'
 
 

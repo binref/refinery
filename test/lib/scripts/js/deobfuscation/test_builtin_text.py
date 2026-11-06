@@ -1,16 +1,8 @@
 """
-Strings only a built-in writes.
-
-`escape` writes the escapes of ECMA-262 B.2.1.1 in every host. The HTML methods of
-`String.prototype`, the text of an array iterator, the characters `Date()` writes at fixed
-positions and the text of a regular expression are folded only where the host is pinned to one
-engine, which is Node: the Windows Script Host, which the default host covers, writes the tags of
-the HTML methods in upper case and has no iterators, and the last two are written by the engine. A
-built-in the program writes stops each of them, whether the program names it or reaches it through
-a value.
-
-Every answer is Node's, under the default deobfuscation, under it in Node, and under the one that
-suspects code it cannot read in Node.
+Only `escape` writes the same text in every host. The default host covers the Windows Script Host,
+which writes the tags of the HTML methods of `String.prototype` in upper case and has no array
+iterators, and the text of `Date()` and of a regular expression is the engine's to write; these fold
+only where the host is Node.
 
 SECURITY: every program here is written out by the module itself and Node runs only those. Nothing
 from `samples` may ever be handed to the engine.
@@ -19,13 +11,14 @@ from __future__ import annotations
 
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
+from test.lib.scripts.js.ledger import printed
 
 from refinery.units.scripting.djs import djs
 
-#: A program printing strings only a built-in writes, mapped to what it prints, to the text the
-#: default deobfuscation writes for it, and to the text the deobfuscation writes for it in Node.
+#: A program mapped to what it prints, to the text the default deobfuscation writes for it, and to
+#: the text the deobfuscation writes for it in Node.
 _A_STRING_A_BUILT_IN_WRITES: dict[str, tuple[str, str, str]] = {
     "console.log(escape('<i></i>'));": (
         '%3Ci%3E%3C/i%3E\n',
@@ -69,8 +62,12 @@ _A_STRING_A_BUILT_IN_WRITES: dict[str, tuple[str, str, str]] = {
     ),
 }
 
-#: The HTML method each tag and attribute is written by, on the string `x` with the attribute
-#: `a"b`, mapped to what Node prints for it.
+_A_BUILT_IN_REACHED_THROUGH_A_CONSTRUCTED_FUNCTION: dict[str, str] = {
+    "console.log([][[] + 'constructor'].constructor('return escape')()([].at));": (
+        'console.log(escape([].at));'
+    ),
+}
+
 _EVERY_HTML_METHOD: dict[str, str] = {
     "console.log('x'.anchor('a\"b'), 'x'.big(), 'x'.blink(), 'x'.bold(), 'x'.fixed(), 'x'.fontcolor('a\"b'), 'x'.fontsize('a\"b'));": (
         '<a name="a&quot;b">x</a> <big>x</big> <blink>x</blink> <b>x</b> <tt>x</tt> <font color="a&quot;b">x</font>'
@@ -78,9 +75,6 @@ _EVERY_HTML_METHOD: dict[str, str] = {
     ),
 }
 
-#: A program that writes the built-in a string of `_A_STRING_A_BUILT_IN_WRITES` comes from, or
-#: reads one no engine fixes, mapped to what Node prints for it. Every deobfuscation leaves the
-#: read of the string standing.
 _A_STRING_THE_PROGRAM_DECIDES: dict[str, str] = {
     "Object.prototype.toString = function () { return 'X'; }; console.log([].entries() + '');": 'X\n',
     "Iterator.prototype.toString = function () { return 'I'; }; console.log([].entries() + '');": 'I\n',
@@ -92,19 +86,24 @@ _A_STRING_THE_PROGRAM_DECIDES: dict[str, str] = {
     "String.prototype.italics = function () { return 'I'; }; console.log(''.italics());": 'I\n',
 }
 
-#: A read the deobfuscation leaves standing although nothing writes a built-in, because the engine
-#: decides it from more than the language says: a position of `Date()` past the name of the time
-#: zone's offset, and a regular expression whose pattern holds a character with a meaning in a
-#: pattern, a flag, or a line break.
+#: Reads the engine decides from more than the language says: a position of `Date()` past its `GMT`,
+#: where the time zone's offset stands, and the text of a regular expression whose pattern holds a
+#: character with a meaning in a pattern, a flag, or a line break.
 _A_STRING_LEFT_TO_THE_ENGINE = [
     'console.log((false + Date())[33]);',
     "console.log(RegExp('a.b') + '', /a/g + '', RegExp('\\n') + '');",
     "console.log(RegExp('(') + '');",
 ]
 
-#: A program reading methods of `Array.prototype` the Windows Script Host does not have, and one
-#: it has but writes its own text for, mapped to what Node prints, to the text the default
-#: deobfuscation writes, and to the text the deobfuscation writes in Node.
+_A_STRING_NODE_WRITES: dict[str, tuple[str, str]] = {
+    "console.log(RegExp('a.b') + '', /a/g + '', RegExp('\\n') + '');": (
+        '/a.b/ /a/g /\\n/\n',
+        "console.log('/a.b/', '/a/g', '/\\\\n/');",
+    ),
+}
+
+#: A program mapped to what Node prints, to the text the default deobfuscation writes for it, and to
+#: the text the deobfuscation writes for it in Node.
 _A_METHOD_NOT_EVERY_HOST_ANSWERS_ALIKE: dict[str, tuple[str, str, str]] = {
     "console.log(typeof [].values, !![].entries, typeof ''.italics);": (
         'function true function\n',
@@ -113,10 +112,6 @@ _A_METHOD_NOT_EVERY_HOST_ANSWERS_ALIKE: dict[str, tuple[str, str, str]] = {
     ),
 }
 
-#: A program that hands to code no scan reads a function it reads under the name of a method of
-#: `RegExp.prototype` off an object no regular expression is, mapped to what Node prints for it, and
-#: to the text the deobfuscation writes for it, which still folds a read that asks the prototype of
-#: strings.
 _A_READ_NAMED_LIKE_A_METHOD_OF_A_REGULAR_EXPRESSION: dict[str, tuple[str, str]] = {
     "var cp = require('child_process'); var run = require('util').promisify(cp.exec); console.log('abc'.nope, typeof run);": (
         'undefined function\n',
@@ -124,7 +119,6 @@ _A_READ_NAMED_LIKE_A_METHOD_OF_A_REGULAR_EXPRESSION: dict[str, tuple[str, str]] 
     ),
 }
 
-#: Each model and host a deobfuscation below is asked under.
 _EVERY_MODE = [
     (False, 'universal'),
     (False, 'node'),
@@ -139,9 +133,25 @@ def _deobfuscated(source: str, strict: bool, environment: str) -> str:
 class TestAStringABuiltInWrites(TestBase):
 
     def test_the_default_deobfuscation_folds_only_escape(self):
+        named = _A_BUILT_IN_REACHED_THROUGH_A_CONSTRUCTED_FUNCTION
         for source, (_, universal, _) in _A_STRING_A_BUILT_IN_WRITES.items():
             with self.subTest(source=source):
-                self.assertEqual(_deobfuscated(source, False, 'universal'), universal)
+                self.assertIn(
+                    _deobfuscated(source, False, 'universal'),
+                    (universal, named.get(source, universal)),
+                )
+
+    @opportunity
+    def test_the_default_deobfuscation_names_a_built_in_reached_through_a_constructed_function(self):
+        for source, named in _A_BUILT_IN_REACHED_THROUGH_A_CONSTRUCTED_FUNCTION.items():
+            with self.subTest(source=source):
+                self.assertEqual(_deobfuscated(source, False, 'universal'), named)
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_the_same_for_the_text_naming_the_built_in(self):
+        for source, named in _A_BUILT_IN_REACHED_THROUGH_A_CONSTRUCTED_FUNCTION.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(named), behavior(source))
 
     def test_each_deobfuscation_in_node_folds_every_one(self):
         for source, (_, _, folded) in _A_STRING_A_BUILT_IN_WRITES.items():
@@ -167,12 +177,36 @@ class TestAStringABuiltInWrites(TestBase):
 
 class TestAStringTheProgramOrTheEngineDecides(TestBase):
 
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_what_each_read_it_writes_alike_records_and_so_does_its_text(self):
+        for source, (prints, folded) in _A_STRING_NODE_WRITES.items():
+            with self.subTest(source=source):
+                self.assertEqual((behavior(source), behavior(folded)), ((prints, None), (prints, None)))
+
     def test_each_deobfuscation_leaves_the_read_standing(self):
         for source in [*_A_STRING_THE_PROGRAM_DECIDES, *_A_STRING_LEFT_TO_THE_ENGINE]:
             last = source.rpartition('console.log(')[2]
-            for strict, environment in _EVERY_MODE:
+            modes = [
+                (strict, environment)
+                for strict, environment in _EVERY_MODE
+                if environment != 'node' or source not in _A_STRING_NODE_WRITES
+            ]
+            for strict, environment in modes:
                 with self.subTest(source=source, strict=strict, environment=environment):
                     self.assertIn(last, _deobfuscated(source, strict, environment))
+
+    def test_each_deobfuscation_in_node_leaves_a_read_node_writes_alike_standing_or_writes_its_text(self):
+        for source, (_, folded) in _A_STRING_NODE_WRITES.items():
+            for strict in (False, True):
+                with self.subTest(source=source, strict=strict):
+                    self.assertIn(_deobfuscated(source, strict, 'node'), (printed(source), folded))
+
+    @opportunity
+    def test_each_deobfuscation_in_node_writes_the_text_of_a_read_node_writes_alike(self):
+        for source, (_, folded) in _A_STRING_NODE_WRITES.items():
+            for strict in (False, True):
+                with self.subTest(source=source, strict=strict):
+                    self.assertEqual(_deobfuscated(source, strict, 'node'), folded)
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_each_deobfuscation_does_what_the_program_does(self):

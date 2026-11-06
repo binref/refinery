@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
+from test import opportunity
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after
@@ -208,11 +209,6 @@ class TestIIFEAccessorPromoter(TestJsDeobfuscator):
         )
 
     def test_the_closure_declarations_are_written_behind_the_inner_prologue(self):
-        """
-        The promoted function keeps the mode its inner body declared: the closure's declarations go
-        below the Directive Prologue that body opens with, since a declaration written above the
-        `'use strict'` would end the prologue and leave the function sloppy.
-        """
         source = inspect.cleandoc(
             """
             var get = function () {
@@ -235,10 +231,6 @@ class TestIIFEAccessorPromoter(TestJsDeobfuscator):
         )
 
     def test_the_whole_prologue_is_stepped_over_and_not_the_directive_alone(self):
-        """
-        A directive the language does not recognize is one all the same, and a declaration wedged in
-        front of it would end the run for the `'use strict'` standing ahead of it as well.
-        """
         source = inspect.cleandoc(
             """
             var get = function () {
@@ -283,12 +275,6 @@ class TestIIFEAccessorPromoter(TestJsDeobfuscator):
         )
 
 
-#: An accessor whose closure returns a function of each kind, mapped to the declaration the
-#: promotion writes for it and to what Node prints when the program calls it. What a call answers is
-#: decided by the kind: a plain function answers the value, an async one a promise, a generator an
-#: iterator, and an async generator an iterator of promises. A declaration written without the kind
-#: would answer something else, and one written without the `*` over a body holding a `yield` is not
-#: even a text an engine reads.
 _AN_ACCESSOR_RETURNING_A_FUNCTION_OF_EACH_KIND: dict[str, tuple[str, str]] = {
     'var get = function () { var d = [1, 2]; return function (i) { return d[i]; }; }();'
     ' console.log(get(0));': (
@@ -365,13 +351,6 @@ class TestAPromotedAccessorIsTheKindOfFunctionItReturned(TestJsDeobfuscator):
         )
 
 
-#: An accessor a promotion has to leave standing, mapped to what Node prints for it. An `async` IIFE
-#: hands back a promise and a generator hands back an iterator, so the name the assignment binds is
-#: not the returned function and a declaration of that name answers nothing the program read. An
-#: arrow reads the `arguments` of the function around it, so one written in the IIFE's body reads
-#: the object the IIFE was called with, which a body carried into a declaration of one parameter no
-#: longer has, and one written in the returned function reads an object whose elements alias that
-#: function's own parameters.
 _AN_ACCESSOR_A_PROMOTION_MUST_LEAVE_ALONE: dict[str, str] = {
     'var get = async function () { var d = [1, 2]; return function (i) { return d[i]; }; }();'
     ' get.then(function (f) { console.log(f(0)); });': '1\n',
@@ -381,17 +360,39 @@ _AN_ACCESSOR_A_PROMOTION_MUST_LEAVE_ALONE: dict[str, str] = {
     ' get.next().then(function (r) { console.log(r.value(1)); });': '2\n',
     'var get = function () { var g = () => arguments.length; var d = [1, 2];'
     " return function (i) { return d[i] + ':' + g(); }; }(9, 9); console.log(get(0));": '1:2\n',
-    'var get = function () { var d = [1, 2]; return function (i) { var g = () => arguments[0];'
-    " return d[i] + ':' + g(); }; }(); console.log(get(1));": '2:1\n',
-    'var get = function () { var d = [1, 2]; return function (i) {'
-    ' var g = () => { arguments[0] = 0; }; g(); return d[i]; }; }();'
-    ' console.log(get(1));': '1\n',
 }
 
-#: An accessor the promotion does rewrite, mapped to the text it writes and to what Node prints for
-#: the program. The arrow here stands inside a function expression of its own, whose `arguments` is
-#: that expression's and not the accessor's, so moving the accessor's body changes nothing about
-#: what the arrow reads.
+_AN_ARROW_READING_THE_ARGUMENTS_OF_THE_RETURNED_FUNCTION: dict[str, tuple[str, str]] = {
+    'var get = function () { var d = [1, 2]; return function (i) { var g = () => arguments[0];'
+    " return d[i] + ':' + g(); }; }(); console.log(get(1));": (
+        inspect.cleandoc(
+            """
+            function get(i) {
+              var d = [1, 2];
+              var g = () => arguments[0];
+              return d[i] + ':' + g();
+            }
+            console.log(get(1));
+            """
+        ), '2:1\n'),
+    'var get = function () { var d = [1, 2]; return function (i) {'
+    ' var g = () => { arguments[0] = 0; }; g(); return d[i]; }; }();'
+    ' console.log(get(1));': (
+        inspect.cleandoc(
+            """
+            function get(i) {
+              var d = [1, 2];
+              var g = () => {
+                arguments[0] = 0;
+              };
+              g();
+              return d[i];
+            }
+            console.log(get(1));
+            """
+        ), '1\n'),
+}
+
 _AN_ACCESSOR_A_PROMOTION_REWRITES: dict[str, tuple[str, str]] = {
     'var get = function () { var d = [1, 2]; return function (i) {'
     ' var h = function () { var g = () => arguments[0]; return g(); };'
@@ -424,12 +425,6 @@ _AN_ACCESSOR_A_PROMOTION_REWRITES: dict[str, tuple[str, str]] = {
 
 
 class TestWhatTheKindOfTheIIFEAndAnArrowsArgumentsCostThePromotion(TestJsDeobfuscator):
-    """
-    A promotion replaces the IIFE with a declaration of the returned function under the name the
-    assignment bound. That is only the same program where the IIFE was a plain function, whose call
-    hands back what it returned, and where nothing in the moved body reads an `arguments` object the
-    move puts a different function in charge of.
-    """
 
     def _promote(self, source: str) -> str:
         return self._run_transformer(source, JsIIFEAccessorPromoter)
@@ -468,11 +463,32 @@ class TestWhatTheKindOfTheIIFEAndAnArrowsArgumentsCostThePromotion(TestJsDeobfus
             },
         )
 
+    def test_an_arrow_reading_the_returned_functions_arguments_is_left_alone_or_promoted(self):
+        rows = _AN_ARROW_READING_THE_ARGUMENTS_OF_THE_RETURNED_FUNCTION
+        for source, (promoted, _) in rows.items():
+            with self.subTest(source=source):
+                self.assertIn(self._promote(source), (self._canonical(source), promoted))
 
-#: An accessor an IIFE builds in a block, mapped to what Node prints for the program. A function
-#: declared in a block names the block: strict code keeps it there, so a call after the block finds
-#: no name, and sloppy code copies it out when the declaration runs, over a variable of its name
-#: outside the block. A declarator in the block puts its name where its kind puts it instead.
+    @opportunity
+    def test_an_arrow_reading_the_returned_functions_arguments_does_not_stop_the_promotion(self):
+        rows = _AN_ARROW_READING_THE_ARGUMENTS_OF_THE_RETURNED_FUNCTION
+        self.assertEqual(
+            {source: self._promote(source) for source in rows},
+            {source: promoted for source, (promoted, _) in rows.items()},
+        )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_the_same_before_and_after_promoting_an_arrow_reading_its_arguments(self):
+        rows = _AN_ARROW_READING_THE_ARGUMENTS_OF_THE_RETURNED_FUNCTION
+        self.assertEqual(
+            {source: (behavior(source), behavior(self._promote(source))) for source in rows},
+            {
+                source: ((printed, None), (printed, None))
+                for source, (_, printed) in rows.items()
+            },
+        )
+
+
 _AN_ACCESSOR_AN_IIFE_BUILDS_IN_A_BLOCK: dict[str, str] = {
     "'use strict';"
     " { var X = function () { var t = 'abc'; return function (i) { return t[i]; }; }(); }"
@@ -525,10 +541,6 @@ class TestAnAccessorAnIIFEBuildsInABlockIsNotPromoted(TestJsDeobfuscator):
         )
 
 
-#: An accessor whose closure builds a list or an object that a call writes into or hands out, also
-#: to a variable outside the call or to a function storing it there, or one holding a list or an
-#: object a read hands out, mapped to what Node prints for the program. The IIFE builds each of them
-#: once, so what one call leaves in it, and its identity, reach the next.
 _AN_ACCESSOR_WHOSE_CLOSED_OVER_VALUE_OUTLIVES_A_CALL: dict[str, str] = {
     'var acc = (function () { var t = [0]; return function (i) { t[0] = t[0] + i; return t[0]; }; })();'
     ' console.log(acc(1), acc(1));': '1 2\n',
@@ -563,10 +575,6 @@ _AN_ACCESSOR_WHOSE_CLOSED_OVER_VALUE_OUTLIVES_A_CALL: dict[str, str] = {
 }
 
 
-#: An accessor whose closure builds a list or an object it only reads through, mapped to the text
-#: the promotion writes and to what Node prints for the program. A method called on a string the
-#: list holds changes no list, neither does a method of an array that only reads it, and a read
-#: through an inner list down to a number hands no list out.
 _AN_ACCESSOR_THAT_ONLY_READS_WHAT_IT_CLOSES_OVER: dict[str, tuple[str, str]] = {
     "var X = function () { var t = ['abc', 'de']; return function (i) {"
     " return t[i].split('').reverse().join(''); }; }(); console.log(X(0));": (
@@ -628,12 +636,6 @@ _AN_ACCESSOR_THAT_ONLY_READS_WHAT_IT_CLOSES_OVER: dict[str, tuple[str, str]] = {
 
 
 class TestAnAccessorWhoseClosedOverValueOutlivesACallIsNotPromoted(TestJsDeobfuscator):
-    """
-    Retired from the JavaScript defect ledger and kept as the regression it retired. The promotion
-    builds the closed-over values inside the declaration it writes, once per call, which computes
-    what the IIFE did only where no call writes into a list or object it closes over or hands one
-    out, nor hands out a list or object such a value holds.
-    """
 
     def _promote(self, source: str) -> str:
         return self._run_transformer(source, JsIIFEAccessorPromoter)

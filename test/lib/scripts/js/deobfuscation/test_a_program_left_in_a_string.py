@@ -1,24 +1,9 @@
-"""
-Programs that leave part of themselves in a string, which a `Function` construction or an `eval`
-runs, read the way Node reads a file it runs as a module.
-
-A CommonJS file is sloppy code unless it says otherwise, so where `refinery.djs` is told the file is
-one, a payload that runs differently as strict code is unpacked into it. Where the file may be an ES
-module as well, such a payload stays in its string, because unpacked it would run as strict code.
-Either way a payload using a name the CommonJS wrapper binds — `require`, `module`, `exports`,
-`__filename`, `__dirname` — runs as global code, which does not see these names, while the same text
-unpacked into the file would read the wrapper's. A `Function` body that only reads such a name is
-unpacked with each read an indirect `eval` of the name, which reads the global scope as the string
-did. Any other use of the name stays in its string, as does a payload declaring one where it would
-land at the top of the file, which is the body of the function the wrapper is, and a payload holding
-a direct `eval`, which reads the scope it runs in.
-"""
 from __future__ import annotations
 
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     deobfuscate_source,
@@ -44,8 +29,6 @@ def _runs_a_string(source: str) -> bool:
     return any(call in source for call in ('Function(', 'eval(', 'eval)('))
 
 
-#: Programs whose payload runs differently as strict code, each with what Node makes of it as a
-#: CommonJS file and as an ES module.
 A_PAYLOAD_ONLY_SLOPPY_CODE_RUNS_AS_WRITTEN = {
     'a nested function reads this': FileProgram(
         a_program("""
@@ -174,9 +157,18 @@ A_PAYLOAD_ONLY_SLOPPY_CODE_RUNS_AS_WRITTEN = {
     ),
 }
 
-#: Packed programs whose payload runs alike as strict code, each with what Node makes of it as a
-#: CommonJS file and as an ES module. A file known to be CommonJS holds each unpacked; whether a
-#: file that may be an ES module does is left to the strict-mode check.
+#: A sloppy write or delete of a global name acts on a `let` another script declared under that
+#: name, which a write or delete through the global object does not reach. A direct `eval` declaring
+#: a name declares it in the scope of a CommonJS file, but in a scope of its own in an ES module.
+NO_STRICT_CODE_REPRODUCES = frozenset({
+    'an implicit global write',
+    'a delete of an unqualified name',
+    'a file reading this at its top level after the payload ran',
+    'a direct eval declaring a var at the top of the file',
+    'a direct eval declaring a function at the top of the file',
+    'a direct eval in a function declaring a var read after it',
+})
+
 A_PACKED_PROGRAM_STRICT_CODE_RUNS_ALIKE = {
     'a packed program spreading a frozen object': FileProgram(
         a_program("""
@@ -219,8 +211,11 @@ class TestAPayloadOnlySloppyCodeRunsAsWrittenIsUnpackedOnlyIntoACommonJsFile(Tes
             (Reading.COMMONJS,),
         )
 
-    def test_a_file_that_may_be_an_es_module_keeps_each_payload_as_written(self):
-        rows = A_PAYLOAD_ONLY_SLOPPY_CODE_RUNS_AS_WRITTEN
+    def test_a_file_that_may_be_an_es_module_keeps_as_written_each_payload_no_strict_code_reproduces(self):
+        rows = {
+            label: row for label, row in A_PAYLOAD_ONLY_SLOPPY_CODE_RUNS_AS_WRITTEN.items()
+            if label in NO_STRICT_CODE_REPRODUCES
+        }
         self.assertEqual(
             {
                 label: deobfuscate_source(row.text, execution=ExecutionModel.module)
@@ -234,6 +229,24 @@ class TestAPayloadOnlySloppyCodeRunsAsWrittenIsUnpackedOnlyIntoACommonJsFile(Tes
             self,
             A_PAYLOAD_ONLY_SLOPPY_CODE_RUNS_AS_WRITTEN,
             (Reading.MODULE, Reading.ES_MODULE),
+        )
+
+
+class TestAPayloadStrictCodeCanReproduceIsUnpackedIntoAFileThatMayBeAnEsModule(TestBase):
+
+    @opportunity
+    def test_each_payload_is_unpacked(self):
+        rows = {
+            label: row for label, row in A_PAYLOAD_ONLY_SLOPPY_CODE_RUNS_AS_WRITTEN.items()
+            if label not in NO_STRICT_CODE_REPRODUCES
+        }
+        unpacked = {
+            label: deobfuscate_source(row.text, execution=ExecutionModel.module)
+            for label, row in rows.items()
+        }
+        self.assertEqual(
+            {label: _runs_a_string(text) for label, text in unpacked.items()},
+            {label: False for label in rows},
         )
 
 
@@ -262,8 +275,6 @@ class TestAPackedProgramStrictCodeRunsAlikeIsUnpackedIntoACommonJsFile(TestBase)
         )
 
 
-#: Programs whose payload runs differently as strict code, called where the file's own text makes
-#: the code strict, each with what Node makes of it as a CommonJS file.
 A_PAYLOAD_AT_A_STRICT_SITE = {
     'a file with a use strict prologue': Program(
         a_program("""
@@ -340,9 +351,8 @@ class TestAPayloadAtAStrictSiteStaysInItsStringInACommonJsFile(TestBase):
         )
 
 
-#: Programs whose payload reads a name the CommonJS wrapper binds, each with what Node makes of it
-#: as a CommonJS file and as an ES module. The string runs as global code, where none of these names
-#: is bound; an assignment the file makes to one writes the wrapper's parameter and binds none.
+#: The string runs as global code, where no name the CommonJS wrapper binds is bound; an assignment
+#: the file makes to one writes the wrapper's parameter and puts nothing on the global object.
 A_PAYLOAD_READING_A_WRAPPER_NAME = {
     'a Function body returning typeof require': FileProgram(
         a_program("""
@@ -387,14 +397,6 @@ A_PAYLOAD_READING_A_WRAPPER_NAME = {
         prints('undefined'),
         prints('undefined'),
     ),
-    'a Function body declaring var exports the file reads after it': FileProgram(
-        a_program("""
-            Function("var exports = 3; console.log(exports)")();
-            console.log(typeof exports);
-            """),
-        prints('3', 'object'),
-        prints('3', 'undefined'),
-    ),
     'a Function body testing for module as a UMD wrapper does': FileProgram(
         a_program("""
             Function("var api = {v: 1}; if (typeof module === 'object') module.exports = api; else globalThis.api = api;")();
@@ -421,9 +423,6 @@ A_PAYLOAD_READING_A_WRAPPER_NAME = {
     ),
 }
 
-#: Programs whose payload declares a name the CommonJS wrapper binds inside a function of the file,
-#: or reads one through an accessor the file defines, each with what Node makes of it as a CommonJS
-#: file and as an ES module.
 A_PAYLOAD_BINDING_A_WRAPPER_NAME_FOR_ITSELF = {
     'a Function body inside a function declaring let module': FileProgram(
         a_program("""
@@ -443,11 +442,6 @@ A_PAYLOAD_BINDING_A_WRAPPER_NAME_FOR_ITSELF = {
     ),
 }
 
-#: Programs whose payload declares a name the CommonJS wrapper binds where it would land at the top
-#: of the file, each with what Node makes of it as a CommonJS file and as an ES module. The top of a
-#: CommonJS file is the body of the function the wrapper is: a `let`, `const` or `class` there
-#: redeclares a parameter, which Node refuses to compile as CommonJS and runs as an ES module, and a
-#: `var` there is the parameter itself, holding what the host passed.
 A_PAYLOAD_DECLARING_A_WRAPPER_NAME_AT_THE_TOP_OF_THE_FILE = {
     'a Function body declaring let module': FileProgram(
         a_program("""
@@ -487,6 +481,14 @@ A_PAYLOAD_DECLARING_A_WRAPPER_NAME_AT_THE_TOP_OF_THE_FILE = {
             """),
         prints('1'),
         prints('1'),
+    ),
+    'a Function body declaring var exports the file reads after it': FileProgram(
+        a_program("""
+            Function("var exports = 3; console.log(exports)")();
+            console.log(typeof exports);
+            """),
+        prints('3', 'object'),
+        prints('3', 'undefined'),
     ),
 }
 
@@ -541,16 +543,18 @@ class TestAPayloadReadingANameTheCommonJsWrapperBindsStaysInItsString(TestBase):
             (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
         )
 
-    def test_a_payload_declaring_the_name_at_the_top_of_the_file_stays_as_written(self):
+    @opportunity
+    def test_a_payload_declaring_the_name_at_the_top_of_the_file_is_unpacked(self):
         rows = A_PAYLOAD_DECLARING_A_WRAPPER_NAME_AT_THE_TOP_OF_THE_FILE
         for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            unpacked = {
+                label: deobfuscate_source(row.text, execution=execution)
+                for label, row in rows.items()
+            }
             with self.subTest(execution.name):
                 self.assertEqual(
-                    {
-                        label: deobfuscate_source(row.text, execution=execution)
-                        for label, row in rows.items()
-                    },
-                    {label: printed(row.text) for label, row in rows.items()},
+                    {label: _runs_a_string(text) for label, text in unpacked.items()},
+                    {label: False for label in rows},
                 )
 
     def test_a_program_whose_payload_declares_the_name_at_the_top_still_prints_what_it_prints(self):
@@ -561,10 +565,6 @@ class TestAPayloadReadingANameTheCommonJsWrapperBindsStaysInItsString(TestBase):
         )
 
 
-#: Programs whose payload reads a name the CommonJS wrapper binds, or the type of one, and does
-#: nothing else with it, each with what Node makes of it as a CommonJS file and as an ES module. The
-#: payload is unpacked, and every such read stays a read of the global scope, an indirect `eval` of
-#: the name, which throws where nothing on the global object holds the name, as the payload does.
 A_PAYLOAD_READING_A_WRAPPER_NAME_AS_GLOBAL_CODE = {
     'a packed body reading __dirname in a function it never calls': FileProgram(
         a_program("""
@@ -604,27 +604,7 @@ A_PAYLOAD_READING_A_WRAPPER_NAME_AS_GLOBAL_CODE = {
     ),
 }
 
-#: Programs whose payload reads a name the CommonJS wrapper binds where no read of the global scope
-#: written into the file reads what it reads: inside a `with` body, whose object may hold the name,
-#: beside a binding of `eval` of its own, after a store that may replace the global `eval`, or as
-#: the target of a write. Each with what Node makes of it as a CommonJS file and as an ES module.
-A_PAYLOAD_READING_A_WRAPPER_NAME_NO_GLOBAL_READ_REPRODUCES = {
-    'a Function body reading the type of __dirname after eval was replaced under a computed key': FileProgram(
-        a_program("""
-            var k = ['ev', 'al'].join('');
-            globalThis[k] = function () { return 'replaced'; };
-            console.log(Function("return typeof __dirname")());
-            """),
-        prints('undefined'),
-        prints('undefined'),
-    ),
-    'a packed body reading __dirname inside a with statement': FileProgram(
-        a_program("""
-            Function("p", "with ({__dirname: 'w'}) console.log(__dirname);")({});
-            """),
-        prints('w'),
-        prints('w'),
-    ),
+A_PAYLOAD_READING_A_WRAPPER_NAME_A_REWRITTEN_GLOBAL_READ_REPRODUCES = {
     'a Function body binding eval and reading the type of __dirname': FileProgram(
         a_program("""
             Function("var eval = 0; console.log(typeof __dirname, eval);")();
@@ -639,6 +619,27 @@ A_PAYLOAD_READING_A_WRAPPER_NAME_NO_GLOBAL_READ_REPRODUCES = {
         prints('ReferenceError'),
         prints('ReferenceError'),
     ),
+}
+
+A_PAYLOAD_READING_A_WRAPPER_NAME_NO_GLOBAL_READ_REPRODUCES = {
+    'a Function body reading the type of __dirname after eval was replaced under a computed key': FileProgram(
+        a_program("""
+            var k = ['ev', 'al'].join('');
+            globalThis[k] = function () { return 'replaced'; };
+            console.log(Function("return typeof __dirname")());
+            """),
+        prints('undefined'),
+        prints('undefined'),
+    ),
+    'a packed body reading __dirname inside a with statement': FileProgram(
+        a_program("""
+            var o = {};
+            o[process.argv.length > 99 ? 'x' : '__dirname'] = 'w';
+            Function("p", "with (p) console.log(__dirname);")(o);
+            """),
+        prints('w'),
+        prints('w'),
+    ),
     'a Function body writing __dirname': FileProgram(
         a_program("""
             Function("__dirname = 'w'; console.log(globalThis.__dirname);")();
@@ -648,9 +649,6 @@ A_PAYLOAD_READING_A_WRAPPER_NAME_NO_GLOBAL_READ_REPRODUCES = {
     ),
 }
 
-#: Programs holding an indirect `eval` of the type of a name, the only code that may run as text,
-#: each with what Node makes of it as a CommonJS file and as an ES module. That `eval` reads one
-#: name of the global scope, so it hides nothing the rest of the file has to be kept for.
 AN_INDIRECT_EVAL_READING_ONE_GLOBAL_NAME = {
     'beside a test of a key of a function nothing writes': FileProgram(
         a_program("""
@@ -677,6 +675,7 @@ class TestAPayloadReadingAWrapperNameReadsItAsGlobalCode(TestBase):
 
     def testnode_prints_what_each_row_pins(self):
         node_prints_what_each_row_pins(self, A_PAYLOAD_READING_A_WRAPPER_NAME_AS_GLOBAL_CODE)
+        node_prints_what_each_row_pins(self, A_PAYLOAD_READING_A_WRAPPER_NAME_A_REWRITTEN_GLOBAL_READ_REPRODUCES)
         node_prints_what_each_row_pins(self, A_PAYLOAD_READING_A_WRAPPER_NAME_NO_GLOBAL_READ_REPRODUCES)
         node_prints_what_each_row_pins(self, AN_INDIRECT_EVAL_READING_ONE_GLOBAL_NAME)
 
@@ -697,6 +696,27 @@ class TestAPayloadReadingAWrapperNameReadsItAsGlobalCode(TestBase):
         each_reading_still_prints(
             self,
             A_PAYLOAD_READING_A_WRAPPER_NAME_AS_GLOBAL_CODE,
+            (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
+        )
+
+    @opportunity
+    def test_each_payload_a_rewritten_global_read_reproduces_is_unpacked(self):
+        rows = A_PAYLOAD_READING_A_WRAPPER_NAME_A_REWRITTEN_GLOBAL_READ_REPRODUCES
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            unpacked = {
+                label: deobfuscate_source(row.text, execution=execution)
+                for label, row in rows.items()
+            }
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    {label: 'Function(' in text for label, text in unpacked.items()},
+                    {label: False for label in rows},
+                )
+
+    def test_each_program_a_rewritten_global_read_reproduces_still_prints_what_it_prints(self):
+        each_reading_still_prints(
+            self,
+            A_PAYLOAD_READING_A_WRAPPER_NAME_A_REWRITTEN_GLOBAL_READ_REPRODUCES,
             (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
         )
 
@@ -750,11 +770,6 @@ class TestAPayloadReadingAWrapperNameReadsItAsGlobalCode(TestBase):
         )
 
 
-#: Programs whose function, called once, declares a name the CommonJS wrapper binds, each with what
-#: Node makes of it as a CommonJS file and as an ES module. Inlining the function would move the
-#: declaration to the top of the file, which is the body of the function the wrapper is: a `let`,
-#: `const` or `class` there redeclares a parameter, which Node refuses to compile as CommonJS and
-#: runs as an ES module, and a `var` there is the parameter itself, holding what the host passed.
 A_FUNCTION_CALLED_ONCE_DECLARING_A_WRAPPER_NAME = {
     'let module': FileProgram(
         a_program("""
@@ -831,9 +846,6 @@ class TestAFunctionDeclaringAWrapperNameStillPrintsWhatItPrints(TestBase):
         )
 
 
-#: Programs whose payload runs alike as sloppy and as strict code, or is refused under either for a
-#: reason that has nothing to do with strict code, each with what Node makes of it as a CommonJS
-#: file and as an ES module.
 A_PAYLOAD_BOTH_READINGS_TREAT_ALIKE = {
     'a Function body reading this at its top level': FileProgram(
         a_program("""
@@ -902,9 +914,6 @@ class TestAPayloadBothReadingsTreatAlikeIsDeobfuscatedAlike(TestBase):
         )
 
 
-#: Programs whose payload holds a direct `eval`, each with what Node makes of it as a CommonJS file
-#: and as an ES module. The `eval` runs in the scope of the payload, which is global code; unpacked
-#: into a file that runs as a module, it would run in the scope of the file.
 A_PAYLOAD_HOLDING_A_DIRECT_EVAL = {
     'a Function body evaluating typeof require': FileProgram(
         a_program("""
@@ -941,8 +950,8 @@ class TestAPayloadHoldingADirectEvalStaysInItsString(TestBase):
     def test_each_payload_stays_as_written_where_the_file_runs_as_a_module(self):
         rows = A_PAYLOAD_HOLDING_A_DIRECT_EVAL
         written = {label: printed(row.text) for label, row in rows.items()}
-        # In a module the `var x` is the file's own, which the payload, run as global code, cannot
-        # name, so it goes as any name nothing reads does.
+        # The `var x` belongs to the file, which the payload, run as global code, cannot see, so
+        # nothing reads it.
         written['a Function body evaluating typeof of a name the file declares'] = printed(
             a_program("""
                 console.log(Function("return eval('typeof x')")());
@@ -966,9 +975,8 @@ class TestAPayloadHoldingADirectEvalStaysInItsString(TestBase):
         )
 
 
-#: Programs whose direct `eval` declares a name the scope it runs in already declares otherwise,
-#: each with what Node makes of it as a CommonJS file and as an ES module. A sloppy evaluation
-#: throws a `SyntaxError` the site catches; a strict one keeps the `var` to itself.
+#: As sloppy code the `eval` throws a `SyntaxError`, which the site catches; as strict code, in an
+#: ES module, it keeps the `var` to itself.
 A_DIRECT_EVAL_DECLARING_A_NAME_THE_SCOPE_DECLARES = {
     'a var the file declares with let after it': FileProgram(
         a_program("""
@@ -1013,9 +1021,6 @@ class TestADirectEvalDeclaringANameTheScopeDeclaresStillPrintsWhatItPrints(TestB
         )
 
 
-#: Packed programs asking `typeof` of a key the accessor object answers, each with what Node makes
-#: of it as a CommonJS file and as an ES module. A getter returning a name throws where nothing
-#: binds the name, which `typeof` of the bare name does not.
 A_PACKED_TYPEOF_OF_A_KEY = {
     'a getter returning a name nothing binds': FileProgram(
         a_program("""
@@ -1055,9 +1060,6 @@ class TestAPackedTypeofOfAKeyStillThrowsWhereItsGetterThrows(TestBase):
         )
 
 
-#: Packed programs writing a global through the accessor object with an operator that reads it as
-#: well, each with what Node makes of it as a CommonJS file and as an ES module. The global's getter
-#: and setter are written at the top of the file, so the setter's write is as strict as the file.
 A_PACKED_COMPOUND_WRITE_ON_A_GLOBAL = {
     'a compound write, an update and a logical assignment': FileProgram(
         a_program("""
@@ -1134,8 +1136,6 @@ class TestAPackedCompoundWriteOnAGlobalStillPrintsWhatItPrints(TestBase):
         )
 
 
-#: Packed programs whose access the bare name the accessor object answers with would not
-#: reproduce, each with what Node makes of it as a CommonJS file and as an ES module.
 A_PACKED_ACCESS_THE_BARE_NAME_DOES_NOT_REPRODUCE = {
     'a parameter text naming two parameters': FileProgram(
         a_program("""
@@ -1168,8 +1168,6 @@ class TestAPackedAccessTheBareNameDoesNotReproduceStillPrintsWhatItPrints(TestBa
         )
 
 
-#: The packer's output for an eleven-line fizzbuzz that reads no global it would map: the accessor
-#: object is empty.
 PACKED_FIZZBUZZ = (
     r'Function("ZvYyC4L","function fizzbuzz(limit){var lines=[];for(var i=1;i<=limit;i++){var '
     r'line=\"\";if(i%3===0){line+=\"Fizz\"}if(i%5===0){line+=\"Buzz\"}lines[\"push\"](line||St'
@@ -1177,9 +1175,6 @@ PACKED_FIZZBUZZ = (
     r'15));")({});'
 )
 
-#: The packer's output for the same fizzbuzz run on an undeclared global it assigns and adds to,
-#: printed beside what `typeof module` says and a name `require("path")` computes: getters, a
-#: setter, and a getter answering `typeof` for the program.
 PACKED_GLOBALS = (
     r'Function("ym9Tun8","function fizzbuzz(limit){var lines=[];for(var i=1;i<=limit;i++){var '
     r'line=\"\";if(i%3===0){line+=\"Fizz\"}if(i%5===0){line+=\"Buzz\"}lines[\"push\"](line||St'
@@ -1190,7 +1185,6 @@ PACKED_GLOBALS = (
     r'=ym9Tun8},get"VM9Zxy"(){return require},get"FCHW63"(){return typeof module}});'
 )
 
-#: The program `PACKED_GLOBALS` packs, as `refinery.djs` writes it once unpacked.
 PACKED_GLOBALS_UNPACKED = inspect.cleandoc(
     """
     function fizzbuzz(limit) {
@@ -1215,12 +1209,6 @@ PACKED_GLOBALS_UNPACKED = inspect.cleandoc(
 
 
 class TestThePackersOwnOutputIsUnpacked(TestBase):
-    """
-    The packer's own output for two small programs, deobfuscated as an analyst runs `refinery.djs`
-    on a Node script and read as text only. Each program writes through the accessor object only
-    where the accessors stand, at the top of the file, so it unpacks whether the file is known to be
-    CommonJS or may be an ES module as well.
-    """
 
     def _deobfuscated(self, source: str, *switches: str) -> str:
         return source.encode('utf8') | djs.assemble(*switches, '-e', 'node') | str
@@ -1242,10 +1230,6 @@ class TestThePackersOwnOutputIsUnpacked(TestBase):
                 )
 
 
-#: Programs reading a global by the indirect `eval` of its name where the reflection pass leaves the
-#: call standing, a local or a parameter of that name standing at the call, and handing on what it
-#: reads: the global object or a built-in, which an alias read by name would show. Each with what
-#: Node prints, and the reading it prints it under.
 AN_INDIRECT_EVAL_OF_A_NAME_WHOSE_VALUE_GOES_ON: dict[str, Program] = {
     'the global object beside a local of its name': Program(
         a_program("""

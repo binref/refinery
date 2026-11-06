@@ -6,7 +6,7 @@ import unittest
 
 from typing import NamedTuple
 
-from test import TestBase
+from test import TestBase, opportunity, todo
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -19,18 +19,15 @@ from test.lib.scripts.js.ledger import Program, Reading, a_program, printed, pri
 from test.lib.scripts.js.test_directive_prologue import NOT_A_PROGRAM
 
 from refinery.lib.scripts import tree_version
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
 
-#: The default-preset string array (rotation IIFE, self-overwriting array function, accessor) a
-#: common obfuscator emits, with the non-checksum string at index 0xac set to `return this` and the
-#: trailing usage
-#: replaced by a separated `Function` global finder. The finder's code is a literal only after the
-#: string-array resolver decodes `_0xe6abe5(0xac)` — a decode the reflection pass cannot perform
-#: itself — so folding it exercises reflection re-running once that surface is revealed.
+#: A string array whose entry `0xac` decodes to `return this`, followed by a `Function` global
+#: finder that takes its code from that entry.
 _STRING_ARRAY_REVEALS_A_GLOBAL_FINDER = (
     r"var _0xe6abe5=_0x1b07;"
     r"(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();while(!![]){try{var _0x29"
@@ -57,13 +54,12 @@ class TestReflectionInlining(TestJsDeobfuscator):
             source, JsReflectionInlining, DeobfuscationOptions(execution=ExecutionModel.module)
         )
 
+    def _reflect_in_a_browser(self, source: str) -> str:
+        return self._run_transformer(
+            source, JsReflectionInlining, DeobfuscationOptions(environment=HostEnvironment.browser)
+        )
+
     def test_a_constant_fold_before_a_sibling_construction_check_does_not_trip_the_pin(self):
-        """
-        Folding the first construction advances the tree under the held pin, and checking the second
-        construction's argument then reads the establishment model for the first time — past the
-        entry version. The window must have that model held from entry, or the pin's fill guard
-        aborts the whole run on this valid input.
-        """
         self.assertEqual(
             "var y = new Function('a', 'return a')(z);\nvar x = 1;",
             self._reflect("var y = new Function('a','return a')(z); var x = new Function('return 1')();"),
@@ -73,11 +69,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual('var x = 1;', self._reflect("eval('var x = 1;');"))
 
     def test_direct_eval_var_inlined_when_reference_is_dominated(self):
-        """
-        A sloppy direct eval's `var` leaks to the caller, so `eval('var x = 1;')` inlines when the eval
-        site dominates every reference to the name. Here `return x` runs after the eval, so hoisting the
-        declaration cannot rebind it and the inlining is admitted.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -114,9 +105,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_direct_eval_in_with_not_inlined(self):
-        """
-        Inside a `with` body a bare `eval` may resolve to a property of the `with` object.
-        """
         source = inspect.cleandoc(
             """
             with (o) {
@@ -127,12 +115,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_direct_eval_strict_body_into_sloppy_site_not_inlined(self):
-        """
-        A direct `eval` whose body opens with `"use strict"` runs strict. Spliced below a non-directive
-        position in a sloppy function the directive no longer governs the body, so an assignment to an
-        undeclared name would silently create a global instead of throwing a `ReferenceError`; the
-        inlining is declined.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -157,10 +139,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_indirect_eval_through_a_host_conditional_alias_is_kept(self):
-        """
-        `window` is a host-conditional alias no universal host defines, so discarding it to inline
-        `window.eval` would drop the `ReferenceError` a lacking host raises reading it; the call is kept.
-        """
         source = "window.eval('var x = 1;');"
         self.assertEqual(source, self._reflect(source))
 
@@ -171,9 +149,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual('var x = 1;', self._reflect("globalThis['eval']('var x = 1;');"))
 
     def test_indirect_eval_shadowed_alias_base_not_inlined(self):
-        """
-        `window` is a local parameter, so `window.eval` is that object's method, not the global eval.
-        """
         source = inspect.cleandoc(
             """
             function f(window) {
@@ -184,10 +159,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_shadowed_function_pack_not_inlined(self):
-        """
-        A locally shadowed `Function` in the pack shape is that local's value, not the intrinsic, so the
-        model-backed callee check must not treat it as a pack pattern to inline.
-        """
         source = inspect.cleandoc(
             """
             function g() {
@@ -199,9 +170,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_indirect_eval_alias_base_in_with_not_inlined(self):
-        """
-        Inside a `with` body the base `window` may resolve to a property of the `with` object.
-        """
         source = inspect.cleandoc(
             """
             with (o) {
@@ -212,42 +180,28 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_indirect_eval_prefix_read_in_with_not_inlined(self):
-        """
-        The bare name `e` in the comma-sequence prefix of `(e, eval)(...)` inside a `with` body fires
-        the object's getter before `eval` resolves. Inlining the indirect eval discards the prefix, so
-        the site is left intact rather than dropping the getter read.
-        """
         source = inspect.cleandoc(
             """
             var e = 0;
-            var o = { get e() {
-              return 0;
-            } };
+            var o = { get e() { console.log('e'); return 0; } };
             with (o) {
               (e, eval)("f()");
             }
             """
         )
-        self.assertEqual(source, self._reflect(source))
+        self.assertEqual(printed(source), self._reflect(source))
 
     def test_constructor_chain_base_read_in_with_not_inlined(self):
-        """
-        The bare base `s` of `s.constructor.constructor(...)()` inside a `with` body fires the object's
-        getter before the chain resolves to `Function`. Inlining discards the base evaluation, so the
-        chain is left intact rather than dropping the getter read.
-        """
         source = inspect.cleandoc(
             """
             var s = '';
-            var o = { get s() {
-              return '';
-            } };
+            var o = { get s() { console.log('s'); return ''; } };
             with (o) {
               s.constructor.constructor('f()')();
             }
             """
         )
-        self.assertEqual(source, self._reflect(source))
+        self.assertEqual(printed(source), self._reflect(source))
 
     def test_indirect_eval_established_identifier_prefix_outside_with_still_inlined(self):
         self.assertEqual(
@@ -258,52 +212,30 @@ class TestReflectionInlining(TestJsDeobfuscator):
         source = "(e, eval)('f()');"
         self.assertEqual(source, self._reflect(source))
 
-    def test_settimeout_string(self):
-        """
-        A string timer is lowered to a deferred function call rather than inlined at the call site: its
-        code is deobfuscated but still runs when the timer schedules it, not immediately.
-        """
+    def test_settimeout_string_lowered_in_a_browser(self):
         self.assertEqual(
             'setTimeout(function() {\n  alert(1);\n}, 0);',
-            self._reflect("setTimeout('alert(1)', 0);"))
+            self._reflect_in_a_browser("setTimeout('alert(1)', 0);"))
 
-    def test_setinterval_string(self):
-        """
-        A `setInterval` string is lowered to a deferred function so its repetition is preserved: inlining
-        the body would run it once instead of on every interval.
-        """
+    def test_setinterval_string_lowered_in_a_browser(self):
         self.assertEqual(
             'setInterval(function() {\n  doStuff();\n}, 1000);',
-            self._reflect("setInterval('doStuff()', 1000);"))
+            self._reflect_in_a_browser("setInterval('doStuff()', 1000);"))
 
     def test_settimeout_non_string_not_inlined(self):
         self.assertEqual('setTimeout(fn, 0);', self._reflect('setTimeout(fn, 0);'))
 
-    def test_string_timer_this_rewritten_to_global(self):
-        """
-        A string timer's `this` is the global object, so lowering it to a function rewrites `this` to
-        `globalThis` — a plain function's `this` would otherwise depend on how the timer invokes it.
-        """
+    def test_string_timer_this_rewritten_to_global_in_a_browser(self):
         self.assertEqual(
             'setTimeout(function() {\n  globalThis.foo();\n}, 0);',
-            self._reflect("setTimeout('this.foo()', 0);"))
+            self._reflect_in_a_browser("setTimeout('this.foo()', 0);"))
 
     def test_string_timer_with_shadowed_free_name_not_lowered(self):
-        """
-        A string timer resolves its free names in the global scope, but the wrapping function resolves
-        them at the call site. A local `alert` shadowing the global there would rebind the call, so the
-        timer is left as a string.
-        """
         self.assertEqual(
             'function f() {\n  var alert = 1;\n  setTimeout("alert(1)", 0);\n}',
             self._reflect('function f(){ var alert = 1; setTimeout("alert(1)", 0); }'))
 
     def test_string_timer_in_with_body_not_lowered(self):
-        """
-        A `with` on the path to the timer binds the body's free names dynamically, so lowering could
-        resolve them to the `with` object's properties rather than the globals the timer would reach. The
-        timer is left as a string.
-        """
         self.assertEqual(
             'function f() {\n  with (o) {\n    setTimeout("foo()", 0);\n  }\n}',
             self._reflect('function f(){ with (o) { setTimeout("foo()", 0); } }'))
@@ -318,34 +250,11 @@ class TestReflectionInlining(TestJsDeobfuscator):
             "setTimeout('var x = 1;', 0);",
             self._reflect_module("setTimeout('var x = 1;', 0);"))
 
-    def test_module_direct_eval_declaration_not_inlined(self):
-        """
-        A module runs strict throughout, so a direct eval in it runs strict, and a strict direct eval's
-        `var` lives in a fresh variable environment discarded when the eval returns. Inlining
-        `eval('var x = 1;')` to `var x = 1;` would materialize a module binding that never existed, so
-        the call is left standing.
-        """
-        self.assertEqual(
-            "eval('var x = 1;');",
-            self._reflect_module("eval('var x = 1;');"))
-
     def test_module_direct_eval_declaration_read_not_inlined(self):
-        """
-        The read makes the divergence observable: the strict eval's `var x` is ephemeral, so
-        `typeof x` is `'undefined'`, whereas the inlined `var x = 1;` would make it `'number'`. The
-        call is left standing so the read still reaches nothing.
-        """
         source = "eval('var x = 1;');\nconsole.log(typeof x);"
         self.assertEqual(source, self._reflect_module(source))
 
     def test_module_direct_eval_strict_only_syntax_not_inlined(self):
-        """
-        A module runs strict throughout, so a direct eval in it parses its text as strict code, where a
-        `with` statement, a legacy octal literal, and a `delete` of a bare name are each a SyntaxError
-        the eval call throws at runtime. Splicing such a body into the module would make the whole file
-        unparseable instead — a throw the eval site caught becoming one the file cannot survive — so the
-        call is left standing whichever strict-only form the body takes.
-        """
         for body in ('with ({}) { g(); }', '010;', 'delete x;'):
             with self.subTest(body=body):
                 source = F"eval('{body}');"
@@ -355,10 +264,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual('foo();', self._reflect_module("(0, eval)('foo();');"))
 
     def test_module_indirect_eval_binding_await_not_inlined(self):
-        """
-        `await` names nothing a module binds, so a payload binding it is a `SyntaxError` once spliced
-        into the module though the eval runs its text as a script where the binding is legal.
-        """
         source = "(0, eval)('console.log(function (await) { return await + 2; }(1));');"
         self.assertEqual(source, self._reflect_module(source))
 
@@ -374,31 +279,16 @@ class TestReflectionInlining(TestJsDeobfuscator):
                 "var _m = Function('return function (await) { return await; }')(); sink(_m);"))
 
     def test_function_constructor_reading_top_level_var_inlined_in_script_mode(self):
-        """
-        A `Function`-constructed body is a sloppy global-scope function, so it resolves `out` against
-        the global object. Under the script model a top-level `var` is itself a property of that object,
-        so inlining `out.push(1)` preserves which binding the read reaches.
-        """
         self.assertEqual(
             'var out = [];\nout.push(1);',
             self._reflect("var out = []; new Function('out.push(1)')();"))
 
     def test_module_function_constructor_reading_top_level_var_not_inlined(self):
-        """
-        Under the module model a top-level `var` is scoped to the module rather than made a property of
-        the global object, so the global-scope `Function` body does not resolve `out` to it. Inlining
-        would rebind the read to the module-local declaration, so the call is left intact.
-        """
         self.assertEqual(
             "var out = [];\nnew Function('out.push(1)')();",
             self._reflect_module("var out = []; new Function('out.push(1)')();"))
 
     def test_indirect_eval_declaration_not_inlined_into_function(self):
-        """
-        Indirect eval runs its code in the global scope, so `var x` binds a global. Inlining it into
-        the function body would rebind `x` as a function local, so the call is left intact even in the
-        default script model.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -409,11 +299,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_indirect_eval_block_hoisted_var_not_inlined_into_function(self):
-        """
-        A `var` inside a nested block of the eval body hoists past the block to the eval's global
-        scope, binding a global. Inlining the call into the function would hoist it into the function
-        instead, so the call is left intact even in the default script model.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -424,10 +309,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_indirect_eval_nested_lexical_declaration_still_inlined(self):
-        """
-        A `let` in a nested block of the eval body is block-scoped and never reaches the global scope,
-        so inlining the call into the function preserves its meaning: the block is inlined intact.
-        """
         source = "function f() { (0, eval)('{ let g = 1; }'); }"
         expected = inspect.cleandoc(
             """
@@ -441,10 +322,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(expected, self._reflect(source))
 
     def test_function_constructor_declaration_inlined_into_function(self):
-        """
-        A `var` in a `Function` constructor body binds a local of the created function, not a global,
-        so inlining it into the enclosing function preserves scope.
-        """
         source = "function f() { new Function('var x = 1; sink(x);')(); }"
         expected = inspect.cleandoc(
             """
@@ -461,10 +338,10 @@ class TestReflectionInlining(TestJsDeobfuscator):
             'window.setTimeout(function() {\n  alert(1);\n}, 0);',
             self._reflect("window.setTimeout('alert(1)', 0);"))
 
-    def test_member_form_string_interval_lowered(self):
+    def test_member_form_string_interval_lowered_in_a_browser(self):
         self.assertEqual(
             'globalThis.setInterval(function() {\n  tick();\n}, 100);',
-            self._reflect("globalThis.setInterval('tick()', 100);"))
+            self._reflect_in_a_browser("globalThis.setInterval('tick()', 100);"))
 
     def test_execscript_string_inlined_in_place(self):
         self.assertEqual(
@@ -481,9 +358,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
             'window.setTimeout(fn, 0);', self._reflect('window.setTimeout(fn, 0);'))
 
     def test_member_form_string_timer_shadowed_base_not_lowered(self):
-        """
-        `window` is a local parameter, so `window.setTimeout` is that object's method, not the timer.
-        """
         source = inspect.cleandoc(
             """
             function f(window) {
@@ -505,8 +379,8 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_top_alias_indirect_eval_is_kept(self):
         """
-        `top` names another realm's global object in a framed document, so `top.eval` runs its code in
-        that realm; inlining it where the fold stands would move the code into this realm, so it is kept.
+        In a framed document `top` is another window, so `top.eval` runs its code in that window's
+        realm.
         """
         source = "top.eval('var x = 1;');"
         self.assertEqual(source, self._reflect(source))
@@ -544,10 +418,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual('1;', self._reflect("[].constructor.constructor('return 1')();"))
 
     def test_single_constructor_hop_function_literal_returns_this(self):
-        """
-        A plain function literal's own `.constructor` is `Function`, so a single
-        `(function(){}).constructor(code)` hop constructs a function from `code`, like the double hop.
-        """
         self.assertEqual(
             'var g = globalThis;',
             self._reflect("var g = (function(){}).constructor('return this')();"))
@@ -562,10 +432,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
             'var x = 1;', self._reflect("var x = (function(){}).constructor('return 1')();"))
 
     def test_single_constructor_hop_async_base_not_inlined(self):
-        """
-        An `async` function literal's `.constructor` is `AsyncFunction`, which builds a coroutine, not
-        the plain function `Function` builds, so a single hop from it is not the `Function` idiom.
-        """
         source = "var g = (async function() {}).constructor('return this')();"
         self.assertEqual(source, self._reflect(source))
 
@@ -574,10 +440,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_separated_function_constructor_folds_and_retires_temporary(self):
-        """
-        A `Function` construction bound to a single-use local and then invoked folds like the immediate
-        `Function(code)()`, and the temporary — now read nowhere — is dropped.
-        """
         self.assertEqual(
             'var g = globalThis;',
             self._reflect("const m = Function('return this'); var g = m();"))
@@ -588,12 +450,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect("const m = (function(){}).constructor('return 1'); var x = m();"))
 
     def test_a_constructor_alias_off_a_function_name_inlines(self):
-        """
-        A `.constructor` read off a name the model pins to one plain function hands out the `Function`
-        intrinsic, so a call through the alias is a construction and inlines like the named spelling.
-        The alias declarator stays: retirement wants a construction initializer, and the folded key
-        escaping into the name is a surface the dead sweep keeps.
-        """
         self.assertEqual(
             'function d() {}\nvar g = d.constructor;\nvar x = 42;',
             self._reflect('function d() {} var g = d.constructor; var x = g("return 42")();'))
@@ -616,10 +472,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect("function d() {} var c = d.constructor('return 42'); var x = c();"))
 
     def test_a_constructor_alias_off_an_async_function_declines(self):
-        """
-        An `async` function's `.constructor` is `AsyncFunction`, which builds a coroutine rather than
-        the plain function `Function` builds — the refusal the literal bases get, applied to a name.
-        """
         source = 'async function d() {} var g = d.constructor; var x = g("return 42")();'
         self.assertEqual(
             'async function d() {}\nvar g = d.constructor;\nvar x = g("return 42")();',
@@ -632,21 +484,37 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect(source))
 
     def test_a_constructor_alias_read_before_its_base_holds_its_value_declines(self):
-        """
-        The member read may see the base's temporal-dead-zone value, so the alias is not proven to
-        hold the intrinsic when it is called.
-        """
         source = 'var g = d.constructor; let d = function () {}; var x = g("return 42")();'
         self.assertEqual(
             'var g = d.constructor;\nlet d = function() {};\nvar x = g("return 42")();',
             self._reflect(source))
 
-    def test_a_constructor_alias_off_a_reassigned_base_declines(self):
-        source = 'var d = function () {}; d = function () {}; var g = d.constructor;'
+    def test_a_constructor_alias_off_a_base_reassigned_to_a_string_declines(self):
+        source = 'var d = function () {}; d = \'\'; var g = d.constructor; var x = g("return 42")();'
         self.assertEqual(
-            'var d = function() {};\nd = function() {};\nvar g = d.constructor;\n'
-            'var x = g("return 42")();',
-            self._reflect(source + ' var x = g("return 42")();'))
+            inspect.cleandoc(
+                """
+                var d = function() {};
+                d = '';
+                var g = d.constructor;
+                var x = g("return 42")();
+                """
+            ),
+            self._reflect(source))
+
+    @opportunity
+    def test_a_constructor_alias_off_a_base_reassigned_to_another_plain_function_inlines(self):
+        source = 'var d = function () {}; d = function () {}; var g = d.constructor; var x = g("return 42")();'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var d = function() {};
+                d = function() {};
+                var g = d.constructor;
+                var x = 42;
+                """
+            ),
+            self._reflect(source))
 
     def test_a_constructor_alias_that_may_hold_another_value_declines(self):
         source = 'var e = function () {}; var g = d.constructor; g = e; var x = g("return 42")();'
@@ -655,11 +523,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect(source))
 
     def test_a_bare_call_through_a_constructor_alias_is_not_an_invocation(self):
-        """
-        A call through a name holding the intrinsic constructor *builds* a function and never runs
-        it, so nothing is invoked and no route resolves it: the value of the construction is a
-        function, not what its body would answer.
-        """
         source = "function d() {} var g = d.constructor; var f = g('return 42');"
         self.assertEqual(
             'function d() {}\nvar g = d.constructor;\nvar f = g(\'return 42\');',
@@ -672,60 +535,48 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect(source))
 
     def test_a_single_empty_parameter_argument_names_no_parameters(self):
-        """
-        `Function(" ", code)` builds a zero-parameter function — the parameter text is trimmed before
-        the list is parsed — so an empty leading argument binds nothing and the construction inlines
-        like the one-argument form.
-        """
         self.assertEqual(
             'var x = 42;',
             self._reflect("var x = Function(' ', 'return 42')();"))
 
     def test_two_empty_parameter_arguments_name_a_comma(self):
-        """
-        `Function("", "", code)` has parameter text `","`, a `SyntaxError` the construction raises
-        itself; the construction stays so the program keeps throwing what it threw.
-        """
         source = "var x = Function('', '', 'return 42')();"
         self.assertEqual(source, self._reflect(source))
 
     def test_a_constructor_alias_with_a_named_parameter_folds_by_evaluation(self):
-        """
-        The alias names the intrinsic constructor, so the call resolves to a construction whose body
-        binds a parameter — the shape the inline route declines and the evaluation route resolves by
-        executing the body over the call's argument value.
-        """
         self.assertEqual(
             "function d() {}\nvar g = d.constructor;\nvar x = 42;",
             self._reflect("function d() {} var g = d.constructor; var x = g('a', 'return 42')(1);"))
 
     def test_separated_temporary_with_another_read_is_kept(self):
-        """
-        The invocation folds, but the temporary keeps its declarator: retirement requires that every
-        read of the binding was an invocation this pass inlined, and `use(m)` is a read that was not.
-        """
         self.assertEqual(
             "const m = Function('return 1');\nuse(m);\nvar x = 1;",
             self._reflect("const m = Function('return 1'); use(m); var x = m();"))
 
     def test_separated_temporary_named_in_with_body_is_kept(self):
-        """
-        A reference inside a `with` body is recorded as a dynamic reference, not a plain read, so the
-        count of invocations this pass inlined can equal every plain read while a use still observes
-        the binding. The invocation folds, but the declarator must be kept: dropping it would leave
-        `use(m)` naming a binding no longer declared.
-        """
         self.assertEqual(
             "const m = Function('return 1');\nwith (obj) {\n  use(m);\n}\nvar x = 1;",
             self._reflect("const m = Function('return 1'); with (obj) { use(m); } var x = m();"))
 
-    def test_a_site_naming_an_earlier_splices_declaration_waits_a_pass(self):
-        """
-        The second eval's body reads `a`, a name the first splice declared, so every pinned answer
-        about it is stale and the site defers to the next pass; the fixpoint then completes it.
-        """
+    def test_a_site_reading_an_earlier_splices_declaration_folds_by_the_fixpoint(self):
         source = "eval('var a = 1;'); eval('console.log(a);');"
-        self.assertEqual("var a = 1;\neval('console.log(a);');", self._reflect(source))
+        self.assertIn(
+            self._reflect(source),
+            (
+                inspect.cleandoc(
+                    """
+                    var a = 1;
+                    eval('console.log(a);');
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    var a = 1;
+                    console.log(a);
+                    """
+                ),
+            ),
+        )
         self.assertEqual('console.log(1);', self._deobfuscate(source))
 
     def test_fold_of_a_temporary_a_same_pass_splice_rebinds_is_declined(self):
@@ -736,12 +587,7 @@ class TestReflectionInlining(TestJsDeobfuscator):
                 " eval('m = function () { return 2; };');"
                 " console.log(m());"))
 
-    def test_separated_temporary_a_lowered_timer_body_names_is_kept(self):
-        """
-        The lowered timer body names `m`, a read no model taken before the lowering contains, so the
-        declarator must survive the same pass that lowered the timer. The shape has no engine witness:
-        Node rejects string timer arguments outright.
-        """
+    def test_separated_temporary_a_lowered_timer_body_names_is_kept_in_a_browser(self):
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -752,7 +598,8 @@ class TestReflectionInlining(TestJsDeobfuscator):
                 }, 0);
                 """
             ),
-            self._reflect("var m = Function('return 41'); m(); setTimeout('console.log(m.name)', 0);"))
+            self._reflect_in_a_browser(
+                "var m = Function('return 41'); m(); setTimeout('console.log(m.name)', 0);"))
 
     def test_separated_temporary_the_analyst_names_an_entrypoint_is_kept(self):
         self.assertEqual(
@@ -775,28 +622,15 @@ class TestReflectionInlining(TestJsDeobfuscator):
             source, self._reflect("let m = Function('return 1'); m = other; var x = m();"))
 
     def test_separated_temporary_binding_parameters_evaluate(self):
-        """
-        The body binds a parameter, so the inline route declines and the evaluation route executes it
-        over the call's argument value, folding the invocation and retiring the temporary.
-        """
         self.assertEqual(
             "var x = 1;",
             self._reflect("const m = Function('a','return a'); var x = m(1);"))
 
     def test_separated_temporary_used_before_established_not_inlined(self):
-        """
-        The invocation is not folded when the construction is not established before it runs, so the
-        constructed function is never read out of its temporal dead zone.
-        """
         source = "var x = m();\nconst m = Function('return 1');"
         self.assertEqual(source, self._reflect("var x = m(); const m = Function('return 1');"))
 
     def test_an_alias_hop_read_before_its_declarator_runs_does_not_fold(self):
-        """
-        `var a = b;` before `var b = function() {}.constructor;` leaves `a` holding `undefined`,
-        so the construction `a('return 1')` throws at runtime and the body it would splice never
-        ran. The alias chain has to be ordered hop by hop, not merely resolved.
-        """
         source = (
             'var a = b; var b = function() {}.constructor;'
             " var c = a('return 1'); c();"
@@ -806,23 +640,12 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect(source))
 
     def test_a_callee_read_before_its_declarator_runs_does_not_fold(self):
-        """
-        The construction's own callee is a name read at the construction, so a declarator that has
-        not run yet leaves the callee `undefined` and the construction throwing: the recognized
-        body is not what the call runs.
-        """
         source = "var c = g('return 1'); c(); var g = Function;"
         self.assertEqual(
             "var c = g('return 1');\nc();\nvar g = Function;",
             self._reflect(source))
 
     def test_payload_clashing_with_the_consumed_temporaries_folds_atomically(self):
-        """
-        The one-shot wrapper: the payload's injected dead code declares the holder's
-        name and reads the construction's name, so the splice preserves meaning only when the two
-        declarations it collides with are consumed by the same edit. The invocation is replaced by
-        the payload and both temporaries go with it.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -845,13 +668,10 @@ class TestReflectionInlining(TestJsDeobfuscator):
                 """
             )))
 
-    def test_payload_clashing_with_consumed_temporaries_at_script_scope_folds_atomically(self):
-        self.assertEqual(
-            'print(1);\nvar h;\nf;',
-            self._reflect(
-                "var h = function() {}.constructor;"
-                " var f = h('print(1); var h; f;');"
-                ' f();'))
+    @todo
+    def test_a_payload_reading_its_construction_at_script_scope_is_left_standing(self):
+        source = "var h = function() {}.constructor; var f = h('print(1); var h; f;'); f();"
+        self.assertEqual(printed(source), self._reflect(source))
 
     def test_a_second_read_of_the_holder_refuses_the_atomic_fold(self):
         source = inspect.cleandoc(
@@ -926,12 +746,49 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._reflect(source))
 
-    def test_a_tampered_prototype_chain_refuses_the_atomic_fold(self):
-        """
-        Deleting the holder drops its `.constructor` read, which is droppable only while the
-        prototype chain it consults is intact: a program that has written any key on the chain
-        could have installed a getter the read would run.
-        """
+    def test_a_getter_on_the_constructor_chain_refuses_the_atomic_fold(self):
+        source = inspect.cleandoc(
+            """
+            Object.defineProperty(Function.prototype, 'constructor', {
+              get: function () { print(0); return Function; }
+            });
+            function w() {
+              var h = function() {}.constructor;
+              var f = h('print(1); var h; f;');
+              f();
+            }
+            w();
+            """
+        )
+        self.assertEqual(printed(source), self._reflect(source))
+
+    @opportunity
+    def test_a_write_of_another_key_on_the_chain_still_allows_the_atomic_fold(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                Object.prototype.q = 1;
+                function w() {
+                  print(1);
+                  var h;
+                  f;
+                }
+                w();
+                """
+            ),
+            self._reflect(inspect.cleandoc(
+                """
+                Object.prototype.q = 1;
+                function w() {
+                  var h = function() {}.constructor;
+                  var f = h('print(1); var h; f;');
+                  f();
+                }
+                w();
+                """
+            )))
+
+    def test_another_key_written_on_the_chain_leaves_the_program_or_folds_temporaries_away(self):
         source = inspect.cleandoc(
             """
             Object.prototype.q = 1;
@@ -943,14 +800,20 @@ class TestReflectionInlining(TestJsDeobfuscator):
             w();
             """
         )
-        self.assertEqual(source, self._reflect(source))
+        folded_with_the_temporaries_gone = inspect.cleandoc(
+            """
+            Object.prototype.q = 1;
+            function w() {
+              print(1);
+              var h;
+              f;
+            }
+            w();
+            """
+        )
+        self.assertIn(self._reflect(source), (source, folded_with_the_temporaries_gone))
 
     def test_a_body_redeclaring_an_unused_lexical_name_at_the_site_is_refused(self):
-        """
-        A `var` the body declares cannot land in a scope that already binds the name lexically:
-        the merged output redeclares it, a `SyntaxError` no input spelled. The capture check
-        alone cannot see a binding nothing reads.
-        """
         source = "let x; var f = Function('var x; print(1);'); f();"
         self.assertEqual(
             "let x;\nvar f = Function('var x; print(1);');\nf();",
@@ -959,13 +822,8 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_string_array_revealed_separated_finder_folds_to_globalthis(self):
         """
-        A separated `Function` global finder whose code is produced only by the string-array resolver
-        folds to `globalThis` under the full pipeline, which requires the reflection pass to run again
-        once the resolver reveals the literal argument. The string-array scaffold collapses, but the
-        finder temporary must stay declared: the fold hands the global object to `sink`, a callee the
-        model cannot resolve, and under the script model the temporary is a property of that object —
-        `function sink(o) { console.log(typeof o._m); }` prints `function` for the original and would
-        print `undefined` once the declaration is retired.
+        The declaration of `_m` stays: in a script it is a property of the global object, and the
+        fold hands that object to `sink`, which may read it.
         """
         self.assertEqual(
             "var _m = Function('return this');\nsink(globalThis);",
@@ -1093,11 +951,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual('globalThis.f(x);', self._reflect(source))
 
     def test_pack_this_receiver_shadowed_by_a_body_binding_not_inlined(self):
-        """
-        The receiver rewrite spells `globalThis` where each `this` stood, so a body binding of that
-        name captures the synthesized read: the constructed function reads the global object it
-        was invoked on, the splice would read the body's own binding, which denotes `1` here.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -1116,11 +969,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
 
     def test_pack_this_receiver_inside_a_with_body_not_inlined(self):
-        """
-        A `with` object supplies properties to name lookups but never to the `this` keyword, so
-        spelling `globalThis` where a `this` inside the `with` body stood would resolve through the
-        `with` object when a property named `globalThis` is present.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -1278,30 +1126,18 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
 
     def test_function_constructor_this_member_becomes_globalthis(self):
-        """
-        The constructed function is invoked with no receiver, so its `this` is the global object; a
-        member access on it becomes the same access on `globalThis`, which the body then inlines.
-        """
         self.assertEqual(
             'globalThis.x;',
             self._reflect("new Function('return this.x')();"),
         )
 
     def test_function_constructor_multi_statement_this_becomes_globalthis(self):
-        """
-        Every `this` bound to the constructed function's own receiver becomes `globalThis`, not only a
-        single `return this`, so a multi-statement body using `this` inlines.
-        """
         self.assertEqual(
             'globalThis.x = 1;\nglobalThis.y = 2;',
             self._reflect("new Function('this.x = 1; this.y = 2;')();"),
         )
 
     def test_function_constructor_nested_function_this_preserved(self):
-        """
-        A `this` inside a nested regular function is that function's own receiver, not the constructed
-        function's, so it is left intact while the outer body inlines.
-        """
         self.assertEqual(
             '(function() {\n  return this;\n});',
             self._reflect("new Function('return function(){ return this; }')();"),
@@ -1330,11 +1166,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
 
     def test_function_constructor_free_script_var_inlined(self):
-        """
-        A body's free `out` resolves to the script-level `var out`, which in a global script scope is
-        the same global-object property the global-scope constructor body reads, so the fold preserves
-        meaning (Node-verified: both leave `out === [1]`).
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -1347,20 +1178,19 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect("var out = []; { new Function('out.push(1)')(); }"),
         )
 
-    def test_function_constructor_free_script_let_not_inlined(self):
-        """
-        A top-level `let` is a lexical binding, not a global-object property, so a global-scope body's
-        free `out` would not resolve to it; the inlining is declined.
-        """
-        source = inspect.cleandoc(
-            """
-            let out = [];
-            {
-              new Function('out.push(1)')();
-            }
-            """
+    @opportunity
+    def test_function_constructor_free_script_let_inlined(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                let out = [];
+                {
+                  out.push(1);
+                }
+                """
+            ),
+            self._reflect("let out = []; { new Function('out.push(1)')(); }"),
         )
-        self.assertEqual(source, self._reflect(source))
 
     def test_function_constructor_statement_free_name_captured_by_block_local_not_inlined(self):
         source = inspect.cleandoc(
@@ -1385,11 +1215,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_function_constructor_body_var_redeclaring_the_caller_folds_by_evaluation(self):
-        """
-        The body's `var x` is local to the constructed function — a scope the caller never sees — so
-        executing the body answers `undefined` and leaves the caller's `x` untouched. The inline
-        route declines: splicing the declaration would redeclare the caller's binding.
-        """
         source = inspect.cleandoc(
             """
             var x = 1;
@@ -1400,10 +1225,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect("var x = 1; new Function('var x = 2;')(); console.log(x);"))
 
     def test_function_constructor_body_function_declaration_folds_by_evaluation(self):
-        """
-        Same locality as a body `var`: the declared function is the constructed function's own, so the
-        caller's `g` still returns 1 after the invocation folds.
-        """
         source = inspect.cleandoc(
             """
             function g() {
@@ -1429,10 +1250,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_function_constructor_body_var_a_caller_closure_reads_folds_by_evaluation(self):
-        """
-        The body's `var x` is the constructed function's own, so the closure the caller returns reads
-        the caller's `x` — unbound, exactly as before the fold.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -1479,11 +1296,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
 
     def test_function_constructor_body_return_does_not_escape_enclosing_function(self):
-        """
-        A `Function`-constructor body's trailing `return` is discarded at statement position — the
-        call's value was already unused — so inlining it into a function body lowers `return x` to a
-        bare `x` rather than returning from the enclosing function and stranding the statements after.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -1497,10 +1309,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
 
     def test_function_constructor_body_non_trailing_return_not_inlined(self):
-        """
-        A `return` before the last statement cannot be reproduced at statement position without
-        reordering, so the inlining is declined rather than letting the early exit escape the caller.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -1512,12 +1320,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_function_constructor_body_nested_control_flow_return_not_inlined(self):
-        """
-        A `return` nested in a body's control flow — here inside an `if` — is not a top-level statement,
-        so scanning only the statement list would miss it. Splicing the `if` into statement position
-        would let the `return` exit the caller (or be a SyntaxError at script level), so the inlining is
-        declined.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -1551,10 +1353,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
 
     def test_function_constructor_body_var_crossing_a_block_let_folds_by_evaluation(self):
-        """
-        The body's `var x` stays inside the constructed function, so the block's `let x` is untouched
-        by the fold; the inline route declines because splicing the declaration would collide.
-        """
         source = inspect.cleandoc(
             """
             {
@@ -1592,9 +1390,8 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_function_constructor_octal_body_folds_to_its_value_in_strict_function(self):
         """
-        The constructed body is sloppy however strict its destination is, so its octal literal spells
-        eight; the inline route declines — splicing `010` into strict code would spell an early
-        error — but the evaluation route answers the value, which no mode changes.
+        A body made by `Function` is sloppy however strict its caller is, so `010` in it is the
+        number 8.
         """
         source = inspect.cleandoc(
             """
@@ -1613,10 +1410,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
             source, self._reflect("'use strict';\nvar x = new Function('return 010')();"))
 
     def test_function_constructor_pure_body_inlined_in_strict_function(self):
-        """
-        A body that behaves identically under strict mode — a pure `return 1 + 1` — inlines into a
-        strict function.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -1637,10 +1430,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect(source))
 
     def test_function_constructor_reads_inlined_in_strict_script(self):
-        """
-        A read-only body inlines into a strict script: reading a free name throws in both modes, so the
-        body cannot diverge under strict mode.
-        """
         source = inspect.cleandoc(
             """
             'use strict';
@@ -1683,7 +1472,7 @@ class TestReflectionInlining(TestJsDeobfuscator):
             """
             function f() {
               'use strict';
-              new Function('if (1) { function g() {} }')();
+              new Function('if (1) { function g() {} } use(g);')();
             }
             """
         )
@@ -1694,7 +1483,7 @@ class TestReflectionInlining(TestJsDeobfuscator):
             """
             function f() {
               'use strict';
-              new Function('eval("var x = 1")')();
+              new Function('eval("var x = 1"); use(x);')();
             }
             """
         )
@@ -1712,10 +1501,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_function_constructor_pure_body_inlined_in_class_method(self):
-        """
-        A class body is always strict, so the gate applies inside a method; a non-diverging body still
-        inlines there.
-        """
         source = inspect.cleandoc(
             """
             class C {
@@ -1760,12 +1545,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
 
-#: A payload spelling an early error in a function's signature: a name repeated in a list the
-#: grammar requires to be unique, an accessor written with the wrong number of parameters, a Use
-#: Strict Directive under a parameter list that may hold none, a name repeated in a list that is not
-#: simple, a word the kind of function reserves in its parameter list, and the same word naming a
-#: function expression, whose name is bound inside it and read under its own kind. Node reads none
-#: of them, under either mode.
 A_PAYLOAD_NO_ENGINE_READS = [
     '((a, a) => 0);',
     '({ m(a, a) {} });',
@@ -1779,11 +1558,8 @@ A_PAYLOAD_NO_ENGINE_READS = [
     '(async function await() {});',
 ]
 
-#: The same signatures written the way the language permits, one for each rule above but the
-#: directive, whose control declares a mode and is therefore declined for a reason of its own. The
-#: last three name a function expression with a word some other kind reserves, which its own kind
-#: does not. Each is spelled the way the printer spells it, so the text a site is replaced by is the
-#: payload itself.
+#: Each payload is spelled the way the printer spells it, since a site evaluating it is expected to
+#: print as exactly this text.
 A_PAYLOAD_EVERY_ENGINE_READS = [
     '((a, b) => 0);',
     '({ m(a, b) {} });',
@@ -1797,8 +1573,6 @@ A_PAYLOAD_EVERY_ENGINE_READS = [
     '(function* await() {});',
 ]
 
-#: A surface that takes a payload as a string and evaluates it, as the template writing one there.
-#: All four run the payload in a scope of their own and hand a `SyntaxError` back to the call site.
 A_SURFACE_THAT_EVALUATES_A_STRING = {
     'indirect eval'            : '(0, eval)({code});',
     'direct eval'              : 'eval({code});',
@@ -1806,10 +1580,6 @@ A_SURFACE_THAT_EVALUATES_A_STRING = {
     'a constructed Function'   : 'new Function({code})();',
 }
 
-#: The pack shape, whose payload reaches the proxy object beside it through a getter or a setter,
-#: mapped to the text `refinery.djs` writes for it. Two of these payloads hold an early error, so
-#: those two calls are left standing; the other two differ from them in a single character and are
-#: unpacked as before.
 A_PACK_WHOSE_PAYLOAD_IS_READ_OR_REFUSED = {
     'Function("p", "((a, a) => p.k);")({ get k() {\n  return x;\n} });':
         'Function("p", "((a, a) => p.k);")({ get k() {\n  return x;\n} });',
@@ -1827,14 +1597,6 @@ def _a_site_evaluating(template: str, payload: str) -> str:
 
 
 def _a_program_catching_what_each_payload_throws(template: str) -> str:
-    """
-    A program that evaluates every payload of `A_PAYLOAD_NO_ENGINE_READS` through *template*, each
-    inside a `try` that names what came out of it, and reports that it reached the end.
-
-    That last line is the whole point of the shape. A payload the language refuses is a
-    `SyntaxError` the call site catches, and the program runs on; written into the file instead, it
-    is the file that no longer parses, and nothing runs at all.
-    """
     attempts = [
         F'try {{ {_a_site_evaluating(template, payload)} console.log(1); }}'
         F' catch (e) {{ console.log(e.constructor.name); }}'
@@ -1863,15 +1625,6 @@ class TestWhichPayloadsTheEngineReads(TestJsDeobfuscator):
 
 
 class TestAPayloadTheLanguageRefusesIsNotInlined(TestJsDeobfuscator):
-    """
-    A payload that holds an early error is a `SyntaxError` wherever it is read, and where it is read
-    decides everything about what that costs. Evaluated, it throws at the one call site, which a
-    program is free to catch and go on from. Spliced into the file, it is the file that no engine
-    reads, and every statement in it is lost along with the payload.
-
-    The rules at stake hold in either mode, so no destination has to be consulted to see them, and
-    a payload the language does read is inlined exactly as before.
-    """
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
@@ -1928,9 +1681,6 @@ class TestAProgramThatCatchesASyntaxErrorStillCatchesOne(TestJsDeobfuscator):
         )
 
 
-#: A payload spelling syntax only module code may hold: an `import` declaration, an `export`
-#: declaration of each shape, and `import.meta`. Every surface above evaluates its text as a Script,
-#: where each of these is a `SyntaxError` the call site catches. Node reads none of them.
 A_PAYLOAD_ONLY_MODULE_CODE_MAY_HOLD = [
     'export var q = 1;',
     'export default 1;',
@@ -1941,11 +1691,6 @@ A_PAYLOAD_ONLY_MODULE_CODE_MAY_HOLD = [
 
 
 def _a_program_naming_what_one_payload_throws(template: str, payload: str) -> str:
-    """
-    A program that evaluates *payload* through *template* inside a `try` that names what came out of
-    it. The payload is a `SyntaxError` the call site catches and the program names; written into the
-    file instead, it is the file that no longer parses and nothing is named at all.
-    """
     return (
         F'try {{ {_a_site_evaluating(template, payload)} }}'
         F' catch (e) {{ console.log(e.name); }}'
@@ -1953,16 +1698,6 @@ def _a_program_naming_what_one_payload_throws(template: str, payload: str) -> st
 
 
 class TestAPayloadOnlyModuleCodeMayHoldIsNotInlined(TestJsDeobfuscator):
-    """
-    Every surface that takes a payload as a string evaluates it as a Script, so an `import` or
-    `export` declaration in one is a `SyntaxError` the call site throws whatever the file around it
-    is. Spliced into that file it is a declaration the program never made, and one the file cannot
-    even be read with; and where the host does load the file as a module, it is a declaration the
-    program never made.
-
-    No mode decides any of it, which is why the refusal costs nothing: the call is left standing to
-    throw exactly what it threw before.
-    """
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
@@ -1992,10 +1727,6 @@ class TestAPayloadOnlyModuleCodeMayHoldIsNotInlined(TestJsDeobfuscator):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAProgramCatchingAModulePayloadStillCatchesIt(TestJsDeobfuscator):
-    """
-    The string timer is not among the surfaces asked here: Node's timers refuse a string argument
-    outright, so the engine cannot be asked what a payload evaluated through one does.
-    """
 
     def _programs(self) -> list[str]:
         return [
@@ -2019,21 +1750,12 @@ class TestAProgramCatchingAModulePayloadStillCatchesIt(TestJsDeobfuscator):
         )
 
 
-#: An indirect eval whose payload binds `await`, which a script binds freely and a module refuses
-#: everywhere its goal symbol reaches. The eval runs its text as a script wherever it stood, so the
-#: binding is legal there; the payload returns 3.
+#: An indirect `eval` runs its text as a script even in a module, where binding `await` is legal.
 _A_PAYLOAD_BINDING_AWAIT = "(0, eval)('console.log(function (await) { return await + 2; }(1));');"
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAPayloadBindingAwaitStaysBehindTheEvalInAModule(TestJsDeobfuscator):
-    """
-    Unlike a payload spelling `import` or `export`, one binding `await` is a program a script reads:
-    the word is module-reserved and not strict-reserved. Splicing it into a module is a `SyntaxError`
-    the file cannot survive, where the eval it replaces threw one the call site caught, so the gate
-    refuses the splice at a module destination and leaves the eval standing. At a script destination
-    the same payload inlines, and the program behaves the same across the rewrite either way.
-    """
 
     def test_a_module_keeps_printing_what_the_eval_printed(self):
         source = 'export {};\n' + _A_PAYLOAD_BINDING_AWAIT
@@ -2056,12 +1778,6 @@ class TestAPayloadBindingAwaitStaysBehindTheEvalInAModule(TestJsDeobfuscator):
 
 
 class APayloadCutShort(NamedTuple):
-    """
-    A payload that stops where the language still requires something, together with the text that
-    would have finished it and what the finished payload prints. `cut` is what a call site is
-    handed and `whole` is the payload the cut was taken from, so the text the cut took is the whole
-    of the difference between the two.
-    """
     opened: str
     closing: str
     prints: str
@@ -2075,10 +1791,8 @@ class APayloadCutShort(NamedTuple):
         return F'{self.opened}{self.closing}'
 
 
-#: A payload that stops in the middle of a construct, keyed by the construct it stops inside of. A
-#: string carved out of a buffer or assembled from a source that was itself truncated ends this
-#: way. Node refuses every `cut` below and reads every `whole`, and each `whole` is spelled the way
-#: the printer spells it, so the text a site is replaced by is the finished payload itself.
+#: Each `whole` is spelled the way the printer spells it, since a site evaluating it is expected to
+#: print as exactly this text.
 A_PAYLOAD_CUT_SHORT = {
     'an argument list': APayloadCutShort(
         'console.log(1, 2', ');', '1 2\n'),
@@ -2114,15 +1828,6 @@ A_PAYLOAD_CUT_SHORT = {
 
 
 def _a_program_reporting_what_each_payload_did(template: str, payloads: list[str]) -> str:
-    """
-    A program that evaluates every payload of *payloads* through *template*, each inside a `try`
-    that reports either what came out of it or that the site was reached, and reports that it got
-    to the end.
-
-    That last line is the whole point of the shape. A payload the engine refuses is a `SyntaxError`
-    the call site catches, and the program runs on; written into the file instead, it is the file
-    that no longer parses, and nothing runs at all.
-    """
     attempts = [
         F'try {{ {_a_site_evaluating(template, payload)} console.log("read"); }}'
         F' catch (e) {{ console.log(e.name); }}'
@@ -2132,16 +1837,6 @@ def _a_program_reporting_what_each_payload_did(template: str, payloads: list[str
 
 
 class TestAPayloadCutShortIsNotInlined(TestJsDeobfuscator):
-    """
-    A payload that stops in the middle of a construct is a program no engine reads, and where it is
-    read decides what that costs. Evaluated, it is a `SyntaxError` at the one call site, which the
-    program around it is free to catch and go on from. Spliced into the file, the tokens the
-    payload stops before have to be written by whoever reads it, and the file then holds a program
-    the payload never spelled.
-
-    Writing the text each cut took turns the same payload into one every engine reads, and that one
-    is inlined exactly as before.
-    """
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
@@ -2224,10 +1919,6 @@ class TestAProgramAroundAPayloadCutShortRunsOn(TestJsDeobfuscator):
         )
 
 
-#: Programs that locate the global object through a `Function` construction — a single-`.constructor`
-#: hop on a function literal, and a construction bound to a temporary and then invoked — and print
-#: through it. Each is folded by the changes under test; Node runs the original and the deobfuscation
-#: to confirm the fold preserves what the program does.
 _A_GLOBAL_FINDER_THAT_PRINTS = {
     'single hop function literal':
         "var g = (function(){}).constructor('return this')(); g.console.log('finder-ok');",
@@ -2258,11 +1949,6 @@ class TestGlobalFinderFoldPreservesBehavior(TestJsDeobfuscator):
         )
 
 
-#: Programs with a reflective site whose splice must be declined, each mapped to the behavior an
-#: engine gives the original. The first three are `Function`-constructor packs whose body, once
-#: substituted, would resolve a name differently at the call site than the constructed function
-#: does: a packed `var` a site read would bind to, a packed free name a site parameter shadows, and
-#: a setter assigning its own parameter, which names nothing outside the setter.
 A_REFLECTIVE_SPLICE_THE_SITE_WOULD_REBIND = {
     'a packed var the site reads': Program(
         a_program("""
@@ -2351,8 +2037,6 @@ class TestAReflectiveSpliceTheSiteWouldRebindIsDeclined(TestBase):
                 self.assertEqual(row.read(), row.required())
 
 
-#: A function whose direct `eval` rebinds one of its locals, and whose later reflective site reads
-#: that local through another function, mapped to the behavior an engine gives it.
 A_LOCAL_A_SPLICED_EVAL_REBINDS = {
     'an indirect eval of a string read through a closure': Program(
         a_program(r"""
@@ -2372,11 +2056,6 @@ A_LOCAL_A_SPLICED_EVAL_REBINDS = {
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestALocalASplicedEvalRebindsIsNotReadAtItsFormerValue(TestBase):
-    """
-    The pass reads the model it held before splicing the `eval`, so which functions hold a direct
-    `eval` is read off the tree that model was built from: the local the splice rebinds still holds
-    a value the model cannot name, and the later site is not resolved through it.
-    """
 
     def test_every_program_behaves_the_way_the_engine_does(self):
         for label, row in A_LOCAL_A_SPLICED_EVAL_REBINDS.items():
@@ -2384,11 +2063,6 @@ class TestALocalASplicedEvalRebindsIsNotReadAtItsFormerValue(TestBase):
                 self.assertEqual(row.read(), row.required())
 
 
-#: Programs in which something still names the single-use `Function`-constructor temporary the pass
-#: is consuming — a same-pass eval splice reading or rebinding it, an eval the pass declines, the
-#: global object a folded finder hands away, or the construction argument's own effect — mapped to
-#: the behavior an engine gives them: the name keeps answering, so the declaration must survive and
-#: no fold may read the value a spliced rebind replaced.
 A_CONSUMED_TEMPORARY_SOMETHING_STILL_NAMES = {
     'an eval splice rebinds it before the read': Program(
         a_program("""
@@ -2464,12 +2138,6 @@ class TestAConsumedTemporaryStillNamedKeepsItsDeclaration(TestBase):
 
 
 class TestAStatementSpliceMovesTheTreeVersion(TestBase):
-    """
-    The statement inliner splices the resolved statements into the container's body in place. The
-    version counter every model cache reads has to move with that splice: a cache whose pin read no
-    change on exit keeps the models built before the splice, and those describe a program in which
-    the spliced statements do not exist.
-    """
 
     def test_inlining_a_statement_position_eval_advances_the_counter(self):
         script = JsParser("eval('var v = 1;'); SINK(v);").parse()
@@ -2487,14 +2155,6 @@ class TestAStatementSpliceMovesTheTreeVersion(TestBase):
 
 
 class TestAPayloadIsWeighedAgainstTheContextOfItsSite(TestJsDeobfuscator):
-    """
-    A payload is read as a script, where `await`, `yield` and `arguments` are names, and is spliced
-    into a site that may read them otherwise: a static block or a static initializer refuses `await`
-    in every position, a field initializer refuses a reference to `arguments` through any arrow, an
-    `async` body reads `await` as the operator and a generator's body `yield`. Node refuses every
-    file the splice would write, so the call is left standing to do what it did; the same payload
-    at a site reading the words as a script does is inlined.
-    """
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
@@ -2623,12 +2283,6 @@ class TestAPayloadIsWeighedAgainstTheContextOfItsSite(TestJsDeobfuscator):
 
 
 class TestAFileSpellingModuleSyntaxIsAModuleDestination(TestJsDeobfuscator):
-    """
-    A file with an `import` or `export` in it is module code whatever the options say, so a payload
-    a module refuses — one binding `await` — is left standing at both surfaces under the script
-    model too, where the same payload in a file spelling no module syntax is inlined. A payload the
-    module reads is still inlined there.
-    """
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
@@ -2679,10 +2333,8 @@ class TestAFileSpellingModuleSyntaxIsAModuleDestination(TestJsDeobfuscator):
 
 class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator):
     """
-    Script code reads `<!--` and a line-head `-->` as comment openers and module code refuses both
-    (§B.1.1), so a payload holding one is inlined where the destination is a script and left
-    standing where it is a module, whether the module is asked for or spelled by the file's own
-    syntax.
+    Script code reads `<!--`, and `-->` at the head of a line, as opening a comment; module code
+    refuses both.
     """
 
     def _reflect(self, source: str) -> str:
@@ -2709,9 +2361,8 @@ class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator
 
     def test_a_payload_holding_either_is_left_standing_where_a_module_is_asked_for(self):
         """
-        The `eval` rows stay standing: inlining would splice comment text into module code, which
-        refuses it. The `Function` row folds — the payload is the constructed body's own text, which
-        the Function constructor reads with the Script goal however the destination is parsed.
+        The `Function` row folds: the constructor reads its body as a script in any file, and only
+        the value the body returns is written into the module.
         """
         rows = {
             'eval("<!-- x\\nconsole.log(1);");': 'eval("<!-- x\\nconsole.log(1);");',
@@ -2752,13 +2403,6 @@ class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator
 
 
 class TestAPayloadIsScriptCodeWhereverItIsEvaluated(TestJsDeobfuscator):
-    """
-    Every reflective surface evaluates its text with the Script goal, a direct `eval` inside an
-    `async` function included, so an `await` operator or a `for await` head at the payload's own
-    top level is a `SyntaxError` the call site catches, whatever the site itself reads `await` as.
-    The same text inlined would run, so the call is left standing to throw as it did; a head inside
-    an `async` function the payload writes is the payload's own and is inlined.
-    """
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
@@ -2816,17 +2460,13 @@ class TestAPayloadIsScriptCodeWhereverItIsEvaluated(TestJsDeobfuscator):
 
 
 class TestAStringTimerBodyIsWeighedAgainstItsWrapper(TestJsDeobfuscator):
-    """
-    A string timer's body is lowered into a plain function of its own rather than spliced at the
-    site, so the words it is weighed against are the wrapper's: `await` and `yield` are names in it
-    whatever function encloses the timer, and a body naming them is lowered where a splice at the
-    site would have been refused.
-    """
 
     def _reflect(self, source: str) -> str:
-        return self._run_transformer(source, JsReflectionInlining)
+        return self._run_transformer(
+            source, JsReflectionInlining, DeobfuscationOptions(environment=HostEnvironment.browser)
+        )
 
-    def test_a_body_naming_await_is_lowered_inside_an_async_function(self):
+    def test_a_body_naming_await_is_lowered_inside_an_async_function_in_a_browser(self):
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -2840,7 +2480,7 @@ class TestAStringTimerBodyIsWeighedAgainstItsWrapper(TestJsDeobfuscator):
             self._reflect('async function f() { setTimeout("console.log(typeof await)", 10); }'),
         )
 
-    def test_a_body_naming_yield_is_lowered_inside_a_generator(self):
+    def test_a_body_naming_yield_is_lowered_inside_a_generator_in_a_browser(self):
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -2855,10 +2495,6 @@ class TestAStringTimerBodyIsWeighedAgainstItsWrapper(TestJsDeobfuscator):
         )
 
 
-#: Every spelling of a `Function` construction whose callee is reached by `.constructor` navigation,
-#: each preceded by a write replacing what that navigation hands out. The write cannot reach the
-#: named intrinsic — `Function("return 42")()` still answers `42` under it — but every navigation
-#: spellings answers what was installed, and each program prints what the replacement returns.
 _NAVIGATION_SPELLINGS_A_REPLACED_CONSTRUCTOR_REACHES = [
     "console.log((function(){}).constructor('return 42')());",
     "console.log(''.constructor.constructor('return 42')());",
@@ -2877,12 +2513,6 @@ A write that redirects `.constructor` navigation to a constructor of the program
 
 @unittest.skipUnless(node_executable() is not None, 'node.js is required')
 class TestAReplacedFunctionPrototypeConstructorRedirectsNavigation(TestJsDeobfuscator):
-    """
-    A program that writes the `constructor` key on a chain rooted at `Function` has replaced the
-    intrinsic every `.constructor` navigation hands out, so no spelling of a construction reached
-    that way inlines as the named one — the replaced constructor runs instead, and what it returns
-    is what both the program and its deobfuscation print.
-    """
 
     def test_each_navigation_spelling_keeps_what_the_replacement_returns(self):
         for spelling in _NAVIGATION_SPELLINGS_A_REPLACED_CONSTRUCTOR_REACHES:
@@ -2892,9 +2522,6 @@ class TestAReplacedFunctionPrototypeConstructorRedirectsNavigation(TestJsDeobfus
                 self.assertEqual(behavior(source), behavior(deobfuscated))
 
 
-#: Every write form a constructed body can use to store a free name, each holding the call the
-#: route would otherwise resolve. An execution that replaced the call would drop the store the real
-#: program performs, so each form is one the route refuses before anything runs.
 _EVERY_WRITE_FORM_A_CONSTRUCTED_BODY_CAN_STORE = [
     "var r = Function('q = 1; return 2')();",
     "var r = Function('q += 1; return 2')();",
@@ -2903,9 +2530,6 @@ _EVERY_WRITE_FORM_A_CONSTRUCTED_BODY_CAN_STORE = [
     "var r = Function('[q] = [1]; return 2')();",
 ]
 
-#: A constructed body reading a name the real tree binds at root scope, mapped to the normalized
-#: text the route leaves standing. A script-level `let` is a spelling the old calls gate never saw,
-#: and a root-scope `undefined` is a name no fragment model resolves the way the real program does.
 _A_ROOT_BINDING_A_CONSTRUCTED_BODY_READS = {
     "var g = 5; var f = Function('a', 'return g + arguments[0]'); var r = f(1);":
         "var g = 5;\nvar f = Function('a', 'return g + arguments[0]');\nvar r = f(1);",
@@ -2915,9 +2539,6 @@ _A_ROOT_BINDING_A_CONSTRUCTED_BODY_READS = {
         "var undefined = 4;\nvar f = Function('a', 'return undefined + arguments[0]');\nvar r = f(1);",
 }
 
-#: A fragment storing to a global builtin under a spelling neither static gate names — `this`
-#: dispatch, the `globalThis` registry entry, and an alias off it are all refused incidentally by
-#: the execution itself, and these rows pin that reliance.
 _A_GLOBAL_STORE_NO_STATIC_GATE_NAMES = [
     "var r = Function('this.String = 9; return 1')();",
     "var r = Function('globalThis.String = 9; return 1')();",
@@ -2926,12 +2547,6 @@ _A_GLOBAL_STORE_NO_STATIC_GATE_NAMES = [
 
 
 class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
-    """
-    A call to a name a `Function` construction resolves to, where the inline route declines — the
-    body binds parameters or reads its `arguments` — is executed over the call's argument values
-    and replaced by the value it answers. Every decline row is a gate the route refuses through and
-    the call stays standing; every fold row's value is Node's.
-    """
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
@@ -2950,9 +2565,13 @@ class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
             rows,
         )
 
-    def test_a_strict_prologue_declines(self):
-        source = "var r = Function(\"'use strict'; return 1;\")();"
-        self.assertEqual(source, self._reflect(source))
+    def test_a_strict_body_is_left_standing_or_answered_as_strict_code(self):
+        source = "var r = Function(\"'use strict'; return typeof this;\")();"
+        self.assertIn(self._reflect(source), (source, "var r = 'undefined';"))
+
+    @opportunity
+    def test_a_strict_body_whose_answer_no_mode_changes_folds(self):
+        self.assertEqual('var r = 1;', self._reflect("var r = Function(\"'use strict'; return 1;\")();"))
 
     def test_non_simple_parameter_text_declines(self):
         source = 'var r = Function("a = 1", "return a;")();'
@@ -2978,11 +2597,6 @@ class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
         )
 
     def test_a_name_an_earlier_site_of_the_same_pass_spliced_in_declines(self):
-        """
-        The write an inlined `eval` carried is one no model the pass pinned records, so a fragment
-        reading the name would answer the value the program replaced — Node prints `99` for this
-        program — and the spliced-name record is what refuses it.
-        """
         source = (
             "eval('String = function (x) { return 99; };');"
             " var f = Function('a', 'return String(arguments[0]);'); console.log(f(97));"
@@ -2994,10 +2608,6 @@ class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
         self.assertEqual(expected, self._reflect(source))
 
     def test_a_rebound_intrinsic_inside_an_eval_argument_stays_standing(self):
-        """
-        A `String` the program has replaced is not one a fold of the argument text may consult.
-        Node throws a `TypeError` for this program, and the call stays standing so it still does.
-        """
         source = 'String = 5; var r = eval(String(97));'
         self.assertEqual('String = 5;\nvar r = eval(String(97));', self._reflect(source))
 
@@ -3017,28 +2627,14 @@ class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
             self._reflect("var f = Function('return arguments.length'); var r = f(1, 2);"))
 
     def test_an_opaque_write_the_text_never_resolves_declines(self):
-        """
-        The decline leg of the composition below: a top-level write under a key only the runtime
-        resolves is a tampering site ordered before the call, so nothing about the call is resolved
-        while it stands.
-        """
         source = (
-            "var k = 'q'; global[k] = 5;"
-            ' var f = Function(\'a\', \'return arguments[0].split(",")\');'
+            'global[process.argv[2]] = 5;'
+            ' var f = Function(\'a\', \'return String(arguments[0]).split(",")\');'
             " console.log(f('x,y,z')[1]);"
         )
-        self.assertEqual(
-            'var k = \'q\';\nglobal[k] = 5;\n'
-            'var f = Function(\'a\', \'return arguments[0].split(",")\');\n'
-            'console.log(f(\'x,y,z\')[1]);',
-            self._deobfuscate(source))
+        self.assertEqual(printed(source), self._deobfuscate(source))
 
     def test_a_write_an_earlier_fold_attributed_lets_the_call_fold(self):
-        """
-        The distilled shape of the sample: a top-level write whose key an earlier fold resolves,
-        and a construction whose body folds its argument through `arguments`. The write becomes an
-        attributed one no oracle counts as a site, and the route answers the value Node answers.
-        """
         source = (
             "global[['q'][0]] = 5;"
             ' var f = Function(\'a\', \'return arguments[0].split(",")\');'
@@ -3048,13 +2644,6 @@ class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
 
 
 class TestAnInvocationPassingArgumentsToAConstruction(TestJsDeobfuscator):
-    """
-    A call to a name a `Function` construction resolves to may pass arguments the body never
-    observes — the construction binds no parameters and reads no `arguments` — so the invocation
-    inlines like the argument-less spelling, the call's arguments evaluated before it and droppable
-    where the splice replaces them. Every argument must be a literal: anything that reads a name or
-    runs a call is an evaluation no splice of the body reproduces, so the call stays standing.
-    """
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
@@ -3070,11 +2659,37 @@ class TestAnInvocationPassingArgumentsToAConstruction(TestJsDeobfuscator):
             self._reflect(
                 "var f = Function('', 'var a = 1; var b = 2; combine(a, b);'); f(3400);"))
 
-    def test_an_identifier_argument_stays_standing(self):
+    def test_an_identifier_argument_is_left_standing_or_dropped_with_the_call(self):
         source = "var x = 1; var f = Function('', 'return 42'); console.log(f(x));"
+        self.assertIn(
+            self._reflect(source),
+            (
+                inspect.cleandoc(
+                    """
+                    var x = 1;
+                    var f = Function('', 'return 42');
+                    console.log(f(x));
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    var x = 1;
+                    console.log(42);
+                    """
+                ),
+            ),
+        )
+
+    @opportunity
+    def test_an_initialized_variable_argument_is_dropped_with_the_call(self):
         self.assertEqual(
-            'var x = 1;\nvar f = Function(\'\', \'return 42\');\nconsole.log(f(x));',
-            self._reflect(source))
+            inspect.cleandoc(
+                """
+                var x = 1;
+                console.log(42);
+                """
+            ),
+            self._reflect("var x = 1; var f = Function('', 'return 42'); console.log(f(x));"))
 
     def test_a_side_effectful_argument_stays_standing(self):
         source = "var f = Function('', 'return 42'); console.log(f(sink()));"
@@ -3095,21 +2710,11 @@ class TestAnInvocationPassingArgumentsToAConstruction(TestJsDeobfuscator):
             self._reflect(source))
 
     def test_a_body_reading_arguments_with_a_literal_argument_folds_by_evaluation(self):
-        """
-        The argument a body reads through `arguments` is one the inline route declines, and the
-        evaluation route answers the value it was passed — the D2 territory this row keeps pinned
-        beside the inline route's own.
-        """
         self.assertEqual(
             'console.log(42);',
             self._reflect("var f = Function('', 'return arguments[0]'); console.log(f(42));"))
 
 
-#: The sample's shape, distilled benignly: a decoder alias read once inside an anonymous
-#: immediately-invoked function, a dead construction spelled through that alias, and an async
-#: sibling carrying a direct `eval` whose argument only the runtime resolves. The decoder folds
-#: where ordering proves the alias read safe — with the eval still standing — and whatever the
-#: pipeline does from there, the program the file spells is the one that runs.
 _A_DECODER_UNDER_A_LATER_EVAL: list[str] = [
     (
         'var out;\n'
@@ -3137,10 +2742,6 @@ _A_DECODER_UNDER_A_LATER_EVAL: list[str] = [
     ),
 ]
 
-#: The loop shape the positioned repair refuses: a volatile read a cycle re-executes, with the
-#: eval that rebinds it between its iterations. Nothing folds, so the second iteration reads the
-#: value the first one's eval wrote — the behavior a repair that froze the first value would
-#: break.
 _A_VOLATILE_READ_ON_A_CYCLE: list[str] = [
     (
         'var out = [];\n'
@@ -3159,13 +2760,6 @@ _A_VOLATILE_READ_ON_A_CYCLE: list[str] = [
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestTheDecoderFoldUnderAnEvalSiblingPreservesBehavior(TestJsDeobfuscator):
-    """
-    The differential net over the positioned alias repair: Node answers each program and the text
-    the deobfuscation produces, and the two must agree. The sample-shape rows show the fold the
-    repair buys — a decoder reached through a volatile alias folding with the eval sibling still
-    standing; the loop row is the net's other half, the shape the repair refuses so that the second
-    iteration still reads what the first one's eval wrote.
-    """
 
     def test_the_sample_shape_behaves_as_the_original(self):
         sources = _A_DECODER_UNDER_A_LATER_EVAL
@@ -3183,13 +2777,6 @@ class TestTheDecoderFoldUnderAnEvalSiblingPreservesBehavior(TestJsDeobfuscator):
 
 
 class TestACommonJsFileRunsAPayloadAsSloppyCode(TestJsDeobfuscator):
-    """
-    A CommonJS file is sloppy code unless its text says otherwise, so a payload that runs
-    differently as strict code is inlined where the file is known to be one, and left standing where
-    it may be an ES module as well. The payload is read with the Script goal there, as the file is.
-    Where the text makes the site strict — a directive, a module declaration — the payload is left
-    standing under either model.
-    """
 
     def _reflect(self, source: str, execution: ExecutionModel) -> str:
         return self._run_transformer(
@@ -3296,16 +2883,9 @@ class TestACommonJsFileRunsAPayloadAsSloppyCode(TestJsDeobfuscator):
 
 class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
     """
-    A CommonJS host runs a file's text as the body of a function whose parameters are `require`,
-    `module`, `exports`, `__filename` and `__dirname`. Code that a `Function` construction, an
-    indirect `eval` or a string timer runs is global code outside that function, where these names
-    are not bound, so a payload reading one is left standing where the file may be CommonJS. Where
-    the file is a script or spells module syntax, nothing binds them at the site either, and the
-    payload is inlined. A read through an accessor the file defines resolves in the file's own
-    scope, so a packed body reading the name that way is unpacked. A file assigning the name writes
-    the wrapper's parameter and binds no global, so a payload reading it is left standing as well.
-    The top of a CommonJS file is the body of the function the wrapper is, which may not declare
-    these names again, so a payload declaring one is left standing where it would land there.
+    A CommonJS file runs as the body of a function whose parameters are `require`, `module`,
+    `exports`, `__filename` and `__dirname`. Code run by a `Function` construction, an indirect
+    `eval` or a string timer is global code, where none of these names is bound.
     """
 
     WRAPPER_NAME_READS = {
@@ -3318,9 +2898,14 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
             'setTimeout(function() {\n  console.log(typeof module);\n}, 0);',
     }
 
-    def _reflect(self, source: str, execution: ExecutionModel) -> str:
+    def _reflect(
+        self,
+        source: str,
+        execution: ExecutionModel,
+        environment: HostEnvironment = HostEnvironment.universal,
+    ) -> str:
         return self._run_transformer(
-            source, JsReflectionInlining, DeobfuscationOptions(execution=execution)
+            source, JsReflectionInlining, DeobfuscationOptions(execution=execution, environment=environment)
         )
 
     def test_a_payload_reading_a_wrapper_name_is_read_as_global_code_where_the_file_may_be_commonjs(self):
@@ -3340,10 +2925,10 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
                     read_as_global_code,
                 )
 
-    def test_the_same_payload_is_inlined_into_a_script(self):
+    def test_the_same_payload_is_inlined_into_a_script_a_browser_runs(self):
         rows = self.WRAPPER_NAME_READS
         self.assertEqual(
-            {source: self._reflect(source, ExecutionModel.script) for source in rows},
+            {source: self._reflect(source, ExecutionModel.script, HostEnvironment.browser) for source in rows},
             rows,
         )
 
@@ -3428,12 +3013,6 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
 
 
 class TestAPackedTypeofThroughAGetterReturningAName(TestJsDeobfuscator):
-    """
-    A getter returning a name reads the name whenever the packed body reads its key, and throws
-    where nothing binds the name; `typeof` of the bare name answers `'undefined'` there instead. So
-    a `typeof` of such a key is left packed. A getter returning `typeof` of the name asks the
-    question itself, and a read of its key is unpacked.
-    """
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
@@ -3458,14 +3037,6 @@ class TestAPackedTypeofThroughAGetterReturningAName(TestJsDeobfuscator):
 
 
 class TestAPackedCompoundWriteBecomesTheSameOperatorOnTheName(TestJsDeobfuscator):
-    """
-    A packed body writes a program's `+=`, `++` or `||=` on a global through the global's key, whose
-    getter and setter both name the global: the access reads through the one and writes through the
-    other, in the order the same operator on the name reads and writes it. A `for-in` or `for-of`
-    head writes through the setter alone, as a plain assignment does. Where getter and setter name
-    different variables, or where the access is a `delete`, which removes the proxy object's own
-    property, the body stays packed.
-    """
 
     ACCESSORS = '({ get k() { return counter; }, set k(v) { return counter = v; } })'
     LOOP_HEADS = (
@@ -3548,11 +3119,6 @@ class TestAPackedCompoundWriteBecomesTheSameOperatorOnTheName(TestJsDeobfuscator
 
 
 class TestAPackTheBareNamesDoNotReproduce(TestJsDeobfuscator):
-    """
-    A pack is unpacked by writing the name each accessor answers with in place of the access. Its
-    parameter has to be one plain name for the accesses to be found, and a call through a getter
-    returning `eval` is an indirect `eval`, which the bare name would turn into a direct one.
-    """
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)

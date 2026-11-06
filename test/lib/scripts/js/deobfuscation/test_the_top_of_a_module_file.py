@@ -1,15 +1,9 @@
-"""
-The names at the top of a module of either kind are the file's own: only the file's text can name
-them, so a reflection surface elsewhere in the file keeps the names a removal takes only where the
-surface can reach them. In a script the same names are globals, which global code names at runtime,
-and a surface keeps them all.
-"""
 from __future__ import annotations
 
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.ledger import (
     FileProgram,
@@ -25,8 +19,6 @@ from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.options import ExecutionModel
 
 
-#: Programs with a reflection surface beside names at the top of the file, each with what Node makes
-#: of it as a CommonJS file and as an ES module.
 A_NAME_AT_THE_TOP_OF_A_FILE_WITH_A_SURFACE = {
     'a dead name at the top of a file with a runtime-keyed global write': FileProgram(
         a_program("""
@@ -148,4 +140,21 @@ class TestANameNothingReadsGoesFromTheTopOfAModuleFile(TestBase):
                 )
 
     def test_a_global_of_a_script_stays_where_global_code_may_read_it(self):
-        self.assertEqual(deobfuscate_source(self.SOURCE, execution=ExecutionModel.script), printed(self.SOURCE))
+        source = a_program("""
+            var v = 1;
+            function f() {
+              return 2;
+            }
+            console.log(globalThis[process.argv[2]]);
+            """)
+        self.assertEqual(deobfuscate_source(source, execution=ExecutionModel.script), printed(source))
+
+    @opportunity
+    def test_a_global_of_a_script_nothing_reads_goes_beside_a_write_under_a_runtime_key(self):
+        self.assertEqual(
+            deobfuscate_source(self.SOURCE, execution=ExecutionModel.script),
+            inspect.cleandoc("""
+                globalThis[process.argv.length > 99 ? "a" : "b"] = 2;
+                console.log(3);
+                """),
+        )

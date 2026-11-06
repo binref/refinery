@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import printed
@@ -19,10 +19,19 @@ from refinery.lib.scripts.js.model import (
 from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
-#: Functions whose parameter list ends in a rest pattern and whose `length` nothing reads, mapped to
-#: the list the pass writes for each and to what Node prints for the program either way: the
-#: pattern alone, after a parameter, holding a default, a hole and a rest element, in strict code
-#: reading its own `arguments`, and in an arrow function.
+AN_EMPTY_REST_PATTERN = 'function f(...[]) { return 1; } console.log(f());'
+AN_EMPTY_REST_PATTERN_DROPPED = inspect.cleandoc(
+    """
+    function f() {
+      return 1;
+    }
+    console.log(f());
+    """
+)
+
+#: A name inside a rest pattern counts nothing toward the function's `length` and never aliases
+#: `arguments`. As a plain parameter it counts, and in sloppy code with a simple parameter list it
+#: aliases `arguments`.
 A_REST_PATTERN_WRITTEN_AS_PARAMETERS: dict[str, tuple[str, str]] = {
     'function f(...[a, b]) { return a + b; } console.log(f(1, 2));': (
         inspect.cleandoc(
@@ -103,15 +112,10 @@ A_REST_PATTERN_WRITTEN_AS_PARAMETERS: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: Functions whose parameter list ends in a rest pattern that the pass leaves, mapped to what Node
-#: prints for each: the `length` is read, the function is handed to a caller the text does not
-#: show, a sloppy body reads its own `arguments`, which plain names would alias, the pattern is
-#: empty, and a class extending the function reads its `length` through `super`.
 A_REST_PATTERN_LEFT_AS_IT_IS: dict[str, str] = {
     'function f(...[a, b]) { return a + b; } console.log(f.length, f(1, 2));': '0 3\n',
     'function f(...[a, b]) { return a + b; } console.log([1].map(f).join());': '1\n',
     'function f(...[a, b]) { a = 9; return arguments[0] + b; } console.log(f(1, 2));': '3\n',
-    'function f(...[]) { return 1; } console.log(f());': '1\n',
     'function f(...[a, b]) { return a + b; } class B extends f { static { console.log(super.length); } }'
     ' console.log(f(1, 2));': '0\n3\n',
 }
@@ -136,11 +140,22 @@ class TestARestPatternBecomesParameters(TestJsDeobfuscator):
             {source: printed(source) for source in rows},
         )
 
+    def test_an_empty_rest_pattern_is_left_as_it_is_or_dropped(self):
+        self.assertIn(
+            self._write(AN_EMPTY_REST_PATTERN),
+            (printed(AN_EMPTY_REST_PATTERN), AN_EMPTY_REST_PATTERN_DROPPED),
+        )
+
+    @opportunity
+    def test_an_empty_rest_pattern_is_dropped(self):
+        self.assertEqual(self._write(AN_EMPTY_REST_PATTERN), AN_EMPTY_REST_PATTERN_DROPPED)
+
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_node_prints_the_same_before_and_after_the_pass(self):
         rows = {
             **{source: prints for source, (_, prints) in A_REST_PATTERN_WRITTEN_AS_PARAMETERS.items()},
             **A_REST_PATTERN_LEFT_AS_IT_IS,
+            AN_EMPTY_REST_PATTERN: '1\n',
         }
         self.assertEqual(
             {source: (behavior(source), behavior(self._write(source))) for source in rows},

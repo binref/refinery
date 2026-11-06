@@ -1,19 +1,7 @@
 """
-An array literal holds one element for every position its commas spell, and a position that was
-left empty is a hole rather than a value. `[1, , 2]` is three long and so is `[1, 2, ,]`, while
-`[1, 2, ]` is two: the last comma there separates nothing that follows it. How many commas an array
-is written with is therefore the whole of how long it is, which makes it the whole of what the
-printer has to write back — a hole at the end is spelled by the comma that would have followed it,
-and dropping that comma hands back an array one shorter than the one that was read.
-
-The same commas between the brackets of a destructuring pattern decide how many values are pulled
-out of the iterator on the right, so every shape below is written twice: once as a literal filled
-with number literals, and once as a pattern filled with names, on the left of an assignment and of
-a declaration.
-
-Node.js decides how long each array is. Every recorded length is re-measured by the tests from the
-shape as it was written and from the shape as the printer writes it, so no row can go stale into a
-claim nothing checks.
+An array literal or array pattern has as many positions as it has commas, plus one if an element
+stands right before `]`: `[1, 2, ]` has two and `[1, 2, ,]` has three. A hole at the end is spelled
+by a comma of its own, which the printer has to keep.
 
 SECURITY: the only text handed to the engine is an array literal of number literals, hand-authored
 here. Nothing from `samples` may ever be fed to this.
@@ -34,13 +22,6 @@ from refinery.lib.scripts.js.synth import JsSynthesizer
 
 
 class Shape(NamedTuple):
-    """
-    One spelling of the commas between a pair of brackets, written twice: `literal` fills the
-    positions with number literals and `pattern` fills them with names, so both are written with
-    the same commas and hold the same number of positions. `length` is what Node reports for
-    `literal`, `holes` names the positions no element was written in, and the two printed texts are
-    what the synthesizer writes for each.
-    """
     literal: str
     pattern: str
     length: int
@@ -66,10 +47,6 @@ SHAPES = (
 
 
 class Written(NamedTuple):
-    """
-    One statement holding one bracketed list, the text the printer writes for that statement, and
-    what the commas of the list spell.
-    """
     source: str
     printed: str
     length: int
@@ -99,9 +76,6 @@ PATTERNS = tuple(
 
 
 def _bracketed_list(source: str) -> JsArrayExpression | JsArrayPattern:
-    """
-    The one array literal or array pattern in *source*.
-    """
     return [
         node for node in JsParser(source).parse().walk_in_order()
         if isinstance(node, (JsArrayExpression, JsArrayPattern))
@@ -119,9 +93,6 @@ def _printed(source: str) -> str:
 
 
 def _lengths_according_to_node(literals: tuple[str, ...]) -> list[int]:
-    """
-    The `length` Node reports for each array literal in *literals*.
-    """
     reads = ', '.join(F'{literal}.length' for literal in literals)
     out, error = behavior(F'console.log(JSON.stringify([{reads}]));\n')
     if error is not None:
@@ -131,11 +102,6 @@ def _lengths_according_to_node(literals: tuple[str, ...]) -> list[int]:
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodeIsTheAuthorityOnHowLongAnArrayIs(TestBase):
-    """
-    Every length this module states is an answer Node gave, and it is asked again here for the
-    literal as written and for the literal as printed. The second is the one the printer is judged
-    by: a text that comes back one element shorter is a different array, whatever it looks like.
-    """
 
     def test_every_recorded_length_is_the_length_node_reports(self):
         self.assertEqual(

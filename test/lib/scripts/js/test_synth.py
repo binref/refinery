@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from test import TestBase
 
+from refinery.lib.scripts import canonical, spells_its_source
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
@@ -45,8 +46,14 @@ class TestJsSynthesizer(TestBase):
     def _round_trip(self, source: str):
         synth = JsSynthesizer()
         ast1 = JsParser(source).parse()
+        self.assertTrue(spells_its_source(ast1), F'{source!r} was not read as a program')
         out1 = synth.convert(ast1)
         ast2 = JsParser(out1).parse()
+        self.assertEqual(
+            canonical(ast1),
+            canonical(ast2),
+            F'Printing changed the program:\nInput: {source!r}\nPrinted: {out1!r}',
+        )
         out2 = synth.convert(ast2)
         self.assertEqual(
             out1, out2,
@@ -297,10 +304,10 @@ class TestJsSynthesizer(TestBase):
         self.assertNotRegex(out, r'return[ \t]*\n')
         self.assertIn('sendStorage(value)', out)
 
-    def test_negative_number_operand_after_newline(self):
+    def test_a_negative_number_after_a_newline_prints_as_a_negated_argument(self):
         source = 'x = f(\n  alphaaaaaaaaa,\n  -680876936\n);'
         out = JsSynthesizer().convert(JsParser(source).parse())
-        self.assertIn('-680876936', out)
+        self.assertEqual(out, 'x = f(alphaaaaaaaaa, -680876936);')
 
     def _assert_synth_valid(self, node, expected: str):
         out = JsSynthesizer().convert(node)
@@ -535,9 +542,6 @@ class TestJsSynthesizer(TestBase):
         node = JsArrowFunctionExpression(params=[], body=body)
         self._assert_synth_valid(node, '() => ({ a } = obj)')
 
-    def test_break_statement(self):
-        self._round_trip('outer: while (true) { break outer; }')
-
     def test_break_label(self):
         self._round_trip('outer: while (true) { break outer; }')
 
@@ -650,7 +654,7 @@ class TestJsSynthesizer(TestBase):
         self._round_trip('class A { static { this.x = 1; } }')
 
     def test_static_block_with_var_and_loop(self):
-        self._round_trip('class A { static { var t = 0; for (var i = 0; i < 3; i++) t += i; } }')
+        self._round_trip('class A { static { var t = 0; for (var i = 0; i < 3; i++) { t += i; } } }')
 
     def test_static_field_named_static(self):
         self._round_trip('class A { static x = 1; }')
@@ -694,15 +698,8 @@ class TestJsSynthesizer(TestBase):
 
 class TestByteArrayGrid(TestBase):
     """
-    A long array of byte-valued integers is printed as a grid of fixed-width hex values instead of one
-    element per line, which is what makes an embedded key or ciphertext block readable rather than a screen
-    of vertical noise. Hex is what buys the alignment — decimal `15` and `216` differ in width — so the
-    radix and the row structure are one feature.
-
-    The refusals carry as much weight as the grid itself. Rewriting a literal's spelling is something this
-    synthesizer otherwise does only under an explicit option, so the trigger has to be exactly the case the
-    grid improves on: an array that would have been broken across lines anyway, every element of which is a
-    byte. An array that fits on its line must come out untouched.
+    A byte array too long for its line is printed as a grid of two-digit hex values instead of one
+    element per line; every other array keeps its spelling.
     """
 
     @staticmethod
@@ -711,9 +708,6 @@ class TestByteArrayGrid(TestBase):
 
     @staticmethod
     def _array_values(source: str) -> list:
-        """
-        Every array literal's element values, so a change of spelling can be shown to preserve them.
-        """
         return [
             [
                 element.value if isinstance(element, JsNumericLiteral) else type(element).__name__
@@ -727,10 +721,6 @@ class TestByteArrayGrid(TestBase):
         return F'var a = [{", ".join(str(v) for v in values)}{extra}];'
 
     def test_long_byte_array_is_emitted_as_a_hex_grid(self):
-        """
-        45 three-digit values are 223 columns as written, so this array is one the synthesizer would have
-        broken up regardless; the grid is what it is broken into.
-        """
         source = self._elements([
             15, 216, 150, 85, 200, 21, 150, 34, 117, 192, 188, 159, 55, 161, 212,
             83, 194, 215, 4, 31, 78, 146, 105, 234, 185, 106, 130, 223, 47, 187,
@@ -758,38 +748,21 @@ class TestByteArrayGrid(TestBase):
         self.assertEqual('var a = [200, 201, 202];', self._emit('var a = [200, 201, 202];'))
 
     def test_small_values_that_fit_as_decimal_are_untouched(self):
-        """
-        The decision rests on the width of the elements as written, not as hex: `0x05` is wider than `5`, so
-        judging by the hex form would break up a line that was never going to overflow.
-        """
         source = self._elements([5] * 40)
         self.assertEqual(source, self._emit(source))
 
     def test_too_few_values_to_fill_a_row_are_not_rewritten(self):
-        """
-        A long name can push even a two-element array past the line limit, but two values are not a grid —
-        converting them to hex would change how the literals are spelled and return nothing for it. The
-        array is still broken onto its own lines, just left in the radix it was written in.
-        """
         result = self._emit(F'var {"name" * 32} = [200, 201];')
         self.assertNotIn('0x', result)
         self.assertEqual(['  200,', '  201'], result.splitlines()[1:3])
 
     def test_a_single_out_of_range_value_declines_the_grid(self):
-        """
-        One value above `0xFF` disqualifies the whole array, since a grid of two-digit cells cannot
-        represent it. The array is long enough to overflow, so it still gets broken up — just not gridded.
-        """
         source = self._elements([200] * 45 + [256])
         result = self._emit(source)
         self.assertNotIn('0x', result)
         self.assertEqual('  200,', result.splitlines()[1])
 
     def test_a_negative_value_declines_the_grid(self):
-        """
-        `-1` parses as a negation applied to `1`, so a check that only inspected literal values would see a
-        byte here and print `0x01`, dropping the sign.
-        """
         result = self._emit(self._elements([200] * 45, extra=', -1'))
         self.assertNotIn('0x', result)
         self.assertEqual('  -1', result.splitlines()[-2])
@@ -808,10 +781,6 @@ class TestByteArrayGrid(TestBase):
         self.assertEqual('  1.5,', result.splitlines()[1])
 
     def test_a_source_hex_array_is_gridded_too(self):
-        """
-        The feature is about how bytes are laid out, not about converting decimal, so an array already
-        written in hex gets the same treatment.
-        """
         source = 'var a = [' + ', '.join(['0xC8'] * 45) + '];'
         result = self._emit(source)
         self.assertEqual(self._array_values(source), self._array_values(result))
@@ -821,10 +790,6 @@ class TestByteArrayGrid(TestBase):
         )
 
     def test_an_array_pattern_is_never_gridded(self):
-        """
-        The grid shares its emitter with array destructuring, where the elements are binding targets and a
-        numeric literal cannot appear.
-        """
         source = 'var [' + ', '.join(F'variable{i}' for i in range(30)) + '] = xs;'
         result = self._emit(source)
         self.assertNotIn('0x', result)
@@ -839,12 +804,6 @@ class TestByteArrayGrid(TestBase):
         self.assertEqual(']);', result.splitlines()[-1])
 
     def test_no_byte_array_is_ever_broken_one_element_per_line(self):
-        """
-        Whether to grid is *predicted* from the element widths, while the fallback *measures* overflow as it
-        emits. If those two disagreed, a byte array could decline the grid and then be broken one element per
-        line — the very layout the grid exists to replace. Swept across lengths, values, and the indentation
-        the surrounding declaration forces.
-        """
         stragglers = []
         for count in (16, 20, 32, 45, 64, 80):
             for prefix in (1, 20, 40, 80, 110, 125):
@@ -854,4 +813,3 @@ class TestByteArrayGrid(TestBase):
                     if any(line.strip().rstrip(',').isdigit() for line in body[1:-1]):
                         stragglers.append((count, prefix, value))
         self.assertEqual([], stragglers)
-

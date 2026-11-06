@@ -1,25 +1,15 @@
 """
-What a class element's own code reads `await`, `yield` and `arguments` as, and whether the tool
-reads the same texts the language does.
+A field initializer and a static block are each a function context of their own (§15.7.1), not the
+body of the function around the class: `yield` is a name in both, and so is `await` in an instance
+initializer, while a static block and a static initializer refuse `await` in every position. Both
+refuse a reference to `arguments` through any arrow, but not through a function. A computed key and
+a heritage clause keep the readings of whatever encloses the class.
 
-A field initializer and a static block are each a function context of their own (§15.7.1): neither
-is the body of the function around the class, so `yield` is a name in both wherever they stand, and
-so is `await` in an instance initializer, while a static block and a static initializer refuse
-`await` in every position. Both refuse a reference to `arguments`, through any arrow but not through
-a function. A computed key and a heritage clause are not the element's own code and keep the
-readings of whatever encloses the class.
+V8 refuses `await` in a static initializer as an unexpected reserved word, also inside an `async`
+function and with `var await = 1` in scope, where an instance initializer reads the variable.
 
-Node decides every expectation here. The question put to it is whether it reads a text at all, and
-the law is that `refinery.lib.scripts.is_well_formed` answers the same: a tree the engine refuses is
-no program to print, and a program the engine reads must come back one. Where a file prints
-something, what it prints has to survive being printed and being deobfuscated.
-
-The static initializer's verdict is V8's: `class C { static p = await; }` is refused with
-`SyntaxError: Unexpected reserved word`, and so is the same class inside an `async` function and
-with `var await = 1` in scope, where the instance initializer `p = await` reads the variable.
-
-SECURITY: every snippet here is hand-authored and benign, and running it is what makes the engine
-the oracle. Nothing from `samples` may ever be fed to this.
+SECURITY: every snippet here is hand-authored and benign, and Node runs it. Nothing from `samples`
+may ever be fed to this.
 """
 from __future__ import annotations
 
@@ -52,10 +42,6 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.parser import JsParser
 
-#: A class element binding or referring to a word its own context refuses, written so that the
-#: word stands where a name stands. Node refuses every one of these files, and the collector
-#: reports on every one of them under either seed: the tree spells the word as the name it was
-#: written as, and the refusal is an early error over that name.
 A_CLASS_ELEMENT_NAMING_A_WORD_IT_REFUSES = [
     'class C { static { var await = 1; } }',
     'function f() { class C { static { var await = 1; } } }',
@@ -78,10 +64,6 @@ A_CLASS_ELEMENT_NAMING_A_WORD_IT_REFUSES = [
     'class C { p = () => arguments; }',
 ]
 
-#: A class element written with an operator its own context has no reading for, or with `await`
-#: where a static element refuses the word outright. Node refuses every one of these files. The
-#: grammar has no tree for them, so the parser refuses them on its own and what the collector says
-#: about the repair is not asked.
 A_CLASS_ELEMENT_WITH_A_READING_IT_DOES_NOT_HAVE = [
     'async function f() { class C { p = await x; } }',
     'async function f() { class C { p = await 1; } }',
@@ -100,9 +82,6 @@ A_CLASS_ELEMENT_WITH_A_READING_IT_DOES_NOT_HAVE = [
     'class C { static { var f = function () { await 1; } } }',
 ]
 
-#: The same words in the positions a class element reads them as the enclosing code would, or in
-#: an instance initializer, where `await` is a name whatever the function around the class is.
-#: Node reads every one of these files and the collector reports nothing about them.
 A_CLASS_ELEMENT_NODE_READS = [
     'async function f() { class C { p = await; } }',
     'async function h() { class C { p = (await) => 1; } }',
@@ -136,7 +115,6 @@ A_CLASS_ELEMENT_NODE_READS = [
     'class C { m() { return arguments; } }',
 ]
 
-#: Files of the shapes above that print, and what Node prints for each.
 A_CLASS_ELEMENT_THAT_PRINTS = {
     'var await = 41; class C { p = await; } console.log(new C().p);':
         prints('41'),
@@ -158,10 +136,6 @@ A_CLASS_ELEMENT_THAT_PRINTS = {
         prints('7'),
 }
 
-#: The kinds of thing the parser reads a spelling of `await` or `yield` as. Each stands only where
-#: the context the model answers for its node reads it that way: an `await` operator where the
-#: model reads the operator, a `for await` head where the model reads the head, and a name where
-#: the word is one.
 THE_KINDS_OF_READING = frozenset({
     'await operator',
     'for await',
@@ -172,11 +146,6 @@ THE_KINDS_OF_READING = frozenset({
 
 
 def _readings_taken_in(source: str) -> list[tuple[str, bool]]:
-    """
-    Every spelling of `await` and `yield` in the tree of *source*, as the kind of thing the parser
-    read it as and whether the context the model answers for its position reads it that way, in
-    tree order.
-    """
     readings: list[tuple[str, bool]] = []
     for node in JsParser(source).parse().walk():
         context = code_context_at(node)
@@ -215,10 +184,6 @@ class TestWhatNodeMakesOfAClassElementsOwnCode(TestBase):
 
 
 class TestTheVerdictAnswersAsNodeDoes(TestBase):
-    """
-    `refinery.lib.scripts.is_well_formed` is the tool's answer to the question Node was asked, so
-    the two agree on every file of the three corpora.
-    """
 
     def test_an_element_naming_a_word_it_refuses_is_no_program(self):
         rows = A_CLASS_ELEMENT_NAMING_A_WORD_IT_REFUSES
@@ -240,11 +205,6 @@ class TestTheVerdictAnswersAsNodeDoes(TestBase):
 
 
 class TestTheCollectorReportsWhereTheTreeSpellsTheRefusedWord(TestBase):
-    """
-    The refusal belongs to the class element and not to the mode, so the collector reports on the
-    same files under either seed, which is what makes it usable as a gate on a payload whose
-    destination is one of these elements.
-    """
 
     def test_it_reports_on_every_element_naming_a_word_it_refuses_under_a_sloppy_seed(self):
         rows = A_CLASS_ELEMENT_NAMING_A_WORD_IT_REFUSES
@@ -279,13 +239,6 @@ class TestAPrintingFileKeepsWhatItPrints(TestBase):
 
 
 class TestTheParserReadsEachWordAsTheModelSaysItStands(TestBase):
-    """
-    The parser descends `refinery.lib.scripts.js.model.CodeContext` as it builds the tree, and the
-    model folds the same context back out of the finished tree, so on every program the two agree:
-    every `await` operator the tree holds stands where the model reads the operator, and every
-    `await` or `yield` name where the model reads a name. The corpus is every program this module
-    and its neighbours know to be one, plus one program per node kind.
-    """
 
     @staticmethod
     def _programs() -> list[str]:

@@ -1,13 +1,9 @@
 """
-A property the global object holds before a script runs: `Math` in every host, `top`, `history`
-and `status` in a browser window. A `var` of such a name at the top of a classic script declares no
-property of its own but names the host's, so no pass may turn a variable of the program into one
-(`refinery.lib.scripts.js.analysis.model.SemanticModel.lands_on_the_host`), and where the property
-keeps a value of its own when a store is made into it, the program's own `var` of the name is not
-read as a variable either, nor is a store into it dropped as one nothing reads
-(`refinery.lib.scripts.js.analysis.model.SemanticModel.kept_by_the_host`).
-Each program is written by hand, and each row says what Node prints for it, run as a classic
-script, in the window `test.lib.scripts.js.ledger` sets up where the row says so.
+A property the global object holds before a script runs: `Math` in every host, `top`, `history` and
+`status` in a browser window. A `var` of such a name at the top of a classic script creates no
+variable of its own but names the host's property.
+
+Node runs every program here: each must be written by hand, never taken from a sample.
 """
 from __future__ import annotations
 
@@ -19,8 +15,6 @@ from test.lib.scripts.js.ledger import Program, Reading, a_program, before_and_a
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 
-#: Classic scripts keeping a value in a variable or key of their own named like a property the global
-#: object holds, mapped to what a host prints for each: the host's property never holds the value.
 A_VALUE_OF_ITS_OWN_NAMED_LIKE_A_PROPERTY_THE_HOST_HOLDS: dict[str, Program] = {
     'a key top of an object of its own': Program(
         a_program("""
@@ -72,9 +66,8 @@ class TestAValueOfItsOwnNamedLikeAPropertyTheHostHoldsStaysItsOwn(TestBase):
                 self.assertEqual(row.read(), row.required())
 
 
-#: Classic scripts storing into a property the global object holds and keeps a value of its own in,
-#: under a `var` at their top or a name they never declare, mapped to what a host prints for each:
-#: a store into it is ignored, or kept as a string.
+#: A store into a property the host keeps its own value in is ignored, or keeps the value converted
+#: to a string: a read does not give back what was stored.
 A_NAME_OF_A_PROPERTY_THE_HOST_KEEPS_ITS_OWN_VALUE_IN: dict[str, Program] = {
     'a number stored into the var status and compared': Program(
         a_program("""
@@ -157,10 +150,6 @@ class TestANameOfAPropertyTheHostKeepsItsOwnValueInIsNoVariable(TestBase):
                 self.assertEqual(row.read(), row.required())
 
 
-#: A strict region assigning to one of the global names that is not writable, mapped to the behavior
-#: Node gives it: the pair of what it prints and what it throws. The write is refused in every row,
-#: so the statement does exactly one thing and that thing is throw. What varies is where the mode
-#: comes from, how the assignment is spelled, and whether anything catches what it throws.
 A_STRICT_REGION_ASSIGNING_TO_A_NON_WRITABLE_GLOBAL = {
     "'use strict';\nNaN = 1;\nconsole.log(1);\n": ('', 'TypeError'),
     "'use strict';\nundefined = 1;\nconsole.log(1);\n": ('', 'TypeError'),

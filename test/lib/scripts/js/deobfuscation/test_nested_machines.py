@@ -1,23 +1,14 @@
 """
-The recovery of a machine of control-flow flattening that stands in a function whose code the
-recovery of the machine around it wrote: the generator held by a variable, the flag a property of an
-object the function makes for each call, and the return of `undefined` that ends the function behind
-the guard. Each program below holds such a machine, written by hand in that shape, and each row says
-what Node prints for it run as a CommonJS file; the deobfuscation prints the same. Where the
-recovery takes a machine apart, the text it writes is pinned; where something outside the
-scaffolding may reach the flag, the generator or the result, it leaves the machine as it is. A
-function the obfuscation declares in a block of a flattened function reads a copy of the block's
-scope object, made when it is called, where the recovered code shares one variable; the recovery
-goes ahead where every store to it runs before the function is made. Three files the obfuscation
-wrote for one program, every function of which it flattened, are read as text and never run: the
-third, whose machine keeps its state in one array, is read from the sample store.
+SECURITY: Node runs only the hand-written programs of `NESTED` and `HANDED_ON`. The files the
+obfuscation wrote and the one read from the sample store are only deobfuscated as text and must
+never be run.
 """
 from __future__ import annotations
 
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 
@@ -42,8 +33,6 @@ def written(source: str) -> str:
     return JsSynthesizer().convert(JsParser(source).parse())
 
 
-#: Programs holding a machine inside a function in the shape the recovery of the machine around it
-#: writes, mapped to what Node prints for each run as a CommonJS file.
 NESTED: dict[str, Program] = {
     'an inner machine as the recovery of the outer one leaves it': Program(
         a_program("""
@@ -819,7 +808,6 @@ NESTED: dict[str, Program] = {
     ),
 }
 
-#: The rows of `NESTED` whose machine the recovery takes apart, mapped to the text it writes.
 NESTED_RECOVERED: dict[str, str] = {
     'an inner machine as the recovery of the outer one leaves it': inspect.cleandoc(
         """
@@ -868,10 +856,6 @@ NESTED_RECOVERED: dict[str, str] = {
     ),
 }
 
-#: The rows of `NESTED` whose machine the recovery leaves as it is: the flag's object is not a
-#: namespace of the function's own made before the call, the flag is read after the guard or shared
-#: by every call, a name the scaffolding spells `undefined` with is bound, or the generator is
-#: stored twice, read by its own name in the code it runs, or held by a `let`.
 NESTED_KEPT = [
     'the object of the flag handed to a function',
     'the object of the flag read under a computed key',
@@ -929,8 +913,6 @@ class TestANestedMachineIsTakenApartOnlyWhereItsScaffoldingIsPrivate(TestBase):
                 self.assertEqual(recovered(source), written(source))
 
 
-#: Programs holding a machine whose block hands its scope object to a function declared in it,
-#: mapped to what Node prints for each run as a CommonJS file.
 HANDED_ON: dict[str, Program] = {
     'a block scope object stored once before the function it hands on is made': Program(
         a_program("""
@@ -1282,8 +1264,6 @@ HANDED_ON: dict[str, Program] = {
     ),
 }
 
-#: The rows of `HANDED_ON` the recovery takes apart, mapped to the text it writes: every store to
-#: the scope object runs before the function is made, and never after.
 HANDED_ON_RECOVERED: dict[str, str] = {
     'a block scope object stored once before the function it hands on is made': inspect.cleandoc(
         """
@@ -1346,12 +1326,33 @@ HANDED_ON_RECOVERED: dict[str, str] = {
     ),
 }
 
-#: The rows of `HANDED_ON` the recovery leaves as they are: a store may run after the function is
-#: made, by a loop, a closure, a branch, a hoisted call, `eval` or a class field initializer.
+HANDED_ON_RECOVERED_ACROSS_A_BRANCH: dict[str, str] = {
+    'a block scope object stored on one branch only before the function is made': inspect.cleandoc(
+        """
+            function outer(n) {
+              var F = {};
+              var B;
+              B = { v: -1 };
+              if (n > 2) {
+                B = {};
+                B.v = n * 10;
+              }
+              B.helper = function(x_1) {
+                var L = {};
+                L.x = x_1;
+                return L.x + B.v;
+              };
+              F.result = B.helper(n);
+              return F.result;
+            }
+            console.log(outer(3), outer(1));
+        """
+    ),
+}
+
 HANDED_ON_KEPT = [
     'a block scope object stored again in a loop while a closure keeps the old one',
     'a block scope object stored by a closure',
-    'a block scope object stored on one branch only before the function is made',
     'the wrapper is made by a hoisted declaration called before a later store',
     'a block scope object stored by eval after a closure of the function it hands on kept it',
     'a block scope object stored by a class field initializer that runs after the function it hands on',
@@ -1375,12 +1376,22 @@ class TestAHandedOnScopeObjectBehavesAsItDid(TestBase):
 class TestAHandedOnScopeObjectIsSharedOnlyWhereItsStoresComeFirst(TestBase):
 
     def test_every_row_is_either_taken_apart_or_kept(self):
-        self.assertEqual(set(HANDED_ON), {*HANDED_ON_RECOVERED, *HANDED_ON_KEPT})
+        self.assertEqual(
+            set(HANDED_ON),
+            {*HANDED_ON_RECOVERED, *HANDED_ON_RECOVERED_ACROSS_A_BRANCH, *HANDED_ON_KEPT},
+        )
 
     def test_each_machine_taken_apart_reads_as_pinned(self):
         self.assertEqual(
             {label: recovered(HANDED_ON[label].text) for label in HANDED_ON_RECOVERED},
             HANDED_ON_RECOVERED,
+        )
+
+    @opportunity
+    def test_a_machine_storing_on_either_branch_before_the_function_is_made_is_taken_apart(self):
+        self.assertEqual(
+            {label: recovered(HANDED_ON[label].text) for label in HANDED_ON_RECOVERED_ACROSS_A_BRANCH},
+            HANDED_ON_RECOVERED_ACROSS_A_BRANCH,
         )
 
     def test_each_machine_kept_is_left_as_it_is(self):
@@ -1390,9 +1401,6 @@ class TestAHandedOnScopeObjectIsSharedOnlyWhereItsStoresComeFirst(TestBase):
                 self.assertEqual(recovered(source), written(source))
 
 
-#: A file the obfuscation wrote with control-flow flattening alone for a program of functions inside
-#: functions, and its deobfuscation: every machine taken apart, the inner ones in the shape the
-#: recovery of the outer one wrote.
 FLATTENED_TWICE = inspect.cleandoc(
     """
     function* jvuXTJ(dY6CQr, i2z9nrB, zEZVXp9, BX02bWn, C0_pQa3 = {
@@ -2066,7 +2074,6 @@ FLATTENED_TWICE_DEOBFUSCATED = inspect.cleandoc(
 )
 
 
-#: The file a later version of the obfuscation wrote for the same program, and its deobfuscation.
 FLATTENED_TWICE_AGAIN = inspect.cleandoc(
     """
     function* L9Hmk_(vwSDGEv, UOhdtOb, y4WZFZE, rknTMf, I2jooF = {
@@ -2778,9 +2785,6 @@ FLATTENED_TWICE_AGAIN_DEOBFUSCATED = inspect.cleandoc(
 )
 
 
-#: The deobfuscation of the file the version of the obfuscation whose machine keeps its state in one
-#: array wrote for the same program, read from the sample store under
-#: `FLATTENED_INTO_ONE_ARRAY_SHA256`.
 FLATTENED_INTO_ONE_ARRAY_DEOBFUSCATED = inspect.cleandoc(
     """
     function ejJdWE(vCQ8tv, ...ItWZ7r) {

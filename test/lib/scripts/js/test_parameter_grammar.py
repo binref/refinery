@@ -1,27 +1,12 @@
 """
 What the language refuses about a function's signature, and whether the tool refuses the same texts.
 
-Three of the early errors `refinery.lib.scripts.js.strict.collect_strict_violations` reports are
-about a signature: a Use Strict Directive standing under a parameter list that is not simple, a name
-repeated among the parameters, and the arity of an accessor. Only the second of the three asks what
-mode the code runs in; the other two are refused whatever mode it is read under.
+Which rules apply depends on where a function stands rather than on the function: a repeated
+parameter name is read in a sloppy function expression standing as a property value and refused in a
+method.
 
-Which of them applies is decided by the position a function stands in rather than by the function:
-`function (a, a) {}` is a program as the value of a property and a Syntax Error as a method, and the
-two are the same node. `refinery.lib.scripts.js.strict.parameter_grammar` names that decision, and
-whether it names it right is a question Node answers, the grammars differing in what they permit.
-
-Node decides every expectation here, and the question put to it is whether it reads a text at all: a
-program it refuses has no behaviour left to compare, and a text the collector reports on had better
-be one of those. The correspondence is the law and it holds in both directions — reporting nothing
-about a text Node refuses lets a deobfuscation hand back a file that no longer parses, and reporting
-something about a text Node reads makes the tool decline work it could have done.
-
-The seed is the mode a destination runs in and not anything the snippet says, so the file that
-witnesses `strict=True` is the same snippet written below a `'use strict'` of its own.
-
-SECURITY: every snippet here is hand-authored and benign, and running it is what makes the engine
-the oracle. Nothing from `samples` may ever be fed to this.
+SECURITY: every snippet here is hand-authored and benign, and Node runs it. Nothing from `samples`
+may ever be fed to this.
 """
 from __future__ import annotations
 
@@ -60,21 +45,13 @@ _FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionE
 
 
 class APosition(NamedTuple):
-    """
-    A place a function can be written, as the template writing one there, the `ParameterGrammar`
-    its parameter list is then read through, and whether Node refuses a name repeated among those
-    parameters when the file around it is sloppy.
-    """
     template: str
     grammar: ParameterGrammar
     refuses_a_repeated_name: bool
 
 
-#: A position a function stands in that takes a whole parameter list, so that a name may repeat
-#: among the parameters at all. A repeated name is refused wherever the grammar is
-#: `ParameterGrammar.UNIQUE`, and the two class fields are refused for a second reason: every part
-#: of a class definition is strict code, and strict code refuses a repeated name under
-#: `ParameterGrammar.FORMAL` as well.
+#: A function expression in a class field refuses a repeated name although it reads its parameters
+#: as a plain function does, because every part of a class is strict code.
 A_FUNCTION_STANDING_AS = {
     'a function declaration': APosition(
         'function f({params}) {{ {body} }}', ParameterGrammar.FORMAL, False),
@@ -128,7 +105,6 @@ A_FUNCTION_STANDING_AS = {
         'class C {{ constructor({params}) {{ {body} }} }}', ParameterGrammar.UNIQUE, True),
 }
 
-#: A position a getter stands in. Every one of them takes no parameters at all.
 A_GETTER_STANDING_AS = {
     'an object getter'         : 'var o = {{ get g({params}) {{ {body} }} }};',
     'a computed object getter' : "var o = {{ get ['g']({params}) {{ {body} }} }};",
@@ -137,7 +113,6 @@ A_GETTER_STANDING_AS = {
     'a private class getter'   : 'class C {{ get #g({params}) {{ {body} }} }}',
 }
 
-#: A position a setter stands in. Every one of them takes exactly one parameter.
 A_SETTER_STANDING_AS = {
     'an object setter'         : 'var o = {{ set s({params}) {{ {body} }} }};',
     'a computed object setter' : "var o = {{ set ['s']({params}) {{ {body} }} }};",
@@ -146,17 +121,13 @@ A_SETTER_STANDING_AS = {
     'a private class setter'   : 'class C {{ set #s({params}) {{ {body} }} }}',
 }
 
-#: The parameter list each position is written with when the question is which grammar reads it.
-#: A getter that takes one and a setter that takes none are Syntax Errors, so the three groups are
-#: asked with a list the position permits.
 A_LIST_THE_POSITION_PERMITS = 'a'
 A_LIST_A_GETTER_PERMITS = ''
 A_LIST_A_SETTER_PERMITS = 'v'
 
-#: A parameter list holding one name twice, mapped to whether `FormalParameters` refuses it in
-#: sloppy code. It does so once the list holds anything that is not a plain identifier, and the
-#: repetition need not be inside that thing: a default value, a rest element or a pattern anywhere
-#: in the list is enough.
+#: A parameter list holding one name twice, mapped to whether a sloppy plain function refuses it: it
+#: does once the list holds a default, a rest element or a pattern anywhere, even away from the
+#: repeated name.
 A_PARAMETER_LIST_HOLDING_A_REPEATED_NAME = {
     'a, a'        : False,
     'a, b, a'     : False,
@@ -170,7 +141,6 @@ A_PARAMETER_LIST_HOLDING_A_REPEATED_NAME = {
     'a, [a]'      : True,
 }
 
-#: A parameter list, mapped to whether a getter may be written with it.
 A_LIST_A_GETTER_MAY_TAKE = {
     ''      : True,
     'a'     : False,
@@ -182,9 +152,7 @@ A_LIST_A_GETTER_MAY_TAKE = {
     '{a}'   : False,
 }
 
-#: The same lists, mapped to whether a setter may be written with them. A setter takes one
-#: parameter and it may be anything a parameter can be, so the two accessors disagree about every
-#: list but the rest element, which is refused for being one, and the two the count refuses.
+#: A setter takes exactly one parameter, which may be a default or a pattern but not a rest element.
 A_LIST_A_SETTER_MAY_TAKE = {
     ''      : False,
     'a'     : True,
@@ -196,11 +164,8 @@ A_LIST_A_SETTER_MAY_TAKE = {
     '{a}'   : True,
 }
 
-#: A function body, mapped to whether it declares the Use Strict Directive. The directive is a
-#: string literal standing plainly in the run of string-literal statements the body opens with, and
-#: nothing else is one: a bracket around it, a template holding the same characters, an escape
-#: spelling one of them, and a statement above it that is no string literal each leave a body that
-#: declares nothing.
+#: A function body, mapped to whether it declares the Use Strict Directive: a `'use strict'` written
+#: without parentheses or escapes among the string literal statements that open the body.
 A_FUNCTION_BODY_WRITTEN_AS = {
     ''                            : False,
     "'use strict';"               : True,
@@ -213,14 +178,9 @@ A_FUNCTION_BODY_WRITTEN_AS = {
     "'use strict'; 'use strict';" : True,
 }
 
-#: A parameter list that is not simple, and one that is. The directive rule is stated over the pair:
-#: the same body is refused under the first and read under the second.
 A_LIST_THAT_IS_NOT_SIMPLE = 'a = 1'
 A_LIST_THAT_IS_SIMPLE = 'a'
 
-#: An accessor holding the Use Strict Directive, mapped to whether Node refuses the file. A getter
-#: takes no parameters and its list is therefore always simple; a setter takes one, which may be a
-#: default or a pattern, and those are the accessors a directive may not stand under.
 AN_ACCESSOR_HOLDING_THE_DIRECTIVE = {
     "var o = { get g() { 'use strict'; } };"          : False,
     "var o = { set s(v) { 'use strict'; } };"         : False,
@@ -232,9 +192,6 @@ AN_ACCESSOR_HOLDING_THE_DIRECTIVE = {
     "class C { static set s([v]) { 'use strict'; } }" : True,
 }
 
-#: An arrow whose parameter list is not simple and whose body is an expression rather than a
-#: statement list. No Directive Prologue is read in one at all, so the text that would be the
-#: directive is the value the arrow answers with and Node reads every one of these.
 AN_ARROW_WHOSE_BODY_IS_AN_EXPRESSION = [
     "var f = (a = 1) => 'use strict';",
     "var f = (a = 1) => ('use strict');",
@@ -242,11 +199,8 @@ AN_ARROW_WHOSE_BODY_IS_AN_EXPRESSION = [
     "var f = (...a) => 'use strict';",
 ]
 
-#: A function written into the parameter list of another, mapped to whether Node refuses the file.
-#: Each rule is asked of the one signature it is about: the inner function's own list is simple and
-#: the repeat in it is legal, however the list it stands inside is written, and it stops being legal
-#: once a directive makes the inner function's own code strict. The outer list is not simple in any
-#: of these, so the outer body may hold no directive whatever stands in the inner one.
+#: Each rule applies to its own signature: the repeat in the inner list is legal unless the inner
+#: body is strict, and the outer body may hold no directive because the outer list is not simple.
 A_FUNCTION_WRITTEN_INTO_ANOTHERS_PARAMETER_LIST = {
     'function f(a = function (b, b) {}) {}'                : False,
     'function f(a = function (b) {}) {}'                   : False,
@@ -255,11 +209,6 @@ A_FUNCTION_WRITTEN_INTO_ANOTHERS_PARAMETER_LIST = {
     "function f(a = function (b) {}) { 'use strict'; }"    : True,
 }
 
-#: A file holding a repeated parameter name somewhere in it, mapped to whether Node refuses to read
-#: it. Nothing in any of these is seeded as strict, so what parts them is where the strictness comes
-#: from: a directive the function's own body declares reaches the parameter list above it, a
-#: directive in a body nested inside it reaches nothing, a class makes everything it holds strict,
-#: and a text that only looks like a directive declares no mode at all.
 A_REPEATED_NAME_MADE_AN_ERROR_BY = {
     'function f(a, a) {}'                                 : False,
     "function f(a, a) { 'use strict'; }"                  : True,
@@ -274,10 +223,6 @@ A_REPEATED_NAME_MADE_AN_ERROR_BY = {
     'var f = (a, a) => {};'                               : True,
 }
 
-#: A name reserved by the kind of function it is written in rather than by the mode the file runs
-#: in: a generator reserves `yield` and an async function reserves `await`, in every position and
-#: whether or not anything around them declares a mode. Node refuses every one of these files as a
-#: sloppy one and as a strict one alike.
 A_NAME_THE_KIND_OF_FUNCTION_RESERVES = [
     'function* g(yield) {}',
     'function* g(a = yield) {}',
@@ -288,16 +233,10 @@ A_NAME_THE_KIND_OF_FUNCTION_RESERVES = [
     'var o = { async m(await) {} };',
 ]
 
-#: The same reservation where the reserved word stands with nothing behind it. Node refuses the
-#: file as a sloppy one and as a strict one alike, but the parser refuses it first: `await` with no
-#: operand is no expression at all, so the declaration is kept as the text it stands in and the
-#: collector has no name to report on.
 A_NAME_THE_PARSER_REFUSES_TO_READ = [
     'async function h(a = await) {}',
 ]
 
-#: The same reservation asked of a declaration's name rather than of a parameter or a reference.
-#: Node refuses every one of these too.
 A_BINDING_THE_KIND_OF_FUNCTION_RESERVES = [
     'function* g() { function yield() {} }',
     'function* g() { class yield {} }',
@@ -305,10 +244,8 @@ A_BINDING_THE_KIND_OF_FUNCTION_RESERVES = [
     'async function h() { class await {} }',
 ]
 
-#: The same four declarations written inside a plain function, mapped to whether Node refuses the
-#: file. Three of them are programs, so it is the kind of the enclosing function and nothing else
-#: that costs the first group its reading. The fourth is refused for a reason of its own: a class
-#: name is strict code wherever the class stands, and `yield` is a strict-mode reserved word.
+#: `class yield {}` is refused even here, because a class name is strict code and strict code
+#: reserves `yield`, but not `await`.
 THE_SAME_BINDING_INSIDE_A_PLAIN_FUNCTION = {
     'function g() { function yield() {} }' : False,
     'function g() { class yield {} }'      : True,
@@ -316,9 +253,6 @@ THE_SAME_BINDING_INSIDE_A_PLAIN_FUNCTION = {
     'function h() { class await {} }'      : False,
 }
 
-#: A function expression named by the word its own kind reserves. An expression's name is bound
-#: inside the function and is read under the function's own kind, so the reservation reaches it
-#: however sloppy the file is and whatever encloses it. Node refuses every one of these.
 A_FUNCTION_EXPRESSION_NAMED_BY_A_WORD_ITS_OWN_KIND_RESERVES = [
     'var x = function* yield() {};',
     'var x = (function* yield() {});',
@@ -329,8 +263,6 @@ A_FUNCTION_EXPRESSION_NAMED_BY_A_WORD_ITS_OWN_KIND_RESERVES = [
     'function p() { var f = async function await() {}; }',
 ]
 
-#: The same words naming a function expression of a kind that reserves neither of them, and the
-#: word the other kind reserves. Node reads every one of these files.
 A_FUNCTION_EXPRESSION_NAME_ITS_OWN_KIND_LEAVES_ALONE = [
     'var x = function yield() {};',
     'var x = function await() {};',
@@ -338,9 +270,6 @@ A_FUNCTION_EXPRESSION_NAME_ITS_OWN_KIND_LEAVES_ALONE = [
     'var x = function* await() {};',
 ]
 
-#: The same words naming a declaration rather than an expression. A declaration's name is bound
-#: outside the function and is read under whatever encloses it, so a declaration of either kind is a
-#: program wherever nothing around it reserves the word. Node reads every one of these files.
 A_DECLARATION_WHOSE_NAME_THE_ENCLOSING_CONTEXT_GOVERNS = [
     'function* yield() {}',
     'async function await() {}',
@@ -348,11 +277,6 @@ A_DECLARATION_WHOSE_NAME_THE_ENCLOSING_CONTEXT_GOVERNS = [
     'function p() { async function await() {} }',
 ]
 
-#: A function expression of a kind that reserves neither word, named by the word the kind of the
-#: function around it reserves. The name is read under the expression's own kind, so a reservation
-#: the surroundings carry does not reach it and Node reads every one of these files. A directive is
-#: no defence for the `await` half, which no strict body reserves. What the tool makes of them is
-#: pinned in `test.lib.scripts.js.test_unfixed_defects`.
 A_FUNCTION_EXPRESSION_NAME_ONLY_THE_ENCLOSING_KIND_RESERVES = [
     'function* g() { var f = function yield() { return 1; }; }',
     'async function h() { var f = function await() { return 1; }; }',
@@ -362,9 +286,6 @@ A_FUNCTION_EXPRESSION_NAME_ONLY_THE_ENCLOSING_KIND_RESERVES = [
     "'use strict'; async function h() { var f = function await() { return 1; }; }",
 ]
 
-#: A class expression standing in the same places, named by the same words. A class name is read
-#: under the context the class stands in rather than under a kind of the class's own, so the
-#: reservation does reach it and Node refuses every one of these files.
 A_CLASS_EXPRESSION_NAME_THE_ENCLOSING_KIND_RESERVES = [
     'function* g() { var C = class yield {}; }',
     'async function h() { var C = class await {}; }',
@@ -400,17 +321,13 @@ def _every_list_in(positions: Iterable[str], lists: dict[str, bool]) -> dict[str
 
 
 def _under_a_strict_seed(source: str) -> str:
-    """
-    *source* written below a Use Strict Directive of its own, which is the file that witnesses what
-    the seed `strict=True` stands for: the mode of the destination a payload is about to be read in.
-    """
     return F"'use strict';\n{source}"
 
 
 def refused(programs: Sequence[str]) -> dict[str, bool]:
     """
-    Whether Node refuses to read each of *programs* as a program at all. Each is compiled and run in
-    a context of its own, so a refusal is a fact about that one text.
+    Whether Node refuses to read each of *programs* at all. Each is compiled in a context of its
+    own, so one refusal says nothing about the others.
     """
     return {
         program: value == NOT_A_PROGRAM
@@ -419,10 +336,6 @@ def refused(programs: Sequence[str]) -> dict[str, bool]:
 
 
 def reported(programs: Iterable[str], *, strict: bool) -> dict[str, bool]:
-    """
-    Whether `refinery.lib.scripts.js.strict.collect_strict_violations` reports anything at all about
-    each of *programs* under the seeded mode.
-    """
     return {
         program: bool(collect_strict_violations(JsParser(program).parse(), strict=strict))
         for program in programs
@@ -579,12 +492,6 @@ class TestTheCollectorReportsADirectiveWhereNodeRefusesOne(TestBase):
 
 
 class TestWhichShapesADirectiveIsPermittedUnderAreTheSameOnesTheCollectorReads(TestBase):
-    """
-    Which parameter lists permit a Use Strict Directive under them is law in
-    `test.lib.scripts.js.test_directive_prologue`, over the same two corpora this crosses: Node
-    refuses a directive under every list that is not simple, in every shape a function is written
-    in, and reads every one of those lists with an empty body.
-    """
 
     def test_the_collector_reports_on_a_directive_under_every_list_that_is_not_simple(self):
         for shape, template in A_FUNCTION_WRITTEN_AS.items():
@@ -603,11 +510,6 @@ class TestWhichShapesADirectiveIsPermittedUnderAreTheSameOnesTheCollectorReads(T
 
 
 class TestWhichGrammarAFunctionTakesItsParametersThrough(TestBase):
-    """
-    The grammar recorded for each position is what the refusals above are stated over: a position
-    recorded `ParameterGrammar.UNIQUE` is one Node refuses a repeated name in, a `GETTER` takes no
-    parameters and a `SETTER` takes exactly one, and `ParameterGrammar.FORMAL` is what is left.
-    """
 
     def test_a_function_takes_the_grammar_the_position_it_stands_in_records(self):
         self.assertEqual(
@@ -679,11 +581,6 @@ class TestANameTheKindOfFunctionReserves(TestBase):
 
 
 class TestTheCollectorReportsANameTheKindOfFunctionReserves(TestBase):
-    """
-    The reservation belongs to the kind of function and not to the mode, so the collector has to
-    report on the same files under either seed. That is what makes it usable as a gate on a payload
-    whose destination is not yet known.
-    """
 
     def test_it_reports_on_every_name_node_refuses_under_a_sloppy_seed(self):
         rows = A_NAME_THE_KIND_OF_FUNCTION_RESERVES
@@ -697,11 +594,9 @@ class TestTheCollectorReportsANameTheKindOfFunctionReserves(TestBase):
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestWhichContextGovernsAFunctionsOwnName(TestBase):
     """
-    A function's name is governed by one context and never by two, and which one it is depends on
-    how the function is written. An expression's name is bound inside it and is read under its own
-    kind, so a generator expression may not be named `yield` even where nothing around it is a
-    generator. A declaration's name is bound outside it and is read under whatever encloses it, so a
-    generator declaration named `yield` is a program wherever the enclosing code reserves nothing.
+    A function expression's name is read under the expression's own kind, a declaration's under the
+    code around it: in sloppy code, `function* yield() {}` is refused as an expression and read as a
+    declaration.
     """
 
     def test_node_refuses_every_expression_named_by_a_word_its_own_kind_reserves(self):
@@ -731,9 +626,8 @@ class TestWhichContextGovernsAFunctionsOwnName(TestBase):
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestWhichContextGovernsAClassExpressionsOwnName(TestBase):
     """
-    A class expression's name is not read the way a function expression's is. It is read under the
-    context the class stands in, so the word the kind of the function around it reserves reaches the
-    name, and the file is refused where the same name on a function expression is a program.
+    Unlike a function expression's name, a class expression's name is read under the code around it:
+    inside an async function, `class await {}` is refused where `function await() {}` is read.
     """
 
     def test_node_refuses_every_class_expression_the_kind_around_it_reserves_the_name_of(self):
@@ -760,12 +654,8 @@ class TestTheCollectorReadsAFunctionsOwnNameFromTheSamePlace(TestBase):
         self.assertEqual(reported(rows, strict=False), every_one_of(rows, False))
 
 
-#: The four kinds of function, spelled the way the source writes one.
 A_KIND_OF_FUNCTION = ('function', 'function*', 'async function', 'async function*')
 
-#: The call that runs the body of a function of each kind. A generator and an async generator hand
-#: back an iterator and run nothing until it is stepped, so a program that only calls one prints
-#: nothing at all and would report the same for a name kept and a name lost.
 A_CALL_THAT_RUNS_THE_BODY_OF = {
     'function'        : 'outer();',
     'function*'       : 'outer().next();',
@@ -773,12 +663,6 @@ A_CALL_THAT_RUNS_THE_BODY_OF = {
     'async function*' : 'outer().next();',
 }
 
-#: A kind of function expression and the word naming it, mapped to what Node prints for a program
-#: that reports the expression's own `name`, or to `None` where Node reads no program at all. An
-#: expression's name is bound inside the function and read under the expression's own kind: a
-#: generator reserves `yield`, an async function reserves `await`, and an async generator reserves
-#: both. Each row stands for the four programs writing that expression inside a function of each
-#: kind, because the kind of the function around it decides nothing about the name.
 A_FUNCTION_EXPRESSION_OF_KIND_NAMED: dict[str, dict[str, str | None]] = {
     'function'        : {'yield': 'yield\n', 'await': 'await\n'},
     'function*'       : {'yield': None, 'await': 'await\n'},
@@ -786,14 +670,8 @@ A_FUNCTION_EXPRESSION_OF_KIND_NAMED: dict[str, dict[str, str | None]] = {
     'async function*' : {'yield': None, 'await': None},
 }
 
-#: The kind of function a declaration stands inside and the word naming that declaration, mapped to
-#: what Node prints for a program that reports the declaration's `name`, or to `None` where Node
-#: reads no program at all. A declaration's name is bound outside the function and read under
-#: whatever encloses it, so the table is the same one and it is read the other way round: each row
-#: stands for the four programs writing that declaration with a kind of its own, because the kind of
-#: the declaration decides nothing about its name. The name is read from a plain function beside the
-#: declaration, where neither word is reserved, so that the reference is never the reason for a
-#: refusal.
+#: The name is read from a plain function beside the declaration, so that the reference itself is
+#: never what Node refuses.
 A_FUNCTION_DECLARATION_INSIDE_KIND_NAMED: dict[str, dict[str, str | None]] = {
     'function'        : {'yield': 'yield\n', 'await': 'await\n'},
     'function*'       : {'yield': None, 'await': 'await\n'},
@@ -864,13 +742,6 @@ def _node_refuses(rows: dict[str, str | None]) -> dict[str, bool]:
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAFunctionNamedYieldOrAwaitKeepsItsName(TestBase):
-    """
-    A named function expression carries its name into the program: the name is bound inside the
-    function and is what `Function.prototype.name` answers with, so a rewrite that drops it changes
-    what the program prints. `yield` and `await` are the two names a kind of function can reserve,
-    and the reservation is what makes half of these texts programs and the other half not, which
-    puts the printer and the early-error collector on the same corpus.
-    """
 
     def test_node_answers_each_named_expression_the_way_the_row_records(self):
         rows = A_NAMED_FUNCTION_EXPRESSION_UNDER_EVERY_ENCLOSING_KIND
@@ -907,13 +778,6 @@ class TestAFunctionNamedYieldOrAwaitKeepsItsName(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestTheCollectorRefusesAReservedFunctionNameWhereNodeDoes(TestBase):
-    """
-    The collector is the gate that keeps a payload out of a destination that would refuse it, so the
-    texts it reports on have to be the texts an engine refuses and no others. Under a sloppy seed
-    that is Node's verdict on the file as written; under a strict seed it is Node's verdict on the
-    same file below a Use Strict Directive, which is one more word Node reserves and the collector
-    must therefore report one more group of texts under.
-    """
 
     def test_it_reports_on_exactly_the_named_expressions_node_refuses(self):
         rows = A_NAMED_FUNCTION_EXPRESSION_UNDER_EVERY_ENCLOSING_KIND
@@ -933,12 +797,6 @@ class TestTheCollectorRefusesAReservedFunctionNameWhereNodeDoes(TestBase):
 
 
 class TestTheVerdictRefusesAFunctionNameWhereNodeDoes(TestBase):
-    """
-    `refinery.lib.scripts.is_well_formed` is the tool's answer to the question Node was asked of
-    every file above, so the two agree on all of them: a declaration named by a word the kind of the
-    enclosing function reserves is no program, and neither is an expression named by a word its own
-    kind reserves, while the names only some other kind reserves are programs.
-    """
 
     def test_a_name_the_kind_of_function_reserves_is_no_program(self):
         rows = [

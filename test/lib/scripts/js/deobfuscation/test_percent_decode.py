@@ -1,25 +1,3 @@
-"""
-Percent-decoding with `decodeURIComponent`.
-
-The decode walks the code units of its argument. A character no escape introduced is copied
-straight into the answer — a surrogate the argument itself spells included, because a string may
-hold one and the decode has nothing to refuse about a character. A percent sign must be followed by
-two hexadecimal digits spelling one octet; an octet outside ASCII must open a run of escaped octets
-that is strict UTF-8, and anything else — an incomplete escape, a lone continuation octet, an
-overlong form, an encoded surrogate, a code point past the last one — throws a `URIError`. The
-code point a run encodes joins the answer as the code units that spell it, so a decoded astral
-character is indistinguishable from a literal holding it, which is the law
-`test.lib.scripts.js.deobfuscation.test_astral_string_producers` states over every probe of a
-string's structure.
-
-The two laws here follow that split. A call the decode answers folds to exactly what the literal of
-its value folds to, so the fold never depends on how the value is spelled; a call the decode
-refuses is a throw, and a throw is not a value, so the call comes back standing exactly where the
-file wrote it.
-
-Node is the authority for every row: it answers each call of the first table with the value the row
-names, and refuses each argument of the second with a `URIError`.
-"""
 from __future__ import annotations
 
 import unittest
@@ -35,12 +13,8 @@ _A_LONE_HIGH = chr(92) + 'uD800'
 
 _A_REVERSED_PAIR = chr(92) + 'uDC00' + chr(92) + 'uD800'
 
-#: An argument the decode answers, mapped to its value; both sides are spelled as the body of a
-#: single-quoted literal. The first four rows hold characters no escape introduced — an astral
-#: character, one standing before an escape, a lone high surrogate, and a pair of surrogates in the
-#: order that names no character — and each passes through untouched. The other four are escapes of
-#: one, two, three and four octets, the last of which decodes to the astral character the first row
-#: spells directly.
+#: A character the argument spells directly is copied through untouched, a lone or reversed
+#: surrogate included; only a run of escaped octets has to be strict UTF-8.
 _A_DECODE_THE_ARGUMENT_ANSWERS: dict[str, tuple[str, str]] = {
     'an astral character'            : (_ASTRAL, _ASTRAL),
     'an astral then an escape'       : (_ASTRAL + '%41', _ASTRAL + 'A'),
@@ -52,12 +26,6 @@ _A_DECODE_THE_ARGUMENT_ANSWERS: dict[str, tuple[str, str]] = {
     'a four octet escape'            : ('%F0%9F%98%80', _ASTRAL),
 }
 
-#: An argument the decode refuses with a `URIError`, keyed by what is wrong with it. The escaped
-#: octet runs cover every way a run fails to be strict UTF-8: an octet that may only continue a
-#: run, a run encoding its code point in more octets than it needs, a run encoding a surrogate, a
-#: run encoding a code point past the last one, a lead octet no length is defined for, a run the
-#: argument ends inside, and a continuation position holding an unescaped character or an octet
-#: outside the continuation range.
 _A_DECODE_THE_SPECIFICATION_REFUSES: dict[str, str] = {
     'a percent sign nothing follows'      : '100%',
     'an escape one digit short'           : '%4',

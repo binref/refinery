@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test import TestBase
+from test import TestBase, opportunity
 
 from refinery.lib.scripts.js.analysis.liveness import build_liveness
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
@@ -153,10 +153,17 @@ class TestLiveness(TestBase):
         self.assertFalse(lv.is_dead_store(self._decl(ast, 'x')))
         self.assertFalse(lv.is_dead_store(self._store(ast, 'x')))
 
-    def test_captured_binding_is_never_a_dead_store(self):
-        source = 'function f() { var x = 1; function g() { return x; } x = 2; return g(); }'
+    def test_stores_an_inner_function_reads_are_live(self):
+        source = 'function f() { var x = 1; function g() { return x; } g(); x = 2; return g(); }'
         ast, lv = self._build(source)
         self.assertFalse(lv.is_dead_store(self._decl(ast, 'x')))
+        self.assertFalse(lv.is_dead_store(self._store(ast, 'x')))
+
+    @opportunity
+    def test_a_store_overwritten_before_any_call_of_the_inner_function_reading_it_is_dead(self):
+        source = 'function f() { var x = 1; function g() { return x; } x = 2; return g(); }'
+        ast, lv = self._build(source)
+        self.assertTrue(lv.is_dead_store(self._decl(ast, 'x')))
         self.assertFalse(lv.is_dead_store(self._store(ast, 'x')))
 
     def test_same_name_block_bindings_are_independent(self):
@@ -187,9 +194,14 @@ class TestLiveness(TestBase):
         ast, lv = self._build(source)
         self.assertFalse(lv.is_dead_store(self._decl(ast, 'i')))
 
-    def test_parameter_store_is_not_reported(self):
-        ast, lv = self._build('function f(p) { p = 1; return 2; }')
+    def test_a_parameter_store_the_arguments_object_reads_is_live(self):
+        ast, lv = self._build('function f(p) { p = 1; return arguments[0]; }')
         self.assertFalse(lv.is_dead_store(self._store(ast, 'p')))
+
+    @opportunity
+    def test_a_parameter_store_nothing_reads_is_dead(self):
+        ast, lv = self._build('function f(p) { p = 1; return 2; }')
+        self.assertTrue(lv.is_dead_store(self._store(ast, 'p')))
 
     def test_top_level_global_store_is_not_reported(self):
         ast, lv = self._build('g = 1; g = 2;')

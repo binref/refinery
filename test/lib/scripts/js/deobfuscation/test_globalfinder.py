@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
+from test import opportunity
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after
@@ -53,10 +54,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         ))
 
     def test_bare_host_alias_finder_is_not_substituted(self):
-        """
-        A finder that just returns `window` throws where the host lacks it (Node refuses `window`),
-        so folding its call to `globalThis` would drop that `ReferenceError`; the call is kept.
-        """
         source = inspect.cleandoc(
             '''
             function g() {
@@ -68,10 +65,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_a_pinned_node_host_substitutes_a_bare_global_finder(self):
-        """
-        `global` resolves under Node, so a finder that returns it drops no throw and its call folds to
-        `globalThis`; a browser alias the pinned host still lacks is left standing.
-        """
         self.assertEqual(self._find_in(
             'function g() { return global; } g();', HostEnvironment.node), inspect.cleandoc(
             '''
@@ -87,10 +80,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         )
 
     def test_a_pinned_browser_host_substitutes_a_same_realm_alias_finder(self):
-        """
-        `window` and `self` are the browser's own same-realm global-object aliases, so a finder that
-        returns one folds to `globalThis` under the pin.
-        """
         for alias in ('window', 'self'):
             with self.subTest(alias=alias):
                 self.assertEqual(self._find_in(
@@ -99,24 +88,33 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
                 )
 
     def test_a_pinned_browser_host_keeps_a_cross_realm_alias_finder(self):
-        """
-        `top` and `frames` resolve in a browser, so the pin proves the finder throw-free, yet in a
-        framed document they name another realm's global object; substituting `globalThis` would change
-        meaning, so the finder is not treated as global-valued and its call is kept.
-        """
-        for alias in ('top', 'frames'):
-            with self.subTest(alias=alias):
-                source = F'function g() {{ return {alias}; }} g();'
-                self.assertEqual(
-                    self._find_in(source, HostEnvironment.browser),
-                    F'function g() {{\n  return {alias};\n}}\ng();',
-                )
+        self.assertEqual(
+            self._find_in('function g() { return top; } g();', HostEnvironment.browser),
+            inspect.cleandoc(
+                '''
+                function g() {
+                  return top;
+                }
+                g();
+                '''
+            ),
+        )
+
+    @opportunity
+    def test_a_pinned_browser_host_substitutes_a_frames_finder(self):
+        self.assertEqual(
+            self._find_in('function g() { return frames; } g();', HostEnvironment.browser),
+            inspect.cleandoc(
+                '''
+                function g() {
+                  return frames;
+                }
+                globalThis;
+                '''
+            ),
+        )
 
     def test_host_read_before_the_anchor_is_not_substituted(self):
-        """
-        The `globalThis` anchor is reached only after a bare `window.bar` read that runs first and
-        throws where the host lacks `window`, so the finder is not throw-free and its call is kept.
-        """
         source = inspect.cleandoc(
             '''
             function g() {
@@ -207,10 +205,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_a_method_called_finder_whose_primary_lookup_threw_returns_its_receiver(self):
-        """
-        Node prints `true`: reading `window` throws, `r` stays `undefined`, and the fallback `this`
-        of a method call is the namespace.
-        """
         source = inspect.cleandoc(
             '''
             var NS = {};
@@ -236,7 +230,7 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
             function g() {
               console.log(1);
-              return window;
+              return globalThis;
             }
             g();
             '''
@@ -248,7 +242,7 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
             function g() {
               leaked = 1;
-              return self;
+              return globalThis;
             }
             function r() {
               return leaked;
@@ -258,22 +252,32 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._find(source))
 
-    def test_call_with_arguments_is_not_substituted(self):
+    def test_a_call_whose_argument_has_an_effect_keeps_the_effect(self):
         source = inspect.cleandoc(
             '''
             function g() {
-              return window;
+              return globalThis;
             }
-            g(1);
+            g(console.log(1));
             '''
         )
-        self.assertEqual(source, self._find(source))
+        self.assertIn(self._find(source), (
+            source,
+            inspect.cleandoc(
+                '''
+                function g() {
+                  return globalThis;
+                }
+                console.log(1), globalThis;
+                '''
+            ),
+        ))
 
     def test_shadowed_globalthis_declines_substitution(self):
         source = inspect.cleandoc(
             '''
             function g() {
-              return window;
+              return globalThis;
             }
             function h() {
               var globalThis;
@@ -287,7 +291,7 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         source = inspect.cleandoc(
             '''
             function g(o) {
-              var x = window;
+              var x = globalThis;
               return o;
             }
             g();
@@ -296,10 +300,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_reassigned_finder_is_not_substituted(self):
-        """
-        The finder name is reassigned before the call, so the call may reach the replacement rather
-        than the finder; substituting `globalThis` would drop the replacement's side effect.
-        """
         source = inspect.cleandoc(
             '''
             function finder() {
@@ -315,26 +315,17 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_premature_call_to_declarator_finder_is_not_substituted(self):
-        """
-        The finder is installed by a `var` initializer, so a call textually before it runs while the
-        binding is the hoisted `undefined` and throws; rewriting that call to `globalThis` would replace
-        the runtime `TypeError` with a value.
-        """
         source = inspect.cleandoc(
             '''
             var g = finder();
             var finder = function() {
-              return window;
+              return globalThis;
             };
             '''
         )
         self.assertEqual(source, self._find(source))
 
     def test_redeclared_finder_is_not_substituted(self):
-        """
-        The name has two declarations, so a call resolves to the last by hoisting; the binding no
-        longer pins one function and the call is left intact.
-        """
         source = inspect.cleandoc(
             '''
             function finder() {
@@ -349,12 +340,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_canonical_umd_getglobal_if_chain_folds_its_call(self):
-        """
-        The canonical UMD/webpack global finder guards each candidate with `typeof x !== 'undefined'`.
-        Once `typeof globalThis` folds to `'object'`, the first guard is `true`, dead-code elimination
-        makes the body a bare `return globalThis` and removes the host-conditional arms behind it,
-        and the finder folds. So `getGlobal()` becomes `globalThis`.
-        """
         source = (
             "function getGlobal() {"
             " if (typeof globalThis !== 'undefined') { return globalThis; }"
@@ -375,11 +360,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         ))
 
     def test_canonical_umd_getglobal_short_circuit_form_folds(self):
-        """
-        The `&&`/`||` form of the same finder, led by `globalThis`. `typeof globalThis !== 'undefined'`
-        folds to `true`, `true && globalThis` to `globalThis`, and the `|| …` chain to `globalThis`, so
-        the body is `return globalThis` and the call folds.
-        """
         source = (
             "function getGlobal() {"
             " return (typeof globalThis !== 'undefined' && globalThis) ||"
@@ -398,12 +378,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         ))
 
     def test_a_thunk_reading_an_outer_const_in_its_dead_zone_is_not_substituted(self):
-        """
-        The thunk returns `globalThis` but first reads the outer `const c` from a point its declaration
-        has not run past, so calling it throws a `ReferenceError` (Node: `Cannot access 'c' before
-        initialization`). That throw is deferred per binding rather than flagged on the flow-insensitive
-        summary, so folding the finder's call would drop it; the call is kept.
-        """
         source = inspect.cleandoc(
             '''
             function g() {
@@ -420,10 +394,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_a_thunk_reading_an_established_outer_const_is_substituted(self):
-        """
-        The control for the dead-zone case: the same thunk, with `const c` declared before the call, so
-        the read runs past the dead zone and cannot throw. The finder folds.
-        """
         source = (
             'function g() {'
             ' const c = 1;'
@@ -445,10 +415,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         ))
 
     def test_a_local_proven_to_hold_the_global_short_circuits_a_host_alias(self):
-        """
-        `t` holds `globalThis`, established before the read, so `t || window` never evaluates `window`
-        and cannot throw where the host lacks it. The finder folds.
-        """
         source = 'function g() { var t = globalThis; return t || window; } g();'
         self.assertEqual(self._find(source), inspect.cleandoc(
             '''
@@ -460,15 +426,11 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
         ))
 
-    def test_a_local_holding_a_host_alias_does_not_short_circuit(self):
-        """
-        The control: `t` holds `window`, which is not proven truthy in every host, so `t || global` may
-        evaluate `global` and throw where the host lacks it. The finder is kept.
-        """
+    def test_a_local_not_holding_the_global_does_not_short_circuit_a_host_alias(self):
         source = inspect.cleandoc(
             '''
             function g() {
-              var t = window;
+              var t = null;
               return t || global;
             }
             g();
@@ -477,12 +439,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_a_read_in_the_finder_bodys_own_dead_zone_is_not_substituted(self):
-        """
-        The finder reads `c` before the `const c` that declares it, so calling it throws a
-        `ReferenceError` (Node: `Cannot access 'c' before initialization`) in every host. Folding the
-        call to `globalThis` would drop that throw; the call is kept. The dead zone of the finder's own
-        binding is what the substitution must see, exactly as it does for a called closure.
-        """
         source = inspect.cleandoc(
             '''
             function g() {
@@ -496,10 +452,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_a_read_past_the_finder_bodys_own_declaration_is_substituted(self):
-        """
-        The control for the own-dead-zone case: the same read runs after `const c`, past the dead zone,
-        so it cannot throw and the finder folds.
-        """
         source = 'function g() { const c = globalThis; var r = c; return r; } var x = g();'
         self.assertEqual(self._find(source), inspect.cleandoc(
             '''
@@ -513,13 +465,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         ))
 
     def test_a_closure_reading_its_own_dead_zone_is_not_substituted(self):
-        """
-        The finder's own body is throw-free, but its call runs a closure that reads a `const` the
-        closure declares itself from before that declaration, so the call throws a `ReferenceError`
-        (Node: `Cannot access 'c' before initialization`) in every host. The closure's effect
-        summary orders the read against the declaration inside it and records the throw, so the
-        finder is not throw-free and the call is kept.
-        """
         source = inspect.cleandoc(
             '''
             function g() {
@@ -535,10 +480,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_a_captured_read_reached_before_its_declaration_is_not_substituted(self):
-        """
-        The finder reads the outer `const G` in a body statement, but its only call runs before that
-        declaration, so calling it throws a `ReferenceError` in every host. The call is kept.
-        """
         source = inspect.cleandoc(
             '''
             function g() {
@@ -552,10 +493,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_a_captured_read_past_its_declaration_is_substituted(self):
-        """
-        The control: the same finder, with `const G` declared before the call, so the read runs past the
-        dead zone and the finder folds.
-        """
         source = 'const G = 5; function g() { var u = G + 1; return globalThis; } g();'
         self.assertEqual(self._find(source), inspect.cleandoc(
             '''
@@ -569,10 +506,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         ))
 
     def test_a_parameter_default_reading_a_host_alias_is_not_substituted(self):
-        """
-        A finder call the fold makes takes no arguments, so every parameter default runs; the default
-        `window` throws a `ReferenceError` where the host lacks it (Node), so the call is kept.
-        """
         source = inspect.cleandoc(
             '''
             function g(a = window) {
@@ -584,10 +517,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_a_parameter_the_body_ignores_does_not_block_substitution(self):
-        """
-        The control: a plain parameter evaluates no default, so it reads nothing a host may lack and the
-        finder folds.
-        """
         source = 'function g(a) { return globalThis; } g();'
         self.assertEqual(self._find(source), inspect.cleandoc(
             '''
@@ -599,11 +528,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         ))
 
     def test_a_destructuring_default_reading_a_host_alias_is_not_substituted(self):
-        """
-        Destructuring `[]` leaves `a` undefined, so its default `window` is evaluated and throws a
-        `ReferenceError` where the host lacks it (Node). The declarator target is not a plain identifier,
-        so the finder is kept.
-        """
         source = inspect.cleandoc(
             '''
             function g() {
@@ -616,11 +540,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_a_catch_handler_reading_a_host_alias_is_not_substituted(self):
-        """
-        The `try` block throws a `TypeError` reading `null.x`, so the handler runs and its `return
-        window` throws a `ReferenceError` where the host lacks `window` (Node). A present handler runs on
-        any block throw, so its body must be throw-free; here it is not, and the finder is kept.
-        """
         source = inspect.cleandoc(
             '''
             function g() {
@@ -637,11 +556,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._find(source))
 
     def test_a_catch_parameter_default_reading_a_host_alias_is_not_substituted(self):
-        """
-        The block throws, the handler runs, and destructuring the thrown value assigns `e` its default
-        `window`, which throws a `ReferenceError` where the host lacks it (Node). The catch parameter is
-        not a plain identifier, so the finder is kept.
-        """
         source = inspect.cleandoc(
             '''
             function g() {

@@ -1,6 +1,3 @@
-"""
-The table of functions the language installs on the prototypes, checked against Node.
-"""
 from __future__ import annotations
 
 import inspect
@@ -12,9 +9,6 @@ from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
 from refinery.lib.scripts.js.builtins import ALIASED_METHODS, PROTOTYPE_METHODS
 
-#: A program printing, for each constructor of `PROTOTYPE_METHODS`, every function-valued own
-#: property of its prototype but `constructor`, each with the `name` of the function it holds and
-#: the other keys holding the same function.
 _THE_PROTOTYPES_OF_NODE = inspect.cleandoc("""
     var owners = {Object: Object, Function: Function, Array: Array, String: String, Number: Number, Boolean: Boolean};
     var table = {};

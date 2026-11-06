@@ -7,26 +7,22 @@ from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
 from refinery.lib.scripts.js.parser import JsParser
 
+A_CHAIN_OF_WRAPPERS = (
+    'function target(a) { return a; }'
+    'function inner(x, y) { return target(y - -5); }'
+    'function outer(a, b, c) { return inner(a, c - -10); }'
+)
+
 
 class TestCallWrapperInliner(TestJsDeobfuscator):
 
     def test_self_forwarding_wrapper_not_inlined(self):
-        """
-        `W` forwards to itself, so inlining its call substitutes a body that calls `W` again,
-        regenerating an equivalent call on every pass. Inlining it must be refused, or the fold loop
-        never reaches a fixpoint. The single-pass output is unchanged either way, so the change flag is
-        what distinguishes the refusal from the non-terminating inline.
-        """
         ast = JsParser('function W(a) { return W(a); } W(1);').parse()
         t = JsCallWrapperInliner()
         t.visit(ast)
         self.assertFalse(t.changed)
 
     def test_mutually_forwarding_wrappers_not_inlined(self):
-        """
-        `W` forwards to `V` and `V` back to `W`; inlining either regenerates a call into the cycle, so
-        neither bottoms out. Both are left intact.
-        """
         ast = JsParser('function W(a) { return V(a); } function V(a) { return W(a); } W(1);').parse()
         t = JsCallWrapperInliner()
         t.visit(ast)
@@ -69,11 +65,6 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
         )
 
     def test_redeclared_wrapper_is_not_inlined(self):
-        """
-        The first `v` is a trivial constant wrapper, but `v` is redeclared by a second body that wins
-        at runtime, so the call resolves to no single function. The inliner must leave the call intact
-        rather than substitute the first body's `return 1`.
-        """
         source = (
             "function v() { return 1; }"
             "function v() { SINK.push('x'); return 2; }"
@@ -113,34 +104,37 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
             ),
         )
 
-    def test_chained_wrappers(self):
-        source = (
-            "function target(a) { return a; }"
-            "function inner(x, y) { return target(y - -5); }"
-            "function outer(a, b, c) { return inner(a, c - -10); }"
-            "var r = outer(1, 2, 3);"
-        )
-        self.assertEqual(
-            self._run_transformer(source, JsCallWrapperInliner),
-            inspect.cleandoc(
-                """
-                function target(a) {
-                  return a;
-                }
-                function inner(x, y) {
-                  return target(y - -5);
-                }
-                var r = inner(1, 3 - -10);
-                """
+    def test_one_visit_inlines_the_outer_wrapper_of_a_chain_or_the_whole_chain(self):
+        self.assertIn(
+            self._run_transformer(F'{A_CHAIN_OF_WRAPPERS}var r = outer(1, 2, 3);', JsCallWrapperInliner),
+            (
+                inspect.cleandoc(
+                    """
+                    function target(a) {
+                      return a;
+                    }
+                    function inner(x, y) {
+                      return target(y - -5);
+                    }
+                    var r = inner(1, 3 - -10);
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    function target(a) {
+                      return a;
+                    }
+                    var r = target(3 - -10 - -5);
+                    """
+                ),
             ),
         )
 
+    def test_a_chain_of_wrappers_deobfuscates_to_the_value_it_computes(self):
+        source = F'{A_CHAIN_OF_WRAPPERS}console.log(outer(1, 2, 3));'
+        self.assertEqual(self._deobfuscate_iterative(source), 'console.log(18);')
+
     def test_wrapper_assigning_parameter_not_inlined(self):
-        """
-        Substituting the call argument for a written parameter would place it at a write target
-        (`g(7 = 5)`), so a wrapper that assigns its own parameter is not a pure function of its
-        arguments and must not be inlined.
-        """
         source = inspect.cleandoc(
             """
             function w(p) {
@@ -177,14 +171,6 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
 class TestAnArgumentBoundToEvalStaysAnIndirectCall(TestJsDeobfuscator):
 
     def test_an_argument_bound_to_eval_is_inlined_as_an_indirect_call(self):
-        """
-        `cb(s)` inside the wrapper reaches `eval` without spelling it, so it runs its text in the
-        global scope, and Node prints `ReferenceError` for this program. Substituting the argument
-        into the callee position as the bare name would make the eval direct, and the program would
-        print `7` — the local the payload must not see.
-        `refinery.lib.scripts.js.deobfuscation.helpers.substitute_use_position` writes `(0, eval)`
-        there instead.
-        """
         self.assertEqual(
             'function f() {\n'
             '  var loc = 7;\n'

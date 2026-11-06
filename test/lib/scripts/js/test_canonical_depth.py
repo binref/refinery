@@ -17,13 +17,6 @@ the comparison raises that limit for itself.
 
 
 class TestADeepTreeIsComparedRatherThanExhaustingTheStack(TestBase):
-    """
-    `refinery.lib.scripts.canonical` decides which program a tree spells by descending every one of
-    its nodes, so how deep a tree it answers for is decided by the parser's nesting limit and not by
-    how many interpreter frames the process happens to run under. Whitespace around a program is one
-    of the things the answer is defined to ignore, which makes a pair that differs only in leading
-    and trailing newlines the same program at every depth the parser accepts.
-    """
 
     def test_every_construct_is_read_whole_at_that_depth(self):
         self.assertEqual(

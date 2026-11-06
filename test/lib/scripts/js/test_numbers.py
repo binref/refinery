@@ -53,11 +53,6 @@ def _every_character_that(is_padding: Callable[[str], bool]) -> list[str]:
 
 
 class TestJsParseInt(TestBase):
-    """
-    `js_parse_int` is the language's `parseInt` and not Python's `int`: it skips ECMAScript
-    WhiteSpace, reads ASCII digits behind an optional sign, and answers `None` where the language
-    answers `NaN`. Every expected value below is what Node prints for the same call.
-    """
 
     def _parses(self, text: str, radix: int = 0) -> float:
         parsed = js_parse_int(text, radix)
@@ -69,12 +64,6 @@ class TestJsParseInt(TestBase):
         return math.copysign(1.0, self._parses(text, radix))
 
     def test_a_string_that_names_negative_zero_keeps_the_sign_of_its_zero(self):
-        """
-        Negative zero is equal to zero and prints as `0`, so the sign is the only witness of it;
-        in the language it shows as `1 / -0` being `-Infinity`. Python's integers have one zero,
-        which is where a sign read out of the parsed digits rather than applied to the magnitude
-        is lost.
-        """
         self.assertEqual(0.0, self._parses('-0'))
         self.assertEqual(-1.0, self._sign('-0'))
         self.assertEqual(-1.0, self._sign('  -0  '))
@@ -87,11 +76,6 @@ class TestJsParseInt(TestBase):
         self.assertIsNone(js_parse_int('\u0967\u0968\u0969'))
 
     def test_padding_python_strips_and_javascript_does_not_ends_the_parse(self):
-        """
-        `U+001C` through `U+001F` are removed by `str.strip` and are not ECMAScript WhiteSpace. In
-        front of the digits they end the parse before it starts; behind them they are just the
-        first character that is not a digit, which is where `parseInt` stops anyway.
-        """
         self.assertIsNone(js_parse_int('\u001C5'))
         self.assertIsNone(js_parse_int('\u001D5'))
         self.assertIsNone(js_parse_int('\u001E5'))
@@ -99,9 +83,6 @@ class TestJsParseInt(TestBase):
         self.assertEqual(5.0, self._parses('5\u001C'))
 
     def test_the_byte_order_mark_pads_a_number_the_way_a_space_does(self):
-        """
-        `U+FEFF` is ECMAScript WhiteSpace and `str.strip` leaves it in place.
-        """
         self.assertEqual(5.0, self._parses('\uFEFF5'))
         self.assertEqual(5.0, self._parses('5\uFEFF'))
         self.assertEqual(18.0, self._parses('\uFEFF\uFEFF12\uFEFF', 16))
@@ -112,10 +93,6 @@ class TestJsParseInt(TestBase):
         self.assertEqual(9007199254740992.0, self._parses('0x20000000000001'))
 
     def test_a_digit_string_outside_the_double_range_parses_to_an_infinity(self):
-        """
-        The count of digits decides this and the digits themselves do not, so a string far longer
-        than any number has to answer as quickly as one that merely overflows.
-        """
         self.assertEqual(1e308, self._parses('1' + '0' * 308))
         self.assertEqual(math.inf, self._parses('9' * 309))
         self.assertEqual(math.inf, self._parses('1' + '0' * 309))
@@ -132,18 +109,8 @@ class TestJsParseInt(TestBase):
 
 
 class TestStringNumericGrammar(TestBase):
-    """
-    `js_string_to_number` is `Number(string)` and `js_parse_float` is `parseFloat(string)`. The two
-    read the same decimal literal and disagree about everything around it: what a string that merely
-    begins as a literal names, what an empty string names, and whether a base other than ten is a
-    number at all. Every expected value below is what Node prints for the same call.
-    """
 
     def _number(self, text: str) -> float | str:
-        """
-        The Number that `Number(text)` names, with `NaN` given by its name rather than as a value:
-        no float compares equal to `NaN`, so an expectation of it cannot be written as a float.
-        """
         value = js_string_to_number(text)
         return 'NaN' if math.isnan(value) else value
 
@@ -307,11 +274,6 @@ class TestStringNumericGrammar(TestBase):
         self.assertTrue(is_negative_zero(js_string_to_number('-1e-400')))
 
     def test_every_spelling_of_a_signed_zero_names_negative_zero(self):
-        """
-        Negative zero prints as `0` and is equal to zero, so `Object.is` is what witnesses it in the
-        engine. `parseFloat('-0x0')` reaches it by stopping at the `x`, where `Number('-0x0')` is
-        not a number at all: the base prefix carries no sign.
-        """
         for text in ['-0', '-0.0', '-0e5']:
             with self.subTest(text=text):
                 self.assertEqual(0.0, self._number(text))
@@ -334,17 +296,6 @@ class TestStringNumericGrammar(TestBase):
         return self._float(F'{pad}-1.5e2{pad}') == -150.0
 
     def test_the_characters_that_pad_a_number_are_the_ones_the_language_calls_whitespace(self):
-        """
-        Each reader is asked which characters it treats as padding by putting every code point there
-        is in front of a number and behind it, and its answer has to be the set the two productions
-        and the Unicode database name. Walking that set alone can only find a character the reader
-        forgot; walking all of Unicode is what finds one the reader invented.
-
-        Neither probe mistakes a character for padding: a digit ahead of `42` names a different
-        number and a sign or a point behind that digit leaves a string that names none, while a sign
-        ahead of `-1.5e2` leaves a string no reader accepts and a digit ahead of it stops the parse
-        at the minus.
-        """
         for pad in LANGUAGE_WHITESPACE:
             with self.subTest(pad=F'U+{ord(pad):04X}'):
                 self.assertEqual(42.0, self._number(F'{pad}42{pad}'))
@@ -361,11 +312,6 @@ class TestStringNumericGrammar(TestBase):
         )
 
     def test_padding_python_strips_and_the_language_does_not_ends_the_number(self):
-        """
-        `U+001C` through `U+001F` and `U+0085` are removed by Python's `str.strip` and are not
-        ECMAScript WhiteSpace. Ahead of the digits they leave a string that names nothing; behind
-        them they are simply where a prefix parse stops.
-        """
         for pad in '\u001C\u001D\u001E\u001F\u0085':
             with self.subTest(pad=F'U+{ord(pad):04X}'):
                 self.assertEqual('NaN', self._number(F'{pad}5'))
@@ -397,11 +343,6 @@ class TestStringNumericGrammar(TestBase):
         self.assertEqual(1.0, self._float('1\u0661'))
 
     def test_characters_that_merely_look_like_digits_name_no_number(self):
-        """
-        The superscript two and the vulgar fraction satisfy `str.isdigit` and `str.isnumeric`, and
-        the Roman numeral and the circled digit satisfy the latter. None of them is a decimal digit
-        of the language, whose digits are `0` through `9` and nothing else.
-        """
         for text in ['\u00B2', '\u00BD', '\u216B', '\u2160', '\u2460']:
             with self.subTest(text=text):
                 self.assertEqual('NaN', self._number(text))
@@ -497,13 +438,6 @@ class TestStringNumericGrammar(TestBase):
 
 
 class TestJsNumberToStringSpellsAnIntegerAsTheDoubleItDenotes(TestBase):
-    """
-    `js_number_to_string` is `String(n)`, whose domain is the Number and therefore the double. A
-    Python `int` reaches it wherever an exact integer was computed, and the text it is given has to
-    be the text the double denoting it is given, digit for digit — most of all where the two
-    disagree about what the digits are. Every expected value below is what Node prints for `String`
-    of the same integer.
-    """
 
     def _spelled(self, value: int) -> str:
         return js_number_to_string(value)
@@ -520,9 +454,8 @@ class TestJsNumberToStringSpellsAnIntegerAsTheDoubleItDenotes(TestBase):
 
     def test_an_integer_past_the_precision_of_a_double_is_spelled_as_its_nearest_one(self):
         """
-        Above `2**53` the integers a double holds are spaced further apart than one, so an integer
-        between two of them has no spelling of its own and prints as the one it rounds to. The
-        magnitudes further up print the digits a double determines and zeros for the rest.
+        `String` writes the fewest digits that name the double and fills the rest with zeros, so
+        `2 ** 63`, which a double holds exactly, prints as `9223372036854776000`.
         """
         self.assertEqual('9007199254740992', self._spelled(2 ** 53 + 1))
         self.assertEqual('-9007199254740992', self._spelled(-(2 ** 53 + 1)))
@@ -540,11 +473,6 @@ class TestJsNumberToStringSpellsAnIntegerAsTheDoubleItDenotes(TestBase):
         self.assertEqual('8.98846567431158e+307', self._spelled(2 ** 1023))
 
     def test_an_integer_too_large_for_a_double_is_spelled_as_the_infinity_it_denotes(self):
-        """
-        Beyond the largest double there is no Number left to round to, and the sign is all that
-        survives. `float` raises on each of these, so the conversion a spelling goes through cannot
-        be the one Python offers for an integer that fits.
-        """
         self.assertEqual('Infinity', self._spelled(10 ** 309))
         self.assertEqual('Infinity', self._spelled(2 ** 1024))
         self.assertEqual('-Infinity', self._spelled(-(2 ** 1024)))
@@ -555,12 +483,6 @@ class TestJsNumberToStringSpellsAnIntegerAsTheDoubleItDenotes(TestBase):
 
 
 class TestThePaddingOfANumberIsTwoSetsReadAsOne(TestBase):
-    """
-    The ECMA-262 TrimString production is WhiteSpace together with the LineTerminators, and it is
-    what a string may be padded with and still name a Number. Everywhere else the two are separate
-    sets — one stands between two tokens and the other additionally ends a line — so what is pinned
-    here is that the padding is their union exactly, and that no character is counted in it twice.
-    """
 
     def test_the_padding_of_a_number_is_the_whitespace_and_the_line_terminators_together(self):
         self.assertEqual(

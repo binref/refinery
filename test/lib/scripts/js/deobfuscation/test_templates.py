@@ -73,7 +73,7 @@ class TestTemplates(TestBase):
         for source, matched in {
             'function g(t) { return t === void 0; }': True,
             'function g(t) { return t === undefined; }': True,
-            'function g(t) { return t === void 1; }': False,
+            'function g(t) { return t === void t(); }': False,
         }.items():
             with self.subTest(source):
                 self.assertEqual(_matches(JsParser(source).parse(), template), matched)
@@ -195,7 +195,7 @@ class TestTemplatesWithShuffledStatements(TestBase):
             ('function F(s) { s.k = true; }', 'function g(t) { t.k = !0; }', True),
             ('function F(s) { s.k = !1; }', 'function g(t) { t.k = false; }', True),
             ('function F(s) { s.k = !0; }', 'function g(t) { t.k = false; }', False),
-            ('function F(s) { s.k = !2; }', 'function g(t) { t.k = false; }', False),
+            ('function F(s) { s.k = !2; }', 'function g(t) { t.k = true; }', False),
         ):
             with self.subTest(template=template, source=source):
                 self.assertEqual(_matches(JsParser(source).parse(), Template(template)), matched)

@@ -5,7 +5,7 @@ import inspect
 
 from dataclasses import replace
 
-from test import TestBase, fastest_processor_time, processor_time_ratio
+from test import TestBase, fastest_processor_time, opportunity, processor_time_ratio, todo
 
 from refinery.lib.scripts import set_child, tree_version
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
@@ -110,6 +110,11 @@ exactly that — so a bare read of either throws in a place that is still confor
 `Float16Array` was added late enough that an engine still in service predates it, which is the
 same objection made about vintage rather than about the host.
 """
+
+_AN_INSTALL_ON_THE_GLOBAL_OBJECT_OR_FROM_A_DESCRIPTOR_MAP = (
+    'Object.defineProperties(Object.prototype, { rr: { set: function (v) {} } });',
+    "Object.defineProperty(globalThis, 'rr', { set: function (v) {} });",
+)
 
 
 class TestEffectModel(TestBase):
@@ -238,8 +243,9 @@ class TestEffectModel(TestBase):
         self.assertTrue(effects.function_can_mutate(g, self._binding(ast, effects.model, 'x')))
         self.assertFalse(effects.summary_of(g).is_pure)
 
-    def test_arithmetic_on_parameters_is_pure(self):
-        self.assertTrue(self._summary('function f(a, b){ return a * b + 1; }', 'f').is_pure)
+    @todo
+    def test_arithmetic_on_parameters_is_not_pure(self):
+        self.assertFalse(self._summary('function f(a, b){ return a * b + 1; }', 'f').is_pure)
 
     def test_fresh_object_is_pure(self):
         self.assertTrue(self._summary('function f(){ return { a: 1, b: [2, 3] }; }', 'f').is_pure)
@@ -248,31 +254,25 @@ class TestEffectModel(TestBase):
         self.assertTrue(self._summary('function f(){ var s = 0; s = s + 1; return s; }', 'f').is_pure)
 
     def test_a_read_of_an_owned_binding_before_its_declaration_throws(self):
-        """
-        A `let` the function declares itself has its dead zone inside the call, so a read from
-        before the declaration is a `ReferenceError` the call itself raises. The summary orders
-        the read against the declaration and records the throw, rather than deferring it to a call
-        site that could not judge a binding out of its scope.
-        """
         self.assertFalse(self._summary('function f(){ var d = c; let c; return d; }', 'f').is_pure)
 
     def test_a_read_of_an_owned_binding_past_its_declaration_is_pure(self):
         self.assertTrue(self._summary('function f(){ let c; var d = c; return d; }', 'f').is_pure)
 
     def test_a_nested_reader_of_an_owned_dead_zone_throws_through_the_caller(self):
-        """
-        The read sits in a nested function the owner calls while the declaration is still pending,
-        so the owner's summary carries the throw by absorbing the nested one: the nested function
-        defers the binding it does not own, and the owner decides it as one it owns.
-        """
         source = (
             'function f(){ function inner(){ return c; } var d = inner(); let c; return d; }'
         )
         self.assertFalse(self._summary(source, 'f').is_pure)
 
     def test_pure_intrinsic_call_is_pure(self):
-        summary = self._summary('function f(n){ return String.fromCharCode(n); }', 'f')
+        summary = self._summary('function f(){ return String.fromCharCode(65); }', 'f')
         self.assertTrue(summary.is_pure)
+
+    @todo
+    def test_a_pure_intrinsic_converting_a_parameter_is_not_pure(self):
+        summary = self._summary('function f(n){ return String.fromCharCode(n); }', 'f')
+        self.assertFalse(summary.is_pure)
 
     def test_async_function_is_pure_but_not_literal_replaceable(self):
         summary = self._summary('async function f(){ return 1; }', 'f')
@@ -333,10 +333,6 @@ class TestEffectModel(TestBase):
         self.assertTrue(effects.function_can_mutate(self._func(ast, 'g'), x))
 
     def test_write_only_unobservable_global_is_pure_with_no_mutated_bindings(self):
-        """
-        A write-only global in a reflection-free program is an unobservable scratch write, so it neither
-        makes the function impure nor names a mutated binding.
-        """
         ast, effects = self._effects('function f(){ scratch = 1; }')
         f = self._func(ast, 'f')
         self.assertTrue(effects.summary_of(f).is_pure)
@@ -349,20 +345,12 @@ class TestEffectModel(TestBase):
         self.assertNotEqual(populated, EffectSummary(writes_global=True))
 
     def test_mutated_bindings_records_confined_but_read_write(self):
-        """
-        Every reference to `x` lies in `f`, and the write changes `x` between the two reads inside
-        `f`, so `x` is a mutated binding.
-        """
         ast, effects = self._effects('var x = 1; function f(){ var a = x; x = 2; var b = x; }')
         f = self._func(ast, 'f')
         x = self._binding(ast, effects.model, 'x')
         self.assertEqual(effects.mutated_bindings(f), frozenset({x}))
 
     def test_call_to_redeclared_function_is_unknown(self):
-        """
-        A name bound by two function declarations resolves to no single body — the later declaration
-        wins at runtime — so a call through it is an unknown callee, not silently the first definition.
-        """
         ast, effects = self._effects('function g(){} function g(){} function h(){ g(); }')
         self.assertTrue(effects.summary_of(self._func(ast, 'h')).calls_unknown)
 
@@ -382,13 +370,6 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
     def test_write_to_a_global_only_one_function_names_is_a_global_write(self):
-        """
-        Every reference to `acc` lies inside `f`, and the assignment creates a property of the
-        global object all the same, which outlives the call. Throwing is a separate question about
-        the same name: `acc` is an implicit global, which comes into existence only once an
-        assignment to it has run, and a flow-insensitive summary cannot put the write in front of
-        the read.
-        """
         summary = self._summary('function f(n){ acc = 0; acc = acc + n; return acc; }', 'f')
         self.assertTrue(summary.writes_global)
         self.assertTrue(summary.throws)
@@ -425,9 +406,6 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.is_pure)
 
     def test_read_of_a_name_only_an_uncalled_function_assigns_throws(self):
-        """
-        Nothing calls `never`, so its assignment never runs and never brings `later` into existence.
-        """
         source = 'function never(){ later = 1; } function f(){ return later; }'
         summary = self._summary(source, 'f')
         self.assertTrue(summary.throws)
@@ -511,12 +489,6 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.writes_global)
 
     def test_fresh_local_returned_after_write_mutates_returned_local(self):
-        """
-        The mutation is real and the flag records it, but the two replacement questions answer differently.
-        A literal replacement is admissible: `value_to_node` builds a new array at every site it fills, so the
-        distinct-object-per-call the mutation depends on survives. Splicing an expression out of the body is
-        not, since it names whatever the body named and guarantees nothing about identity.
-        """
         summary = self._summary('function f(){ var o = []; o[0] = 9; return o; }', 'f')
         self.assertFalse(summary.writes_global)
         self.assertFalse(summary.writes_captured)
@@ -525,14 +497,14 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.is_literal_replaceable)
         self.assertFalse(summary.is_expression_replaceable)
 
-    def test_fresh_local_passed_to_call_after_write_mutates_returned_local(self):
+    def test_fresh_local_passed_to_an_unknown_call_after_write_calls_unknown(self):
         summary = self._summary('function f(){ var o = []; o[0] = 9; sink(o); return 1; }', 'f')
         self.assertFalse(summary.writes_global)
-        self.assertTrue(summary.mutates_returned_local)
+        self.assertTrue(summary.calls_unknown)
         self.assertFalse(summary.is_pure)
 
     def test_fresh_local_aliased_after_write_mutates_returned_local(self):
-        summary = self._summary('function f(){ var o = []; o[0] = 9; var b = o; return b[0]; }', 'f')
+        summary = self._summary('function f(){ var o = []; o[0] = 9; var b = o; return b; }', 'f')
         self.assertFalse(summary.writes_global)
         self.assertTrue(summary.mutates_returned_local)
         self.assertFalse(summary.is_pure)
@@ -595,12 +567,6 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.is_pure)
 
     def test_write_to_local_from_allocating_method_is_not_a_global_write(self):
-        """
-        `Array.prototype.slice` returns a newly created array, so a local initialized from it holds a
-        container no other code can reach — exactly as if it had been initialized to `[]`. Requiring a
-        *literal* initializer reported the enclosing function as writing globals when it touched only its
-        own locals, which is the shape every buffer-mixing decoder takes.
-        """
         summary = self._summary(
             'function f(){ var s = [1, 2]; var a = s.slice(); a[0] ^= 3; return a; }', 'f')
         self.assertFalse(summary.writes_global)
@@ -612,21 +578,11 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.writes_global)
 
     def test_write_to_local_from_allocating_method_on_a_parameter_is_a_global_write(self):
-        """
-        A parameter's type is unknown, so `src.slice()` need not be `Array.prototype.slice` at all: a caller
-        may pass an object whose own `slice` returns a shared array, and the write then lands on it. The
-        receiver must be known to be an array, not merely to have a method of that name.
-        """
         summary = self._summary(
             'function f(src){ var a = src.slice(); a[0] ^= 3; return a; }', 'f')
         self.assertTrue(summary.writes_global)
 
     def test_write_to_local_from_a_fresh_returning_function_is_not_a_global_write(self):
-        """
-        Freshness follows through a call the model resolves to one function whose every `return` yields a
-        fresh container. This is the composition the digest chain relies on: the buffer is the result of an
-        allocating method applied to a value a helper function built.
-        """
         source = (
             'function mk(){ var r = []; r.push(1); return r; }'
             'function f(){ var a = mk().slice(); a[0] ^= 3; return a; }'
@@ -635,21 +591,12 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.writes_global)
 
     def test_write_to_local_from_non_allocating_method_is_a_global_write(self):
-        """
-        `reverse` returns the receiver rather than a new array, so a write through the result is a write to
-        whatever the receiver was. Only methods the specification requires to allocate may qualify.
-        """
         summary = self._summary(
             'function f(){ var s = [1, 2]; var a = s.reverse(); a[0] = 9; return a; }', 'f')
         self.assertTrue(summary.mutates_returned_local or summary.writes_global)
         self.assertFalse(summary.is_pure)
 
     def test_write_to_local_from_allocating_method_on_a_non_array_is_a_global_write(self):
-        """
-        A receiver carrying its own `slice` shadows `Array.prototype.slice` and may return anything,
-        including a shared array. Freshness of the receiver is not enough: it must be known to be an array,
-        which an object literal is not — even though the literal itself is fresh.
-        """
         source = (
             'var shared = [1, 2];'
             'function f(){ var h = { slice: function(){ return shared; } };'
@@ -659,10 +606,6 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.writes_global)
 
     def test_write_to_local_from_a_param_returning_function_is_a_global_write(self):
-        """
-        A helper that returns its own parameter yields whatever the caller owns, so the result is not fresh
-        however the call is spelled.
-        """
         source = (
             'function mk(p){ return p; }'
             'function f(q){ var a = mk(q).slice(); a[0] = 9; return a; }'
@@ -671,29 +614,19 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.is_pure)
 
     def test_write_to_local_reassigned_from_outside_is_a_global_write(self):
-        """
-        Every value the binding can hold must be fresh, not merely the one its declaration gives it. A later
-        assignment from an outer container makes a write through the name observable there.
-        """
         source = 'var outer = [1, 2]; function f(){ var a = []; a = outer; a[0] = 9; return a; }'
         summary = self._summary(source, 'f')
         self.assertTrue(summary.writes_global)
 
     def test_write_to_local_destructured_from_outside_is_a_global_write(self):
-        """
-        The same requirement under a destructuring assignment, which reaches the binding through a pattern
-        rather than a plain assignment target.
-        """
         source = 'var outer = [[1, 2]]; function f(){ var a = []; [a] = outer; a[0] = 9; return a; }'
         summary = self._summary(source, 'f')
         self.assertTrue(summary.writes_global)
 
     def test_write_to_local_from_allocating_method_on_a_species_receiver_is_observable(self):
         """
-        `slice` and its neighbours route through ArraySpeciesCreate, which reads
-        `constructor[Symbol.species]` off the receiver, so a program that writes `constructor` decides what
-        the "newly created" array actually is — it can hand back a shared object, or make the call throw by
-        leaving a primitive there. Freshness of the receiver is not enough; its array guarantee is gone.
+        `a.slice()` builds its result with what `a.constructor` holds under the key
+        `Symbol.species`, so writing `a.constructor` decides what `a.slice()` returns.
         """
         source = (
             'function f(){ var a = [1, 2]; a.constructor = c;'
@@ -704,8 +637,8 @@ class TestEffectModel(TestBase):
 
     def test_write_to_local_from_allocating_method_on_a_proto_written_receiver_is_observable(self):
         """
-        `__proto__` replaces the prototype that the `constructor` lookup walks, so it reaches the same
-        decision by another route.
+        Writing `a.__proto__` changes the object `a.constructor` is read from, and with it what
+        `a.slice()` returns.
         """
         source = (
             'function f(){ var a = [1, 2]; a.__proto__ = p;'
@@ -716,9 +649,7 @@ class TestEffectModel(TestBase):
 
     def test_write_to_local_from_allocating_method_on_a_computed_key_receiver_is_observable(self):
         """
-        A computed key that is not a literal may name `constructor`, so it counts. The check is asked only
-        about the references to one binding, which is why this conservatism does not reach the ordinary
-        `s[i] = v` element write on a different local — the next test is the control for that.
+        `k` may be `'constructor'`, and what `a.constructor` holds decides what `a.slice()` returns.
         """
         source = (
             "function f(k){ var a = [1, 2]; a[k] = c;"
@@ -728,11 +659,6 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.writes_global)
 
     def test_write_to_local_from_allocating_method_on_an_index_written_receiver_is_fresh(self):
-        """
-        The precision control: a receiver written only at numeric-literal indices names no property that can
-        redirect the allocation, so it keeps its array guarantee. Without this the species check would refuse
-        every decoder that fills a buffer before slicing it.
-        """
         source = (
             'function f(){ var a = [1, 2]; a[0] = 5; a[1] = 6;'
             ' var x = a.slice(); x[0] ^= 3; return x; }'
@@ -741,11 +667,6 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.writes_global)
 
     def test_write_to_local_from_allocating_method_with_patched_prototype_is_observable(self):
-        """
-        The array guarantee rests on `Array.prototype` being the one the language defines. A program that
-        writes a property on it can make `slice` return anything, so the receiver being a fresh array is not
-        enough on its own.
-        """
         source = (
             'Array.prototype.slice = function(){ return shared; };'
             'function f(){ var a = [1, 2]; var x = a.slice(); x[0] = 9; return x; }'
@@ -754,31 +675,21 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.writes_global)
 
     def test_write_to_self_referential_local_is_observable(self):
-        """
-        A binding whose only value is derived from itself has no base case, so nothing establishes that it
-        holds a container at all. Answering from the partial result mid-recursion would let the cycle assert
-        its own conclusion.
-        """
         source = 'function f(){ var a = a.slice(); a[0] = 9; return a; }'
         summary = self._summary(source, 'f')
         self.assertFalse(summary.is_pure)
 
     def test_write_to_local_from_a_conditionally_returning_function_is_observable(self):
-        """
-        A helper that returns a fresh array on one path and falls off the end on another yields `undefined`
-        there, and a member write on `undefined` throws. Every `return` being fresh is not the same as the
-        call being fresh.
-        """
         source = (
             'function mk(c){ if (c) { return []; } }'
             'function f(){ var a = mk(0); a[0] = 9; return a; }'
         )
         summary = self._summary(source, 'f')
-        self.assertTrue(summary.writes_global)
+        self.assertTrue(summary.throws)
 
     def test_write_to_fresh_object_with_setter_is_a_global_write(self):
         summary = self._summary(
-            'function f(){ var o = { set k(v){ g = v; } }; o.k = 9; } var g;', 'f')
+            'function f(){ var o = { set k(v){ g = v; } }; o.k = 9; } var g; function r(){ return g; }', 'f')
         self.assertTrue(summary.writes_global)
 
     def test_write_through_object_literal_setting_proto_is_a_global_write(self):
@@ -818,9 +729,6 @@ class TestEffectModel(TestBase):
         self.assertFalse(object_member_access_runs_accessor(self._object('x = { a: 1 };')))
 
     def _atom(self, source: str) -> bool:
-        """
-        `container_literal_access_is_plain` applied to the initializer of `var probe = ...`.
-        """
         ast = JsParser(F'var probe = {source};').parse()
         declarator = next(n for n in ast.walk_in_order() if isinstance(n, JsVariableDeclarator))
         return container_literal_access_is_plain(declarator.init)
@@ -847,17 +755,9 @@ class TestEffectModel(TestBase):
         self.assertFalse(self._atom('{ __proto__: p }'))
 
     def test_parenthesized_container_literal_access_is_plain(self):
-        """
-        The atom strips parentheses, so a grouped literal answers as the literal does. The predicate it
-        replaced did not, and answered `False` for `({ k: 1 })` while answering `True` for `{ k: 1 }`.
-        """
         self.assertTrue(self._atom('({ a: 1 })'))
 
     def test_primitive_literal_access_is_not_plain(self):
-        """
-        A primitive is not a container. It is separately getter-safe, which is why `_base_getter_safe`
-        admits it and this does not — the two questions are distinct.
-        """
         self.assertFalse(self._atom("'s'"))
 
     def test_identifier_access_is_not_plain(self):
@@ -934,7 +834,7 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.is_pure)
 
     def test_self_recursive_pure_function_is_pure(self):
-        source = 'function f(n){ return n <= 1 ? 1 : f(n - 1); }'
+        source = 'function f(n){ return n === 0 ? 1 : f(0); }'
         self.assertTrue(self._summary(source, 'f').is_pure)
 
     def test_mutual_recursion_propagates_effect_to_fixpoint(self):
@@ -1019,11 +919,6 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
     def test_opaque_global_write_voids_pristine(self):
-        """
-        A computed write on the global object names no global — so it is no read-naming surface —
-        but it stores a property there, and the stored key may be the name of the intrinsic a call
-        spells. The write fact, not the surface, is what refuses here.
-        """
         source = (
             'var k = process.env.KEY || "Math";'
             ' globalThis[k] = { floor: function () { return 999; } };'
@@ -1051,18 +946,13 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
     def test_locally_shadowed_intrinsic_is_not_trusted(self):
-        source = 'function f(){ var Math = { floor: 0 }; return Math.floor; }'
+        source = 'function f(){ var Math = { get floor() { return ext(); } }; return Math.floor; }'
         self.assertFalse(self._summary(source, 'f').is_pure)
 
     def test_global_intrinsic_read_is_pure(self):
         self.assertTrue(self._summary('function f(){ return globalThis.Uint8Array; }', 'f').is_pure)
 
     def test_intrinsic_read_through_host_alias_may_throw(self):
-        """
-        A host-conditional alias may not resolve, so a member read through `window` may throw a
-        `ReferenceError` on the base and the summary is not pure; the same read through
-        `globalThis`, which the language mandates in every host, stays pure.
-        """
         self.assertTrue(self._summary('function f(){ return window.String; }', 'f').throws)
         self.assertTrue(self._summary('function f(){ return globalThis.String; }', 'f').is_pure)
 
@@ -1074,10 +964,9 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.calls_unknown)
         self.assertFalse(summary.is_pure)
 
-    def test_computed_global_intrinsic_read_stays_impure(self):
-        summary = self._summary("function f(){ return globalThis['String']; }", 'f')
-        self.assertTrue(summary.calls_unknown)
-        self.assertFalse(summary.is_pure)
+    @opportunity
+    def test_computed_global_intrinsic_read_under_a_literal_key_is_pure(self):
+        self.assertTrue(self._summary("function f(){ return globalThis['String']; }", 'f').is_pure)
 
     def test_global_read_voided_by_accessor_install(self):
         source = (
@@ -1089,11 +978,6 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
     def test_global_read_voided_by_computed_accessor_install(self):
-        """
-        `Object['defineProperty']` installs the accessor just as the dotted form does, so a global read is
-        no longer getter-free. Reading only dotted property names answered `True` here, and a later fold of
-        the key would then withdraw the trust after a consumer had relied on it.
-        """
         source = (
             "Object['defineProperty'](globalThis, 'String', { get: function(){ return 0; } });"
             ' function f(){ return globalThis.Uint8Array; }'
@@ -1111,11 +995,6 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.global_pristine)
 
     def test_global_read_survives_a_dynamic_key_call(self):
-        """
-        The precision control: a key whose value is unknown is not an install. Treating it as one would
-        make almost every obfuscated program lose this trust, and it guards nothing — such a key is only
-        resolved in a later pass, which rebuilds this model.
-        """
         source = (
             "var o = { f: function(){} }; var k = 'f'; o[k]();"
             ' function f(){ return globalThis.Uint8Array; }'
@@ -1130,7 +1009,7 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
     def test_shadowed_global_alias_read_is_not_trusted(self):
-        source = 'function f(){ var globalThis = { String: 0 }; return globalThis.String; }'
+        source = 'function f(){ var globalThis = { get String() { return ext(); } }; return globalThis.String; }'
         self.assertFalse(self._summary(source, 'f').is_pure)
 
     def test_clean_program_is_global_pristine(self):
@@ -1160,13 +1039,25 @@ class TestEffectModel(TestBase):
                 self.assertTrue(effects.installed_under('rr'))
                 self.assertFalse(effects.installed_under('zz'))
 
+    def test_an_install_on_the_global_object_or_from_a_descriptor_map_is_found_by_its_key(self):
+        for source in _AN_INSTALL_ON_THE_GLOBAL_OBJECT_OR_FROM_A_DESCRIPTOR_MAP:
+            with self.subTest(source=source):
+                _, effects = self._effects(source)
+                self.assertFalse(effects.global_pristine)
+                self.assertTrue(effects.installed_under('rr'))
+
+    @opportunity
+    def test_an_install_on_the_global_object_or_from_a_descriptor_map_is_found_by_its_key_alone(self):
+        for source in _AN_INSTALL_ON_THE_GLOBAL_OBJECT_OR_FROM_A_DESCRIPTOR_MAP:
+            with self.subTest(source=source):
+                _, effects = self._effects(source)
+                self.assertFalse(effects.installed_under('zz'))
+
     def test_an_install_without_a_key_is_found_by_every_name(self):
         for source in (
-            'Object.defineProperties(Object.prototype, { rr: { set: function (v) {} } });',
             'Object.defineProperty(Object.prototype, k, { set: function (v) {} });',
             "Object.defineProperty.call(null, Object.prototype, 'rr', { set: function (v) {} });",
             "var d = Object.defineProperty; d(Object.prototype, 'rr', { set: function (v) {} });",
-            "Object.defineProperty(globalThis, 'rr', { set: function (v) {} });",
         ):
             with self.subTest(source=source):
                 _, effects = self._effects(source)
@@ -1268,8 +1159,9 @@ class TestEffectModel(TestBase):
     def test_new_array_shadowed_is_impure(self):
         self.assertFalse(self._summary('function f(){ var Array = 0; return new Array(1); }', 'f').is_pure)
 
-    def test_new_object_is_not_a_pure_construct(self):
-        self.assertFalse(self._summary('function f(){ return new Object(); }', 'f').is_pure)
+    @opportunity
+    def test_new_object_is_pure(self):
+        self.assertTrue(self._summary('function f(){ return new Object(); }', 'f').is_pure)
 
     def _member(self, source: str) -> JsMemberExpression:
         ast, effects = self._effects(source)
@@ -1286,7 +1178,7 @@ class TestEffectModel(TestBase):
         self.assertFalse(self._member_effects.is_side_effect_free(member))
 
     def test_side_effect_free_rejects_shadowed_intrinsic_read(self):
-        member = self._member('var String = {}; String.fromCodePoint;')
+        member = self._member('var String = { get fromCodePoint() { return ext(); } }; String.fromCodePoint;')
         self.assertFalse(self._member_effects.is_side_effect_free(member))
 
     def test_side_effect_free_rejects_intrinsic_read_under_reflection(self):
@@ -1356,14 +1248,6 @@ class TestEffectModel(TestBase):
         self.assertTrue(effects.is_side_effect_free(iife))
 
     def test_side_effect_free_default_clears_allocation_holding_an_unresolved_read(self):
-        """
-        The default read effect is the getter half alone, which a name no binding resolves does not
-        trip, so a discarded allocation holding one is cleared. Every context that drops a value with
-        nothing left evaluating the read asks instead for *reads_may_throw* with a definite-assignment
-        vouch; a context that relocates the read into a still-evaluated position keeps the throw there
-        and asks it only of the sub-expression it truly drops. The default remains the leaf for a read
-        the caller does keep.
-        """
         for source, kind in [('x = [zzz];', JsArrayExpression), ('x = ({p: zzz});', JsObjectExpression)]:
             ast, effects = self._effects(source)
             node = next(n for n in ast.walk_in_order() if isinstance(n, kind))
@@ -1371,10 +1255,6 @@ class TestEffectModel(TestBase):
                 self.assertTrue(effects.is_side_effect_free(node, discarded=True))
 
     def test_side_effect_free_reads_may_throw_rejects_allocation_holding_an_unresolved_read(self):
-        """
-        With the throw half demanded, the same allocation is rejected: reading `zzz` throws a
-        `ReferenceError` as the element is evaluated, which discarding the value does not avert.
-        """
         for source, kind in [('x = [zzz];', JsArrayExpression), ('x = ({p: zzz});', JsObjectExpression)]:
             ast, effects = self._effects(source)
             node = next(n for n in ast.walk_in_order() if isinstance(n, kind))
@@ -1383,11 +1263,6 @@ class TestEffectModel(TestBase):
                     effects.is_side_effect_free(node, discarded=True, reads_may_throw=True))
 
     def test_side_effect_free_reads_may_throw_clears_allocation_whose_reads_resolve(self):
-        """
-        The demand is about a read that may throw and nothing else: a resolved local and a name the
-        specification mandates on the global object both resolve for certain, so an allocation over
-        them stays free even with the throw half demanded.
-        """
         for source in ['var a = 1; x = [a];', 'x = [undefined, NaN];']:
             ast, effects = self._effects(source)
             node = next(n for n in ast.walk_in_order() if isinstance(n, JsArrayExpression))
@@ -1635,8 +1510,8 @@ class TestEffectModel(TestBase):
 
     def test_array_with_a_hole_read_by_a_method_that_only_reads_it_is_mutable(self):
         """
-        At the hole, the method reads the position from the prototypes, where an accessor is handed
-        the array.
+        At the hole, the method reads the index through the prototype chain, where a getter the
+        program installs receives the array and may write to it.
         """
         for call in ['a.join("-")', 'a.indexOf(5)', 'a.at(1)']:
             with self.subTest(call=call):
@@ -1670,12 +1545,6 @@ class TestEffectModel(TestBase):
 
     @staticmethod
     def _summaries_by_round_robin(effects: EffectModel) -> dict[int, EffectSummary]:
-        """
-        The fixpoint `EffectModel._compute` settled before the worklist: every function is re-scanned
-        every round until a round changes no summary. A sink-free `_scan` absorbs callee summaries
-        through `summary_of`, so the reference owns `effects._summaries` and rebuilds it from bottom;
-        both schedulers drive the identical transfer function and differ in scan order alone.
-        """
         effects._summaries = {id(func): EffectSummary() for func in effects._functions}
         changed = True
         while changed:
@@ -1692,13 +1561,6 @@ class TestEffectModel(TestBase):
         self.assertEqual(dict(effects._summaries), self._summaries_by_round_robin(effects))
 
     def test_worklist_settles_where_round_robin_settles(self):
-        """
-        The least fixpoint of the summary join is unique, so the worklist scheduling of
-        `EffectModel._compute` — a function is re-scanned only when a callee it calls changed summary
-        under it — must settle on the summaries the round-robin scheduler settles on. The corpus is
-        the seeded programs the differential fuzzer runs, plus every call-graph shape the two
-        schedulers can order differently.
-        """
         for seed in range(64):
             with self.subTest(seed=seed):
                 self._assert_worklist_settles_where_round_robin_settles(generate(seed))
@@ -1714,11 +1576,6 @@ class TestEffectModel(TestBase):
                 self._assert_worklist_settles_where_round_robin_settles(source)
 
     def test_call_chain_propagates_the_innermost_summary_to_the_outermost_function(self):
-        """
-        The innermost function writes a global the outermost never names, so the fact reaches the
-        outermost summary only through the two call edges between them, and one compute has to carry
-        it across both.
-        """
         source = (
             'function c(){ leaked = 1; }'
             ' function b(){ c(); }'
@@ -1730,12 +1587,6 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.is_pure)
 
     def test_forward_referenced_callee_change_reaches_its_caller(self):
-        """
-        The caller is scanned before the callee it names and absorbs the callee's empty first
-        summary, so its own first scan changes nothing; the callee's later change must still reach
-        the caller through the edge that first scan recorded. This is the one behavior a worklist
-        can lose that a fixed round count cannot express.
-        """
         source = 'function a(){ b(); } function b(){ leaked = 1; } function r(){ return leaked; }'
         summary = self._summary(source, 'a')
         self.assertTrue(summary.writes_global)
@@ -1743,23 +1594,9 @@ class TestEffectModel(TestBase):
 
 
 class TestTrustedIntrinsic(TestBase):
-    """
-    `trusted_intrinsic` asks whether one named global is still the built-in at a use site. It answers per
-    name rather than program-wide, which is what lets a program that patches `Object.prototype` keep
-    folding `Math.floor`: `intrinsics_pristine` collapses every root into a single flag, so one disturbed
-    name withdraws trust from all of them, including names the disturbance cannot reach.
-
-    A refusal must cover every way a name can stop being the built-in — all six declaration forms, a write
-    anywhere along a member chain rooted at it, a `delete`, and a descriptor install that never writes the
-    name syntactically. The paired trust cases are equally load-bearing: over-refusal silently disables
-    correct folds, so each refusal has a control that must still be trusted.
-    """
 
     @staticmethod
     def _trust(source: str, name: str):
-        """
-        `trusted_intrinsic` for the callee root named *name* in the single call it appears in.
-        """
         ast = JsParser(source).parse()
         effects = build_effects(build_semantic_model(ast))
         target = None
@@ -1789,11 +1626,6 @@ class TestTrustedIntrinsic(TestBase):
         self._trusts("console.log(parseInt('10'));", 'parseInt')
 
     def test_name_absent_from_any_blessed_list_is_trusted(self):
-        """
-        Trust is not restricted to a list of known intrinsics: whether a fold knows how to evaluate the
-        call is the caller's question. `atob` is absent from the effect model's pure-intrinsic vocabulary,
-        yet an unshadowed `atob` is still the built-in.
-        """
         self._trusts("console.log(atob('QUJD'));", 'atob')
 
     def test_var_shadow_is_refused(self):
@@ -1812,10 +1644,6 @@ class TestTrustedIntrinsic(TestBase):
         self._refuses('(function (Math) { console.log(Math.floor(1.7)); })({ floor: null });')
 
     def test_assignment_shadow_is_refused(self):
-        """
-        A bare assignment introduces an implicit-global binding for the name, which is why no separate scan
-        of write-role identifiers is needed to catch it.
-        """
         self._refuses('Math = { floor: function(){ return 1; } }; console.log(Math.floor(1.7));')
 
     def test_assignment_inside_a_function_is_refused(self):
@@ -1834,22 +1662,12 @@ class TestTrustedIntrinsic(TestBase):
         self._refuses('try {} catch (Math) {} console.log(Math.floor(1.7));')
 
     def test_shadow_in_an_unrelated_scope_is_refused(self):
-        """
-        The shadow is in a sibling function the use site never enters, so JavaScript resolves the use site
-        to the global and a per-site scope lookup would permit the fold. Refusing is deliberate and is why
-        no such lookup is performed: a name the program binds anywhere is one an obfuscator may be routing
-        values through, and the price of refusing is an unfolded call rather than a wrong value.
-        """
         self._refuses('(function(){ var Math = 1; })(); console.log(Math.floor(1.7));')
 
     def test_property_write_on_the_name_is_refused(self):
         self._refuses('Math.floor = function(){ return 1; }; console.log(Math.floor(1.7));')
 
     def test_nested_property_write_is_refused(self):
-        """
-        The write is two levels deep, so the assignment target's own `.object` is another member
-        expression rather than the name. Attribution has to follow the chain to its root.
-        """
         self._refuses('Math.prototype.zz = 1; console.log(Math.floor(1.7));')
 
     def test_computed_property_write_is_refused(self):
@@ -1862,20 +1680,12 @@ class TestTrustedIntrinsic(TestBase):
         self._refuses('delete Math.floor; console.log(Math.floor(1.7));')
 
     def test_define_property_on_the_name_is_refused(self):
-        """
-        `Object.defineProperty` replaces a method without writing the name syntactically, so a scan for
-        assignments alone would leave it looking untouched.
-        """
         self._refuses("Object.defineProperty(Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
 
     def test_define_getter_on_the_name_is_refused(self):
         self._refuses("Math.__defineGetter__('floor', function(){}); console.log(Math.floor(1.7));")
 
     def test_define_property_through_a_computed_key_is_refused(self):
-        """
-        `Object['defineProperty']` reaches the same method as the dotted form. Matching only a dotted
-        property name left the install invisible, so the patched name stayed foldable.
-        """
         self._refuses(
             "Object['defineProperty'](Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
 
@@ -1892,19 +1702,10 @@ class TestTrustedIntrinsic(TestBase):
             "Math['__define' + 'Getter__']('floor', function(){}); console.log(Math.floor(1.7));")
 
     def test_install_on_a_guarded_target_is_refused(self):
-        """
-        The install target is the value the argument denotes, not its syntax: `Math || 0` evaluates to
-        `Math`, so the descriptor lands on the intrinsic.
-        """
         self._refuses(
             "Object.defineProperty(Math || 0, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
 
     def test_install_on_a_target_guarded_from_the_right_is_refused(self):
-        """
-        Which operand survives depends on the values, so both must be attributed. Following only the left
-        of `||` — correct for `intrinsic_of`, which certifies what a node *does* denote — misses this one,
-        because collecting writes needs the opposite approximation.
-        """
         self._refuses(
             "Object.defineProperty(0 || Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
 
@@ -1926,10 +1727,6 @@ class TestTrustedIntrinsic(TestBase):
             ' console.log(Math.floor(1.7));')
 
     def test_install_on_an_unrelated_object_is_trusted(self):
-        """
-        The precision control for the whole install family: attributing every argument to every name would
-        refuse folds the program never endangered.
-        """
         self._trusts(
             "var o = {}; Object['defineProperty'](o, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
 
@@ -1943,18 +1740,10 @@ class TestTrustedIntrinsic(TestBase):
             "Object['defineProperty'](String.prototype, 'zz', { value: 1 }); console.log(Math.floor(1.7));")
 
     def test_dynamic_key_call_on_an_unrelated_object_is_trusted(self):
-        """
-        A key whose value is unknown is not treated as an install. Doing so would refuse a fold for every
-        dynamic call in the program, and it protects nothing: a variable key is resolved by substitution in
-        a later pass, which rebuilds this model.
-        """
         self._trusts(
             "var o = { f: function(){} }; var k = 'f'; o[k](); console.log(Math.floor(1.7));")
 
     def test_reflection_surface_refuses_every_name(self):
-        """
-        A direct `eval` can rebind anything at runtime, so no name is provably intact.
-        """
         self._refuses("eval('Math = 1'); console.log(Math.floor(1.7));")
 
     def test_property_read_alone_is_trusted(self):
@@ -1964,19 +1753,12 @@ class TestTrustedIntrinsic(TestBase):
         self._trusts('[1].map(Math.floor); console.log(Math.floor(1.7));')
 
     def test_aliasing_the_name_is_trusted(self):
-        """
-        Binding the intrinsic to a local reads it; it does not disturb it.
-        """
         self._trusts('var m = Math; console.log(Math.floor(1.7));')
 
     def test_another_name_being_shadowed_is_trusted(self):
         self._trusts('var Object = 1; console.log(Math.floor(1.7));')
 
     def test_another_name_being_patched_is_trusted(self):
-        """
-        The precision this query exists for: patching `Object.prototype` cannot affect `Math`, so `Math`
-        stays foldable. The program-wide `intrinsics_pristine` flag cannot express this.
-        """
         self._trusts('Object.prototype.zz = 1; console.log(Math.floor(1.7));')
 
     def test_the_patched_name_itself_is_refused(self):
@@ -1984,11 +1766,6 @@ class TestTrustedIntrinsic(TestBase):
 
 
 class TestTrustedPrototype(TestBase):
-    """
-    `trusted_prototype` answers the question a literal receiver raises: `'ab'.toUpperCase()` mentions no
-    identifier, so no name-based query can see that `String.prototype.toUpperCase` was replaced. It maps
-    the receiver's type to the intrinsic that owns its methods and asks that name the same question.
-    """
 
     @staticmethod
     def _trusted(source: str, value_type: type) -> bool:
@@ -2009,10 +1786,6 @@ class TestTrustedPrototype(TestBase):
             "Array.prototype.join = function () { return 'X'; };", list))
 
     def test_patch_of_one_prototype_leaves_the_other_trusted(self):
-        """
-        The same precision as the per-name query: patching `Array.prototype` cannot change what a string
-        method means.
-        """
         source = "Array.prototype.join = function () { return 'X'; };"
         self.assertFalse(self._trusted(source, list))
         self.assertTrue(self._trusted(source, str))
@@ -2032,13 +1805,6 @@ class TestTrustedPrototype(TestBase):
 
 
 class TestReadChainIntact(TestBase):
-    """
-    `read_chain_intact` answers the neighbouring question for a property *read* rather than a method call.
-    A method resolves on the prototype that owns it, so `Array.prototype.join` shadows anything installed on
-    `Object.prototype`; a read of an arbitrary name has no such shadow and walks the chain to its root.
-    The two therefore diverge on exactly one input — a patch to `Object.prototype` — and that divergence is
-    the reason they are separate predicates.
-    """
 
     @staticmethod
     def _intact(source: str, value_type: type) -> bool:
@@ -2067,11 +1833,6 @@ class TestReadChainIntact(TestBase):
         self.assertFalse(self._intact(source, dict))
 
     def test_object_prototype_patch_divides_the_read_from_the_call(self):
-        """
-        The one input on which the two questions must disagree. Node confirms both halves: patching
-        `Object.prototype.join` leaves `[1, 2].join('-')` meaning the built-in, while patching
-        `Object.prototype.zz` makes `[1, 2].zz` run user code.
-        """
         source = 'Object.prototype.zz = 1;'
         self.assertTrue(self._trusted(source, list))
         self.assertFalse(self._intact(source, list))
@@ -2100,12 +1861,6 @@ class TestReadChainIntact(TestBase):
 
 
 class TestCallIsFoldable(TestBase):
-    """
-    `call_is_foldable` is the single gate every constant fold shares. It must admit exactly the calls whose
-    value can replace them: the callee is still the built-in it is spelled as, and no argument carries an
-    effect the fold would discard. The admit cases matter as much as the refusals — a gate that refuses too
-    much silently disables correct folding, which is the failure mode that looks like success.
-    """
 
     @staticmethod
     def _foldable(source: str, receiver_type: type | None = None) -> bool:
@@ -2145,11 +1900,6 @@ class TestCallIsFoldable(TestBase):
             "String.prototype.toUpperCase = function () {}; var r = 'ab'.toUpperCase();", str))
 
     def test_literal_receiver_needs_no_receiver_type(self):
-        """
-        A literal receiver's type is fixed by its own syntax, so the gate resolves the prototype question
-        itself rather than requiring the caller to answer it. This is what lets a fold ask about a whole
-        chain without first walking down to its innermost receiver.
-        """
         self.assertTrue(self._foldable("var r = 'ab'.toUpperCase();"))
         self.assertTrue(self._foldable("var r = [1, 2].join('-');"))
         self.assertTrue(self._foldable('var r = (5).toString(2);'))
@@ -2159,22 +1909,12 @@ class TestCallIsFoldable(TestBase):
             "String.prototype.toUpperCase = function () {}; var r = 'ab'.toUpperCase();"))
 
     def test_computed_receiver_without_a_receiver_type_is_refused(self):
-        """
-        Where the syntax settles nothing — an identifier, a member read, a conditional, a concatenation —
-        the receiver's type is genuinely unknown, and an unanswered question is not a yes. The caller must
-        supply the type it knows, or be refused.
-        """
         self.assertFalse(self._foldable("var s = 'ab'; var r = s.toUpperCase();"))
         self.assertFalse(self._foldable("var o = { s: 'ab' }; var r = o.s.toUpperCase();"))
         self.assertFalse(self._foldable("var r = ('a' + 'b').toUpperCase();"))
         self.assertFalse(self._foldable("var x = 1; var r = (x ? 'a' : 'b').toUpperCase();"))
 
     def test_chain_link_receiver_is_judged_by_the_inner_call(self):
-        """
-        At a link whose receiver is another call no prototype can be named, so the inner call is put through
-        this same gate in full. Its arguments are judged too: an effectful argument to the inner link is as
-        observable as one to the outer, and checking only the inner callee's trust would fold it away.
-        """
         self.assertTrue(self._foldable(
             "var r = [1, 2].map(function (x) { return x + 1; }).join('-');"))
         self.assertFalse(self._foldable(
@@ -2185,10 +1925,6 @@ class TestCallIsFoldable(TestBase):
             " var r = [1, 2].slice(h()).join('-');"))
 
     def test_callback_writing_a_script_scope_var_is_refused(self):
-        """
-        Every reference of `n` lies in the callback, and the write is a global write all the same:
-        each call of the callback reads what the one before it stored.
-        """
         self.assertFalse(self._foldable(
             'var n = 0; var r = [1, 2].map(function (x) { n += x; return x; });', list))
 
@@ -2209,18 +1945,10 @@ class TestCallIsFoldable(TestBase):
             'var s = [9]; var r = [1, 2].map(function (x) { s.push(x); return x; });', list))
 
     def test_trusted_call_valued_argument_is_admitted(self):
-        """
-        A nested call is admissible precisely because the same questions are asked of it. Refusing all
-        nested calls would disable a large class of correct folds.
-        """
         self.assertTrue(self._foldable('var r = Math.floor(Math.abs(-1.7));'))
         self.assertTrue(self._foldable('var r = parseInt(String.fromCharCode(65));'))
 
     def test_shadowed_nested_callee_is_refused(self):
-        """
-        The nested call is what makes this refusable: `String` is shadowed, so the inner call is not the
-        built-in, and the outer fold must not proceed on a value it cannot trust.
-        """
         self.assertFalse(self._foldable(
             'var String = {}; var r = parseInt(String.fromCharCode(65));'))
 
@@ -2233,9 +1961,6 @@ class TestCallIsFoldable(TestBase):
         self.assertFalse(self._foldable("eval('x'); var r = Math.floor(1.7);"))
 
     def test_unrelated_prototype_patch_still_admits(self):
-        """
-        The precision control: patching `Object.prototype` cannot reach `Math`, so the fold survives.
-        """
         self.assertTrue(self._foldable('Object.prototype.zz = 1; var r = Math.floor(1.7);'))
 
     def test_callee_that_is_not_a_name_is_refused(self):
@@ -2244,16 +1969,9 @@ class TestCallIsFoldable(TestBase):
 
 class TestFoldsRevealNoTrust(TestBase):
     """
-    The program-wide facts a fold gate rests on must not become *less* restrictive as folds fire. A
-    simplification pass reads these facts many times, and a consumer may legitimately hold one answer for
-    the length of a pass; if a rewrite could reveal an intrinsic write that the held answer predates, that
-    consumer would admit a fold against an already-patched built-in.
-
-    Each case therefore hides an install behind a form a fold collapses, and asserts the facts read the same
-    before and after. The direction matters: `_globals_written` growing is the hazard, because the held set
-    is the smaller earlier one, and `global_pristine` going `True` to `False` is the hazard for the same
-    reason. Testing the shapes alone is not enough — an earlier version of this check diffed only the
-    written-name set and reported every channel closed while `global_pristine` was still moving.
+    A simplification pass must not reveal a write to a built-in that the facts read before the pass
+    did not hold, because a fold may act on those facts for the whole pass. The pass may drop a
+    write together with the code that made it.
     """
 
     @staticmethod
@@ -2269,12 +1987,21 @@ class TestFoldsRevealNoTrust(TestBase):
         )
 
     def _stable(self, source: str):
-        """
-        Assert one simplification pass leaves every fact a fold gate consumes unchanged.
-        """
         ast = JsParser(source).parse()
         JsSimplifications().visit(ast)
         self.assertEqual(self._facts(source), self._facts(JsSynthesizer().convert(ast)))
+
+    def _not_loosened(self, source: str):
+        ast = JsParser(source).parse()
+        JsSimplifications().visit(ast)
+        written, intrinsics_pristine, global_pristine, surface = self._facts(source)
+        written_after, intrinsics_pristine_after, global_pristine_after, surface_after = self._facts(
+            JsSynthesizer().convert(ast)
+        )
+        self.assertLessEqual(written_after, written)
+        self.assertFalse(intrinsics_pristine and not intrinsics_pristine_after)
+        self.assertFalse(global_pristine and not global_pristine_after)
+        self.assertFalse(surface_after and not surface)
 
     def test_computed_install_key_reveals_nothing(self):
         self._stable(
@@ -2309,17 +2036,9 @@ class TestFoldsRevealNoTrust(TestBase):
         self._stable("Math['fl' + 'oor'] = function(){}; console.log(Math.floor(1.7));")
 
     def test_a_program_that_only_folds_reveals_nothing(self):
-        """
-        The control: a pass that folds but installs nothing must also leave the facts alone, or the
-        assertion above would hold for reasons unrelated to install attribution.
-        """
         self._stable("console.log('a' + 'b'); console.log(Math.floor(1.7));")
 
     def test_aliased_install_target_reveals_nothing(self):
-        """
-        A write through an alias is attributed to the intrinsic before any fold collapses the alias, so
-        inlining `m` to `Math` cannot reveal a patch the held answer predates.
-        """
         self._stable('var m = Math; m.floor = function(){}; console.log(Math.floor(1.7));')
 
     def test_two_hop_aliased_install_target_reveals_nothing(self):
@@ -2337,11 +2056,6 @@ class TestFoldsRevealNoTrust(TestBase):
             "var p = Array.prototype; p.join = function(){}; console.log([1, 2].join('-'));")
 
     def test_guarded_escape_argument_reveals_nothing(self):
-        """
-        An intrinsic handed to a patching function through a form a fold collapses. `0 || Math` names
-        nothing until the guard folds away, so the escape must be seen through the guard or the pass would
-        reveal the write after the held answer was read.
-        """
         self._stable(
             'function p(o) { o.floor = function(){}; } p(0 || Math); console.log(Math.floor(1.7));')
 
@@ -2354,11 +2068,7 @@ class TestFoldsRevealNoTrust(TestBase):
             'function p(o) { o.floor = function(){}; } p((1, Math)); console.log(Math.floor(1.7));')
 
     def test_escape_in_a_dead_branch_reveals_nothing(self):
-        """
-        Removing the branch removes the escape, which shrinks the set — the safe direction. Growing is the
-        hazard, so this pins that the pass does not instead *discover* one.
-        """
-        self._stable(
+        self._not_loosened(
             'function p(o) { o.floor = function(){}; } if (false) { p(Math); }'
             ' console.log(Math.floor(1.7));')
 
@@ -2372,25 +2082,11 @@ class TestFoldsRevealNoTrust(TestBase):
             ' console.log(Math.floor(1.7));')
 
     def test_a_read_only_escape_reveals_nothing(self):
-        """
-        The spared side must be stable too: a callee that only reads through its parameter keeps the
-        intrinsic trusted, and no fold may turn that answer around.
-        """
         self._stable(
             'function log(o) { return o.PI; } log(Math); console.log(Math.floor(1.7));')
 
 
 class TestAliasedIntrinsicWrites(TestBase):
-    """
-    A property write patches the intrinsic its target *denotes*, not the one it is spelled with. `var m =
-    Math; m.floor = f` mentions `Math` nowhere in the assignment, so attributing the write to the syntactic
-    root left `Math` looking pristine and `Math.floor(1.7)` folding to the built-in.
-
-    A *may* analysis: one branch holding an intrinsic is enough to record it. The direction is forced —
-    missing an alias yields a wrong value, an extra name only an unfolded call — and the aliasing tests below
-    pin the precision that direction must not cost, since a bare alias with no write through it is ordinary
-    minifier output.
-    """
 
     @staticmethod
     def _written(source: str) -> frozenset[str]:
@@ -2419,10 +2115,6 @@ class TestAliasedIntrinsicWrites(TestBase):
         self._records('var a = Math; var b = a; b.floor = f;', 'Math')
 
     def test_write_through_an_alias_copied_back_and_forth_is_recorded(self):
-        """
-        `a` and `b` may each hold what the other holds, so a write through `b` reaches `Object`
-        whichever of the two names the scan asks about first.
-        """
         self._records(inspect.cleandoc("""
             function patch() { b.prototype.foo = 1; }
             var a, b;
@@ -2436,10 +2128,6 @@ class TestAliasedIntrinsicWrites(TestBase):
         self._records('var m; m = Math; m.floor = f;', 'Math')
 
     def test_write_through_an_alias_reassigned_to_an_intrinsic_is_recorded(self):
-        """
-        The binding holds a plain object on one path and the intrinsic on another, so a *must* analysis
-        would answer that it is never `Math`.
-        """
         self._records('var m = {}; m = Math; m.floor = f;', 'Math')
 
     def test_computed_key_write_through_an_alias_is_recorded(self):
@@ -2461,50 +2149,22 @@ class TestAliasedIntrinsicWrites(TestBase):
         self._records('var A = Array; A.prototype.join = f;', 'Array')
 
     def test_a_bare_alias_with_no_write_records_nothing(self):
-        """
-        The precision this must not cost: `var m = Math; m.floor(x)` is ordinary minifier output, and
-        refusing it would unfold every such call.
-        """
         self._omits('var m = Math; var r = m.floor(1.7);', 'Math')
 
     def test_a_write_on_an_unrelated_local_records_nothing(self):
         self._omits('var m = {}; m.floor = f;', 'Math')
 
     def test_the_result_of_an_intrinsic_call_is_not_an_alias(self):
-        """
-        The false positive a walk over every identifier in the initializer produces: the local holds the
-        *string* `fromCharCode` returned, not `String` itself. Three such aliases were reported on a real
-        sample before the walk was narrowed to value-preserving positions.
-        """
         self._omits("var s = String.fromCharCode(65); s.x = 1;", 'String')
 
     def test_the_result_of_a_method_call_is_not_an_alias(self):
         self._omits("var s = 'ab'.toUpperCase(); s.x = 1;", 'String')
 
     def test_a_write_through_a_mutually_assigned_pair_terminates(self):
-        """
-        The alias walk follows binding values, so a cycle must not spin. `Math` is still recorded, since
-        one of the two does hold it.
-        """
         self._records('var a = Math; var b = a; a = b; b.floor = f;', 'Math')
 
 
 class TestEscapedIntrinsicWrites(TestBase):
-    """
-    An intrinsic handed to code whose writes cannot be enumerated is patched by a write this analysis never
-    sees. `function p(o) { o.floor = f; } p(Math)` writes `Math.floor` while naming `Math` only as an
-    argument, so scanning for write targets left the name pristine and `Math.floor(1.7)` folding to the
-    built-in.
-
-    The question asked is whether the value *escapes*, not where it flows. A binder from each argument to its
-    parameter would reach none of the routes below except the first — a callback, a returned value,
-    `arguments`, spread, rest, and a method on an object literal are all invisible to it — while asking
-    whether a use hands the value onward covers them together.
-
-    Refusal is not blanket. A call whose callee provably writes nothing through a parameter keeps the
-    intrinsic trusted, which is what the omission tests pin: `log(Math)` for a `log` that only reads `o.PI`
-    is ordinary code, and refusing it would unfold every such call.
-    """
 
     @staticmethod
     def _written(source: str) -> frozenset[str]:
@@ -2524,10 +2184,6 @@ class TestEscapedIntrinsicWrites(TestBase):
         self._records('function p(a, o) { o.floor = f; } p(0, Math);', 'Math')
 
     def test_a_prototype_passed_to_a_patching_function_is_recorded(self):
-        """
-        The argument is a member read, not the intrinsic itself, but `Array.prototype` shares the surface
-        that decides what `[1, 2].join()` means.
-        """
         self._records('function p(o) { o.join = f; } p(Array.prototype);', 'Array')
 
     def test_an_alias_passed_to_a_patching_function_is_recorded(self):
@@ -2540,9 +2196,6 @@ class TestEscapedIntrinsicWrites(TestBase):
         self._records('function p(o) { o.floor = f; } p(...[Math]);', 'Math')
 
     def test_an_intrinsic_reaching_a_rest_parameter_is_recorded(self):
-        """
-        No name tracks a rest element's contents, so the callee cannot be shown write-free.
-        """
         self._records('function p(...r) { r[0].floor = f; } p(Math);', 'Math')
 
     def test_an_intrinsic_reaching_the_arguments_object_is_recorded(self):
@@ -2552,12 +2205,6 @@ class TestEscapedIntrinsicWrites(TestBase):
         self._records('function q(o) { o.floor = f; } function p(o) { q(o); } p(Math);', 'Math')
 
     def test_an_intrinsic_passed_to_a_callback_is_recorded(self):
-        """
-        The regression test for the callee-resolution defect. The callee `f` is a *parameter*, and a
-        resolver that fell back to a binding's declaration parent answered `each` — the function that
-        declares `f` rather than the one it holds. `each` writes nothing itself, so the callback's write
-        vanished and every other test in this class still passed.
-        """
         self._records('function each(f) { f(Math); } each(function (o) { o.floor = f; });', 'Math')
 
     def test_an_intrinsic_passed_to_a_method_of_an_object_literal_is_recorded(self):
@@ -2567,31 +2214,18 @@ class TestEscapedIntrinsicWrites(TestBase):
         self._records('p(Math);', 'Math')
 
     def test_an_intrinsic_passed_to_a_reassigned_callee_is_recorded(self):
-        """
-        Reading the callee's post-reassignment value would report the reading function; ordering the two is
-        exactly what the resolution this rests on refuses to assume.
-        """
         self._records('function p(o) { return o.PI; } p = function (o) { o.floor = f; }; p(Math);', 'Math')
 
     def test_an_intrinsic_returned_from_a_function_is_recorded(self):
         self._records('function get() { return Math; } get().floor = f;', 'Math')
 
     def test_an_intrinsic_a_callee_returns_is_recorded(self):
-        """
-        Distinct from returning it directly, and not covered by aliasing: the alias walk stops at a call, so
-        `m` does not denote `Math` here. Letting a callee hand its parameter back is therefore its own escape
-        route, and a callee that does so is not write-free however little it writes.
-        """
         self._records('function get(o) { return o; } var m = get(Math); m.floor = f;', 'Math')
 
     def test_an_intrinsic_a_callee_returns_parenthesized_is_recorded(self):
         self._records('function get(o) { return (o); } var m = get(Math); m.floor = f;', 'Math')
 
     def test_an_intrinsic_a_callee_returns_inside_a_container_is_recorded(self):
-        """
-        These three are why no explicit return check exists: routing the question through `_value_escapes`
-        catches a parameter wrapped on the way out, which a check for a bare returned identifier would not.
-        """
         self._records('function get(o) { return [o]; } var a = get(Math); a[0].floor = f;', 'Math')
 
     def test_an_intrinsic_a_callee_returns_in_an_object_is_recorded(self):
@@ -2601,22 +2235,15 @@ class TestEscapedIntrinsicWrites(TestBase):
         self._records('var get = (o) => o; var m = get(Math); m.floor = f;', 'Math')
 
     def test_an_intrinsic_passed_along_a_chain_past_the_depth_limit_is_recorded(self):
-        """
-        The recursion cap is a refusal, not an approval: a chain too long to follow is unproven rather than
-        proven safe, so the write at its end must still be recorded.
-        """
         self._records(
             'function f0(o) { f1(o); } function f1(o) { f2(o); } function f2(o) { f3(o); }'
             ' function f3(o) { f4(o); } function f4(o) { f5(o); } function f5(o) { o.floor = f; }'
             ' f0(Math);',
             'Math')
 
-    def test_a_read_only_chain_past_the_depth_limit_is_recorded(self):
-        """
-        The precision the cap costs, stated plainly: this chain writes nothing, yet exceeds the limit and so
-        is refused. Pinned deliberately — if the limit ever moves, this is the test that says what changed.
-        """
-        self._records(
+    @opportunity
+    def test_a_read_only_chain_past_the_depth_limit_records_nothing(self):
+        self._omits(
             'function f0(o) { f1(o); } function f1(o) { f2(o); } function f2(o) { f3(o); }'
             ' function f3(o) { f4(o); } function f4(o) { f5(o); } function f5(o) { return o.PI; }'
             ' f0(Math);',
@@ -2629,11 +2256,6 @@ class TestEscapedIntrinsicWrites(TestBase):
             'Math')
 
     def test_an_unknown_computed_key_read_off_an_intrinsic_is_recorded(self):
-        """
-        `Array[k]` may be `Array.prototype`, so an unresolvable key must reach the surface. This is the
-        direction opposite to an install key, where an unknown name identifies no method: there a missed
-        guess costs precision, here it costs soundness.
-        """
         self._records('function p(o) { o.join = f; } p(Array[k]);', 'Array')
 
     def test_a_known_surface_computed_key_is_recorded(self):
@@ -2649,11 +2271,6 @@ class TestEscapedIntrinsicWrites(TestBase):
         self._records('var h = { m: Math }; h.m.floor = f;', 'Math')
 
     def test_an_intrinsic_saved_to_a_global_by_a_callee_is_recorded(self):
-        """
-        The callee writes no property, so the write-free check must fail for the other reason: it lets the
-        parameter escape. A parameter denotes no intrinsic name, so `save = o` cannot be spared the way
-        `var m = Math` is — the attribution chain would end there.
-        """
         self._records('function p(o) { save = o; } p(Math); save.floor = f;', 'Math')
 
     def test_a_deleting_callee_is_recorded(self):
@@ -2683,11 +2300,6 @@ class TestEscapedIntrinsicWrites(TestBase):
         self._omits('function use(o) { return o.floor(1.7); } use(Math);', 'Math')
 
     def test_a_constant_read_off_an_intrinsic_records_nothing(self):
-        """
-        Node settles the key question: writing a property of the number `Math.PI` cannot change what
-        `Math.floor(1.7)` returns, so handing that value out is harmless. Continuing the walk through every
-        member access instead would refuse every program that prints a constant.
-        """
         self._omits('function p(v) { v.x = 1; } p(Math.PI);', 'Math')
 
     def test_a_method_read_off_an_intrinsic_records_nothing(self):
@@ -2703,10 +2315,6 @@ class TestEscapedIntrinsicWrites(TestBase):
         self._omits('var m = Math; console.log(m.floor(1.7));', 'Math')
 
     def test_an_alias_assigned_after_declaration_records_nothing(self):
-        """
-        The write-role `m` in `m = Math` is not a value being handed anywhere; reading it as one recorded
-        `Math` for every program that aliases it.
-        """
         self._omits('var m; m = Math; console.log(m.floor(1.7));', 'Math')
 
     def test_a_two_hop_alias_records_nothing(self):
@@ -2747,11 +2355,6 @@ class TestEscapedIntrinsicWrites(TestBase):
 
 
 class TestTrustedIntrinsicName(TestBase):
-    """
-    `trusted_intrinsic_name` asks the question `trusted_intrinsic` asks, for a caller that holds a
-    name rather than a node spelling it: `/a/.test(s)` builds its object from `RegExp` without
-    naming it.
-    """
 
     @staticmethod
     def _trust(source: str) -> bool:
@@ -2790,11 +2393,6 @@ class TestTrustedIntrinsicName(TestBase):
 
 
 class TestAFunctionObjectReachedThroughAName(TestBase):
-    """
-    `EffectModel.function_object_untouched` for the first function a program writes. A program can
-    give that function a `toString` of its own through any name that holds it, and converting it
-    then answers what the program installed rather than the text it was written with.
-    """
 
     @staticmethod
     def _untouched(source: str) -> bool:
@@ -2819,14 +2417,6 @@ class TestAFunctionObjectReachedThroughAName(TestBase):
 
 
 class TestAFunctionHandedOnConvertsToItsTextUnlessAnInstallReachesIt(TestBase):
-    """
-    `refinery.lib.scripts.js.analysis.effects.EffectModel.function_conversion_untouched` for the
-    function `W` a program writes first and keeps in an array. Converting `W` answers its written
-    text unless the program gives it a conversion method of its own or a new prototype, which a
-    function handed on can receive from code that never names it. The answer rests on finding no
-    such install only on the tree the run has settled, since a key the run decodes later may yet
-    spell one.
-    """
 
     PREFIX = 'function W(a) { return a + 1; } var g = [W];'
     SHOW = 'console.log(g.length, String(W));'
@@ -3085,10 +2675,6 @@ class TestAFunctionHandedOnConvertsToItsTextUnlessAnInstallReachesIt(TestBase):
 
 
 class TestTheConversionScanCostsWhatTheProgramIsLong(TestBase):
-    """
-    The scan of conversion installs runs whenever an effect model is built, which a run does after
-    every change. Each receiver it judges, and each concatenation it reads, is read once.
-    """
 
     @staticmethod
     def _build_repeatedly(model: SemanticModel, count: int):
@@ -3097,10 +2683,6 @@ class TestTheConversionScanCostsWhatTheProgramIsLong(TestBase):
 
     @classmethod
     def _fastest_build(cls, source: str, batch: int) -> float:
-        """
-        The fastest of three runs that each build the effects of one model of the source the given
-        number of times.
-        """
         ast = JsParser(source).parse()
         models = [build_semantic_model(ast) for _ in range(3)]
         return fastest_processor_time(functools.partial(cls._build_repeatedly, model, batch) for model in models)
@@ -3127,11 +2709,6 @@ class TestTheConversionScanCostsWhatTheProgramIsLong(TestBase):
 
 
 def _call_summary(source: str, name: str = '') -> EffectSummary:
-    """
-    The summary of the function *name* declares in *source*, or of the first function the text
-    spells when *name* is empty, which is how a table varies a function between a declaration, a
-    function expression and an arrow: only one of the three carries a name at all.
-    """
     ast = JsParser(source).parse()
     effects = build_effects(build_semantic_model(ast))
     for node in ast.walk_in_order():
@@ -3149,27 +2726,12 @@ def _call_summary(source: str, name: str = '') -> EffectSummary:
 
 
 def _without_binding_identity(summary: EffectSummary) -> tuple[EffectSummary, dict[str, set[str]]]:
-    """
-    *summary* with every set of `Binding` objects emptied, and beside it the names of the bindings
-    each set held. Those sets name bindings by identity, so summaries taken from two parses of two
-    programs can never compare equal through them, however alike the effects they record are.
-    """
     sets = ('captured_writes', 'written_bindings', 'dead_zone_reads')
     names = {name: {binding.name for binding in getattr(summary, name)} for name in sets}
     return replace(summary, captured_writes=set(), written_bindings=set(), dead_zone_reads=set()), names
 
 
 class TestAClassBodysMemberNamesAreNotReads(TestBase):
-    """
-    The name of a class method, field or accessor is the key the member is stored under, the same
-    kind of name as an object-literal key, and never a read of a binding spelled the same way.
-    Defining such a class inside a function therefore leaves that function doing what it does
-    without it. A name written in brackets is the opposite: the brackets hold an expression the
-    class definition evaluates, so the function does whatever evaluating that expression does.
-
-    Each case is an equality between the summaries of two programs rather than a flag, so that it
-    goes on saying the same thing when the summary grows a field.
-    """
 
     def test_a_class_whose_member_names_are_keys_leaves_the_function_holding_it_unchanged(self):
         for member in [
@@ -3227,11 +2789,6 @@ class TestAClassBodysMemberNamesAreNotReads(TestBase):
 
 
 class TestAFieldInitializerRunsAtEachConstruction(TestBase):
-    """
-    The initializer of a field written without `static` runs each time an instance is constructed,
-    as the body of a function the class calls then; the class statement only creates it. The
-    initializer of a static field runs while the class statement does.
-    """
 
     def test_a_function_declaring_a_class_does_not_run_its_field_initializers(self):
         self.assertEqual(
@@ -3279,7 +2836,7 @@ _AN_EXPRESSION_A_CALL_EVALUATES: dict[str, tuple[str, str]] = {
     ),
     'a read of a name nothing binds, inside a destructuring pattern': (
         'function f({ a = zzz } = {}) { return a; }',
-        'function f(o) { zzz; return o; }',
+        'function f(o = {}) { var { a = zzz } = o; return a; }',
     ),
     'a read of a name nothing binds, in an arrow': (
         'var f = (a = zzz) => a;',
@@ -3309,24 +2866,24 @@ _A_DEFAULT_EVERY_NAME_OF_WHICH_IS_BOUND = [
     'function f(a = 1) { return a; }',
     'var f = function (a = 1) { return a; };',
     'var f = (a = 1) => a;',
-    'function f({ a = 5 } = {}) { return a; }',
-    'function f([a = 5] = []) { return a; }',
     'function f(b, a = b) { return a; }',
     'function f(a = Math.max(1, 2)) { return a; }',
     'var ok = 5; function f(a = ok) { return a; }',
 ]
 """
-The controls, in the same spellings: a call that omits the argument evaluates the default and goes
-on into the body, so nothing about the parameter list may be held against it.
+The controls, in the same spellings but the destructuring patterns: a call that omits the argument
+evaluates the default and goes on into the body, so nothing about the parameter list may be held
+against it. A destructuring pattern is held against a call that passes an argument it cannot
+destructure.
 """
+
+_A_DESTRUCTURING_PARAMETER_EVERY_DEFAULT_OF_WHICH_IS_BOUND = [
+    'function f({ a = 5 } = {}) { return a; }',
+    'function f([a = 5] = []) { return a; }',
+]
 
 
 class TestAParameterDefaultIsPartOfWhatACallEvaluates(TestBase):
-    """
-    A parameter default is evaluated by the call, before the body is entered, on every call that
-    omits the argument. What a default does is therefore part of what a call to the function does,
-    and a summary taken from the body alone is a summary of a different function.
-    """
 
     def test_a_call_may_throw_exactly_where_the_default_reads_a_name_nothing_binds(self):
         summarized = [
@@ -3344,6 +2901,12 @@ class TestAParameterDefaultIsPartOfWhatACallEvaluates(TestBase):
             if not _call_summary(source).is_pure
         }
         self.assertEqual(impure, set())
+
+    @todo
+    def test_a_call_may_throw_where_a_destructuring_parameter_meets_the_argument_passed(self):
+        for source in _A_DESTRUCTURING_PARAMETER_EVERY_DEFAULT_OF_WHICH_IS_BOUND:
+            with self.subTest(source=source):
+                self.assertTrue(_call_summary(source).throws)
 
     def test_a_default_is_summarized_as_the_same_expression_at_the_top_of_the_body_is(self):
         for name, (default, body) in _AN_EXPRESSION_A_CALL_EVALUATES.items():
@@ -3379,20 +2942,12 @@ class TestAParameterDefaultIsPartOfWhatACallEvaluates(TestBase):
 
 
 class TestTheEffectModelBuildsForAProgramWithManyNames(TestBase):
-    """
-    The effect model builds for programs that pass a function through many names, in time that grows
-    with the program.
-    """
 
     def test_a_chain_of_two_thousand_names_each_holding_the_one_before_builds(self):
         source = 'var c0 = function () {};\n' + ''.join(F'var c{k} = c{k - 1};\n' for k in range(1, 2000))
         build_effects(build_semantic_model(JsParser(source).parse()))
 
     def test_names_given_one_of_ten_names_build_in_time_that_grows_with_the_program(self):
-        """
-        Every level of names adds the same lines to the program, so a build whose time grows with
-        the program takes about seven times as long for eight levels as for one.
-        """
         def build(depth: int) -> tuple[float, int]:
             width = 10
             lines = [F'var n0_{i} = function () {{}};' for i in range(width)]
@@ -3412,6 +2967,7 @@ class TestTheEffectModelBuildsForAProgramWithManyNames(TestBase):
 
         large_time, large_size = build(8)
         small_time, small_size = build(1)
-        # A build growing with the square of the program takes about 49 times as long, which the
-        # bound of three times the size ratio refuses with room to spare.
+        # The program for eight levels is about seven times as long as for one, so a build growing
+        # with its square takes about 49 times as long, which the bound of three times the size
+        # ratio refuses.
         self.assertLess(processor_time_ratio(large_time, small_time), 3 * large_size / small_size)

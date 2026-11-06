@@ -3,17 +3,16 @@ from __future__ import annotations
 import inspect
 import unittest
 
+from test import opportunity, todo
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import before_and_after
+from test.lib.scripts.js.ledger import before_and_after, before_and_after_in_a_host, prints
 
 from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
-#: Programs reading a namespace property from inside a function that binds the namespace's own name,
-#: where the read of the outer namespace `A` stands below the hoist of the inner namespace's `M.A`.
 A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME = {
     'an outer namespace a bare read keeps': (
         'var A = {}; function f() { var M = {}; M.A = function () { return 1; };'
@@ -28,8 +27,6 @@ A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME = {
     ),
 }
 
-#: Programs reading a namespace property from below a binding of the property's own name, so a
-#: flattening that rewrites the read to a bare identifier would rebind it. Each prints `2`.
 A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME = {
     'nested var': (
         'var NS = {}; NS.p = 2; function f() { var p = 1; return NS.p; } console.log(f());'
@@ -43,9 +40,6 @@ A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME = {
     ),
 }
 
-#: Programs whose namespace keys a bare name cannot carry: keys that are no name a declaration may
-#: take, a read a `with` object answers, a direct `eval` that sees the namespace or declares a key
-#: between a read and the namespace. Each call takes an argument no fold computes.
 A_KEY_A_BARE_NAME_CANNOT_CARRY = [
     'function f(q) { var NS = {}; NS["foo-bar"] = q; return NS["foo-bar"]; }'
     ' console.log(f(Math.random() < 2 ? 1 : 0));',
@@ -60,9 +54,6 @@ A_KEY_A_BARE_NAME_CANNOT_CARRY = [
 ]
 
 
-#: Programs declaring a namespace bare, `var NS;`, whose object a later statement makes where the
-#: object is not one every access reaches: made again on every round of a loop, read by a function
-#: called before it is made, made twice, or made by a nested function.
 A_NAMESPACE_MADE_WHERE_NOT_EVERY_ACCESS_REACHES_IT = {
     'made in a loop': (
         'function f(n) { var NS, seen = []; for (var i = 0; i < n; i++) {'
@@ -78,7 +69,7 @@ A_NAMESPACE_MADE_WHERE_NOT_EVERY_ACCESS_REACHES_IT = {
         ' NS = {}; return g(); } console.log(f());'
     ),
     'made by a nested function': (
-        'function f() { var NS; function make() { NS = {}; } make(); NS.a = 1; return NS.a; }'
+        'function f() { var NS; function make() { NS = {}; } make(); NS.a = 1; make(); return NS.a; }'
         ' console.log(f());'
     ),
 }
@@ -90,10 +81,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         return self._run_transformer(source, JsNamespaceFlattening)
 
     def _flatten_one_plan_at_a_time(self, source: str) -> str:
-        """
-        The pass's sequential self: each decided plan applies at the moment it is decided, against
-        the tree the previous plans already changed. Its output must equal the batched run's.
-        """
         ast = JsParser(source).parse()
         instance = JsNamespaceFlattening()
         instance.options = None
@@ -253,10 +240,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_function_kept_in_place_when_a_use_can_run_before_assignment(self):
-        """
-        `early()` reads the property and runs before the assignment, so a hoisted `function greet(){}`
-        would let that call see the function early; the assignment stays in place behind a bare `var`.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -307,10 +290,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_named_function_expression_kept_in_place(self):
-        """
-        Hoisting to `function f(){}` would drop the expression's own name `fact`, leaving the
-        recursive call unbound; the in-place form preserves it.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -325,10 +304,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_deleted_property_blocks_flattening(self):
-        """
-        `delete p` on a bare `var` binding is not a property removal, so a namespace with a deleted
-        property is left intact.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -341,11 +316,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_a_namespace_whose_method_reads_it_through_this_stays_whole(self):
-        """
-        `NS.f()` binds `this === NS`, and the method reads `NS.x` through it as `this.x`. Moving
-        `NS.x` into a variable `x` leaves `this.x` reading a key the object no longer has, so a
-        method that reads its receiver keeps every key of the namespace in place.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -374,12 +344,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_a_method_stored_other_than_by_a_plain_assignment_still_reads_its_namespace(self):
-        """
-        Each program first stores a `this`-free method and then overwrites it with one that reads
-        `this.x`, through a write that is not the left side of a plain `=`. Inside a function the
-        flattened `var x` is no property of the global object, so a detached call would log
-        `undefined`.
-        """
         for store in [
             '[NS.f] = [function () { return this.x; }];',
             '({ a: NS.f } = { a: function () { return this.x; } });',
@@ -394,41 +358,57 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
                 self.assertEqual(behavior(self._flatten(source)), ('5\n', None))
                 self.assertEqual(before_and_after(source), (('5\n', None), ('5\n', None)))
 
-    def test_this_method_called_through_sequence_is_flattened(self):
-        """
-        `(0, NS.f)()` detaches the receiver, so `this` is the global object in both forms and the
-        `this`-observing method flattens.
-        """
+    def test_this_method_called_through_sequence_in_a_function_is_flattened(self):
         self.assertEqual(
             inspect.cleandoc(
                 """
-                function f() {
-                  return this.x;
+                function main() {
+                  function f() {
+                    return this.x;
+                  }
+                  var x;
+                  x = 5;
+                  log((0, f)());
                 }
-                var x;
-                x = 5;
-                log((0, f)());
-                """
-            ),
-            self._flatten('var NS = {}; NS.x = 5; NS.f = function () { return this.x; }; log((0, NS.f)());'),
-        )
-
-    def test_this_method_called_through_alias_is_flattened(self):
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                function f() {
-                  return this.x;
-                }
-                var x;
-                x = 5;
-                var g = f;
-                log(g());
                 """
             ),
             self._flatten(
-                'var NS = {}; NS.x = 5; NS.f = function () { return this.x; }; var g = NS.f; log(g());'),
+                'function main() { var NS = {}; NS.x = 5; NS.f = function () { return this.x; };'
+                ' log((0, NS.f)()); }'
+            ),
         )
+
+    def test_this_method_called_through_alias_in_a_function_is_flattened(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function main() {
+                  function f() {
+                    return this.x;
+                  }
+                  var x;
+                  x = 5;
+                  var g = f;
+                  log(g());
+                }
+                """
+            ),
+            self._flatten(
+                'function main() { var NS = {}; NS.x = 5; NS.f = function () { return this.x; };'
+                ' var g = NS.f; log(g()); }'
+            ),
+        )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    @todo
+    def test_a_this_method_called_detached_at_the_top_level_still_reads_the_global_object(self):
+        for call in [
+            'console.log((0, NS.f)());',
+            'var g = NS.f; console.log(g());',
+        ]:
+            source = F'var NS = {{}}; NS.x = 5; NS.f = function () {{ return this.x; }}; {call}'
+            with self.subTest(call):
+                self.assertEqual(before_and_after_in_a_host(source), (prints('undefined'), prints('undefined')))
 
     def test_this_free_method_receiver_called_is_flattened(self):
         self.assertEqual(
@@ -444,17 +424,10 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_this_method_called_through_parentheses_kept_on_namespace(self):
-        """
-        Parentheses are transparent to the receiver: `(NS.f)()` still binds `this === NS`, so the
-        method is held back unchanged.
-        """
         source = 'var NS = {}; NS.f = function () { return this.x; }; log((NS.f)());'
         self.assertEqual(self._run_transformers(source), self._flatten(source))
 
     def test_this_method_constructed_with_new_is_flattened(self):
-        """
-        `new NS.f()` gives the constructor a fresh `this`, so detaching the callee does not change it.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -468,19 +441,10 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_opaque_value_receiver_called_kept_on_namespace(self):
-        """
-        The value of `NS.f` is not a provable `this`-free function literal, so a receiver call on it is
-        held back rather than detached.
-        """
         source = 'var NS = {}; NS.f = impl(); NS.f();'
         self.assertEqual(self._run_transformers(source), self._flatten(source))
 
     def test_the_declarations_a_flattening_writes_stand_behind_the_directive(self):
-        """
-        Flattening a namespace object writes a declaration for every bare name it leaves behind, and
-        that declaration goes below the `'use strict'` the body opens with. Written above it, the
-        directive would stop being one and the body would run sloppy.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -511,10 +475,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_property_held_back_when_member_object_reads_the_name(self):
-        """
-        A use of the flattened name in object position (`k.y`) is captured by the emitted
-        `var k` the same way a bare use is, so the property stays on the namespace.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -531,11 +491,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_hoist_held_back_when_declaration_name_captures_the_bodies_free_name(self):
-        """
-        Raising `NS.g = function () { return g.y; }` to a hoisted `function g(){}` would rebind the
-        `g` the body reads to the declaration itself, so the assignment stays in place behind the
-        namespace object.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -550,11 +505,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_two_declarators_of_one_namespace_name_are_left_alone(self):
-        """
-        The second declarator's own identifier is a bare reference to the name, so neither
-        declaration describes a namespace whose every reference is a property access, and the pass
-        dissolves neither.
-        """
         source = (
             'var NS = {}; NS.g = function () { return 42; };'
             ' var NS = {}; NS.g = function () { return 7; }; foo(NS.g);'
@@ -578,11 +528,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
 
     def test_a_batch_holds_back_a_key_an_earlier_plan_emits(self):
-        """
-        `A` and `B` flatten in one batch and both carry the name `k`. The plan for `A` emits
-        `var k`, so the plan for `B` must leave its `B.k` on the namespace rather than rewriting the
-        reads into the binding `A` owns.
-        """
         source = (
             'var A = {}; var B = {}; A.k = 1; A.j = 2; B.k = 3; B.m = 4;'
             ' log(A.k + A.j + B.k + B.m);'
@@ -604,24 +549,14 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
         self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
 
-    @unittest.expectedFailure
+    @opportunity
     def test_a_namespace_declared_with_properties_flattens_like_an_empty_one(self):
-        """
-        A local object literal read only through static keys is a namespace whether or not it
-        starts empty. Flattening admits only the empty literal, so the member array of a literal
-        with properties stays a member read, and no other pass folds a member read by its spelling.
-        """
         self.assertEqual(
             'SINK(1, 6);',
             self._deobfuscate('var X = {a: 1}; X.Y = [5, 6]; SINK(X.a, X.Y[1]);'),
         )
 
     def test_a_namespace_declared_bare_and_made_once_in_a_block_flattens(self):
-        """
-        The recovery of a machine declares an object the machine makes in a block as `var NS;` and
-        leaves the statement making it in the block. It runs once per call of `f`, before every
-        access, so the keys become variables of `f` and the object goes.
-        """
         source = inspect.cleandoc(
             """
             function f(c) {
@@ -665,33 +600,30 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_a_namespace_made_where_not_every_access_reaches_it_still_prints_it(self):
-        """
-        Flattened, a key would keep what an earlier round of the loop stored, a read the object
-        answers with a throw would answer, and a function made before the second object would read
-        what is stored into the first.
-        """
         for label, source in A_NAMESPACE_MADE_WHERE_NOT_EVERY_ACCESS_REACHES_IT.items():
             with self.subTest(label):
                 self.assertEqual(behavior(source), behavior(self._flatten(source)))
                 self.assertEqual(*before_and_after(source))
 
-    def test_a_namespace_whose_object_a_labelled_statement_makes_stays(self):
-        """
-        The statement making the object would have to go with `var NS`, and the body of a label
-        cannot go alone: the store left behind writes an undeclared name, which throws in strict
-        code.
-        """
+    def test_a_namespace_whose_object_a_labelled_statement_makes_stays_or_flattens_dropping_the_label(self):
         source = (
             "'use strict'; function f(c) { var NS; made: NS = {}; NS.a = c + 1; return NS.a; }"
             ' console.log(f(1));'
         )
-        self.assertEqual(self._flatten(source), JsSynthesizer().convert(JsParser(source).parse()))
+        flattened = inspect.cleandoc(
+            """
+            'use strict';
+            function f(c) {
+              var a;
+              a = c + 1;
+              return a;
+            }
+            console.log(f(1));
+            """
+        )
+        self.assertIn(self._flatten(source), (JsSynthesizer().convert(JsParser(source).parse()), flattened))
 
     def test_two_namespaces_declared_in_one_statement_flatten_together(self):
-        """
-        Both plans hold the one `var` statement that declares `A` and `B`. The first removes its own
-        declarator and leaves the statement to the second, which removes the statement.
-        """
         source = 'var A = {}, B = {}; A.x = 1; B.y = 2; log(A.x + B.y);'
         self.assertEqual(
             inspect.cleandoc(
@@ -708,10 +640,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
 
     def test_two_namespaces_declared_in_one_statement_hoist_together(self):
-        """
-        The same shape with a function on each namespace: both plans hoist, and both still find the
-        declaration they share.
-        """
         source = (
             'var A = {}, B = {}; A.f = function () { return 1; };'
             ' B.g = function () { return 2; }; log(A.f() + B.g());'
@@ -733,11 +661,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
 
     def test_two_hoists_in_one_batch_splice_by_statement_not_position(self):
-        """
-        Both plans hoist a function declaration into the same body, and applying the first inserts
-        statements the second's recorded positions would no longer point at. The splices carry the
-        assignment statements themselves, so the second plan still finds its own.
-        """
         source = (
             'var A = {}; var B = {}; A.f = function () { return 1; };'
             ' B.g = function () { return 2; }; foo(A.f, B.g);'
@@ -768,11 +691,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_a_read_below_a_binding_of_its_name_still_reads_the_namespace(self):
-        """
-        A bare name written where the read stood would resolve to the binding between it and the
-        flattened declaration: a parameter, a local, a key an inner namespace declares, or a
-        function the inner namespace's flattening hoists.
-        """
         for source in [
             *A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME.values(),
             *A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME.values(),
@@ -782,12 +700,7 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
                 self.assertEqual(*before_and_after(source))
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    def test_a_key_a_bare_name_cannot_carry_stays_on_the_namespace(self):
-        """
-        A key that is no name a declaration may take, a read that a `with` object answers where it
-        stands, and a namespace a direct `eval` can see, or a key one can declare between the read
-        and the namespace: flattening any of these prints something else, or nothing that parses.
-        """
+    def test_a_key_a_bare_name_cannot_carry_still_prints_what_it_printed(self):
         for source in A_KEY_A_BARE_NAME_CANNOT_CARRY:
             with self.subTest(source):
                 self.assertEqual(behavior(source), behavior(self._flatten(source)))

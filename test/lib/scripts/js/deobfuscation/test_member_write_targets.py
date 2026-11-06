@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.analysis.write_positions import WRITE_POSITIONS
 
@@ -70,45 +70,76 @@ _READS_INSIDE_A_WRITE_TARGET = [
     ),
 ]
 
+_WRITES_INTO_AN_ARRAY_LITERAL_FOLDED_WHOLE = {
+    'assignment': 'console.log(9);',
+    'compound assignment': 'console.log(6);',
+    'postfix increment': 'console.log(1);',
+    'prefix decrement': 'console.log(0);',
+    'delete': 'console.log(true);',
+    'array pattern': 'console.log([9]);',
+    'array pattern with default': 'console.log([]);',
+    'object pattern': 'console.log({ p: 9 });',
+    'nested pattern': 'console.log([{ p: 9 }]);',
+    'for-in head': 'console.log("in");',
+    'for-of head': 'console.log("of");',
+}
+
+_WRITES_FOLDED_WHOLE = {
+    _ARRAY_INDEX[0]: _WRITES_INTO_AN_ARRAY_LITERAL_FOLDED_WHOLE,
+}
+
+_WRITES_A_READ_STANDS_IN_FOLDED_WHOLE = {
+    'console.log([1, 2, 3][0].x = 5);': 'console.log(5);',
+    'console.log([1, 2, 3][[0, 1][0]] = 9);': 'console.log(9);',
+    'console.log({ p: [1, 2, 3][0] } = { p: [4, 5, 6][1] });': 'console.log({ p: 5 });',
+}
+
 
 def _in_position(template: str, target: str) -> str:
     return template.replace('TARGET', target)
 
 
 def _deobfuscate(source: str) -> str:
-    """
-    The script the `djs` unit emits for *source*, iterated to a fixed point as the unit does.
-    """
     return source.encode('utf8') | djs(strict=True) | str
 
 
 def _rewritten_snippets() -> list[str]:
-    """
-    Every snippet in this file that deobfuscation changes. The snippets it leaves alone are not
-    here: running an unchanged copy of a program to compare it with itself decides nothing.
-    """
     snippets = [_in_position(_PARENTHESIZED_WRITE, target) for target, _ in _FOLDABLE_READS]
     snippets.extend(source for source, _ in _READS_OF_THE_SAME_ACCESS)
     snippets.extend(source for source, _ in _READS_INSIDE_A_WRITE_TARGET)
     snippets.append(_LOCAL_ALIAS_WRITE)
+    snippets.extend(
+        _in_position(template, target)
+        for target in _WRITES_FOLDED_WHOLE
+        for _, template in WRITE_POSITIONS
+    )
     return snippets
 
 
 class TestMemberWriteTargets(TestBase):
     """
-    A member expression the deobfuscator folds as a read — an index into an all-literal array, a
-    property of a global object alias — designates a storage location rather than a value when it
-    stands in a write position, and folding it there replaces an assignment target with a constant.
-    Every snippet below is spelled the way the synthesizer spells it, so the expectation for one
-    that may not be folded is that deobfuscation gives it back unchanged.
+    Every snippet here is spelled as the deobfuscator prints code, so a snippet it leaves alone
+    comes back as the same text.
     """
 
-    def test_a_write_target_survives_deobfuscation_verbatim(self):
+    def test_a_write_target_survives_deobfuscation_verbatim_unless_the_whole_write_folds(self):
         for target, _ in _FOLDABLE_READS:
+            folded_whole = _WRITES_FOLDED_WHOLE.get(target, {})
             for position, template in WRITE_POSITIONS:
                 source = _in_position(template, target)
                 with self.subTest(target=target, position=position):
-                    self.assertEqual(source, _deobfuscate(source))
+                    self.assertIn(_deobfuscate(source), (source, folded_whole.get(position, source)))
+
+    @opportunity
+    def test_a_write_into_an_array_literal_folds_to_the_value_it_hands_on(self):
+        target, _ = _ARRAY_INDEX
+        self.assertEqual(
+            {
+                position: _deobfuscate(_in_position(template, target))
+                for position, template in WRITE_POSITIONS
+            },
+            _WRITES_INTO_AN_ARRAY_LITERAL_FOLDED_WHOLE,
+        )
 
     def test_a_write_to_an_established_global_through_an_alias_survives_verbatim(self):
         for position, template in WRITE_POSITIONS:
@@ -122,10 +153,12 @@ class TestMemberWriteTargets(TestBase):
 
     def test_parentheses_around_a_write_target_do_not_expose_it_to_the_fold(self):
         for target, _ in _FOLDABLE_READS:
+            unwrapped = F'console.log({target} = 9);'
+            folded_whole = _WRITES_FOLDED_WHOLE.get(target, {}).get('assignment', unwrapped)
             with self.subTest(target=target):
-                self.assertEqual(
-                    F'console.log({target} = 9);',
+                self.assertIn(
                     _deobfuscate(_in_position(_PARENTHESIZED_WRITE, target)),
+                    (unwrapped, folded_whole),
                 )
 
     def test_the_same_access_in_a_read_position_is_folded(self):
@@ -136,15 +169,21 @@ class TestMemberWriteTargets(TestBase):
     def test_a_read_inside_a_write_target_is_folded(self):
         for source, expected in _READS_INSIDE_A_WRITE_TARGET:
             with self.subTest(source=source):
-                self.assertEqual(expected, _deobfuscate(source))
+                self.assertIn(
+                    _deobfuscate(source),
+                    (expected, _WRITES_A_READ_STANDS_IN_FOLDED_WHOLE.get(source, expected)),
+                )
+
+    @opportunity
+    def test_a_write_holding_a_folded_read_folds_to_the_value_it_hands_on_where_nothing_observes_it(self):
+        self.assertEqual(
+            {source: _deobfuscate(source) for source in _WRITES_A_READ_STANDS_IN_FOLDED_WHOLE},
+            _WRITES_A_READ_STANDS_IN_FOLDED_WHOLE,
+        )
 
 
 @unittest.skipUnless(node_executable() is not None, 'node.js is required')
 class TestMemberWriteTargetsAgainstNode(TestBase):
-    """
-    Node, not our reading of the specification, decides both halves of the rule: what the program
-    the deobfuscator was given does, and what the program the fold would have produced does instead.
-    """
 
     def test_deobfuscation_preserves_what_node_does(self):
         for source in _rewritten_snippets():
@@ -158,11 +197,8 @@ class TestMemberWriteTargetsAgainstNode(TestBase):
 
     def test_folding_an_array_index_write_target_produces_a_program_node_cannot_parse(self):
         """
-        The element an index read denotes is not a storage location, so the fold leaves a numeric
-        literal where an assignment target must be, and the program is rejected before it runs a
-        line. The exception is `delete`, whose operand need not be a reference at all: `delete 1` is
-        a legal program that answers what the one it replaces answers, the one write position in
-        which Node cannot tell the fold from the original.
+        `delete` is the one write position that takes any expression: `delete 1` is a program, and
+        it answers `true`.
         """
         _, folded = _ARRAY_INDEX
         for position, template in WRITE_POSITIONS:
@@ -171,11 +207,6 @@ class TestMemberWriteTargetsAgainstNode(TestBase):
                 self.assertEqual(expected, behavior(_in_position(template, folded)))
 
     def test_folding_a_global_alias_delete_target_is_a_syntax_error_under_strict_mode(self):
-        """
-        A sloppy script writes a global object property and the bare name it folds to the same way,
-        so this is where the two come apart: strict mode forbids `delete` of a name and allows
-        `delete` of a property.
-        """
         source = inspect.cleandoc("""
             'use strict';
             console.log(delete globalThis.parseInt);

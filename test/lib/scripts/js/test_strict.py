@@ -366,9 +366,6 @@ class TestJsStrict(TestBase):
             [StrictViolation(source.index('package'), 'reserved-word', 'package')])
 
 
-#: A file that spells syntax only module code may hold, together with a construct strict code
-#: refuses. Nothing in any of them declares a mode, so the `import` or `export` — or the
-#: `import.meta` — is the whole of what makes each a file no engine reads.
 A_STRICT_ERROR_UNDER_MODULE_SYNTAX = [
     'export const a = 1;\nwith ({}) {}',
     "import 'fs';\nvar q = 010;",
@@ -377,8 +374,6 @@ A_STRICT_ERROR_UNDER_MODULE_SYNTAX = [
     "export * from 'fs';\nfunction f(q, q) {}",
 ]
 
-#: The same five files with the module syntax taken out of them, which leaves five sloppy scripts
-#: every engine reads and nothing is reported about.
 THE_SAME_FILES_WITHOUT_THE_MODULE_SYNTAX = [
     'with ({}) {}',
     'var q = 010;',
@@ -405,13 +400,6 @@ class TestNodeRefusesAStrictErrorInAFileThatSpellsModuleSyntax(TestBase):
 
 
 class TestTheCollectorReadsModuleCodeAsStrictCode(TestBase):
-    """
-    Module code is strict code with nothing saying so, so a file whose text spells module-only
-    syntax is one the collector reports a strict error in without any seed being given for it. Which
-    files those are is `refinery.lib.scripts.js.strict.names_module_syntax`, recorded on the tree by
-    the parser; the seed a caller passes is the mode of a *destination* and says nothing about the
-    file in hand.
-    """
 
     @staticmethod
     def _violations(source: str) -> list[StrictViolation]:
@@ -461,12 +449,6 @@ class TestTheCollectorReadsModuleCodeAsStrictCode(TestBase):
 
 
 class TestKeepingTheDirectiveAcrossAWholeBodyReplacement(TestBase):
-    """
-    Installing a new statement list as a body's whole content drops the Use Strict Directive without
-    removing anything, which is why `refinery.lib.scripts.js.strict.keeping_directives` restores it.
-    A pass that rebuilds a body out of copies of its own statements has already kept it, by value
-    rather than by identity, and carrying the original as well would write the directive twice.
-    """
 
     SOURCE = "function f() { 'use strict'; log(1); log(2); }"
 
@@ -490,11 +472,6 @@ class TestKeepingTheDirectiveAcrossAWholeBodyReplacement(TestBase):
         return JsSynthesizer().convert(ast)
 
     def _a_copy_of_the_prologue(self):
-        """
-        The directive statement of a second parse of the same source: a statement the source wrote
-        as a directive and that is not the one the host holds, which is what a pass handing back
-        clones of a body's own statements installs.
-        """
         return self._body(JsParser(self.SOURCE).parse()).body[0]
 
     def test_a_replacement_that_dropped_the_directive_gets_it_back(self):
@@ -524,10 +501,6 @@ class TestKeepingTheDirectiveAcrossAWholeBodyReplacement(TestBase):
         )
 
 
-#: A permutation of a three-statement body whose first statement is the Use Strict Directive,
-#: written as the indices the replacement takes from that body. None of them opens with the
-#: directive, which is the case a pass that reorders statements hands over, and the last one
-#: drops a statement as well.
 AN_ORDER_THAT_LEAVES_THE_DIRECTIVE_OFF_THE_HEAD = [
     (1, 0, 2),
     (1, 2, 0),
@@ -538,13 +511,6 @@ AN_ORDER_THAT_LEAVES_THE_DIRECTIVE_OFF_THE_HEAD = [
 
 
 class TestAReplacementHoldingTheDirectiveBehindAnotherStatement(TestBase):
-    """
-    A directive is what a body opens with, so a pass that reorders statements hands back a list
-    where the host's own directive statement declares nothing, and the list installed as the body
-    has to open with it again. Moving it there is the only way: a tree holds a node in one place, so
-    a list naming the same statement at two indices leaves one node with one parent standing at
-    both, and every map keyed by identity over the tree then reads it as two.
-    """
 
     SOURCE = "function f() { 'use strict'; log(1); log(2); }"
 
@@ -600,9 +566,6 @@ class TestAReplacementHoldingTheDirectiveBehindAnotherStatement(TestBase):
         )
 
 
-#: A function declaration written as the whole of an `if` clause, in each of the modes. Annex B.3.4
-#: admits one in sloppy code, reading it as a block holding it; strict code has no such rule and
-#: the grammar refuses a declaration where it requires a statement.
 A_FUNCTION_DECLARATION_AS_AN_IF_CLAUSE = {
     'sloppy': a_program("""
         if (1) function W() { return 1; }
@@ -627,13 +590,6 @@ class TestNodeReadsAClausePositionDeclarationOnlyWhereAnnexBSaysSo(TestBase):
 
 
 class TestTheVerdictReadsTheFileUnderItsOwnModeAndGoal(TestBase):
-    """
-    `refinery.lib.scripts.is_well_formed` asks the root of a file for its early errors, and a
-    script's root answers with what `collect_strict_violations` reports under the mode the file
-    declares and the goal its syntax spells. So a clause-position declaration is a program only
-    below no directive, a strict error beside module syntax makes a file no program, and the same
-    text with the module syntax taken out is one.
-    """
 
     def test_a_clause_position_declaration_is_refused_in_strict_code_only(self):
         self.assertEqual(

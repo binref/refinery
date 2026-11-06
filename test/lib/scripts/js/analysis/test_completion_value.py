@@ -11,10 +11,6 @@ from test.lib.scripts.js.analysis.differential import (
     node_executable,
 )
 
-#: Programs whose value a caller receives, chosen so that removing a statement which computes
-#: nothing changes it. Most of them end on a bare literal or a bare name — the shape that looks
-#: inert and is not — and several are shapes the tool itself folds down to one, so that a pass
-#: deleting inert statements would throw away the very value the fold had just computed.
 PROGRAMS_WITH_A_VALUE_TO_PRESERVE: tuple[str, ...] = (
     "'a';",
     '1;',
@@ -71,10 +67,8 @@ PROGRAMS_WITH_A_VALUE_TO_PRESERVE: tuple[str, ...] = (
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestWhichStatementSuppliesTheValueOfAProgram(TestBase):
     """
-    A run of statements has a value and not only an effect, and JavaScript hands that value back:
-    `eval` returns it to its caller and so does a script run as a unit. Every row below is what Node
-    answered when it was asked, under both of those models; none of it is read off a specification
-    or off what this tool makes of the same program.
+    The value of a program is its completion value: what `eval` of the text returns, and what
+    running the text as a script returns to whoever ran it.
     """
 
     def _pins(self, table: dict[str, str]):
@@ -126,12 +120,6 @@ class TestWhichStatementSuppliesTheValueOfAProgram(TestBase):
         })
 
     def test_a_branch_loop_switch_try_or_with_that_supplies_nothing_resets_the_value(self):
-        """
-        Each of these computes nothing, and unlike an empty statement or a declaration each replaces
-        the value with `undefined` rather than leaving the one before it standing. A label is not
-        one of them and passes the value through, so the last row answers `undefined` on account of
-        `if` beneath the label and not on account of the label.
-        """
         self._pins({
             "'a'; if (false) 1;"                  : 'undefined',
             "'a'; if (true) {}"                   : 'undefined',
@@ -195,13 +183,6 @@ class TestWhichStatementSuppliesTheValueOfAProgram(TestBase):
         })
 
     def test_a_sloppy_block_level_function_declaration_supplies_a_value_to_a_script_only(self):
-        """
-        The only shape in this file the two models answer differently, which is why it is pinned
-        against each of them separately instead of through `_pins`. Node was asked and a script
-        takes the function for its value where an `eval` of the same text does not; the two agree
-        again once the text declares itself strict, where the declaration is no longer sloppy
-        mode's and the web compatibility rules for it no longer apply.
-        """
         divergent = ["'a'; { function g(){} }", "'a'; if (true) { function g(){} }"]
         self.assertEqual(
             completion_values(divergent, JsEvaluation.EVAL), ['"a"', 'undefined']
@@ -216,20 +197,11 @@ class TestWhichStatementSuppliesTheValueOfAProgram(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestDeobfuscationPreservesWhatAProgramEvaluatesTo(TestBase):
-    """
-    What a deobfuscated program evaluates to must be what the program it came from evaluated to,
-    wherever the program carries an end value worth reading. The value is observable to whoever called
-    `eval` on the payload and to whoever ran the script as a unit, so both are asked, and neither is
-    answered by looking at what the program printed. The default keeps a computed end value the program
-    itself carries and drops only a trailing marker that spells `undefined` a fold left behind; every
-    program quantified here carries such a value or falls to the empty program when its lone marker
-    goes, so each reads back with the value it had. Holding a script's end value where dropping that
-    marker would expose a different one is what `preserve_script_return` is for, not the default.
-    """
 
-    def test_the_deobfuscation_of_a_program_evaluates_to_what_the_program_does(self):
+    def test_with_the_option_the_deobfuscation_of_a_program_evaluates_to_what_the_program_does(self):
         deobfuscated = [
-            deobfuscate_source(program) for program in PROGRAMS_WITH_A_VALUE_TO_PRESERVE
+            deobfuscate_source(program, preserve_script_return=True)
+            for program in PROGRAMS_WITH_A_VALUE_TO_PRESERVE
         ]
         for evaluation in JsEvaluation:
             before = completion_values(PROGRAMS_WITH_A_VALUE_TO_PRESERVE, evaluation)
@@ -244,23 +216,17 @@ class TestDeobfuscationPreservesWhatAProgramEvaluatesTo(TestBase):
                         F'{chr(10)}{result}',
                     )
 
-    def test_a_block_function_a_script_takes_for_its_value_is_kept(self):
-        """
-        A script takes a sloppy block-level function declaration for its value where an `eval` of
-        the same text does not (`TestWhichStatementSuppliesTheValueOfAProgram`), so a declaration
-        nothing calls stays where it may give the script its value.
-        """
+    def test_with_the_option_a_script_that_takes_a_block_function_for_its_value_still_does(self):
         programs = ["'a'; { function g() {} }", "'a'; if (true) { function g() {} }"]
-        deobfuscated = [deobfuscate_source(program) for program in programs]
+        deobfuscated = [
+            deobfuscate_source(program, preserve_script_return=True) for program in programs
+        ]
         self.assertEqual(
             completion_values(deobfuscated, JsEvaluation.SCRIPT),
             ['function', 'function'],
         )
 
 
-#: Single-use wrappers and a `Function` construction whose call ran off its end returning `undefined`,
-#: leaving the body's own last value in the end position the call did not hold. Node evaluates each
-#: original to `undefined` under both the eval and the script model.
 A_WRAPPER_WHOSE_END_VALUE_WOULD_LEAK = (
     'var n = 1; function w(){ n++; } w();',
     "function w(){ console.log('side'); 42; } w();",
@@ -271,14 +237,6 @@ A_WRAPPER_WHOSE_END_VALUE_WOULD_LEAK = (
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestPreserveScriptReturnHoldsAWrapperEndValue(TestBase):
-    """
-    A single-use wrapper or a `Function` construction whose call ran off its end returned `undefined`;
-    inlining the body leaves the body's own last value where the call stood. `preserve_script_return`
-    holds the script's end value at `undefined`, so an `eval` or a `vm` run of the file receives what
-    it did before the fold. Without the option the end value is not held: the tail's value stands,
-    which the default does not undertake to preserve, and no `void 0` is inserted to force it back to
-    `undefined`.
-    """
 
     def test_the_option_holds_the_end_value_the_call_gave(self):
         deobfuscated = [
@@ -309,16 +267,6 @@ class TestPreserveScriptReturnHoldsAWrapperEndValue(TestBase):
                 self.assertNotIn('void 0', deobfuscate_source(program))
 
 
-#: A completion the script yields from a position the wrapper inliners do not own: an `eval` whose
-#: body completes empty, a fall-off construction inside a block at the file's tail, a store whose value
-#: is the file's completion, a control-flow-flattened dispatcher whose last case loops back with a bare
-#: `continue` so the exhausted dispatch washes the completion to `undefined`, and one whose last case
-#: leaves the switch instead so the loop completes with that case's own value. The last two are `eval`
-#: bodies that answer with a value only when a branch or a loop runs, which an inlined body reproduces
-#: on its own — an appended `void 0` would wrongly force `undefined` over them — and a store carried to
-#: the completion by a `break` reached ahead of the dead statement that appears to shadow it. Node
-#: evaluates these to `undefined`, `undefined`, `1`, `undefined`, `44`, `5`, `2`, and `111`
-#: respectively, under both the eval and the script model.
 A_COMPLETION_POSITION_THE_OPTION_HOLDS = (
     '5; eval("var x = 1");',
     '7; { new Function("42")(); }',
@@ -333,15 +281,6 @@ A_COMPLETION_POSITION_THE_OPTION_HOLDS = (
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestPreserveScriptReturnHoldsEveryCompletionPosition(TestBase):
-    """
-    `preserve_script_return` holds the script's top-level completion wherever a transform would move
-    it, not only at the wrapper-inliner sites. An `eval` whose body completes empty returned `undefined`
-    the inlined declaration would expose a tail value for; a fall-off construction inside a block at the
-    file's tail decides the completion the same as one at the root; the dead-store sweep would drop a
-    store whose value is the completion; a control-flow-flattened dispatcher completes `undefined` while
-    its recovered straight-line code would answer with a value. An `eval` or a `vm` run of the fold
-    receives what it did before.
-    """
 
     def test_the_option_holds_the_completion_at_every_position(self):
         deobfuscated = [

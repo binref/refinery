@@ -1,40 +1,28 @@
-"""
-A store of `undefined` into a `var` that holds `undefined` already, which
-`refinery.lib.scripts.js.deobfuscation.unused.JsUnusedCodeRemoval` removes where every other way a
-value reaches the `var` runs after the store. Each program is written by hand, and each row says
-what Node prints for it run as a CommonJS file.
-"""
 from __future__ import annotations
 
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import (
-    behavior,
     deobfuscate_source,
     module_graph_behavior,
     node_executable,
 )
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 
+from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.options import ExecutionModel
-from refinery.units.scripting.djs import djs
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
 
 
-def deobfuscated_by_the_unit(source: str) -> str:
-    """
-    The text `refinery.djs` writes for *source* under its default reading of a CommonJS file for
-    Node, which trusts the code a direct `eval` runs.
-    """
-    return source.encode('utf8') | djs.assemble('-c', '-e', 'node') | str
+def deobfuscated_for_a_file_others_load(source: str, execution: ExecutionModel) -> str:
+    ast = JsParser(source).parse()
+    deobfuscate(ast, execution=execution, loaded_by_other_files=True)
+    return JsSynthesizer().convert(ast)
 
 
-#: Programs storing `undefined` into a `var`, mapped to what Node prints for each run as a CommonJS
-#: file: the store before or after other values reach the `var` through a store, a closure, a call,
-#: a loop, a `with` body, `eval`, a function declaration Annex B copies in, `arguments`, a parameter
-#: of the same name, a `for-in` or `for-of` head, a destructuring declarator, a class field, and the
-#: store spelled `void 0`.
 STORES_OF_UNDEFINED: dict[str, Program] = {
     'the shape of the corpus': Program(
         a_program("""
@@ -597,8 +585,6 @@ STORES_OF_UNDEFINED: dict[str, Program] = {
     ),
 }
 
-#: Programs of `STORES_OF_UNDEFINED` whose store goes, mapped to the text the deobfuscation writes
-#: for each.
 REMOVED: dict[str, str] = {
     'the shape of the corpus': "console.log('a', 'b');",
     'closure called after the store': inspect.cleandoc(
@@ -629,9 +615,11 @@ REMOVED: dict[str, str] = {
     ),
 }
 
-#: Programs storing `undefined` into a `var` that a function of another file may write before the
-#: store, mapped to the files that function is called from: one CommonJS file requiring the other,
-#: and one ES module importing the other, each in a cycle.
+FOLDED_WHOLE: dict[str, str] = {
+    'closure called after the store': 'console.log(5);',
+    'annex b copy after the store': "console.log('function');",
+}
+
 A_STORE_ANOTHER_FILE_MAY_PRECEDE = {
     a_program("""
         var x;
@@ -675,18 +663,14 @@ class TestAStoreOfUndefinedBehavesAsItDid(TestBase):
             with self.subTest(label=label):
                 self.assertEqual(row.read(), row.required())
 
-    def test_a_store_before_eval_runs_still_prints_it_where_the_unit_trusts_eval(self):
-        row = STORES_OF_UNDEFINED['direct eval before the store']
-        self.assertEqual(behavior(deobfuscated_by_the_unit(row.text)), row.prints)
-
     def test_a_var_at_the_top_of_a_script_still_prints_it_where_the_host_may_write_it(self):
         row = STORES_OF_UNDEFINED['a var at the top of the file']
         self.assertEqual(Reading.SCRIPT.read(row.text), (row.prints, row.prints))
 
-    def test_a_store_another_file_may_precede_still_prints_it(self):
+    def test_a_store_another_file_may_precede_still_prints_it_where_other_files_load_the_input(self):
         for source, (entry, others) in A_STORE_ANOTHER_FILE_MAY_PRECEDE.items():
             execution = ExecutionModel.module if entry.endswith('.mjs') else ExecutionModel.commonjs
-            rewritten = deobfuscate_source(source, execution=execution)
+            rewritten = deobfuscated_for_a_file_others_load(source, execution)
             with self.subTest(entry=entry):
                 self.assertEqual(
                     (
@@ -699,15 +683,27 @@ class TestAStoreOfUndefinedBehavesAsItDid(TestBase):
 
 class TestAStoreOfUndefinedGoesWhereNoOtherValueReachesTheVarBeforeIt(TestBase):
 
-    def test_each_store_removed_reads_as_pinned(self):
+    def test_each_store_goes_and_the_rest_stays_or_folds_whole(self):
+        for label, without_the_store in REMOVED.items():
+            with self.subTest(label=label):
+                self.assertIn(
+                    deobfuscate_source(STORES_OF_UNDEFINED[label].text, execution=ExecutionModel.commonjs),
+                    (without_the_store, FOLDED_WHOLE.get(label, without_the_store)),
+                )
+
+    @opportunity
+    def test_a_function_left_once_the_store_goes_folds_to_what_it_returns(self):
         self.assertEqual(
             {
                 label: deobfuscate_source(STORES_OF_UNDEFINED[label].text, execution=ExecutionModel.commonjs)
-                for label in REMOVED
+                for label in FOLDED_WHOLE
             },
-            REMOVED,
+            FOLDED_WHOLE,
         )
 
-    def test_a_var_at_the_top_of_a_script_keeps_its_store(self):
-        text = deobfuscate_source(STORES_OF_UNDEFINED['a var at the top of the file'].text, execution=ExecutionModel.script)
-        self.assertIn('SC = undefined;', text)
+    @opportunity
+    def test_a_var_at_the_top_of_a_script_folds_as_in_a_commonjs_file(self):
+        self.assertEqual(
+            deobfuscate_source(STORES_OF_UNDEFINED['a var at the top of the file'].text, execution=ExecutionModel.script),
+            'console.log(2);',
+        )

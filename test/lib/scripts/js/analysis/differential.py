@@ -1,22 +1,6 @@
 """
-Differential testing support for JavaScript deobfuscation: run a snippet and its deobfuscated form in
-a real Node.js engine and compare observable behavior. This is the strongest available oracle for the
-invariant that deobfuscation preserves semantics — the engine, not our own interpreter, decides.
-
-Three execution models are available, because they disagree about what a top-level declaration means.
-`behavior` runs the snippet as `node <file>`, a CommonJS module, where a top-level `var`/`function` is
-scoped to the module. `host_behavior` runs it as a classic global script and can additionally call a
-name through `globalThis` afterwards, which is the only way to observe a declaration that reaches the
-global object — and therefore the only way to observe whether an entrypoint a host would call survived.
-`behavior(source, module=True)` runs it as an ECMAScript module, which is the only one of the three
-that is strict code without a directive saying so, and the only one where `import`, `export`, and
-`import.meta` are available at all. A declaration in that model names something in another file, so
-a question about an import or export name needs that file to exist: `module_graph_behavior` is the
-same execution with a whole graph of modules written beside the entry.
-
-What a program prints is not all of it: a program also has a value, and `completion_values` reports
-that one. `eval` hands it back to its caller and so does a script run as a unit, so a rewrite that
-leaves every print in place can still change what a payload was worth to whoever ran it.
+Run hand-written JavaScript in Node.js and report what it prints, throws or evaluates to, so that
+the engine decides whether a snippet and its deobfuscation behave alike.
 
 SECURITY: this executes JavaScript in Node.js. It must only ever be given benign, hand-authored
 snippets. Never point it at the repository's malware test corpus or any untrusted sample — executing
@@ -51,11 +35,8 @@ from test.lib.scripts.js.analysis.nodejs import (
 
 def node_reads_as_a_program(source: str) -> bool:
     """
-    Whether `node --check` reads *source* as a program, parsing it as a script and never running it.
-    A file the grammar refuses is a syntax error the check reports, so this is the engine answering
-    the same question `refinery.lib.scripts.is_well_formed` answers about the tree the parser built.
-    A test that decoded a sample is refused even where Node checked the same snippet before, and the
-    snippet reaches the file untranslated, for the reason `behavior` gives.
+    Whether `node --check` accepts the syntax of *source*; Node does not run it. A test that decoded
+    a sample is refused, even for a snippet Node checked before.
     """
     refuse_script_host_near_a_sample('node')
     return _node_checks(source)
@@ -85,12 +66,9 @@ def deobfuscate_source(
     environment: HostEnvironment = HostEnvironment.universal,
 ) -> str:
     """
-    Parse, deobfuscate, and re-synthesize a snippet, returning the deobfuscated source. *execution*
-    selects the execution model (the oracle runs each snippet as a CommonJS module, so a
-    scope-sensitive snippet must be deobfuscated under a module model to be comparable).
-    *entrypoints* names top-level functions a host calls by name, which intra-script reachability
-    cannot see. *environment* is the host the deobfuscation assumes; the oracle is Node, so every
-    host but the browser's describes the engine the snippet runs in.
+    `behavior` runs a snippet as a CommonJS file, where a top-level declaration stays inside the
+    file, so a snippet whose output depends on that compares with its deobfuscation only under the
+    *execution* `commonjs` or `module`.
     """
     ast = JsParser(source).parse()
     deobfuscate(
@@ -113,28 +91,10 @@ sys.stdout.buffer.write(deobfuscate_source(source).encode('utf-8'))
 
 
 class DeobfuscationFailed(Exception):
-    """
-    The child process running a deobfuscation exited without producing one. It carries the child's
-    standard error, which is where the traceback is.
-    """
+    pass
 
 
 def deobfuscate_within(source: str, seconds: float) -> str | None:
-    """
-    The deobfuscation of *source*, or `None` when it did not finish within *seconds*.
-
-    Termination is a property worth asserting on its own: a fold that computes in unbounded integer
-    arithmetic can run for hours on an expression a double answers in one operation, and that is a
-    defect no comparison of results can express. It runs in a child process because such a computation
-    happens inside a single interpreter opcode, where no timer, signal, or thread can interrupt it —
-    only killing the process can.
-
-    Both the source and the result cross the process boundary as UTF-8 bytes over a pipe rather than
-    as text through the platform's codec, so that a program the console encoding cannot spell is
-    reported as what it is. The child is killed on every way out and not only on the timeout,
-    because the one thing this helper must never do is leave behind the runaway process it exists to
-    bound.
-    """
     root = Path(__file__).resolve().parents[5]
     with subprocess.Popen(
         [sys.executable, '-c', _DEOBFUSCATE_IN_CHILD, str(root)],
@@ -158,19 +118,9 @@ def deobfuscate_within(source: str, seconds: float) -> str | None:
 
 def _as_global_script(source: str, calls: tuple[str, ...], prelude: str = '') -> str:
     """
-    Wrap *source* so it runs under the *script* execution model and then invoke each name in *calls* as
-    a host would. The host code *prelude* runs first, setting up the global object the script finds.
-
-    `node file.js` runs a CommonJS module, where a top-level `var`/`function` is scoped to the module,
-    so `behavior` alone cannot observe anything about the global object. Indirect `eval` runs its
-    argument in the true global scope — the same scope a browser `<script>`, a Windows Script Host
-    `.js`, or a JXA file gets — which is what puts a top-level declaration onto `globalThis` and makes
-    it reachable by name from outside.
-
-    That reachability is the whole point: a host entrypoint has no caller inside the file, so its
-    deletion changes nothing about running the file and is invisible to a stdout comparison. Calling it
-    afterwards through `globalThis` is what turns the deletion into an observable difference, with Node
-    rather than our own reading of the specification deciding what the difference is.
+    An indirect `eval` runs its argument in the global scope, as a classic script runs, so a
+    top-level declaration of *source* becomes a property of `globalThis`. Run directly, the file is
+    a CommonJS file, whose top-level declarations stay inside it.
     """
     lines = [prelude] if prelude else []
     lines.append('const globalEval = eval;')
@@ -207,26 +157,11 @@ def behavior(
     fresh: bool = False,
 ) -> tuple[str, str | None]:
     """
-    Execute *source* in Node.js and return its observable behavior as a pair: the captured standard
-    output, and the error type (`TypeError`, `ReferenceError`, …) when execution terminated with an
-    uncaught exception, or `None` on success. Only the type is kept, not the message: the message
-    describes the offending expression, which a semantics-preserving rewrite may legitimately reshape
-    (e.g. folding `(function(){})(x)` to `void 0` turns "(intermediate value) is not a function" into
-    "(void 0) is not a function" — the same `TypeError`). Stack traces and file paths are dropped too,
-    so an original snippet and its deobfuscation compare equal whenever they throw the same way.
+    Run *source* in Node.js as a CommonJS file, or as an ES module with *module*, and return what it
+    prints and the type of the error it ended in, or `None` when it ended without one. The message
+    of the error is dropped, since a rewrite that keeps the meaning may still change it.
 
-    *module* writes the snippet to a `.mjs` file, which is what makes Node read it as an ECMAScript
-    module rather than as a CommonJS one. The extension is the whole of the difference: it decides
-    the goal symbol the source is parsed under, and module code is strict code whether or not any
-    directive says so.
-
-    The snippet reaches the file untranslated, because which characters end a line is a question
-    the engine is asked here: the platform default rewrites every `\\n` on the way out, so a case
-    written with `\\r\\n` handed Node a `\\r\\r\\n`, and the two sides of the comparison then read
-    different programs.
-
-    *fresh* runs Node even when it has answered for this snippet before; `module_graph_behavior`
-    says when that is needed.
+    Node's answer for a snippet is remembered; *fresh* asks Node again.
     """
     return module_graph_behavior(
         {'snippet.mjs' if module else 'snippet.js': source},
@@ -244,20 +179,12 @@ def module_graph_behavior(
     fresh: bool = False,
 ) -> tuple[str, str | None]:
     """
-    The observable behavior of running *entry* with every file of *files* written beside it, in the
-    same shape `behavior` reports.
+    What running *entry* prints and the type of the error it ended in, as `behavior` reports them,
+    with every file of *files* written beside it under its key. The extension of a key decides
+    whether Node reads that file as a CommonJS file or as an ES module.
 
-    A declaration that names something across the module boundary says nothing on its own: what
-    `import { x } from './m.mjs'` reaches is a name `./m.mjs` exports, and whether it reaches one at
-    all is the linker's answer rather than the parser's. One file can therefore never be asked what
-    such a declaration means, and a graph of them is the smallest thing that can.
-
-    Each file reaches the folder untranslated, for the reason `behavior` gives, and the extension in
-    each key is what decides the goal symbol its file is read under.
-
-    Node's answers are remembered, and kept for later runs, as
-    `test.lib.scripts.js.analysis.node_answers` says. A test whose question is whether two runs of a
-    program agree passes *fresh*, which runs Node again and keeps nothing.
+    Node's answers are remembered and may be kept for later runs. A test asking whether two runs of
+    one program agree passes *fresh*, which asks Node again and keeps nothing.
     """
     return ask(tuple(sorted(files.items())), entry, timeout, fresh=fresh)
 
@@ -282,15 +209,10 @@ function enc(x) {
 
 def code_units(expressions: Sequence[str], *, timeout: float = NODE_TIMEOUT) -> list[str]:
     """
-    Node's value for each expression in *expressions*, rendered as the structure its UTF-16 code
-    units give it: a string as `S[...codes...]`, an array as `A[...elements...]`, and everything
-    else as a word naming it. The rendering is what makes a pinned value independent of how the
-    value is spelled — `'\\uD83D'`, a literal lone high surrogate, and a `String.fromCharCode` call
-    all render as `S[55357]` — so a test comparing two of these compares values and not escapes.
+    Node's value for each of *expressions*, as `_CODE_UNIT_ENCODER` spells it: a string as the list
+    of its UTF-16 code units, so that two spellings of one string give the same answer.
 
-    All of *expressions* are evaluated in one process, because a table of them otherwise costs one
-    Node start per row. They are therefore evaluated in one scope and in order, which is a scope any
-    of them can write to; keep them free of effects.
+    All of *expressions* run in one scope and in order, so each must be free of effects.
     """
     probes = '\n'.join(F'console.log(enc({expression}));' for expression in expressions)
     stdout, error = behavior(F'{_CODE_UNIT_ENCODER}\n{probes}\n', timeout=timeout)
@@ -301,12 +223,8 @@ def code_units(expressions: Sequence[str], *, timeout: float = NODE_TIMEOUT) -> 
 
 class JsEvaluation(str, Enum):
     """
-    The way a program is handed to the engine when the question is what it evaluates to.
-
-    `EVAL` is the payload model: the program is the argument of a call to `eval`, which returns the
-    value, and that is how a stage of a malware chain reaches this tool. `SCRIPT` is the unit model:
-    the program is compiled and run whole, the way `vm.runInThisContext` and any host that embeds an
-    engine run one, and the value is the script's own. Both are asked because they need not agree.
+    How `completion_values` hands a program to Node: `EVAL` as the argument of an indirect `eval`,
+    `SCRIPT` as a whole script.
     """
     EVAL = 'eval'
     SCRIPT = 'script'
@@ -357,18 +275,9 @@ def completion_values(
     timeout: float = NODE_TIMEOUT,
 ) -> list[str]:
     """
-    The value each program in *programs* evaluates to under *evaluation*, named the way a reader can
-    check by eye: a string as its JSON spelling, a number, `null`, `undefined`, `function`, and the
-    class of anything else. A program that ends abruptly has no value at all, and is reported as
-    `throw` and the name of what it threw, so that an ending is never confused with a result.
-
-    Each program gets a context of its own. Programs would otherwise share one global, where a
-    second `let` of the same name is a syntax error and a leftover `var` is a value the next program
-    can see, and a table of programs is meant to be read one row at a time.
-
-    The values come back through a file rather than through standard output, because a program in
-    *programs* may print, and what it prints must not be mistaken for what it evaluates to. Node
-    therefore always runs again here: a remembered answer would leave that file unwritten.
+    The value each of *programs* evaluates to under *evaluation*, each in a context of its own, as
+    `_COMPLETION_DRIVER` names it; a program that throws gives `throw` and the name of what it
+    threw.
     """
     with tempfile.TemporaryDirectory() as folder:
         path = os.path.join(folder, 'values.json')

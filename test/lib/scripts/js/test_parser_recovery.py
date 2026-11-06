@@ -41,17 +41,10 @@ from refinery.units.sinks.ppjscript import ppjscript
 
 
 def unread_spans(tree: Node) -> list[str]:
-    """
-    The text every `refinery.lib.scripts.js.model.JsErrorNode` of *tree* keeps, in the order the
-    file writes them.
-    """
     return [node.text for node in tree.walk_in_order() if isinstance(node, JsErrorNode)]
 
 
 def spans_written_in_order(text: str, spans: list[str]) -> bool:
-    """
-    Whether *text* writes each of *spans* verbatim, one behind the other in the order given.
-    """
     cursor = 0
     for span in spans:
         found = text.find(span, cursor)
@@ -62,9 +55,6 @@ def spans_written_in_order(text: str, spans: list[str]) -> bool:
 
 
 def a_span_the_parser_kept(node: object) -> tuple[type, str]:
-    """
-    The kind of *node*, and the text it keeps where it is a span no parser could read.
-    """
     return type(node), node.text if isinstance(node, JsErrorNode) else ''
 
 
@@ -78,12 +68,6 @@ is spelled as this text followed by the tail the broken construct contributes.
 
 
 class Stop(NamedTuple):
-    """
-    A source that stops where the language still requires something, together with the text that
-    would have finished it. `cut` is what the tool is handed and `whole` is the file it was cut
-    from, so the text the cut took is the whole of the difference between the two. Node rejects
-    every `cut` here and accepts every `whole`.
-    """
     opened: str
     closing: str
 
@@ -156,15 +140,6 @@ what the tool does with them is pinned on its own.
 
 
 class TestParserRecoveryAlwaysPrints(TestBase):
-    """
-    `refinery.lib.scripts.js.parser.JsParser` never raises, so every question about a broken file is
-    answered by the tree it recovers. A construct the parser cannot finish reading is kept as the
-    text it stands in: a `refinery.lib.scripts.js.model.JsErrorNode` reading, verbatim, the
-    statement or list item the construct began at up to where the file stopped, and nothing is
-    written that the file did not hold. What is pinned here is that the text comes back, that
-    printing it again writes the same text, which span is the one kept, and that the tree says it
-    is not a program. Node refuses every print here, since none of the cuts was made whole.
-    """
 
     def _print(self, source: str) -> str:
         return JsSynthesizer().convert(JsParser(source).parse())
@@ -211,13 +186,6 @@ class TestParserRecoveryAlwaysPrints(TestBase):
         )
 
     def test_the_construct_a_source_stops_inside_is_kept_as_an_error_node(self):
-        """
-        The span kept begins where the statement or list item the construct belongs to began: a
-        member access keeps the object it hangs off, a method body keeps only the statement inside
-        it, and a `case` keeps only its clause, since a switch is a list the parser reads clause by
-        clause. A bracketed list the file ends inside is kept as the list it is, so what an object
-        literal contributes is the member the file stopped inside and not the literal around it.
-        """
         expected = {
             'var_with_no_name': [('var', 'expected a name')],
             'const_with_no_name': [('const', 'expected a name')],
@@ -275,11 +243,6 @@ class TestParserRecoveryAlwaysPrints(TestBase):
                 self.assertEqual(self._print(whole), F'{_HEAD}{tail}')
 
     def test_printing_what_was_printed_for_a_source_that_stops_mid_construct_writes_it_again(self):
-        """
-        The output of a recovery is itself input to the tool, and the text an error node keeps is
-        read back as that same text: a print that changed on the second pass would be a tool that
-        reads its own output as something other than what it wrote.
-        """
         once = {name: self._print(stop.cut) for name, stop in _STOPS.items()}
         self.assertEqual({name: self._print(text) for name, text in once.items()}, once)
 
@@ -313,12 +276,6 @@ class TestParserRecoveryAlwaysPrints(TestBase):
 
 
 class TestParserRecoveryOverAMalformedNamePosition(TestBase):
-    """
-    The same law where a name position holds a token that is not a name. Nothing was cut off here,
-    so the statement holding the position is kept whole, up to the semicolon or the closing brace
-    that ends it: the token that was not a name stays where it stood, inside the text that comes
-    back, and a brace that closes the enclosing block is the block's and never the text's.
-    """
 
     def _print(self, source: str) -> str:
         return JsSynthesizer().convert(JsParser(source).parse())
@@ -383,9 +340,6 @@ class TestParserRecoveryOverAMalformedNamePosition(TestBase):
         )
 
 
-#: Module declarations that stop before the specifier they read from. A module host refuses every
-#: one of them: `new vm.SourceTextModule` under `node --experimental-vm-modules` answers
-#: `SyntaxError: Unexpected end of input`, and `Unexpected token ','` for `import a,`.
 MODULE_DECLARATIONS_CUT_BEFORE_THEIR_SPECIFIER = (
     'import',
     'import a',
@@ -401,9 +355,8 @@ MODULE_DECLARATIONS_CUT_BEFORE_THEIR_SPECIFIER = (
     'export * from',
 )
 
-#: Module declarations that name the module they read from, which the same host accepts. It answers
-#: for `export { a as b };` alone, and for a name rather than for a spelling: `Export 'a' is not
-#: defined in module`, where `var a; export { a as b };` is accepted.
+#: A host refuses `export { a as b };` alone because no declaration binds `a`; the refusal is about
+#: the name and not the spelling, since `var a; export { a as b };` is accepted.
 MODULE_DECLARATIONS_THAT_NAME_THEIR_SPECIFIER = (
     'import a from "m";',
     'import "m";',
@@ -419,16 +372,6 @@ MODULE_DECLARATIONS_THAT_NAME_THEIR_SPECIFIER = (
 
 
 class TestAModuleDeclarationIsReadOnlyWhereItsSpecifierIsWritten(TestBase):
-    """
-    A module declaration names the module it reads from with a string literal, and a file that
-    stops before that literal was written holds no declaration at all. Such a span is kept as a
-    `refinery.lib.scripts.js.model.JsErrorNode` reading the text verbatim, so the tree reports that
-    the file is not a program and what is printed for it is what was handed over.
-
-    This was an entry of this ledger until the parser stopped answering such a file with a
-    declaration carrying a specifier that no text spells, and it stays as the regression test that
-    entry became.
-    """
 
     @staticmethod
     def _well_formed(source: str) -> bool:
@@ -467,10 +410,6 @@ class TestAModuleDeclarationIsReadOnlyWhereItsSpecifierIsWritten(TestBase):
         )
 
 
-#: Files that stop in the middle of a construct, grouped by the construct each one stops inside of.
-#: No engine reads any of them, and the law below is quantified over all of them at once: the group
-#: a row is in is only what the parser would have had to finish writing in order to answer with a
-#: program at all.
 SOURCES_THAT_STOP_INSIDE_A_CONSTRUCT = {
     'a function': (
         'function',
@@ -548,24 +487,6 @@ SOURCES_THAT_STOP_INSIDE_A_CONSTRUCT = {
 
 
 class TestAFileThatStopsInsideAConstructIsNotAProgram(TestBase):
-    """
-    A file cut in the middle of a construct still has to be answered with a tree. The parser keeps
-    what it could not finish reading as the text it stands in, and a block, a class body or a
-    switch the file ends inside keeps the statements it holds and records that nothing closed it,
-    so what comes back is what was handed over — `x = f(1, 2` prints as `x = f(1, 2` and
-    `try {} catch` as `try {} catch` — and the tree says it is not a program.
-
-    No engine reads any of these. `new vm.Script` refuses every row but the export declarations,
-    each with `SyntaxError: Unexpected end of input` except `x = f(1, 2` and `x = f(g(1), 2`, which
-    it refuses with `missing ) after argument list`. The export declarations are put to `new
-    vm.SourceTextModule` under `node --experimental-vm-modules`, because `vm.Script` refuses them
-    for a reason of its own, `Unexpected token 'export'`; that host refuses all four with
-    `Unexpected end of input` and accepts `export {};`, `var a; export { a };`, `export function
-    f() {}` and `export default function () {}`, so what it refuses is the cut and not the keyword.
-
-    This was an entry of the JavaScript defect ledger until the parser began
-    recording the repair, and it stays as the regression test that entry became.
-    """
 
     @staticmethod
     def _well_formed(source: str) -> bool:
@@ -591,10 +512,6 @@ class TestAFileThatStopsInsideAConstructIsNotAProgram(TestBase):
         )
 
     def test_a_file_that_stops_inside_a_construct_drops_no_character_and_prints_to_itself(self):
-        """
-        Layout is the printer's: `for (;;) {` comes back as `for (; ; ) {`. What may not change is
-        the characters the file holds, and the print of the print.
-        """
         sources = self._sources()
         printed = {source: self._printed(source) for source in sources}
         self.assertEqual(
@@ -606,12 +523,6 @@ class TestAFileThatStopsInsideAConstructIsNotAProgram(TestBase):
         )
 
     def test_a_bracket_the_file_closes_with_something_else_is_not_a_well_formed_program(self):
-        """
-        Node refuses `var x = (1 + 2; g(x);` with `SyntaxError: Unexpected token ';'`. The file does
-        not stop anywhere — it runs to its end — and the declaration is kept as the text it is:
-        a bracket it opened and never closed holds everything behind it, the `;` and the call
-        included, so the text runs to the end of the file.
-        """
         source = 'var x = (1 + 2; g(x);'
         self.assertEqual(
             (self._well_formed(source), self._printed(source)),
@@ -619,9 +530,6 @@ class TestAFileThatStopsInsideAConstructIsNotAProgram(TestBase):
         )
 
 
-#: Names a module may bind. `node --check` on a `.mjs` file accepts every one of them in every
-#: position of `A_POSITION_NAMING_A_BINDING_THE_FILE_CREATES` and in every position of
-#: `A_POSITION_NAMING_THE_FAR_SIDE_OF_THE_BOUNDARY`.
 A_NAME_A_MODULE_MAY_BIND = (
     'alpha',
     'as',
@@ -634,13 +542,8 @@ A_NAME_A_MODULE_MAY_BIND = (
     'meta',
 )
 
-#: Words that same host refuses in every position of
-#: `A_POSITION_NAMING_A_BINDING_THE_FILE_CREATES`, each with a `SyntaxError`: `Unexpected token
-#: 'class'` and its like for a word the language reserves anywhere, `Unexpected reserved word` for
-#: `enum` and for `await`, which only module code reserves, `Unexpected strict mode reserved word`
-#: for the words only strict code reserves, and `Unexpected eval or arguments in strict mode` for
-#: the two names strict code refuses to bind. It accepts every one of them in every position of
-#: `A_POSITION_NAMING_THE_FAR_SIDE_OF_THE_BOUNDARY`.
+#: Module code is strict, so besides the reserved words it refuses to bind `await`, the words only
+#: strict code reserves, `eval` and `arguments`.
 A_WORD_NO_MODULE_MAY_BIND = (
     'default',
     'class',
@@ -673,8 +576,6 @@ A_WORD_NO_MODULE_MAY_BIND = (
     'arguments',
 )
 
-#: The positions of an `import` or `export` declaration that name a binding the file creates, each
-#: as the declaration that writes a name there.
 A_POSITION_NAMING_A_BINDING_THE_FILE_CREATES = {
     'a default import'     : 'import {name} from "m";',
     'a namespace import'   : 'import * as {name} from "m";',
@@ -683,8 +584,8 @@ A_POSITION_NAMING_A_BINDING_THE_FILE_CREATES = {
     'an export of a local' : 'var {name};\nexport {{ {name} }};',
 }
 
-#: The positions of an `import` or `export` declaration that name something on the far side of the
-#: module boundary, where the grammar takes an IdentifierName rather than a name the file binds.
+#: In these positions the grammar takes an IdentifierName, which a reserved word is as well, rather
+#: than a name the file binds.
 A_POSITION_NAMING_THE_FAR_SIDE_OF_THE_BOUNDARY = {
     'an import'              : 'import {{ {name} as local }} from "m";',
     'a re-export'            : 'export {{ {name} }} from "m";',
@@ -696,19 +597,6 @@ A_POSITION_NAMING_THE_FAR_SIDE_OF_THE_BOUNDARY = {
 
 
 class TestAModuleTakesAWiderNameAcrossItsBoundaryThanItBinds(TestBase):
-    """
-    An `import` or `export` declaration writes names in two kinds of position. One names a binding
-    the file creates, and takes an ordinary name: `node --check` on a `.mjs` file refuses every
-    word of `A_WORD_NO_MODULE_MAY_BIND` there. The other names something on the far side of the
-    module boundary, and takes an IdentifierName, which is the wider set — the same host accepts
-    every one of those words there. `import { default as local } from "m";` is a module and
-    `import { default } from "m";` is not, and the two differ in nothing but which position the
-    reserved word stands in.
-
-    What is pinned is the accepting half of that: every spelling the host reads is read here
-    without a repair, and printed back as the file wrote it; and the one spelling that is both
-    positions at once, the shorthand import, which binds.
-    """
 
     @staticmethod
     def _read_and_printed(source: str) -> tuple[bool, str]:
@@ -741,11 +629,6 @@ class TestAModuleTakesAWiderNameAcrossItsBoundaryThanItBinds(TestBase):
                 )
 
     def test_the_shorthand_import_binds_the_word_the_shorthand_re_export_only_passes_on(self):
-        """
-        The word in `import { yield } from "m";` names a binding as well as the far side of the
-        boundary, and the word in `export { yield } from "m";` names the far side twice over, which
-        is why the host refuses the first and reads the second.
-        """
         self.assertEqual(
             {
                 source: is_well_formed(JsParser(source).parse())
@@ -755,19 +638,6 @@ class TestAModuleTakesAWiderNameAcrossItsBoundaryThanItBinds(TestBase):
         )
 
 
-#: Files no engine reads, each mapped to the text the parser could not read and its reason. Node
-#: refuses every one of them: `Unexpected end of input` for the ones that stop short, `Invalid
-#: regular expression: missing /` for the lone slash, `Unexpected token ')'` for `x = ()`, for
-#: `x = (a,)` and for the two files holding a stray closer, `Unexpected token '...'` for
-#: `x = (...a)`, `Unexpected identifier 'b'` for the three with two names pressed together,
-#: `missing ) after argument list` for the two argument lists, `Unexpected string` for the catch
-#: parameter, `Unexpected token 'break'` for the case clause, `Missing } in template expression`
-#: for the three templates, `Unexpected token '}'` for the three clause bodies and for
-#: `{ throw }`, `Illegal newline after throw` for the three files breaking the line behind
-#: `throw`, `Malformed arrow function parameter list` for the two arrows behind `new`, and
-#: `Invalid or unexpected token` for the six files whose line ends inside a string. The import
-#: declaration is module code, which `node --check` on a `.mjs` file refuses with `Unexpected
-#: identifier 'c'`.
 A_FILE_THE_PARSER_REFUSES = {
     'x = /': ('x = /', 'unexpected token'),
     'var': ('var', 'expected a name'),
@@ -820,20 +690,6 @@ A_FILE_THE_PARSER_REFUSES = {
 
 
 class TestAFileTheParserRefusesComesBackAsItWasWritten(TestBase):
-    """
-    `refinery.lib.scripts.js.model.JsErrorNode` promises that a span no parser could read is kept
-    verbatim, so that what an analyst gets back still contains what was written; and printing a
-    parse and parsing that print reaches a fixed point, including for a source no engine accepts,
-    because a tool that reads its own output otherwise changes a file every pass. The span kept
-    is the statement or list item the refused token stood in: a whole statement for most of these,
-    the two elements pressed together for an argument or parameter list, and the one clause for
-    the switch. A span ending in a string a line terminator ended takes the terminator with it:
-    `x = "abc` at the end of a file is a string the file ended inside, which is a different tree,
-    and a print that put the span last would otherwise read back as that.
-
-    None of these prints reads as a program either: a print that did would answer a file no engine
-    reads with one an engine runs.
-    """
 
     def test_no_character_of_the_file_is_dropped(self):
         rows = A_FILE_THE_PARSER_REFUSES
@@ -871,11 +727,6 @@ class TestAFileTheParserRefusesComesBackAsItWasWritten(TestBase):
         )
 
     def test_a_clause_body_holding_unread_text_is_written_without_a_block(self):
-        """
-        A clause takes one statement and the braces a printer adds around it are a block, which is
-        a statement the source did not write. Where the body is text no parser could read, those
-        braces close the text off from what follows and the print reads back as a different file.
-        """
         sources = [
             'if (a) foo(});',
             'while (a) foo(});',
@@ -888,10 +739,6 @@ class TestAFileTheParserRefusesComesBackAsItWasWritten(TestBase):
         )
 
     def test_a_line_ended_string_is_not_followed_by_a_second_line_terminator(self):
-        """
-        The span kept for a string a line ended holds that line terminator, so a printer writing
-        one of its own behind the span puts a line into the file that nobody wrote.
-        """
         sources = ['x = "abc\rz;', 'x = "abc\nz;', 'x = "abc\r\nz;']
         self.assertEqual(
             {source: printed(source) for source in sources},
@@ -901,22 +748,12 @@ class TestAFileTheParserRefusesComesBackAsItWasWritten(TestBase):
     def test_a_legal_trailing_comma_is_the_printers_to_drop_where_the_file_is_refused_elsewhere(
         self,
     ):
-        """
-        `x = [1, 2, ]` is a program the printer writes in its own form, and the file being refused
-        somewhere else does not turn the rest of it into text to keep verbatim. What the refusal
-        keeps is the item the parser could not read, and nothing around it.
-        """
         source = 'x = [1, 2, ]; y = (a b);'
         self.assertEqual(printed(source), 'x = [1, 2];\ny = (a b);')
         self.assertEqual(unread_spans(JsParser(source).parse()), ['a b'])
         self.assertEqual(well_formed(source), False)
 
 
-#: Files that end inside a regular expression literal, mapped to the constructs nothing closed,
-#: outermost first. Node refuses each with `SyntaxError: Invalid regular expression: missing /`.
-#: A literal the file ends inside is the literal it is and not text the parser refused, which is
-#: what tells `x = /ab` apart from `x = /`, where the one slash spells no literal at all and stays
-#: unread text.
 A_FILE_THAT_ENDS_INSIDE_A_REGULAR_EXPRESSION = {
     'x = /ab': (JsScript, JsRegExpLiteral),
     'x = /ab+': (JsScript, JsRegExpLiteral),
@@ -956,19 +793,6 @@ class TestAFileThatEndsInsideARegularExpressionKeepsTheLiteralOpen(TestBase):
 
 
 class TestASpanTheParserCouldNotReadEndsWhereItsStatementDoes(TestBase):
-    """
-    A clause takes one statement, so a body no parser could read has to end where that statement
-    ends and the rest of the file has to stay outside it: at the `else` of an `if`, at the `while`
-    of a `do`, at the next `case` of a switch, at the statement behind a declaration. A span that
-    ran on would swallow what follows it into text nothing reads again.
-
-    Node refuses `if (x) foo bar`, `do foo bar`, and the switch, each with `SyntaxError:
-    Unexpected identifier 'bar'`. The two declarations are module code, which `node --check` on a
-    `.mjs` file refuses with `SyntaxError: Unexpected identifier 'B'`.
-
-    Every shape is asked of the print as well, since one that only survives a single pass is a
-    file the tool rewrites every time it reads it.
-    """
 
     @staticmethod
     def _both_readings(source: str) -> dict[str, str]:
@@ -1062,21 +886,16 @@ class TestASpanTheParserCouldNotReadEndsWhereItsStatementDoes(TestBase):
 
     def test_a_case_body_that_could_hold_the_next_case_prints_no_program(self):
         """
-        The slash behind `y;` opens a regular expression literal, and `case` on the same line as
-        that literal ends nothing, which is why no engine reads the file. A span cut at that word
-        would put the literal in one clause and `case 2` in the next, and the printer writes a
-        clause on a line of its own, where the break behind the literal ends the statement and the
-        file an engine refused comes back as one it runs.
+        The `/` behind `y;` opens the regular expression literal `/ a */`, and a `case` behind it on
+        the same line is a syntax error. A print that wrote `case 2` on a line of its own would end
+        the statement there and turn the file into a program.
         """
         source = 'switch (x) { case 1: y; / a */ case 2: z; }'
         self.assertEqual(well_formed(printed(source)), False)
 
 
-#: Spellings of a numeral the language refuses (§12.9.3): a separator not between two digits of
-#: one run or behind a leading `0`, a radix prefix with no digits, an exponent with no digit behind
-#: its sign, a legacy octal literal with a fraction, an exponent or an `n`, and a numeral an
-#: IdentifierStart or a digit is pressed against. Node refuses `x = <spelling>;` for every one of
-#: them, and `test.lib.scripts.js.test_lexer` states which token the lexer ends each at.
+#: No digit and no IdentifierStart may stand right behind a numeral, so `3in y` and `1.toString()`
+#: are refused although `3 in y` is not.
 A_NUMERAL_THE_LANGUAGE_REFUSES = (
     '004E',
     '007e1',
@@ -1139,14 +958,6 @@ class TestANumeralTheLanguageRefusesIsNoProgram(TestBase):
         )
 
 
-#: Files whose parse once needed a token the source did not write. Four of the tables come from
-#: `test.lib.scripts.js.deobfuscation.test_escaped_identifiers`, where the law they belong to is
-#: stated: a terminal word of the grammar is matched by the characters typed, so an escaped
-#: spelling of `get`, `set`, `static`, `async`, `instanceof` or `in` is a name standing where the
-#: grammar wanted a word. The last four are the same shape with nothing escaped about it: two names
-#: pressed together, `let` spelled with an escape where a declaration would begin, and an arrow
-#: function written as the operand of `new`, which the grammar takes no arrow function for. Node
-#: refuses every one of them with a `SyntaxError` and prints nothing.
 A_FILE_THE_PARSER_REFUSES_THAT_AN_ENGINE_REFUSES_TOO = (
     *AN_ESCAPED_ACCESSOR_TERMINAL,
     *AN_ESCAPED_STATIC_TERMINAL,
@@ -1163,13 +974,6 @@ A_FILE_THE_PARSER_REFUSES_THAT_AN_ENGINE_REFUSES_TOO = (
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAFileTheParserRefusesIsNotAnsweredWithAProgram(TestBase):
-    """
-    Standing where the grammar requires one token and finding another, the parser keeps the
-    statement or list item it was reading as the text it is, so what comes back holds the text no
-    engine agreed to read and is refused by the engine as the file was. This was an entry of
-    `test.lib.scripts.js.test_unfixed_defects` while the parser wrote the token it wanted instead,
-    and it stays as the regression test that entry became.
-    """
 
     def test_a_file_the_parser_refuses_comes_back_refused(self):
         rows = A_FILE_THE_PARSER_REFUSES_THAT_AN_ENGINE_REFUSES_TOO
@@ -1180,8 +984,6 @@ class TestAFileTheParserRefusesIsNotAnsweredWithAProgram(TestBase):
         )
 
 
-#: A construct nested inside itself *n* times, for every construct the parser reads by descending
-#: into it. Node reads each of them a hundred deep and a thousand deep.
 A_CONSTRUCT_NESTED = {
     'parentheses': lambda n: '(' * n + '1' + ')' * n + ';',
     'arrays': lambda n: '[' * n + ']' * n + ';',
@@ -1199,7 +1001,6 @@ A_CONSTRUCT_NESTED = {
     'exponentiations': lambda n: 'z = ' + 'a ** ' * n + '1;',
 }
 
-#: The same, for the two shapes the parser reads in a loop rather than by descending.
 A_CHAIN_NESTED = {
     'binary operators': lambda n: 'a' + ' + a' * n + ';',
     'member accesses': lambda n: 'a' + '.b' * n + ';',
@@ -1207,16 +1008,6 @@ A_CHAIN_NESTED = {
 
 
 class TestAFileNestedTooDeepToReadIsRefusedAndNeverCrashes(TestBase):
-    """
-    The parser descends once per level of nesting and refuses to descend past a budget, so that a
-    file nested a thousand deep is answered with the text it could not read rather than with a
-    `RecursionError` from inside the tools that read and print it. A hundred levels are read; a
-    thousand are refused at the budget, and the file still comes back whole: the one span the
-    parser kept is text the file wrote, the print drops no character, and printing it writes it
-    again. Where the budget falls is the parser's to choose and no engine answers it, which is why
-    nothing here counts how much of a file was left unread. A chain the parser reads in a loop has
-    no depth to refuse.
-    """
 
     def _read(self, source: str) -> tuple[bool, bool, str, list[tuple[str, bool]]]:
         text = printed(source)
@@ -1253,8 +1044,6 @@ class TestAFileNestedTooDeepToReadIsRefusedAndNeverCrashes(TestBase):
         )
 
 
-#: What one edit puts into a program: a bracket, a quote, a slash, a separator, a character that
-#: begins no token, a comment opener of each kind.
 AN_INSERTION = (
     ')',
     '}',
@@ -1282,10 +1071,6 @@ AN_INSERTION = (
 
 
 def every_file_one_edit_away(source: str, rng: random.Random, count: int) -> list[str]:
-    """
-    *count* files one edit away from *source*: a character deleted, or one of `AN_INSERTION` put
-    in, at a position *rng* picks.
-    """
     mutants: list[str] = []
     for _ in range(count):
         position = rng.randrange(len(source) + 1)
@@ -1297,16 +1082,6 @@ def every_file_one_edit_away(source: str, rng: random.Random, count: int) -> lis
 
 
 class TestAFileOneEditAwayFromAProgramComesBackAsItWasWritten(TestBase):
-    """
-    Over every program the hand-written corpora of this module and of
-    `test.lib.scripts.js.test_comment_carriers` hold, eight files one edit away from it, from a
-    fixed seed. Whatever the edit made of the program, printing the print changes nothing, and
-    every span the parser could not read comes back verbatim and in the order the file wrote it.
-
-    What the file holds around such a span is the printer's to write in its own form, where a
-    trailing comma or a separating semicolon is not kept: an edit that refuses one statement of a
-    file leaves the rest of it a program, and `x = [1, 2, ]; y = (a b);` is such a file.
-    """
 
     def test_every_mutant_prints_to_itself_and_keeps_every_span_it_could_not_read(self):
         rng = random.Random(20260907)

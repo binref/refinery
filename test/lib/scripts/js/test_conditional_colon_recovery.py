@@ -22,14 +22,6 @@ def _unread(source: str) -> list[tuple[str, str]]:
 
 
 class TestAConditionalMissingItsColonStopsAtItsBoundary(TestBase):
-    """
-    A conditional expression whose colon is absent may not be finished by stepping over the token
-    that stands where the colon was expected. Where that token closes the statement or the block,
-    stepping over it reads the next statement as the conditional's alternate and folds the whole
-    tail of the block into one expression. Node rejects every colon-less source here; what is
-    pinned is that the parser keeps the conditional as the text it stands in, up to the token
-    that closes it and never past it, so that the statements after it are read as themselves.
-    """
 
     def test_the_statement_after_a_colonless_conditional_is_kept(self):
         _, printed, count = _read_and_printed('f(); a ? b; g();')

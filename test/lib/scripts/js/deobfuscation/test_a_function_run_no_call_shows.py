@@ -1,12 +1,10 @@
 """
 A function whose body runs where no call of its name shows: through the global object, through its
 own `arguments`, through the `caller` of a function it calls, through `new.target`, or at a step of
-a generator object. Such a run may store into a file-level `var` between the store of another run
-and its read, so the `var` stays at the top of the file
-(`refinery.lib.scripts.js.analysis.localization`), and a value is not carried past it
-(`refinery.lib.scripts.js.analysis.effects.EffectModel.function_escapes`). Each program is written
-by hand, and each row says what Node prints for it run the way its reading names: as a CommonJS
-file, or as a classic script where the row reaches the global object.
+a generator object. Such a run may store into a file-level `var` between the store and the read of
+another run.
+
+Node runs every program here: each must be written by hand, never taken from a sample.
 """
 from __future__ import annotations
 
@@ -18,9 +16,6 @@ from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 
 from refinery.lib.scripts.js.options import ExecutionModel
 
-#: Programs with a file-level `var` one function writes before it reads it, which another run of
-#: that function writes in between, a run no call of the function's name shows, mapped to what
-#: Node prints for each.
 ANOTHER_RUN_NO_CALL_SHOWS: dict[str, Program] = {
     'a call of itself through the global object': Program(
         a_program("""
@@ -198,8 +193,6 @@ ANOTHER_RUN_NO_CALL_SHOWS: dict[str, Program] = {
     ),
 }
 
-#: Programs reading a value past a run of the function that writes it, a run no call of the
-#: function's name shows, mapped to what Node prints for each.
 A_VALUE_READ_PAST_A_RUN_NO_CALL_SHOWS: dict[str, Program] = {
     'a value read past a call of its writer through the global object': Program(
         a_program("""

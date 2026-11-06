@@ -21,13 +21,6 @@ accepts every tight one, and a space is the only difference between the members 
 
 
 class TestASplitOptionalChainOperatorRecoversToTheChain(TestBase):
-    """
-    The `?.` operator is one token, so a space between its two characters is not the operator and not
-    any other program: a conditional cannot stand there, because a consequent that opens with a dot
-    opens with a number the lexer reads whole. `refinery.lib.scripts.js.parser.JsParser` reads the
-    split spelling as the operator the source meant, which is the one reading that is a program at
-    all, and records that it repaired the file.
-    """
 
     def test_a_split_operator_is_the_same_program_as_the_tight_operator(self):
         for name, (split, tight) in _SPLIT_AND_TIGHT.items():

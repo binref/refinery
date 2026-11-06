@@ -145,6 +145,7 @@ from refinery.lib.scripts.js.strict import (
     keeping_directives,
     statement_list,
 )
+from refinery.lib.scripts.js.synth import escape_js_string
 from refinery.lib.scripts.js.token import FUTURE_RESERVED, KEYWORDS
 from refinery.lib.scripts.js.utf16 import SURROGATE_PAIR, code_units, from_code_units
 from refinery.lib.scripts.js.values import (
@@ -564,13 +565,6 @@ def utf16_code_units(text: str) -> list[str]:
     return units
 
 
-def _escape_residue(m: re.Match[str]):
-    cp = ord(m.group())
-    if cp > 0xFF:
-        return F'\\u{cp:04X}'
-    return F'\\x{cp:02x}'
-
-
 def spell_astral_characters(value: str) -> str:
     """
     Write the pairs of code units that name a character above the basic plane as that character. A
@@ -600,49 +594,6 @@ def code_points(value: str) -> list[str]:
         points.append(value[index:index + step])
         index += step
     return points
-
-
-def escape_js_string(value: str, quote: str = "'") -> str:
-    """
-    Escape a string for use in a JavaScript string literal. Returns the escaped body without
-    surrounding quotes. Backslash is escaped first to avoid double-escaping. Control characters
-    not covered by named escapes are emitted as `\\xHH`; a surrogate that names no character on its
-    own as `\\uXXXX`, and a pair of them as the character they name.
-
-    A NUL is `\\0`, except where a digit stands behind it: `\\0` followed by `0` through `7` is one
-    legacy octal escape and would swallow the digit into a different character, and followed by `8`
-    or `9` it is an escape strict code refuses. A NUL a digit follows is spelled `\\x00` instead, so
-    the character behind it stays the character the value held.
-    """
-    value = spell_astral_characters(value)
-    value = value.replace('\\', r'\\')
-    value = value.replace('\n', r'\n')
-    value = value.replace('\r', r'\r')
-    value = value.replace('\t', r'\t')
-    value = re.sub(r'\x00(?=[0-9])', r'\\x00', value)
-    value = value.replace('\0', r'\0')
-    value = value.replace(quote, F'\\{quote}')
-    return re.sub(r'[\x01-\x1f\ud800-\udfff]', _escape_residue, value)
-
-
-def escape_js_template_text(value: str) -> str:
-    """
-    Escape a string so that it spells itself inside a template literal. Three characters end a run
-    of template text rather than standing in it — the backtick that closes the literal, the `${`
-    that opens a hole, and the backslash that would eat what follows it.
-
-    A line feed stands as itself, because a template is the one literal that may span lines. A
-    carriage return does not: every line terminator sequence a template is written with denotes a
-    line feed, so a return written into the text would come back as one and the string would not
-    be the string. A lone surrogate has to be spelled too, for the same reason a string spells one
-    — there is no encoding of the file that carries it.
-    """
-    value = spell_astral_characters(value)
-    value = value.replace('\\', r'\\')
-    value = value.replace('\r', r'\r')
-    value = value.replace('`', r'\`')
-    value = value.replace('${', r'\${')
-    return re.sub(r'[\x00-\x08\x0b-\x1f\ud800-\udfff]', _escape_residue, value)
 
 
 def string_value(node: Expression | None) -> str | None:

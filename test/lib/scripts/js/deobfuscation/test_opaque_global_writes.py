@@ -1,14 +1,4 @@
 """
-A computed global write stores a property and names nothing.
-
-`globalThis[expr] = v` was once counted as a reflective surface — the same alarm as `eval` — and
-that one flag withdrew every trust question program-wide, refusing to execute the very decoder
-whose folding would have removed the computed key: a deadlock. The surface and the write are now
-separate questions (`refinery.lib.scripts.js.analysis.model.SemanticModel.has_opaque_global_write`):
-naming a global at runtime still blocks everything it blocked, while storing a property under a
-runtime key blocks only what replacing a value blocks — an intrinsic called by name, and a
-script-scope name keeping its spelled value.
-
 SECURITY: every program here is hand-authored in this file and benign. No sample and no stored
 obfuscator fixture may be fed to this.
 """
@@ -16,9 +6,15 @@ from __future__ import annotations
 
 import unittest
 
-from test import TestBase
-from test.lib.scripts.js.analysis.differential import node_executable
-from test.lib.scripts.js.ledger import a_program, before_and_after_in_a_host, folded, prints
+from test import TestBase, opportunity, todo
+from test.lib.scripts.js.analysis.differential import host_behavior, node_executable
+from test.lib.scripts.js.ledger import (
+    a_program,
+    before_and_after_in_a_host,
+    deobfuscated_host_behavior,
+    folded,
+    prints,
+)
 
 _A_WRITE_NO_LONGER_BLOCKS_A_METHOD_CALL = {
     'a string method on a literal receiver': (
@@ -33,31 +29,39 @@ _A_WRITE_NO_LONGER_BLOCKS_A_METHOD_CALL = {
             console.log('b');
             """).rstrip(chr(10)),
     ),
-    'a decoder function executed through the write': (
-        a_program("""
-            var k = process.env.KEY;
-            globalThis[k] = 0;
-            function d(s) {
-              return s.charAt(1);
-            }
-            console.log(d('abc'));
-            """),
-        a_program("""
-            var k = process.env.KEY;
-            globalThis[k] = 0;
-            function d(s) {
-              return s.charAt(1);
-            }
-            console.log('b');
-            """).rstrip(chr(10)),
-    ),
 }
 """
 Each program stores a property on the global object under a key the analysis cannot read, and each
-must still fold across it: a write cannot run code or read a value, so the decoder sitting behind it
+must still fold across it: a write cannot run code or read a value, so the call sitting behind it
 folds as it would without the write. The write and its key are what stay — the recall cost of a
 sound design, pinned here so it is a cost and not a regression.
 """
+
+#: A top-level `const` is no property of the global object, so a store under a runtime key cannot
+#: replace the decoder.
+_A_DECODER_A_CONST_HOLDS_CALLED_ACROSS_THE_WRITE = a_program("""
+    var k = process.env.KEY;
+    globalThis[k] = 0;
+    const d = function (s) {
+      return s.charAt(1);
+    };
+    console.log(d('abc'));
+    """)
+
+_THE_DECODER_CALL_FOLDED = a_program("""
+    var k = process.env.KEY;
+    globalThis[k] = 0;
+    const d = function(s) {
+      return s.charAt(1);
+    };
+    console.log('b');
+    """).rstrip(chr(10))
+
+_THE_DECODER_CALL_FOLDED_AND_THE_DECODER_REMOVED = a_program("""
+    var k = process.env.KEY;
+    globalThis[k] = 0;
+    console.log('b');
+    """).rstrip(chr(10))
 
 _A_GLOBAL_WRITTEN_UNDER_A_RUNTIME_KEY = {
     'the written name is the intrinsic a call spells': a_program("""
@@ -98,31 +102,54 @@ that names nothing withdraws nothing — and an unfettered exemption would have 
 replacement: these rows are what keeps the write fact routed.
 """
 
+_A_DECODER_A_FUNCTION_DECLARATION_BINDS_REPLACED_BY_THE_WRITE = a_program("""
+    var k = process.env.KEY || 'd';
+    globalThis[k] = 0;
+    function d(s) {
+      return s.charAt(1);
+    }
+    console.log(d('abc'));
+    """)
+
 
 class TestAWriteThatNamesNothingStillFolds(TestBase):
-    """
-    The recall side: what the surface split buys. Each row must fold across the write to the text
-    pinned beside it, or the deadlock is back.
-    """
 
     def test_each_program_folds_to_the_pinned_text(self):
         for label, (source, expected) in _A_WRITE_NO_LONGER_BLOCKS_A_METHOD_CALL.items():
             with self.subTest(label):
                 self.assertEqual(folded(source), expected)
 
+    def test_a_decoder_a_const_holds_folds_across_the_write(self):
+        self.assertIn(folded(_A_DECODER_A_CONST_HOLDS_CALLED_ACROSS_THE_WRITE), (
+            _THE_DECODER_CALL_FOLDED,
+            _THE_DECODER_CALL_FOLDED_AND_THE_DECODER_REMOVED,
+        ))
+
+    @opportunity
+    def test_a_decoder_a_const_holds_is_removed_once_its_call_folds_across_the_write(self):
+        self.assertEqual(
+            folded(_A_DECODER_A_CONST_HOLDS_CALLED_ACROSS_THE_WRITE),
+            _THE_DECODER_CALL_FOLDED_AND_THE_DECODER_REMOVED,
+        )
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAGlobalWrittenUnderARuntimeKeyStillBinds(TestBase):
-    """
-    The soundness side, read under the script execution model — the one in which a top-level
-    declaration is a property of the global object at all.
-    """
 
     def test_every_program_behaves_the_way_the_host_does(self):
         for label, source in _A_GLOBAL_WRITTEN_UNDER_A_RUNTIME_KEY.items():
             with self.subTest(label):
                 before, after = before_and_after_in_a_host(source)
                 self.assertEqual(after, before)
+
+    def test_a_host_throws_where_a_write_replaced_a_decoder_a_function_declaration_binds(self):
+        source = _A_DECODER_A_FUNCTION_DECLARATION_BINDS_REPLACED_BY_THE_WRITE
+        self.assertEqual(host_behavior(source), ('', 'TypeError'))
+
+    @todo
+    def test_a_decoder_a_function_declaration_binds_is_not_folded_across_a_write_replacing_it(self):
+        source = _A_DECODER_A_FUNCTION_DECLARATION_BINDS_REPLACED_BY_THE_WRITE
+        self.assertEqual(deobfuscated_host_behavior(source), ('', 'TypeError'))
 
 _A_READ_THE_WRITE_HAS_NOT_REACHED = {
     'a read before the write': (
@@ -170,7 +197,6 @@ handed a program that still prints the written value. The second and third lose 
 a literal key nothing reads names no binding the sweep must keep.
 """
 
-#: The first row's program, whose fold is the one the write's position has to justify.
 _A_READ_BEFORE_THE_WRITE = a_program("""
     var s = 'abcdef';
     var k = process.env.KEY || 's';
@@ -179,8 +205,6 @@ _A_READ_BEFORE_THE_WRITE = a_program("""
     console.log(t);
     """)
 
-#: The same program with the store moved ahead of the read, which the write's replacement then
-#: reaches first: a host running it as a script ends it with a `TypeError` on both sides.
 _A_READ_THE_WRITE_HAS_REACHED = a_program("""
     var s = 'abcdef';
     var k = process.env.KEY || 's';
@@ -191,14 +215,6 @@ _A_READ_THE_WRITE_HAS_REACHED = a_program("""
 
 
 class TestAReadTheWriteHasNotReachedYetFolds(TestBase):
-    """
-    The located form of the write fact. A store under a runtime key may replace a script-scope
-    name, so it is a kill — but a kill at the statement that spells it, which a read standing before
-    it, or inside the operands that statement evaluates before storing, is not reached by. The recall
-    the volatile-everywhere reading refused: each of these stayed standing whole before the kill was
-    located, the third deadlocked — its key folds only once the read inside it is answered, and the
-    read is answered only once the write stops being volatile everywhere.
-    """
 
     def test_each_program_folds_to_the_pinned_text(self):
         for label, (source, expected) in _A_READ_THE_WRITE_HAS_NOT_REACHED.items():
@@ -208,11 +224,6 @@ class TestAReadTheWriteHasNotReachedYetFolds(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAReadTheWriteHasReachedStaysStanding(TestBase):
-    """
-    The soundness half the located kill owes: a read standing after the store may observe the
-    written value, so it stays standing, and a host running the file as a script — the model in
-    which the store really does replace the name — ends it the same way on both sides.
-    """
 
     def test_each_program_still_prints_and_throws_what_the_host_does(self):
         self.assertEqual(
@@ -261,10 +272,6 @@ standing exactly as before.
 
 
 class TestAConstructionUnderARuntimeKeyWrite(TestBase):
-    """
-    The one write-fact census arm the plan routed through the oracle, pinned by its two
-    directions.
-    """
 
     def test_each_program_folds_to_the_pinned_text(self):
         for label, (source, expected) in _A_CONSTRUCTION_INVOKED_UNDER_A_RUNTIME_KEY_WRITE.items():

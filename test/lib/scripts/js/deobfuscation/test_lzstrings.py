@@ -1,13 +1,3 @@
-"""
-Programs that keep their strings compressed with the lz-string library: the minified build of the
-library is inserted whole, and one call of its `decompressFromUTF16` with a string literal gives
-every string of the program, joined. `refinery.djs` replaces that call by the string it returns
-where the name holds the object the library builds, nothing changes that object before the call, and
-the built-ins the library reads are the language's when it is built and when the call runs.
-
-`COMPRESSED("...")` in a program stands for the string literal the library's `compressToUTF16`
-makes of the text, which the library makes in Node when the test runs.
-"""
 from __future__ import annotations
 
 import inspect
@@ -17,7 +7,7 @@ import unittest
 
 from typing import Mapping
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.ledger import (
     NL,
@@ -32,8 +22,7 @@ from test.lib.scripts.js.ledger import (
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.units.scripting.djs import djs
 
-#: The function of the minified build of lz-string 1.5.0, copyright (c) 2013 pieroxy, MIT license,
-#: as the package ships it in `libs/lz-string.min.js`; a call of it builds the library object.
+#: The minified build of lz-string 1.5.0, copyright (c) 2013 pieroxy, MIT license.
 LIBRARY = (
     'function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123'
     '456789+/=",n="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-$",e={};function t'
@@ -85,18 +74,14 @@ LIBRARY = (
     'ow(2,d),d++)}}};return i}'
 )
 
-#: The library built and held by a name, as it is inserted into a program.
 LIB = F'var L={LIBRARY}();'
 
-#: The line the build is shipped with, which hands the library to a module loader where one is
-#: present: an AMD `define`, the `module` of a CommonJS file, or AngularJS.
 TAIL = (
     '"function"==typeof define&&define.amd?define(function(){return L}):"undefined"!=typeof module&&null!=module?'
     'module.exports=L:"undefined"!=typeof angular&&null!=angular&&angular.module("LZString",[]).factory("LZString",'
     'function(){return L});'
 )
 
-#: The accessor over the strings: one call decompresses all of them, joined by `|`.
 TEMPLATE = (
     'var SC;(function(){var compressedString=COMPRESSED("line|column|name|BrainfuckError|located|toString| at line |, '
     'column |freeze|ADD|add|MOVE|move");'
@@ -104,21 +89,17 @@ TEMPLATE = (
     'SC=function(index){return stringArray[index]}})();'
 )
 
-#: Reads of strings through the accessor, at the top of the file and in a function.
 USE = 'console.log(SC(0), SC(3), SC(6) + SC(12)); function f() { return SC(9); } console.log(f());'
 
-#: A text whose repeats the library compresses into references to its own earlier parts.
 FOX = 'the quick brown fox jumps over the lazy dog|' * 30
 
-#: A file written beside the program that installs an AMD loader, whose `define` writes the object
-#: it is handed.
 AMD_LOADER_BESIDE = (
     'require("fs").writeFileSync(require("path").join(__dirname, "amd.js"), "global.define = function (f) { '
     'f()._decompress = function () { return 1; }; }; global.define.amd = true;");'
 )
 
-#: A program an obfuscator compressed the strings of, as it wrote it: the library under a generated
-#: name, its export line, and the accessor in front of an eleven-line fizzbuzz.
+#: SECURITY: obfuscator output for a fizzbuzz whose strings it compressed with the library. It is
+#: only ever read as text and never run.
 STRINGS_COMPRESSED = (
     r'var ZvYyC4L=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr'
     r'stuvwxyz0123456789+/=",n="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-$",e={'
@@ -179,7 +160,6 @@ STRINGS_COMPRESSED = (
     r')](__p_2ibP_SC(5)+fizzbuzz(15));'
 )
 
-#: The one line the program prints, as `refinery.djs` recovers it.
 FIZZBUZZ_PRINTED = (
     "console.log('FizzBuzz: 1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14, FizzBuzz');"
 )
@@ -188,10 +168,6 @@ _COMPRESSED = re.compile(r'COMPRESSED\(("(?:[^"\\]|\\.)*")\)')
 
 
 def _compressed_by_the_library(texts: tuple[str, ...]) -> dict[str, str]:
-    """
-    The string literal Node prints for what the library's `compressToUTF16` makes of each of
-    *texts*, one to a line.
-    """
     calls = ''.join(F'console.log(JSON.stringify(L.compressToUTF16({json.dumps(text)})));' for text in texts)
     out, error = behavior(F'var L = {LIBRARY}(); {calls}')
     assert error is None, error
@@ -212,9 +188,6 @@ def with_compressed_strings(rows: Mapping[str, FileProgram]) -> dict[str, FilePr
     }
 
 
-#: Programs that build the library and decompress strings with it, some after or while they change
-#: the object or the built-ins it reads, each with what Node makes of it as a CommonJS file and as an
-#: ES module.
 A_PROGRAM_DECOMPRESSING_ITS_STRINGS = {
     'the inserted shape: library, its export line, the accessor': FileProgram(
         LIB + TAIL + TEMPLATE + USE,
@@ -620,9 +593,6 @@ class TestAProgramDecompressingItsStringsStillPrintsWhatItPrints(TestBase):
         )
 
 
-#: Programs that replace a method of strings or arrays the library calls through the prototype of a
-#: literal before decompressing, each with what Node makes of it as a CommonJS file and as an ES
-#: module.
 A_METHOD_THE_LIBRARY_CALLS_REPLACED_THROUGH_THE_PROTOTYPE_OF_A_LITERAL = {
     'charCodeAt replaced through the __proto__ of a string literal': FileProgram(
         '"".__proto__.charCodeAt = function () { return 40; };' + LIB + 'console.log(JSON.stringify(L.decompressFromUTF16(COMPRESSED("abcabc|abc"))));',
@@ -715,10 +685,6 @@ class TestTheInsertedShapeIsDecompressed(TestBase):
 
 
 class TestAProgramAnObfuscatorCompressedTheStringsOf(TestBase):
-    """
-    The program `STRINGS_COMPRESSED`, deobfuscated as an analyst runs `refinery.djs` on a Node
-    script and read as text only.
-    """
 
     def _deobfuscated(self, *switches: str) -> str:
         return STRINGS_COMPRESSED.encode('utf8') | djs.assemble(*switches) | str
@@ -734,9 +700,6 @@ class TestAProgramAnObfuscatorCompressedTheStringsOf(TestBase):
         self.assertIn('.decompressFromUTF16(', self._deobfuscated('-c', '-l', '-e', 'node'))
 
 
-#: What `refinery.djs` writes for a file whose strings an obfuscation compressed, besides scrambling
-#: its statements into calls of a wrapper, minifying it, moving its declarations and concealing its
-#: strings, run as a CommonJS file for Node.
 COMPRESSED_AND_SCRAMBLED_DEOBFUSCATED = inspect.cleandoc(
     """
     function* countdown(n) {
@@ -744,8 +707,7 @@ COMPRESSED_AND_SCRAMBLED_DEOBFUSCATED = inspect.cleandoc(
         yield n--;
       }
     }
-    var counter;
-    counter = 0;
+    var counter = 0;
     for (const value of countdown(3)) {
       counter += value;
     }
@@ -763,6 +725,18 @@ class TestTheFileTheObfuscationCompressedAndScrambled(TestBase):
     run.
     """
 
-    def test_the_file_reads_as_pinned(self):
+    def test_the_file_reads_as_the_program_it_conceals_its_moved_declaration_joined_or_not(self):
+        source = self.download_sample(COMPRESSED_AND_SCRAMBLED_SHA256)
+        joined = 'var counter = 0;'
+        self.assertIn(
+            source | djs.assemble('-c', '-e', 'node') | str,
+            (
+                COMPRESSED_AND_SCRAMBLED_DEOBFUSCATED,
+                COMPRESSED_AND_SCRAMBLED_DEOBFUSCATED.replace(joined, F'var counter;{NL}counter = 0;'),
+            ),
+        )
+
+    @opportunity
+    def test_the_file_reads_as_the_program_it_conceals(self):
         source = self.download_sample(COMPRESSED_AND_SCRAMBLED_SHA256)
         self.assertEqual(source | djs.assemble('-c', '-e', 'node') | str, COMPRESSED_AND_SCRAMBLED_DEOBFUSCATED)

@@ -1,44 +1,17 @@
-"""
-Five spellings through which a program can replace a builtin while the tracker records nothing.
-
-A write need not name the global it writes. A local holding the object (`var g = globalThis;
-g.String = fake`) writes the `String` the file never mentions; a receiver a sloppy call supplies
-(`this[k] = v` in a bare call) is the global object; a call handed the object
-(`t(globalThis)`, `Reflect.set(globalThis, …)`) can write any property of it; a destructuring
-pattern reads the `eval` intrinsic off the object as a value (`const {eval} = globalThis`); and an
-accessor install names the key it replaces (`globalThis.__defineGetter__('String', …)`). Each was
-invisible to every tracker — no write fact, no surface, no per-name record — so the fold kept
-trusting the builtin the program had replaced.
-
-The five fixes share one vocabulary rather than five spellings of their own: the write target's
-base is read through `may_be_the_global_object` (the spelled names, a file-given alias, or the
-receiver a call supplies), the hand-over is judged by the observation gate that already owns the
-global object handed to a call, the destructuring is judged as the value-read of the intrinsic it
-is, and the install is judged by the key `refinery.lib.scripts.js.keys.accessor_installs` reads. Each refusing row has a
-fold twin — the same program through a receiver or object that is not the global — so the refusal
-cannot widen on its own.
-
-Every recorded behavior is Node's, and each corpus is asserted twice: against Node, which makes
-the behavior a measurement, and against the deobfuscation, which must both behave the same way and
-write the text the row pins — a builtin the fold kept trusting would appear folded where the
-program's own text left it standing.
-"""
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from typing import NamedTuple
 
+from test import opportunity
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
 from refinery.units.scripting.djs import djs
 
 
 class _Row(NamedTuple):
-    """
-    One program replacing a builtin through a spelling no tracker read: what Node's behavior for it
-    is, and the text the deobfuscation writes for it.
-    """
     node_behavior: tuple[str, str | None]
     text: str
 
@@ -48,13 +21,17 @@ def _deobfuscated(source: str) -> str:
 
 
 def _assert_both_ways(testcase: unittest.TestCase, rows: dict[str, _Row]) -> None:
-    """
-    Node answers each program with the behavior the row records, and the deobfuscation both behaves
-    the same way and writes the text the row pins.
-    """
+    _assert_behaves(testcase, rows)
+    _assert_writes(testcase, rows)
+
+
+def _assert_behaves(testcase: unittest.TestCase, rows: dict[str, _Row]) -> None:
     testcase.assertEqual({source: behavior(source) for source in rows}, _behaviors(rows))
     testcase.assertEqual(
         {source: behavior(_deobfuscated(source)) for source in rows}, _behaviors(rows))
+
+
+def _assert_writes(testcase: unittest.TestCase, rows: dict[str, _Row]) -> None:
     testcase.assertEqual({source: _deobfuscated(source) for source in rows}, _row_text(rows))
 
 
@@ -66,9 +43,6 @@ def _row_text(rows: dict[str, _Row]) -> dict[str, str]:
     return {source: row.text for source, row in rows.items()}
 
 
-#: A write through a local holding the global object, mapped to Node's behavior for it and to the
-#: text the deobfuscation writes. Both the dot spelling and the computed-literal spelling write the
-#: global the key names; the twin writes a global nothing trusts and the call folds.
 _A_WRITE_THROUGH_AN_ALIAS_OF_THE_GLOBAL_OBJECT: dict[str, _Row] = {
     'var g = globalThis; g.String = fake; var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
@@ -87,28 +61,39 @@ _A_WRITE_THROUGH_AN_ALIAS_OF_THE_GLOBAL_OBJECT: dict[str, _Row] = {
 }
 
 
-#: A write through the receiver a sloppy bare call supplies — `this` in the body of a function
-#: called with no receiver — mapped to Node's behavior and to the deobfuscation's text. The twin
-#: hands the function another object and the call folds.
 _A_WRITE_THE_RECEIVER_SUPPLIES: dict[str, _Row] = {
     'function t() { this[k] = v; } t(); var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
         ('', 'ReferenceError'),
         'function t() {\n  this[k] = v;\n}\nt();\nvar r = String.fromCharCode(65);\nconsole.log(r);',
     ),
+}
+
+
+_A_WRITE_ANOTHER_RECEIVER_TAKES: dict[str, _Row] = {
     'var o = {}; function t() { this[k] = v; } t.call(o);'
     ' var r = String.fromCharCode(65); console.log(r);': _Row(
         ('', 'ReferenceError'),
         'var o = {};\nfunction t() {\n  this[k] = v;\n}\nt.call(o);\n'
-        'var r = String.fromCharCode(65);\nconsole.log(r);',
+        "console.log('A');",
     ),
 }
 
 
-#: The global object handed to a call, mapped to Node's behavior and to the deobfuscation's text.
-#: A callee that could read a property of the object it was handed could write one, and the
-#: observation gate that already owns the question decides which hand-overs those are; the twin
-#: hands the object to a function that touches nothing and the call folds.
+_A_WRITE_ANOTHER_RECEIVER_TAKES_LEFT_STANDING: dict[str, str] = {
+    'var o = {}; function t() { this[k] = v; } t.call(o);'
+    ' var r = String.fromCharCode(65); console.log(r);': inspect.cleandoc("""
+        var o = {};
+        function t() {
+          this[k] = v;
+        }
+        t.call(o);
+        var r = String.fromCharCode(65);
+        console.log(r);
+    """),
+}
+
+
 _THE_OBJECT_HANDED_TO_A_CALL: dict[str, _Row] = {
     'function t(x) { x[k] = v; } t(globalThis); var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
@@ -128,10 +113,6 @@ _THE_OBJECT_HANDED_TO_A_CALL: dict[str, _Row] = {
 }
 
 
-#: A destructuring pattern reading a reflective intrinsic off the global object, mapped to Node's
-#: behavior and to the deobfuscation's text. `const {eval} = globalThis` is the value-read of the
-#: intrinsic under the one spelling the identifier walk cannot see, through the object itself as
-#: through an alias of it; the twin destructures an ordinary object and the call folds.
 _A_DESTRUCTURED_INTRINSIC: dict[str, _Row] = {
     'const {eval} = globalThis; eval("String = 9"); var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
@@ -152,9 +133,6 @@ _A_DESTRUCTURED_INTRINSIC: dict[str, _Row] = {
 }
 
 
-#: An accessor install on the global object, mapped to Node's behavior and to the deobfuscation's
-#: text. The receiver spelling and the argument spelling both install the named key as a global; the
-#: twin installs on a local object and the call folds.
 _AN_INSTALL_ON_THE_GLOBAL_OBJECT: dict[str, _Row] = {
     'globalThis.__defineGetter__("String", function () { return 9; });'
     ' var r = String.fromCharCode(65); console.log(r);': _Row(
@@ -195,6 +173,21 @@ class TestAWriteTheReceiverSupplies(unittest.TestCase):
 
     def test_each_row_behaves_and_writes_as_recorded(self):
         _assert_both_ways(self, _A_WRITE_THE_RECEIVER_SUPPLIES)
+
+    def test_a_write_another_receiver_takes_behaves_as_recorded(self):
+        _assert_behaves(self, _A_WRITE_ANOTHER_RECEIVER_TAKES)
+
+    def test_a_write_another_receiver_takes_writes_the_source_or_the_folded_text(self):
+        for source, row in _A_WRITE_ANOTHER_RECEIVER_TAKES.items():
+            with self.subTest(source=source):
+                self.assertIn(
+                    _deobfuscated(source),
+                    (_A_WRITE_ANOTHER_RECEIVER_TAKES_LEFT_STANDING[source], row.text),
+                )
+
+    @opportunity
+    def test_a_write_another_receiver_takes_writes_the_folded_text(self):
+        _assert_writes(self, _A_WRITE_ANOTHER_RECEIVER_TAKES)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

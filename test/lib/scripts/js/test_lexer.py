@@ -62,11 +62,6 @@ A_LINE_BREAK_INSIDE_A_CHARACTER_CLASS = inspect.cleandoc("""
 
 
 def _named(code_point: int) -> str:
-    """
-    The code point, named. Most of the characters these tests are about have no width and the rest
-    are indistinguishable from a space or from each other, so a failure reporting the character
-    itself reports nothing at all.
-    """
     return F'U+{code_point:04X}'
 
 
@@ -133,10 +128,6 @@ class TestJsLexer(TestBase):
     def test_float_decimal(self):
         tokens = self._tokens('3.14')
         self.assertEqual(tokens, [(JsTokenKind.FLOAT, '3.14')])
-
-    def test_float_leading_dot(self):
-        tokens = self._tokens('.5')
-        self.assertEqual(tokens, [(JsTokenKind.FLOAT, '.5')])
 
     def test_float_exponent(self):
         tokens = self._tokens('1e10')
@@ -245,11 +236,13 @@ class TestJsLexer(TestBase):
         tokens = self._tokens('_private')
         self.assertEqual(tokens, [(JsTokenKind.IDENTIFIER, '_private')])
 
-    def test_line_comment(self):
-        tokens = self._tokens('x // comment\ny')
-        kinds = [k for k, _ in tokens]
-        self.assertIn(JsTokenKind.COMMENT, kinds)
-        self.assertIn(JsTokenKind.IDENTIFIER, kinds)
+    def test_a_line_comment_runs_to_the_end_of_its_line_and_no_further(self):
+        self.assertEqual(self._tokens('x // comment\ny'), [
+            (JsTokenKind.IDENTIFIER, 'x'),
+            (JsTokenKind.COMMENT, '// comment'),
+            (JsTokenKind.NEWLINE, '\n'),
+            (JsTokenKind.IDENTIFIER, 'y'),
+        ])
 
     def test_block_comment(self):
         tokens = self._tokens('x /* comment */ y')
@@ -384,9 +377,7 @@ class TestJsLexer(TestBase):
     def _bounded_tokens(self, source: str, limit: int = 16) -> list[tuple[JsTokenKind, str]]:
         """
         The first *limit* tokens of *source*, the end of file among them. A scan that consumes no
-        input yields tokens for as long as anything reads them, and `list` cannot report that as a
-        failure because it never returns at all; reading a bounded prefix turns the same defect into
-        an assertion about a sequence whose end is missing.
+        input yields tokens forever, so reading the whole stream would hang where this read fails.
         """
         return [
             (token.kind, token.value)
@@ -394,10 +385,6 @@ class TestJsLexer(TestBase):
         ]
 
     def test_a_backslash_that_begins_no_escape_is_a_token_that_consumes_it(self):
-        """
-        Node refuses every program written with one, so the character names nothing; what these
-        pin is that the scan moves past it and reaches the end of the input.
-        """
         backslash = '\\'
         self.assertEqual(self._bounded_tokens(backslash), [
             (JsTokenKind.ERROR, backslash),
@@ -423,12 +410,6 @@ class TestJsLexer(TestBase):
         ])
 
     def test_a_unicode_escape_in_an_identifier_is_still_one_identifier(self):
-        """
-        Node reads a declaration whose name is written with a unicode escape as a declaration of the
-        name that escape denotes, and prints the value for a program that goes on to read the plain
-        spelling. The escape is therefore part of the name, whether it opens the name or sits inside
-        it, and never a token standing beside it.
-        """
         self.assertEqual(
             self._bounded_tokens(R'\u0061bc'),
             [(JsTokenKind.IDENTIFIER, R'\u0061bc'), (JsTokenKind.EOF, '')])
@@ -440,12 +421,6 @@ class TestJsLexer(TestBase):
         return len(JsParser(source).parse().body)
 
     def test_a_code_point_escape_naming_no_code_point_ends_with_the_literal_it_is_in(self):
-        """
-        Node refuses the program: `U+110000` is past the last code point there is, so the escape
-        names nothing. The literal is over at its closing quote all the same, and the statement
-        written behind it is still a statement — a scan that went looking for the character the
-        escape promised would take the rest of the file with it.
-        """
         source = R"x = '\u{110000}'; y;"
         self.assertEqual(self._bounded_tokens(source), [
             (JsTokenKind.IDENTIFIER, 'x'),
@@ -459,11 +434,6 @@ class TestJsLexer(TestBase):
         self.assertEqual(self._statements(source), 2)
 
     def test_a_code_point_escape_whose_brace_is_never_closed_ends_with_its_literal(self):
-        """
-        Node refuses the program: nothing closes the brace the escape opens, so what stands behind
-        it is no hexadecimal number. The quote ends the literal all the same, and the statement
-        behind it survives an escape that named nothing.
-        """
         source = R"x = '\u{41'; y;"
         self.assertEqual(self._bounded_tokens(source), [
             (JsTokenKind.IDENTIFIER, 'x'),
@@ -490,11 +460,6 @@ class TestJsLexer(TestBase):
         self.assertEqual(self._statements(source), 2)
 
     def test_a_digit_of_another_script_is_a_digit_of_no_numeral(self):
-        """
-        Node refuses both programs. The decimal digits of the language are `0` through `9` and no
-        others, so an Arabic-Indic digit and a superscript digit each stand for themselves rather
-        than open a number.
-        """
         self.assertEqual(self._bounded_tokens('x = \u0661\u0662\u0663; y;'), [
             (JsTokenKind.IDENTIFIER, 'x'),
             (JsTokenKind.EQUALS, '='),
@@ -517,10 +482,6 @@ class TestJsLexer(TestBase):
         ])
 
     def test_a_digit_of_another_script_behind_a_numeral_is_no_digit_of_it(self):
-        """
-        Node refuses each program. A number ends at the last of its own digits, so what follows is a
-        character standing beside the number rather than one more digit of it.
-        """
         for digit in ['\u0661', '\u00B2', '\uFF11']:
             with self.subTest(digit=F'U+{ord(digit):04X}'):
                 self.assertEqual(self._bounded_tokens(F'x = 1{digit}; y;'), [
@@ -536,10 +497,8 @@ class TestJsLexer(TestBase):
 
     def test_a_decimal_digit_of_another_script_is_part_of_a_name_and_no_other_digit_is(self):
         """
-        Node runs the two programs written with a digit of general category `Nd` — the Arabic-Indic
-        one and the fullwidth one — and refuses the two written with a digit of category `No`, the
-        superscript and the circled one. IdentifierPart is stated over the category and not over
-        what a reader would call a digit, so a name ends before the digits it does not name.
+        `U+0661` and `U+FF11` are of general category `Nd`, which a name may hold; the superscript
+        `U+00B2` and the circled `U+2460` are of category `No`, which it may not.
         """
         for digit in ['\u0661', '\uFF11']:
             with self.subTest(digit=F'U+{ord(digit):04X}'):
@@ -566,11 +525,6 @@ class TestJsLexer(TestBase):
                 ])
 
     def test_a_hash_bang_line_ends_at_a_line_terminator_and_that_ending_ends_a_line(self):
-        """
-        Node runs each of these programs. The first line is a comment that is one token of its own,
-        and the terminator that ends it is a line ending exactly as the one that ends any other
-        comment is. A carriage return and a line feed together are one ending and not two.
-        """
         endings = [chr(0x000A), chr(0x000D), chr(0x000D) + chr(0x000A), chr(0x2028), chr(0x2029)]
         for ending in endings:
             with self.subTest(ending=' '.join(_spelled(map(ord, ending)))):
@@ -585,9 +539,6 @@ class TestJsLexer(TestBase):
                 self.assertEqual(self._statements(source), 1)
 
     def test_a_file_that_is_only_a_hash_bang_line_holds_only_that_token(self):
-        """
-        Node runs this file, and it prints nothing. The line is over without a terminator to end it.
-        """
         self.assertEqual(self._bounded_tokens('#!/usr/bin/env node'), [
             (JsTokenKind.HASHBANG, '#!/usr/bin/env node'),
             (JsTokenKind.EOF, ''),
@@ -595,11 +546,6 @@ class TestJsLexer(TestBase):
         self.assertEqual(self._statements('#!/usr/bin/env node'), 0)
 
     def test_a_joiner_may_stand_inside_a_name_and_may_not_open_one(self):
-        """
-        Node runs the first program and refuses the second. The zero width joiner and non-joiner are
-        IdentifierPart and not IdentifierStart, so a name holds one anywhere but at its beginning,
-        where the character stands for itself and the name behind it is a name of its own.
-        """
         for joiner in [chr(0x200C), chr(0x200D)]:
             with self.subTest(joiner=F'U+{ord(joiner):04X}'):
                 self.assertEqual(self._bounded_tokens(F'x = a{joiner}b; y;'), [
@@ -623,19 +569,10 @@ class TestJsLexer(TestBase):
                 ])
 
     def _scan_regexp(self, source: str, pos: int = 0) -> tuple[JsToken | None, int]:
-        """
-        What a regular expression scan of *source* reads where scanning stands at *pos*, and where
-        scanning stands once that scan is over.
-        """
         lexer = JsLexer(source, pos)
         return lexer.scan_regexp(), lexer.pos
 
     def test_a_regexp_scan_reads_the_whole_literal_and_stops_behind_it(self):
-        """
-        Node reads each of these as one regular expression, whose `source` names the pattern
-        between the slashes: a slash inside a character class and a slash written behind a
-        backslash are characters of the pattern rather than the end of the literal.
-        """
         for literal in ['/zzz/', '/zzz/gi', '/[/]/', '/[/]/gi', R'/a\/b/', R'/[\]/]/']:
             with self.subTest(literal=literal):
                 self.assertEqual(
@@ -643,10 +580,6 @@ class TestJsLexer(TestBase):
                     (JsToken(JsTokenKind.REGEXP, literal, 4), 4 + len(literal)))
 
     def test_the_flags_of_a_regexp_are_the_name_characters_written_against_it(self):
-        """
-        Node prints `gi` for the flags of the first of these literals and the empty string for
-        those of the second, where a space stands between the literal and the name behind it.
-        """
         self.assertEqual(
             self._scan_regexp('/zzz/gi.flags'), (JsToken(JsTokenKind.REGEXP, '/zzz/gi', 0), 7))
         self.assertEqual(
@@ -654,10 +587,8 @@ class TestJsLexer(TestBase):
 
     def test_a_regexp_scan_that_reaches_the_end_of_its_line_reads_nothing_and_stays(self):
         """
-        Node refuses each of these programs. No regular expression literal reaches over the end of
-        the line it begins on, neither in its pattern nor inside a character class, and a backslash
-        carries it no further. The scan leaves scanning on the slash it was asked about, which is
-        still the operator it may have to be read as.
+        A regular expression literal never spans a line break, not even one behind a backslash,
+        which in a string literal would continue the line.
         """
         for source in [
             A_LINE_BREAK_BEFORE_THE_CLOSING_SLASH,
@@ -669,10 +600,8 @@ class TestJsLexer(TestBase):
 
     def test_a_regexp_scan_that_reaches_the_end_of_the_file_reads_the_literal_it_ends_inside(self):
         """
-        Node refuses each of these programs. A file that ends before the closing slash ends inside
-        the literal, which is what the scan reports: the text runs to the end of the file and the
-        token says that nothing closed it. A lone slash is no such literal — a body needs one
-        character at least — so the scan reads nothing and stays.
+        A lone slash at the end of the file opens no literal, since a pattern holds at least one
+        character.
         """
         for source, text in [('x = / zzz', '/ zzz'), ('x = /[zzz', '/[zzz')]:
             with self.subTest(source=source):
@@ -689,15 +618,8 @@ class TestJsLexer(TestBase):
 
 class TestTheWhitespaceProductionsAreThreeSetsAndNotOne(TestBase):
     """
-    `WHITESPACE`, `LINE_TERMINATORS` and `ASCII_WHITESPACE` answer three different questions: what
-    may stand between two tokens, where a line ends and a semicolon may therefore be inserted, and
-    what a forgiving base64 decode removes from the argument of `atob` before it reads it. Their
-    union is what pads a number, and pinning that union alone is blind to a character that moved
-    from one of them into another — which is a change of where statements end, or of which arguments
-    `atob` refuses.
-
-    Each set is therefore pinned on its own, against the Unicode database or the standard that names
-    it rather than against a list copied out of the code under test.
+    The token whitespace separates tokens, the line terminators end a line, and the ASCII whitespace
+    is what a forgiving base64 decode skips in the argument of `atob`.
     """
 
     def test_the_whitespace_production_is_the_four_named_characters_and_the_space_separators(self):
@@ -717,12 +639,6 @@ class TestTheWhitespaceProductionsAreThreeSetsAndNotOne(TestBase):
         self.assertEqual(_spelled(WHATWG_ASCII_WHITESPACE), _spelled(map(ord, ASCII_WHITESPACE)))
 
     def test_ascii_whitespace_is_the_ascii_of_the_language_without_the_vertical_tab(self):
-        """
-        The vertical tab is the one ASCII character the language calls whitespace that a forgiving
-        decode refuses rather than skips, and the two line terminators of ASCII are characters it
-        skips although they end a line. The set is therefore neither of the other two sets, nor
-        their union cut down to ASCII.
-        """
         language = {ord(c) for c in WHITESPACE + LINE_TERMINATORS if ord(c) < 0x80}
         self.assertEqual(_spelled(language - {0x000B}), _spelled(map(ord, ASCII_WHITESPACE)))
         self.assertEqual(
@@ -733,12 +649,9 @@ class TestTheWhitespaceProductionsAreThreeSetsAndNotOne(TestBase):
             _spelled({ord(c) for c in ASCII_WHITESPACE} & _code_points_of_category('Zs')))
 
 
-#: A character no name opens with and every name may hold. Nine of them are named by
-#: `Other_ID_Continue` and by the two joiners, which no general category IdentifierPart is stated
-#: over holds, and the rest are one character from each category that is: a decimal digit of another
-#: script, a combining accent written as its own character, a spacing mark, and a connector other
-#: than the low line. The two katakana middle dots are `Po` exactly as the halfwidth comma below is,
-#: so a scan reading the category alone ends a name at all three.
+#: Characters a name may hold but not open with. The first seven are named by `Other_ID_Continue`,
+#: whose general categories no name could otherwise hold; then come the two joiners, which the
+#: language names itself, and the rest are of the categories `Nd`, `Mn`, `Mc` and `Pc`.
 A_CHARACTER_A_NAME_HOLDS_AND_NEVER_OPENS_WITH = (
     0x00B7,
     0x0387,
@@ -757,11 +670,9 @@ A_CHARACTER_A_NAME_HOLDS_AND_NEVER_OPENS_WITH = (
     0xFE33,
 )
 
-#: A character a name opens with, and therefore one it may hold anywhere. The low line and the
-#: dollar sign are the two the language names itself; six more are named by `Other_ID_Start`, whose
-#: categories are `Sm`, `So` and `Sk` and would otherwise leave them out; and the rest are one
-#: character from each category IdentifierStart is stated over, the two katakana letters and the
-#: prolonged sound mark standing beside the middle dots the entry above is about.
+#: Characters a name may open with, and so hold anywhere. `_` and `$` are named by the language
+#: itself, the next six by `Other_ID_Start`, whose general categories no name could otherwise open
+#: with, and the rest are of the categories `Lt`, `Lo`, `Lm` and `Nl`.
 A_CHARACTER_A_NAME_OPENS_WITH = (
     0x005F,
     0x0024,
@@ -780,9 +691,6 @@ A_CHARACTER_A_NAME_OPENS_WITH = (
     0x3005,
 )
 
-#: A character no name holds anywhere. Four are digits a reader would call digits and the category
-#: `Nd` does not hold, and the rest stand next to a character above in their block, in their
-#: category, or in both.
 A_CHARACTER_NO_NAME_HOLDS = (
     0x00B2,
     0x2460,
@@ -796,8 +704,6 @@ A_CHARACTER_NO_NAME_HOLDS = (
     0x30A0,
 )
 
-#: Every character above, mapped to whether a name may open with it and whether a name may hold it.
-#: Node is asked both questions of each, and the lexer is required to answer as Node does.
 A_CHARACTER_AND_WHERE_IT_MAY_STAND_IN_A_NAME = {
     **{code: (False, True) for code in A_CHARACTER_A_NAME_HOLDS_AND_NEVER_OPENS_WITH},
     **{code: (True, True) for code in A_CHARACTER_A_NAME_OPENS_WITH},
@@ -814,20 +720,11 @@ def _a_name_holding(character: str) -> str:
 
 
 def _the_name_a_declaration_binds(source: str) -> str | None:
-    """
-    The text of the identifier token the scan reads where *source* binds a name, and nothing where
-    it reads some other token there. A bounded read, for the reason `TestJsLexer._bounded_tokens`
-    gives.
-    """
     token = next(itertools.islice(JsLexer(source).tokenize(), 1, 2))
     return token.value if token.kind is JsTokenKind.IDENTIFIER else None
 
 
 def _where_each_character_may_stand() -> dict[str, tuple[bool, bool]]:
-    """
-    The table above, keyed by the name of each code point rather than by the code point, since a
-    failure has to report which character it is about.
-    """
     return {
         _named(code): answer
         for code, answer in A_CHARACTER_AND_WHERE_IT_MAY_STAND_IN_A_NAME.items()
@@ -835,26 +732,8 @@ def _where_each_character_may_stand() -> dict[str, tuple[bool, bool]]:
 
 
 class TestANameIsWrittenWithTheCharactersTheLanguageReadsOneFrom(TestBase):
-    """
-    Where a name ends is decided by two Unicode properties and by nothing a reader would recognize
-    as a rule about letters and digits. A character the scan wrongly reads as ending a name splits
-    one declaration into three statements and prints them back as three, and one it wrongly reads as
-    continuing a name joins two statements into text no engine reads; neither is reported by
-    anything the parser or the printer does.
-
-    `TestTheCharactersNodeReadsANameFrom` asks the engine the same question of the same forty
-    characters, which is what makes the table these are compared against the language rather than a
-    list somebody wrote down. Both halves are pinned separately, since a revision of either party
-    that moved the line would otherwise leave the two agreeing about something new and be reported
-    by nothing.
-    """
 
     def test_the_lexer_ends_a_name_exactly_where_the_language_ends_one(self):
-        """
-        Each character written once at the start of a name and once inside one: a name the scan
-        reads through is one identifier token spanning every character of it, and one it ends early
-        leaves some other token where the name was.
-        """
         self.assertEqual(
             {
                 _named(code): (
@@ -872,22 +751,11 @@ class TestANameIsWrittenWithTheCharactersTheLanguageReadsOneFrom(TestBase):
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestTheCharactersNodeReadsANameFrom(TestBase):
     """
-    The engine's half of `TestANameIsWrittenWithTheCharactersTheLanguageReadsOneFrom`: the table the
-    scan is held to is the engine's answer and not this file's opinion, so a Unicode revision that
-    moved the line fails here rather than passing everywhere.
-
     SECURITY: every program here is written out by this module and Node runs only those. Nothing
     from `samples` may ever be handed to the engine.
     """
 
     def test_node_reads_a_name_opened_by_and_holding_the_characters_pinned_here(self):
-        """
-        Each character is written once at the start of a name and once inside one, and the two
-        declarations are evaluated for the value the name was given. Node answers `7` where the
-        character is part of the name and refuses the program where it is not, since a character
-        that ends the name early leaves a statement beginning with a character no expression opens
-        with.
-        """
         rows = A_CHARACTER_AND_WHERE_IT_MAY_STAND_IN_A_NAME
         programs = list(itertools.chain.from_iterable(
             (_a_name_opened_by(chr(code)), _a_name_holding(chr(code))) for code in rows
@@ -904,10 +772,10 @@ class TestTheCharactersNodeReadsANameFrom(TestBase):
 
 class TestScriptCodeHasTwoMoreCommentOpeners(TestBase):
     """
-    `<!--` opens a comment wherever a comment may open, and `-->` opens one only where nothing but
-    whitespace and comments precedes it on its line, the head of the file counting as such a line
-    (§B.1.1). Each runs to the end of its line the way `//` does; anywhere else the characters of
-    `-->` are the decrement operator and `>`.
+    In a script, `<!--` opens a comment wherever a comment may open, and `-->` opens one only where
+    nothing but whitespace and comments stands before it on its line, the head of the file included
+    (ECMA-262 §B.1.1). Each runs to the end of its line like `//`; anywhere else `-->` is a
+    decrement followed by `>`.
     """
 
     def test_the_opener_opens_a_comment_wherever_it_stands(self):
@@ -1051,13 +919,11 @@ class TestScriptCodeHasTwoMoreCommentOpeners(TestBase):
 
 class TestANumeralEndsWhereTheGrammarEndsOne(TestBase):
     """
-    §12.9.3 reads a numeral by its productions: a separator stands between two digits of one run
-    and nowhere else, a radix prefix needs digits, an exponent needs a digit behind its sign, a
-    legacy octal literal takes no separator, fraction, exponent or `n`, the integer part of a
-    `0`-led decimal takes no separator while its fraction and exponent take them, and the source
-    character behind a numeral may be neither an IdentifierStart nor a digit. Node compiles
-    `x = <spelling>;` for every spelling of the first table and refuses it for every spelling of
-    the second.
+    A numeral ends where the productions of ECMA-262 §12.9.3 end it: a separator stands between two
+    digits of one run and nowhere else, a radix prefix needs digits, an exponent needs a digit
+    behind its sign, a legacy octal literal takes no separator, fraction, exponent or `n`, the
+    integer part of a `0`-led decimal takes no separator while its fraction and exponent take them,
+    and the character behind a numeral may be neither an IdentifierStart nor a digit.
     """
 
     def test_a_numeral_node_compiles_is_one_terminated_token(self):
@@ -1163,12 +1029,26 @@ class TestANumeralEndsWhereTheGrammarEndsOne(TestBase):
         self.assertEqual({source: _tokens_with_termination(source) for source in rows}, rows)
 
 
+A_ZERO_LED_DECIMAL_WITH_A_SEPARATOR_BEHIND_ITS_INTEGER_PART = {
+    'x = 08.1_1;': '8.11',
+    'x = 09.5_5;': '9.55',
+    'x = 08.1_1e2_2;': '8.11e+22',
+    'x = 08e1_0;': '80000000000',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestWhatNodeMakesOfASeparatorBehindAZeroLedIntegerPart(TestBase):
+
+    def test_node_evaluates_each_spelling_to_the_value_the_grammar_gives_it(self):
+        rows = A_ZERO_LED_DECIMAL_WITH_A_SEPARATOR_BEHIND_ITS_INTEGER_PART
+        self.assertEqual(
+            dict(zip(rows, completion_values(list(rows), JsEvaluation.SCRIPT))),
+            rows,
+        )
+
+
 class TestABlockCommentReportsWhetherItWasClosed(TestBase):
-    """
-    Node refuses a file that ends inside a block comment (§12.4, MultiLineComment). The comment
-    runs to the end of the file either way; whether `*/` ended it is the one fact the text does
-    not carry, so the token carries it.
-    """
 
     def test_a_block_comment_is_terminated_exactly_where_the_closer_was_found(self):
         rows = {

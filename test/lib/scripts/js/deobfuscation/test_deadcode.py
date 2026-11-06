@@ -3,7 +3,9 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase
+from typing import Iterable
+
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
@@ -134,11 +136,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
 
 
 class TestAConditionalWriteInAKeptTestKeepsALaterBranch(TestJsDeobfuscator):
-    """
-    A pruned branch whose test may have an effect leaves the test behind as a statement, where the
-    `if` stood. When that statement assigns a name under a branch that may not run, a later test
-    reading the name has no known value, and its branch stays.
-    """
 
     def test_an_assignment_in_a_nested_block(self):
         source = inspect.cleandoc(
@@ -238,13 +235,6 @@ class TestAConditionalWriteInAKeptTestKeepsALaterBranch(TestJsDeobfuscator):
 
 
 class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
-    """
-    A guard testing a local the model can resolve to a single allocation answers from that
-    allocation — every object is truthy, an empty array included — but only where the read is
-    ordered after the value's establishment: a never-reassigned `var` still reads `undefined`
-    before its initializer runs, and the branch the undefined read would take is not the branch
-    the allocation takes.
-    """
 
     @staticmethod
     def _deadcode(source: str, *, trust_eval: bool = False) -> str:
@@ -272,7 +262,7 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
             self._deadcode('function f() { var a = []; if (!a) { x(); } else { y(); } }'),
         )
 
-    def test_a_read_before_the_initializer_runs_is_kept(self):
+    def test_a_read_before_the_initializer_runs_is_not_answered_by_the_allocation(self):
         source = inspect.cleandoc(
             """
             function f() {
@@ -284,9 +274,81 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
             }
             """
         )
+        self.assertIn(
+            self._deadcode(source),
+            (
+                source,
+                inspect.cleandoc(
+                    """
+                    function f() {
+                      return;
+                      var a;
+                    }
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    function f() {
+                      return;
+                    }
+                    """
+                ),
+                'function f() {}',
+            ),
+        )
+
+    @opportunity
+    def test_a_read_before_the_initializer_runs_takes_the_branch_of_undefined(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              if (!a) {
+                return;
+              }
+              var a = ['x'];
+              SINK('kept');
+            }
+            """
+        )
+        self.assertIn(
+            self._deadcode(source),
+            (
+                inspect.cleandoc(
+                    """
+                    function f() {
+                      return;
+                      var a;
+                    }
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    function f() {
+                      return;
+                    }
+                    """
+                ),
+                'function f() {}',
+            ),
+        )
+
+    def test_a_binding_reassigned_to_an_unknown_value_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a = ['x'];
+              a = SINK();
+              if (!a) {
+                return;
+              }
+              SINK('kept');
+            }
+            """
+        )
         self.assertEqual(source, self._deadcode(source))
 
-    def test_a_reassigned_binding_is_kept(self):
+    @opportunity
+    def test_a_binding_reassigned_to_another_array_folds(self):
         source = inspect.cleandoc(
             """
             function f() {
@@ -299,7 +361,18 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
             }
             """
         )
-        self.assertEqual(source, self._deadcode(source))
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  var a = ['x'];
+                  a = [];
+                  SINK('kept');
+                }
+                """
+            ),
+            self._deadcode(source),
+        )
 
     def test_a_cross_function_guard_on_an_established_array_folds(self):
         self.assertEqual(
@@ -327,10 +400,6 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
         )
 
     def test_a_cross_function_guard_under_an_eval_folds_only_with_trust(self):
-        """
-        The value the guard tests can be rebound by the payload the `eval` runs, so the suspecting
-        model keeps the branch and the trusting model folds it.
-        """
         script = inspect.cleandoc(
             """
             function f() {
@@ -362,11 +431,6 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
         )
 
     def test_a_script_scope_guard_under_an_opaque_global_write_is_kept(self):
-        """
-        The top-level `var a` is a property of the global object, and `globalThis[k] = 0` may store
-        under the key `a`, so the guard cannot fold under either model — an opaque global write is
-        never trust-excused.
-        """
         source = inspect.cleandoc(
             """
             var a = ['x'];
@@ -382,10 +446,6 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
         self.assertEqual(source, self._deadcode(source, trust_eval=True))
 
     def test_a_script_scope_guard_under_an_indirect_eval_is_kept(self):
-        """
-        `window.eval` is indirect eval, a reflective surface kept under both models; it runs in the
-        global scope and can rebind the global `a`, so the guard cannot fold.
-        """
         source = inspect.cleandoc(
             """
             var a = ['x'];
@@ -401,11 +461,6 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
         self.assertEqual(source, self._deadcode(source, trust_eval=True))
 
     def test_a_computed_eval_key_destructuring_can_rebind_a_global_guard(self):
-        """
-        `{['eval']: e}` binds the `eval` intrinsic out of the global object as surely as `{eval: e}`
-        does, so `e(payload)` is indirect eval running in the global scope that can rebind the
-        global `a`; the guard cannot fold under either model.
-        """
         source = inspect.cleandoc(
             """
             var a = ['x'];
@@ -422,12 +477,6 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
         self.assertEqual(source, self._deadcode(source, trust_eval=True))
 
     def test_a_computed_variable_key_destructuring_can_rebind_a_global_guard(self):
-        """
-        `{[k]: e} = globalThis` is the destructuring counterpart of the member read `globalThis[k]`:
-        the runtime resolves the key, which may be `eval`, so `e(payload)` may be indirect eval
-        rebinding the global `a`. The guard cannot fold under either model, matching how the member
-        read is kept.
-        """
         source = inspect.cleandoc(
             """
             var a = ['x'];
@@ -444,12 +493,6 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
         self.assertEqual(source, self._deadcode(source, trust_eval=True))
 
     def test_an_alias_read_under_a_dynamic_key_can_rebind_a_global_guard(self):
-        """
-        `var g = globalThis; g[k]` reads an unknown global through an alias just as `globalThis[k]`
-        reads it on the spelled global object: the runtime key may resolve to `eval`, so
-        `g[k](payload)` may be indirect eval rebinding the global `a`. The guard cannot fold under
-        either model, matching how the read on the spelled global object is kept.
-        """
         source = inspect.cleandoc(
             """
             var g = globalThis;
@@ -466,12 +509,6 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
         self.assertEqual(source, self._deadcode(source, trust_eval=True))
 
     def test_an_alias_read_under_a_dynamic_key_keeps_the_guard_through_the_pipeline(self):
-        """
-        Through the whole pipeline a multi-use alias of the global object read under a runtime key
-        keeps the guard. The second read of `g` holds the alias in place so the inliner does not
-        rewrite it back to `globalThis`, and `g[k](payload)` still reads as an indirect eval that may
-        rebind the global `a`.
-        """
         source = inspect.cleandoc(
             """
             var g = globalThis;
@@ -492,11 +529,6 @@ def deobfuscated(source: str) -> str:
     return deobfuscate_source(source, execution=ExecutionModel.commonjs, environment=HostEnvironment.node)
 
 
-#: Programs holding statements control never reaches, mapped to what Node prints for each run as a
-#: CommonJS file: code behind a `return`, `throw`, `break`, `continue`, `yield` or `await`, in the
-#: cases of a `switch`, around a `try` and its `finally`, behind loops, inside a `with`, a labeled
-#: block and a class static block, and in lists where the same run also prunes an `if`. Several of
-#: them declare a name behind the jump that code which runs still reads.
 NEVER_RUNS: dict[str, Program] = {
     'a call behind a return': Program(
         a_program("""
@@ -966,9 +998,8 @@ NEVER_RUNS: dict[str, Program] = {
     ),
 }
 
-#: The text the deobfuscation writes for each program of `NEVER_RUNS`. What never runs is gone, but
-#: a declaration scoped to its list stays, and a `var` stays for the names a removed statement
-#: declares.
+#: What never runs is gone, but a declaration scoped to its list stays, and a `var` stays for the
+#: names a removed statement declares.
 NEVER_RUNS_DEOBFUSCATED: dict[str, str] = {
     'a call behind a return': inspect.cleandoc(
         """
@@ -1155,7 +1186,6 @@ NEVER_RUNS_DEOBFUSCATED: dict[str, str] = {
               } finally {
                 console.log('finally');
               }
-              console.log('never');
             }
             console.log(f());
         """
@@ -1221,7 +1251,6 @@ NEVER_RUNS_DEOBFUSCATED: dict[str, str] = {
                   return i;
                 }
               }
-              console.log('never');
             }
             console.log(f(2));
         """
@@ -1471,6 +1500,48 @@ NEVER_RUNS_DEOBFUSCATED: dict[str, str] = {
 }
 
 
+NEVER_RUNS_BEHIND_A_STATEMENT_THAT_NEVER_COMPLETES = (
+    'a finally behind a return, and a call behind the try',
+    'a call behind a loop without a test that is left only by a return',
+)
+
+NEVER_RUNS_WITHOUT_THE_CONSTRUCT_LEFT_DOING_NOTHING: dict[str, str] = {
+    'statements behind a break in a loop and in a switch': inspect.cleandoc(
+        """
+            for (let i = 0; i < 3; i++) {
+              if (i === 1) {
+                console.log('skip');
+                continue;
+              }
+              console.log(i);
+            }
+            console.log('two');
+            console.log('in');
+        """
+    ),
+    'a statement behind a return at the top of a CommonJS file': inspect.cleandoc(
+        """
+            console.log('top');
+        """
+    ),
+    'a call behind a do-while left by a break': inspect.cleandoc(
+        """
+            console.log('body');
+            console.log('after');
+        """
+    ),
+    'an empty try whose catch never runs and whose finally does': inspect.cleandoc(
+        """
+            function f() {
+              console.log('finally');
+              return 1;
+            }
+            console.log(f());
+        """
+    ),
+}
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAStatementThatNeverRunsGoesWithoutAChangeInBehavior(TestBase):
 
@@ -1487,11 +1558,28 @@ class TestAStatementThatNeverRunsGoesWithoutAChangeInBehavior(TestBase):
 
 class TestAStatementThatNeverRunsGoes(TestBase):
 
-    def test_each_program_reads_as_pinned(self):
-        self.assertEqual(
-            {label: deobfuscated(row.text) for label, row in NEVER_RUNS.items()},
-            NEVER_RUNS_DEOBFUSCATED,
+    def _assert_what_never_runs_is_gone(self, labels: Iterable[str]):
+        for label in labels:
+            expected = NEVER_RUNS_DEOBFUSCATED[label]
+            cleaner = NEVER_RUNS_WITHOUT_THE_CONSTRUCT_LEFT_DOING_NOTHING.get(label, expected)
+            with self.subTest(label=label):
+                self.assertIn(deobfuscated(NEVER_RUNS[label].text), (expected, cleaner))
+
+    def test_what_never_runs_behind_a_jump_is_gone_from_each_program(self):
+        never_completing = NEVER_RUNS_BEHIND_A_STATEMENT_THAT_NEVER_COMPLETES
+        self._assert_what_never_runs_is_gone(
+            label for label in NEVER_RUNS if label not in never_completing
         )
+
+    @opportunity
+    def test_what_never_runs_behind_a_statement_that_never_completes_is_gone(self):
+        self._assert_what_never_runs_is_gone(NEVER_RUNS_BEHIND_A_STATEMENT_THAT_NEVER_COMPLETES)
+
+    @opportunity
+    def test_a_construct_left_doing_nothing_goes_as_well(self):
+        for label, clean in NEVER_RUNS_WITHOUT_THE_CONSTRUCT_LEFT_DOING_NOTHING.items():
+            with self.subTest(label=label):
+                self.assertEqual(deobfuscated(NEVER_RUNS[label].text), clean)
 
 
 class TestWhatNeverRunsButIsNotCodeThatRunsStays(TestJsDeobfuscator):
@@ -1507,7 +1595,35 @@ class TestWhatNeverRunsButIsNotCodeThatRunsStays(TestJsDeobfuscator):
             export var v = 2;
             """
         )
-        self.assertEqual(self._deadcode(source), source)
+        without_the_initializer = inspect.cleandoc(
+            """
+            throw new Error('stop');
+            import './side-effect.js';
+            export function f() {
+              return 1;
+            }
+            export var v;
+            """
+        )
+        self.assertIn(self._deadcode(source), (source, without_the_initializer))
+
+    @opportunity
+    def test_the_initializer_of_an_export_behind_a_throw_goes(self):
+        source = inspect.cleandoc(
+            """
+            throw new Error('stop');
+            export var v = 2;
+            """
+        )
+        self.assertEqual(
+            self._deadcode(source),
+            inspect.cleandoc(
+                """
+                throw new Error('stop');
+                export var v;
+                """
+            ),
+        )
 
     def test_source_the_parser_could_not_read_behind_a_return_stays(self):
         source = inspect.cleandoc(

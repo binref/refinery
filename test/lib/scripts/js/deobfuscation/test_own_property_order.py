@@ -1,29 +1,11 @@
 """
-The order an object's own properties are visited in, and what a function that walks them folds to.
+Every walk of an object's own properties, `Object.keys`, `Object.values`, `Object.entries` and
+`for...in`, visits first the keys whose text is the canonical decimal numeral of an array position,
+from `0` to `4294967294`, in ascending order, and then every other key in the order it was first
+written.
 
-An object has one order and every walk of it reports that one: `Object.keys`, `Object.values`,
-`Object.entries`, and a `for...in` loop all visit the same keys in the same sequence. The keys whose
-text is a plain decimal numeral for a position an array could hold come first, in ascending numeric
-order, and every other key follows in the order the object first wrote it.
-
-Which keys those are is a question about the text of the key and not about how the file spelled it.
-`0x10` written as a number is the key `16` and is one of them, and so is a key a computed slot or a
-`JSON.parse` produced, while `01`, `+1`, `-1`, `1.0`, `1e2`, `'0x10'`, and a numeral with a space
-beside it are ordinary names and are not. A key already present keeps the place it was first written
-in, whatever a later write does to its value.
-
-The upper end of that numeral range is the same bound the second half of this module is about. An
-array is the object whose own keys are its positions, and the positions it is defined over end at
-`2 ** 32 - 2`: a write above that is an ordinary key that leaves `length` where it was, and a
-`length` of `2 ** 32` or more, of a negative number, or of a fraction is refused. A key just past
-the end is therefore visited among the names rather than among the numerals, which is what ties the
-two halves together.
-
-A program is free to name a position four billion deep, and answering what it does must not mean
-building it, so those programs are asked for two things: that an answer arrives at all within a
-bound on the time, and that it is the answer Node gives.
-
-Node is the authority for every order and every answer in this module.
+A key written as a number or computed is the text of its value, so `0x10` is the key `16`, while
+`'01'`, `'+1'`, `'-1'`, `'1.0'` and `'1e2'` are ordinary names.
 """
 from __future__ import annotations
 
@@ -39,7 +21,6 @@ from test.lib.scripts.js.analysis.differential import (
 
 from refinery.units.scripting.djs import djs
 
-#: A literal whose keys are plain names and numerals, mapped to the order they are visited in.
 _A_NUMERAL_IS_VISITED_BEFORE_A_NAME: dict[str, str] = {
     '{ b: 1, a: 2, c: 3 }'               : 'b|a|c',
     "{ 2: 'x', 1: 'y', b: 'z', a: 'w' }" : '1|2|b|a',
@@ -51,9 +32,6 @@ _A_NUMERAL_IS_VISITED_BEFORE_A_NAME: dict[str, str] = {
     "{ '': 1, a: 2 }"                    : '|a',
 }
 
-#: A literal holding a key whose text is a numeral the file did not write out as one, mapped to the
-#: order its keys are visited in. A number is spelled by the value it denotes and not by the digits
-#: the file used for it, and a computed slot is spelled by the value it evaluates to.
 _A_NUMERAL_THE_FILE_SPELLED_ANOTHER_WAY: dict[str, str] = {
     '{ 0x10: 1, 8: 2 }'            : '8|16',
     '{ 1_0: 1, 9: 2 }'             : '9|10',
@@ -65,9 +43,6 @@ _A_NUMERAL_THE_FILE_SPELLED_ANOTHER_WAY: dict[str, str] = {
     "{ ['b']: 1, ['1']: 2, a: 3 }" : '1|b|a',
 }
 
-#: A literal holding a key that reads as a number without being written as one, mapped to the order
-#: its keys are visited in. None of these keys is the text a number is spelled by, so each is an
-#: ordinary name that keeps the place it was written in.
 _A_KEY_WHOSE_TEXT_IS_NO_NUMERAL: dict[str, str] = {
     "{ '01': 1, '1': 2 }"       : '1|01',
     "{ '00': 1, '0': 2 }"       : '0|00',
@@ -112,9 +87,6 @@ _EVERY_ORDER: dict[str, str] = {
 
 _THE_OBJECT_EVERY_WALK_IS_ASKED_ABOUT = "{ 2: 'x', 1: 'y', b: 'z', a: 'w' }"
 
-#: A body walking `_THE_OBJECT_EVERY_WALK_IS_ASKED_ABOUT`, mapped to what the walk finds. The object
-#: is written with its two numerals out of order and after neither of its names, so a walk reporting
-#: the order the keys were written would answer every row differently.
 _EVERY_WALK_OF_ONE_OBJECT: dict[str, str] = {
     "return Object.keys(OBJECT).join('|');"                            : '1|2|b|a',
     "return Object.values(OBJECT).join('|');"                          : 'y|x|z|w',
@@ -122,9 +94,6 @@ _EVERY_WALK_OF_ONE_OBJECT: dict[str, str] = {
     "var r = []; for (var k in OBJECT) r.push(k); return r.join('|');" : '1|2|b|a',
 }
 
-#: A walk over an object no literal wrote whole, mapped to what the walk finds. Assignments, a
-#: shorthand, and `JSON.parse` each make the same keys some other way, and a rewrite of a key that
-#: is already there moves its value without moving its place.
 _A_WALK_OVER_A_BUILT_OBJECT: dict[str, str] = {
     "var o = {}; o.b = 1; o.a = 2; o[3] = 3; o[2] = 4; return Object.keys(o).join('|');" : '2|3|b|a',
     "var o = {}; o['2'] = 1; o.x = 2; o['1'] = 3; return Object.keys(o).join('|');"      : '1|2|x',
@@ -137,11 +106,6 @@ _A_WALK_OVER_A_BUILT_OBJECT: dict[str, str] = {
     "var r = []; for (var k in { 2: 1, b: 2, 1: 3 }) { r.push(k); break; } return r[0];" : '1',
 }
 
-#: A walk whose answer is recorded without asking that it be folded, mapped to what Node prints for
-#: the program that makes it. Each is a way of reaching an object's own keys that the order rule has
-#: to survive whether or not this tool ever computes it: a key removed and written again, an object
-#: two others were merged into, an array and a string walked as objects, a key defined by an
-#: accessor or a method, and a walk whose body removes a key the walk has not reached yet.
 _A_WALK_ANSWERED_THE_SAME_BEFORE_AND_AFTER: dict[str, str] = {
     "var o = { b: 1 }; o.a = 2; delete o.b; o.b = 3; return Object.keys(o).join('|');"   : 'a|b',
     "return Object.keys(Object.assign({ b: 1 }, { a: 2 }, { 1: 3 })).join('|');"         : '1|b|a',
@@ -154,11 +118,10 @@ _A_WALK_ANSWERED_THE_SAME_BEFORE_AND_AFTER: dict[str, str] = {
     "var o = { a: 1, b: 2 }, r = ''; for (var k in o) { delete o.b; r += k; } return r;" : 'a',
 }
 
-#: A program that names a position at or beyond the end of the space an array's positions are drawn
-#: from, mapped to what Node makes of it: the standard output, and the type of an uncaught exception
-#: where one ends the run. The last position is `4294967294`; a write above it is an ordinary key
-#: that leaves `length` alone and is visited among the names, and a `length` that is not a whole
-#: number from zero to `4294967295` is refused with a `RangeError` rather than clamped.
+#: Each program maps to what it prints and to the type of the exception that ends it, if one does.
+#: The last position an array holds is `4294967294`: a write above it is an ordinary key that leaves
+#: `length` alone, and a `length` that is not a whole number from `0` to `4294967295` throws a
+#: `RangeError`.
 _THE_END_OF_THE_INDEX_SPACE: dict[str, tuple[str, str | None]] = {
     'var a = []; a[4294967293] = 1; return a.length;'                                     : ('4294967294\n', None),
     'var a = []; a[4294967294] = 1; return a.length;'                                     : ('4294967295\n', None),
@@ -182,9 +145,6 @@ _THE_END_OF_THE_INDEX_SPACE: dict[str, tuple[str, str | None]] = {
     "var a = [1, 2]; a.length = 4294967295; return a.length + ':' + a[1];"                : ('4294967295:2\n', None),
 }
 
-#: How long a program of `_THE_END_OF_THE_INDEX_SPACE` may take to deobfuscate. Every one of them
-#: names a position billions deep, and answering what such a program does by building the array it
-#: describes costs an unbounded amount of time and memory rather than a wrong answer.
 _SECONDS_A_DEOBFUSCATION_MAY_TAKE = 60.0
 
 _DID_NOT_FINISH = ('', 'the deobfuscation did not finish')
@@ -274,13 +234,8 @@ class TestAWalkIsAnsweredTheSameWhetherOrNotItFolds(TestBase):
         )
 
 
-#: A question about a position a `delete` emptied, mapped to what Node answers it with. A removed
-#: position is no longer one of the array's own keys, so the walk passes over it, the membership
-#: test reports it absent, and a search does not find `undefined` there. The same four questions
-#: over a position an array grew past were answered wrongly once, and are law in
-#: `test.lib.scripts.js.deobfuscation.test_inherited_reads` now; these rows are the half that
-#: was always right, and
-#: they are what says the two ways of emptying a position are told apart at all.
+#: `indexOf` passes over a position that is not an own key, so it does not find `undefined` where
+#: `delete` emptied one.
 _A_POSITION_A_DELETE_EMPTIED: dict[str, str] = {
     "var v = [1, 2, 3]; delete v[1]; var r = ''; for (var k in v) r += k; return r;" : '02',
     'var v = [1, 2, 3]; delete v[1]; return 1 in v;'                                 : 'false',

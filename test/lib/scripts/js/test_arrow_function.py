@@ -212,12 +212,6 @@ ONE_STATEMENT_AFTER_A_CONCISE_BODY = [
 class TestJsArrowFunction(TestBase):
 
     def _statements(self, source: str) -> list[str | tuple[str, str]]:
-        """
-        The statements of the program, each printed back to source, in the order they are written.
-        A span the parser could not read is `PARSE_ERROR` paired with the text it holds, which no
-        printed statement equals, so a program that lost a statement to a recovery cannot pass for
-        one that read it, and a span that swallowed a statement shows which one.
-        """
         return [
             (PARSE_ERROR, node.text) if isinstance(node, JsErrorNode) else JsSynthesizer().convert(node)
             for node in JsParser(source).parse().body
@@ -269,24 +263,11 @@ class TestJsArrowFunction(TestBase):
                     (JsParenthesizedExpression, printed))
 
     def test_a_list_that_no_expression_spells_is_kept_as_the_text_it_is(self):
-        """
-        Node rejects each of these four, because the empty list, the rest element and the trailing
-        comma are shapes of a parameter list and of nothing else, and no arrow follows to bind
-        them. The parser keeps the list as the text it could not read, and writes no arrow the
-        file never had.
-        """
         for source, _ in LISTS_THAT_NO_EXPRESSION_SPELLS:
             with self.subTest(source=source):
                 self.assertEqual(self._statements(source), [(PARSE_ERROR, source)])
 
     def test_every_statement_written_after_such_a_list_comes_back_as_the_source_wrote_it(self):
-        """
-        Node rejects every file below, because the list is a parameter list and the body that would
-        bind it was never written. The statements that follow are the analyst's file: written on
-        the line below the list, each comes back as itself; written on the same line, the first of
-        them is inside the text the list's statement runs to, since a statement no grammar reads
-        ends where its line does, and every statement after that one comes back as itself.
-        """
         for source, _ in LISTS_THAT_NO_EXPRESSION_SPELLS:
             for statements in STATEMENTS_WRITTEN_AFTER_A_LIST_NO_EXPRESSION_SPELLS:
                 written = '\n'.join(statements)
@@ -300,11 +281,6 @@ class TestJsArrowFunction(TestBase):
                         [(PARSE_ERROR, F'{source} {statements[0]}'), *statements[1:]])
 
     def test_a_bracketed_list_after_async_that_no_arrow_follows_is_a_call_argument_list(self):
-        """
-        Every one of these ten is a program Node accepts, including the three that no parenthesized
-        expression may spell: after `async` the brackets are covered by a call as well as by an
-        arrow head, and a call takes an empty list, a spread, and a trailing comma.
-        """
         for source, printed in BRACKETED_LISTS_AFTER_ASYNC_THAT_NO_ARROW_FOLLOWS:
             with self.subTest(source=source):
                 expression = self._expression(source)
@@ -314,9 +290,7 @@ class TestJsArrowFunction(TestBase):
 
     def test_an_arrow_on_the_line_below_its_head_binds_no_parameters(self):
         """
-        Node rejects all three: no line break may stand between a parameter list and its arrow.
-        What was written is left an expression, and the arrow with the body behind it is one span
-        of text the parser could not read.
+        No line break may stand between the parameters of an arrow function and its `=>`.
         """
         for head, expected in A_LINE_BREAK_BEFORE_THE_ARROW:
             with self.subTest(head=head):
@@ -356,12 +330,6 @@ class TestJsArrowFunction(TestBase):
                 self.assertEqual(self._statements(F'{head} ++'), expected)
 
     def test_an_increment_on_the_same_line_joins_even_what_no_program_may_update(self):
-        """
-        Neither of these is a program Node accepts: an arrow function is no left-hand side
-        expression at all, and a function expression is one that may not be assigned to. The parser
-        reads no such early error and joins the increment to what precedes it either way, so what
-        stands here is the recovery and not a reading.
-        """
         for head, expected in AN_INCREMENT_AFTER_WHAT_CANNOT_BE_ASSIGNED_TO:
             with self.subTest(head=head):
                 self.assertEqual(self._statements(F'{head} ++'), expected)

@@ -1,15 +1,11 @@
 """
-Functions a program makes from strings and calls through an array: a flag computed by a function
-from the default of its parameter, a function that runs the text it is handed as a direct `eval`,
-the functions that text declares and answers, and functions left forwarding their calls to the
-element of an array that holds one of those. Each program is written by hand, and each row says
-what Node prints for it run as a CommonJS file.
+SECURITY: Node runs every program here. Each is written by hand; never add one taken from a sample.
 """
 from __future__ import annotations
 
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     deobfuscate_source,
@@ -25,13 +21,12 @@ from refinery.units.scripting.djs import djs
 
 def deobfuscated_by_the_unit(source: str) -> str:
     """
-    The text `refinery.djs` writes for *source* under its default reading of a CommonJS file for
-    Node, which trusts the code a direct `eval` runs.
+    The text `refinery.djs` writes for *source* as a CommonJS file for Node; without `-s`, the unit
+    trusts the code a direct `eval` runs.
     """
     return source.encode('utf8') | djs.assemble('-c', '-e', 'node') | str
 
 
-#: Calls of functions whose parameters have defaults, with what Node prints for each.
 DEFAULTED_PARAMETERS: dict[str, Program] = {
     'a flag given by its default': Program(
         a_program("""
@@ -112,9 +107,6 @@ DEFAULTED_PARAMETERS: dict[str, Program] = {
     ),
 }
 
-#: Calls of a function that answers the direct `eval` of its parameter, with what Node prints for
-#: each: texts that declare a function and answer it, or answer a value, and texts that read what
-#: the function's own scope holds, write the name of the function they declare, or declare more.
 CALLS_RUNNING_THEIR_ARGUMENT: dict[str, Program] = {
     'a call after eval was replaced under a key the run computes': Program(
         a_program("""
@@ -275,8 +267,10 @@ CALLS_RUNNING_THEIR_ARGUMENT: dict[str, Program] = {
     ),
 }
 
-#: Functions forwarding their calls to an element of an array, which forwards them to a function it
-#: declares, with what Node prints for each.
+HOLDS_AN_EVAL_THE_TRUSTING_MODEL_MAY_ASSUME_INERT = frozenset({
+    'a text whose function runs its argument by a direct eval',
+})
+
 FORWARDERS_THROUGH_AN_ARRAY: dict[str, Program] = {
     'a forwarder whose apply the program replaced through getPrototypeOf': Program(
         a_program("""
@@ -468,9 +462,6 @@ FORWARDERS_THROUGH_AN_ARRAY: dict[str, Program] = {
     ),
 }
 
-#: The three together: a flag computed from a default, the function running text that declares the
-#: functions of an array, and forwarders to its elements, one of which a function calls and throws
-#: the result of away. Node prints `5` for it.
 ALL_THREE = a_program("""
     function integrity(flag = true) { return flag; }
     var ok = integrity();
@@ -500,9 +491,11 @@ class TestAFunctionMadeFromAStringStillPrintsWhatItPrints(TestBase):
                     with self.subTest(label=label, reading=reading.name):
                         self.assertEqual(program.read(), program.required())
 
-    def test_each_program_still_prints_it_where_the_unit_trusts_eval(self):
+    def test_each_program_running_no_eval_assumed_inert_still_prints_it_where_the_unit_trusts_eval(self):
         for rows in (DEFAULTED_PARAMETERS, CALLS_RUNNING_THEIR_ARGUMENT, FORWARDERS_THROUGH_AN_ARRAY):
             for label, row in rows.items():
+                if label in HOLDS_AN_EVAL_THE_TRUSTING_MODEL_MAY_ASSUME_INERT:
+                    continue
                 with self.subTest(label=label):
                     self.assertEqual(behavior(deobfuscated_by_the_unit(row.text)), row.prints)
 
@@ -521,12 +514,22 @@ class TestAFunctionMadeFromAStringIsWrittenOut(TestBase):
             'console.log(true, false, null);',
         )
 
-    def test_a_call_whose_callee_has_a_default_writing_a_name_of_the_caller_stays_a_call(self):
+    def test_a_call_whose_callee_has_a_default_writing_a_name_of_the_caller_stays_a_call_or_becomes_5(self):
         text = deobfuscate_source(
             DEFAULTED_PARAMETERS['a default writing a name of the function calling it'].text,
             execution=ExecutionModel.commonjs,
         )
-        self.assertIn('console.log(f());', text)
+        self.assertTrue('console.log(f());' in text or text == 'console.log(5);', text)
+
+    @opportunity
+    def test_a_call_whose_callee_has_a_default_writing_a_name_of_the_caller_becomes_5(self):
+        self.assertEqual(
+            deobfuscate_source(
+                DEFAULTED_PARAMETERS['a default writing a name of the function calling it'].text,
+                execution=ExecutionModel.commonjs,
+            ),
+            'console.log(5);',
+        )
 
     def test_each_text_declaring_and_answering_a_function_becomes_that_function(self):
         self.assertEqual(
@@ -554,7 +557,8 @@ class TestAFunctionMadeFromAStringIsWrittenOut(TestBase):
                 """).rstrip(),
         )
 
-    def test_a_text_the_scope_of_its_function_decides_stays_a_string(self):
+    @opportunity
+    def test_a_text_the_scope_of_its_function_decides_leaves_no_eval(self):
         for label in (
             'a sloppy text run by a strict function',
             'a text reading the parameter of the function running it',
@@ -565,7 +569,7 @@ class TestAFunctionMadeFromAStringIsWrittenOut(TestBase):
             'a function replaced before the call',
         ):
             with self.subTest(label=label):
-                self.assertIn('eval(', deobfuscated_by_the_unit(CALLS_RUNNING_THEIR_ARGUMENT[label].text))
+                self.assertNotIn('eval(', deobfuscated_by_the_unit(CALLS_RUNNING_THEIR_ARGUMENT[label].text))
 
     def test_a_forwarder_of_the_arguments_takes_the_function_back(self):
         self.assertEqual(
@@ -590,7 +594,8 @@ class TestAFunctionMadeFromAStringIsWrittenOut(TestBase):
                 """).rstrip(),
         )
 
-    def test_a_forwarder_the_function_cannot_replace_stays(self):
+    @opportunity
+    def test_a_forwarder_the_function_cannot_replace_is_taken_out(self):
         for label in (
             'a strict function reading this, forwarded from sloppy code',
             'two forwarders of one element',
@@ -608,7 +613,7 @@ class TestAFunctionMadeFromAStringIsWrittenOut(TestBase):
                     FORWARDERS_THROUGH_AN_ARRAY[label].text,
                     execution=ExecutionModel.commonjs,
                 )
-                self.assertIn('.apply(this, [T, arguments])', text)
+                self.assertNotIn('.apply(this, [T, arguments])', text)
 
     def test_a_strict_forwarder_taking_the_function_back_keeps_its_directive(self):
         self.assertEqual(

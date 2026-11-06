@@ -1,33 +1,10 @@
 """
-The head of a `for` loop is not an ordinary expression position, and what the tool prints there has
-to be a program that still means what the source did.
-
-A head comes in three shapes — `for (INIT; TEST; UPDATE)`, `for (TARGET in OBJECT)` and
-`for (TARGET of ITERABLE)` — and each slot claims a word or an operator for itself. The init slot
-reads a bare `in` as the start of a for-in and refuses it, all the way down through a conditional's
-alternate, an arrow's expression body and a comma; the for-of iterable slot is a single
-`AssignmentExpression` and refuses a comma; the for-of target slot refuses anything opening with the
-word `let`, where the for-in target only refuses `let` immediately before a bracket. The three
-refusals are not each other's and none of them is the one an ordinary statement makes: a statement
-refuses a leading `{` and a leading `function`, which every one of these slots accepts.
-
-The brackets that get a refused expression into a slot are therefore load-bearing text, and they are
-not necessarily nodes: a pass that folds an expression into the slot a bracket used to occupy leaves
-a tree that has to be printed with brackets nothing in it holds. So the law here is not that the
-brackets come back, it is that the output is a program that does what the input did, and it is
-checked over three ways of getting from a source to an output — printing what was parsed, printing
-after every bracket in the tree is replaced by what it holds, and printing what the deobfuscation
-passes leave behind.
-
-Node.js decides all of it. Every head is recorded together with what V8 prints for it and with a
-second spelling of the same head, one bracket added or taken away, and what V8 prints for that one:
-where the two differ the bracket carries meaning, and where they agree the slot tolerates it either
-way. Both spellings are re-measured by the tests, so a row cannot go stale into a claim nothing
-checks.
-
-`HEADS` is the whole corpus and the law below is quantified over all of it. Seven of these rows were
-a second table the law had to leave out, each one a head whose `in` the parser read under a ban the
-grammar had already lifted; they are ordinary rows now.
+A `for` head is not an ordinary expression position. The init slot of `for (INIT; TEST; UPDATE)`
+refuses a bare `in`, even in the alternate of a conditional, the body of an arrow or an operand of a
+comma; the iterable of a for-of refuses a comma; the target of a for-of refuses anything starting
+with the word `let`, while the target of a for-in refuses only `let` followed by `[`. A bracket that
+gets an expression past one of these refusals is part of the program even where the tree holds no
+node for it.
 
 SECURITY: the snippets here are hand-authored and benign, and running them is what makes the engine
 the oracle. Nothing from `samples` may ever be fed to this.
@@ -50,13 +27,8 @@ from test.lib.scripts.js.test_fidelity import _strip_parentheses
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
-#: What Node.js says about a text it does not read as a program at all. The law below is quantified
-#: over programs, so this is what a respelling says and never what a head says.
 NOT_A_PROGRAM = 'SyntaxError'
 
-#: The names every snippet shares, so that a row is the loop head it is about and nothing else. The
-#: values are chosen to make each head observable: `let` holds the three properties the heads that
-#: use it read, and `b` holds the one key the `in` operator asks for.
 FIXTURE = inspect.cleandoc("""
     var log = [];
     var b = {k: 1}, t = {}, a = "p", r, x, k;
@@ -70,27 +42,15 @@ def _program(loop: str) -> str:
 
 
 def node_says(source: str) -> str:
-    """
-    What Node.js makes of *source*: the standard output it produced, or the name of the error that
-    stopped it. Every snippet here ends by printing the log it built as a JSON array, so the two
-    kinds of answer cannot be mistaken for one another.
-    """
     out, error = behavior(source)
     return error or out.strip()
 
 
 def printed_from_the_parse(source: str) -> str:
-    """
-    What this project prints for the tree its parser built from *source*.
-    """
     return JsSynthesizer().convert(JsParser(source).parse())
 
 
 def printed_without_the_brackets(source: str) -> str:
-    """
-    What this project prints once every bracket of the parse of *source* has been replaced by what
-    it holds, which is the tree a pass folding into a bracketed slot leaves behind.
-    """
     tree = JsParser(source).parse()
     while _strip_parentheses(tree):
         pass
@@ -98,11 +58,6 @@ def printed_without_the_brackets(source: str) -> str:
 
 
 class Head(NamedTuple):
-    """
-    A loop head and what the program around it prints, together with the same head respelled by one
-    bracket and what that prints. The respelling is a substitution rather than a second program so
-    that the two can differ nowhere but in the head.
-    """
     loop: str
     prints: str
     respelling: tuple[str, str]
@@ -295,11 +250,6 @@ HEADS = [
 ]
 
 class TestJsForHeadCorpus(TestBase):
-    """
-    What the corpus claims about itself, checked without an engine. A row that is not a program, or
-    whose two spellings differ somewhere other than the head, would leave the law below asserting
-    something other than what it says it asserts.
-    """
 
     def test_every_head_is_recorded_as_a_program(self):
         for head in HEADS:
@@ -315,12 +265,6 @@ class TestJsForHeadCorpus(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestJsForHeadSurvivesPrinting(TestBase):
-    """
-    The law: whatever the source said, what this project prints is a program that does the same
-    thing. Three routes reach the printer with different trees — the one the parser built, that one
-    with every bracket replaced by what it holds, and the one the deobfuscation passes left — and
-    the engine answers for all three.
-    """
 
     def test_node_reads_both_spellings_of_every_head_as_the_corpus_records_them(self):
         for head in HEADS:

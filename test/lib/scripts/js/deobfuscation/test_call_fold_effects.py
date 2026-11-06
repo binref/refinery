@@ -1,26 +1,3 @@
-"""
-Folding a call to a built-in writes the value in place of the call and deletes the text that was
-there. `Math.floor(4.7)` becomes `4`, `String.fromCharCode(72, 105)` becomes `'Hi'`, and a method on
-a literal receiver is no different — but the deleted text is not always only a way of naming a
-value. An argument may assign, update, or delete; so may an element of the literal the method is
-called on, and so may the expression that names the method. Where it does, the store is the
-program's, not the call's, and a later statement reading that location has to find what the store
-put there. A fold that answers with the right value and drops the store is a wrong answer that no
-comparison of values shows.
-
-Every position a store can be written in is asked for separately, because they are separately
-reached: what the call is passed, what it is called on, and what names the method on it. The
-spellings vary too — a bare assignment is the plainest one, and the same store hides in a compound
-assignment, an update, a comma operand, a summand, a template substitution, a spread element, a
-destructuring pattern, a `delete`, and a call to a function whose body writes.
-
-The other direction is the one a behavior comparison cannot see. A deobfuscator that folds nothing
-preserves behavior perfectly, so refusing too much is invisible to Node and has to be pinned as
-text: `_FOLDED` and `_FOLDS_BESIDE_A_STORE` say what the tool must still fold, the second of them
-for programs that do store somewhere the fold does not reach.
-
-Node is the authority for every absolute value in this module.
-"""
 from __future__ import annotations
 
 import inspect
@@ -28,18 +5,13 @@ import unittest
 
 from typing import NamedTuple
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 
 from refinery.units.scripting.djs import djs
 
 
 class _Store(NamedTuple):
-    """
-    A program that stores into a location while the one call in it is evaluated. It prints the value
-    the call produced and then reads the location back, so a deobfuscation that keeps the value and
-    drops the store agrees on the first line and differs on the second.
-    """
     call: str
     printed: str
     setup: str = 'var v = 0;'
@@ -51,11 +23,13 @@ class _Store(NamedTuple):
 
 
 class _Rewrite(NamedTuple):
-    """
-    A program and the text `refinery.djs` leaves it as.
-    """
     source: str
     result: str
+    cleaned: str | None = None
+
+    @property
+    def texts(self) -> tuple[str, ...]:
+        return (self.result,) if self.cleaned is None else (self.result, self.cleaned)
 
 
 _A_FUNCTION_THAT_WRITES = inspect.cleandoc(
@@ -123,9 +97,6 @@ with is printed first, so the first line stays whether or not the fold happened 
 line says whether the store survived it.
 """
 
-#: A call the fold decides, mapped to the text it must be folded to. Nothing in any of them stores,
-#: so the call is worth exactly the value it computes and its text may go. Node is asked to value
-#: both spellings, and a row is right only if it answers them alike.
 _FOLDED: dict[str, str] = {
     'Math.floor(4.7)': '4',
     'Math.max(1, 2 + 3)': '5',
@@ -158,6 +129,12 @@ _FOLDS_BESIDE_A_STORE: dict[str, _Rewrite] = {
             console.log(v);
             """
         ),
+        inspect.cleandoc(
+            """
+            console.log(4);
+            console.log(1);
+            """
+        ),
     ),
     'a store in a sibling argument': _Rewrite(
         inspect.cleandoc(
@@ -172,6 +149,12 @@ _FOLDS_BESIDE_A_STORE: dict[str, _Rewrite] = {
             var v = 0;
             console.log(4, (v = 2, 3));
             console.log(v);
+            """
+        ),
+        inspect.cleandoc(
+            """
+            console.log(4, 3);
+            console.log(2);
             """
         ),
     ),
@@ -214,26 +197,20 @@ _FOLDS_BESIDE_A_STORE: dict[str, _Rewrite] = {
     ),
 }
 """
-A program whose call the fold must still reach, mapped to the text `refinery.djs` leaves it as. Each
-of them stores somewhere the fold does not reach — a neighbouring statement, a sibling argument, a
-function written down and never called — or reads back a store the fold may carry through, and the
-call is decided by what is written in it either way. A refusal here is invisible to Node, which is
-why the text is what these rows assert.
+A program whose call the fold must still reach, mapped to the text `refinery.djs` leaves it as and,
+where a later read takes a store the program keeps, to the cleaner text that carries the store into
+the read. Each of them stores somewhere the fold does not reach — a neighbouring statement, a
+sibling argument, a function written down and never called — or reads back a store the fold may
+carry through, and the call is decided by what is written in it either way. A refusal here is
+invisible to Node, which is why the text is what these rows assert.
 """
 
 
 def _deobfuscated(source: str) -> str:
-    """
-    The script `refinery.djs` emits for *source*.
-    """
     return source.encode('utf8') | djs(strict=True) | str
 
 
 def _fold(expression: str) -> str:
-    """
-    The text `refinery.djs` leaves *expression* as. It is written into a `console.log` argument,
-    which survives, so nothing but the fold decides what comes back.
-    """
     printed = _deobfuscated(F'console.log({expression});')
     return printed.removeprefix('console.log(').removesuffix(');')
 
@@ -271,13 +248,22 @@ class TestACallNothingInWhichStoresIsFoldedAway(TestBase):
 
 class TestAStoreTheFoldDoesNotReachDoesNotStopIt(TestBase):
 
-    def test_each_program_is_left_as_the_text_the_row_records(self):
+    def test_each_program_is_left_as_a_text_the_row_records(self):
         for name, rewrite in _FOLDS_BESIDE_A_STORE.items():
             with self.subTest(name=name):
-                self.assertEqual(_deobfuscated(rewrite.source), rewrite.result)
+                self.assertIn(_deobfuscated(rewrite.source), rewrite.texts)
+
+    @opportunity
+    def test_a_store_a_later_read_takes_is_carried_into_the_read(self):
+        rows = {name: rewrite for name, rewrite in _FOLDS_BESIDE_A_STORE.items() if rewrite.cleaned}
+        self.assertEqual(
+            {name: _deobfuscated(rewrite.source) for name, rewrite in rows.items()},
+            {name: rewrite.cleaned for name, rewrite in rows.items()},
+        )
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    def test_node_prints_the_same_for_each_program_and_the_text_it_was_left_as(self):
+    def test_node_prints_the_same_for_each_program_and_each_text_it_may_be_left_as(self):
         for name, rewrite in _FOLDS_BESIDE_A_STORE.items():
-            with self.subTest(name=name):
-                self.assertEqual(behavior(rewrite.source), behavior(rewrite.result))
+            for text in rewrite.texts:
+                with self.subTest(name=name, text=text):
+                    self.assertEqual(behavior(rewrite.source), behavior(text))

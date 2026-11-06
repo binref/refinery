@@ -1,11 +1,6 @@
 """
-A comparison of the host's clock with a time. A run is assumed to read the clock inside a window of
-dates (`refinery.lib.scripts.js.analysis.environment.ASSUMED_CLOCK`), so a comparison with a time
-outside the window answers the same for every run and folds wherever the clock is the built-in's;
-a time inside it is the program's own, an expiry or a time the program waits for, and stays.
-
-SECURITY: every program here is hand-authored and benign. No sample and no stored obfuscator fixture
-may be fed to this.
+SECURITY: every program here is hand-authored and benign, and Node runs them. No sample and no
+stored obfuscator fixture may ever be handed to it.
 """
 from __future__ import annotations
 
@@ -14,7 +9,7 @@ import unittest
 
 from datetime import date, datetime, timezone
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
@@ -115,6 +110,20 @@ class TestAComparisonOfTheClockFolds(TestBase):
         source = "if (Date.now() > 4102444800000) { while (true) {} }\nconsole.log('ran');"
         self.assertIn('Date.now() > 4102444800000', _deobfuscated(source, clock=None))
 
+    @opportunity
+    def test_a_comparison_the_language_decides_without_the_window_folds(self):
+        for source, folded in {
+            'console.log(new Date(0).getTime() > 4102444800000);': 'console.log(false);',
+            'console.log(Date.now() > NaN);': 'console.log(false);',
+        }.items():
+            with self.subTest(source=source):
+                self.assertEqual(_deobfuscated(source), folded)
+
+    @opportunity
+    def test_a_comparison_of_a_clock_read_whose_argument_runs_folds_after_the_argument_runs(self):
+        source = 'var n = 0;\nconsole.log(Date.now(n++) > 4102444800000, n);'
+        self.assertEqual(_deobfuscated(source), 'console.log(false, 1);')
+
 
 class TestAComparisonTheWindowDoesNotDecideStays(TestBase):
 
@@ -136,9 +145,6 @@ class TestAComparisonTheWindowDoesNotDecideStays(TestBase):
                 Date.prototype.getTime = function () { return 5000000000000; };
                 if (new Date().getTime() > 4102444800000) { console.log('late'); }
             """): 'new Date().getTime() > 4102444800000',
-            'console.log(new Date(0).getTime() > 4102444800000);': 'new Date(0).getTime() > 4102444800000',
-            'console.log(Date.now() > NaN);': 'Date.now() > NaN',
-            'var n = 0;\nconsole.log(Date.now(n++) > 4102444800000, n);': 'Date.now(n++) > 4102444800000',
             inspect.cleandoc("""
                 Function.prototype.call = function () { return 5000000000000; };
                 console.log(Date.prototype.getTime.call(new Date()) > 4102444800000);
@@ -152,9 +158,6 @@ class TestAComparisonTheWindowDoesNotDecideStays(TestBase):
                 self.assertIn(kept, _deobfuscated(source))
 
 
-#: Programs comparing the host's clock with a time, in the three forms a read of the clock takes,
-#: with the built-in `Date` and with every way a program replaces what it answers, mapped to what
-#: Node prints for them.
 A_COMPARISON_OF_THE_CLOCK = {
     "if (Date.now() > 4102444800000) { while (true) {} }\nconsole.log('ran');": 'ran\n',
     "if ((new Date()).getTime() > 4102444800000) { while (true) {} }\nconsole.log('ran');": 'ran\n',

@@ -1,13 +1,9 @@
 """
-The anchored tampering oracle: whether the built-ins a fold or an interpreted execution is about to
-trust still mean what the language says at one point in the program — the anchor. Every refuse row
-here is a program one textual spelling away from its clear twin: the tampering site removed, or
-moved after the anchor, must fold. The interpreter rows hold the anchor the evaluation route passes
-— the call node being executed — and show the trust that clearance buys where the program-wide
-questions refuse on the surface alone.
+Whether the builtins a fold or an interpreted call trusts still behave as the language defines them
+at one point of the program, the anchor.
 
-SECURITY: every program here is hand-authored in this file and benign. No sample and no stored
-obfuscator fixture may be fed to this.
+SECURITY: every program here is written by hand in this file and is benign. No sample may ever be
+fed to these tests.
 """
 from __future__ import annotations
 
@@ -32,12 +28,8 @@ from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from test import TestBase, a_property_of_the_pin_itself
 
-#: Every refuse row's anchor: the first `String.fromCharCode` call, the builtin the tampering
-#: sites in these programs are all spelled against.
 _FROM_CHAR_CODE = 'fromCharCode'
 
-#: The method only the decoder IIFE of the sample-shape rows calls, distinguishing it from the
-#: outer immediately-invoked function that contains it.
 _DECODER_STEP = 'charAt'
 
 
@@ -65,12 +57,6 @@ def _call_of_name(ast: Node, callee_name: str) -> JsCallExpression:
 
 
 def _decoder_iife_call(ast: Node, property_name: str) -> JsCallExpression:
-    """
-    The immediately-invoked function call whose own body calls a `.{property_name}` method — the
-    decoder every sample-shape row folds. The call that makes the method is inside the callee
-    itself, not a function nested in it, which is what distinguishes the decoder from the outer
-    immediately-invoked function containing it.
-    """
     for node in ast.walk():
         if not (
             isinstance(node, JsCallExpression)
@@ -328,9 +314,6 @@ program.
 
 
 class TestBuiltinsIntactAt(TestBase):
-    """
-    The oracle's own verdicts, asked of the anchor every refuse program spells the same way.
-    """
 
     def _verdict(self, source: str) -> bool:
         ast = JsParser(source).parse()
@@ -377,9 +360,9 @@ class TestBuiltinsIntactAt(TestBase):
 
     def test_an_entrypoint_matched_activation_refuses_under_the_option(self):
         """
-        The host may invoke a named top-level function an unbounded number of times with no caller
-        in the file, so its activation breaks multiplicity wherever a site exists — only under the
-        option that names it, and only where the name is a property of the global object.
+        A host may call an entry point again after the write in it has run, so the write may run
+        before the anchor. A top-level function of a CommonJS file is no property of the global
+        object, and no host reaches it by its name.
         """
         source = (
             'var k, v;\n'
@@ -400,10 +383,6 @@ class TestBuiltinsIntactAt(TestBase):
 
 
 class TestTheTrustQuestionsAtAnAnchor(TestBase):
-    """
-    The trust questions a fold asks at its point: each is the program-wide question where that one
-    holds, and the per-name question where the oracle clears the point.
-    """
 
     _CLEAN = 'var s = String.fromCharCode(65);\nvar t = ["x"].concat("a|b".split("|"));'
     _SURFACE_AFTER = (
@@ -475,13 +454,8 @@ class TestTheTrustQuestionsAtAnAnchor(TestBase):
 
 class TestSingularValueAt(TestBase):
     """
-    The positioned value question: which single value a binding holds at the moment a given read
-    evaluates it. Every program with an `eval` in it makes the binding volatile program-wide; the
-    rows here draw where ordering repairs that — the hazard provably runs after the read, the
-    value established before it, the read at most once — and where each leg refuses. The volatile
-    locals all live inside an anonymous immediately-invoked function, the shape the sample's
-    payload spells: a named script-scope activation is one the oracle's own multiplicity walk
-    refuses under a reflection surface, which is its line and not this query's.
+    Each program keeps its variable inside an anonymous immediately-invoked function: the `eval`
+    could call a named top-level function again, which alone refuses the value.
     """
 
     @staticmethod
@@ -663,20 +637,9 @@ class TestSingularValueAt(TestBase):
 
 
 class TestThePositionedAliasHop(TestBase):
-    """
-    The recognizer's alias hops under the positioned query: a callee reached through a name the
-    program-wide volatility question refuses still denotes the `Function` intrinsic where ordering
-    proves the read safe, and every gate the stock hop passes in front of a value resolution keeps
-    its place. Every program here is the sample's shape — a decoder alias read inside an anonymous
-    immediately-invoked function whose async sibling carries the eval.
-    """
 
     @staticmethod
     def _verdict(source: str, *, positioned: bool = False, callee: str = 'xTe', **kwargs) -> bool | None:
-        """
-        The recognizer's verdict for the *callee* call of *source*, with the positioned query
-        injected when *positioned* asks for it.
-        """
         ast = JsParser(source).parse()
         cache = ModelCache(ast)
         node = _call_of_name(ast, callee).callee
@@ -757,17 +720,8 @@ class TestThePositionedAliasHop(TestBase):
 
 
 class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
-    """
-    The trust the interpreter's arms buy with an anchor: the program-wide questions refuse on the
-    presence of a surface or a write alone, the oracle on whether it ran before the anchor, and
-    each row shows both — the anchored execution answering what the program answers, the
-    un-anchored one refusing.
-    """
 
     def _execute(self, source: str, anchor_of, expression_of) -> object:
-        """
-        The anchored evaluation of *expression_of* over *source*, anchored at *anchor_of*.
-        """
         ast = JsParser(source).parse()
         cache = ModelCache(ast)
         interpreter = JsInterpreter(
@@ -780,10 +734,6 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
 
     @staticmethod
     def _unanchored_refuses(source: str, expression_of) -> bool:
-        """
-        Whether the same expression, evaluated with no anchor, is refused — the program-wide
-        refusal the oracle's clearance replaces.
-        """
         ast = JsParser(source).parse()
         cache = ModelCache(ast)
         try:
@@ -875,10 +825,6 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
         )
 
     def test_an_attributed_prototype_write_still_refuses_at_the_anchor(self):
-        """
-        The per-name arm stays independent of the oracle: a written `Object` refuses the chain
-        question through the anchored arm exactly as it does through the program-wide one.
-        """
         source = (
             'Object.prototype.z = 9;\n'
             'function f(o) {\n'
@@ -895,11 +841,6 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
                 lambda ast: _call_of_name(ast, 'f'))
 
     def test_the_child_interpreter_forwards_the_anchor(self):
-        """
-        A call the interpreted body makes runs in a child interpreter; the anchor it asks the
-        oracle through is the one this execution started with, so a builtin the nested call reads
-        folds under the same clearance the outer one did.
-        """
         source = (
             'var k, v;\n'
             'function g() { return String.fromCharCode(65); }\n'
@@ -932,11 +873,6 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
     )
 
     def test_a_decoder_folds_with_a_later_eval_sibling(self):
-        """
-        The sample's shape: the construction the decoder alias reaches is refused only where the
-        eval that makes the alias volatile runs before it, so the decoder folds with the eval still
-        standing and its argument still runtime-dependent.
-        """
         expression = lambda ast: _decoder_iife_call(ast, _DECODER_STEP)
         self.assertTrue(self._unanchored_refuses(self._DECODER_IIFE, expression))
         self.assertEqual(self._execute(self._DECODER_IIFE, expression, expression), '0')
@@ -975,11 +911,6 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
 
 
 class TestManyAnchorsShareOneEnumeration(TestBase):
-    """
-    The site list is computed once per model lifetime, so a program with many anchors answers
-    them all within a bound a per-anchor re-derivation would not meet — the model-thrash history
-    made explicit.
-    """
 
     def test_every_anchor_answers_within_the_bound(self):
         body = ['function f() {']

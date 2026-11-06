@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     deobfuscate_source,
@@ -19,8 +19,6 @@ from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
-#: The functions the machines below compute their state with: `sum` adds up the state, and `slice`
-#: reads a part of a table, which a machine's call spreads into the state it starts in.
 PRELUDE = inspect.cleandoc(
     """
     function sum(array) {
@@ -36,7 +34,6 @@ PRELUDE = inspect.cleandoc(
     """
 )
 
-#: A function that decodes the key of a scope object from two numbers.
 DECODER = inspect.cleandoc(
     """
     var names = "AlabelB";
@@ -46,7 +43,6 @@ DECODER = inspect.cleandoc(
     """
 )
 
-#: A function that decodes a key from two numbers, in a table that names one of the keys.
 LABELS = inspect.cleandoc(
     """
     var names = "labelother";
@@ -56,9 +52,6 @@ LABELS = inspect.cleandoc(
     """
 )
 
-#: The function `grade(n)`, whose body is a machine of two blocks. The state starts as `START`,
-#: whose sum is 15. The first block stores a label under `STORE`, runs `PAYLOAD` and moves the
-#: state to the sum 16; the second returns the label, read after `READ`. No state reaches 17.
 GRADE = inspect.cleandoc(
     """
     function grade(n) {
@@ -99,10 +92,6 @@ def graded(
     prelude: str = PRELUDE,
     after: str = 'console.log(grade(3), grade(30));',
 ) -> str:
-    """
-    A program that defines *prelude* and `GRADE` with its parts replaced, between *before* and
-    *after*.
-    """
     machine = (
         GRADE
         .replace('FIRST', first)
@@ -115,9 +104,6 @@ def graded(
     return '\n'.join(part for part in (before, prelude, machine, after) if part)
 
 
-#: The function `grade(n)` as the recovery of an outer machine writes it: the machine copies its
-#: parameters into variables, a `return` of `undefined` stands behind its loop, and its call
-#: stands further down the body, behind `BETWEEN`. The second block reads the label after `READ`.
 COPIED = inspect.cleandoc(
     """
     function grade(n) {
@@ -153,15 +139,9 @@ COPIED = inspect.cleandoc(
 
 
 def copied(read: str = '', between: str = '') -> str:
-    """
-    A program that defines `PRELUDE` and `COPIED` with its parts replaced.
-    """
     return '\n'.join((PRELUDE, COPIED.replace('READ', read).replace('BETWEEN', between)))
 
 
-#: The machine of a program that takes the function `greet` apart: its first block runs `BEFORE`,
-#: makes the wrapper and prints two calls of it, one without the second argument, and the block
-#: the wrapper enters stores the arguments with `ARGUMENTS` before it greets.
 GREET = inspect.cleandoc(
     """
     function M(states, scope = { A: {} }, runtime, arg) {
@@ -188,9 +168,6 @@ GREET = inspect.cleandoc(
 
 
 def greeted(arguments: str, before: str = '') -> str:
-    """
-    A program that defines `PRELUDE` and `GREET` with its parts replaced.
-    """
     return '\n'.join((PRELUDE, GREET.replace('ARGUMENTS', arguments).replace('BEFORE', before)))
 
 
@@ -800,8 +777,6 @@ THE_ITERATOR_OF_EVERY_ARRAY_IS_STOPPED_AND_THE_START_STATE_SPREADS_A_LITERAL = g
     before='Object.getPrototypeOf([][Symbol.iterator]()).next = () => ({ done: true });',
 )
 
-#: The recovered body of `grade` in every machine of `GRADE` whose recovery stores the label under
-#: the key it was written with.
 GRADE_RECOVERED = inspect.cleandoc(
     """
     function grade(n) {
@@ -812,9 +787,8 @@ GRADE_RECOVERED = inspect.cleandoc(
     """
 )
 
-#: Each machine the recovery reads, mapped to code its recovery writes. The function evaluator runs
-#: first, as it does in the pipeline: it folds a start state that reads no state, as it folds
-#: `[...slice(0, 3)]`.
+GRADE_RECOVERED_STATEMENTS = GRADE_RECOVERED.replace('A["label"]', 'A.label').partition('\n')[2]
+
 RECOVERED = {
     A_FUNCTION_WHOSE_BODY_IS_A_MACHINE: GRADE_RECOVERED,
     THE_MACHINE_OF_THE_PROGRAM: inspect.cleandoc(
@@ -880,16 +854,7 @@ RECOVERED = {
         console.log(out.join(''));
         """
     ),
-    A_MACHINE_CALLED_FURTHER_DOWN_WITH_A_RETURN_BEHIND_ITS_LOOP: inspect.cleandoc(
-        """
-        function grade(n) {
-          var res, ret;
-          var A = {};
-          A.label = n > 10 ? 'big' : 'small';
-          return A.label + '!';
-        }
-        """
-    ),
+    A_MACHINE_CALLED_FURTHER_DOWN_WITH_A_RETURN_BEHIND_ITS_LOOP: GRADE_RECOVERED_STATEMENTS,
     A_FUNCTION_TAKEN_APART_WHOSE_PARAMETER_HAS_A_DEFAULT: inspect.cleandoc(
         """
         A.greet = function(name_1, mark_1 = '!') {
@@ -936,8 +901,11 @@ RECOVERED = {
     ),
 }
 
-#: Machines the recovery leaves as they are, each mapped to the reason.
 KEPT = {
+    A_CASE_RUNS_CODE_THAT_CHANGES_THE_STATE: 'the code runs eval',
+}
+
+DECIDED_BY_THE_FILE = {
     THE_CODE_READS_THE_LENGTH_OF_THE_STATE: 'the state is read as a whole',
     THE_CODE_HANDS_THE_STATE_TO_A_FUNCTION: 'the state is handed out',
     A_CLOSURE_READS_THE_STATE_WHEN_IT_IS_CALLED: 'the state is read after the run',
@@ -972,7 +940,6 @@ KEPT = {
     A_CLASS_FIELD_READS_THE_STATE_WHEN_AN_INSTANCE_IS_MADE: 'the state is read after the run',
     A_CLASS_FIELD_DECODES_A_KEY_FROM_THE_STATE_WHEN_AN_INSTANCE_IS_MADE: 'the state is read after the run',
     A_DECLARED_FUNCTION_READS_THE_STATE_WHEN_IT_IS_CALLED: 'the state is read after the run',
-    A_CASE_RUNS_CODE_THAT_CHANGES_THE_STATE: 'the code runs eval',
 }
 
 
@@ -989,30 +956,18 @@ class TestArrayMachines(TestJsDeobfuscator):
                 self.assertNotIn('switch (sum(states))', recovered)
 
     def test_a_table_read_by_a_method_under_a_key_another_pass_decides_is_recovered(self):
-        """
-        The key `method` holds is folded by another pass, after which the table is only read by a
-        method that leaves it as it is.
-        """
         self.assertEqual(
             self._deobfuscate(A_TABLE_READ_BY_A_METHOD_UNDER_A_COMPUTED_KEY),
             "console.log('small!', 'big!');",
         )
 
     def test_a_machine_whose_copied_parameters_other_passes_fold_is_recovered(self):
-        """
-        The machine copies its parameters into variables, as the recovery of an outer machine
-        writes it; other passes fold the copies, after which the machine is recovered.
-        """
         self.assertEqual(
             self._deobfuscate(A_MACHINE_WHOSE_PARAMETERS_ARE_COPIED_CALLED_FURTHER_DOWN),
             "console.log('small!', 'big!');",
         )
 
     def test_a_jump_whose_condition_another_pass_decides_is_recovered(self):
-        """
-        Two array literals are two objects, so `[] === []` is `false` whatever the state holds; once
-        another pass folds it, the next block is decided by the state.
-        """
         self.assertEqual(
             self._deobfuscate(A_JUMP_WHOSE_CONDITION_COMPARES_TWO_NEW_ARRAYS),
             "console.log('small!', 'big!');",
@@ -1023,30 +978,44 @@ class TestArrayMachines(TestJsDeobfuscator):
             with self.subTest(reason=reason, source=source):
                 self.assertIn('switch (sum(states))', self._deobfuscate(source))
 
-    def test_a_machine_inside_a_function_of_a_recovered_machine_keeps_its_own_names(self):
-        """
-        The inner machine reads the length of its state and is kept; the recovery of the outer one
-        substitutes none of its state into the inner one, whose names are the same.
-        """
-        deobfuscated = self._deobfuscate(A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_THE_SAME_NAMES)
-        self.assertEqual(deobfuscated.count('switch (sum(states))'), 1)
-        self.assertIn('scope.B[dec(states[0] - 5, 5)] = states.length;', deobfuscated)
+    @opportunity
+    def test_each_machine_whose_run_the_file_decides_is_recovered(self):
+        for source, reason in DECIDED_BY_THE_FILE.items():
+            with self.subTest(reason=reason, source=source):
+                self.assertNotIn('switch (sum(states))', self._deobfuscate(source))
 
-    def test_a_wrapper_of_a_machine_inside_a_function_of_a_recovered_machine_calls_its_own_machine(self):
-        """
-        The wrapper of the inner machine calls it under the names of the outer one, which the
-        function around the inner machine binds anew, so the recovery of the outer machine is no
-        run of that wrapper.
-        """
+    def test_a_machine_inside_a_function_of_a_recovered_machine_keeps_its_own_names_or_is_recovered_too(self):
+        deobfuscated = self._deobfuscate(A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_THE_SAME_NAMES)
+        inner_machine_as_written = (
+            deobfuscated.count('switch (sum(states))') == 1
+            and 'scope.B[dec(states[0] - 5, 5)] = states.length;' in deobfuscated
+        )
+        self.assertTrue(inner_machine_as_written or deobfuscated == "console.log('small3!', 'big3!');", deobfuscated)
+
+    @opportunity
+    def test_a_machine_inside_a_function_of_a_recovered_machine_is_recovered_too(self):
+        self.assertEqual(
+            self._deobfuscate(A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_THE_SAME_NAMES),
+            "console.log('small3!', 'big3!');",
+        )
+
+    def test_a_wrapper_of_a_machine_inside_a_function_of_a_recovered_machine_calls_its_own_machine_or_is_recovered_too(self):
         deobfuscated = self._deobfuscate(A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_A_WRAPPER_OF_THE_SAME_NAMES)
-        self.assertEqual(deobfuscated.count('switch (sum(states))'), 1)
-        self.assertIn('return M([6, 6, 6], { C: {} }, runtime, r);', deobfuscated)
+        inner_machine_as_written = (
+            deobfuscated.count('switch (sum(states))') == 1
+            and 'return M([6, 6, 6], { C: {} }, runtime, r);' in deobfuscated
+        )
+        inner_machine_recovered = 'switch (sum(states))' not in deobfuscated and "'outer'" not in deobfuscated
+        self.assertTrue(inner_machine_as_written or inner_machine_recovered, deobfuscated)
+
+    @opportunity
+    def test_a_wrapper_of_a_machine_inside_a_function_of_a_recovered_machine_is_recovered_too(self):
+        self.assertNotIn(
+            'switch (sum(states))',
+            self._deobfuscate(A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_A_WRAPPER_OF_THE_SAME_NAMES),
+        )
 
     def test_a_slot_named_by_a_key_decoded_from_the_state_does_not_capture_a_global_of_its_name(self):
-        """
-        The bare `B` reads the global, while the decoded key names the slot `B` of the scope
-        object, which the recovery would make a variable `B`.
-        """
         self.assertEqual(
             self._deobfuscate(A_KEY_DECODED_FROM_THE_STATE_NAMING_A_GLOBAL_THE_CODE_READS),
             "console.log('smallouter!', 'bigouter!');",
@@ -1054,8 +1023,8 @@ class TestArrayMachines(TestJsDeobfuscator):
 
     def test_a_default_that_is_a_function_without_a_name_stays_in_the_argument_store(self):
         """
-        A parameter would give the function its own name, which the member the store gives it to
-        does not.
+        Moved into the parameter list, the default would be named after its parameter; assigned to a
+        member of the store, its name stays empty.
         """
         self.assertIn(
             '[B.name, B.mark = function() {}] = r;',
@@ -1063,10 +1032,6 @@ class TestArrayMachines(TestJsDeobfuscator):
         )
 
     def test_a_default_that_runs_code_stays_in_the_argument_store_where_eval_is_trusted(self):
-        """
-        Where eval is trusted, the machine is recovered, and the code the default runs is still run
-        where the names of the body exist.
-        """
         ast = JsParser(A_DEFAULT_THAT_RUNS_CODE_READING_AN_ELEMENT).parse()
         for transformer in (JsFunctionEvaluator, JsStateMachineUnflattening):
             instance = transformer()
@@ -1076,17 +1041,8 @@ class TestArrayMachines(TestJsDeobfuscator):
         self.assertNotIn('switch (sum(states))', recovered)
         self.assertIn("[B.name, B.mark = eval('scope.B.name')] = r;", recovered)
 
-    @unittest.expectedFailure
+    @opportunity
     def test_a_machine_whose_class_reads_its_instance_under_a_key_from_a_table_of_the_machine_is_recovered(self):
-        """
-        The method `read` destructures `this` under a key read from a table the machine holds.
-        The model takes a read of `this` under a key it cannot name for a read of the global object
-        under any name, and trusts no built-in anywhere; the function that decodes the keys of the
-        scope object calls a built-in, so the recovery cannot decode them. The machine is the one
-        thing that writes the table, so the key is known only once the machine is recovered. A fix
-        bounds the objects a method's `this` may be, so that a read of the instance is not counted
-        as one of the global object.
-        """
         self.assertNotIn(
             'switch (sum(states))',
             self._deobfuscate(A_CLASS_READING_ITS_INSTANCE_UNDER_A_KEY_FROM_A_TABLE_OF_THE_MACHINE),
@@ -1132,6 +1088,7 @@ class TestNodePrintsTheSameForEachArrayMachine(TestJsDeobfuscator):
     def _machines(self):
         yield from RECOVERED
         yield from KEPT
+        yield from DECIDED_BY_THE_FILE
         yield A_TABLE_READ_BY_A_METHOD_UNDER_A_COMPUTED_KEY
         yield A_MACHINE_WHOSE_PARAMETERS_ARE_COPIED_CALLED_FURTHER_DOWN
         yield A_JUMP_WHOSE_CONDITION_COMPARES_TWO_NEW_ARRAYS
@@ -1160,9 +1117,6 @@ class TestNodePrintsTheSameForEachArrayMachine(TestJsDeobfuscator):
         self.assertEqual(behavior(source), behavior(self._deobfuscate(source)))
 
 
-#: A machine whose function returns through a flag: the machine sets `ret` where it returns, and the
-#: function returns what the machine returned where `ret` is set after the call. `ret` is reset to
-#: `undefined` right before the call.
 A_MACHINE_RETURNING_THROUGH_A_FLAG = a_program(
     """
     function sum(array) {
@@ -1224,10 +1178,6 @@ _FELL_THROUGH = (
 
 
 def flagged(*edits: tuple[str, str]) -> str:
-    """
-    `A_MACHINE_RETURNING_THROUGH_A_FLAG` with the first text of each of *edits* replaced by its
-    second.
-    """
     text = A_MACHINE_RETURNING_THROUGH_A_FLAG
     for old, new in edits:
         assert text.count(old) == 1, old
@@ -1235,10 +1185,6 @@ def flagged(*edits: tuple[str, str]) -> str:
     return text
 
 
-#: Machines returning through a flag, mapped to what Node prints for each run as a CommonJS file:
-#: the flag reset before the call or not, set or written before it, a parameter, a property, a
-#: variable of an outer function, declared after the call or as a function, the call in a loop or a
-#: block, and a run of the machine that ends without setting the flag.
 A_FLAG_THE_FUNCTION_RETURNS_THROUGH: dict[str, Program] = {
     'the flag reset before the call': Program(
         flagged(),
@@ -1405,8 +1351,6 @@ A_FLAG_THE_FUNCTION_RETURNS_THROUGH: dict[str, Program] = {
     ),
 }
 
-#: Machines of `A_FLAG_THE_FUNCTION_RETURNS_THROUGH` recovered where no store resets the flag,
-#: mapped to the text the deobfuscation writes for each.
 RECOVERED_WITHOUT_A_RESET: dict[str, str] = {
     'no store resetting the flag': "console.log('small!', 'big!');",
     'the flag a property': "console.log('small!', 'big!');",

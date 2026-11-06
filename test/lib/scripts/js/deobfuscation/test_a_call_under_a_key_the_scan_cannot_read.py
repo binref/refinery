@@ -1,17 +1,6 @@
 """
-A call under a key the write scan cannot read.
-
-The key of `Array.prototype[k](5)` may be `push`, which stores into every array, the key of
-`Math[k]('floor', g)` may be `__defineGetter__`, which installs on `Math`, the key of
-`Object[k](JSON, 'parse', d)` may be `defineProperty`, which installs on `JSON`, and the key of
-`Object[k]([])` may be `getPrototypeOf`, which hands out a prototype under no name. An install on
-the global object under a key the scan cannot read may replace any global. Each program writes such
-a call with a key a later pass reads, or never reads, and then reads what the call wrote; each
-deobfuscation leaves that read standing, and Node prints the same for the program and for every
-deobfuscation of it.
-
-An install throws where its function cannot be called or its descriptor is no object, so such a call
-installs nothing, and a fold it would block still folds.
+A call under a computed key may write a built-in object, as `Array.prototype[k](5)` does where `k`
+is `push`, so a read such a write decides has to stay.
 
 SECURITY: every program here is written out by the module itself and Node runs only those. Nothing
 from `samples` may ever be handed to the engine.
@@ -30,8 +19,6 @@ _GETTER_OF_SEVEN = 'function () { return function () { return 7; }; }'
 _GETTER_OF_X = "function () { return function () { return 'X'; }; }"
 _GETTER_OF_A_MATH = 'function () { return {floor: function () { return 7; }}; }'
 
-#: A program writing through a call under a key the scan cannot read, mapped to what it prints and to
-#: the read the write decides.
 _A_WRITE_UNDER_A_KEY_NOT_READ: dict[str, tuple[str, str]] = {
     "var k = ['push'][0]; Array.prototype[k](5); console.log([][0]);": ('5\n', '[][0]'),
     "var o = {k: 'push'}; Array.prototype[o.k](5); console.log([][0]);": ('5\n', '[][0]'),
@@ -68,8 +55,6 @@ _A_WRITE_UNDER_A_KEY_NOT_READ: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: A program whose call installs nothing, mapped to what it prints and to the text every deobfuscation
-#: writes for the read after it.
 _A_CALL_THAT_INSTALLS_NOTHING: dict[str, tuple[str, str]] = {
     "console.log(String[['fromCharCode']](104, 105));": ('hi\n', "console.log('hi');"),
     "try { Math.__defineGetter__('floor', 5); } catch (e) {} console.log(Math.floor(1.5));": (
@@ -90,10 +75,6 @@ _A_CALL_THAT_INSTALLS_NOTHING: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: Programs that install a key on every object through a method whose name an object holds, and read
-#: that key off an object of their own, mapped to what Node prints: the reading object declared
-#: before the one holding the name, and declared in a function nested in its scope. An obfuscator
-#: stores the names a program spells in such objects, and the program itself is arbitrary.
 _A_KEY_ANOTHER_OBJECT_READS_AFTER_A_COPY_INSTALLED_IT = {
     a_program("""
         var B = {x: 1};
@@ -109,7 +90,6 @@ _A_KEY_ANOTHER_OBJECT_READS_AFTER_A_COPY_INSTALLED_IT = {
         """): '1\n',
 }
 
-#: Each model and host a deobfuscation below is asked under.
 _EVERY_MODE = [
     (False, 'universal'),
     (True, 'universal'),
@@ -171,4 +151,3 @@ class TestACallThatInstallsNothingBlocksNoFold(TestBase):
             for strict, environment in _EVERY_MODE:
                 with self.subTest(source=source, strict=strict, environment=environment):
                     self.assertEqual(behavior(_deobfuscated(source, strict, environment)), (prints, None))
-

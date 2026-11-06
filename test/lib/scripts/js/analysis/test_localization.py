@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test import TestBase
+from test import TestBase, opportunity
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.cache import ModelCache
@@ -68,8 +68,16 @@ class TestLocalization(TestBase):
     def test_initialized_pseudo_global_is_not_localizable(self):
         self.assertStays('var x = compute(); function f() { x = 1; return x; } f();')
 
-    def test_pseudo_global_captured_by_nested_closure_is_not_localizable(self):
-        self.assertStays('var x; function f() { x = 1; return function () { return x; }; } f()();')
+    def test_pseudo_global_a_closure_reads_after_a_later_run_is_not_localizable(self):
+        self.assertStays(
+            'var x;'
+            ' function f(v) { x = v; return function () { return x; }; }'
+            ' var g = f(1); f(2); console.log(g());'
+        )
+
+    @opportunity
+    def test_pseudo_global_a_closure_of_the_only_run_reads_localizes_there(self):
+        self.assertMovesIntoF('var x; function f() { x = 1; return function () { return x; }; } f()();')
 
     def test_reflection_surface_disables_localization(self):
         self.assertStays('var x; function f() { x = 1; return x; } eval(payload);')

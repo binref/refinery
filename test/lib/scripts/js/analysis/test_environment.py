@@ -4,7 +4,7 @@ import inspect
 import json
 import unittest
 
-from test import TestBase
+from test import TestBase, backlog
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
 from refinery.lib.scripts.js.analysis.environment import (
@@ -23,10 +23,8 @@ from refinery.lib.scripts.js.parser import JsParser
 
 _HOST_CONDITIONAL_ALIASES = ('window', 'self', 'top', 'frames', 'global')
 
-#: A program printing what each own property of the global object it runs on is, in the terms the
-#: data of `refinery.lib.scripts.js.analysis.environment` uses: a store of `null` and of an object is
-#: made into each property with a setter, and a read after it either gives back what was stored or a
-#: value the property keeps of its own.
+_LANGUAGE_CONSTANTS = frozenset({'NaN', 'Infinity', 'undefined'})
+
 _A_READOUT_OF_THE_GLOBAL_OBJECT = inspect.cleandoc("""
     const describe = Object.getOwnPropertyDescriptor;
     const print = console.log.bind(console);
@@ -52,9 +50,6 @@ _A_READOUT_OF_THE_GLOBAL_OBJECT = inspect.cleandoc("""
     print(JSON.stringify(kinds));
     """)
 
-#: A program printing what each property the global object it runs on inherits from a prototype
-#: between it and `Object.prototype`, under a name it does not hold, is, in the terms of
-#: `_A_READOUT_OF_THE_GLOBAL_OBJECT`; nothing is stored into any of them.
 _A_READOUT_OF_WHAT_THE_GLOBAL_OBJECT_INHERITS = inspect.cleandoc("""
     const describe = Object.getOwnPropertyDescriptor;
     const print = console.log.bind(console);
@@ -71,12 +66,6 @@ _A_READOUT_OF_WHAT_THE_GLOBAL_OBJECT_INHERITS = inspect.cleandoc("""
 
 
 def _bare_read_may_throw(source: str, name: str, environment: HostEnvironment) -> bool:
-    """
-    Whether the model, pinned to *environment*, answers that the one bare read of *name* in *source*
-    may throw a `ReferenceError`. The name is expected to occur exactly once as a reference, so that a
-    program deleting the name off the global object can spell it in the delete's member position
-    without that key counting as a read.
-    """
     ast = JsParser(source).parse()
     model = build_semantic_model(ast, environment)
     reads = [
@@ -90,11 +79,6 @@ def _bare_read_may_throw(source: str, name: str, environment: HostEnvironment) -
 
 
 class TestTheUniversalEnvironmentIsTheLanguageFloor(TestBase):
-    """
-    The default `universal` environment asserts exactly the globals the ECMAScript specification
-    mandates, so an unpinned deobfuscation is judged as it always was. A pinned host only ever adds
-    names, never removes one the language guarantees.
-    """
 
     def test_universal_provides_every_guaranteed_global(self):
         for name in GUARANTEED_GLOBALS:
@@ -112,18 +96,21 @@ class TestTheUniversalEnvironmentIsTheLanguageFloor(TestBase):
                 with self.subTest(environment=environment.name, name=name):
                     self.assertTrue(environment.provides(name))
 
-    def test_a_language_mandated_name_is_never_withheld_on_delete(self):
+    def test_a_language_constant_is_never_withheld_on_delete(self):
         for environment in HostEnvironment:
-            for name in GUARANTEED_GLOBALS:
+            for name in _LANGUAGE_CONSTANTS:
                 with self.subTest(environment=environment.name, name=name):
                     self.assertFalse(environment.withholds_on_delete(name))
 
+    @backlog
+    def test_a_delete_withholds_every_language_mandated_name_that_is_not_a_constant(self):
+        for environment in HostEnvironment:
+            for name in GUARANTEED_GLOBALS - _LANGUAGE_CONSTANTS:
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertTrue(environment.withholds_on_delete(name))
+
 
 class TestTheUniversalHostCallsEveryHandlerAPinnedHostCalls(TestBase):
-    """
-    The default `universal` environment covers every host a pin names, so a function a script
-    stores where any one of them calls it is called there too.
-    """
 
     def test_every_handler_a_pinned_host_calls_is_called_without_a_pin(self):
         for environment in HostEnvironment:
@@ -148,12 +135,6 @@ class TestAHostReadsTheValueStoredWhereItCallsAHandler(TestBase):
 
 
 class TestAHostHoldsEveryPropertyItHasAPartIn(TestBase):
-    """
-    A window holds every property whose stored value it reads, and the default `universal`
-    environment holds every property a pinned host holds and keeps its own value in each that one
-    does. A worker is not asked the first: it inherits most of what it calls and provides from the
-    prototype of its global object, which a `var` of the name does not land on.
-    """
 
     def test_every_property_whose_stored_value_a_window_reads_is_one_it_holds(self):
         spec = _SPECS[HostEnvironment.browser]
@@ -187,7 +168,6 @@ class TestAHostInheritsPropertiesItsGlobalObjectDoesNotHold(TestBase):
     """
     A dedicated worker inherits `self`, a getter without a setter, from the prototype of its global
     object, and a window inherits the constant `TEMPORARY`; a store into either name keeps nothing.
-    The default `universal` environment inherits every such property a pinned host inherits.
     """
 
     def test_a_worker_inherits_its_self_keeping_a_value_of_its_own(self):
@@ -241,12 +221,6 @@ class TestAGlobalIsANameSomeHostHasAPropertyUnder(TestBase):
 
 
 class TestABareGlobalReadIsJudgedAgainstThePinnedHost(TestBase):
-    """
-    A bare read of a name the program never declares reaches the host's global object, and whether it
-    resolves or raises a `ReferenceError` is the host's fact: `global` exists under Node and not in a
-    browser, `window` and `self` the other way around, and `self` is a worker's own global alias while
-    `window` is not. The default `universal` environment resolves neither, so both are kept.
-    """
 
     def test_node_resolves_its_own_alias_and_still_throws_a_browser_alias(self):
         self.assertFalse(_bare_read_may_throw('global;', 'global', HostEnvironment.node))
@@ -267,12 +241,6 @@ class TestABareGlobalReadIsJudgedAgainstThePinnedHost(TestBase):
 
 
 class TestPresenceIsThreeValued(TestBase):
-    """
-    A pinned host answers a name `PRESENT`, `ABSENT`, or `UNKNOWN`. `PRESENT` is exactly what `provides`
-    reports; `ABSENT` names the well-known globals of other hosts this one is characterized to lack; and
-    the two are disjoint, so no name is claimed present and absent at once. The default `universal` host
-    is certain of no absence — every non-guaranteed name is `UNKNOWN`, since some host defines it.
-    """
 
     def test_presence_present_agrees_with_provides(self):
         for environment in HostEnvironment:
@@ -285,12 +253,9 @@ class TestPresenceIsThreeValued(TestBase):
 
     def test_present_and_absent_are_disjoint(self):
         for environment in HostEnvironment:
-            for name in ('String', 'Buffer', 'window', 'global', 'process', 'self', 'navigator'):
-                with self.subTest(environment=environment.name, name=name):
-                    presence = environment.presence(name)
-                    self.assertIn(presence, (Presence.PRESENT, Presence.ABSENT, Presence.UNKNOWN))
-                    if presence is Presence.PRESENT:
-                        self.assertTrue(environment.provides(name))
+            spec = _SPECS[environment]
+            with self.subTest(environment=environment.name):
+                self.assertEqual(spec.provided & spec.absent, frozenset())
 
     def test_the_universal_host_is_certain_of_no_absence(self):
         for name in ('Buffer', 'window', 'global', 'process', 'require', 'self'):
@@ -303,20 +268,13 @@ class TestPresenceIsThreeValued(TestBase):
 
     def test_a_dedicated_worker_does_not_call_request_animation_frame_absent(self):
         """
-        A dedicated worker exposes `requestAnimationFrame` through the `AnimationFrameProvider` mixin, so
-        `-e worker` must not assert it absent: `typeof requestAnimationFrame` abstains rather than folding
-        to `'undefined'`, which would drop a branch the host actually takes.
+        A dedicated worker has `requestAnimationFrame`, as a window does.
         """
         self.assertIsNot(HostEnvironment.worker.presence('requestAnimationFrame'), Presence.ABSENT)
         self.assertIsNone(typeof_of_global('requestAnimationFrame', HostEnvironment.worker))
 
 
 class TestTypeofFoldsOnlyWhereTheHostSettlesIt(TestBase):
-    """
-    `typeof name` folds to a constant only where the result is host-independent or the pinned host settles
-    it. A universal name folds in every host; a host-conditional name folds to its type where the host
-    provides it and to `'undefined'` where the host is certain it is absent, and abstains otherwise.
-    """
 
     def test_a_universal_typeof_folds_in_every_host(self):
         for environment in HostEnvironment:
@@ -348,11 +306,6 @@ class TestTypeofFoldsOnlyWhereTheHostSettlesIt(TestBase):
                 self.assertIsNone(typeof_of_global(name, HostEnvironment.universal))
 
     def test_every_provided_host_conditional_name_has_a_typeof(self):
-        """
-        A name a host provides beyond the language floor must have a recorded `typeof`, or `typeof
-        <name>` under that pin silently stops folding where the read itself resolves. This couples the
-        provide sets to the `typeof` map the way `GUARANTEED_GLOBALS` is coupled to its own.
-        """
         for environment in HostEnvironment:
             for name in _SPECS[environment].provided - GUARANTEED_GLOBALS:
                 with self.subTest(environment=environment.name, name=name):
@@ -361,11 +314,9 @@ class TestTypeofFoldsOnlyWhereTheHostSettlesIt(TestBase):
 
 class TestDeletingAHostGlobalWithholdsItsPinnedPresence(TestBase):
     """
-    A host-conditional global is a deletable property of the global object, so a program that deletes
-    one off a global-object alias makes a later bare read of it throw. The pin withholds the name's
-    presence program-wide once such a delete appears, keeping the read's throw rather than dropping it;
-    a language-mandated name is never withheld, and a delete off a shadowed alias — a local of the same
-    name — deletes nothing off the global object and so withholds nothing.
+    A host-conditional global is a deletable property of the global object, and so is every
+    language-mandated one except the constants `NaN`, `Infinity` and `undefined`; a bare read of a
+    deleted name throws.
     """
 
     def test_a_bare_read_resolves_when_the_host_defines_the_name(self):
@@ -383,9 +334,14 @@ class TestDeletingAHostGlobalWithholdsItsPinnedPresence(TestBase):
         source = 'delete top.Buffer; Buffer;'
         self.assertTrue(_bare_read_may_throw(source, 'Buffer', HostEnvironment.node))
 
-    def test_deleting_a_language_mandated_name_withholds_nothing(self):
+    def test_deleting_a_language_constant_withholds_nothing(self):
+        source = 'delete globalThis.NaN; NaN;'
+        self.assertFalse(_bare_read_may_throw(source, 'NaN', HostEnvironment.node))
+
+    @backlog
+    def test_deleting_a_language_mandated_name_that_is_not_a_constant_withholds_it(self):
         source = 'delete globalThis.String; String;'
-        self.assertFalse(_bare_read_may_throw(source, 'String', HostEnvironment.node))
+        self.assertTrue(_bare_read_may_throw(source, 'String', HostEnvironment.node))
 
     def test_a_delete_off_a_shadowed_alias_withholds_nothing(self):
         source = 'var globalThis = 0; delete globalThis.Buffer; Buffer;'

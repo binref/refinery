@@ -1,14 +1,4 @@
 """
-A key a fold spells where the models read a key they could not read.
-
-Each program holds a key a later fold decodes, by `String.fromCharCode`, a slice, a conditional or a
-parameter, where a reader of the models looks for a name: an `eval` or a `Function` read, a key that
-reaches a prototype, a `constructor` that is constructed with, a `caller`, a global read or written
-through a receiver that may be the global object, an install on the global object. A held model read
-that key as none of the names, so the fold that spells one there renews the models. The run that
-holds the models and the run that builds them again for every decision write the same text, and Node
-prints the same for the program and for that text.
-
 SECURITY: every program here is written out by the module itself and Node runs only those. Nothing
 from `samples` may ever be handed to the engine.
 """
@@ -24,8 +14,6 @@ from test.lib.scripts.js.ledger import before_and_after, each_program_still_prin
 from refinery.lib.scripts.modelcache import ModelCacheBase
 from refinery.units.scripting.djs import djs
 
-#: A program spelling a key a reader looks for only once a fold decodes it, mapped to what Node
-#: makes of it.
 _A_KEY_A_FOLD_SPELLS: dict[str, tuple[str, str | None]] = {
     "var w = (function () { return this; })(); w[1 ? 'eval' : 'x']('g()'); var o = {}; o.x = 1;"
     " globalThis[Math.random()]; g(); function g() { console.log('x' in o); }": ('', 'ReferenceError'),
@@ -47,14 +35,11 @@ _A_KEY_A_FOLD_SPELLS: dict[str, tuple[str, str | None]] = {
     "[]['#__proto__'.slice(1)].x = 5; console.log([].x);": ('5\n', None),
 }
 
-#: A program building a function through `constructor` read twice under a key spelled as a
-#: concatenation, mapped to what Node prints for it.
 _A_FUNCTION_BUILT_UNDER_A_CONCATENATED_KEY = {
     "var F = []['constr' + 'uctor']['constr' + 'uctor'];"
     " F('Math.floor = function () { return 7; }')(); console.log(Math.floor(1.5));": '7\n',
 }
 
-#: Each model a deobfuscation below is asked under.
 _EVERY_MODEL = [False, True]
 
 
@@ -65,6 +50,10 @@ def _holding_nothing(self):
 
 def _deobfuscated(source: str, strict: bool) -> str:
     return source.encode('utf8') | djs(strict=strict) | str
+
+
+def _deobfuscated_as_a_commonjs_file(source: str, strict: bool) -> str:
+    return source.encode('utf8') | djs(strict=strict, commonjs=True) | str
 
 
 def _deobfuscated_rebuilding_the_models(source: str, strict: bool) -> str:
@@ -94,20 +83,15 @@ class TestAKeyAFoldSpellsRenewsTheModels(TestBase):
                 self.assertEqual(behavior(source), does)
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    def test_node_does_the_same_with_each_deobfuscation(self):
+    def test_node_does_the_same_with_each_deobfuscation_written_for_a_commonjs_file(self):
         for source, does in _A_KEY_A_FOLD_SPELLS.items():
             for strict in _EVERY_MODEL:
                 with self.subTest(source=source, strict=strict):
-                    self.assertEqual(behavior(_deobfuscated(source, strict)), does)
+                    self.assertEqual(behavior(_deobfuscated_as_a_commonjs_file(source, strict)), does)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAConcatenatedKeyIsReadAsTheStringItSpells(TestBase):
-    """
-    `[].constructor.constructor` is `Function`, and the function it builds replaces `Math.floor`
-    before the program calls it. Every reader reads `'constr' + 'uctor'` as `constructor`, so the
-    strict model counts the construction and leaves the call standing.
-    """
 
     def test_the_deobfuscation_prints_what_the_program_prints(self):
         rows = _A_FUNCTION_BUILT_UNDER_A_CONCATENATED_KEY

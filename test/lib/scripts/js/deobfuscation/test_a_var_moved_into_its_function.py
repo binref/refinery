@@ -1,11 +1,3 @@
-"""
-A file-level `var` whose every reference lies in one function, which
-`refinery.lib.scripts.js.deobfuscation.unused.JsUnusedCodeRemoval` moves into that function where
-every run of it reads only what that run stored
-(`refinery.lib.scripts.js.analysis.localization`). Each program is written by hand, and each row
-says what Node prints for it run the way its reading names: as a CommonJS file, or as a classic
-script where the row reaches the global object.
-"""
 from __future__ import annotations
 
 import unittest
@@ -16,11 +8,6 @@ from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 
 from refinery.lib.scripts.js.options import ExecutionModel
 
-#: Programs with a file-level `var` one function writes before it reads it, which another run of
-#: that function writes in between, mapped to what Node prints for each: the run waits at an
-#: `await`, a `yield`, the head of a `for await` loop, a point leaving the body of such a loop,
-#: which waits for its iterator to close, or the `return` of an async generator, calls itself,
-#: calls code that calls it, or reads the `var` after such a call in the statement that makes it.
 ANOTHER_RUN_WRITES: dict[str, Program] = {
     'an await': Program(
         a_program("""
@@ -217,9 +204,8 @@ ANOTHER_RUN_WRITES: dict[str, Program] = {
     ),
 }
 
-#: Programs with a file-level `var` one function writes before it reads it in its body, and which an
-#: expression of its parameter list reads or writes, mapped to what Node prints for each: those
-#: expressions run in a scope of their own, which a `var` declared in the body does not reach.
+#: Parameter expressions run in a scope of their own, which a `var` declared in the body does not
+#: reach.
 READ_OR_WRITTEN_IN_THE_PARAMETERS: dict[str, Program] = {
     'a parameter default that reads it': Program(
         a_program("""
@@ -249,9 +235,6 @@ READ_OR_WRITTEN_IN_THE_PARAMETERS: dict[str, Program] = {
     ),
 }
 
-#: Classic scripts with a file-level `var` one function writes before it reads it, which the
-#: function also reaches as a property of a name holding the global object, mapped to what Node
-#: prints for each: the `var` is that property only while the file declares it.
 REACHED_THROUGH_THE_GLOBAL_OBJECT: dict[str, Program] = {
     'a member of a name holding the global object': Program(
         a_program("""
@@ -279,10 +262,6 @@ REACHED_THROUGH_THE_GLOBAL_OBJECT: dict[str, Program] = {
     ),
 }
 
-#: Programs with a file-level `var` one function writes before it reads it, which no other run of
-#: that function writes in between, mapped to what Node prints for each: the run reads it before
-#: it calls itself, calls itself or waits before it stores it, calls code that cannot run it, or
-#: returns from an async function, which does not wait there.
 NO_OTHER_RUN_WRITES: dict[str, Program] = {
     'a read before the call': Program(
         a_program("""

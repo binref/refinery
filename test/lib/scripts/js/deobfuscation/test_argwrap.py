@@ -101,11 +101,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
 
     def test_argwrap_expression_position_lowered_to_sequence(self):
-        """
-        A wrapper call embedded in a larger expression cannot expand to preceding statements without
-        reordering side effects, so it is lowered in place to the comma sequence its evaluation is
-        equivalent to — the arguments left to right, then `undefined`.
-        """
         source = inspect.cleandoc(
             """
             function wr() { wr = function() {}; }
@@ -147,10 +142,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
 
     def test_conditional_arm_preserves_short_circuit(self):
-        """
-        The wrapper call sits in a conditional arm, evaluated only when the branch is taken; lowering
-        it to a sequence in place keeps `a()` out of the untaken branch.
-        """
         source = 'function wr() { wr = function() {}; } var y = c ? wr(a()) : 0; g(y);'
         self.assertEqual(
             self._run_transformer(source, JsAssignmentsAsFunctionArgs),
@@ -163,11 +154,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
 
     def test_parenthesized_callee_is_expanded_like_a_bare_one(self):
-        """
-        `(wr)(x = 1)` calls what `wr(x = 1)` calls: parentheses around a callee say nothing about
-        which binding the call reads, and
-        `refinery.lib.scripts.js.analysis.model.enclosing_operator` is what looks through them.
-        """
         source = inspect.cleandoc(
             """
             function wr() { wr = function() {}; }
@@ -185,10 +171,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
         self.assertEqual(self._deobfuscate_iterative(source), goal)
 
     def test_spread_argument_call_not_expanded(self):
-        """
-        A spread argument cannot become a comma-sequence operand (or a bare statement) without
-        producing invalid syntax, so the call is left intact and the wrapper is retained.
-        """
         source = 'function wr() { wr = function() {}; } var y = wr(...arr); g(y);'
         self.assertEqual(
             self._run_transformer(source, JsAssignmentsAsFunctionArgs),
@@ -217,9 +199,8 @@ class TestOnlyAWrapperTheNameActuallyHoldsIsExpanded(TestJsDeobfuscator):
 
     def test_a_wrapper_a_parameter_default_cannot_see_is_left_standing(self):
         """
-        A parameter default runs in a scope of its own, outside the body, so `W` there is not the
-        `W` the body declares and the call throws before the body ever runs. The model gives the
-        parameters and the body one scope, so the call is recorded against the body's binding.
+        A parameter default runs in a scope of its own, outside the body, so its `W` is not the
+        function the body declares and the call throws.
         """
         source = inspect.cleandoc(
             """
@@ -244,10 +225,6 @@ class TestOnlyAWrapperTheNameActuallyHoldsIsExpanded(TestJsDeobfuscator):
         )
 
     def test_a_wrapper_nothing_calls_is_left_standing_beside_one_that_expands(self):
-        """
-        No call to `never` was expanded, so the answer about its declaration is one no call asked
-        for. Expanding a call to `used` says nothing about it.
-        """
         source = inspect.cleandoc(
             """
             function never() { never = function () {}; }
@@ -268,12 +245,6 @@ class TestOnlyAWrapperTheNameActuallyHoldsIsExpanded(TestJsDeobfuscator):
         )
 
     def test_a_wrapper_the_analyst_named_as_a_host_entrypoint_is_left_standing(self):
-        """
-        A host that calls `wr` by name reads a declaration this file never calls, so removing it
-        deletes code reachable from outside. The other two removers of a function declaration —
-        `refinery.lib.scripts.js.deobfuscation.unused.JsUnusedCodeRemoval` and
-        `refinery.lib.scripts.js.deobfuscation.evaluator.JsFunctionEvaluator` — refuse it too.
-        """
         source = self._wrapper_and_call()
         self.assertEqual(
             self._run_transformer(
@@ -292,10 +263,6 @@ class TestOnlyAWrapperTheNameActuallyHoldsIsExpanded(TestJsDeobfuscator):
         )
 
     def test_a_wrapper_no_export_names_is_expanded_beside_an_export_of_that_name(self):
-        """
-        The exported `wr` is the top-level `var`; the wrapper is a different binding inside `outer`
-        that no export list can reach.
-        """
         source = inspect.cleandoc(
             """
             var wr = 1;

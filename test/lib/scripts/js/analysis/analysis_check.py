@@ -1,31 +1,12 @@
 """
-Runtime ground-truth checker for the effect model's mutation analysis. It generates a small, benign,
-deterministic program that defines a function `f`, runs that program in Node.js while recording which
-outer variables `f` actually rebinds, then asks the effect model the same question and asserts the
-model's answer COVERS what really happened: every outer variable that changed when `f()` ran is in
-`mutated_bindings(f)`. Only this safe direction is checked — the model may over-approximate (name a
-binding that did not change on a given run, e.g. a write in a branch that was not taken) but it must
-never miss one, since a missed mutation is exactly what lets a constant be inlined past a real write.
+Checks the effect model's mutation analysis against Node.js: it generates a small program defining a
+function `f`, runs it in Node while recording which outer variables `f()` rebinds, and checks the
+model's answer against them. The model may name a variable that did not change on a run, but must
+never miss one that did.
 
-This tests the analysis layer directly, rather than only the deobfuscator's final output: a wrong
-`mutated_bindings` answer is caught on a tiny program, with no cleanup pass needed to trip over it.
-Three of the soundness bugs the binding-resolved effect lift introduced were wrong answers of exactly
-this kind, reachable here but not by the output-level fuzzer.
-
-The check is scoped to a function the model resolves completely. When `f`'s summary is `calls_unknown`
-the model does not claim to enumerate the bindings reached through the unknown call, so the coverage
-promise does not apply and the sample is skipped. And a changed variable is only required to be
-reported when the model considers it readable (`Binding.is_read`): a write whose result no code in the
-analysed program can observe is, by design, not a mutated binding, even though the probe's own snapshot
-reads it. The generator exercises the resolvable mutation shapes the lift bugs hid in — a write whose
-reads are all confined to `f`, a redeclared helper, a mutation through a nested function or a
-transitive call — and leaves the unresolved shapes to the output-level differential fuzzer.
-
-`generate_probe(seed)` is a pure function of its integer seed, so any failure reproduces from its seed.
-
-SECURITY: like `differential`, this executes JavaScript in Node.js and must only ever run the benign
-programs this module generates. Never point it at the repository's malware corpus or any untrusted
-sample — executing those is forbidden.
+SECURITY: this executes JavaScript in Node.js and must only ever run the benign programs this module
+generates. Never point it at the repository's malware corpus or any untrusted sample; executing
+those is forbidden.
 """
 from __future__ import annotations
 
@@ -47,11 +28,6 @@ _CHECK_RE = re.compile(F'^{_CHECK_PREFIX}(.*)$', re.MULTILINE)
 
 @dataclass
 class ProbeProgram:
-    """
-    A generated analysis subject: *source* is an inert program (variable declarations and function
-    definitions only, nothing runs at the top level), *outer_names* are its outer variables, and
-    *func_name* names the function under test. The probe in `run_text` is what actually invokes it.
-    """
     source: str
     outer_names: list[str]
     func_name: str
@@ -59,13 +35,10 @@ class ProbeProgram:
 
 class _ProbeGenerator:
     """
-    Builds one `ProbeProgram` for a seed. Every program is valid, terminating (no `while`, only
-    constant-bound `for` loops, an acyclic call graph), deterministic (no clock, randomness, `this`,
-    host object, or reflective construct), and benign (it only assigns integer literals, calls locally
-    declared helpers, and adds its outer variables). The function under test `f` reads every outer
-    variable once in its `return`, so each is a binding the model treats as read, and writes a subset
-    of them through a mix of direct, conditional, looped, nested-function, and transitive-call forms —
-    plus the occasional redeclared helper, whose call the model must treat as unknown.
+    Node runs every program this builds, so each must stay terminating, deterministic and benign: no
+    `while`, only constant-bound `for` loops, an acyclic call graph, no clock, randomness, host
+    object or reflective construct, and nothing but integer assignments, calls of local helpers and
+    additions.
     """
 
     def __init__(self, seed: int):
@@ -137,19 +110,14 @@ class _ProbeGenerator:
 
 
 def generate_probe(seed: int) -> ProbeProgram:
-    """
-    Build the benign analysis subject for *seed*. The same seed always yields the same program.
-    """
     return _ProbeGenerator(seed).generate()
 
 
 def run_text(probe: ProbeProgram) -> str:
     """
-    The runnable form of *probe*: the inert program followed by a probe that snapshots each outer
-    variable, calls the function under test once, and prints the names of the variables whose identity
-    changed. The snapshot reads the outer variables outside the function, so it is appended here rather
-    than placed in `probe.source`, which the model analyses as the program actually written (a variable
-    read only inside the function stays confined there for the analysis).
+    The program Node runs for *probe*: its source followed by code that prints which outer variables
+    `f()` rebinds. That code stays out of `probe.source` because it reads every outer variable
+    outside `f`, which would change what the model is asked.
     """
     snapshot = ' '.join(F'var _b{i} = {name};' for i, name in enumerate(probe.outer_names))
     compare = ' '.join(
@@ -167,9 +135,6 @@ def run_text(probe: ProbeProgram) -> str:
 
 
 def observed_changes(probe: ProbeProgram, *, timeout: float = NODE_TIMEOUT) -> set[str]:
-    """
-    The set of outer variables of *probe* whose identity changed when `f()` ran in Node.js.
-    """
     stdout, error = behavior(run_text(probe), timeout=timeout)
     if error is not None:
         raise RuntimeError(F'probe did not run cleanly in node ({error}):\n{run_text(probe)}')
@@ -187,12 +152,6 @@ class _ModelView:
 
 
 def model_view(probe: ProbeProgram) -> _ModelView:
-    """
-    The effect model's answer for *probe*'s function: the outer variables it reports the function may
-    mutate, the outer variables it treats as read (so a write to them is observable), and whether its
-    summary is `calls_unknown` (in which case it does not claim to enumerate the bindings the unknown
-    call reaches).
-    """
     ast = JsParser(probe.source).parse()
     model = build_semantic_model(ast)
     effects = build_effects(model)
@@ -218,10 +177,9 @@ def model_view(probe: ProbeProgram) -> _ModelView:
 
 def unsound_misses(probe: ProbeProgram, observed: set[str], view: _ModelView) -> set[str]:
     """
-    The outer variables that observably changed at runtime, are observable to the analysed program
-    (read somewhere in it), yet the model did not report as mutated — the unsound under-reports. Empty
-    when the model is sound for this program. Always empty, vacuously, when the summary is
-    `calls_unknown`, where the model makes no completeness claim.
+    The outer variables that changed when `f()` ran and that the analysed program reads, but that
+    the model does not report as mutated. A write nothing in the program reads is no mutation to the
+    model, and a `calls_unknown` summary claims no complete list, so neither counts as a miss.
     """
     if view.calls_unknown:
         return set()

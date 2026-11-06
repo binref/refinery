@@ -1,16 +1,7 @@
 """
-What the printer spells for a comma expression, and what the text it spells reads back as.
-
-A sequence is flat in the source text and nested in the tree, so the commas alone do not say which
-tree wrote them: `(a, b), c` and `a, (b, c)` are two trees that both spell `a, b, c` once the
-brackets are gone, and reading that back gives one sequence of three. The two compute the same
-value, which is why no assertion about what a program prints when it runs could tell them apart,
-and why every assertion here is about the text or about the tree that parses out of it.
-
-The trees are reached by parsing a bracketed spelling and then taking the bracket nodes away, which
-is the tree a pass holds after folding an expression into the slot a bracket used to occupy. A tree
-straight from the parser still carries the brackets its source was written with and would say
-nothing about whether the printer can put them back.
+Each table maps a source to the text the printer writes for its tree once the brackets the source
+was written with are taken away: the brackets in the source say which tree is meant, and the
+brackets in the output are the ones the printer has to supply.
 """
 from __future__ import annotations
 
@@ -23,11 +14,6 @@ from refinery.lib.scripts import Node, canonical
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
-#: One comma list, written with every nesting that spells it, and the flat sequence as a control.
-#: The context is the same throughout so that only the shape of the tree varies. Each entry maps a
-#: bracketed source to the text its unbracketed tree must print as: the brackets in the source say
-#: which tree is meant and are then removed, and the brackets in the output are the ones the printer
-#: had to supply on its own.
 SEQUENCE_IN_A_SEQUENCE: dict[str, str] = {
     '(a, b, c);': 'a, b, c;',
     '((a, b), c);': '(a, b), c;',
@@ -39,9 +25,7 @@ SEQUENCE_IN_A_SEQUENCE: dict[str, str] = {
     '(((a, b), c), ((d, e), f));': '((a, b), c), ((d, e), f);',
 }
 
-#: The positions whose grammar reads a whole `Expression`, which is what a comma list is. A sequence
-#: standing in one of them is spelled without brackets, and only the sequence nested inside it keeps
-#: a pair.
+#: The positions whose grammar reads a whole `Expression`, which a comma list is.
 WHERE_A_COMMA_LIST_STANDS_BARE: dict[str, str] = {
     'x[((a, b), c)];': 'x[(a, b), c];',
     'x?.[((a, b), c)];': 'x?.[(a, b), c];',
@@ -69,8 +53,7 @@ WHERE_A_COMMA_LIST_STANDS_BARE: dict[str, str] = {
 }
 
 #: The positions whose grammar reads a single `AssignmentExpression`, where a bare comma would end
-#: the operand rather than continue it. A sequence standing in one of them is spelled with brackets
-#: of its own, and the sequence nested inside it keeps a second pair.
+#: the operand.
 WHERE_A_COMMA_LIST_NEEDS_A_BRACKET: dict[str, str] = {
     'f(((a, b), c));': 'f(((a, b), c));',
     'f(x, ((a, b), c));': 'f(x, ((a, b), c));',
@@ -158,16 +141,6 @@ class TestJsSequenceExpressionPrinting(TestBase):
         )
 
     def test_the_printed_text_reads_back_as_the_tree_that_was_printed(self):
-        """
-        What is re-read is the printer's output, never the text a table holds. Comparing a table
-        entry against its own source is the tempting simplification and it proves nothing: that
-        assertion calls the printer nowhere, so it stays green under a printer that has stopped
-        bracketing anything at all.
-
-        Both trees have their brackets taken away before they are compared, because a bracket is
-        not part of the program: what is asserted is that the sequences nest the same way, which
-        is exactly what the commas alone cannot say.
-        """
         for table in (
             SEQUENCE_IN_A_SEQUENCE,
             WHERE_A_COMMA_LIST_STANDS_BARE,

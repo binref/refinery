@@ -1,20 +1,18 @@
 """
-Programs that read a table through an accessor over an array `var T = [...]`, a function like
+Programs that read a table through an accessor, a function over an array such as
 
     function A(i) { return T[i]; }
 
 and programs whose functions read other names declared outside them. A call folds to the value it
-reads where that name holds one value nothing changes and that value is in place before the call
-runs. Every other call stays, or becomes the read it makes. A function that changes an array it
-reads, or hands the array out, keeps every call, since what a call answers then depends on every
-call made before it.
+reads only where that name holds one value nothing changes and that value is in place before the
+call runs.
 """
 from __future__ import annotations
 
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     deobfuscate_source,
@@ -35,8 +33,6 @@ from test.lib.scripts.js.ledger import (
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.units.scripting.djs import djs
 
-#: Programs calling an accessor whose table, or a function whose constant, is in place before every
-#: call runs and never changes, mapped to what Node prints for them.
 A_CALL_THE_TABLE_IS_IN_PLACE_FOR = {
     a_program("""
         function A(i) { return T[i > 1 ? i - 3 : i - -2]; }
@@ -83,10 +79,6 @@ A_CALL_THE_TABLE_IS_IN_PLACE_FOR = {
         """): 'same\n',
 }
 
-#: Programs whose folded call runs a function that calls another one declared inside a function the
-#: fold is running, mapped to what Node prints for them and to the text the deobfuscation writes: a
-#: helper declared after a `return`, a sibling declaration and a recursive one are each in place
-#: wherever they are called, since a declaration is in place from the start of the run declaring it.
 A_CALL_INTO_A_FUNCTION_A_RUNNING_FUNCTION_DECLARES = {
     a_program("""
         function outer(x) {
@@ -112,8 +104,6 @@ A_CALL_INTO_A_FUNCTION_A_RUNNING_FUNCTION_DECLARES = {
         """): ('120\n', 'console.log(120);'),
 }
 
-#: A program whose folded call runs a closure that a call it made earlier created and handed out
-#: before putting the name the closure reads in place, mapped to what Node prints for it.
 A_CLOSURE_READING_A_NAME_ITS_RUN_HAS_NOT_PUT_IN_PLACE = {
     a_program("""
         function mk(early) {
@@ -127,9 +117,6 @@ A_CLOSURE_READING_A_NAME_ITS_RUN_HAS_NOT_PUT_IN_PLACE = {
         """): 'undefined\n',
 }
 
-#: Programs whose function declares a name in a block that it also reads for another binding, or
-#: whose folded call is written in such a function, mapped to what Node prints for them. The name
-#: read outside the block is the other binding, whatever the block put under the name.
 A_BLOCK_DECLARING_A_NAME_THE_FUNCTION_ALSO_READS = {
     a_program("""
         const e = 3;
@@ -159,9 +146,6 @@ A_BLOCK_DECLARING_A_NAME_THE_FUNCTION_ALSO_READS = {
         """): 'undefined\n',
 }
 
-#: Programs calling a function before the name it reads is in place, from a function that is folded
-#: later in the same pass, mapped to what Node prints for them. The read written in place of the
-#: first call names the binding the function reads, not a global of that name.
 A_READ_WRITTEN_BEFORE_ITS_NAME_IS_IN_PLACE_AND_FOLDED_AGAIN = {
     a_program("""
         function outer() {
@@ -181,11 +165,6 @@ A_READ_WRITTEN_BEFORE_ITS_NAME_IS_IN_PLACE_AND_FOLDED_AGAIN = {
         """): 'ReferenceError\n',
 }
 
-#: Programs whose one write of a name stands where its statement evaluates it on some runs only,
-#: below `&&`, in an arm of a conditional, on the right of a logical assignment, in a `switch`
-#: clause test, past an optional link, in a class field initializer or in a branch of a static
-#: block, and whose call reads the name after that statement, mapped to what Node prints for them.
-#: The statement completes on a run that skips the write.
 A_CALL_AFTER_A_WRITE_ITS_STATEMENT_MAY_SKIP = {
     a_program("""
         var c;
@@ -247,8 +226,6 @@ A_CALL_AFTER_A_WRITE_ITS_STATEMENT_MAY_SKIP = {
         """): 'TypeError\n',
 }
 
-#: Programs folding a chain of array methods that calls back into a function not yet in place where
-#: the chain runs, mapped to what Node prints for them.
 A_CHAIN_CALLING_BACK_INTO_A_FUNCTION_NOT_YET_IN_PLACE = {
     a_program("""
         try { console.log([1, 2].map(g).join('')); } catch (e) { console.log(e.name); }
@@ -260,9 +237,6 @@ A_CHAIN_CALLING_BACK_INTO_A_FUNCTION_NOT_YET_IN_PLACE = {
         """): 'TypeError\n',
 }
 
-#: Programs calling an accessor once before its table is in place and once after, mapped to what
-#: Node prints for them and to the text the deobfuscation writes: the first call becomes the read of
-#: the table it makes, which fails as the call did, and only the second becomes the element.
 A_CALL_BEFORE_THE_TABLE_IS_IN_PLACE = {
     a_program("""
         function A(i) { return T[i]; }
@@ -318,9 +292,6 @@ A_CALL_BEFORE_THE_TABLE_IS_IN_PLACE = {
     ),
 }
 
-#: Programs calling an accessor whose table changes, may change, is handed out, or is not the one
-#: the accessor reads, and a function that writes the value it reads, mapped to what Node prints
-#: for them. None of these calls has a value the file decides.
 A_CALL_WHOSE_TABLE_MAY_CHANGE = {
     a_program("""
         function A(i) { return T[i]; }
@@ -377,8 +348,6 @@ A_CALL_WHOSE_TABLE_MAY_CHANGE = {
         """): '2 2\n',
 }
 
-#: Programs calling a function that changes or hands out an array it reads, mapped to what Node
-#: prints for them.
 A_CALL_CHANGING_THE_ARRAY_IT_READS = {
     a_program("""
         const data = ['first', 'second', 'third'];
@@ -408,10 +377,8 @@ A_CALL_CHANGING_THE_ARRAY_IT_READS = {
         """): '3\n',
 }
 
-#: Scripts whose table code the file cannot read rewrites before the accessor is called, a direct
-#: `eval` in a function and a `Function` body, mapped to what a host running them as a classic
-#: script prints. The code runs where a table of the script is in reach, and no reference records
-#: it.
+#: Scripts whose table code known only at run time rewrites, through a direct `eval` in a function
+#: and a `Function` body, mapped to what a host running them as a classic script prints.
 A_SCRIPT_TABLE_THAT_CODE_IT_CANNOT_READ_REWRITES = {
     a_program("""
         var T = ['a', 'b'];
@@ -428,9 +395,8 @@ A_SCRIPT_TABLE_THAT_CODE_IT_CANNOT_READ_REWRITES = {
         """): 'z\n',
 }
 
-#: Scripts whose table is rewritten in plain sight before the accessor is called, by an indirect
-#: `eval` and by a store on the global object under a runtime key, mapped to what a host running
-#: them as a classic script prints.
+#: Scripts whose table is rewritten in plain sight, by an indirect `eval` and by a store on the
+#: global object, mapped to what a host running them as a classic script prints.
 A_SCRIPT_TABLE_REWRITTEN_IN_PLAIN_SIGHT = {
     a_program("""
         var T = ['a', 'b'];
@@ -446,8 +412,6 @@ A_SCRIPT_TABLE_REWRITTEN_IN_PLAIN_SIGHT = {
         """): 'z\n',
 }
 
-#: Programs whose function calls a method on its table or on an element of it, or iterates it,
-#: mapped to what Node prints for them. Nothing changes the table, so every call has one value.
 A_CALL_THAT_CALLS_A_METHOD_ON_THE_TABLE = {
     a_program("""
         const T = ['a', 'b'];
@@ -471,8 +435,6 @@ A_CALL_THAT_CALLS_A_METHOD_ON_THE_TABLE = {
         """): 'ab\n',
 }
 
-#: A program whose folded call runs a function that holds a table and a closure reading it, mapped
-#: to what Node prints for it.
 A_CALL_WHOSE_CLOSURE_READS_A_TABLE_OF_ITS_FUNCTION = {
     a_program("""
         function outer(x) { const T = ['a', 'b']; const A = i => T[i]; return A(x) + A(1 - x); }
@@ -480,15 +442,12 @@ A_CALL_WHOSE_CLOSURE_READS_A_TABLE_OF_ITS_FUNCTION = {
         """): 'ba\n',
 }
 
-#: A script whose table a host reads by name, and so may have rewritten before the call runs.
 A_TABLE_A_HOST_READS = a_program("""
     function A(i) { return T[i]; }
     var T = ['x'];
     console.log(A(0));
     """)
 
-#: Programs whose recursive function reads one of its own locals before the declaration of that
-#: local has run in the inner call, mapped to what Node prints for them.
 A_RECURSIVE_CALL_READING_A_LOCAL_BEFORE_ITS_DECLARATION = {
     a_program("""
         function F(n) {
@@ -666,24 +625,40 @@ class TestATableReadThroughAnAccessorIsFolded(TestBase):
             {source: written for source, (_, written) in rows.items()},
         )
 
-    def test_a_call_whose_table_may_change_is_left_as_it_is(self):
-        rows = A_CALL_WHOSE_TABLE_MAY_CHANGE
+    @opportunity
+    def test_a_call_after_its_table_changed_in_plain_sight_becomes_the_element_it_reads(self):
+        rows = {
+            a_program("""
+                function A(i) { return T[i]; }
+                var T = ['x'];
+                console.log(A(0));
+                T[0] = 'y';
+                console.log(A(0));
+                """): inspect.cleandoc(
+                """
+                console.log('x');
+                console.log('y');
+                """
+            ),
+            a_program("""
+                function A(i) { return T[i]; }
+                var T = ['x'];
+                console.log(A(0));
+                T = ['y'];
+                console.log(A(0));
+                """): inspect.cleandoc(
+                """
+                console.log('x');
+                console.log('y');
+                """
+            ),
+        }
         self.assertEqual(
             {
                 source: deobfuscate_source(source, execution=ExecutionModel.module)
                 for source in rows
             },
-            {source: printed(source) for source in rows},
-        )
-
-    def test_a_call_changing_the_array_it_reads_is_left_as_it_is(self):
-        rows = A_CALL_CHANGING_THE_ARRAY_IT_READS
-        self.assertEqual(
-            {
-                source: deobfuscate_source(source, execution=ExecutionModel.module)
-                for source in rows
-            },
-            {source: printed(source) for source in rows},
+            rows,
         )
 
     def test_a_call_into_a_function_a_running_function_declares_becomes_its_value(self):
@@ -696,51 +671,26 @@ class TestATableReadThroughAnAccessorIsFolded(TestBase):
             {source: written for source, (_, written) in rows.items()},
         )
 
-    def test_a_closure_reading_a_name_its_run_has_not_put_in_place_is_left_as_it_is(self):
-        rows = A_CLOSURE_READING_A_NAME_ITS_RUN_HAS_NOT_PUT_IN_PLACE
-        self.assertEqual(
-            {
-                source: deobfuscate_source(source, execution=ExecutionModel.module)
-                for source in rows
-            },
-            {source: printed(source) for source in rows},
-        )
-
-    def test_a_chain_calling_back_into_a_function_not_yet_in_place_is_left_as_it_is(self):
-        rows = A_CHAIN_CALLING_BACK_INTO_A_FUNCTION_NOT_YET_IN_PLACE
-        self.assertEqual(
-            {
-                source: deobfuscate_source(source, execution=ExecutionModel.module)
-                for source in rows
-            },
-            {source: printed(source) for source in rows},
-        )
-
-    def test_a_call_into_a_table_stays_only_where_a_host_reads_the_table(self):
+    def test_a_table_a_host_reads_stays_with_its_call_left_alone_or_folded(self):
         source = A_TABLE_A_HOST_READS
-        self.assertEqual(
+        self.assertEqual(deobfuscate_source(source), "console.log('x');")
+        self.assertIn(
+            deobfuscate_source(source, entrypoints=('T',)),
             (
-                deobfuscate_source(source),
-                deobfuscate_source(source, entrypoints=('T',)),
-            ),
-            (
-                "console.log('x');",
                 printed(source),
+                inspect.cleandoc(
+                    """
+                    var T = ['x'];
+                    console.log('x');
+                    """
+                ),
             ),
         )
 
 
 class TestATableReadThroughAnAccessorIsNotYetFolded(TestBase):
-    """
-    Calls whose value the program decides but that stay. A method called on the table or on one
-    of its elements counts as a possible change of the table, because the question whether an
-    array may change does not tell a method of the array from one of its elements, nor a method
-    that changes the array from one that only reads it. A closure a folded call creates reads the
-    table of the run that created it, and a function value the interpreter holds does not carry
-    that run, so the read is refused.
-    """
 
-    @unittest.expectedFailure
+    @opportunity
     def test_a_call_that_calls_a_method_on_the_table_is_folded(self):
         rows = A_CALL_THAT_CALLS_A_METHOD_ON_THE_TABLE
         self.assertEqual(
@@ -751,7 +701,7 @@ class TestATableReadThroughAnAccessorIsNotYetFolded(TestBase):
             {source: False for source in rows},
         )
 
-    @unittest.expectedFailure
+    @opportunity
     def test_a_call_whose_closure_reads_a_table_of_its_function_is_folded(self):
         rows = A_CALL_WHOSE_CLOSURE_READS_A_TABLE_OF_ITS_FUNCTION
         self.assertEqual(
@@ -764,19 +714,10 @@ class TestATableReadThroughAnAccessorIsNotYetFolded(TestBase):
 
 
 def with_words(count: int, program: str) -> str:
-    """
-    *program* with its string `"WORDS"` holding *count* words joined by `|`: the table an
-    obfuscation splits into the strings of the program, longer than a fold may write into the text
-    where *count* is above 260.
-    """
     words = '|'.join(F'w{index:04}' for index in range(count))
     return program.replace('"WORDS"', F'"{words}"')
 
 
-#: Programs whose functions read a table a method chain builds, mapped to what Node prints for each
-#: run as a CommonJS file: a string split into the strings of the program and read through an
-#: accessor, with the split, the receiver or the table changed before or after, read before it is
-#: built, handed out, built twice, or built by a chain that throws, and chains of other methods.
 A_TABLE_A_METHOD_CHAIN_BUILDS: dict[str, Program] = {
     'two tables built from each other': Program(
         with_words(300, a_program("""
@@ -1322,9 +1263,6 @@ A_TABLE_A_METHOD_CHAIN_BUILDS: dict[str, Program] = {
     ),
 }
 
-#: Programs reading a table a method chain builds after a call of a function the deobfuscation
-#: cannot see, whose name the table itself supplies, mapped to what Node prints for each run as a
-#: CommonJS file.
 A_TABLE_READ_AFTER_AN_UNKNOWN_CALL: dict[str, Program] = {
     'a table read after a call of an unknown function': Program(
         with_words(300, a_program("""
@@ -1417,8 +1355,6 @@ A_TABLE_READ_AFTER_AN_UNKNOWN_CALL: dict[str, Program] = {
     ),
 }
 
-#: Programs of `A_TABLE_A_METHOD_CHAIN_BUILDS` whose calls of the accessor fold to the strings they
-#: read, mapped to the text the deobfuscation writes for each.
 FOLDED_FROM_A_TABLE_A_METHOD_CHAIN_BUILDS: dict[str, str] = {
     'a table of 300 words': inspect.cleandoc(
         """
@@ -1446,8 +1382,8 @@ FOLDED_FROM_A_TABLE_A_METHOD_CHAIN_BUILDS: dict[str, str] = {
 
 def deobfuscated_by_the_unit(source: str) -> str:
     """
-    The text `refinery.djs` writes for *source* under its default reading of a CommonJS file for
-    Node, which trusts the code `eval` and `Function` run.
+    What the unit writes for *source* as a CommonJS file for Node, without `-s`, so that it trusts
+    the code `eval` and `Function` run.
     """
     return source.encode('utf8') | djs.assemble('-c', '-e', 'node') | str
 

@@ -45,11 +45,6 @@ _STATEMENTS_BEFORE_THE_CUT = 3
 
 
 class Truncation(NamedTuple):
-    """
-    A file that stops in the middle of one construct, together with the text that would have
-    finished it. `cut` is what an analyst carves out of memory and `whole` is the file it was cut
-    from, so a difference between the two is caused by the cut and nothing else.
-    """
     head: str
     opened: str
     closing: str
@@ -182,10 +177,6 @@ _INTACT = {
 
 
 def _last_initializer(script: JsScript) -> Expression:
-    """
-    The value the last declaration of *script* is given, reached through the function body where the
-    corpus put that declaration inside one.
-    """
     statement = script.body[-1]
     if isinstance(statement, JsFunctionDeclaration):
         assert isinstance(statement.body, JsBlockStatement)
@@ -304,12 +295,6 @@ class TestTruncatedSource(TestBase):
                 self.assertEqual(self._template_runs_of(_TRUNCATIONS[name].whole), runs)
 
     def test_no_tree_is_well_formed_after_the_cut(self):
-        """
-        Whatever the cut ran into says so. A literal the cut ran into records the delimiter it is
-        missing; a block the cut ran into records that nothing closed it; a comment the cut ran
-        into is the last thing the file holds, and the file records that it ended inside one. Node
-        refuses every cut file, and so every tree reports that it is no program.
-        """
         names = list(_TRUNCATIONS)
         self.assertEqual(
             {name: is_well_formed(JsParser(_TRUNCATIONS[name].cut).parse()) for name in names},
@@ -338,11 +323,6 @@ class TestTruncatedSource(TestBase):
                 self.assertEqual(is_well_formed(JsParser(source).parse()), True)
 
     def test_the_synthesizer_prints_the_literal_the_cut_left_open_and_the_file_ends_there(self):
-        """
-        The literal is written as the file wrote it, with no closing quote or backtick the file did
-        not hold, and nothing is written behind it: the block a function body opened is not closed
-        either, since the file did not close it.
-        """
         expected = {
             'string_at_top_level': "const banner = 'loading the alpha module",
             'template_at_top_level': 'const banner = `loading ${registry.alpha} and everything after it',
@@ -360,10 +340,6 @@ class TestTruncatedSource(TestBase):
                     self.assertEqual(printed.endswith(last_line), True)
 
     def test_the_synthesizer_prints_the_cut_regexp_as_written(self):
-        """
-        A regular expression the cut left open is the literal the file ended inside: it is written
-        as it was written, and the file ends there.
-        """
         expected = {
             'regexp_at_top_level': 'const pattern = /^alpha-[0-9]+',
             'regexp_in_function_body': '  const clean = name.replace(/[^a-z0-9',
@@ -385,12 +361,6 @@ class TestTruncatedSource(TestBase):
                     self.assertEqual(twice, once)
 
     def test_the_comment_the_cut_left_open_is_the_last_line_of_the_output(self):
-        """
-        The comment runs to the end of the file and the file carries it, so the output is what the
-        text before the comment prints, then the comment as it was written at the head of a line,
-        and nothing behind it: no closing brace for the function body the second cut is inside of,
-        which is where the file ended.
-        """
         expected = {
             'comment_at_top_level': '\n/* the registry maps each name to the handler that reads it',
             'comment_in_function_body': (
@@ -476,13 +446,8 @@ class TestTruncatedSource(TestBase):
 
 class TestAFoldOverALiteralTheCutLeftOpen(TestBase):
     """
-    What the deobfuscator makes of a buffer that ends inside a literal a fold reaches. The buffer
-    is not a program — Node refuses every `cut` in the table and accepts every `whole` — and the
-    one thing the tool may not answer with is a program, because an analyst reading it has no way
-    left to tell that the file they handed over was cut. The literal was never closed, so the fold
-    does not reach it, and the missing tail may read the declaration holding it, so no removal
-    takes it: the expression is written as the file wrote it and the file ends inside the literal,
-    exactly as it was handed over.
+    A buffer cut inside a literal is no program, and the deobfuscation must not make it one: an
+    analyst could then no longer tell that the file was cut.
     """
 
     def _deobfuscated(self, source: str) -> str:
@@ -504,10 +469,6 @@ class TestAFoldOverALiteralTheCutLeftOpen(TestBase):
                 self.assertEqual(deobfuscated.endswith(last_line), True)
 
     def test_the_same_file_with_its_delimiter_restored_deobfuscates_to_a_program(self):
-        """
-        Each closed file differs from the carved one by the single character the carve took, so a
-        corpus the tool refused for some other reason would leave the refusal above saying nothing.
-        """
         for name, truncation in _FOLDS.items():
             with self.subTest(name):
                 printed = self._deobfuscated(truncation.whole)

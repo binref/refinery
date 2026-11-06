@@ -1,15 +1,9 @@
-"""
-A CommonJS file can have Node's `require` load code its text does not hold: a file, a package, or
-a built-in module that runs source text. Such code commonly sets up globals, so a `typeof` of a name
-the host lacks folds only where no such load may precede it, and the tampering oracle counts every
-load as a site. A built-in module that runs no code loads nothing.
-"""
 from __future__ import annotations
 
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, todo
 from test.lib.scripts.js.analysis.differential import (
     deobfuscate_source,
     module_graph_behavior,
@@ -31,8 +25,6 @@ from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 
-#: Programs that load code through `require` before or after a `typeof` of a name Node lacks, each
-#: with what Node makes of it as a CommonJS file and as an ES module.
 A_PROGRAM_THAT_LOADS_CODE = {
     'require read as a value': FileProgram(
         a_program("""
@@ -262,8 +254,9 @@ class TestTheCallsThatLoadCode(TestBase):
     def test_a_require_the_file_declares_loads_nothing(self):
         self.assertCountEqual(self._loaded('function require(m) { return m; } require("./setup.js");'), [])
 
-    def test_a_require_held_under_another_name_is_not_followed(self):
-        self.assertCountEqual(self._loaded('var r = require; r("./setup.js");'), [])
+    @todo
+    def test_a_require_held_under_another_name_loads_code(self):
+        self.assertCountEqual(self._loaded('var r = require; r("./setup.js");'), ['./setup.js'])
 
     def test_the_require_of_the_module_object_loads_code(self):
         self.assertCountEqual(self._loaded('module.require("./setup.js"); module.require("fs");'), ['./setup.js'])

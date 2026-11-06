@@ -1,10 +1,3 @@
-"""
-Programs storing a value in a part of a statement that runs on some runs of the statement only:
-below `&&`, in an arm of `?:`, behind a logical assignment, in an optional call, or in the default
-of a destructuring pattern. On a run that completes the statement without the store, a function
-called after it reads the variable unset, a test after it is decided the other way, and an `in`
-finds no key.
-"""
 from __future__ import annotations
 
 import unittest
@@ -17,9 +10,6 @@ from test.lib.scripts.js.ledger import (
     each_program_still_prints,
 )
 
-#: Programs storing into a variable declared without a value in a part of a statement that runs on
-#: some runs only, and reading the variable in a function called after that statement, mapped to
-#: what Node prints for them.
 A_VALUE_STORED_ON_SOME_RUNS_READ_BY_A_FUNCTION = {
     a_program("""
         var c;
@@ -79,8 +69,6 @@ A_VALUE_STORED_ON_SOME_RUNS_READ_BY_A_FUNCTION = {
         """): 'undefined\n',
 }
 
-#: Programs storing into a variable or a property in a part of a statement that runs on some runs
-#: only, and testing after the statement whether the store ran, mapped to what Node prints for them.
 A_VALUE_STORED_ON_SOME_RUNS_DECIDING_A_TEST = {
     a_program("""
         var c;
@@ -120,9 +108,6 @@ A_VALUE_STORED_ON_SOME_RUNS_DECIDING_A_TEST = {
         """): 'no\n',
 }
 
-#: Programs storing into a variable through a destructuring default, or storing into another one in
-#: the default, at any depth of the pattern, mapped to what Node prints for them: the default runs
-#: only where the value it stands for is missing.
 A_VALUE_STORED_IN_A_DEFAULT = {
     a_program("""
         var cfg = JSON.parse('{"level": 3}'), level;
@@ -225,8 +210,6 @@ A_VALUE_STORED_IN_A_DEFAULT = {
         """): 'skipped taken\n',
 }
 
-#: Programs whose `for-in` or `for-of` target is a pattern with a default that stores, read in the
-#: body and after it, mapped to what Node prints for them.
 A_VALUE_STORED_IN_A_DEFAULT_OF_A_LOOP_TARGET = {
     a_program("""
         function g(xs) {

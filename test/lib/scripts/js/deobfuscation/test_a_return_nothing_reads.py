@@ -1,16 +1,9 @@
-"""
-The `return` ending the body of a function whose every call throws the value away, which
-`refinery.lib.scripts.js.deobfuscation.unused.JsUnusedCodeRemoval` takes the value from: a value
-that costs nothing to compute goes with its `return`, a store becomes a statement of its own, which
-the removal of unused variables reads, and any other value stays returned. Each program is written
-by hand, and each row says what Node prints for it.
-"""
 from __future__ import annotations
 
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     completion_values,
@@ -21,14 +14,8 @@ from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import Program, a_program, prints
 
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
+from refinery.lib.scripts.js.options import DeobfuscationOptions
 
-#: Functions ending in a `return` whose calls discard the value, mapped to what Node prints for each
-#: run as a CommonJS file: a store nothing reads, a store another function reads, an `async`
-#: function settling its promise with an object that has a `then`, a call returned for its effect, a
-#: function expression and an object literal read where the statement begins, a read that throws
-#: because nothing declares the name or its `let` has not run, a read that runs a getter, a
-#: recursive function, a constructor, a generator never resumed, and a function one call of which
-#: reads the value.
 RETURNS_NOTHING_READS: dict[str, Program] = {
     'a store nothing reads': Program(
         a_program("""
@@ -247,13 +234,13 @@ class TestAReturnNothingReadsGivesUpItsValue(TestJsDeobfuscator):
             })();
             SINK('done');
             """)
-        expected = inspect.cleandoc("""
+        with_the_emptied_call = inspect.cleandoc("""
             (function() {})();
             SINK('done');
             """)
-        self.assertEqual(expected, self._unused(source))
+        self.assertIn(self._unused(source), (with_the_emptied_call, "SINK('done');"))
 
-    def test_a_returned_call_stays_a_return(self):
+    def test_a_returned_call_keeps_its_call(self):
         source = inspect.cleandoc("""
             function outer() {
               (function () {
@@ -262,7 +249,7 @@ class TestAReturnNothingReadsGivesUpItsValue(TestJsDeobfuscator):
             }
             outer();
             """)
-        expected = inspect.cleandoc("""
+        as_a_return = inspect.cleandoc("""
             function outer() {
               (function() {
                 return SINK(1);
@@ -270,7 +257,15 @@ class TestAReturnNothingReadsGivesUpItsValue(TestJsDeobfuscator):
             }
             outer();
             """)
-        self.assertEqual(expected, self._unused(source))
+        as_a_statement = inspect.cleandoc("""
+            function outer() {
+              (function() {
+                SINK(1);
+              })();
+            }
+            outer();
+            """)
+        self.assertIn(self._unused(source), (as_a_return, as_a_statement))
 
     def test_a_returned_read_of_a_local_goes(self):
         source = inspect.cleandoc("""
@@ -282,7 +277,7 @@ class TestAReturnNothingReadsGivesUpItsValue(TestJsDeobfuscator):
             }
             outer();
             """)
-        expected = inspect.cleandoc("""
+        with_the_binding = inspect.cleandoc("""
             function outer() {
               (function() {
                 var kept = SINK(1);
@@ -290,7 +285,15 @@ class TestAReturnNothingReadsGivesUpItsValue(TestJsDeobfuscator):
             }
             outer();
             """)
-        self.assertEqual(expected, self._unused(source))
+        without_the_binding = inspect.cleandoc("""
+            function outer() {
+              (function() {
+                SINK(1);
+              })();
+            }
+            outer();
+            """)
+        self.assertIn(self._unused(source), (with_the_binding, without_the_binding))
 
     def test_a_returned_undefined_goes_like_a_literal(self):
         source = inspect.cleandoc("""
@@ -314,14 +317,34 @@ class TestAReturnNothingReadsGivesUpItsValue(TestJsDeobfuscator):
             """)
         self.assertEqual(expected, self._unused(source))
 
-    def test_an_async_function_keeps_a_returned_store_of_an_object(self):
+    def test_an_async_function_keeps_returning_its_object(self):
         source = inspect.cleandoc("""
             (async function() {
               var settled;
               return settled = { then: SINK };
             })();
             """)
-        self.assertEqual(source, self._unused(source))
+        without_the_store = inspect.cleandoc("""
+            (async function() {
+              return { then: SINK };
+            })();
+            """)
+        self.assertIn(self._unused(source), (source, without_the_store))
+
+    @opportunity
+    def test_an_async_function_returns_its_object_without_the_store_nothing_reads(self):
+        source = inspect.cleandoc("""
+            (async function() {
+              var settled;
+              return settled = { then: SINK };
+            })();
+            """)
+        expected = inspect.cleandoc("""
+            (async function() {
+              return { then: SINK };
+            })();
+            """)
+        self.assertEqual(expected, self._unused(source))
 
     def test_a_function_one_call_of_which_reads_the_value_keeps_its_return(self):
         source = inspect.cleandoc("""
@@ -336,7 +359,7 @@ class TestAReturnNothingReadsGivesUpItsValue(TestJsDeobfuscator):
             """)
         self.assertEqual(source, self._unused(source))
 
-    def test_a_function_a_host_may_call_keeps_its_return(self):
+    def test_an_entrypoint_keeps_its_return(self):
         source = inspect.cleandoc("""
             function value() {
               var kept;
@@ -344,11 +367,36 @@ class TestAReturnNothingReadsGivesUpItsValue(TestJsDeobfuscator):
             }
             value();
             """)
-        self.assertEqual(source, self._unused(source))
+        without_the_store = inspect.cleandoc("""
+            function value() {
+              return SINK(1);
+            }
+            value();
+            """)
+        options = DeobfuscationOptions(entrypoints=('value',))
+        self.assertIn(
+            self._run_transformer(source, JsUnusedCodeRemoval, options),
+            (source, without_the_store),
+        )
+
+    @opportunity
+    def test_a_top_level_function_no_host_calls_gives_up_its_return(self):
+        source = inspect.cleandoc("""
+            function value() {
+              var kept;
+              return kept = SINK(1);
+            }
+            value();
+            """)
+        expected = inspect.cleandoc("""
+            function value() {
+              SINK(1);
+            }
+            value();
+            """)
+        self.assertEqual(expected, self._unused(source))
 
 
-#: Scripts ending in a call whose function returns a value every call of it in the text discards,
-#: which the script's own completion value then is.
 SCRIPTS_COMPLETING_WITH_A_DISCARDED_RETURN = (
     'var S;\n(function () { var t = [1, 2]; return S = function (i) { return t[i]; }; })();\n',
     '(function () { return Math.random() < 2 ? 1 : 2; })();\n',

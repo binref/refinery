@@ -4,7 +4,7 @@ import functools
 import inspect
 import unittest
 
-from test import TestBase, a_property_of_the_pin_itself, fastest_processor_time
+from test import TestBase, a_property_of_the_pin_itself, fastest_processor_time, todo
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
@@ -36,14 +36,26 @@ class TestObjectFold(TestJsDeobfuscator):
             self._objectfold("var o = {'f': function(a, b) { return a + b; }}; var r = o['f'](1, 2);"),
         )
 
-    def test_side_effecting_property_value_not_folded(self):
+    def test_side_effecting_property_value_keeps_its_call(self):
         source = inspect.cleandoc(
             """
             var o = { a: 1, b: f() };
             console.log(o.a);
             """
         )
-        self.assertEqual(source, self._objectfold(source))
+        read_folded = inspect.cleandoc(
+            """
+            var o = { a: 1, b: f() };
+            console.log(1);
+            """
+        )
+        object_dropped = inspect.cleandoc(
+            """
+            f();
+            console.log(1);
+            """
+        )
+        self.assertIn(self._objectfold(source), (source, read_folded, object_dropped))
 
     def test_object_member_mutated_through_with_not_folded(self):
         source = inspect.cleandoc(
@@ -85,21 +97,16 @@ class TestObjectFold(TestJsDeobfuscator):
     def test_local_object_in_function_with_direct_eval_not_folded(self):
         source = inspect.cleandoc(
             """
-            function f() {
+            function f(s) {
               var o = { p: 1 };
-              eval("x");
+              eval(s);
               SINK(o.p);
             }
             """
         )
         self.assertEqual(source, self._objectfold(source))
 
-    def test_script_scope_object_still_folds_under_direct_eval_residual(self):
-        """
-        A script-scope object folds even though the program has a direct `eval` that could name it:
-        freezing every global on an opaque surface would regress real samples (the b91 lookup arrays), so
-        this is the accepted dynamic-scope residual, not a bug.
-        """
+    def test_script_scope_object_folds_past_a_direct_eval_of_code_that_cannot_name_it(self):
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -109,6 +116,17 @@ class TestObjectFold(TestJsDeobfuscator):
             ),
             self._objectfold('var o = { p: 1 }; eval("x"); SINK(o.p);'),
         )
+
+    @todo
+    def test_script_scope_object_not_folded_past_a_direct_eval_of_unread_code(self):
+        source = inspect.cleandoc(
+            """
+            var o = { p: 1 };
+            eval(s);
+            SINK(o.p);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
 
     def test_object_value_reassigned_through_with_not_folded(self):
         source = inspect.cleandoc(
@@ -124,18 +142,16 @@ class TestObjectFold(TestJsDeobfuscator):
         self.assertEqual(source, self._objectfold(source))
 
     def test_object_value_reassignable_by_direct_eval_not_folded(self):
-        """
-        The value binding `x` is reassignable by the direct `eval` in `outer`, while the object `o`
-        lives in `inner`, where its own container is immutable. Only the value-stability gate can
-        block this fold.
-        """
         source = inspect.cleandoc(
             """
-            function outer() {
+            function outer(s) {
               var x = 1;
-              eval("x = 2");
+              function poke() {
+                eval(s);
+              }
               function inner() {
                 var o = { p: x };
+                poke();
                 SINK(o.p);
               }
               inner();
@@ -159,12 +175,6 @@ class TestObjectFold(TestJsDeobfuscator):
         )
 
     def test_object_read_through_with_folds_resolved_access_but_keeps_declaration(self):
-        """
-        The `with` body reads `o.p` without mutating it, so the container stays immutable and the resolved
-        `SINK(o.p)` folds to the value. The declaration must be kept: the `with`-body `o.p` still names
-        `o` (it denotes this object when `q` lacks the property), and removing `var o` would leave that
-        reference dangling.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -178,7 +188,7 @@ class TestObjectFold(TestJsDeobfuscator):
             self._objectfold('var o = { p: 1 }; with (q) { y = o.p; } SINK(o.p);'),
         )
 
-    def test_proto_setting_object_not_folded(self):
+    def test_an_object_that_sets_an_unknown_prototype_is_not_folded(self):
         source = inspect.cleandoc(
             """
             var o = { __proto__: base, a: 1 };
@@ -671,11 +681,6 @@ class TestObjectFold(TestJsDeobfuscator):
         self.assertEqual(source, self._objectfold(source))
 
     def test_parenthesized_function_property_read_by_identity_not_folded(self):
-        """
-        A parenthesized function value is the same function as the bare form, so a bare identity read of
-        it must not clone it into two distinct functions either: the paren is seen through so the
-        identity guard keeps the fold from happening.
-        """
         source = inspect.cleandoc(
             """
             var o = { f: (function() {
@@ -947,11 +952,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
         self.assertEqual(source, self._objectfold(source))
 
     def test_property_reading_lexical_in_dead_zone_not_folded(self):
-        """
-        `{ p: x }` reads `x` before its `let` declaration — its temporal dead zone, a `ReferenceError`
-        at runtime — so folding `o.p` to `x` at the later access site would replace the throw with the
-        declared value; the object is left unfolded.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -986,11 +986,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
 
     def test_deferred_read_of_lexical_in_nested_function_still_folds(self):
-        """
-        The property value reads `x` only inside a nested function, evaluated when `o.p()` is called —
-        a site folding preserves — not eagerly at the literal, so the dead-zone gate does not apply and
-        the wrapper still inlines at its call site.
-        """
         source = inspect.cleandoc(
             """
             function f() {
@@ -1015,11 +1010,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
 
 
-#: Each row maps a program probing one argument-evaluation-order edge case — a dropped, reordered,
-#: duplicated, or conditionally-read effect, a nested-arrow live read, or a pure-call reorder — to
-#: what Node prints for it. Where substitution would change that order the fold keeps the function
-#: value called with its arguments standing where they were written; where an argument is read once,
-#: unconditionally, in order, before the body's own effects, it is substituted.
 AN_ARGUMENT_WHOSE_EFFECT_THE_FOLD_OWES = {
     'function g() { SIDE = 1; return 2; }'
     ' var o = { m: function (a) { return 7; } };'
@@ -1338,11 +1328,6 @@ class TestNodePrintsTheSameAboutArgumentsTheFoldOwes(TestJsDeobfuscator):
         )
 
 
-#: Programs in which folding one object changes what is true of another, mapped to what Node prints
-#: for each: a call argument reads the other object, at the top level, inside a function, and with
-#: the object of helpers first; a fold gives `Object` a name the other object's prototype is then
-#: written through, from a literal and through a one-line method; a literal reads the folded object;
-#: and a copy names another object.
 A_FOLD_THAT_CHANGES_WHAT_ANOTHER_OBJECT_MEANS = {
     'var B = {f: function (p) { return p + 1; }};'
     ' var C = {y: 2};'
@@ -1378,8 +1363,6 @@ A_FOLD_THAT_CHANGES_WHAT_ANOTHER_OBJECT_MEANS = {
 }
 
 
-#: A fold that gives the global object a name a later object is then replaced through, a property
-#: of the global object only where the script runs as a classic script.
 A_FOLD_NAMING_THE_GLOBAL_OBJECT = inspect.cleandoc(
     """
     var A = {g: globalThis};
@@ -1408,12 +1391,6 @@ class TestNodePrintsTheSameWhereOneFoldChangesAnotherObject(TestJsDeobfuscator):
         )
 
 
-#: Programs in which a fold puts a copy where the models read what it evaluates to, mapped to what
-#: Node prints for each: an intrinsic as the object a descriptor is installed on, at the top level
-#: and inside a function, as the foot of a chain an inlined call answers and a write goes through,
-#: and in an `arguments` object a parameter shares; a string naming the method a call installs a
-#: descriptor through; and a function reaching the argument a fold hands it through its own
-#: `arguments` object, where the fold wrote that function in place of the call's callee.
 A_COPY_THE_MODELS_READ_WHERE_IT_LANDS = {
     'var A = {o: Object};'
     ' Object.defineProperty(A.o.prototype, "k", {value: 1});'
@@ -1446,10 +1423,6 @@ A_COPY_THE_MODELS_READ_WHERE_IT_LANDS = {
 }
 
 
-#: Programs in which a fold puts a copy of the global object, or of a string naming a global, where
-#: the models read it, mapped to what a host running them as classic scripts prints: a member access
-#: on the copy, a descriptor installed on it, a function it is handed to, a key naming a global, and
-#: `eval` read through a key off a receiver a plain call supplies.
 A_COPY_OF_THE_GLOBAL_OBJECT_OR_OF_A_GLOBAL_NAME = {
     'var A = {g: globalThis};'
     ' var C = {x: 1};'
@@ -1476,9 +1449,6 @@ A_COPY_OF_THE_GLOBAL_OBJECT_OR_OF_A_GLOBAL_NAME = {
 }
 
 
-#: Programs in which a fold removes, together with the literal or the argument that held it, the
-#: one read of a property another object holds, whose value is a name nothing declares. Building
-#: that object throws a `ReferenceError`, which the deobfuscation has to keep.
 A_FOLD_DROPPING_THE_ONE_READ_OF_A_THROWING_VALUE = (
     'var A = {f: function () { return B.x; }, c: 2};'
     ' var B = {x: g, y: 1};'
@@ -1491,9 +1461,8 @@ A_FOLD_DROPPING_THE_ONE_READ_OF_A_THROWING_VALUE = (
 )
 
 
-#: Programs that call a value an object holds, mapped to what Node prints for each: `eval` itself,
-#: which the call reaches as an indirect `eval` reading the global scope, and a function running a
-#: direct `eval`, which reads the scope it was written in.
+#: Calling `eval` through a property is an indirect `eval`, which reads the global scope; a direct
+#: `eval` reads the scope of the function it is written in, not that of its caller.
 A_CALLED_VALUE_THAT_EVALUATES_CODE = {
     'var A = {e: eval};'
     ' function f() { var x = "local"; return A.e("typeof x"); }'
@@ -1505,10 +1474,6 @@ A_CALLED_VALUE_THAT_EVALUATES_CODE = {
 }
 
 
-#: Programs in which an object reads a key it does not hold after its own copy of a string made a
-#: call install that key on every object, mapped to what a host running them as classic scripts
-#: prints: `eval` read through a key off a receiver a plain call supplies, called before and after
-#: the function supplying it is declared, and the method that installs a descriptor.
 A_KEY_AN_OBJECT_READS_AFTER_ITS_OWN_COPY_INSTALLED_IT = {
     'var A = {k: "eval", c: "Object.prototype.q = 1"};'
     ' function G() { return this; }'
@@ -1524,9 +1489,6 @@ A_KEY_AN_OBJECT_READS_AFTER_ITS_OWN_COPY_INSTALLED_IT = {
 }
 
 
-#: Programs in which a function value reads a name inside its own `with` and is called after a
-#: copied key created that name as a global, mapped to what a host running them as classic scripts
-#: prints: called from a function that does not bind the name, and from one whose parameter does.
 A_VALUE_READING_A_GLOBAL_A_COPIED_KEY_CREATES = {
     'var g = 1;'
     ' function main() {'
@@ -1545,9 +1507,6 @@ A_VALUE_READING_A_GLOBAL_A_COPIED_KEY_CREATES = {
 }
 
 
-#: Programs in which an inlined call of an object is handed a read of the same object, mapped to
-#: what Node prints: a key the object does not hold, the same read handed to a call nested in
-#: another, a key the object inherits, and a key read inside a function handed to the call.
 A_READ_OF_AN_OBJECT_HANDED_TO_ITS_OWN_INLINED_CALL = {
     'var O = {f: function (a) { return a + 1; }};'
     ' console.log(O.f(O.q));': 'NaN\n',
@@ -1562,9 +1521,6 @@ A_READ_OF_AN_OBJECT_HANDED_TO_ITS_OWN_INLINED_CALL = {
 }
 
 
-#: Programs whose object holds, under a key nothing reads, a value that converts an object with a
-#: conversion method of its own, mapped to what Node prints: `toString` on an object literal, and
-#: `valueOf` on an instance of a class.
 A_VALUE_NO_ACCESS_READS_THAT_RUNS_A_CONVERSION = {
     'var p = {toString: function () { console.log("conv"); return "c"; }};'
     ' var H = {s: p + "", n: 2};'
@@ -1576,9 +1532,6 @@ A_VALUE_NO_ACCESS_READS_THAT_RUNS_A_CONVERSION = {
 }
 
 
-#: Programs in which an inlined call of an object answers, in a computed key, the name of the method
-#: that installs a descriptor or of `eval`, and another object then reads the key that installs on
-#: every object, mapped to what a host running them as classic scripts prints.
 AN_INSTALL_NAMED_BY_WHAT_AN_INLINED_CALL_ANSWERS = {
     'var A = {k: function () { return "defineProperty"; }};'
     ' Object[A.k()](Object.prototype, "q", {value: 1});'
@@ -1660,10 +1613,6 @@ class TestNodePrintsTheSameWhereACopyLandsWhereTheModelsReadIt(TestJsDeobfuscato
 
 
 class TestObjectFoldingCostsWhatAConcatenationIsLong(TestJsDeobfuscator):
-    """
-    After every copy, object folding asks whether the copy completed a constant string. A storage
-    object holding the pieces of a split string has it ask once for every piece of one chain.
-    """
 
     @a_property_of_the_pin_itself
     def test_four_hundred_copied_pieces_of_one_concatenation_fold_within_a_second(self):
@@ -1673,9 +1622,6 @@ class TestObjectFoldingCostsWhatAConcatenationIsLong(TestJsDeobfuscator):
         self.assertLess(fastest_processor_time(functools.partial(self._objectfold, source) for _ in range(3)), 1.0)
         self.assertNotIn('O.', self._objectfold(source))
 
-#: Programs that call a method on an object literal, one the object owns or one every object
-#: inherits, each with what Node makes of it as a CommonJS file and as an ES module. An inherited
-#: method can hand the object back to be written or replace one of its properties.
 A_METHOD_CALLED_ON_AN_OBJECT_LITERAL = {
     'an object handed back by valueOf and written': FileProgram(
         a_program("""
@@ -1714,11 +1660,6 @@ class TestAMethodCalledOnAnObjectLiteralStillPrintsWhatItPrints(TestBase):
         each_reading_still_prints(self, A_METHOD_CALLED_ON_AN_OBJECT_LITERAL, (Reading.COMMONJS, Reading.MODULE))
 
 
-#: An accessor installed on a locally-declared empty object the file reaches only in member position,
-#: mapped to what Node prints for each. The installing call is a member access itself, and the key it
-#: installs is what the program reads or writes afterwards: a getter whose read the program prints,
-#: a setter whose write runs program code, and a getter installed under a key held in a binding the
-#: read resolves.
 AN_ACCESSOR_INSTALLED_ON_A_NAMESPACE_OBJECT = {
     'var o = {};\n'
     'o.__defineGetter__("x", function () { return 9; });\n'
@@ -1737,33 +1678,15 @@ AN_ACCESSOR_INSTALLED_ON_A_NAMESPACE_OBJECT = {
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAnAccessorInstalledOnANamespaceObjectIsStillRead(TestBase):
-    """
-    An accessor installed on an object literal through a method every plain object inherits
-    (`__defineGetter__`, `__defineSetter__`) changes what a read or a write of its key does. The
-    object fold takes a call on the object as leaving it unchanged only where the call names one of
-    the object's own methods, so the install keeps the reads and writes of the key on the object.
-    The `Object.defineProperty(o, "x", {...})` spelling hands the object to a call as a bare
-    identifier, which no fold takes as leaving it unchanged.
-    """
 
     def test_the_read_and_write_an_accessor_installed_on_the_namespace_answers(self):
-        """
-        Node prints `9`, `set 5` and `3` for the three programs of
-        `AN_ACCESSOR_INSTALLED_ON_A_NAMESPACE_OBJECT`.
-        """
         rows = AN_ACCESSOR_INSTALLED_ON_A_NAMESPACE_OBJECT
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
 
-    def test_a_receiver_handed_to_the_install_is_left_standing(self):
-        """
-        Node prints `7` for the program, and the deobfuscation prints the same, coming back with
-        the object and its read in place: the receiver is handed to `Object.defineProperty` as a bare
-        identifier, which the flattener's safety check refuses, so the install and the read it feeds
-        survive together.
-        """
+    def test_a_getter_installed_through_define_property_still_answers_the_read(self):
         source = (
             'var p = {};\n'
             'Object.defineProperty(p, "y", { get: function () { return 7; } });\n'

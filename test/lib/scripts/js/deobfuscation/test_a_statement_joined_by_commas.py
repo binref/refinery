@@ -1,8 +1,6 @@
 """
-A statement that is a comma sequence, which
-`refinery.lib.scripts.js.deobfuscation.sequences.JsSequenceStatementSplitting` writes as one
-statement per part. Each program is written by hand, and each row says what Node prints for it run
-as a CommonJS file.
+SECURITY: every program here is hand-authored and benign, and Node runs each of them. Nothing from
+`samples` may ever be fed to this.
 """
 from __future__ import annotations
 
@@ -25,10 +23,6 @@ def split(source: str) -> str:
     return JsSynthesizer().convert(ast)
 
 
-#: Programs holding a statement that is a comma sequence, mapped to what Node prints for each run
-#: as a CommonJS file: the statement in a list, in a case, in a static block, as the body of a
-#: branch and of a label, with a part that throws, and with a later part that may not start a
-#: statement as it is written.
 STATEMENTS_JOINED_BY_COMMAS: dict[str, Program] = {
     'stores in the body of a function': Program(
         a_program("""
@@ -235,7 +229,17 @@ class TestDeadStoresJoinedByCommasGoAsSeparateOnesDo(TestBase):
                 F'function f(p, q) {{ var a, b; {stores} return p.z; }} console.log(f(o1, o2), f(o3, o4));',
                 execution=ExecutionModel.commonjs,
             )
+        reads_kept = inspect.cleandoc(
+            """
+            function f(p, q) {
+              p.x;
+              q.y;
+              return p.z;
+            }
+            console.log(f(o1, o2), f(o3, o4));
+            """
+        )
         self.assertEqual(
-            deobfuscated('a = p.x, b = q.y;'),
-            deobfuscated('a = p.x; b = q.y;'),
+            (deobfuscated('a = p.x, b = q.y;'), deobfuscated('a = p.x; b = q.y;')),
+            (reads_kept, reads_kept),
         )

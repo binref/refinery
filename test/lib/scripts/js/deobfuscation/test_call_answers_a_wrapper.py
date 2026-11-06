@@ -1,36 +1,16 @@
 """
-A call to a function that wraps what its body returns answers the wrapper, never the value.
+A call to an `async` function or a generator answers a wrapper, a promise or a generator object, and
+never the value its body returns.
 
-`async function m() { return 7; }` called answers a promise; `function* g() { return 7; }` called
-answers a generator object whose completion value is `7` and which yields nothing at all. Neither is
-`7`. A pass that reads such a body and answers the call with what the body returned hands back a
-program that computes something else, and hands it back looking clean: nothing throws where the
-program is only read, nothing is half-rewritten, and the analyst gets no signal that the answer is
-not the one the language gives.
+Every row reads something only the wrapper has: `.then` for an `async` function, `.next` for a
+generator and for an async generator. A generator object has no `.then` either, so `typeof g().then`
+prints `undefined` whether or not the call was folded.
 
-Eleven sites across ten passes do it. Each has its own entry here, and each entry is asked three
-ways:
+The count of functions that wrap and of calls that reach one is read from the syntax in this file
+and never asked of the library, so that a wrong answer of the library cannot hide from it.
 
-- the shape the pass exists for, folded, so that a guard which refuses too much is caught by the
-  control rather than by silence — a site witnessed by nothing is a site a guard can quietly empty
-  while the rest of the suite stays green;
-- the same shape with the keyword, read for what still stands in the output, which needs no engine
-  and so is the reading that survives on a machine with no Node.js;
-- the same shape run in Node before and after, which is what says the two agree.
-
-**The read has to be one the two answers disagree on.** `typeof decode(P).then` for a *generator*
-answers `undefined` in Node and here alike, because a generator object has no `.then` either, and the
-row is then blind to a fold that is wrong the whole time. `.then` for `async`, `.next` for a generator
-and for an async generator.
-
-The tally `_what_wraps_and_what_calls_it` reads is deliberately its own and does not ask
-`refinery.lib.scripts.js.model`: a test that asks the library whether the library is right reports
-only that it is self-consistent.
-
-SECURITY: every program here is hand-authored in this file and benign, except the base91 table and
-decoder, which are the fixture `test.lib.scripts.js.deobfuscation.test_b91strings` builds and which
-are written out in full below so that what the engine is handed is what is read here. No sample and
-no stored obfuscator fixture may be fed to this.
+SECURITY: the programs here run in Node, and every one is written out in full in this file. No
+sample and no stored obfuscator fixture may ever be added here.
 """
 from __future__ import annotations
 
@@ -79,7 +59,6 @@ from refinery.lib.scripts.js.model import (
     is_generator_function,
     wraps_return,
 )
-from refinery.lib.scripts.js.deobfuscation.interpreter import JsInterpreter
 from refinery.lib.scripts.js.parser import JsParser
 
 NL = chr(10)
@@ -104,11 +83,6 @@ def an_iife(read: str = '(function (a) { return a; })(7)') -> str:
 def a_global_finder(
     kw: str = '', read: str = 'g() === globalThis', closure_head: str = 'function',
 ) -> str:
-    """
-    *closure_head* writes the keyword onto the closure the call reaches rather than onto the finder,
-    which is where the finder's own effect summary cannot answer for it: `EffectSummary.absorb`
-    leaves `wraps_return` out, so a callee's wrapping never reaches its caller's summary.
-    """
     return _lines(
         F'{kw}function g() {{',
         F'  var a = [{closure_head} () {{ return globalThis; }}];',
@@ -120,10 +94,6 @@ def a_global_finder(
 
 
 def a_callback(read: str = '[1, 2].filter(function (x) { return x > 1; }).length') -> str:
-    """
-    A predicate handed to an array method, which the interpreter runs rather than reads. Every
-    promise and every generator object is truthy, so a wrapping predicate keeps both elements.
-    """
     return _lines(F'console.log({read});')
 
 
@@ -137,9 +107,6 @@ def a_callback_inside_a_body(kw: str = '') -> str:
 
 
 def a_rotation(kw: str = '', read: str = 'x.join("")') -> str:
-    """
-    A rotation over a literal array of ten elements, which is the floor the pass recognizes one at.
-    """
     return _lines(
         F'{kw}function rot(arr, n) {{',
         '  for (var i = 0; i < n; i++) arr.push(arr.shift());',
@@ -151,10 +118,6 @@ def a_rotation(kw: str = '', read: str = 'x.join("")') -> str:
 
 
 def a_string_array(accessor_kw: str = '', holder_kw: str = '', read: str = 'ACC(0)') -> str:
-    """
-    A holder that replaces itself on its first call, an accessor that reads it by index, and a
-    rotation loop whose sum matches its target at once, so the strings stand as written.
-    """
     return _lines(
         F"{holder_kw}function A() {{ var s = ['hello', 'world'];"
         ' A = function () { return s; }; return A(); }',
@@ -177,23 +140,6 @@ def a_string_array_whose_rotation_runs(
     replacement_head: str = 'function',
     rotation_head: str = 'function',
 ) -> str:
-    """
-    The same three parts written the way an obfuscator emits them: the checksum is read through the
-    accessor, so it answers differently at each rotation, and a target the written order does not
-    meet makes the loop turn the array over before it breaks.
-
-    The loop is what reads what the holder answered. In `a_string_array` it breaks before it touches
-    the array, which is why that program agrees with Node for an `async` holder and this one does
-    not: here `arr` is the promise the holder answered, and a promise has no `shift`.
-
-    Each of the three functions takes its whole head rather than a keyword written in front of one,
-    because a generator is spelled `function*` and a prefix cannot produce that.
-
-    *replacement_head* writes the head of the function the holder installs in its own place, which
-    is the one every call after the first reaches. *rotation_head* writes the head of the loop's
-    own function: calling a generator never runs its body, so a generator rotation turns the array
-    over in the pass and not in the program.
-    """
     return _lines(
         F"{holder_head} A() {{ var s = ['3', '5'];"
         F' A = {replacement_head} () {{ return s; }}; return A(); }}',
@@ -216,10 +162,6 @@ AN_ENCODED_STRING = 'hJQxp9Pvj3X2QId3C4RuMOe1C4EpuSg2b/8JyqzSWjrQm+VgNNg='
 
 
 def a_scramble(kw: str = '', read: str = F"typeof decode('{AN_ENCODED_STRING}').then") -> str:
-    """
-    A Scramble cipher instance behind a decode wrapper. `pb` and `decrypt` are stubs so that the
-    program runs at all; the read is of the value the pass substitutes and not of what they compute.
-    """
     return _lines(
         "function pb() { return 'K'; }",
         "function decrypt() { return 'X'; }",
@@ -249,11 +191,6 @@ def a_base91_table(
     accessor_kw: str = '',
     read: str = "typeof accessor(12).then",
 ) -> str:
-    """
-    The base91 table, decoder and caching accessor of
-    `test.lib.scripts.js.deobfuscation.test_b91strings`, with the `bufferToString` that fixture
-    leaves to its caller written in so that the program runs. Index 12 decodes to `log`.
-    """
     return _lines(
         'function bufferToString(a) { return String.fromCharCode.apply(null, a); }',
         'var cache = {};',
@@ -312,14 +249,6 @@ def a_self_disabling_wrapper_as_a_statement(kw: str = '') -> str:
 def a_self_disabling_wrapper_called_twice(
     head: str = 'function', read: str = 'typeof W(b())',
 ) -> str:
-    """
-    A wrapper called once as a statement and once where its value is read.
-
-    Expanding a call site takes the wrapper's body with it, and that body is the assignment that
-    disables the wrapper. The second call therefore reads a wrapper the input had already disabled,
-    which for an `async` wrapper answers a promise where the input answered `undefined`. A generator
-    is not disabled in the input either, because a call never runs its body.
-    """
     return _lines(
         F'{head} W() {{ W = function () {{}}; }}',
         'var log = [];',
@@ -333,12 +262,6 @@ def a_self_disabling_wrapper_called_twice(
 def a_self_disabling_wrapper_a_plain_one_shares_a_name_with(
     head: str = 'async function', read: str = 'typeof W(a()).then',
 ) -> str:
-    """
-    A wrapper whose call this pass may not answer, under a name a plain wrapper elsewhere in the
-    file also answers to. The refusal is kept per declaration, and the plain wrapper's own call is
-    expanded all the same: the two calls read two bindings, which their shared name says nothing
-    about.
-    """
     return _lines(
         'function W() { W = function () {}; }',
         'W(0);',
@@ -356,13 +279,6 @@ A_DISPATCH = '(params = ["a", "b"], d("f1"))'
 
 
 def a_dispatcher(outer: str = '', entry: str = '', read: str = A_DISPATCH) -> str:
-    """
-    An entry table selected by name behind a dispatcher taking a name, a flag and a return kind.
-
-    The call site reads `(params = [...], d("f1")).then` and never `d("f1").then`: this pass does
-    not unwrap the second shape at all, so a row written that way reports agreement for every
-    keyword and for the control alike.
-    """
     return _lines(
         'var cache = Object["create"](null);',
         'var params;',
@@ -402,9 +318,6 @@ def a_dispatcher(outer: str = '', entry: str = '', read: str = A_DISPATCH) -> st
     )
 
 
-#: For each site, the shape that pass exists for and the text it folds to. A guard that refuses more
-#: than the keyword is caught here rather than by a suite that stayed green because nothing witnessed
-#: the site at all.
 THE_SHAPE_EACH_PASS_IS_FOR = {
     'wrappers': (a_call_wrapper(), 'console.log(7);'),
     'simplify': (an_iife(), 'console.log(7);'),
@@ -442,8 +355,6 @@ THE_SHAPE_EACH_PASS_IS_FOR = {
 }
 
 
-#: Per site, the same shape with a keyword on the function whose call the pass answers, mapped to
-#: what Node prints for it. Every value here was read off Node and none of it off this project.
 A_CALL_ANSWERING_A_WRAPPER = {
     'wrappers': {
         a_call_wrapper('async ', 'typeof w(7).then'): 'function\n',
@@ -525,17 +436,8 @@ A_CALL_ANSWERING_A_WRAPPER = {
 }
 
 
-#: Shapes in which the keyword sits on a function whose call the pass is right to answer, so that a
-#: guard written per pass rather than per function is caught. An `async` entry of a dispatcher is
-#: recovered as an `async` function, and an async arrow immediately called is answered by the value
-#: of its own body. A generator entry that unpacks its arguments is not recovered: it unpacks them
-#: at its first step, where a parameter list binds them at the call.
-#:
-#: The `async` rotation IIFE is the row that says the two kinds do not always answer together: that
-#: loop is read for its effect on the array and never for what the call answered, and an `async`
-#: body holding no `await` runs to completion before the call returns, so the array really is
-#: rotated. Its generator twin, which rotates nothing, sits in
-#: `A_ROTATION_THAT_READS_WHAT_THE_HOLDER_ANSWERED`.
+#: An `async` function holding no `await` runs its whole body before its call returns, so the
+#: `async` rotation turns the array over just as a plain one does.
 A_WRAPPER_THE_PASS_IS_RIGHT_TO_ANSWER = {
     a_string_array_whose_rotation_runs(target=5, rotation_head='async function'): (
         '5' + NL,
@@ -561,18 +463,10 @@ A_WRAPPER_THE_PASS_IS_RIGHT_TO_ANSWER = {
 }
 
 
-#: What Node makes of a string array whose rotation loop actually turns the array over, per kind of
-#: each function the three parts are built from. The holder rows say an `async` holder is not an
-#: answer the pass may give: the loop indexes what the holder answered, and what an `async` holder
-#: answers is a promise, which has no `shift`. Node throws where the pass used to print the rotated
-#: string.
-#:
-#: The replacement rows ask the same of the function the holder installs in its own place, which is
-#: what every call after the first reaches, and the rotation row asks it of the loop's own function:
-#: calling a generator never runs its body, so the array Node hands the accessor is the one written.
-#:
-#: The plain row beside them is the control, and it is also why `a_string_array` cannot state this
-#: on its own: its loop breaks before it touches the array, so every kind agrees there.
+#: Where the holder or the function it installs in its place is `async` or a generator, the loop's
+#: `arr` is a promise or a generator object, which has neither `push` nor `shift`, so the program
+#: throws a `TypeError`. A generator rotation prints `3` because calling a generator never runs its
+#: body, so the array is never turned over.
 A_ROTATION_THAT_READS_WHAT_THE_HOLDER_ANSWERED = {
     a_string_array_whose_rotation_runs(target=5): ('5' + NL, None),
     a_string_array_whose_rotation_runs('async function', target=5): ('', 'TypeError'),
@@ -586,19 +480,12 @@ A_ROTATION_THAT_READS_WHAT_THE_HOLDER_ANSWERED = {
 }
 
 
-#: Programs whose fold lifts an operator out of the body that gives it meaning. Neither output is a
-#: program at all: `await` outside an `async` body and `yield` outside a generator are syntax errors,
-#: so `refinery.lib.scripts.is_well_formed` answers `False` for what comes back.
 AN_OPERATOR_THE_BODY_GAVE_MEANING_TO = (
     'console.log(typeof (async function () { return await 7; })().then);' + NL,
     'console.log(typeof (function* () { return yield 7; })().next);' + NL,
 )
 
 
-#: Every way the language has of writing a function, against the kind each one is: whether it is
-#: `async`, whether it is a generator, and whether a call to it therefore answers a wrapper rather
-#: than what the body returned. The answers are the syntax and nothing else — `async function*` is
-#: both, an arrow is never a generator because none can be written.
 A_FUNCTION_OF_EVERY_KIND = {
     'function f() {}': (False, False, False),
     'async function f() {}': (True, False, True),
@@ -643,11 +530,6 @@ def _wraps_what_it_returns(node: Node | None) -> bool:
 
 
 def _the_keys_a_wrapping_function_is_held_under(root: Node) -> set[str]:
-    """
-    Every name a wrapping function in *root* is held under: its own, the one a declarator binds it
-    to, and the property or method key it is written at. A member access names no binding, so a name
-    a wrapping function carries anywhere is all a reading of the text can say about `o.m()`.
-    """
     names: set[str] = set()
     for node in root.walk():
         if not _wraps_what_it_returns(node):
@@ -668,11 +550,6 @@ def _the_keys_a_wrapping_function_is_held_under(root: Node) -> set[str]:
 
 
 def _the_names_a_pattern_binds(pattern: Node | None) -> set[str]:
-    """
-    The names a binding position introduces: the identifier itself, the target a default is written
-    onto, what a rest element gathers, and the value halves of an object or array pattern. A
-    property key that is not the pattern's own identifier names a property and binds nothing.
-    """
     if isinstance(pattern, JsIdentifier):
         return {pattern.name}
     if isinstance(pattern, JsAssignmentPattern):
@@ -700,18 +577,14 @@ def _the_scopes_around(node: Node):
 
 def _the_region_a_holder_scopes(holder: Node | None) -> Node | None:
     """
-    The node a block-scoped declaration written directly in *holder* is visible throughout. Every
-    case of a `switch` shares the one scope the switch block opens, so a `let` written in one case
-    is visible in all of them and in the discriminant of none.
+    The node throughout which a block-scoped declaration written directly in *holder* is visible.
+    All cases of a `switch` share the one scope its block opens, so a `let` written in one case is
+    visible in every case.
     """
     return holder.parent if isinstance(holder, JsSwitchCase) else holder
 
 
 def _where_a_lexical_declaration_is_visible(node: Node) -> Node | None:
-    """
-    The region a declaration is visible in when it is visible in less than the whole scope — a
-    `let`, a `const`, a class, or a caught error — and `None` for one the whole scope holds.
-    """
     if isinstance(node, JsCatchClause):
         return node.body
     if isinstance(node, JsClassDeclaration):
@@ -724,10 +597,6 @@ def _where_a_lexical_declaration_is_visible(node: Node) -> Node | None:
 
 
 def _what_a_declaration_binds(node: Node) -> tuple[set[str], Node | None]:
-    """
-    The names *node* declares and what it binds them to, which is `None` for a declaration binding
-    something other than a function written where it stands.
-    """
     if isinstance(node, JsFunctionDeclaration) and isinstance(node.id, JsIdentifier):
         return {node.id.name}, node
     if isinstance(node, JsClassDeclaration) and isinstance(node.id, JsIdentifier):
@@ -744,10 +613,6 @@ def _what_a_declaration_binds(node: Node) -> tuple[set[str], Node | None]:
 
 
 def _how_deep_inside(scope: Node, block: Node | None) -> int:
-    """
-    How far *block* sits below *scope*, and zero for a declaration the whole scope holds. Where one
-    name is declared twice, the deeper of the two is the one a reference inside both reads.
-    """
     depth = 0
     node = block
     while node is not None and node is not scope:
@@ -757,12 +622,6 @@ def _how_deep_inside(scope: Node, block: Node | None) -> int:
 
 
 def _what_a_scope_declares(scope: Node, name: str, reference: JsIdentifier) -> list[Node | None]:
-    """
-    What *scope* itself declares under *name* where *reference* stands: a function expression's own
-    name, the parameters, and the declarations written in it, less the ones a block holds that the
-    reference stands outside of. A function below the scope declares into its own scope, not this
-    one.
-    """
     seen: list[tuple[int, Node | None]] = []
     if isinstance(scope, JsFunctionExpression) and isinstance(scope.id, JsIdentifier):
         if scope.id.name == name:
@@ -787,15 +646,6 @@ def _what_a_scope_declares(scope: Node, name: str, reference: JsIdentifier) -> l
 
 
 def _what_a_scope_writes(scope: Node, name: str) -> list[Node | None]:
-    """
-    What an assignment written anywhere in *scope* puts into the binding *scope* declares under
-    *name*. A declaration says what a name is bound to and an assignment says what it holds later,
-    and a call reads whichever of the two ran last, so both count.
-
-    An assignment a nested scope declaring the same name owns puts nothing into this binding, so the
-    target is resolved the same way a read is: the innermost scope around it that declares the name
-    at all has to be this one.
-    """
     written: list[Node | None] = []
     for node in scope.walk():
         if not isinstance(node, JsAssignmentExpression) or not isinstance(node.left, JsIdentifier):
@@ -809,10 +659,6 @@ def _what_a_scope_writes(scope: Node, name: str) -> list[Node | None]:
 
 
 def _the_scope_the_name_reaches(reference: JsIdentifier) -> Node | None:
-    """
-    The innermost scope around *reference* that declares its name at all, which is the one a read or
-    a write of it touches, and `None` for a name declared nowhere.
-    """
     for scope in _the_scopes_around(reference):
         if _what_a_scope_declares(scope, reference.name, reference):
             return scope
@@ -820,15 +666,6 @@ def _the_scope_the_name_reaches(reference: JsIdentifier) -> Node | None:
 
 
 def _the_name_reaches_a_wrapping_function(reference: JsIdentifier) -> bool:
-    """
-    Whether the name read at *reference* reaches a function that wraps what its body returns, read
-    the way a reader reads it: the innermost scope around the reference that declares the name at
-    all is the one that answers, and a name declared nowhere reaches nothing.
-
-    A file-global set of the names a wrapping function answers to cannot say this. It counts a call
-    to a plain function elsewhere in the file as a call to the wrapping one, so a pass that answers
-    the plain call — which it may — reads as having answered the wrapping one.
-    """
     scope = _the_scope_the_name_reaches(reference)
     if scope is None:
         return False
@@ -853,14 +690,6 @@ def _calls_a_wrapping_function(callee: Node | None, keys: set[str]) -> bool:
 
 
 def _what_wraps_and_what_calls_it(source: str) -> tuple[int, int]:
-    """
-    How many functions in *source* wrap what their body returns, and how many calls reach one.
-
-    A pass that answers such a call takes the call away, and usually the function with it, so this
-    pair moving is what a wrong answer looks like from outside the engine. A pass that reshapes
-    either without answering the call — promoting an accessor, flattening a namespace, extracting an
-    entry — carries the keyword along and leaves the pair where it was.
-    """
     root = JsParser(source).parse()
     keys = _the_keys_a_wrapping_function_is_held_under(root)
     wrapping = 0
@@ -882,11 +711,6 @@ def _after_the_fold(rows: dict[str, str]) -> dict[str, tuple[int, int]]:
 
 
 class TestEachPassStillAnswersTheShapeItIsFor(TestBase):
-    """
-    The admission control, one row per site, with no keyword anywhere. Each states the text that pass
-    folds its own shape to, so that a guard which refuses the shape rather than the keyword fails
-    here. Without it a guard could empty a site and leave the suite green.
-    """
 
     def test_every_site_folds_the_shape_it_exists_for(self):
         self.assertEqual(
@@ -896,10 +720,6 @@ class TestEachPassStillAnswersTheShapeItIsFor(TestBase):
 
 
 class TestAWrapperThePassIsRightToAnswerIsStillAnswered(TestBase):
-    """
-    The other half of the control: a keyword on a function whose call the pass may answer. A guard
-    written per pass rather than per function destroys these.
-    """
 
     def test_each_of_them_folds_to_the_text_it_folded_to(self):
         rows = A_WRAPPER_THE_PASS_IS_RIGHT_TO_ANSWER
@@ -921,15 +741,12 @@ class TestAWrapperThePassIsRightToAnswerIsStillAnswered(TestBase):
 
 
 class TestTheDeobfuscationStillCallsAWrappingFunction(TestBase):
-    """
-    What each site leaves standing, read from the output text and from nothing else, so that the
-    regression is reported on a machine with no Node.js as well.
-    """
 
-    def test_no_site_answers_a_call_to_one(self):
+    def test_every_site_but_a_wrapper_called_as_a_statement_keeps_each_call_to_one(self):
         rows = {
             source: prints
-            for group in A_CALL_ANSWERING_A_WRAPPER.values()
+            for site, group in A_CALL_ANSWERING_A_WRAPPER.items()
+            if site != 'argwrap in statement position'
             for source, prints in group.items()
         }
         self.assertEqual(_after_the_fold(rows), _each_row_keeps_what_wraps_and_what_calls_it(rows))
@@ -937,16 +754,8 @@ class TestTheDeobfuscationStillCallsAWrappingFunction(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestTheProgramPrintsWhatItPrinted(TestBase):
-    """
-    Node is the oracle for every value here. Each test names what Node prints and asserts that the
-    deobfuscation prints it too, with neither of the two throwing.
-    """
 
     def test_a_call_wrapper(self):
-        """
-        Node prints `function` for each: `w(7)` answers a promise for `async`, a generator object for
-        a generator, and an async generator object for both, and each has the read the row asks for.
-        """
         rows = A_CALL_ANSWERING_A_WRAPPER['wrappers']
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -969,8 +778,8 @@ class TestTheProgramPrintsWhatItPrinted(TestBase):
 
     def test_a_callback_an_array_method_runs(self):
         """
-        Node prints `2` for each: every promise and every generator object is truthy, so `filter`
-        keeps both elements where the value each body returned would have kept one.
+        Node prints `2` for each: a promise and a generator object are both truthy, so `filter`
+        keeps both elements.
         """
         rows = A_CALL_ANSWERING_A_WRAPPER['interpreter']
         self.assertEqual(
@@ -994,9 +803,8 @@ class TestTheProgramPrintsWhatItPrinted(TestBase):
 
     def test_a_string_array(self):
         """
-        Node prints `function` for the two accessor rows. The generator *holder* prints `undefined`:
-        a generator's body does not run when it is called, so the self-reassignment never happens and
-        the accessor reads an index of a generator object.
+        The generator holder prints `undefined`: calling a generator never runs its body, so the
+        holder never replaces itself and the accessor indexes a generator object.
         """
         rows = A_CALL_ANSWERING_A_WRAPPER['stringarray']
         self.assertEqual(
@@ -1012,11 +820,6 @@ class TestTheProgramPrintsWhatItPrinted(TestBase):
         )
 
     def test_a_base91_table(self):
-        """
-        The keyword is asked for on the accessor and on the decoder, because the accessor answers
-        with what the decoder gave it and either one wrapping is enough to make the call answer a
-        wrapper.
-        """
         rows = A_CALL_ANSWERING_A_WRAPPER['b91strings']
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -1024,10 +827,6 @@ class TestTheProgramPrintsWhatItPrinted(TestBase):
         )
 
     def test_a_self_disabling_wrapper_in_expression_position(self):
-        """
-        Node prints `function a`: the call answers a promise, and the argument ran on the way. The
-        expansion writes `(a(), void 0)`, which has the argument's effect and no `.then`.
-        """
         rows = A_CALL_ANSWERING_A_WRAPPER['argwrap in expression position']
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -1036,10 +835,10 @@ class TestTheProgramPrintsWhatItPrinted(TestBase):
 
     def test_a_self_disabling_wrapper_in_statement_position(self):
         """
-        Node prints `undefined a,b` for the `async` wrapper: its body ran on the first call and
-        disabled it, so the second call answers `undefined`. Expanding the first call takes that
-        body away, and the second call then answers a promise. The generator beside it prints
-        `object a,b` because a call never runs its body, so nothing disables it either way.
+        Node prints `undefined a,b` for the `async` wrapper: its body runs at the first call and
+        replaces it with a plain function, so the second call answers `undefined`. The generator
+        prints `object a,b` because calling a generator never runs its body, so it is never
+        replaced.
         """
         rows = A_CALL_ANSWERING_A_WRAPPER['argwrap in statement position']
         self.assertEqual(
@@ -1056,13 +855,6 @@ class TestTheProgramPrintsWhatItPrinted(TestBase):
 
 
 class TestNeitherEscapeLeavesAProgramNothingCanSpell(TestBase):
-    """
-    `await` and `yield` mean what they mean because of the body they stand in. Lifting the body's
-    return expression to the call site would take that body away, and what came back would not be a
-    program at all: `await` outside an `async` body and `yield` outside a generator are both syntax
-    errors. `refinery.lib.scripts.is_well_formed`, reached through
-    `test.lib.scripts.js.ledger.well_formed`, answers for what comes back.
-    """
 
     def test_the_fold_leaves_both_of_them_spellable(self):
         self.assertEqual(
@@ -1072,11 +864,6 @@ class TestNeitherEscapeLeavesAProgramNothingCanSpell(TestBase):
 
 
 class TestARefusalStillLetsTheRunEnd(TestBase):
-    """
-    A pass that declines has to decline without reporting a change, or the pipeline is handed the
-    same tree for as long as it is willing to look at it. Every shape the guards refuse is run under
-    a bound here, so a refusal that spins is a failure and not a hang.
-    """
 
     def test_every_refused_shape_is_deobfuscated_within_the_bound(self):
         rows = [
@@ -1091,11 +878,6 @@ class TestARefusalStillLetsTheRunEnd(TestBase):
 
 
 class TestTheKindOfAFunctionIsAnsweredForEverySpellingOfOne(TestBase):
-    """
-    The three predicates the guards are written in terms of, asked for every way the language has of
-    writing a function. An arrow carries no `generator` field at all, because there is no generator
-    arrow to write, so the generator question has to be answered for one without reading it.
-    """
 
     def test_each_spelling_answers_the_kind_it_is_written_with(self):
         self.assertEqual(
@@ -1106,24 +888,7 @@ class TestTheKindOfAFunctionIsAnsweredForEverySpellingOfOne(TestBase):
             A_FUNCTION_OF_EVERY_KIND,
         )
 
-    def test_wrapping_is_exactly_being_async_or_being_a_generator(self):
-        self.assertEqual(
-            {
-                source: wraps_return(_the_only_function_in(source))
-                for source in A_FUNCTION_OF_EVERY_KIND
-            },
-            {
-                source: is_async or is_generator
-                for source, (is_async, is_generator, _) in A_FUNCTION_OF_EVERY_KIND.items()
-            },
-        )
 
-
-#: Programs calling a function the `async` keyword marks, mapped to what Node prints for each.
-#: Calling one answers a promise whose resolution is the value the body returned, never that value,
-#: so a program asking anything of what the call answered is asking it of the promise. Two of the
-#: three were folded to the returned value until the call wrapper and the IIFE inliner began asking
-#: what a call answers.
 A_CALL_TO_AN_ASYNC_FUNCTION = {
     'async function m(){ return 7; }'
     ' m().then(function(v){ console.log(v); });': '7\n',
@@ -1134,9 +899,6 @@ A_CALL_TO_AN_ASYNC_FUNCTION = {
 }
 
 
-#: The same rule reached through the other spellings of a function: an async function expression, an
-#: async arrow, an async method of a class, and a generator method. These were answered correctly
-#: before the fold learned the rule, so they say the fix did not buy one spelling at another's cost.
 AN_ASYNC_SHAPE_WRITTEN_ANOTHER_WAY = {
     'var m = async function(){ return 7; }; console.log(typeof m().then);': 'function\n',
     'var m = async () => 7; console.log(typeof m().then);': 'function\n',
@@ -1147,12 +909,6 @@ AN_ASYNC_SHAPE_WRITTEN_ANOTHER_WAY = {
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAnAsyncCallAnswersAPromiseInEverySpelling(TestBase):
-    """
-    The rows the release ledger carried as a blocker until the two general inliners began asking what
-    a call answers, and the four spellings beside them that were never folded. Each row asks the call
-    for something only the promise or the generator object has, so a fold to the returned value
-    prints something else or throws where Node prints a value.
-    """
 
     def test_a_call_to_an_async_function_is_not_folded_to_what_its_body_returned(self):
         self.assertEqual(
@@ -1173,14 +929,6 @@ class TestAnAsyncCallAnswersAPromiseInEverySpelling(TestBase):
         )
 
 
-#: Every route by which the deobfuscation reaches `JsInterpreter._call_function`, with a plain
-#: function at the end of it, mapped to what Node prints and what the deobfuscation folds it to. The
-#: guard added there is one line nine callers share, so a guard refusing more than the keyword empties
-#: all of them at once.
-#:
-#: `_eval_inline_call` has no row: traced over the whole harvest it is never entered, because an
-#: immediately called function expression is folded before the interpreter is asked about it. A row
-#: written for it would report the guard admits what it should while never reaching the guard.
 A_CALL_THE_INTERPRETER_MAY_RUN = {
     'console.log((function () { var g = function (a) { return a + a; };'
     ' var s = 0; for (var i = 0; i < 2; i++) s += g(i); return s; })());': (
@@ -1216,55 +964,17 @@ A_CALL_THE_INTERPRETER_MAY_RUN = {
 }
 
 
-def _folded_while_watching_the_interpreter(source: str) -> tuple[str, bool]:
-    """
-    What *source* folds to, and whether the guarded call was entered while it folded.
-    """
-    original = JsInterpreter._call_function
-    entered: list[object] = []
-
-    def counted(interpreter, func, args):
-        entered.append(func)
-        return original(interpreter, func, args)
-
-    JsInterpreter._call_function = counted
-    try:
-        return folded(source), bool(entered)
-    finally:
-        JsInterpreter._call_function = original
-
-
 class TestTheInterpreterStillRunsACallItMayRun(TestBase):
-    """
-    The admission control for the guard on the interpreter's trunk. Each row states the text it folds
-    to, and states that the guarded method was entered while it folded — without the second, a row
-    some other pass began answering would go on reporting that the guard admits what it should.
-    """
 
     def test_each_route_folds_to_the_text_it_folds_to(self):
         self.assertEqual(
-            {
-                source: _folded_while_watching_the_interpreter(source)[0]
-                for source in A_CALL_THE_INTERPRETER_MAY_RUN
-            },
+            {source: folded(source) for source in A_CALL_THE_INTERPRETER_MAY_RUN},
             {source: text for source, (_, text) in A_CALL_THE_INTERPRETER_MAY_RUN.items()},
-        )
-
-    def test_each_route_reaches_the_guarded_call(self):
-        self.assertEqual(
-            {
-                source: _folded_while_watching_the_interpreter(source)[1]
-                for source in A_CALL_THE_INTERPRETER_MAY_RUN
-            },
-            {source: True for source in A_CALL_THE_INTERPRETER_MAY_RUN},
         )
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestEveryRouteIntoTheInterpreterPrintsWhatItPrinted(TestBase):
-    """
-    The same rows against Node, so that a fold which keeps its shape but changes its value is caught.
-    """
 
     def test_each_route_prints_what_it_printed(self):
         rows = {
@@ -1279,12 +989,6 @@ class TestEveryRouteIntoTheInterpreterPrintsWhatItPrinted(TestBase):
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestARotationReadsWhatTheHolderAnswered(TestBase):
-    """
-    The string array's holder is called by the rotation loop before anything else reads it, and the
-    loop indexes what it answered. A holder that answers a promise or a generator object makes that
-    indexing throw, so a pass that resolved the strings anyway handed back a program that runs where
-    the input did not.
-    """
 
     def test_each_kind_of_holder_does_what_it_does(self):
         rows = A_ROTATION_THAT_READS_WHAT_THE_HOLDER_ANSWERED

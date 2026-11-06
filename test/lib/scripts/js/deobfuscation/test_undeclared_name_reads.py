@@ -1,35 +1,3 @@
-"""
-Evaluating a bare name that denotes no binding throws a `ReferenceError`, so a function whose body
-reads such a name is not a function whose call may be quietly discarded: discarding it turns a
-program that refuses to run into one that runs and prints.
-
-Every program in the two tables that follow hands the result of its call to a declarator nothing
-reads. That is what puts the call within reach of the removal this module is about: written as a
-bare `f();` statement instead, almost every one of these programs comes back unchanged whether the
-read counts for anything or not, and a row that cannot fail is worse than no row, because it reads
-as assurance.
-
-`_A_READ_WHOSE_NAME_MAY_NOT_EXIST` is the direction Node decides. Every program ends in a
-`ReferenceError` before it prints, so a call that went missing shows up as a line Node did not print
-for the original.
-
-`_REDUCED` is the direction Node cannot see, because a deobfuscator that reduces nothing preserves
-behavior perfectly, and it asserts text. A name that a declaration, a parameter, a `catch` clause or
-the specification itself binds is a name whose read cannot throw, and a property name, an object
-key, a label, a `typeof` and a `delete` do not read a binding at all. Each of those functions
-returns a value no folder can compute — a `Math.random()` stored once is what puts one out of reach
-— so removing the discarded call is the only rewrite that can take the program away, and the answer
-turns on what the read inside it is worth. Refuse every read and every one of those rows comes back
-standing.
-
-A parameter default is the same question asked one position further out: it is evaluated by
-every call that omits its argument, before the body is entered, so a default reading such a name
-ends the call in the same way a first statement reading it would.
-`_A_PARAMETER_DEFAULT_THAT_DECIDES_THE_CALL` and `_A_PARAMETER_DEFAULT_THAT_CANNOT_THROW` are
-the two directions again, for that position.
-
-Node is the authority for every value recorded in this module.
-"""
 from __future__ import annotations
 
 import inspect
@@ -37,15 +5,12 @@ import unittest
 
 from typing import NamedTuple
 
+from test import opportunity
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 
 class _Program(NamedTuple):
-    """
-    A program whose observable behavior turns on whether one name denotes a binding, together with
-    what Node prints for it and the error it ends with, if any.
-    """
     source: str
     printed: str
     error: str | None = None
@@ -53,10 +18,20 @@ class _Program(NamedTuple):
 
 class _Rewrite(NamedTuple):
     """
-    A program and the text the deobfuscator leaves it as.
+    A program, the text the deobfuscator reduces it to, and the partial reductions it may stop at
+    instead, each of which behaves as the program does.
     """
     source: str
     result: str
+    short_of_it: tuple[str, ...] = ()
+
+
+_ONLY_THE_UNREAD_RANDOM_LEFT = inspect.cleandoc(
+    """
+    var unfoldable = Math.random();
+    console.log('after');
+    """
+)
 
 
 _A_READ_WHOSE_NAME_MAY_NOT_EXIST: dict[str, _Program] = {
@@ -246,12 +221,8 @@ _REDUCED: dict[str, _Rewrite] = {
             console.log('after');
             """
         ),
-        inspect.cleandoc(
-            """
-            var unfoldable = Math.random();
-            console.log('after');
-            """
-        ),
+        "console.log('after');",
+        (_ONLY_THE_UNREAD_RANDOM_LEFT,),
     ),
     'a global the specification mandates': _Rewrite(
         inspect.cleandoc(
@@ -264,12 +235,8 @@ _REDUCED: dict[str, _Rewrite] = {
             console.log('after');
             """
         ),
-        inspect.cleandoc(
-            """
-            var unfoldable = Math.random();
-            console.log('after');
-            """
-        ),
+        "console.log('after');",
+        (_ONLY_THE_UNREAD_RANDOM_LEFT,),
     ),
     'a declared global': _Rewrite(
         inspect.cleandoc(
@@ -282,12 +249,8 @@ _REDUCED: dict[str, _Rewrite] = {
             console.log('after');
             """
         ),
-        inspect.cleandoc(
-            """
-            var unfoldable = Math.random();
-            console.log('after');
-            """
-        ),
+        "console.log('after');",
+        (_ONLY_THE_UNREAD_RANDOM_LEFT,),
     ),
     'a local declaration of the name': _Rewrite(
         inspect.cleandoc(
@@ -301,12 +264,8 @@ _REDUCED: dict[str, _Rewrite] = {
             console.log('after');
             """
         ),
-        inspect.cleandoc(
-            """
-            var unfoldable = Math.random();
-            console.log('after');
-            """
-        ),
+        "console.log('after');",
+        (_ONLY_THE_UNREAD_RANDOM_LEFT,),
     ),
     'a catch parameter': _Rewrite(
         inspect.cleandoc(
@@ -323,12 +282,8 @@ _REDUCED: dict[str, _Rewrite] = {
             console.log('after');
             """
         ),
-        inspect.cleandoc(
-            """
-            var unfoldable = Math.random();
-            console.log('after');
-            """
-        ),
+        "console.log('after');",
+        (_ONLY_THE_UNREAD_RANDOM_LEFT,),
     ),
     'an object key read back as a property name': _Rewrite(
         inspect.cleandoc(
@@ -341,12 +296,8 @@ _REDUCED: dict[str, _Rewrite] = {
             console.log('after');
             """
         ),
-        inspect.cleandoc(
-            """
-            var unfoldable = Math.random();
-            console.log('after');
-            """
-        ),
+        "console.log('after');",
+        (_ONLY_THE_UNREAD_RANDOM_LEFT,),
     ),
     'a parameter': _Rewrite(
         inspect.cleandoc(
@@ -359,12 +310,8 @@ _REDUCED: dict[str, _Rewrite] = {
             console.log('after');
             """
         ),
-        inspect.cleandoc(
-            """
-            var unfoldable = Math.random();
-            console.log('after');
-            """
-        ),
+        "console.log('after');",
+        (_ONLY_THE_UNREAD_RANDOM_LEFT,),
     ),
     'a label': _Rewrite(
         inspect.cleandoc(
@@ -380,12 +327,8 @@ _REDUCED: dict[str, _Rewrite] = {
             console.log('after');
             """
         ),
-        inspect.cleandoc(
-            """
-            var unfoldable = Math.random();
-            console.log('after');
-            """
-        ),
+        "console.log('after');",
+        (_ONLY_THE_UNREAD_RANDOM_LEFT,),
     ),
     'a typeof of a name nothing binds': _Rewrite(
         inspect.cleandoc(
@@ -428,12 +371,13 @@ _REDUCED: dict[str, _Rewrite] = {
     ),
 }
 """
-A program the deobfuscator must still reduce, mapped to the text it leaves it as. Each function
-returns a value no folder can compute, so removing its discarded call is the only rewrite that can
-take the program away and the answer turns entirely on what the read inside it is worth: a gate that
-refused every read would hand back every row with its function and its call in place. The last row
-asks for both directions at once: the function nothing calls goes, and the read that outlives it is
-not answered with the value that function would have stored.
+A program the deobfuscator must still reduce, mapped to the text it reduces it to and the texts
+short of that it may leave instead. Each function returns a value no folder can compute, so removing
+its discarded call is the only rewrite that can take the program away and the answer turns entirely
+on what the read inside it is worth: a gate that refused every read would hand back every row with
+its function and its call in place. The last row asks for both directions at once: the function
+nothing calls goes, and the read that outlives it is not answered with the value that function would
+have stored.
 """
 
 
@@ -458,16 +402,24 @@ class TestAReadOfANameThatMayNotDenoteABinding(TestJsDeobfuscator):
 
 class TestAReadThatCannotThrowIsStillReduced(TestJsDeobfuscator):
 
-    def test_each_program_is_left_as_the_text_the_row_records(self):
+    def test_each_program_is_reduced_to_the_row_text_or_left_short_of_it(self):
         for name, rewrite in _REDUCED.items():
+            with self.subTest(name=name):
+                self.assertIn(self._deobfuscate(rewrite.source), (rewrite.result, *rewrite.short_of_it))
+
+    @opportunity
+    def test_each_program_with_a_text_short_of_it_is_reduced_to_the_row_text(self):
+        rows = _REDUCED.items()
+        for name, rewrite in ((name, rewrite) for name, rewrite in rows if rewrite.short_of_it):
             with self.subTest(name=name):
                 self.assertEqual(self._deobfuscate(rewrite.source), rewrite.result)
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    def test_node_does_the_same_for_each_program_and_the_text_it_was_left_as(self):
+    def test_node_does_the_same_for_each_program_and_each_text_it_may_be_left_as(self):
         for name, rewrite in _REDUCED.items():
-            with self.subTest(name=name):
-                self.assertEqual(behavior(rewrite.source), behavior(rewrite.result))
+            for text in (rewrite.result, *rewrite.short_of_it):
+                with self.subTest(name=name, text=text):
+                    self.assertEqual(behavior(rewrite.source), behavior(text))
 
 
 _A_PARAMETER_DEFAULT_THAT_DECIDES_THE_CALL: dict[str, _Program] = {
@@ -606,13 +558,16 @@ _A_PARAMETER_DEFAULT_THAT_CANNOT_THROW: dict[str, _Rewrite] = {
             console.log(f());
             """
         ),
-        inspect.cleandoc(
-            """
-            function f({ a = 5 } = {}) {
-              return a;
-            }
-            console.log(f());
-            """
+        'console.log(5);',
+        (
+            inspect.cleandoc(
+                """
+                function f({ a = 5 } = {}) {
+                  return a;
+                }
+                console.log(f());
+                """
+            ),
         ),
     ),
     'an arrow default the folder can compute': _Rewrite(
@@ -627,8 +582,9 @@ _A_PARAMETER_DEFAULT_THAT_CANNOT_THROW: dict[str, _Rewrite] = {
 }
 """
 A program whose parameter default reads only what is bound, mapped to the text the deobfuscator
-leaves it as. Reducing inside a default is what a refusal to look at parameter lists at all would
-cost, so these rows are what keeps the rows above from being passed by refusing everything.
+reduces it to and the texts short of that it may leave instead. Reducing inside a default is what a
+refusal to look at parameter lists at all would cost, so these rows are what keeps the rows above
+from being passed by refusing everything.
 """
 
 
@@ -653,13 +609,21 @@ class TestAParameterDefaultDecidesWhetherACallThrows(TestJsDeobfuscator):
 
 class TestAParameterDefaultThatCannotThrowIsStillReduced(TestJsDeobfuscator):
 
-    def test_each_program_is_left_as_the_text_the_row_records(self):
+    def test_each_program_is_reduced_to_the_row_text_or_left_short_of_it(self):
         for name, rewrite in _A_PARAMETER_DEFAULT_THAT_CANNOT_THROW.items():
+            with self.subTest(name=name):
+                self.assertIn(self._deobfuscate(rewrite.source), (rewrite.result, *rewrite.short_of_it))
+
+    @opportunity
+    def test_each_program_with_a_text_short_of_it_is_reduced_to_the_row_text(self):
+        rows = _A_PARAMETER_DEFAULT_THAT_CANNOT_THROW.items()
+        for name, rewrite in ((name, rewrite) for name, rewrite in rows if rewrite.short_of_it):
             with self.subTest(name=name):
                 self.assertEqual(self._deobfuscate(rewrite.source), rewrite.result)
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    def test_node_does_the_same_for_each_program_and_the_text_it_was_left_as(self):
+    def test_node_does_the_same_for_each_program_and_each_text_it_may_be_left_as(self):
         for name, rewrite in _A_PARAMETER_DEFAULT_THAT_CANNOT_THROW.items():
-            with self.subTest(name=name):
-                self.assertEqual(behavior(rewrite.source), behavior(rewrite.result))
+            for text in (rewrite.result, *rewrite.short_of_it):
+                with self.subTest(name=name, text=text):
+                    self.assertEqual(behavior(rewrite.source), behavior(text))

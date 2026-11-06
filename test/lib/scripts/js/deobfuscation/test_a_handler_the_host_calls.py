@@ -1,10 +1,5 @@
 """
-A function a script stores where the host calls it from outside the file: an event handler of the
-global object, such as the `onload` a browser window calls once the script has run, or a name the
-analyst declared a host reaches. No call of it shows in the file, so the store is never dead
-(`refinery.lib.scripts.js.analysis.model.SemanticModel.host_reaches_global`). Each program is
-written by hand, and each row says what Node prints for it run as a classic script in the window
-`test.lib.scripts.js.ledger` sets up.
+SECURITY: Node runs every program here. Each is written by hand; never add one taken from a sample.
 """
 from __future__ import annotations
 
@@ -16,7 +11,6 @@ from test.lib.scripts.js.ledger import Program, Reading, a_program, folded, prin
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 
-#: Classic scripts storing a load handler, mapped to what a browser window prints for each.
 A_LOAD_HANDLER_A_WINDOW_CALLS: dict[str, Program] = {
     'a load handler stored at the top': Program(
         a_program("""
@@ -82,9 +76,6 @@ class TestALoadHandlerTheWindowCallsIsKept(TestBase):
                 self.assertEqual(row.read(), row.required())
 
 
-#: Classic scripts running a function body that declares a load handler of its own, mapped to what
-#: a browser window prints for each: the declaration is local to that body, so the window never
-#: calls it.
 A_LOAD_HANDLER_LOCAL_TO_A_FUNCTION_BODY: dict[str, Program] = {
     'a function called once declaring a load handler': Program(
         a_program("""

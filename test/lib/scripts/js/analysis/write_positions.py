@@ -1,10 +1,3 @@
-"""
-Every position a member expression can be written in, as a template with a `TARGET` placeholder.
-
-The list describes `is_member_write_target` and `is_simple_assignment_target` — analysis predicates —
-so it lives in the analysis test package and is imported by the deobfuscation-side tests that need the
-same positions spelled the same way.
-"""
 from __future__ import annotations
 
 import inspect

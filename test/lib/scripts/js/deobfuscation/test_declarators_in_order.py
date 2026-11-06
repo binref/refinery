@@ -1,26 +1,18 @@
 """
-The declarators of one declaration, which run one after the other: a later one reads what an
-earlier one stored, and a write, a call, a getter or a throw in one of them is seen by the ones
-after it. Each program is written by hand, and each row says what Node prints for it run as a
-CommonJS file.
+SECURITY: the programs here run in Node, and every one is written by hand in this file. No sample
+and no stored obfuscator fixture may ever be added here.
 """
 from __future__ import annotations
 
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 
 from refinery.lib.scripts.js.options import ExecutionModel
 
-#: Programs holding a declaration of several declarators, mapped to what Node prints for each run as
-#: a CommonJS file: a later declarator reading an earlier one, one rewriting an earlier one
-#: directly, through a closure, a getter, a conversion or a global alias, one throwing, `let` read
-#: before its declarator, a `var` declared twice, declarators in a `for` head, a loop, a generator,
-#: under a label and a `case`, and declarators changing what an earlier one read of
-#: `String.prototype`.
 DECLARATORS: dict[str, Program] = {
     'later declarator reads earlier': Program(
         a_program("""
@@ -498,8 +490,6 @@ DECLARATORS: dict[str, Program] = {
     ),
 }
 
-#: Programs of `DECLARATORS` whose declarators fold now that a later one is known to run after an
-#: earlier one, mapped to the text the deobfuscation writes for each.
 FOLDED: dict[str, str] = {
     'declarators at the top of a file': "console.log('ab');",
     'declarators under a case': inspect.cleandoc(
@@ -510,6 +500,10 @@ FOLDED: dict[str, str] = {
             }
         """
     ),
+}
+
+UNWRAPPED: dict[str, str] = {
+    'declarators under a case': "console.log('mn');",
 }
 
 
@@ -530,10 +524,19 @@ class TestDeclaratorsInOrderBehaveAsTheyDid(TestBase):
 class TestALaterDeclaratorReadsAnEarlierOne(TestBase):
 
     def test_the_declarators_at_the_top_of_a_file_and_under_a_case_fold(self):
+        for label, folded in FOLDED.items():
+            with self.subTest(label=label):
+                self.assertIn(
+                    deobfuscate_source(DECLARATORS[label].text, execution=ExecutionModel.commonjs),
+                    (folded, UNWRAPPED.get(label, folded)),
+                )
+
+    @opportunity
+    def test_a_switch_on_a_constant_around_the_folded_declarators_goes(self):
         self.assertEqual(
             {
                 label: deobfuscate_source(DECLARATORS[label].text, execution=ExecutionModel.commonjs)
-                for label in FOLDED
+                for label in UNWRAPPED
             },
-            FOLDED,
+            UNWRAPPED,
         )

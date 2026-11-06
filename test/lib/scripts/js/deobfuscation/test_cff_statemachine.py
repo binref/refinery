@@ -6,6 +6,7 @@ import unittest
 
 from unittest import mock
 
+from test import opportunity
 from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_within, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import wontfix
@@ -282,14 +283,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_nested_wrapper_arg_rebind(self):
-        """
-        The wrapper `run` has a rest-parameter named `a` that collides with a state variable, and
-        its recovered body contains a nested function that binds the generator's argument variable
-        `args` as its own local. Threading `run`'s arguments must mint a fresh parameter (`args_1`)
-        rather than reuse the colliding `a`, and must leave the nested `var args` untouched instead
-        of capturing it. Verified equivalent to the original under Node: `outer()(7)` returns `15`
-        for both, as do the other drivers.
-        """
         result = self._run_transformer(self.NESTED_WRAPPER_ARG_REBIND_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -441,10 +434,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         )
 
     def test_generator_cff_machine_with_more_blocks_than_the_limit_is_declined(self):
-        """
-        `LOOPING_CFF` runs four blocks. Under a limit of three the recovery leaves the generator as
-        it is rather than recover the blocks it read; under a limit of four it recovers it.
-        """
         source = self.LOOPING_CFF
         with mock.patch.object(statemachine, '_MAX_BLOCKS', 3):
             self.assertEqual(
@@ -987,11 +976,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_mixed_sequence_branch_preserved(self):
-        """
-        The branch condition `scope.x` reads a member never written on the empty default scope, so it
-        is `undefined` and the recovery must declare `var x;` for the stripped bare read rather than
-        leave an unbound free `x`. The redirect sibling keeps `var extra;` for the same reason.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -1007,16 +991,26 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 }
                 """
             ),
+            self._run_transformer(self.MIXED_SEQUENCE_BRANCH_CFF, JsStateMachineUnflattening),
+        )
+
+    @opportunity
+    def test_generator_cff_branch_on_a_member_never_written_takes_the_else_arm(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  console.log("other");
+                  console.log("end");
+                  return "result";
+                }
+                """
+            ),
             self._deobfuscate(self.MIXED_SEQUENCE_BRANCH_CFF),
         )
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_generator_cff_mixed_sequence_branch_behaviour_preserved(self):
-        """
-        `wrapper()` takes the else branch (`scope.x` is `undefined`), prints `other` then `end`, and
-        returns `"result"`. Dropping the read to a bare free `x` would throw a `ReferenceError` before
-        any output, so the recovered code diverges unless it declares the name.
-        """
         source = self.MIXED_SEQUENCE_BRANCH_CFF
         invoke = '\nconsole.log(JSON.stringify(wrapper()));'
         self.assertEqual(
@@ -1174,11 +1168,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_namespace_local_deep_write_recovered(self):
-        """
-        The complement of the free-name tests: a genuine namespace-local with a `scope.NS.local`
-        defining write is proven local, so bare `local` is qualified back to `NS.local`. This is
-        what distinguishes the fix from simply never qualifying.
-        """
         result = self._run_transformer(self.NAMESPACE_LOCAL_DEEP_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -1299,15 +1288,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_sibling_namespace_home_canonical(self):
-        """
-        A member of a sibling namespace `Sub` distinct from the main default `NS` is written
-        qualified (`Sub.slot`, while the `with` redirect is unset) and later read bare (`slot`,
-        while the redirect points at `Sub`). Node resolves both to `scope.Sub.slot`, so the recovery
-        must canonicalize the member to `Sub.slot` in both positions independently of the momentary
-        redirect. `Sub` reaches the scope as an object-literal argument the wrapper threads to the
-        shared generator, a fresh object for every call of the wrapper, so it is declared as
-        `var Sub = {}` in the wrapper's recovered body.
-        """
         result = self._run_transformer(self.SIBLING_NAMESPACE_HOME_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -1351,45 +1331,61 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
-    def test_generator_cff_ambiguous_namespace_home_declined(self):
-        """
-        The member `v` is written under two sibling namespaces (`scope.NS.v` and `scope.Alt.v`), so it
-        has no single canonical home — under the `with`-redirect a bare `v` resolves to `NS.v` or
-        `Alt.v` depending on the routing state at each use, which redirect-independent qualification
-        cannot express. Recovery of the whole generator is declined and it is returned unchanged,
-        rather than emitting a bare `v` that would resolve to a free variable. Node-verified: the
-        original and the returned form both evaluate `outer()` to 22.
-        """
-        result = self._run_transformer(self.AMBIGUOUS_NAMESPACE_HOME_CFF, JsStateMachineUnflattening)
-        self.assertEqual(result, inspect.cleandoc(
-            """
-            function outer() {
-              function* gen(a, b, scope = { NS: {} }, args) {
-                while (a + b !== 100) {
-                  with (scope.RV || scope) {
-                    switch (a + b) {
-                      case 10:
-                        scope.Alt = {};
-                        scope.NS.v = 11;
-                        scope.Alt.v = 22;
-                        scope.RV = scope.Alt;
-                        a = 40, b = 0;
-                        break;
-                      case 40:
-                        return done = true, v;
-                        break;
+    def test_generator_cff_member_written_under_two_namespaces_is_left_alone_or_read_from_the_redirect_target(self):
+        self.assertIn(
+            self._deobfuscate(self.AMBIGUOUS_NAMESPACE_HOME_CFF),
+            (
+                inspect.cleandoc(
+                    """
+                    function outer() {
+                      function* gen(a, b, scope = { NS: {} }, args) {
+                        while (a + b !== 100) {
+                          with (scope.RV || scope) {
+                            switch (a + b) {
+                              case 10:
+                                scope.Alt = {};
+                                scope.NS.v = 11;
+                                scope.Alt.v = 22;
+                                scope.RV = scope.Alt;
+                                a = 40;
+                                b = 0;
+                                break;
+                              case 40:
+                                return done = true, v;
+                            }
+                          }
+                        }
+                      }
+                      var done;
+                      var result = gen(5, 5).next().value;
+                      if (done) {
+                        return result;
+                      }
                     }
-                  }
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    function outer() {
+                      return 22;
+                    }
+                    """
+                ),
+            ),
+        )
+
+    @opportunity
+    def test_generator_cff_member_written_under_two_namespaces_is_read_from_the_redirect_target(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  return 22;
                 }
-              }
-              var done;
-              var result = gen(5, 5)["next"]()["value"];
-              if (done) {
-                return result;
-              }
-            }
-            """
-        ))
+                """
+            ),
+            self._deobfuscate(self.AMBIGUOUS_NAMESPACE_HOME_CFF),
+        )
 
     CATCH_PARAM_QUALIFY_CFF = inspect.cleandoc(
         """
@@ -1423,11 +1419,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_catch_param_does_not_leak_qualification(self):
-        """
-        The namespace-local `x` is shadowed by a `catch (x)` binding in one statement and read
-        bare in a sibling statement. The catch exemption must stay confined to the catch clause so
-        the later read still qualifies to `NS.x`. Original and recovered both return 10 under Node.
-        """
         result = self._run_transformer(self.CATCH_PARAM_QUALIFY_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -1471,11 +1462,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_arrow_param_not_qualified(self):
-        """
-        An arrow parameter that shares a name with the namespace-local `x` is its own binding, so it
-        must stay bare rather than be rewritten to the invalid `(NS.x) => NS.x + 1`. Original and
-        recovered both return 6 under Node.
-        """
         result = self._run_transformer(self.ARROW_PARAM_QUALIFY_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -1514,10 +1500,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_object_shorthand_qualified(self):
-        """
-        A namespace-local read through an object shorthand `{x}` must expand to `{x: NS.x}`; leaving
-        it bare would read a global. Original and recovered both return {x: 7} under Node.
-        """
         result = self._run_transformer(self.OBJECT_SHORTHAND_QUALIFY_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -1556,11 +1538,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_compound_assignment_home(self):
-        """
-        A member whose only defining write is a logical assignment (`scope.NS.c ||= 3`) is still a
-        namespace-local, so its bare read must qualify to `NS.c`. Original and recovered both return
-        4 under Node.
-        """
         result = self._run_transformer(self.COMPOUND_ASSIGNMENT_HOME_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -1600,11 +1577,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_plain_param_wrapper_preserved(self):
-        """
-        A wrapper with a plain (non-rest) parameter colliding with a state variable must stay plain
-        after its argument name is minted fresh, not become `...args_1`, so the caller's single
-        array argument keeps its binding. Original and recovered both return 3 for `outer()([1,2])`.
-        """
         result = self._run_transformer(self.PLAIN_PARAM_WRAPPER_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -1648,11 +1620,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_wrapper_rest_free_reference(self):
-        """
-        The wrapper's rest name `data` also occurs as a free global read in the recovered body, so
-        reusing it as the argument name would capture that global; a fresh name must be minted
-        instead. Original and recovered both yield sink == 999 under Node.
-        """
         result = self._run_transformer(self.WRAPPER_REST_FREE_REFERENCE_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -1696,11 +1663,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_wrapper_shorthand_arg_rebound(self):
-        """
-        The threaded argument holder read through a shorthand `{args}` must expand to `{args: rest}`
-        so the property value binds the wrapper parameter. Original and recovered both return
-        {args: [5, 6]} for `outer()(5, 6)` under Node.
-        """
         result = self._run_transformer(self.WRAPPER_SHORTHAND_ARG_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -1740,12 +1702,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_state_value_reaches_only_the_slots_that_read_the_name(self):
-        """
-        The state variable `i` also spells a member property, an object key and a shorthand
-        property. Only the shorthand is a read of the binding, so only it takes the state value and
-        expands to `{i: 40}`; substituting into the other two emits `o.40` and `{40: 2}`, which no
-        engine parses. Original and recovered both return [1, 40, 40, 2] under Node.
-        """
         result = self._run_transformer(
             self.STATE_NAME_IN_PROPERTY_SLOTS_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
@@ -1790,11 +1746,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_per_call_namespace_is_a_local_of_the_wrapper(self):
-        """
-        Each call of the wrapper hands the generator a fresh `Loc`, which the closure it returns
-        keeps; the recovered wrapper declares `Loc` itself, and the argument store becomes its
-        parameters.
-        """
         result = self._run_transformer(self.PER_CALL_NAMESPACE_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -1943,10 +1894,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_default_reading_the_element_before_it_reads_that_parameter(self):
-        """
-        The argument store gives the second element the first as its default, which the parameter
-        list evaluates after the first parameter is bound: the default becomes a read of it.
-        """
         result = self._run_transformer(
             self.ARGUMENT_STORE_WITH_A_DEFAULT_READING_THE_ELEMENT_BEFORE_IT_CFF,
             JsStateMachineUnflattening,
@@ -1999,10 +1946,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_argument_stored_to_a_variable_a_nested_wrapper_hands_on_is_recovered(self):
-        """
-        The store of the argument into `p` runs before the nested wrapper that hands `p` on is made,
-        also once the store is a statement of the parameter it became.
-        """
         result = self._run_transformer(
             self.ARGUMENT_STORED_TO_A_VARIABLE_A_NESTED_WRAPPER_HANDS_ON_CFF,
             JsStateMachineUnflattening,
@@ -2107,6 +2050,41 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                   case 20:
                     return done = true, F.result;
                   case 50:
+                    console.log('before');
+                    [[L.x], L.o] = args;
+                    a = 60, b = 0;
+                    break;
+                  case 60:
+                    return L.o + L.x;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        console.log(outer(3));
+        """
+    )
+
+    NESTED_ARGUMENT_PATTERN_AFTER_A_STORE_TO_THE_NAMESPACE_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = { F: {} }, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    F.helper = function(...rest) {
+                      return gen(40, 10, { F: scope.F, L: {} }, rest)["next"]()["value"];
+                    };
+                    F.result = F.helper([n], 'x');
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    return done = true, F.result;
+                  case 50:
                     L.k = 1;
                     [[L.x], L.o] = args;
                     a = 60, b = 0;
@@ -2126,10 +2104,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_nested_argument_pattern_becomes_a_nested_parameter(self):
-        """
-        A flattened function stores its arguments as `[[a, b = d], O]`: the first argument is
-        unpacked by a pattern of its own, which becomes a pattern parameter with the same default.
-        """
         result = self._run_transformer(self.NESTED_ARGUMENT_PATTERN_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -2150,10 +2124,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         ))
 
     def test_generator_cff_default_reading_a_slot_of_a_nested_pattern_reads_its_parameter(self):
-        """
-        The default of the second argument reads the first element of the first, stored before it
-        is evaluated; the nested pattern also ends in a rest element.
-        """
         result = self._run_transformer(
             self.NESTED_ARGUMENT_PATTERN_WITH_A_REST_AND_A_DEFAULT_READING_INTO_IT_CFF,
             JsStateMachineUnflattening,
@@ -2177,10 +2147,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         ))
 
     def test_generator_cff_nested_argument_pattern_after_another_statement_stays_a_store(self):
-        """
-        Unpacking the first argument runs its iterator, which a parameter list does at the call:
-        behind another statement of the body, the store stays where it runs.
-        """
         result = self._run_transformer(
             self.NESTED_ARGUMENT_PATTERN_AFTER_ANOTHER_STATEMENT_CFF,
             JsStateMachineUnflattening,
@@ -2191,8 +2157,32 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
               var F = {};
               F.helper = function(...rest) {
                 var L = {};
-                L.k = 1;
+                console.log('before');
                 [[L.x], L.o] = rest;
+                return L.o + L.x;
+              };
+              F.result = F.helper([n], 'x');
+              return F.result;
+            }
+            console.log(outer(3));
+            """
+        ))
+
+    @opportunity
+    def test_generator_cff_nested_argument_pattern_after_a_store_to_the_namespace_becomes_a_parameter(self):
+        result = self._run_transformer(
+            self.NESTED_ARGUMENT_PATTERN_AFTER_A_STORE_TO_THE_NAMESPACE_CFF,
+            JsStateMachineUnflattening,
+        )
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer(n) {
+              var F = {};
+              F.helper = function([x_1], o_1) {
+                var L = {};
+                L.k = 1;
+                L.x = x_1;
+                L.o = o_1;
                 return L.o + L.x + L.k;
               };
               F.result = F.helper([n], 'x');
@@ -2325,10 +2315,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_state_read_by_the_field_of_a_class_is_declined(self):
-        """
-        The field is set when an instance is made, which happens after the transition, from the
-        state variable as it is then.
-        """
         source = self.STATE_READ_BY_THE_FIELD_OF_A_CLASS_CFF
         self.assertEqual(
             self._run_transformers(source),
@@ -2551,16 +2537,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_recovery_declines_what_it_cannot_express(self):
-        """
-        A wrapper handing the generator a scope object a call makes, a nested function reading a
-        state variable when it is called, a run storing to the argument holder the main call never
-        passes, a scope object whose namespace an accessor makes afresh on every read, a namespace
-        nothing refers to whose initializer calls a function, and a wrapper handing on an argument
-        other than its own parameter: each generator is left as it is. So is one whose call is not
-        the obfuscator's scaffolding exactly: a guard that does more than return the result, a
-        return of the generator no guard turns into a return of the function, a result read after
-        the guard, and a declaration standing between the generator and its call.
-        """
         for source in (
             self.UNREADABLE_WRAPPER_SCOPE_CFF,
             self.STATE_READ_BY_A_CLOSURE_CFF,
@@ -2610,11 +2586,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_main_slot_is_declared_beside_a_wrapper_slot_of_its_name(self):
-        """
-        The wrapper's run keeps its own `t` on the scope object each call makes, and the main run
-        keeps another on its own. Declaring the wrapper's must not stop the main run's from being
-        declared, or the main run's `t` becomes a global every call of `outer` shares.
-        """
         result = self._run_transformer(
             self.MAIN_SLOT_NAMED_LIKE_A_WRAPPER_SLOT_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
@@ -2660,10 +2631,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_parameter_default_does_not_see_the_body_it_belongs_to(self):
-        """
-        The default `() => scope.v` is evaluated in the scope of the parameter list, where the
-        body's `var scope` does not exist, so it reads the generator's scope object.
-        """
         result = self._run_transformer(self.DEFAULT_READING_A_SLOT_CFF, JsStateMachineUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -3474,11 +3441,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_namespace_holding_more_than_data_is_declined(self):
-        """
-        A namespace whose literal defines a setter, and one whose literal gives it a prototype: a
-        store to a member runs code, and a read finds what the prototype holds, so neither member
-        holds what the stores the recovery reads put there. Each generator is left as it is.
-        """
         for source in (self.NAMESPACE_WITH_A_SETTER_CFF, self.NAMESPACE_WITH_A_PROTOTYPE_CFF):
             with self.subTest(source):
                 self.assertEqual(
@@ -3634,11 +3596,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_routing_slots_stored_by_destructuring_route_and_are_dropped(self):
-        """
-        The first case test reads `p` before the entry block stores it, which makes `NaN` and does
-        not match; afterwards `p` is `15` and routes to its case. Only case tests read `p` and `q`,
-        so their store goes with them.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -3881,18 +3838,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_routing_the_obfuscator_does_not_write_is_declined(self):
-        """
-        The obfuscator stores constants in its routing slots once, before anything else in the
-        block the machine starts in, reads them only in case tests, and gives every block one
-        state. Each generator here breaks that, and is left as it is: the matched case runs on into
-        the next, a case test ahead of the match reads a name the machine does not know or a slot
-        stored from an expression it cannot evaluate, a routing slot is stored in a loop, stored
-        again after a wrapper ran, stored after a wrapper was called, written bare through the
-        `with` statement, written by a function the leading stores store, or written under a key
-        only known at runtime, the object holding it is replaced behind its store or in a later
-        block or given another prototype, its store runs a setter a prototype holds, and a block is
-        reached with two states, one pair of them told apart only by the sign of a zero.
-        """
         for source in (
             self.MATCHED_CASE_THE_RECOVERY_CANNOT_READ_CFF,
             self.ROUTING_READ_OF_A_NAME_NO_SLOT_HOLDS_YET_CFF,
@@ -3973,11 +3918,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_write_through_a_rest_parameter_named_like_the_scope_routes(self):
-        """
-        The function the case stores names its rest parameter like the scope object and stores
-        into it under a key only the call knows: that store writes the array of its arguments, no
-        routing slot.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -3998,17 +3938,48 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         )
 
     def test_generator_cff_write_of_a_parameter_named_like_a_routing_slot_routes(self):
-        """
-        The function the case stores writes its parameter `k`, which the `with` statement around
-        it does not reach: no routing slot is written. The bare `k` it reads still counts as a read
-        of the slot, so the slot's store stays.
-        """
+        self.assertIn(
+            self._run_transformer(
+                self.ROUTING_SLOT_NAME_A_PARAMETER_REBINDS_CFF, JsStateMachineUnflattening
+            ),
+            (
+                inspect.cleandoc(
+                    """
+                    function outer() {
+                      var NS = {};
+                      [NS.k] = [25];
+                      NS.twice = function(k) {
+                        k = k * 2;
+                        return k;
+                      };
+                      return NS.twice(4);
+                    }
+                    console.log(outer());
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    function outer() {
+                      var NS = {};
+                      NS.twice = function(k) {
+                        k = k * 2;
+                        return k;
+                      };
+                      return NS.twice(4);
+                    }
+                    console.log(outer());
+                    """
+                ),
+            ),
+        )
+
+    @opportunity
+    def test_generator_cff_write_of_a_parameter_named_like_a_routing_slot_routes_and_the_slot_is_dropped(self):
         self.assertEqual(
             inspect.cleandoc(
                 """
                 function outer() {
                   var NS = {};
-                  [NS.k] = [25];
                   NS.twice = function(k) {
                     k = k * 2;
                     return k;
@@ -4028,10 +3999,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         'program can hand to a function as a value; the machine hands them only to itself'
     )
     def test_generator_cff_routing_slot_written_through_a_namespace_handed_to_a_function_stays(self):
-        """
-        The function the case stores is handed the namespace holding the routing slot and writes
-        that slot under a key only the call knows, whatever its parameter is named.
-        """
         for name in ('NS', 'o'):
             source = inspect.cleandoc(
                 F"""
@@ -4071,16 +4038,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 )
 
     def test_generator_cff_recovery_declines_a_body_the_obfuscator_does_not_write(self):
-        """
-        A body that runs on into the next case, directly or off the end of a `switch` it ends in, a
-        state variable stored and read before the transition that ends the body, a branch storing a
-        state variable before its transition, from an expression the machine cannot evaluate or
-        where the branch reads it back, a condition storing a state variable, a class taking a state
-        variable's name, a payload leaving the switch by a `break` of its own, on every way or on
-        one, a function declared behind a `return` or behind the transition, under a label or not,
-        and a variable declared in a body no run reaches: the obfuscator ends every body in one
-        transition and declares nothing in it, and each generator is left as it is.
-        """
         for source in (
             self.BODY_RUNNING_ON_INTO_THE_NEXT_CASE_CFF,
             self.BODY_ENDING_IN_A_SWITCH_THAT_RUNS_ON_CFF,
@@ -4104,11 +4061,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 )
 
     def test_generator_cff_bare_name_every_object_inherits_is_declined(self):
-        """
-        The obfuscator rewrites only the variables of the function it flattens; a call of any other
-        name stays bare inside its `with` statement, which finds `toString` on the object it reads,
-        as every object inherits it, before the function or global of that name the program means.
-        """
         for source in (
             self.PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF,
             self.GLOBAL_CALLED_BY_A_NAME_THE_SCOPE_OBJECT_INHERITS_CFF,
@@ -4133,10 +4085,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         )
 
     def test_generator_cff_body_that_leaves_the_state_as_it_is_is_declined(self):
-        """
-        The first body stores no state and leaves the switch, so the machine dispatches the same
-        state again, forever; the generator never returns and is left as it is.
-        """
         source = inspect.cleandoc(
             """
             function outer() {
@@ -4165,17 +4113,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         )
 
     def test_generator_cff_recovery_declines_what_its_new_home_would_change(self):
-        """
-        A flag and a result some other function reads, a generator called from outside its
-        scaffolding, a result stored on an object, a returned call inside a block, a call inside a
-        loop, a key a wrapper copies from its creator that the creator then changes, a namespace a
-        wrapper hands on and rebinds, a namespace a wrapper hands on under a name a parameter binds
-        between it and its creator, a flag a wrapper raises before code behind the guard, a
-        generator reading its own receiver and arguments or suspending, a slot named like a
-        parameter the function around the call reads, a slot under a key no declaration can bind,
-        and a block function in strict code: the recovered code would mean something else where it
-        lands, and each generator is left as it is.
-        """
         for source in (
             self.FLAG_AND_RESULT_OF_AN_OUTER_FUNCTION_CFF,
             self.GENERATOR_CALLED_BEFORE_ITS_DECLARATION_CFF,
@@ -4199,11 +4136,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 )
 
     def test_generator_cff_wrapper_making_itself_again_is_declined_in_time(self):
-        """
-        The wrapper's run makes the same wrapper again, so recovering every wrapper the recovered
-        code holds never ends. The recovery has to give up instead; a run that does not end within
-        a minute fails here rather than hanging the suite.
-        """
         source = self.WRAPPER_MAKING_ITSELF_AGAIN_CFF
         outcome: list[str] = []
 
@@ -4216,11 +4148,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         self.assertEqual(outcome, [self._run_transformers(source)])
 
     def test_generator_cff_recovery_survives_a_deep_expression_beside_the_call(self):
-        """
-        The checks that ask whether the scaffolding is private read the whole function around the
-        call, which holds a chain of two thousand additions here; the recovery still goes through
-        under the recursion depth the unit runs with.
-        """
         chain = ' + '.join(['q'] * 2000)
         source = inspect.cleandoc(
             F"""
@@ -6072,16 +5999,58 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         )
 
     def test_generator_cff_loop_left_by_a_break_from_its_body_keeps_the_break(self):
+        self.assertIn(
+            self._run_transformer(
+                self.LOOP_LEFT_BY_A_BREAK_FROM_ITS_BODY_CFF, JsStateMachineUnflattening
+            ),
+            (
+                inspect.cleandoc(
+                    """
+                    function wrapper(n, stop) {
+                      var i;
+                      i = 0;
+                      while (true) {
+                        if (!(i < n)) {
+                          break;
+                        }
+                        if (i === stop) {
+                          break;
+                        }
+                        console.log(i);
+                        i = i + 1;
+                      }
+                      return i;
+                    }
+                    """
+                ),
+                inspect.cleandoc(
+                    """
+                    function wrapper(n, stop) {
+                      var i;
+                      i = 0;
+                      while (i < n) {
+                        if (i === stop) {
+                          break;
+                        }
+                        console.log(i);
+                        i = i + 1;
+                      }
+                      return i;
+                    }
+                    """
+                ),
+            ),
+        )
+
+    @opportunity
+    def test_generator_cff_loop_left_by_a_break_from_its_body_tests_its_condition_and_keeps_the_break(self):
         self.assertEqual(
             inspect.cleandoc(
                 """
                 function wrapper(n, stop) {
                   var i;
                   i = 0;
-                  while (true) {
-                    if (!(i < n)) {
-                      break;
-                    }
+                  while (i < n) {
                     if (i === stop) {
                       break;
                     }
@@ -6341,10 +6310,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         )
 
     def test_generator_cff_structure_the_recovery_cannot_write_is_declined(self):
-        """
-        A loop of the machine left to two blocks, which no `break` can say, and a ladder whose
-        copies would hold more code than the blocks of the machine: each generator is left as it is.
-        """
         for source in (
             self.LOOP_LEFT_TO_TWO_BLOCKS_CFF,
             self.LADDER_OF_FOUR_LEVELS_CFF,
@@ -6356,10 +6321,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 )
 
     def test_generator_cff_recovered_code_holds_every_node_in_one_place(self):
-        """
-        Where the structuring writes a block a second time, it writes a copy: no node of the
-        recovered code stands under two parents.
-        """
         for source in (
             self.BRANCH_RETURNING_EARLY_AND_RUNNING_ON_CFF,
             self.EARLY_RETURN_IN_AN_IF_AND_ELSE_THAT_MEET_CFF,
@@ -6380,11 +6341,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 self.assertEqual([], [child for node, child in held if child.parent is not node])
 
     def test_generator_cff_machine_of_nearly_a_thousand_early_returns_is_recovered(self):
-        """
-        A machine of 990 conditionals, each returning on one branch and going on to the next on the
-        other, so that the code nests no deeper than one `if` but every conditional asks where its
-        branches meet; it is recovered under the recursion depth the unit runs with.
-        """
         cases = []
         for index in range(990):
             state, early = 10 * (index + 1), 100000 + index
@@ -6400,11 +6356,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         self.assertNotIn('function*', result)
 
     def test_generator_cff_ladder_of_twenty_levels_is_declined_in_time(self):
-        """
-        A ladder of 20 levels, each block of which goes to both blocks of the next level: written
-        out, every level would double the code below it. The copies outgrow the machine, and the
-        deobfuscation leaves the generator as it is within a minute.
-        """
         cases = []
         for level in range(1, 21):
             for side in (1, 2):
@@ -7025,10 +6976,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         )
 
     def test_generator_cff_wrapper_made_in_a_block_placed_twice_is_declined(self):
-        """
-        A copy of the block that makes a wrapper would make a second wrapper, which the recovery
-        would take apart as a run of its own, beyond what the bound on copies counts.
-        """
         source = self.WRAPPER_MADE_IN_A_BLOCK_PLACED_TWICE_CFF
         self.assertEqual(
             self._run_transformers(source),
@@ -7142,15 +7089,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         )
 
     def test_generator_cff_return_the_guard_cannot_tell_apart_is_declined(self):
-        """
-        Where the guard behind the call cannot tell the returns of the generator that end the
-        function from those that fall through, the generator is left as it is: a return of the main
-        run that stores nothing or `false` to the flag; a flagged return in a `try` whose `finally`
-        ends the run another way, or whose value may throw into its `catch`, with code behind the
-        guard; and a flag declared by a `let`, or whose name a slot of the scope object, a block or
-        a loop of the run, or the generator itself binds anew, or the object of a `with` statement
-        of the run may hold.
-        """
         for source in (
             self.RETURN_WITHOUT_THE_FLAG_IN_THE_MAIN_RUN_CFF,
             self.RETURN_STORING_FALSE_TO_THE_FLAG_CFF,
@@ -7170,10 +7108,9 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 )
 
 
-#: The statements that run each fixture of `TestGeneratorCFFUnflattening` and print what it did,
-#: appended to the fixture and to its recovery alike. A fixture that already prints on its own
-#: needs none; every other one is called with arguments that reach the paths its machine recovers,
-#: and a name it reads from outside is given a value the recovery could lose.
+#: The statements that run each generator fixture above and print what it did. A fixture that prints
+#: on its own needs none; every other one is called with arguments that reach the paths its machine
+#: recovers, and each name it reads from outside is given a value the recovery could lose.
 ENTRY_POINTS = {
     'FIZZBUZZ_CFF': '',
     'WITH_DISSOLUTION_CFF': 'console.log(wrapper() === globalThis);',
@@ -7395,6 +7332,7 @@ ENTRY_POINTS = {
     'NESTED_ARGUMENT_PATTERN_CFF': '',
     'NESTED_ARGUMENT_PATTERN_WITH_A_REST_AND_A_DEFAULT_READING_INTO_IT_CFF': '',
     'NESTED_ARGUMENT_PATTERN_AFTER_ANOTHER_STATEMENT_CFF': '',
+    'NESTED_ARGUMENT_PATTERN_AFTER_A_STORE_TO_THE_NAMESPACE_CFF': '',
     'ROUTING_OBJECT_NAME_A_REST_PARAMETER_REBINDS_CFF': '',
     'ROUTING_SLOT_NAME_A_PARAMETER_REBINDS_CFF': '',
 }

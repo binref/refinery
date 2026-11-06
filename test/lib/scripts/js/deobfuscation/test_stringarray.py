@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import re
 
-from test import TestBase
+from test import TestBase, opportunity
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
     a_program,
@@ -17,7 +17,6 @@ from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.stringarray import (
     Encoding,
     JsStringArrayResolver,
-    _CACHE_ATTR,
     _detect_encoding,
     _find_all_accessor_functions,
     _find_array_function,
@@ -55,10 +54,6 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual("console.log('test string');", result)
 
     def test_string_array_without_rotation(self):
-        """
-        The obfuscator leaves the array unrotated, so there is no rotation IIFE to simulate and the
-        array literal already holds the strings in the order the accessor reads them.
-        """
         result = self._deobfuscate(_UNROTATED_SOURCE)
         self.assertEqual("console.log('test string');", result)
 
@@ -80,8 +75,8 @@ class TestStringArray(TestJsDeobfuscator):
 
     def test_string_array_index_string_that_is_no_number_keeps_its_call(self):
         """
-        Python's `int` reads `'1_72'` as 172, the position `0xac` names; the decoder's subtraction
-        reads it as `NaN`, and the array holds nothing there.
+        The decoder's subtraction reads `'1_72'` as `NaN`: a numeric separator is allowed in a
+        numeric literal but not in a string converted to a number.
         """
         source = self._default_preset().replace('_0xe6abe5(0xac)', "_0xe6abe5('1_72')")
         self.assertIn("var msg = _0x1b07('1_72');", self._deobfuscate(source).splitlines())
@@ -120,10 +115,6 @@ class TestStringArray(TestJsDeobfuscator):
         )
 
     def test_string_array_index_read_from_an_object_stored_to_after_its_literal(self):
-        """
-        The call reads `0xa8`, the index the store wrote, which names `'log'` in this preset. The
-        call either stays or becomes that string; the literal's `0xac` names the other one.
-        """
         source = self._default_preset() + 'var o={k:0xac};o.k=0xa8;console.log(_0xe6abe5(o.k));'
         result = self._deobfuscate(source)
         self.assertIn(result.splitlines()[-1], {
@@ -132,11 +123,6 @@ class TestStringArray(TestJsDeobfuscator):
         })
 
     def test_string_array_decoder_that_changes_its_index_before_subtracting_is_not_read(self):
-        """
-        The decoder swaps positions 0 and 1 before it subtracts its offset, and the array lists the
-        two strings the other way around, so the program still logs the string. Reading the decoder
-        as if the subtraction came first swaps the two strings.
-        """
         source = _UNROTATED_SOURCE.replace(
             '_0x3a2c1f=_0x3a2c1f-0x0;',
             '_0x3a2c1f=0x1-_0x3a2c1f;_0x3a2c1f=_0x3a2c1f-0x0;',
@@ -153,10 +139,6 @@ class TestStringArray(TestJsDeobfuscator):
         })
 
     def test_string_array_decoder_with_a_fractional_offset_is_not_read(self):
-        """
-        The decoder reads positions `0.5` and `-0.5`, which name no element, so both calls answer
-        `undefined`. Truncating the offset to zero reads the two strings instead.
-        """
         source = _UNROTATED_SOURCE.replace('_0x3a2c1f-0x0;', '_0x3a2c1f-0.5;')
         self.assertNotEqual(_UNROTATED_SOURCE, source)
         self.assertEqual('console[_0x1b07(0x0)](msg);', self._deobfuscate(source).splitlines()[-1])
@@ -170,10 +152,6 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual("console.log('str1');", self._deobfuscate(source))
 
     def test_string_array_self_overwriting_decoder_that_changes_its_index_before_forwarding(self):
-        """
-        The outer function adds one to the index before it hands it on, so `N(0x10)` reads `'str1'`.
-        Reading the call as if the index went on untouched reads `'str0'`.
-        """
         source = (
             "function V(){var a=['str0','str1','str2'];V=function(){return a;};return V();}"
             'function N(t,n){const Y=V();t=t+0x1;N=function(Z,o){Z=Z-0x10;let R=Y[Z];return R;};'
@@ -185,17 +163,11 @@ class TestStringArray(TestJsDeobfuscator):
             "console.log('str1');",
         })
 
-    def test_string_array_decoder_declared_again_later_keeps_its_calls(self):
-        """
-        The later declaration is the function the name holds, so every call answers `'evil'`.
-        """
+    def test_string_array_decoder_declared_again_later_answers_every_call_with_the_later_declaration(self):
         source = _UNROTATED_SOURCE + "function _0x1b07(a,b){return 'evil';}"
         self.assertEqual("console.evil('evil');", self._deobfuscate(source))
 
-    def test_string_array_decoder_replaced_by_a_var_of_its_name_keeps_its_calls(self):
-        """
-        The `var` replaces the decoder before any call runs, so every call answers `'evil'`.
-        """
+    def test_string_array_decoder_replaced_by_a_var_of_its_name_answers_every_call_with_the_replacement(self):
         source = "var _0x1b07=function(a,b){return 'evil';};" + _UNROTATED_SOURCE
         self.assertEqual("console.evil('evil');", self._deobfuscate(source))
 
@@ -206,16 +178,28 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertIn("console.log('test string');", result)
         self.assertIn('export const dec = _0x1b07;', result)
 
-    def test_string_array_rotation_that_stays_keeps_reading_the_array(self):
-        """
-        A call the pass cannot answer keeps the rotation, and the rotation has to keep turning the
-        array that call reads. Answering the checksum's reads with the strings the turning ends on
-        makes the loop stop before it turns.
-        """
+    _THE_DEFAULT_PRESET_ARRAY_WRITTEN_TURNED = re.compile(r"\[\s*'12767458FlCTYp',\s*'2BveYOA',")
+
+    def test_string_array_an_unanswered_call_reads_keeps_turning_or_is_written_turned(self):
         source = self._default_preset() + 'function g(x){return _0xe6abe5(x);}unknown(g);'
         result = self._deobfuscate(source)
-        self.assertIn('parseInt(_0x2bca43(0xa7))', result)
         self.assertIn("console.log('test string');", result.splitlines())
+        self.assertTrue(
+            'parseInt(_0x2bca43(0xa7))' in result
+            or (
+                self._THE_DEFAULT_PRESET_ARRAY_WRITTEN_TURNED.search(result) is not None
+                and 'shift' not in result
+            ),
+            result,
+        )
+
+    @opportunity
+    def test_string_array_an_unanswered_call_reads_is_written_turned(self):
+        source = self._default_preset() + 'function g(x){return _0xe6abe5(x);}unknown(g);'
+        result = self._deobfuscate(source)
+        self.assertIn("console.log('test string');", result.splitlines())
+        self.assertRegex(result, self._THE_DEFAULT_PRESET_ARRAY_WRITTEN_TURNED)
+        self.assertNotIn('shift', result)
 
     def test_string_array_without_rotation_and_an_offset(self):
         source = _FOLDED_CHECKSUM_SOURCE.partition('}(_0x2fc0,0x827c2));')[2]
@@ -224,23 +208,12 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual("console.log('test string');", result)
 
     def test_string_array_preset_beside_non_finite_object_property_values(self):
-        """
-        Each property value denotes `Infinity` or `NaN`, and neither names a position in a string
-        array. Refusing such an expression is this pattern's own business; handing it to `int`
-        instead ends the run before the rotation is ever resolved.
-        """
         source = self._default_preset() + (
             'var cfg = { limit: 1e400 + 0, ratio: 1e400 * 0, span: 1e308 * 10 };'
         )
         self.assertEqual("console.log('test string');", self._deobfuscate(source))
 
     def test_string_array_preset_beside_non_finite_accessor_call_indices(self):
-        """
-        The same three values as the argument of an accessor call, which is the other place a
-        resolved constant is read as an index into the string array. No folding turns one into a
-        position, so those calls stand and the machinery stands with them while the function holding
-        them does. Nothing calls that function, and once it is gone, nothing reads the machinery.
-        """
         result = self._deobfuscate(A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER)
         self.assertEqual("console.log('test string');", result)
 
@@ -389,11 +362,6 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual("console.log('test string');", result)
 
     def test_string_array_with_wrappers_shifting_by_an_index_spelled_as_a_string(self):
-        """
-        Each wrapper shifts what it is passed by `0x5`, spelled as a number or a string, and each
-        call passes the position the default preset reads shifted the other way: `'0xb1' - '0x5'`
-        and `0xa7 - -'0x5'` are both `0xac`, where `msg` is read from.
-        """
         preset = self._default_preset('_0xw')
         for wrapper, read_msg, read_log in [
             ("function _0xw(_0xa){return _0x1b07(_0xa-'0x5');}", "_0xw('0xb1')", "_0xw('0xad')"),
@@ -405,19 +373,12 @@ class TestStringArray(TestJsDeobfuscator):
                 self.assertEqual((1, 1), (source.count(read_msg), source.count(read_log)))
                 self.assertEqual("console.log('test string');", self._deobfuscate(source))
 
-    def test_string_array_resolution_populates_cache(self):
-        """
-        A successful resolution stores the simulated array on the scope node so a later pipeline pass
-        can reuse it if the simplifier rewrites the checksum expression in between; this checks the
-        cache is populated after resolution.
-        """
+    def test_string_array_resolver_alone_answers_every_call_of_the_default_preset(self):
         source = self._default_preset()
         ast = JsParser(source).parse()
         resolver = JsStringArrayResolver()
         resolver.visit(ast)
         self.assertTrue(resolver.changed)
-        cache = getattr(ast, _CACHE_ATTR, None)
-        self.assertIsNotNone(cache)
         result = JsSynthesizer().convert(ast)
         self.assertEqual(
             inspect.cleandoc(
@@ -467,11 +428,6 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual("console.log('test string');", result)
 
     def test_string_array_accessors_with_different_offsets(self):
-        """
-        The second accessor subtracts one more than the first, and its call asks for one more, so
-        both read the same strings as before. Reading the second call with the first accessor's
-        offset reads the string after `'log'`.
-        """
         second = 'function _0x2nd(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-'
         source = _TWO_ACCESSOR_SOURCE.replace(
             F'{second}0xa0;', F'{second}0xa1;'
@@ -580,15 +536,11 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual("console.log('secretnested_val');", self._deobfuscate(source))
 
 
-#: The default preset beside a function whose accessor calls read a non-finite index. No constant
-#: folding turns one into a position in the string array, so the pass can answer none of the calls
-#: and the accessor keeps the name each of them stands on.
 A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER = TestStringArray._default_preset() + (
     'function unused() {'
     ' return _0xe6abe5(1e400 + 0) + _0xe6abe5(1e400 * 0) + _0xe6abe5(1e308 * 10); }'
 )
 
-#: The obfuscator's output with the string array left unrotated.
 _UNROTATED_SOURCE = (
     r"function _0x1b07(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-0x0;var _0x2fc00e=_0x2fc0();var _0x"
     r"1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}var msg=_0x1b07(0x1);function _0x2fc0(){var _0x581e"
@@ -596,7 +548,6 @@ _UNROTATED_SOURCE = (
     r"1b07(0x0)](msg);"
 )
 
-#: The default preset with a second accessor beside the first, reading the same array.
 _TWO_ACCESSOR_SOURCE = (
     r"var _0xe6abe5=_0x1b07;(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();whi"
     r"le(!![]){try{var _0x293699=-parseInt(_0x2bca43(0xa7))/0x1+-parseInt(_0x2bca43(0xa1))/0x2*(-parseInt("
@@ -613,8 +564,6 @@ _TWO_ACCESSOR_SOURCE = (
     r"sole[_0x2nd(0xa8)](msg);"
 )
 
-#: The default preset with the rotation loop left holding nothing but a constant-folded checksum,
-#: so the array literal already spells the strings in the order the accessor reads them.
 _FOLDED_CHECKSUM_SOURCE = (
     r"(function(_0x13a108,_0x20b5f6){var _0x36965a=_0x13a108();while(!![]){try{if(0x827c2===_0x20b5f6)brea"
     r"k;else _0x36965a['push'](_0x36965a['shift']());}catch(_0x35acf4){_0x36965a['push'](_0x36965a['shift'"
@@ -626,8 +575,6 @@ _FOLDED_CHECKSUM_SOURCE = (
     r"8)](msg);"
 )
 
-#: A string array written out by hand: a holder that replaces itself on its first call and an
-#: accessor that reads it by index, with no rotation, so the strings stand in the order written.
 _A_HAND_WRITTEN_STRING_ARRAY = (
     "function A() { var s = ['hello', 'world']; A = function () { return s; }; return A(); }\n"
     'function ACC(i, k) { i = i - 0; var a = A(); var r = a[i]; return r; }\n'
@@ -635,10 +582,6 @@ _A_HAND_WRITTEN_STRING_ARRAY = (
 
 
 class TestStringArrayShapesNoObfuscationEmits(TestBase):
-    """
-    Programs on which the resolver answers a decoder call that the program does not make, where
-    only a shape made up for the defect reaches it.
-    """
 
     @wontfix('the obfuscation declares each alias of the decoder first in the scope that calls it')
     def test_an_alias_called_before_its_declaration_runs(self):

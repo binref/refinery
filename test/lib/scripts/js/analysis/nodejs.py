@@ -1,11 +1,10 @@
 """
-How Node.js is asked about a program: where it is, the environment it starts in, how the files of a
-program reach it, how its answer is read, and what it says it is. The digest of this file is part of
-the identity of every kept answer, so that a change to how Node is asked starts them over; it holds
-nothing else, so that no other change does.
+How Node.js is asked about a program. The digest of this file is part of the identity of every kept
+answer, so that a change to how Node is asked starts them over; code that does not change how Node
+is asked belongs elsewhere, so that no other change does.
 
 SECURITY: this executes JavaScript in Node.js. It must only ever be given benign, hand-authored
-snippets. Never point it at the repository's malware test corpus or any untrusted sample — executing
+snippets. Never point it at the repository's malware test corpus or any untrusted sample; executing
 those is forbidden.
 """
 from __future__ import annotations
@@ -28,8 +27,8 @@ from samples import refuse_script_host_near_a_sample
 NODE_TIMEOUT = 60.0
 
 #: Variables of the environment that change how Node prints or starts without being part of any
-#: program: colors, extra command line options, and extra places to look for modules. Node starts
-#: without them, so that a shell setting one, such as `FORCE_COLOR`, asks the same question as any.
+#: program. Node starts without them, so that a shell setting one, such as `FORCE_COLOR`, gets the
+#: same answers as any other.
 _NOT_FOR_NODE = frozenset({
     'FORCE_COLOR',
     'NO_COLOR',
@@ -40,18 +39,11 @@ _NOT_FOR_NODE = frozenset({
 
 
 def node_environment() -> dict[str, str]:
-    """
-    The environment every run of Node gets: this process's own, without `_NOT_FOR_NODE`.
-    """
     return {key: value for key, value in os.environ.items() if key.upper() not in _NOT_FOR_NODE}
 
 
 @functools.lru_cache(maxsize=None)
 def node_executable() -> str | None:
-    """
-    The path to the Node.js executable, or `None` when it is not installed. It is looked up once per
-    process: searching a long `PATH` takes milliseconds, far more than giving a remembered answer.
-    """
     return shutil.which('node')
 
 
@@ -60,25 +52,12 @@ _ERROR_RE = re.compile(r'^([A-Za-z]*Error)(?=:\s|\s*$)', re.MULTILINE)
 
 def _normalize_error(stderr: str) -> str:
     """
-    The error type a nonzero-exit *stderr* names — `Error`, `TypeError`, `ReferenceError`, and so
-    on — read off the `XxxError: …` line every thrown `Error` prints, or the bare name when its
-    message is empty. It is the last such line, because Node prints the uncaught error after
-    whatever the program wrote to *stderr* itself. Only the type is kept, for the reason
-    `test.lib.scripts.js.analysis.differential.behavior` gives: the message names the offending
-    expression, which a semantics-preserving rewrite may reshape.
+    The type of the error that ended a run, read off the last `XxxError:` line of *stderr*, since
+    Node prints the uncaught error after anything the program wrote there. The message is dropped
+    because it quotes the offending expression, which a semantics-preserving rewrite may reshape.
 
-    RESOLUTION LIMIT: a program may `throw` a value that is not an `Error` — a string, a number, an
-    object, `null`, `undefined`, a symbol — and such a throw prints no `XxxError:` line, so every
-    one of them collapses to the single token `ERROR` here. Two programs that throw *different*
-    non-Error values are therefore indistinguishable by the error half of an answer, and a rewrite
-    that changed which non-Error value is thrown is invisible unless the standard output leading up
-    to the throw also differs. The exposure is narrow — the fuzzer never emits an uncaught non-Error
-    throw, so only a hand-authored ledger entry reaches it — but an entry that must tell two
-    non-Error throws apart asserts on standard output rather than on this token. Parsing the thrown
-    value out of *stderr* is deliberately not attempted: Node renders it in a shape that varies by
-    value and version (an object spans lines, a symbol renders as nothing), so a parse would trade a
-    rare false match for a version-fragile false difference between two runs that threw the very
-    same value.
+    A thrown value that is not an `Error` prints no such line, so every such throw reads as `ERROR`;
+    a test that must tell two of them apart asserts on standard output instead.
     """
     if names := _ERROR_RE.findall(stderr):
         return names[-1]
@@ -92,10 +71,10 @@ def run(
     timeout: float,
 ) -> tuple[str, str | None]:
     """
-    What the Node at *node* prints when it runs *entry* with every file of *graph* written beside
-    it, as names and sources, and the type of the error it ended in, or `None` when it ended without
-    one. Each file is written untranslated and what Node prints is read untranslated, because which
-    characters end a line is a question the engine is asked.
+    What Node prints when it runs *entry* with each name and source of *graph* written beside it as
+    a file, and the type of the error the run ended in, or `None`. Line ends are neither translated
+    when the files are written nor when the output is read, because which characters end a line is
+    part of what the engine is asked.
     """
     refuse_script_host_near_a_sample('node')
     with tempfile.TemporaryDirectory() as folder:
@@ -114,9 +93,6 @@ def run(
     return stdout, _normalize_error(proc.stderr.decode('utf-8', 'replace'))
 
 
-#: Asks Node what it is and where it runs: its version, the versions of what it is built with, such
-#: as its Unicode, locale and time zone data, its platform and processor, and the locale and time
-#: zone that every program sees. All of them change what a program prints as much as the program.
 _NODE_IDENTITY = R'''
 const options = Intl.DateTimeFormat().resolvedOptions();
 console.log(JSON.stringify([
@@ -131,8 +107,6 @@ console.log(JSON.stringify([
 
 _NODE_VERSION = re.compile(r'v\d+\.\d+\.\d+')
 
-#: The variables of the environment, besides those whose name begins with `LC_`, that decide the
-#: locale and time zone Node runs in and the locale data it reads.
 _SURROUNDING_VARIABLES = frozenset({
     'LANG',
     'LANGUAGE',
@@ -143,9 +117,9 @@ _SURROUNDING_VARIABLES = frozenset({
 
 def surroundings() -> tuple[tuple[str, str], ...]:
     """
-    The variables of this process's environment that decide the locale, time zone and locale data of
-    Node. Nothing else of the environment changes what Node says it is, and the rest changes all the
-    time: pytest names the current test in it.
+    The variables of this process's environment that decide Node's locale, time zone and locale
+    data. The rest is left out: it changes nothing Node says it is, and it changes all the time,
+    since pytest names the current test in it.
     """
     return tuple(sorted(
         (key, value) for key, value in os.environ.items()
@@ -153,18 +127,14 @@ def surroundings() -> tuple[tuple[str, str], ...]:
     ))
 
 
-#: The digest of this module as it was loaded, which decides how Node is asked.
 _CODE = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
 def identity(node: str) -> str | None:
     """
-    What the Node at *node* is, as a digest, or `None` when it cannot say. Node runs
-    `_NODE_IDENTITY` as it runs any program, through `run`. The digest covers the path of the
-    executable, everything `_NODE_IDENTITY` asks, and the code of this module: an answer is only
-    ever the answer of the Node that gave it, asked this way. What Node says depends on its
-    `surroundings`, which themselves are not part of the digest, so that two shells that spell the
-    same time zone differently give the same one.
+    What the Node at *node* is, as a digest, or `None` when it cannot say, so that a kept answer is
+    only ever reused from the same Node asked the same way. The environment enters only through what
+    Node reports, so that two shells spelling the same time zone differently give the same identity.
     """
     refuse_script_host_near_a_sample('node')
     try:
