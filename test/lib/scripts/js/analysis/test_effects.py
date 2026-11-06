@@ -1137,6 +1137,46 @@ class TestEffectModel(TestBase):
         _, effects = self._effects('function f(){ return globalThis.Uint8Array; }')
         self.assertTrue(effects.global_pristine)
 
+    def test_a_prototype_swapped_in_through_the_bare_name_proto_voids_global_pristine(self):
+        _, effects = self._effects("__proto__ = { get Uint8Array() { return 0; } }; console.log(Uint8Array);")
+        self.assertFalse(effects.global_pristine)
+        self.assertTrue(effects.installed_under('Uint8Array'))
+        self.assertTrue(effects.installed_under('zz'))
+
+    def test_a_clean_program_installs_under_no_name(self):
+        _, effects = self._effects('function f(){ rr = 1; return rr; }')
+        self.assertFalse(effects.installed_under('rr'))
+
+    def test_an_install_under_a_key_is_found_by_that_name_alone(self):
+        for source in (
+            "Object.defineProperty(Object.prototype, 'rr', { set: function (v) {} });",
+            "Reflect.defineProperty(Object.prototype, 'rr', { get: function () { return 1; } });",
+            "globalThis.__defineSetter__('rr', function (v) {});",
+            "Object.defineProperty(Object['proto' + 'type'], 'r' + 'r', { set: function (v) {} });",
+        ):
+            with self.subTest(source=source):
+                _, effects = self._effects(source)
+                self.assertFalse(effects.global_pristine)
+                self.assertTrue(effects.installed_under('rr'))
+                self.assertFalse(effects.installed_under('zz'))
+
+    def test_an_install_without_a_key_is_found_by_every_name(self):
+        for source in (
+            'Object.defineProperties(Object.prototype, { rr: { set: function (v) {} } });',
+            'Object.defineProperty(Object.prototype, k, { set: function (v) {} });',
+            "Object.defineProperty.call(null, Object.prototype, 'rr', { set: function (v) {} });",
+            "var d = Object.defineProperty; d(Object.prototype, 'rr', { set: function (v) {} });",
+            "Object.defineProperty(globalThis, 'rr', { set: function (v) {} });",
+        ):
+            with self.subTest(source=source):
+                _, effects = self._effects(source)
+                self.assertFalse(effects.global_pristine)
+                self.assertTrue(effects.installed_under('zz'))
+
+    def test_a_data_property_installed_under_another_key_is_not_found_by_the_name(self):
+        _, effects = self._effects("Object.defineProperty(exports, '__esModule', { value: true });")
+        self.assertFalse(effects.installed_under('rr'))
+
     def _intrinsic_of(self, expr: str, prefix: str = ''):
         ast, effects = self._effects(F'{prefix}var _t = {expr};')
         decl = next(

@@ -6284,33 +6284,33 @@ class TestAMaskedFunctionCalledAsAMethodIsUnmasked(TestBase):
         self.assertNotIn('...a', deobfuscate_source(source, execution=ExecutionModel.commonjs))
 
 
-#: A function storing into a name no declaration binds before it reads it, whose call a fold
-#: answers with the string it returns.
-A_DECODER_WRITING_A_NAME_NO_DECLARATION_BINDS = a_program("""
-    const decode = function (s) {
+#: A decoder storing into a name no declaration binds, in a script the Windows Script Host runs,
+#: which writes what it decodes through the host's `WScript`.
+A_DECODER_IN_A_SCRIPT_OF_THE_WINDOWS_SCRIPT_HOST = a_program("""
+    var decode = function (s) {
       rr = '';
       for (var i = 0; i < s.length; i++) {
         rr += String.fromCharCode(s.charCodeAt(i) ^ 1);
       }
       return rr;
     };
-    var x = decode('Idmmn');
+    WScript.Echo(decode('Idmmn'));
     """)
 
 
-class TestADecoderWritingANameNoDeclarationBindsIsFolded(TestBase):
+class TestADecoderInAScriptOfTheWindowsScriptHostIsFolded(TestBase):
     """
-    A call folds only where it has no effect but its value. An assignment to a name no declaration
-    binds creates a property of the global object that outlives the call, so the call has an
-    effect, and `decode('Idmmn')` stays a call where it could be `'Hello'`. Dropping the creation of
-    that property is sound only where no host intercepts the name: a browser runs a setter for
-    `onload`, `name` or `status`. The host model has to say which global names a host intercepts
-    before a fold may drop such a store.
+    A name a function stores into without declaring it moves into that function only where the
+    file runs no code its text does not hold
+    (`refinery.lib.scripts.js.analysis.foreign.may_run_code_it_does_not_hold`), and a use of a
+    global no host defines may be such code. The host data the answer reads holds a browser window,
+    a dedicated worker and Node; `WScript` is a global of the Windows Script Host, which the default
+    host covers too, and the data does not hold it, so `decode('Idmmn')` stays a call.
     """
 
     @unittest.expectedFailure
     def test_the_call_folds_to_the_string_it_returns(self):
-        self.assertIn("'Hello'", deobfuscate_source(A_DECODER_WRITING_A_NAME_NO_DECLARATION_BINDS))
+        self.assertIn("WScript.Echo('Hello');", folded(A_DECODER_IN_A_SCRIPT_OF_THE_WINDOWS_SCRIPT_HOST))
 
 
 class TestAFunctionCalledInParenthesesWhereItIsWrittenIsSummarizedAsItsBody(TestBase):
@@ -6456,18 +6456,158 @@ class TestAFileLevelVarObservedAsAPropertyOfTheGlobalObjectStays(TestBase):
                 self.assertEqual(row.deobfuscated(), row.prints)
 
 
-class TestAStrictStoreIntoAPropertyAWorkerInheritsWithoutASetterStillThrows(TestBase):
+#: Classic scripts storing into a name no declaration binds in the one function using it, which the
+#: deobfuscation moves into that function, whose presence on the global object the program
+#: observes, mapped to what Node prints for each: an `in` test of the global object for the name,
+#: and a conversion or an `await` of the global object, which calls the function stored there.
+A_NAME_NO_DECLARATION_BINDS_OBSERVED_AS_A_PROPERTY_OF_THE_GLOBAL_OBJECT = {
+    'an in test of the global object': Program(
+        a_program("""
+            function f(v) { rr = v; return rr; }
+            f(1);
+            console.log('rr' in globalThis);
+            """),
+        prints('true'),
+        Reading.SCRIPT,
+    ),
+    'a toString of the global object': Program(
+        a_program("""
+            function f(v) { toString = v; return toString; }
+            f(function () { return 'patched'; });
+            console.log('' + globalThis);
+            """),
+        prints('patched'),
+        Reading.SCRIPT,
+    ),
+    'a then of the global object': Program(
+        a_program("""
+            function f(v) { then = v; return then; }
+            f(function (resolve) { console.log('then ran'); resolve(1); });
+            (async function () { await globalThis; console.log('done'); })();
+            """),
+        prints('then ran', 'done'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestANameNoDeclarationBindsObservedAsAPropertyOfTheGlobalObjectStays(TestBase):
     """
-    A dedicated worker inherits `self` from the prototype of its global object, with a getter and
-    no setter. A store into it does nothing in sloppy code and throws a `TypeError` in strict code.
-    The host data holds only the properties of the global object itself, so the deobfuscation
-    removes the store as one nothing reads, and the strict script that threw prints instead.
+    A store into a name no declaration binds creates a property of the global object. An `in` test
+    for the name, a conversion of the global object, which calls its `toString`, and an `await` of
+    it, which calls its `then`, read that property without naming the binding, so the move of the
+    name into the function storing into it goes unseen.
     """
 
-    @wontfix('no program stores into the self of its worker in strict code')
-    def test_the_store_is_kept_for_a_worker(self):
-        source = "'use strict'; self = 1; console.log('after');"
-        self.assertIn('self = 1', folded(source, environment=HostEnvironment.worker))
+    def test_a_host_prints_what_each_row_pins(self):
+        for label, row in A_NAME_NO_DECLARATION_BINDS_OBSERVED_AS_A_PROPERTY_OF_THE_GLOBAL_OBJECT.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    @wontfix('no program tests or converts its global object for a name it stores into itself')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_NAME_NO_DECLARATION_BINDS_OBSERVED_AS_A_PROPERTY_OF_THE_GLOBAL_OBJECT.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.deobfuscated(), row.prints)
+
+
+#: Classic scripts storing into a name no declaration binds in the one function using it, which the
+#: deobfuscation moves into that function, where the program locks or hooks its own global object
+#: through a value the analysis does not see as that object, mapped to what Node prints for each.
+A_GLOBAL_OBJECT_LOCKED_OR_HOOKED_THROUGH_A_VALUE_NOT_SEEN_AS_IT = {
+    'made non-extensible through the this of a sloppy call': Program(
+        a_program("""
+            (function () { Object.preventExtensions(this); })();
+            function f(v) { rr = v; return rr; }
+            try { console.log(f(1)); } catch (e) { console.log(e.constructor.name); }
+            """),
+        prints('ReferenceError'),
+        Reading.SCRIPT,
+    ),
+    'made non-extensible through a function returning this': Program(
+        a_program("""
+            function h() { return this; }
+            Object.preventExtensions(h());
+            function f(v) { rr = v; return rr; }
+            try { console.log(f(1)); } catch (e) { console.log(e.constructor.name); }
+            """),
+        prints('ReferenceError'),
+        Reading.SCRIPT,
+    ),
+    'made non-extensible through apply': Program(
+        a_program("""
+            Object.preventExtensions.apply(null, [globalThis]);
+            function f(v) { rr = v; return rr; }
+            try { console.log(f(1)); } catch (e) { console.log(e.constructor.name); }
+            """),
+        prints('ReferenceError'),
+        Reading.SCRIPT,
+    ),
+    'made non-extensible through forEach': Program(
+        a_program("""
+            [globalThis].forEach(Object.preventExtensions);
+            function f(v) { rr = v; return rr; }
+            try { console.log(f(1)); } catch (e) { console.log(e.constructor.name); }
+            """),
+        prints('ReferenceError'),
+        Reading.SCRIPT,
+    ),
+    'sealed through the this of a sloppy call': Program(
+        a_program("""
+            (function () { Object.seal(this); })();
+            function f(v) { rr = v; return rr; }
+            try { console.log(f(1)); } catch (e) { console.log(e.constructor.name); }
+            """),
+        prints('ReferenceError'),
+        Reading.SCRIPT,
+    ),
+    'the name deleted through a function returning this': Program(
+        a_program("""
+            function h() { return this; }
+            function f(v) { rr = v; delete h().rr; return typeof rr; }
+            console.log(f(1));
+            """),
+        prints('undefined'),
+        Reading.SCRIPT,
+    ),
+    'a prototype set through a function returning this': Program(
+        a_program("""
+            function h() { return this; }
+            Object.setPrototypeOf(h(), {
+              set rr(v) { console.log('set ' + v); },
+              get rr() { return 'kept'; }
+            });
+            function f(v) { rr = v; return rr; }
+            console.log(f(1));
+            """),
+        prints('set 1', 'kept'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAGlobalObjectLockedOrHookedThroughAValueNotSeenAsItKeepsTheNamesStoredIntoIt(TestBase):
+    """
+    A store into a name no declaration binds creates a property of the global object only where the
+    object takes one and nothing is installed under the name. The analysis follows the global
+    object where the file spells it or gives it a name; the `this` of a sloppy call, a function
+    returning it, and a call through `apply` or `forEach` hand it on unseen, so the move of the
+    name into the function storing into it misses that the store throws, is deleted, or runs a
+    setter.
+    """
+
+    def test_a_host_prints_what_each_row_pins(self):
+        for label, row in A_GLOBAL_OBJECT_LOCKED_OR_HOOKED_THROUGH_A_VALUE_NOT_SEEN_AS_IT.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.behaves(), row.prints)
+
+    @wontfix('no program locks or hooks its own global object and then stores into a name it never declares')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        for label, row in A_GLOBAL_OBJECT_LOCKED_OR_HOOKED_THROUGH_A_VALUE_NOT_SEEN_AS_IT.items():
+            with self.subTest(label=label):
+                self.assertEqual(row.deobfuscated(), row.prints)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

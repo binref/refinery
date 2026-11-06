@@ -280,9 +280,13 @@ def deobfuscated_host_behavior(
 #: address stored into it, which the entry prints, and cannot be declared anew, `onload` is an event
 #: handler attribute, which holds a function stored into it and `null` in place of anything else,
 #: `window` and `top` are the global object itself, which neither can be declared anew nor be given
-#: another value, and `history` is the session history of the window, which has no setter.
+#: another value, `history` is the session history of the window, which has no setter, and
+#: `TEMPORARY` is a constant the window inherits from a prototype between it and `Object.prototype`.
 WINDOW_ATTRIBUTES = a_program("""
     (function () {
+      Object.setPrototypeOf(globalThis, Object.create(Object.getPrototypeOf(globalThis), {
+        TEMPORARY: { value: 0, enumerable: true }
+      }));
       Object.defineProperty(globalThis, 'window', {
         get: function () { return globalThis; }
       });

@@ -893,38 +893,31 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     def _localize_pseudo_globals(self, root: JsScript):
         """
-        Relocate a script-scope `var` that behaves as one function's local into that function
+        Relocate a script-scope `var`, or a name no declaration binds, that behaves as one
+        function's local into that function
         (`refinery.lib.scripts.js.analysis.localization.localizable_bindings`): a global the
-        obfuscator hoisted, every run of the function reading only what that run stored. Its
-        script-scope declarator is removed and a bare `var` for the name is hoisted into the
-        function body, where the later sweeps act on the tightened scope; the next pass, over a
-        fresh model, sees it as a local.
+        obfuscator hoisted or left undeclared, every run of the function reading only what that run
+        stored. The script-scope declarator of a `var` is removed, and a bare `var` for the name is
+        hoisted into the function body, where the later sweeps act on the tightened scope; the next
+        pass, over a fresh model, sees it as a local.
 
         Targets are gathered from the pass-start models before any mutation. Relocating one binding
         removes no reference to another, and a localization candidate is never a dead-store
         candidate (one is script-scope, the other strictly function-local), so the batch stays
         mutually consistent.
-
-        Relocation takes the name out of the global scope, so a binding code outside the file
-        reaches by name is left where it stands
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`): a function
-        that stores the load handler in a script-level `var onload` writes the property the window
-        calls, which the same store into a local of that function never does.
         """
         relocations: dict[int, tuple[JsBlockStatement, list[str]]] = {}
         declarators: list[JsVariableDeclarator] = []
         for binding, function in localizable_bindings(self.liveness, self.reaching):
-            if self.model.reached_from_outside(binding):
-                continue
             body = getattr(function, 'body', None)
             if not isinstance(body, JsBlockStatement):
                 continue
-            sites = self._declarators_of(binding)
+            sites = [] if binding.kind is BindingKind.IMPLICIT_GLOBAL else self._declarators_of(binding)
             if sites is None:
                 continue
             declarators.extend(sites)
             relocations.setdefault(id(body), (body, []))[1].append(binding.name)
-        if not declarators:
+        if not relocations:
             return
         for declarator in declarators:
             remove_declarator(declarator)
@@ -1015,8 +1008,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         `with` or direct `eval` inside its own function; a global, from any surface, from code
         outside the file reading or calling it
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`), and from a
-        body the file hands the global object to; and an exported binding, from an importer that
-        reads its value once the module has run.
+        body the file hands the global object to; a name no declaration binds, also from an
+        accessor the program installs under it, which a store into the name runs
+        (`refinery.lib.scripts.js.analysis.effects.EffectModel.installed_under`); and an exported
+        binding, from an importer that reads its value once the module has run.
 
         Those last cases have references the model does record where the text spells them, and they
         keep everything reached through such a name. The model decides them all; a `None` binding (a
@@ -1026,6 +1021,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         if binding is None:
             return False
         if self._reached_without_a_reference(binding):
+            return True
+        if binding.kind is BindingKind.IMPLICIT_GLOBAL and self.effects.installed_under(binding.name):
             return True
         return self.model.reached_from_outside(binding)
 

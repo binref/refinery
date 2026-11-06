@@ -5,7 +5,7 @@ property of its own but names the host's, so no pass may turn a variable of the 
 (`refinery.lib.scripts.js.analysis.model.SemanticModel.lands_on_the_host`), and where the property
 keeps a value of its own when a store is made into it, the program's own `var` of the name is not
 read as a variable either, nor is a store into it dropped as one nothing reads
-(`refinery.lib.scripts.js.analysis.model.SemanticModel.held_by_the_host`).
+(`refinery.lib.scripts.js.analysis.model.SemanticModel.kept_by_the_host`).
 Each program is written by hand, and each row says what Node prints for it, run as a classic
 script, in the window `test.lib.scripts.js.ledger` sets up where the row says so.
 """

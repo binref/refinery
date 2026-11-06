@@ -20,11 +20,12 @@ a conditional write, or one on a path that may throw before it runs (an exceptio
 does not mask an earlier live store. Only a function's own, uncaptured `var`/`let` bindings are analysed
 — anything a closure or another scope might read is conservatively kept.
 
-Beyond the locals, the dataflow tracks a script-scope `var` every read and store of which lies in
-the body of one function inside that function's graph (`LivenessModel.pseudo_local_owner`), so that
-`refinery.lib.scripts.js.analysis.localization` can ask where it is live there. The tracking is kept
-separate from `LivenessModel.is_dead_store`, which retains its strict function-local candidacy, so
-widening the dataflow never widens what counts as a removable dead store.
+Beyond the locals, the dataflow tracks a script-scope `var`, or a name no declaration binds, every
+read and store of which lies in the body of one function inside that function's graph
+(`LivenessModel.pseudo_local_owner`), so that `refinery.lib.scripts.js.analysis.localization` can
+ask where it is live there. The tracking is kept separate from `LivenessModel.is_dead_store`,
+which retains its strict function-local candidacy, so widening the dataflow never widens what
+counts as a removable dead store.
 
 The public surface — `LivenessModel.live_in`, `LivenessModel.live_out`,
 `LivenessModel.live_around`, `LivenessModel.node_of`, `LivenessModel.is_dead_store`,
@@ -68,6 +69,12 @@ from refinery.lib.scripts.js.model import (
 )
 
 _CANDIDATE_KINDS = (BindingKind.VAR, BindingKind.LET)
+
+_PSEUDO_LOCAL_KINDS = (BindingKind.VAR, BindingKind.IMPLICIT_GLOBAL)
+"""
+The kinds of a script-scope binding the dataflow tracks inside the one function using it: a `var`
+the file declares at its top, and a name no declaration binds, which a store makes a global.
+"""
 
 
 class LivenessModel:
@@ -176,20 +183,22 @@ class LivenessModel:
 
     def pseudo_local_owner(self, binding: Binding) -> Node | None:
         """
-        The function whose graph tracks *binding*, a script-scope `var`, as one of its locals: the
-        one function whose body holds every read of it and every site that stores into it
-        (`refinery.lib.scripts.js.analysis.model.Binding.store_sites`), none at script scope, in the
-        parameter list or in a function nested below it. `None` for every other binding.
+        The function whose graph tracks *binding*, a script-scope binding of `_PSEUDO_LOCAL_KINDS`,
+        as one of its locals: the one function whose body holds every read of it and every site
+        that stores into it (`refinery.lib.scripts.js.analysis.model.Binding.store_sites`), none at
+        script scope, in the parameter list or in a function nested below it. `None` for every
+        other binding.
         """
         return self._pseudo_local_owners.get(binding)
 
     def _index_pseudo_locals(self):
         """
-        Record, for each script-scope `var` binding that behaves as a single function's local, that
-        function, so the dataflow can track it inside it: the owner `_sole_owning_function` finds.
+        Record, for each script-scope binding of `_PSEUDO_LOCAL_KINDS` that behaves as a single
+        function's local, that function, so the dataflow can track it inside it: the owner
+        `_sole_owning_function` finds.
         """
         for binding in self.model.root_scope.bindings.values():
-            if binding.kind is not BindingKind.VAR:
+            if binding.kind not in _PSEUDO_LOCAL_KINDS:
                 continue
             function = self._sole_owning_function(binding)
             if function is not None:
@@ -363,7 +372,7 @@ class LivenessModel:
     ) -> bool:
         """
         Whether *binding* is tracked in *graph*: either an uncaptured function-local of the graph's
-        own function (the strict store candidate) or a script-scope `var` that function owns
+        own function (the strict store candidate) or a script-scope binding that function owns
         (`LivenessModel.pseudo_local_owner`). The second case feeds only the live sets; it never
         reaches `LivenessModel.is_dead_store`, which keeps the strict candidacy.
         """

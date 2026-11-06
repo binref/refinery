@@ -3243,11 +3243,12 @@ class SemanticModel:
         (`_bindings_holding_the_global_object`), so a value read out of such a write would feed the
         very set that decides whether it is one. A binding with no declaration — an implicit global,
         and the binding `_ensure_implicit_global_from_alias_write` mints — contributes nothing and
-        is never complete, even where the file assigns it by name. Neither is a property the host
-        holds and keeps a value of its own in (`held_by_the_host`): a read of it does not give back
-        what the file stored. With *ignore_dynamic_rebinds* the dynamic-rebind conjunct is left out
-        of the completeness verdict: the values answer what the text spells, and whether a rebind
-        crosses a given read is the caller's ordering question over `binding_dynamic_rebind_sites`.
+        is never complete, even where the file assigns it by name. Neither is a property of the
+        global object that keeps a value of its own (`kept_by_the_host`): a read of it does not give
+        back what the file stored. With *ignore_dynamic_rebinds* the dynamic-rebind conjunct is left
+        out of the completeness verdict: the values answer what the text spells, and whether a
+        rebind crosses a given read is the caller's ordering question over
+        `binding_dynamic_rebind_sites`.
 
         The values hold wherever the name is not in their temporal dead zone; a bare declarator
         contributes no value even though the name reads `undefined` there, and a consumer that needs a
@@ -3640,7 +3641,7 @@ class SemanticModel:
         complete = (
             ignore_dynamic_rebinds
             or not self.binding_maybe_reassigned_dynamically(binding)
-        ) and not self.held_by_the_host(binding)
+        ) and not self.kept_by_the_host(binding)
         if binding.supplied_by_host and not any(
             isinstance(declaration.parent, JsFunctionDeclaration)
             and declaration.parent.id is declaration
@@ -4008,21 +4009,30 @@ class SemanticModel:
         """
         return self.host_reaches_global(binding.name) and self._is_the_global_property(binding)
 
-    def held_by_the_host(self, binding: Binding) -> bool:
+    def kept_by_the_host(self, binding: Binding) -> bool:
         """
-        Whether *binding* is a property of the global object that the host holds before the script
-        runs and that keeps a value of its own when the script stores one
+        Whether *binding* is a property of the global object that keeps a value of its own when the
+        script stores one: the host holds it before the script runs
         (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.keeps_its_own_value`), such
         as the `status` of a browser window, which keeps a string, or its `top`, which keeps the
-        window: the binding is a `var` at the top of a script or the one Annex B gives a function
-        declared in a block there, neither of which declares a property of its own, or a name the
-        script never declares. What a read of it gives is not what the file stored. A function
-        declared at the top of the script replaces such a property with a variable of its own, where
-        the copy Annex B makes of one declared in a block stores into it.
+        window, and the binding is a `var` at the top of a script or the one Annex B gives a
+        function declared in a block there, neither of which declares a property of its own, or a
+        name the script never declares. A store into such a name also finds a property the global
+        object inherits, such as the `self` of a dedicated worker, which has no setter
+        (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.inherits_a_property_keeping_its_own_value`);
+        a `var` declares a property of its own in front of that one. What a read of it gives is not
+        what the file stored. A function declared at the top of the script replaces such a property
+        with a variable of its own, where the copy Annex B makes of one declared in a block stores
+        into it.
         """
+        environment = self.environment
         return (
             binding.kind in (BindingKind.VAR, BindingKind.FUNCTION, BindingKind.IMPLICIT_GLOBAL)
-            and self.environment.keeps_its_own_value(binding.name)
+            and (
+                environment.keeps_its_own_value(binding.name)
+                or binding.kind is BindingKind.IMPLICIT_GLOBAL
+                and environment.inherits_a_property_keeping_its_own_value(binding.name)
+            )
             and self.reaches_global_object(binding)
             and not any(
                 isinstance(function := declaration.parent, JsFunctionDeclaration)
@@ -4055,16 +4065,16 @@ class SemanticModel:
         """
         Whether code outside the file may reach *binding* by name at some point through the global
         object, reading what it holds, keeping a value of its own in it, or calling it: a host reads
-        it (`named_by_the_host`), the host holds it and keeps its own value in it
-        (`held_by_the_host`), or code outside the file calls it (`called_from_outside`). An
-        importer reaching an export is not among them: that is `Binding.exported`, which a caller
-        asks beside this. A pass that could delete such a declaration or a store into it, fold a
-        read of one into its value, or relocate one out of the global scope asks here before doing
-        so, so that the answer is one predicate's rather than each pass's own.
+        it (`named_by_the_host`), the host keeps a value of its own in it (`kept_by_the_host`), or
+        code outside the file calls it (`called_from_outside`). An importer reaching an export is
+        not among them: that is `Binding.exported`, which a caller asks beside this. A pass that
+        could delete such a declaration or a store into it, fold a read of one into its value, or
+        relocate one out of the global scope asks here before doing so, so that the answer is one
+        predicate's rather than each pass's own.
         """
         return (
             self.named_by_the_host(binding)
-            or self.held_by_the_host(binding)
+            or self.kept_by_the_host(binding)
             or self.called_from_outside(binding)
         )
 

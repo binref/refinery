@@ -323,27 +323,27 @@ def accessor_installs(call: JsCallExpression) -> Iterator[AccessorInstall]:
         return
     method = key_text(callee)
     if method is None or method in RECEIVER_INSTALL_METHODS:
-        if _may_be_callable(_argument(call, 1)):
+        if _may_be_callable(call_argument(call, 1)):
             yield AccessorInstall(callee.object, None if method is None else _argument_key(call, 0))
     if method is None:
-        descriptors = (_argument(call, 1), _argument(call, 2))
+        descriptors = (call_argument(call, 1), call_argument(call, 2))
         key = None
     elif method == 'defineProperty':
-        descriptors = (_argument(call, 2),)
+        descriptors = (call_argument(call, 2),)
         key = _argument_key(call, 1)
     elif method == 'defineProperties':
-        descriptors = (_argument(call, 1),)
+        descriptors = (call_argument(call, 1),)
         key = None
     else:
         return
-    target = _argument(call, 0)
+    target = call_argument(call, 0)
     if target is None or isinstance(target, JsSpreadElement):
         return
     if any(_may_be_object(descriptor) for descriptor in descriptors):
         yield AccessorInstall(target, key)
 
 
-def _argument(call: JsCallExpression, index: int) -> Node | None:
+def call_argument(call: JsCallExpression, index: int) -> Node | None:
     """
     The argument *call* passes at *index*: the first spread at or before it, which may put anything
     there, or the argument written there, or `None` where none is.
@@ -358,7 +358,7 @@ def _argument_key(call: JsCallExpression, index: int) -> str | None:
     """
     The key the argument of *call* at *index* converts to, `None` where it may be any.
     """
-    argument = _argument(call, index)
+    argument = call_argument(call, index)
     if isinstance(argument, JsSpreadElement):
         return None
     return expression_key(argument)

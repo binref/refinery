@@ -43,7 +43,7 @@ import enum
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, Sequence
+from typing import Callable, NamedTuple, Sequence
 
 from refinery.lib.scripts import Expression, Node, tree_root, tree_version
 from refinery.lib.scripts.js.analysis.conversions import (
@@ -55,6 +55,7 @@ from refinery.lib.scripts.js.analysis.conversions import (
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
 from refinery.lib.scripts.js.analysis.environment import typeof_of_global
 from refinery.lib.scripts.js.analysis.evaluation import owns_a_run, walk_run
+from refinery.lib.scripts.js.analysis.foreign import may_run_code_it_does_not_hold
 from refinery.lib.scripts.js.analysis.intrinsics import (
     GLOBAL_OBJECT,
     INHERITED_CHAIN_ROOTS,
@@ -94,6 +95,7 @@ from refinery.lib.scripts.js.keys import (
     NO_IS_STRICTER,
     KeyAssumptions,
     accessor_install_method,
+    accessor_installs,
     key_is,
     key_may_be,
     key_text,
@@ -1089,7 +1091,9 @@ class EffectModel:
         self._dominance = dominance
         self._dead_zone_safe_cache: dict[int, bool] = {}
         self.intrinsics_pristine = _intrinsics_pristine(model)
-        self.global_pristine = _global_pristine(model, self.assumed_keys)
+        self._installs = _global_installs(model, self.assumed_keys)
+        self.global_pristine = self._installs.pristine
+        self._runs_code_it_does_not_hold: bool | None = None
         if intrinsic_writes is None:
             intrinsic_writes = build_intrinsic_writes(model)
         self.intrinsic_writes = intrinsic_writes
@@ -2492,6 +2496,27 @@ class EffectModel:
             return False
         return self.prototype_name_unwritten(value_type)
 
+    def installed_under(self, name: str) -> bool:
+        """
+        Whether the program may install an accessor or a property under the key *name* that a
+        store into the global name *name* finds: on the global object, on a prototype it inherits
+        from, or on any other object, since the analysis does not follow which objects those are.
+        It answers yes for every name where the program swaps the prototype of the global object or
+        installs under a key it cannot bound (`_global_installs`), and no for every name where
+        `global_pristine` answers yes.
+        """
+        keys = self._installs.keys
+        return keys is None or name in keys
+
+    def may_run_code_it_does_not_hold(self) -> bool:
+        """
+        Whether the program may run code its text does not hold
+        (`refinery.lib.scripts.js.analysis.foreign.may_run_code_it_does_not_hold`), asked once.
+        """
+        if (answer := self._runs_code_it_does_not_hold) is None:
+            self._runs_code_it_does_not_hold = answer = may_run_code_it_does_not_hold(self.model)
+        return answer
+
     def global_key_written(self, name: str, key: str) -> bool:
         """
         Whether the program writes the property *key* on a chain rooted at the global *name*:
@@ -3483,13 +3508,31 @@ def _writes_the_global_prototype(model: SemanticModel, member: JsMemberExpressio
     )
 
 
-def _global_pristine(model: SemanticModel, assumptions: KeyAssumptions) -> bool:
+class _GlobalInstalls(NamedTuple):
     """
-    Whether a property read on the global object is free of user getters: the program exposes no
+    What the program installs that a read or a store of a global name may run
+    (`_global_installs`): *pristine* says that it installs nothing, and *keys* are the names it
+    installs under, `None` where they cannot be bounded.
+    """
+    pristine: bool
+    keys: frozenset[str] | None
+
+
+_ANY_INSTALL = _GlobalInstalls(False, None)
+
+
+def _global_installs(model: SemanticModel, assumptions: KeyAssumptions) -> _GlobalInstalls:
+    """
+    What the program installs that a read or a store of a global name may run. A property read on
+    the global object is free of user getters where it is pristine: the program exposes no
     reflective surface through which an accessor could be installed at runtime, and installs none
     statically through `Object.defineProperty`, `defineProperties`, the legacy
-    `__define[GS]etter__`, or a prototype swap onto the global object through `__proto__`. Only
-    under this precondition may a read of a trusted global data property be treated as effect-free.
+    `__define[GS]etter__`, or a prototype swap onto the global object through `__proto__`, spelled
+    as a member or as the bare name no declaration binds. Only under this precondition may a read
+    of a trusted global data property be treated as effect-free. An accessor installed under one
+    key is found by a name of that key alone, so the keys of the installs are listed; a swapped
+    prototype, a call of an installer that is not the call of its member, and an install without
+    a key bound them by none.
 
     A computed key counts as an install, since `Object['define' + 'Property']` reaches the same method as
     the dotted form; reading the property name alone would let a fold of the key withdraw this trust after
@@ -3502,15 +3545,28 @@ def _global_pristine(model: SemanticModel, assumptions: KeyAssumptions) -> bool:
     the read property a new value or setter, so `has_opaque_global_write` refuses here.
     """
     if model.has_reflection_surface() or model.has_opaque_global_write():
-        return False
+        return _ANY_INSTALL
+    proto = model.root_scope.bindings.get('__proto__')
+    if proto is not None and proto.kind is BindingKind.IMPLICIT_GLOBAL and proto.writes:
+        return _ANY_INSTALL
+    keys: set[str] = set()
+    pristine = True
     for node in model.root.walk():
         if not isinstance(node, JsMemberExpression):
             continue
         if accessor_install_method(node, assumptions) is not None:
-            return False
+            pristine = False
+            call = enclosing_operator(node)
+            if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not node:
+                return _ANY_INSTALL
+            for install in accessor_installs(call):
+                if install.key is None:
+                    return _ANY_INSTALL
+                keys.add(install.key)
+            continue
         if _writes_the_global_prototype(model, node, assumptions):
-            return False
-    return True
+            return _ANY_INSTALL
+    return _GlobalInstalls(pristine, frozenset(keys))
 
 
 class AnchoredTrust:

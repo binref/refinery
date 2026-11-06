@@ -32,11 +32,11 @@ import enum
 import operator
 
 from dataclasses import dataclass
-from typing import Callable, NamedTuple
+from typing import Callable, Iterable, NamedTuple
 
 from refinery.lib.json import loads
 from refinery.lib.resources import datapath
-from refinery.lib.scripts.js.builtins import ITERATOR_METHODS
+from refinery.lib.scripts.js.builtins import ITERATOR_METHODS, OBJECT_PROTOTYPE_MEMBERS
 
 
 class Presence(enum.Enum):
@@ -536,52 +536,103 @@ asserted absent — which would fold `typeof requestAnimationFrame` to `'undefin
 yields `'function'`.
 """
 
-def _load_host_globals() -> dict[str, dict[str, str]]:
+class HostPropertyKind(enum.Enum):
     """
-    The own properties of the global object of each host, read out of it and shipped as
+    What a property of the global object of a host is, as `js-globals.json` records it, where a
+    store of `null` and of an object was made into each property the global object holds with a
+    setter:
+
+    - `VALUE`: a writable data property;
+    - `CONSTANT`: a data property that is not writable;
+    - `GETTER`: an accessor without a setter;
+    - `SETTER_STORED`: an accessor a read of which gave back what was stored into it;
+    - `SETTER_OWN`: an accessor a read of which gave back a value of its own after a store;
+    - `SETTER_THREW`: an accessor whose setter threw;
+    - `SETTER_UNTESTED`: an accessor nothing was stored into: the `location` of a window, which
+      navigates, and every accessor the global object inherits.
+    """
+    VALUE = 'value'
+    CONSTANT = 'constant'
+    GETTER = 'getter'
+    SETTER_STORED = 'setter:stored'
+    SETTER_OWN = 'setter:own'
+    SETTER_THREW = 'setter:threw'
+    SETTER_UNTESTED = 'setter:untested'
+
+    @property
+    def reads_back_a_store(self) -> bool:
+        """
+        Whether a read of the name after sloppy code stored a value into it gives back that value.
+        A store into a writable data property the global object inherits puts a property of its
+        own in front of it, which then gives the value back.
+        """
+        return self is HostPropertyKind.VALUE or self is HostPropertyKind.SETTER_STORED
+
+
+class _HostGlobals(NamedTuple):
+    """
+    The properties of the global object of one host: those it holds, and those it inherits from its
+    prototypes above `Object.prototype` under a name it does not hold.
+    """
+    own: dict[str, HostPropertyKind]
+    inherited: dict[str, HostPropertyKind]
+
+
+def _load_host_globals() -> dict[str, _HostGlobals]:
+    """
+    The properties of the global object of each host, read out of it and shipped as
     `js-globals.json`: a browser window and a dedicated worker of a current Chromium, and Node.
     The names a wallet added to the window read (`cardano`, `ethereum`, `solana`, `web3`) are left
-    out. Each maps the name of a property to what it is, where a store of `null` and of an object
-    was made into each one with a setter:
-
-    - `value`: a writable data property;
-    - `constant`: a data property that is not writable;
-    - `getter`: an accessor without a setter;
-    - `setter:stored`: an accessor a read of which gave back what was stored into it;
-    - `setter:own`: an accessor a read of which gave back a value of its own after a store;
-    - `setter:threw`: an accessor whose setter threw;
-    - `setter:untested`: an accessor nothing was stored into: the `location` of a window, which
-      navigates.
+    out. Each maps the name of a property to what it is (`HostPropertyKind`).
     """
     with datapath('js-globals.json').open('rb') as fp:
-        return loads(fp.read())
+        data = loads(fp.read())
+
+    def kinds(properties: dict[str, str]) -> dict[str, HostPropertyKind]:
+        return {name: HostPropertyKind(kind) for name, kind in properties.items()}
+
+    return {
+        host: _HostGlobals(kinds(properties['own']), kinds(properties['inherited']))
+        for host, properties in data.items()
+    }
 
 
 _HOST_GLOBALS = _load_host_globals()
 
-_KINDS_READ_BACK_AFTER_A_STORE = frozenset({
-    'value',
-    'setter:stored',
-})
-"""
-The kinds of property a read of which gives back what a script stored into it.
-"""
+
+class _GlobalObjects(NamedTuple):
+    """
+    The properties of the global objects of the hosts an environment covers: *held* are those one
+    of them holds, *held_keeping_their_own_value* those of them that keep a value of their own when
+    a script stores one, *inherited_keeping_their_own_value* those one inherits that do, and
+    *named* every name one of them has a property under, `Object.prototype` included.
+    """
+    held: frozenset[str]
+    held_keeping_their_own_value: frozenset[str]
+    inherited_keeping_their_own_value: frozenset[str]
+    named: frozenset[str]
 
 
-def _held_by(*hosts: str) -> frozenset[str]:
-    return frozenset(name for host in hosts for name in _HOST_GLOBALS[host])
-
-
-def _keeping_their_own_value(*hosts: str) -> frozenset[str]:
+def _keeping_their_own_value(properties: Iterable[dict[str, HostPropertyKind]]) -> frozenset[str]:
     return frozenset(
         name
-        for host in hosts
-        for name, kind in _HOST_GLOBALS[host].items()
-        if kind not in _KINDS_READ_BACK_AFTER_A_STORE
+        for kinds in properties
+        for name, kind in kinds.items()
+        if not kind.reads_back_a_store
     )
 
 
-_WINDOW_EVENT_HANDLERS = frozenset(name for name in _HOST_GLOBALS['window'] if name.startswith('on'))
+def _global_objects_of(*hosts: str) -> _GlobalObjects:
+    data = [_HOST_GLOBALS[host] for host in hosts]
+    return _GlobalObjects(
+        frozenset(name for properties in data for name in properties.own),
+        _keeping_their_own_value(properties.own for properties in data),
+        _keeping_their_own_value(properties.inherited for properties in data),
+        frozenset(name for properties in data for part in properties for name in part) | OBJECT_PROTOTYPE_MEMBERS,
+    )
+
+
+_WINDOW_EVENT_HANDLERS = frozenset(name for name in _HOST_GLOBALS['window'].own if name.startswith('on'))
 """
 The event handler attributes of a browser window: properties of the global object whose value the
 window calls when the event they name fires, so a function a script stores in one runs with no call
@@ -695,9 +746,8 @@ class _EnvironmentSpec:
     regardless, preserving the sound default's behavior exactly where the host adds nothing.
     *engine* is the engine every engine the host covers is, where there is one. *handlers* are the
     properties of the global object whose value the host calls, and *read_on_store* the others whose
-    value the host reads when a script stores one. *held* are the properties the global object holds
-    before a script runs, and *own_value* those of them that keep a value of their own when a script
-    stores one.
+    value the host reads when a script stores one. *global_objects* are the properties of the
+    global objects of the hosts it covers before a script runs.
     """
     provided: frozenset[str]
     mandated: frozenset[str]
@@ -705,8 +755,7 @@ class _EnvironmentSpec:
     engine: JsEngine | None = None
     handlers: frozenset[str] = frozenset()
     read_on_store: frozenset[str] = frozenset()
-    held: frozenset[str] = frozenset()
-    own_value: frozenset[str] = frozenset()
+    global_objects: _GlobalObjects = _global_objects_of()
 
     def provides(self, name: str) -> bool:
         return name in self.provided
@@ -839,7 +888,7 @@ class HostEnvironment(enum.Enum):
         property the global object inherits is not one it holds: a `var` of its name declares a
         property of its own in front of it.
         """
-        return name in _SPECS[self].held
+        return name in _SPECS[self].global_objects.held
 
     def keeps_its_own_value(self, name: str) -> bool:
         """
@@ -849,7 +898,29 @@ class HostEnvironment(enum.Enum):
         as the string the `status` of a browser window converts it to. A read of it after the store
         does not give back what was stored.
         """
-        return name in _SPECS[self].own_value
+        return name in _SPECS[self].global_objects.held_keeping_their_own_value
+
+    def inherits_a_property_keeping_its_own_value(self, name: str) -> bool:
+        """
+        Whether the global object of some host this one covers inherits a property *name* from a
+        prototype above it that keeps a value of its own when sloppy code stores one into the name
+        no declaration binds: the store finds that property and stores nothing, as into the `self`
+        of a dedicated worker, which has a getter and no setter, or runs its setter. A property of
+        `Object.prototype` is not asked about here: its only accessor is `__proto__`.
+        """
+        return name in _SPECS[self].global_objects.inherited_keeping_their_own_value
+
+    def has_a_global(self, name: str) -> bool:
+        """
+        Whether the global object of a host this one covers has a property *name* before a script
+        runs, its own or inherited, `Object.prototype` included, as `_load_host_globals` reads them
+        for a browser window, a dedicated worker and Node, or this host provides the name. A read of
+        a global name none has finds what the file does not define, such as a function of a library
+        a page loads. The Windows Script Host, which `universal` covers, is not read, and a name
+        only it has answers no.
+        """
+        spec = _SPECS[self]
+        return name in spec.provided or name in spec.global_objects.named
 
     @property
     def engine(self) -> JsEngine | None:
@@ -931,16 +1002,14 @@ _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {
         GUARANTEED_GLOBALS,
         handlers=_WINDOW_EVENT_HANDLERS | _WORKER_EVENT_HANDLERS,
         read_on_store=_WINDOW_ATTRIBUTES_READ_ON_STORE,
-        held=_held_by('window', 'worker', 'node'),
-        own_value=_keeping_their_own_value('window', 'worker', 'node'),
+        global_objects=_global_objects_of('window', 'worker', 'node'),
     ),
     HostEnvironment.node: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _NODE_GLOBALS,
         GUARANTEED_GLOBALS,
         _NODE_ABSENT,
         engine=JsEngine.v8,
-        held=_held_by('node'),
-        own_value=_keeping_their_own_value('node'),
+        global_objects=_global_objects_of('node'),
     ),
     HostEnvironment.browser: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _BROWSER_GLOBALS,
@@ -948,15 +1017,13 @@ _SPECS: dict[HostEnvironment, _EnvironmentSpec] = {
         _BROWSER_ABSENT,
         handlers=_WINDOW_EVENT_HANDLERS,
         read_on_store=_WINDOW_ATTRIBUTES_READ_ON_STORE,
-        held=_held_by('window'),
-        own_value=_keeping_their_own_value('window'),
+        global_objects=_global_objects_of('window'),
     ),
     HostEnvironment.worker: _EnvironmentSpec(
         GUARANTEED_GLOBALS | _WORKER_GLOBALS,
         GUARANTEED_GLOBALS,
         _WORKER_ABSENT,
         handlers=_WORKER_EVENT_HANDLERS,
-        held=_held_by('worker'),
-        own_value=_keeping_their_own_value('worker'),
+        global_objects=_global_objects_of('worker'),
     ),
 }

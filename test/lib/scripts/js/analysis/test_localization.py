@@ -4,6 +4,7 @@ from test import TestBase
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.cache import ModelCache
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.analysis.localization import localizable_bindings, localization_target
 from refinery.lib.scripts.js.model import JsFunctionDeclaration
 from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
@@ -119,7 +120,7 @@ class TestLocalization(TestBase):
 
     def test_a_var_read_after_a_continue_to_the_head_of_a_for_await_loop_moves(self):
         self.assertMovesIntoF(
-            'var x; async function f(v) { for await (var e of [0]) { x = v; log(x); continue; } }'
+            'var x; async function f(v) { for await (var e of [0]) { x = v; console.log(x); continue; } }'
         )
 
     def test_a_var_of_a_function_the_host_may_run_again_while_it_runs_stays_at_the_top(self):
@@ -162,6 +163,66 @@ class TestLocalization(TestBase):
         ):
             with self.subTest(source=source):
                 self.assertStays(source)
+
+    def test_a_name_no_declaration_binds_used_in_one_function_moves_there(self):
+        for source in (
+            'function f(n) { x = []; x.push(n); return x; } console.log(f(3));',
+            'function f(a) { x = 0; for (var i = 0; i < a.length; i++) x += a[i]; return x; } console.log(f([1, 2]));',
+        ):
+            with self.subTest(source=source):
+                self.assertMovesIntoF(source)
+
+    def test_a_name_no_declaration_binds_stored_in_strict_code_stays(self):
+        for source in (
+            "'use strict'; function f(v) { x = v; return x; }",
+            "function f(v) { 'use strict'; x = v; return x; }",
+            'class C { m(v) { x = v; return x; } }',
+        ):
+            with self.subTest(source=source):
+                self.assertStays(source)
+
+    def test_a_name_no_declaration_binds_stays_in_a_file_that_may_be_an_es_module(self):
+        source = 'function f(v) { x = v; return x; }'
+        cache = ModelCache(JsParser(source).parse(), DeobfuscationOptions(execution=ExecutionModel.module))
+        self.assertIsNone(self._target(cache))
+
+    def test_a_name_no_declaration_binds_the_function_deletes_stays(self):
+        self.assertStays('function f(v) { x = v; delete x; return typeof x; }')
+
+    def test_a_name_no_declaration_binds_the_program_installs_under_stays(self):
+        for source in (
+            "Object.defineProperty(Object.prototype, 'x', { set: function (v) {} }); function f(v) { x = v; return x; }",
+            "globalThis.__defineSetter__('x', function (v) {}); function f(v) { x = v; return x; }",
+            "__proto__ = { set x(v) {} }; function f(v) { x = v; return x; }",
+        ):
+            with self.subTest(source=source):
+                self.assertStays(source)
+
+    def test_a_name_an_install_under_another_key_leaves_moves(self):
+        self.assertMovesIntoF(
+            "Object.defineProperty(Object.prototype, 'y', { set: function (v) {} }); function f(v) { x = v; return x; }"
+        )
+
+    def test_a_name_a_host_inherits_keeping_its_own_value_stays(self):
+        source = 'function f(v) { self = v; return self; }'
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast, DeobfuscationOptions(environment=HostEnvironment.worker))
+        self.assertIsNone(localization_target(cache.liveness, cache.reaching, cache.model.root_scope.bindings['self']))
+
+    def test_a_global_stays_where_the_file_may_run_code_it_does_not_hold(self):
+        for source in (
+            'function f(v) { x = v; run(); return x; }',
+            'var x; function f(v) { x = v; run(); return x; }',
+            "function f(v) { x = v; document.write('<p>'); return x; }",
+        ):
+            with self.subTest(source=source):
+                self.assertStays(source)
+
+    def test_a_var_of_a_commonjs_file_moves_where_the_file_may_run_code_it_does_not_hold(self):
+        source = 'var x; function f(v) { x = v; run(); return x; }'
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast, DeobfuscationOptions(execution=ExecutionModel.commonjs))
+        self.assertIs(self._target(cache), self._func(ast, 'f'))
 
     def test_a_var_dead_wherever_another_run_may_store_it_moves(self):
         for source in (

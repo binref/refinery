@@ -52,6 +52,23 @@ _A_READOUT_OF_THE_GLOBAL_OBJECT = inspect.cleandoc("""
     print(JSON.stringify(kinds));
     """)
 
+#: A program printing what each property the global object it runs on inherits from a prototype
+#: between it and `Object.prototype`, under a name it does not hold, is, in the terms of
+#: `_A_READOUT_OF_THE_GLOBAL_OBJECT`; nothing is stored into any of them.
+_A_READOUT_OF_WHAT_THE_GLOBAL_OBJECT_INHERITS = inspect.cleandoc("""
+    const describe = Object.getOwnPropertyDescriptor;
+    const print = console.log.bind(console);
+    const kinds = Object.create(null);
+    for (let p = Object.getPrototypeOf(globalThis); p !== null && p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+      for (const k of Object.getOwnPropertyNames(p).sort()) {
+        if (Object.prototype.hasOwnProperty.call(globalThis, k) || k in kinds) continue;
+        const d = describe(p, k);
+        kinds[k] = 'value' in d ? (d.writable ? 'value' : 'constant') : (d.set ? 'setter' : 'getter');
+      }
+    }
+    print(JSON.stringify(kinds));
+    """)
+
 
 def _bare_read_may_throw(source: str, name: str, environment: HostEnvironment) -> bool:
     """
@@ -146,7 +163,7 @@ class TestAHostHoldsEveryPropertyItHasAPartIn(TestBase):
 
     def test_every_property_a_pinned_host_holds_is_held_without_a_pin(self):
         for environment in HostEnvironment:
-            for name in _SPECS[environment].held:
+            for name in _SPECS[environment].global_objects.held:
                 with self.subTest(environment=environment.name, name=name):
                     self.assertTrue(HostEnvironment.universal.holds(name))
                     if environment.keeps_its_own_value(name):
@@ -163,6 +180,64 @@ class TestAHostHoldsEveryPropertyItHasAPartIn(TestBase):
             with self.subTest(environment=environment.name):
                 self.assertFalse(environment.holds('zzz'))
                 self.assertFalse(environment.keeps_its_own_value('zzz'))
+                self.assertFalse(environment.inherits_a_property_keeping_its_own_value('zzz'))
+
+
+class TestAHostInheritsPropertiesItsGlobalObjectDoesNotHold(TestBase):
+    """
+    A dedicated worker inherits `self`, a getter without a setter, from the prototype of its global
+    object, and a window inherits the constant `TEMPORARY`; a store into either name keeps nothing.
+    The default `universal` environment inherits every such property a pinned host inherits.
+    """
+
+    def test_a_worker_inherits_its_self_keeping_a_value_of_its_own(self):
+        self.assertFalse(HostEnvironment.worker.holds('self'))
+        self.assertTrue(HostEnvironment.worker.inherits_a_property_keeping_its_own_value('self'))
+
+    def test_a_window_inherits_temporary_keeping_a_value_of_its_own(self):
+        self.assertFalse(HostEnvironment.browser.holds('TEMPORARY'))
+        self.assertTrue(HostEnvironment.browser.inherits_a_property_keeping_its_own_value('TEMPORARY'))
+
+    def test_a_writable_value_a_host_inherits_takes_a_store(self):
+        self.assertFalse(HostEnvironment.browser.inherits_a_property_keeping_its_own_value('addEventListener'))
+        self.assertTrue(HostEnvironment.browser.has_a_global('addEventListener'))
+
+    def test_every_property_a_pinned_host_inherits_keeping_its_own_value_is_inherited_without_a_pin(self):
+        for environment in HostEnvironment:
+            for name in _SPECS[environment].global_objects.inherited_keeping_their_own_value:
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertTrue(HostEnvironment.universal.inherits_a_property_keeping_its_own_value(name))
+
+
+class TestAGlobalIsANameSomeHostHasAPropertyUnder(TestBase):
+
+    def test_every_name_a_host_provides_or_holds_is_a_global_of_it(self):
+        for environment in HostEnvironment:
+            spec = _SPECS[environment]
+            for name in spec.provided | spec.global_objects.held:
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertTrue(environment.has_a_global(name))
+
+    def test_every_global_of_a_pinned_host_is_a_global_without_a_pin(self):
+        for environment in HostEnvironment:
+            for name in _SPECS[environment].global_objects.named:
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertTrue(HostEnvironment.universal.has_a_global(name))
+
+    def test_what_every_object_inherits_is_a_global_of_every_host(self):
+        for environment in HostEnvironment:
+            for name in ('toString', 'hasOwnProperty', 'constructor', '__proto__'):
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertTrue(environment.has_a_global(name))
+
+    def test_a_name_only_a_browser_has_is_no_global_of_node(self):
+        self.assertTrue(HostEnvironment.browser.has_a_global('document'))
+        self.assertFalse(HostEnvironment.node.has_a_global('document'))
+
+    def test_a_name_no_host_has_is_no_global(self):
+        for environment in HostEnvironment:
+            with self.subTest(environment=environment.name):
+                self.assertFalse(environment.has_a_global('zzz'))
 
 
 class TestABareGlobalReadIsJudgedAgainstThePinnedHost(TestBase):
@@ -381,6 +456,20 @@ class TestNodeAgreesWithTheEnvironment(TestBase):
             for name, kind in kinds.items()
             if kind not in ('value', 'setter:stored')
             and not HostEnvironment.node.keeps_its_own_value(name)
+        ]
+        self.assertEqual(unknown, [])
+        self.assertEqual(keeping_their_own_value_unknown, [])
+
+    def test_node_inherits_no_property_the_environment_does_not_know(self):
+        out, error = behavior(_A_READOUT_OF_WHAT_THE_GLOBAL_OBJECT_INHERITS)
+        self.assertIsNone(error)
+        kinds: dict[str, str] = json.loads(out)
+        unknown = [name for name in kinds if not HostEnvironment.node.has_a_global(name)]
+        keeping_their_own_value_unknown = [
+            name
+            for name, kind in kinds.items()
+            if kind != 'value'
+            and not HostEnvironment.node.inherits_a_property_keeping_its_own_value(name)
         ]
         self.assertEqual(unknown, [])
         self.assertEqual(keeping_their_own_value_unknown, [])
