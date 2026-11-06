@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from test import todo
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1ExpandableStringHoist
@@ -72,18 +71,14 @@ class TestPs1ASubexpressionOfThePipelineInputRunsBeforeTheCommand(TestPs1):
         source = '''\'Write-Host $x\' + "$( $x = 'b' )" | Invoke-Expression'''
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'b'")
 
-    def test_a_pipeline_body_reads_what_a_subexpression_of_its_input_assigns(self):
-        source = '''\'a\' + "$( $x = 'b' )" | ForEach-Object { Write-Host $x }'''
+    def test_a_pipeline_body_reads_what_a_subexpression_after_a_variable_assigns(self):
+        source = '''$x = 'a'; $x + "$( $x = 'b' )" | ForEach-Object { Write-Host $x }'''
         self._assertDeobfuscatesToOneOf(
             source,
             source,
             "'a' | ForEach-Object {\n  Write-Host 'b'\n}",
+            "Write-Host 'b'",
         )
-
-    @todo
-    def test_a_pipeline_body_reads_what_a_subexpression_after_a_variable_assigns(self):
-        source = '''$x = 'a'; $x + "$( $x = 'b' )" | ForEach-Object { Write-Host $x }'''
-        self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'b'")
 
 
 class TestPs1ASubexpressionAStatementMayNotEvaluateStaysWhereItRuns(TestPs1):

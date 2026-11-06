@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import backlog, todo, wontfix
+from test import backlog, opportunity, todo, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1 import data
@@ -825,6 +825,10 @@ class TestPs1APipelineOverAScalarRunsItsBlockOverThatOneItem(TestPs1):
 
     def test_an_array_source_runs_the_block_over_each_of_its_items(self):
         self.assertEqual(self._apply('@(5, 6) | % { $_ + 1 }', Ps1ForEachPipeline), '6, 7')
+
+    @opportunity
+    def test_a_block_that_runs_a_command_over_one_item_becomes_the_block(self):
+        self._assertDeobfuscatesTo("'a' | ForEach-Object { Write-Host 'b' }", "Write-Host 'b'")
 
 
 class TestPs1AnArrayABlockHandsOutWholeIsNotTheValuesInsideIt(TestPs1):
