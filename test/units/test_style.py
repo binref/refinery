@@ -1,6 +1,7 @@
 import ast
 import functools
 import importlib
+import inspect
 import os.path
 import pkgutil
 import pytest
@@ -628,7 +629,7 @@ class TestPartialReadDiscipline(TestBase):
     a pipeline enters it in a `with` statement, which closes it.
     """
 
-    _CONVERSIONS = {'bytes', 'bytearray', 'str', 'list', 'set', 'dict', 'tuple', 'memoryview', 'int'}
+    _BUILTIN_TYPES = {'bytes', 'bytearray', 'str', 'list', 'set', 'frozenset', 'dict', 'tuple', 'memoryview', 'int'}
     _READERS = {'next', 'one', 'iter', 'islice', 'any', 'all', 'zip'}
     _STREAM_READERS = {'read', 'read1', 'readline'}
 
@@ -638,7 +639,9 @@ class TestPartialReadDiscipline(TestBase):
             return False
         if isinstance(right := node.right, (ast.Constant, ast.List, ast.Set, ast.Dict)):
             return False
-        return not isinstance(right, ast.Name) or right.id not in cls._CONVERSIONS
+        if isinstance(right, ast.Call):
+            right = right.func
+        return not isinstance(right, ast.Name) or right.id not in cls._BUILTIN_TYPES
 
     @staticmethod
     def _can_stop(loop: ast.For) -> bool:
@@ -676,6 +679,20 @@ class TestPartialReadDiscipline(TestBase):
                             yield node.lineno
             if isinstance(node, ast.For) and is_pipeline(node.iter) and cls._can_stop(node):
                 yield node.lineno
+
+    def test_a_union_with_a_constructed_frozenset_is_no_pipeline(self):
+        tree = ast.parse(inspect.cleandoc("""
+            KEYS = CONVERSION_KEYS | frozenset({'source', 'flags'})
+            written = any(global_key_written('RegExp', key) for key in KEYS)
+        """))
+        self.assertListEqual(list(self._partial_reads(tree)), [])
+
+    def test_a_unit_constructed_on_the_right_is_a_pipeline(self):
+        tree = ast.parse(inspect.cleandoc("""
+            chunks = data | xor(key)
+            first = next(chunks)
+        """))
+        self.assertListEqual(list(self._partial_reads(tree)), [2])
 
     def test_every_pipeline_that_is_read_partly_is_closed(self):
         unclosed = set()

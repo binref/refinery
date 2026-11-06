@@ -663,4 +663,3 @@ class Ps1RaiseModel:
                 kinds |= Ps1ErrorKind.CALLED
             kinds |= leaving & (Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED)
         return kinds
-

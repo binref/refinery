@@ -536,6 +536,7 @@ asserted absent — which would fold `typeof requestAnimationFrame` to `'undefin
 yields `'function'`.
 """
 
+
 class HostPropertyKind(enum.Enum):
     """
     What a property of the global object of a host is, as `js-globals.json` records it, where a

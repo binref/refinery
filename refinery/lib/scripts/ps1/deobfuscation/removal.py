@@ -625,10 +625,10 @@ class Ps1RemovalPlans:
         that walks bodies to find its removals is already holding the list, and says so here.
 
         Nothing checks the claim, so a caller that names the wrong list files a proposal `commit`
-        will silently drop and `accepted` will still report; see `accepted` for what rests on it. Filing the same statement a second time drops the first proposal rather than
-        leaving it standing, because the alternative is a statement `withdraw` can only reach one of
-        — a withdrawal that half happens is what remembering where a proposal landed exists to
-        rule out.
+        will silently drop and `accepted` will still report; see `accepted` for what rests on it.
+        Filing the same statement a second time drops the first proposal rather than leaving it
+        standing, because the alternative is a statement `withdraw` can only reach one of — a
+        withdrawal that half happens is what remembering where a proposal landed exists to rule out.
         """
         plan = self._plan_for(parent, attr)
         filed = self._filed.get(id(statement))
