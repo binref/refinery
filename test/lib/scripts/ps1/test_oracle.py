@@ -734,6 +734,114 @@ TYPE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
             'OUT\tSystem.Char[]\tA B C',
             'OUT\tSystem.Int32\t3',
         ),
+    '$t = [byte[]]@([char]80, [char]85); Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Byte[]\t80 85',
+            'OUT\tSystem.Byte\t80',
+            'OUT\tSystem.Byte\t85',
+        ),
+    '$t = [byte[]](80, 300); Write-Output (,$t)':
+        (
+            'ERROR\tInvalidCastIConvertible\tSystem.Management.Automation.RuntimeException',
+            'OUT\t\t<null>',
+        ),
+    "$t = [byte[]]'AB'; Write-Output (,$t)":
+        (
+            'ERROR\tInvalidCastExceptionScalarToArray\tSystem.Management.Automation.RuntimeException',
+            'OUT\t\t<null>',
+        ),
+    "$t = [byte[]]@('80', '85'); Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.Byte[]\t80 85',
+            'OUT\tSystem.Byte\t80',
+            'OUT\tSystem.Byte\t85',
+        ),
+    "$t = [byte[]]@('0x50'); Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.Byte[]\t80',
+            'OUT\tSystem.Byte\t80',
+        ),
+    '$t = [char[]]65; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Char[]\tA',
+            'OUT\tSystem.Char\tA',
+        ),
+    '$t = [byte[]][char[]](80, 85); Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Byte[]\t80 85',
+            'OUT\tSystem.Byte\t80',
+            'OUT\tSystem.Byte\t85',
+        ),
+    '$t = [byte[]]72; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Byte[]\t72',
+            'OUT\tSystem.Byte\t72',
+        ),
+    '$t = [byte[]]$true; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Byte[]\t1',
+            'OUT\tSystem.Byte\t1',
+        ),
+    '$t = [byte[]]1.9; Write-Output (,$t)':
+        ('OUT\tSystem.Byte[]\t2',),
+    '$t = [byte[]][char]65; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Byte[]\t65',
+            'OUT\tSystem.Byte\t65',
+        ),
+    '$t = [byte[]]$null; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\t\t<null>',
+            'OUT\t\t<null>',
+        ),
+    '$t = [char[]]$true; Write-Output (,$t); Write-Output $t':
+        (
+            'ERROR\tInvalidCastIConvertible\tSystem.Management.Automation.RuntimeException',
+            'OUT\t\t<null>',
+            'OUT\t\t<null>',
+        ),
+    '$t = [char[]]1.9; Write-Output (,$t)':
+        (
+            'ERROR\tInvalidCastExceptionScalarToArray\tSystem.Management.Automation.RuntimeException',
+            'OUT\t\t<null>',
+        ),
+    '$t = [char[]]$null; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\t\t<null>',
+            'OUT\t\t<null>',
+        ),
+    '$t = [char[]]1.5; Write-Output (,$t)':
+        (
+            'ERROR\tInvalidCastExceptionScalarToArray\tSystem.Management.Automation.RuntimeException',
+            'OUT\t\t<null>',
+        ),
+    "$t = [byte[]]'80'; Write-Output (,$t)":
+        ('OUT\tSystem.Byte[]\t80',),
+    "$t = [byte[]]'A'; Write-Output (,$t)":
+        (
+            'ERROR\tInvalidCastExceptionScalarToArray\tSystem.Management.Automation.RuntimeException',
+            'OUT\t\t<null>',
+        ),
+    '$t = [byte[]]@($null); Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Byte[]\t0',
+            'OUT\tSystem.Byte\t0',
+        ),
+    "$t = [byte[]]@('AB'); Write-Output (,$t)":
+        (
+            'ERROR\tInvalidCastFromStringToInteger\tSystem.Management.Automation.RuntimeException',
+            'OUT\t\t<null>',
+        ),
+    '$t = [char[]][char]65; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Char[]\tA',
+            'OUT\tSystem.Char\tA',
+        ),
+    '$t = [byte[]][byte]65; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Byte[]\t65',
+            'OUT\tSystem.Byte\t65',
+        ),
     "Write-Output ('x' -replace 'x', [char]65); Write-Output ('x' -replace 'x', 'A')":
         (
             'OUT\tSystem.String\tA',
@@ -4478,6 +4586,7 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
 #: The corpus snippets the tool emits unchanged. See `TestPs1EverySnippetIsStillRewritten`.
 UNREWRITTEN_SNIPPETS: frozenset[str] = frozenset({
     "Write-Host ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SGVs!bG8=')))",
+    "[Text.Encoding]::ASCII.GetString([byte[]](80, 300))",
 })
 
 

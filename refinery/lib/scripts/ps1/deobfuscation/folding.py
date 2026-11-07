@@ -904,12 +904,8 @@ class Ps1ConstantFolding(Transformer):
         encoding_name = detect_encoding_chain(node)
         if encoding_name is not None:
             if len(node.arguments) == 1:
-                int_values = collect_integers(unwrap_single_paren(node.arguments[0]))
-                if int_values is not None:
-                    try:
-                        raw_bytes = bytearray(int_values)
-                    except (ValueError, OverflowError):
-                        return None
+                raw_bytes = collect_byte_array(node.arguments[0])
+                if raw_bytes is not None:
                     encoding = ENCODING_MAP.get(
                         encoding_name.lower(), encoding_name)
                     try:
@@ -917,7 +913,7 @@ class Ps1ConstantFolding(Transformer):
                     except LookupError:
                         encoding = 'utf-8'
                     try:
-                        decoded_str = raw_bytes.decode(encoding)
+                        decoded_str = bytes(raw_bytes).decode(encoding)
                     except Exception:
                         return None
                     return make_string_literal(decoded_str)

@@ -78,7 +78,7 @@ def _type_rule(row: str) -> Simplified | None:
     if row not in _TYPES or not _STORED_AND_WRITTEN.fullmatch(row):
         return None
     transcript = TYPE_TRANSCRIPTS.get(row, ())
-    if not transcript or any(line.startswith('THROW') for line in transcript):
+    if not transcript or any(not line.startswith('OUT\t') for line in transcript):
         return None
     if _stores_a_command_call(row):
         return None

@@ -1414,184 +1414,361 @@ _NOT_YET_DISPATCHED: tuple[str, ...] = (
 )
 
 NOT_YET_SIMPLIFIED: frozenset[str] = frozenset({
-    'for ($i = 0; $i -lt 2; $i++) { 1 }',
-    'function f { $input; $input | ForEach-Object { Write-Host "seen:$_" } }; 1, 2 | f',
-    'function f { [void]$input; $input | ForEach-Object { Write-Host "seen:$_" } }; 1, 2 | f',
-    "Set-Alias zzq Write-Output; (Get-Alias | Where-Object { $_.Name -eq 'zzq' }).Definition",
-    "Set-Alias zq3 Write-Output; ${alias:zq3} = 'Write-Host'; zq3 'z'",
-    "$h = @{ k = 'Set-Alias zzq Write-Host' }; Set-Alias zzq Write-Output; iex $h.k; zzq 'x'",
-    '$x = 1, 2, 3; Write-Output $x[0]; $x[0] = 9; Write-Output $x[0]',
-    '$x = 1, 2, 3; $y = $x; Write-Output $y[0]; [Array]::Reverse($x); Write-Output $y[0]',
-    '$x = 1, 2, 3; $y = 0, 0, 0; [Array]::Copy($x, $y, 3); Write-Output $y',
-    '$x = 1, 2, 3; $y = 0, 0, 0; $x.CopyTo($y, 0); Write-Output $y',
-    '$x = 1, 2, 3; for ($i = 0; $i -lt 2; $i++) { Write-Output $x[0]; [Array]::Reverse($x) }',
-    "$q, $r = 'abc', 'd'; Write-Output $q.SUBSTRING(1, 1); Write-Output $r",
-    "$q = 'abc'; [int]$q = 5; Write-Output $q.GetType().FullName",
-    "function Get-Zqfrob { Write-Output 'hit' }; Zqfrob",
-    "function Get-Zqfrob { Write-Output 'p' }; function Zqfrob { Write-Output 'b' }; Zqfrob",
-    "$env:zzq = '7'; function Get-Item { Write-Output 'from-function' }; item env:zzq",
-    "$x = 'a'; function f { Write-Host (variable x -ValueOnly) }; f; $x = 'c'",
-    "$x = 'a'; function f { Write-Host (item variable:x).Value }; f; $x = 'c'",
-    "$x = 'a'; function f { Write-Host (Get-Item variable:x).Value }; f; $x = 'c'",
-    '$x = 1, 2, 3; $y = $x -as [array]; $y[0] = 9; Write-Output $x',
-    '$x = 1, 2, 3; [Array]::Reverse($x -as [array]); Write-Output $x',
-    '$x = 1, 2, 3; $y = if ($True) { $x }; $x[0] = 9; Write-Output $y[0]',
-    '$x = 1, 2, 3; $y = $x; $x | Set-Variable z; $y[0] = 9; Write-Output $z',
-    '$x = 1, 2, 3; Write-Output -NoEnumerate $x | Set-Variable z; $y = $x; $y[0] = 9; '
-    'Write-Output $z',
-    '$x = 1, 2, 3; Write-Output -NoEnumerate $script:x | Set-Variable z; $z[0] = 9; Write-Output '
-    '$x',
-    '$x = 1, 2, 3; class C { static [object] M() { return $script:x } }; $y = [C]::M(); $y[0] = '
-    '9; Write-Output $x[0]',
-    '$x = 1, 2, 3; $a = $null; $a = $a + $x; $a[0] = 9; Write-Output $x[0]',
-    "function Get-Language { $Null = 668 }; language; Write-Host 'A'",
-    "trap { continue }; zzq0000=5; Write-Host 'after'",
-    "foreach ($i in 1..2) { Write-Output $($c = $c + 'x'; $c) }",
-    'foreach ($i in 1..2) { Write-Output $(if (0) { $m = \'A\' }; $o = "${m}"; $m = \'B\'; $o) }',
-    'Set-Variable q 5; function fq { $q + 1 }; Write-Output (fq)',
-    '$o = [pscustomobject]@{}; Add-Member -Type NoteProperty k v -InputObject $o; $o.k',
-    "$b = 'a'; $v = Get-Variable; ($v | Where-Object Name -eq 'b').Value = 'b'; Write-Output $b",
-    '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b',
-    '$x = 1, 2, 3; $y = @([object[]]$x); $y[0] = 9; Write-Output $x',
-    '$x = 1, 2, 3; [Array]::Reverse(@([object[]]$x)); Write-Output $x',
-    'function f { [object[]]$a = 1, 2; [Array]::Reverse(@($a)); Write-Output $a }; f',
-    '$x = 1, 2, 3; $b = 7, 8; $null = (. { $b = $x }), ($b[0] = 9); Write-Output $x',
-    '$x = 1, 2, 3; $w = ($z = $y = $x)[0]; $z[0] = 9; Write-Output $x',
-    "$x = 'a'; $v = Get-Variable x -ValueOnly:$false; $v.Value = 'b'; Write-Output $x",
-    "$x = 'a'; $v = Get-ChildItem variable:\\; ($v | Where-Object Name -eq 'x').Value = 'b'; "
-    'Write-Output $x',
-    "$p = @('a'); function f1 { $null = [int]$p[0]; Write-Host 'm1' }; trap { continue }; f1; "
-    "Write-Host 'm2'",
-    '$b = 0; foreach ($i in 1) { $b = 1 }; while ($b -ne 2) { switch ($b) { 0 { Write-Host '
-    "'zero'; $b = 2 } 1 { Write-Host 'one'; $b = 2 } } }",
-    "$s = 0; while ($s -ne -1) { switch ($s) { 0 { Write-Host 'a'; $s = -1 } default { break } } "
-    '}; Write-Host $s',
-    '$t = [array]::Reverse((1, 2, 3, 4)); Write-Output ($null -eq $t)',
-    'function dec($d, $k) { $o = @(0) * $d.Length; for ($i = 0; $i -lt $d.Length; $i++) { $o[$i] '
-    '= $d[$i] -bxor $k[$i % $k.Length] }; $o }; $key = 1, 2, 3; Write-Output (dec (4, 5, 6) $key)',
-    "$x = 'a'; function f { Write-Host $x }; f; $x = 'c'",
-    "$x = 'a'; function f { Write-Host $script:x }; f; $x = 'b'",
-    "$x = 'a'; $c = 'Write-Host $x'; function f { iex $c }; f; $x = 'c'",
-    "$x = 'a'; function f { Write-Host (Get-Variable x -ValueOnly) }; f; $x = 'c'",
-    '$v = 41; & { $v++; Write-Host $v }; Write-Host $v',
-    "$i = 0; $null = [int]::TryParse('42', [ref]$script:i); Write-Host $i",
-    '$v = \'a\'; . ([ScriptBlock]::Create(\'$v = "b"\')); Write-Output $v; Write-Output (1 + 1)',
-    '$t = [decimal]::MaxValue + 1; Write-Output (,$t); Write-Output $t',
-    '$t = 0.50000000000000000000000000001d; Write-Output (,$t); Write-Output $t',
-    '$t = 9.9999999999999999999999999999d; Write-Output (,$t); Write-Output $t',
-    "$t = 16 + 'file'; Write-Output (,$t); Write-Output $t",
-    '$t = [int64]::MaxValue * 2; Write-Output (,$t); Write-Output $t',
-    '$t = [double]::PositiveInfinity; Write-Output (,$t); Write-Output $t',
-    '$t = [double]::NaN; Write-Output (,$t); Write-Output $t',
-    '$t = ([char]65).ToUpper(); Write-Output (,$t); Write-Output $t',
-    '$t = ([char]65).Substring(0); Write-Output (,$t); Write-Output $t',
-    "$t = [double]'1,5'; Write-Output (,$t); Write-Output $t",
-    "$t = -bnot 'abc'; Write-Output (,$t); Write-Output $t",
-    '$t = -bnot 3000000000.0; Write-Output (,$t); Write-Output $t',
-    "$t = 'ab' * 0xFFFFFFFF; Write-Output (,$t); Write-Output $t",
-    '$t = [byte]300; Write-Output (,$t); Write-Output $t',
-    '$t = [byte]-1; Write-Output (,$t); Write-Output $t',
-    '$t = [int]2147483648; Write-Output (,$t); Write-Output $t',
-    '$t = [single]1.5; Write-Output (,$t); Write-Output $t',
-    '$t = [char]65536; Write-Output (,$t); Write-Output $t',
-    '$t = [char]-1; Write-Output (,$t); Write-Output $t',
-    "$t = [int]'abc'; Write-Output (,$t); Write-Output $t",
-    "$t = [int]'1e3'; Write-Output (,$t); Write-Output $t",
-    "$t = [byte]'1e3'; Write-Output (,$t); Write-Output $t",
-    "$t = [int]'1_0'; Write-Output (,$t); Write-Output $t",
-    "$t = [int]'0b1010'; Write-Output (,$t); Write-Output $t",
-    "$t = [int]'   '; Write-Output (,$t); Write-Output $t",
-    "$t = [int]'1,000'; Write-Output (,$t); Write-Output $t",
-    "$t = [int]'1kb'; Write-Output (,$t); Write-Output $t",
-    "$t = [int]'0o17'; Write-Output (,$t); Write-Output $t",
-    "$t = [byte]'-1'; Write-Output (,$t); Write-Output $t",
-    "$t = [byte]'0x100'; Write-Output (,$t); Write-Output $t",
-    "$t = [char]'AB'; Write-Output (,$t); Write-Output $t",
-    "$t = [char]''; Write-Output (,$t); Write-Output $t",
-    "$t = 'a' + @(1, 2); Write-Output (,$t); Write-Output $t",
-    "$t = [double]'1.5'; Write-Output (,$t); Write-Output $t",
-    "$t = [Convert]::ToInt32('0x10'); Write-Output (,$t); Write-Output $t",
-    "$t = [Convert]::ToInt32('1_0'); Write-Output (,$t); Write-Output $t",
-    "$t = [Convert]::ToInt32('7.5'); Write-Output (,$t); Write-Output $t",
-    "$t = [Convert]::ToInt32('-10', 16); Write-Output (,$t); Write-Output $t",
-    "$t = 'abc' -as [int]; Write-Output (,$t); Write-Output $t",
-    '$t = 300 -as [byte]; Write-Output (,$t); Write-Output $t',
-    "$t = switch ('1') { 1 { 'number' } }; Write-Output (,$t); Write-Output $t",
-    "$t = switch (1) { '1' { 'text' } }; Write-Output (,$t); Write-Output $t",
-    "$t = switch ('0x10') { 16 { 'hex' } }; Write-Output (,$t); Write-Output $t",
-    "$null = 'abc' -match '(b)'; $t = $Matches[1]; Write-Output (,$t); Write-Output $t",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
+    "[System.IO.IOException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
+    "[System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
+    "[System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
+    "[System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
+    "[System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
+    "[System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap { "
+    "Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap { "
+    "Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = "
+    "@('a')\n$ErrorActionPreference = 'Stop'; $null = [int]$p[0]; Write-Host 'rest'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\n$null "
+    "= $($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = "
+    "@('a')\n$v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nforeach ($i in 1, 2) { try { try { "
+    "continue } finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'm' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nfunction f1 { $null = "
+    "[int]$p[0]; Write-Host 'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nfunction f1 { $null = [int]$p[0]; "
+    "Write-Host 'rest' }; try { f1; Write-Host 't' } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nfunction f1 { $null = "
+    "[int]$p[0]; Write-Host 'rest' }; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nfunction f1 "
+    "{ $v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1 }; f1; Write-Host $v1",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nfunction f1 { try { try { return } "
+    "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'tail' }; f1; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntrap { "
+    "continue }; $v1 = 'one'; $v1 = [int]$p[0]; throw 'x'; Write-Host $v1",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = [int]$p[0]; "
+    "Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = [int]$p[0]; "
+    "Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host "
+    "'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
+    "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.Exception] { Write-Host 'e' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
+    "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.InvalidCastException] { Write-Host 'i' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = "
+    "[int]$p[0]; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = "
+    "[int]$p[0]; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { foreach ($i in 1, 2) { "
+    "$null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { throw "
+    "'x' } catch { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { throw 'x' } catch "
+    "{ & { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { throw 'x' } catch { "
+    "try { throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { try { $null = "
+    "[int]$p[0] } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { try { exit } "
+    "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { try { return } "
+    "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { try { throw 'x' } finally "
+    "{ $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap [System.IO.IOException] "
+    "{ Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap [System.IO.IOException] { "
+    "Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap "
+    "[System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap [System.InvalidCastException] { "
+    "Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap "
+    "[System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap "
+    "[System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap { "
+    "Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap { Write-Host "
+    "'t'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap [System.IO.IOException] "
+    "{ Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap [System.IO.IOException] { "
+    "Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap "
+    "[System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap [System.InvalidCastException] { "
+    "Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap "
+    "[System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap "
+    "[System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap { "
+    "Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap { Write-Host "
+    "'t'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = "
+    "@('a')\n$ErrorActionPreference = 'Stop'; $null = [int]$p[0]; Write-Host 'rest'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\n$null = "
+    "$($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\n$null = [int]$p[0]; Write-Host 'rest'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\n$v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nforeach ($i in 1, "
+    "2) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nforeach ($i in 1, 2) { try { try { continue } "
+    "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'm' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { "
+    "$null = [int]$p[0]; Write-Host 'rest' }; f1; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { $null = [int]$p[0]; "
+    "Write-Host 'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { $null = [int]$p[0]; "
+    "Write-Host 'rest' }; try { f1; Write-Host 't' } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { $null = [int]$p[0]; "
+    "Write-Host 'rest' }; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { $v1 "
+    "= 'one'; $v1 = [int]$p[0]; Write-Host $v1 }; f1; Write-Host $v1",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { try { try { return } finally { "
+    "Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'tail' }; f1; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntrap { Write-Host 't'; $null = "
+    "[int]$p[0]; continue }; try { throw 'x' } catch [System.IO.IOException] { }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntrap { "
+    "continue }; $v1 = 'one'; $v1 = [int]$p[0]; throw 'x'; Write-Host $v1",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = [int]$p[0]; "
+    "Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host "
+    "'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } "
+    "catch [System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
+    "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.Exception] { Write-Host 'e' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
+    "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.InvalidCastException] { Write-Host 'i' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = "
+    "[int]$p[0]; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = "
+    "[int]$p[0]; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { Write-Host 't' } "
+    "finally { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { foreach ($i in 1, 2) { $null "
+    "= [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { throw 'x' } "
+    "catch { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { throw 'x' } catch { & { "
+    "$null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { throw 'x' } catch { try { "
+    "throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { try { $null = "
+    "[int]$p[0] } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { try { exit } "
+    "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { try { return } "
+    "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { try { throw 'x' } finally { "
+    "$null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a', $null, 'a')\ntrap { $null = "
+    "[int]$p[0]; Write-Host 'trest'; continue }; $null = [int]$p[2]; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap [System.IO.IOException] { "
+    "Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap [System.IO.IOException] { "
+    "Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap [System.InvalidCastException] { "
+    "Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap [System.InvalidCastException] { "
+    "Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap "
+    "[System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap "
+    "[System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap { Write-Host 't' "
+    "}; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap { Write-Host 't'; "
+    "continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
     "$a = 'a,b,c' -split ',', 2; $t = $a.Count; Write-Output (,$t); Write-Output $t",
     "$a = 'a,b,c' -split ',', 2; $t = $a[1]; Write-Output (,$t); Write-Output $t",
-    '$i = 0; if ($false -and ($i++)) { }; $t = $i; Write-Output (,$t); Write-Output $t',
-    '$i = 0; if ($true -or ($i++)) { }; $t = $i; Write-Output (,$t); Write-Output $t',
     "$a = @(0); $t = if ($a) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
     "$a = @(0, 0); $t = if ($a) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
-    "$t = @('1') -contains 1; Write-Output (,$t); Write-Output $t",
-    "$t = @(1) -contains '1'; Write-Output (,$t); Write-Output $t",
-    "$t = 'a*' -like 'a`*'; Write-Output (,$t); Write-Output $t",
-    "$t = 'ab' -like 'a`*'; Write-Output (,$t); Write-Output $t",
-    "$t = 'b' -like '[!a]'; Write-Output (,$t); Write-Output $t",
-    "$t = '1_0' -band 15; Write-Output (,$t); Write-Output $t",
-    '$t = [byte]400; Write-Output (,$t); Write-Output $t',
-    '$t = [byte](200 * 2); Write-Output (,$t); Write-Output $t',
-    "$t = 'ſ' -match 's'; Write-Output (,$t); Write-Output $t",
-    "$t = 'ſ' -cmatch 's'; Write-Output (,$t); Write-Output $t",
-    "$t = 1 + '1e400'; Write-Output (,$t); Write-Output $t",
-    '$t = [decimal]::MaxValue % 1.5d; Write-Output (,$t); Write-Output $t',
-    '$t = [decimal]::MaxValue % 1; Write-Output (,$t); Write-Output $t',
-    '$t = 1d + 0.1; Write-Output (,$t); Write-Output $t',
-    '$t = 1d - 0.1; Write-Output (,$t); Write-Output $t',
-    '$t = [byte]1 -shl 4; Write-Output (,$t); Write-Output $t',
-    '$t = [byte]1 -shl -1; Write-Output (,$t); Write-Output $t',
-    '$t = [single]1.5 -shl 1; Write-Output (,$t); Write-Output $t',
-    '$t = $null -band [uint32]1; Write-Output (,$t); Write-Output $t',
-    '$t = 1.5 / -0.0; Write-Output (,$t); Write-Output $t',
-    "$t = 'ab' * 1.5; Write-Output (,$t); Write-Output $t",
-    '$v = [single]1.5; $t = $v -shl 1; Write-Output (,$t); Write-Output $t',
-    '$t = [single]1.5 + 1; Write-Output (,$t); Write-Output $t',
-    '$v = $null; $t = $v -band [uint32]1; Write-Output (,$t); Write-Output $t',
+    "$b = 'a'; $v = Get-Variable; ($v | Where-Object Name -eq 'b').Value = 'b'; Write-Output $b",
+    '$b = 0; foreach ($i in 1) { $b = 1 }; while ($b -ne 2) { switch '
+    "($b) { 0 { Write-Host 'zero'; $b = 2 } 1 { Write-Host 'one'; $b = 2 } } }",
+    "$env:zzq = '7'; function Get-Item { Write-Output 'from-function' }; item env:zzq",
+    "$h = @{ k = 'Set-Alias zzq Write-Host' }; Set-Alias zzq Write-Output; iex $h.k; zzq 'x'",
+    "$i = 0; $null = [int]::TryParse('42', [ref]$script:i); Write-Host $i",
+    '$i = 0; if ($false -and ($i++)) { }; $t = $i; Write-Output (,$t); Write-Output $t',
+    '$i = 0; if ($true -or ($i++)) { }; $t = $i; Write-Output (,$t); Write-Output $t',
     '$l = [byte]1; $r = 4; $t = $l -shl $r; Write-Output (,$t); Write-Output $t',
-    '$t = $true * 2; Write-Output (,$t); Write-Output $t',
-    '$t = @(1, 2) -band 1; Write-Output (,$t); Write-Output $t.Count',
-    '$t = [bool](0.0 / 0.0); Write-Output (,$t); Write-Output $t',
-    "$t = if ([char]0) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
-    "$t = if ('0') { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
-    "$t = if (@(@())) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
-    "$t = if ((,[char]0)) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
-    "$t = - 'abc'; Write-Output (,$t); Write-Output $t",
-    "$t = if (- '0') { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
-    '$t = - @(); Write-Output (,$t); Write-Output $t',
-    "$t = if (- '5') { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
+    "$null = 'abc' -match '(b)'; $t = $Matches[1]; Write-Output (,$t); Write-Output $t",
+    '$o = [pscustomobject]@{}; Add-Member -Type NoteProperty k v -InputObject $o; $o.k',
+    "$p = @('a')\n$ErrorActionPreference = 'Stop'; $null = [int]$p[0]; Write-Host 'rest'",
+    "$p = @('a')\n$null = $($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'",
+    "$p = @('a')\n$v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1",
+    "$p = @('a')\nforeach ($i in 1, 2) { try { try { continue } finally { "
+    "Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'm' }; Write-Host 'after'",
+    "$p = @('a')\nfunction f1 { $null = [int]$p[0]; Write-Host "
+    "'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'",
+    "$p = @('a')\nfunction f1 { $null = [int]$p[0]; Write-Host 'rest' }; "
+    "try { f1; Write-Host 't' } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$p = @('a')\nfunction f1 { $null = [int]$p[0]; Write-Host 'rest' "
+    "}; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'",
+    "$p = @('a')\nfunction f1 { $v1 = 'one'; $v1 = "
+    '[int]$p[0]; Write-Host $v1 }; f1; Write-Host $v1',
+    "$p = @('a')\nfunction f1 { try { try { return } finally { Write-Host 'f'; "
+    "$null = [int]$p[0] } } catch { }; Write-Host 'tail' }; f1; Write-Host 'after'",
+    "$p = @('a')\ntrap { Write-Host 't'; $null = [int]$p[0]; continue }; "
+    "try { throw 'x' } catch [System.IO.IOException] { }; Write-Host 'after'",
+    "$p = @('a')\ntrap { continue }; $v1 = 'one'; $v1 = [int]$p[0]; throw 'x'; Write-Host $v1",
+    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } "
+    "catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'",
+    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
+    "[System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'",
+    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
+    "[System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'",
+    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
+    "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.Exception] { Write-Host 'e' }; Write-Host 'after'",
+    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
+    "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.InvalidCastException] { Write-Host 'i' }; Write-Host 'after'",
+    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host "
+    "'rest' } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host "
+    "'rest' } finally { Write-Host 'fin' }; Write-Host 'after'",
+    "$p = @('a')\ntry { foreach ($i in 1, 2) { $null = [int]$p[0]; "
+    "Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$p = @('a')\ntry { throw 'x' } catch { $null = "
+    "[int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    "$p = @('a')\ntry { throw 'x' } catch { & { $null = "
+    "[int]$p[0]; Write-Host 'rest' }; Write-Host 'c' }; Write-Host 'after'",
+    "$p = @('a')\ntry { throw 'x' } catch { try { throw 'x' } "
+    "finally { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'",
+    "$p = @('a')\ntry { try { $null = [int]$p[0] } finally "
+    "{ }; Write-Host 'rest' } finally { }; Write-Host 'after'",
+    "$p = @('a')\ntry { try { exit } finally { Write-Host "
+    "'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
+    "$p = @('a')\ntry { try { return } finally { Write-Host "
+    "'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
+    "$p = @('a')\ntry { try { throw 'x' } finally { $null = [int]$p[0]; "
+    "Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
+    "$p = @('a'); function f1 { $null = [int]$p[0]; "
+    "Write-Host 'm1' }; trap { continue }; f1; Write-Host 'm2'",
+    "$q = 'abc'; [int]$q = 5; Write-Output $q.GetType().FullName",
+    "$q, $r = 'abc', 'd'; Write-Output $q.SUBSTRING(1, 1); Write-Output $r",
+    '$s = 0; while ($s -ne -1) { switch ($s) { 0 { '
+    "Write-Host 'a'; $s = -1 } default { break } } }; Write-Host $s",
+    "$t = '10' -cle '9'; Write-Output (,$t); Write-Output $t",
+    "$t = '10' -ge 9; Write-Output (,$t); Write-Output $t",
+    "$t = '10' -gt 9; Write-Output (,$t); Write-Output $t",
+    "$t = '10' -le '9'; Write-Output (,$t); Write-Output $t",
     "$t = '10' -lt '9'; Write-Output (,$t); Write-Output $t",
     "$t = '10' -lt 9; Write-Output (,$t); Write-Output $t",
-    "$t = 10 -lt '9'; Write-Output (,$t); Write-Output $t",
-    "$t = '10' -ge 9; Write-Output (,$t); Write-Output $t",
-    "$t = 10 -ge '9'; Write-Output (,$t); Write-Output $t",
-    "$t = 'B' -gt 'a'; Write-Output (,$t); Write-Output $t",
-    "$t = 'B' -cgt 'a'; Write-Output (,$t); Write-Output $t",
-    "$t = 'B' -igt 'a'; Write-Output (,$t); Write-Output $t",
-    "$t = '10' -cle '9'; Write-Output (,$t); Write-Output $t",
-    "$t = 1 -lt 'abc'; Write-Output (,$t); Write-Output $t",
-    "$t = 1 -gt 'abc'; Write-Output (,$t); Write-Output $t",
-    "$t = 1 -eq 'abc'; Write-Output (,$t); Write-Output $t",
-    "$t = 1 -ne 'abc'; Write-Output (,$t); Write-Output $t",
-    "$t = 1 -lt '5'; Write-Output (,$t); Write-Output $t",
-    '$t = 79228162514264337593543950335d + 1d; Write-Output (,$t); Write-Output $t',
-    '$t = 79228162514264337593543950335d - -1d; Write-Output (,$t); Write-Output $t',
-    '$t = 1d / 0d; Write-Output (,$t); Write-Output $t',
-    "$t = [char]48 * '1'; Write-Output (,$t); Write-Output $t",
-    "$t = $true * '1'; Write-Output (,$t); Write-Output $t",
-    '$t = [char]48 * 2; Write-Output (,$t); Write-Output $t',
-    '$t = $true - 1.0d; Write-Output (,$t); Write-Output $t',
-    '$t = $true + 1.0d; Write-Output (,$t); Write-Output $t',
-    '$t = $true / 1.0d; Write-Output (,$t); Write-Output $t',
-    "$t = 'ss' -eq [char]0x00DF; Write-Output (,$t); Write-Output $t",
-    "$t = [char]0x00DF -eq 'ss'; Write-Output (,$t); Write-Output $t",
     "$t = '2' -lt '10'; Write-Output (,$t); Write-Output $t",
-    "$t = '10' -le '9'; Write-Output (,$t); Write-Output $t",
-    "$t = '10' -gt 9; Write-Output (,$t); Write-Output $t",
-    '$t = 9.9999999999999999999999999999d + 0d; Write-Output (,$t); Write-Output $t',
+    "$t = 'B' -cgt 'a'; Write-Output (,$t); Write-Output $t",
+    "$t = 'B' -gt 'a'; Write-Output (,$t); Write-Output $t",
+    "$t = 'B' -igt 'a'; Write-Output (,$t); Write-Output $t",
+    "$t = 'a' + @(1, 2); Write-Output (,$t); Write-Output $t",
+    "$t = 'a*' -like 'a`*'; Write-Output (,$t); Write-Output $t",
+    "$t = 'ab' * 1.5; Write-Output (,$t); Write-Output $t",
+    "$t = 'ab' -like 'a`*'; Write-Output (,$t); Write-Output $t",
+    "$t = 'abc' -as [int]; Write-Output (,$t); Write-Output $t",
+    "$t = 'b' -like '[!a]'; Write-Output (,$t); Write-Output $t",
+    "$t = 'ss' -eq [char]0x00DF; Write-Output (,$t); Write-Output $t",
     "$t = 'x' + [decimal]'1.0'; Write-Output (,$t); Write-Output $t",
+    "$t = 'ſ' -cmatch 's'; Write-Output (,$t); Write-Output $t",
+    "$t = 'ſ' -match 's'; Write-Output (,$t); Write-Output $t",
+    '$t = -bnot 3000000000.0; Write-Output (,$t); Write-Output $t',
+    '$t = 0.50000000000000000000000000001d; Write-Output (,$t); Write-Output $t',
+    "$t = 1 -eq 'abc'; Write-Output (,$t); Write-Output $t",
+    "$t = 1 -lt '5'; Write-Output (,$t); Write-Output $t",
+    "$t = 1 -ne 'abc'; Write-Output (,$t); Write-Output $t",
+    '$t = 1.5 / -0.0; Write-Output (,$t); Write-Output $t',
+    "$t = 10 -ge '9'; Write-Output (,$t); Write-Output $t",
+    "$t = 10 -lt '9'; Write-Output (,$t); Write-Output $t",
+    '$t = 1d + 0.1; Write-Output (,$t); Write-Output $t',
+    '$t = 1d - 0.1; Write-Output (,$t); Write-Output $t',
+    '$t = 300 -as [byte]; Write-Output (,$t); Write-Output $t',
+    '$t = 9.9999999999999999999999999999d + 0d; Write-Output (,$t); Write-Output $t',
+    '$t = 9.9999999999999999999999999999d; Write-Output (,$t); Write-Output $t',
+    "$t = @('1') -contains 1; Write-Output (,$t); Write-Output $t",
+    "$t = @(1) -contains '1'; Write-Output (,$t); Write-Output $t",
+    '$t = @(1, 2) -band 1; Write-Output (,$t); Write-Output $t.Count',
     "$t = [Text.StringBuilder]::new('ab').ToString(); Write-Output (,$t); Write-Output $t",
-    *(_dispatched(name) for name in _NOT_YET_DISPATCHED),
+    '$t = [array]::Reverse((1, 2, 3, 4)); Write-Output ($null -eq $t)',
+    '$t = [bool](0.0 / 0.0); Write-Output (,$t); Write-Output $t',
+    '$t = [byte[]][char[]](80, 85); Write-Output (,$t); Write-Output $t',
+    '$t = [byte]1 -shl -1; Write-Output (,$t); Write-Output $t',
+    '$t = [byte]1 -shl 4; Write-Output (,$t); Write-Output $t',
+    "$t = [char]0x00DF -eq 'ss'; Write-Output (,$t); Write-Output $t",
+    '$t = [decimal]::MaxValue % 1.5d; Write-Output (,$t); Write-Output $t',
+    '$t = [decimal]::MaxValue % 1; Write-Output (,$t); Write-Output $t',
+    "$t = [double]'1,5'; Write-Output (,$t); Write-Output $t",
+    "$t = [double]'1.5'; Write-Output (,$t); Write-Output $t",
+    '$t = [double]::NaN; Write-Output (,$t); Write-Output $t',
+    '$t = [double]::PositiveInfinity; Write-Output (,$t); Write-Output $t',
+    '$t = [int64]::MaxValue * 2; Write-Output (,$t); Write-Output $t',
+    "$t = [int]'1,000'; Write-Output (,$t); Write-Output $t",
+    "$t = [int]'1e3'; Write-Output (,$t); Write-Output $t",
+    '$t = [single]1.5 + 1; Write-Output (,$t); Write-Output $t',
+    '$t = [single]1.5 -shl 1; Write-Output (,$t); Write-Output $t',
+    '$t = [single]1.5; Write-Output (,$t); Write-Output $t',
+    "$t = if ('0') { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
+    "$t = if ((,[char]0)) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
+    "$t = if (- '0') { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
+    "$t = if (- '5') { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
+    "$t = if (@(@())) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
+    "$t = if ([char]0) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
+    "$t = switch ('0x10') { 16 { 'hex' } }; Write-Output (,$t); Write-Output $t",
+    "$t = switch ('1') { 1 { 'number' } }; Write-Output (,$t); Write-Output $t",
+    "$t = switch (1) { '1' { 'text' } }; Write-Output (,$t); Write-Output $t",
+    '$v = $null; $t = $v -band [uint32]1; Write-Output (,$t); Write-Output $t',
+    '$v = \'a\'; . ([ScriptBlock]::Create(\'$v = "b"\')); Write-Output $v; Write-Output (1 + 1)',
+    '$v = 41; & { $v++; Write-Host $v }; Write-Host $v',
+    '$v = [single]1.5; $t = $v -shl 1; Write-Output (,$t); Write-Output $t',
+    "$x = 'a'; $c = 'Write-Host $x'; function f { iex $c }; f; $x = 'c'",
+    "$x = 'a'; $v = Get-ChildItem variable:\\; ($v | "
+    "Where-Object Name -eq 'x').Value = 'b'; Write-Output $x",
+    "$x = 'a'; $v = Get-Variable x -ValueOnly:$false; $v.Value = 'b'; Write-Output $x",
+    "$x = 'a'; function f { Write-Host $script:x }; f; $x = 'b'",
+    "$x = 'a'; function f { Write-Host $x }; f; $x = 'c'",
+    "$x = 'a'; function f { Write-Host (Get-Item variable:x).Value }; f; $x = 'c'",
+    "$x = 'a'; function f { Write-Host (Get-Variable x -ValueOnly) }; f; $x = 'c'",
+    "$x = 'a'; function f { Write-Host (item variable:x).Value }; f; $x = 'c'",
+    "$x = 'a'; function f { Write-Host (variable x -ValueOnly) }; f; $x = 'c'",
+    '$x = 1, 2, 3; $a = $null; $a = $a + $x; $a[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; $b = 7, 8; $null = (. { $b = $x }), ($b[0] = 9); Write-Output $x',
+    '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b',
+    '$x = 1, 2, 3; $w = ($z = $y = $x)[0]; $z[0] = 9; Write-Output $x',
+    '$x = 1, 2, 3; $y = $x -as [array]; $y[0] = 9; Write-Output $x',
+    '$x = 1, 2, 3; $y = $x; $x | Set-Variable z; $y[0] = 9; Write-Output $z',
+    '$x = 1, 2, 3; $y = $x; Write-Output $y[0]; [Array]::Reverse($x); Write-Output $y[0]',
+    '$x = 1, 2, 3; $y = 0, 0, 0; $x.CopyTo($y, 0); Write-Output $y',
+    '$x = 1, 2, 3; $y = 0, 0, 0; [Array]::Copy($x, $y, 3); Write-Output $y',
+    '$x = 1, 2, 3; $y = @([object[]]$x); $y[0] = 9; Write-Output $x',
+    '$x = 1, 2, 3; $y = if ($True) { $x }; $x[0] = 9; Write-Output $y[0]',
+    '$x = 1, 2, 3; Write-Output $x[0]; $x[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; Write-Output -NoEnumerate '
+    '$script:x | Set-Variable z; $z[0] = 9; Write-Output $x',
+    '$x = 1, 2, 3; Write-Output -NoEnumerate $x | '
+    'Set-Variable z; $y = $x; $y[0] = 9; Write-Output $z',
+    '$x = 1, 2, 3; [Array]::Reverse($x -as [array]); Write-Output $x',
+    '$x = 1, 2, 3; [Array]::Reverse(@([object[]]$x)); Write-Output $x',
+    '$x = 1, 2, 3; class C { static [object] M() { return '
+    '$script:x } }; $y = [C]::M(); $y[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; for ($i = 0; $i -lt 2; $i++) { Write-Output $x[0]; [Array]::Reverse($x) }',
+    "Set-Alias zq3 Write-Output; ${alias:zq3} = 'Write-Host'; zq3 'z'",
+    "Set-Alias zzq Write-Output; (Get-Alias | Where-Object { $_.Name -eq 'zzq' }).Definition",
+    'Set-Variable q 5; function fq { $q + 1 }; Write-Output (fq)',
+    'for ($i = 0; $i -lt 2; $i++) { 1 }',
+    "foreach ($i in 1..2) { Write-Output $($c = $c + 'x'; $c) }",
+    'foreach ($i in 1..2) { Write-Output $(if (0) { $m = \'A\' }; $o = "${m}"; $m = \'B\'; $o) }',
+    "function Get-Language { $Null = 668 }; language; Write-Host 'A'",
+    "function Get-Zqfrob { Write-Output 'hit' }; Zqfrob",
+    "function Get-Zqfrob { Write-Output 'p' }; function Zqfrob { Write-Output 'b' }; Zqfrob",
+    'function dec($d, $k) { $o = @(0) * $d.Length; for ($i = 0; $i -lt $d.Length; $i++) { $o[$i] '
+    '= $d[$i] -bxor $k[$i % $k.Length] }; $o }; $key = 1, 2, 3; Write-Output (dec (4, 5, 6) $key)',
+    'function f { $input; $input | ForEach-Object { Write-Host "seen:$_" } }; 1, 2 | f',
+    'function f { [object[]]$a = 1, 2; [Array]::Reverse(@($a)); Write-Output $a }; f',
+    'function f { [void]$input; $input | ForEach-Object { Write-Host "seen:$_" } }; 1, 2 | f',
+    "trap { continue }; zzq0000=5; Write-Host 'after'",
 })

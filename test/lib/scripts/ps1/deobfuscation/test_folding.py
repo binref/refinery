@@ -607,8 +607,9 @@ class TestPs1AValueThatIsNoIntegerIsNotReadAsOne(TestPs1):
     def test_a_real_index_folds_to_the_rounded_element(self):
         self.assertEqual(self._apply('$x = @(10, 20, 30)[1.5]', Ps1ConstantFolding), '$x = 30')
 
-    def test_a_real_byte_is_not_truncated_to_a_whole_one(self):
-        self._assertUnchanged('$x = [BitConverter]::ToString(@(1.5))', Ps1ConstantFolding)
+    def test_a_real_byte_is_the_whole_one_it_rounds_to(self):
+        self.assertEqual(
+            self._apply('$x = [BitConverter]::ToString(@(1.5))', Ps1ConstantFolding), "$x = '02'")
 
     def test_a_real_conversion_base_is_not_truncated_to_a_whole_one(self):
         self._assertUnchanged("$x = [Convert]::ToInt32('41', 16.0)", Ps1ConstantFolding)

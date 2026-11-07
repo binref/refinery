@@ -1200,6 +1200,25 @@ def _element_payloads(fact: Ps1Fact) -> list[object]:
     return [one.payload if isinstance(one, Ps1Constant) else one for one in _elements(fact)]
 
 
+def _measured_byte_arrays() -> dict[str, bytes]:
+    """
+    The bytes the host printed for every transcript row whose witness holds a `Byte[]`. The rows
+    where the host threw instead name no bytes, and the reader must not answer them either.
+    """
+    rows: dict[str, bytes] = {}
+    for row, transcript in TYPE_TRANSCRIPTS.items():
+        match = _ROW_PATTERN.fullmatch(row)
+        if match is None or _throws(transcript):
+            continue
+        stamp, rendered = _printed(transcript[0])
+        if stamp == 'System.Byte[]':
+            rows[match.group('expression')] = bytes(int(one) for one in rendered.split())
+    return rows
+
+
+BYTE_ARRAY_ROWS: dict[str, bytes] = _measured_byte_arrays()
+
+
 class _Collected(NamedTuple):
     source: str
     collected: bytes
@@ -1214,6 +1233,13 @@ def _corpus_byte_arrays() -> tuple[_Collected, ...]:
         if collected is None or not isinstance(fact, Ps1Constant):
             continue
         if not isinstance(fact.payload, tuple):
+            continue
+        if not all(
+            isinstance(one, Ps1Constant)
+            and isinstance(one.payload, int)
+            and not isinstance(one.payload, bool)
+            for one in _elements(fact)
+        ):
             continue
         rows.append(_Collected(site.source, collected, _element_payloads(fact)))
     return tuple(rows)
@@ -3335,7 +3361,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
 
     def test_an_expression_the_source_pins_evaluates_to_exactly_what_it_pins(self):
         compared = [site for site in SITES if read(site.node) is not UNKNOWN]
-        self.assertEqual(len(compared), 2961)
+        self.assertEqual(len(compared), 3054)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -3350,7 +3376,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             if resolve_expression_type(site.node) is not None
             and type_of(evaluate(site.node).value) is not None
         ]
-        self.assertEqual(len(compared), 2996)
+        self.assertEqual(len(compared), 3081)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -3366,7 +3392,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             if candidate_types(site.node, CLOSED_WORLD)
             and type_of(evaluate(site.node).value) is not None
         ]
-        self.assertEqual(len(compared), 2996)
+        self.assertEqual(len(compared), 3081)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -3387,17 +3413,41 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
         self.assertIn(OBJECT_ARRAY, candidate_types(_slot('[array]5'), CLOSED_WORLD))
 
     def test_a_string_the_tree_reader_spells_is_the_string_named_here(self):
-        self.assertEqual(len(STRINGS), 1731)
+        self.assertEqual(len(STRINGS), 1774)
         self.assertEqual(
             [row.source for row in STRINGS if row.named != Ps1Constant(STRING, row.text)], [])
 
     def test_the_bytes_the_array_reader_collects_are_the_numbers_the_elements_name(self):
-        self.assertEqual(len(BYTE_ARRAYS), 116)
+        self.assertEqual(len(BYTE_ARRAYS), 128)
         self.assertEqual(
             [row.source for row in BYTE_ARRAYS if list(row.collected) != row.payloads], [])
 
+    def test_the_bytes_the_array_reader_collects_are_the_bytes_the_host_printed(self):
+        answered = {
+            expression: collect_byte_array(_slot(expression))
+            for expression in BYTE_ARRAY_ROWS
+        }
+        self.assertEqual(
+            [expression for expression, expected in BYTE_ARRAY_ROWS.items()
+             if answered[expression] not in (None, expected)], [])
+        self.assertEqual(len([one for one in answered.values() if one is not None]), 8)
+
+    def test_a_row_the_host_threw_on_names_no_bytes_the_reader_answers(self):
+        threw = [
+            match.group('expression') for row, transcript in TYPE_TRANSCRIPTS.items()
+            if (match := _ROW_PATTERN.fullmatch(row)) is not None and _throws(transcript)
+        ]
+        self.assertEqual(len(threw), 49)
+        self.assertEqual(
+            [expression for expression in threw
+             if collect_byte_array(_slot(expression)) is not None], [])
+
+    @backlog
+    def test_a_byte_array_cast_over_a_char_array_cast_collects_the_elements(self):
+        self.assertEqual(collect_byte_array(_slot('[byte[]][char[]](80, 85)')), b'PU')
+
     def test_a_literal_node_and_the_domain_read_one_spelling_as_one_number(self):
-        self.assertEqual(len(NUMERALS), 524)
+        self.assertEqual(len(NUMERALS), 535)
         self.assertEqual(
             sorted({one.raw for one in NUMERALS if one.named.payload != one.reported}),
             sorted(MISREAD_SPELLINGS),
@@ -3424,7 +3474,7 @@ class TestPs1EvaluateIsNoStrongerThanItsSteps(unittest.TestCase):
 
     def test_a_step_that_can_be_consulted_is_the_whole_answer(self):
         consulted = [step for step in STEPS if step.consultable]
-        self.assertEqual(len(consulted), 555)
+        self.assertEqual(len(consulted), 583)
         self.assertEqual(
             [step.source for step in consulted if step.answered.value != step.step.value], [])
 
@@ -3442,7 +3492,7 @@ class TestPs1EvaluateIsNoStrongerThanItsSteps(unittest.TestCase):
 
     def test_an_array_names_a_value_only_where_every_element_is_one(self):
         named = [row for row in ARRAYS if row.named]
-        self.assertEqual(len(named), 159)
+        self.assertEqual(len(named), 168)
         self.assertEqual([row.source for row in named if not row.elements_named], [])
 
     def test_an_element_that_names_only_a_type_leaves_the_array_unknown(self):
@@ -3467,7 +3517,7 @@ class TestPs1EvaluateCarriesAThrowUp(unittest.TestCase):
             for child in site.node.children()
             if isinstance(child, Expression) and evaluate(child).may_throw
         ]
-        self.assertEqual(len(compared), 2406)
+        self.assertEqual(len(compared), 2480)
         self.assertEqual(
             [site.source for site, _ in compared if not evaluate(site.node).may_throw], [])
 

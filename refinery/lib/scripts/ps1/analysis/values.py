@@ -185,11 +185,11 @@ def collect_facts(node: Node | None) -> list[Ps1Fact] | None:
     This is the only place the elements of a collection are taken apart, and every caller that wants
     something *of* each of them — an integer, a text, a number-or-text — asks the element that
     question itself. A collector per question would each have to state again which spellings build a
-    collection, and `read` already knows: `@(1, 2)`, `(1, 2)`, `1, 2`, a `[char[]]` over any of them
-    and a cast over any of those are one answer here.
+    collection, and `read` already knows: `@(1, 2)`, `(1, 2)`, `1, 2`, a `[char[]]` or `[byte[]]`
+    over any of them and a cast over any of those are one answer here.
     """
     fact = read(node)
-    if isinstance(fact, Ps1Constant) and fact.type in (_OBJECT_ARRAY, _CHAR_ARRAY):
+    if isinstance(fact, Ps1Constant) and fact.type in (_OBJECT_ARRAY, _CHAR_ARRAY, _BYTE_ARRAY):
         payload = fact.payload
         return None if not isinstance(payload, tuple) else list(payload)
     return None if fact is UNKNOWN else [fact]
@@ -234,15 +234,27 @@ def _each(facts: list[Ps1Fact] | None, of: Callable[[Ps1Fact], _T | None]) -> li
 def collect_byte_array(node: Expression) -> bytes | None:
     """
     The bytes an expression names, or `None` where it names something that is not a list of them.
-    A number outside a byte is not one, which is a refusal rather than a truncation.
+    Each element is asked of `convert` to a Byte rather than read as an integer, which is the
+    conversion a `[byte[]]` cast performs: measured, a Char is its code point and a String the
+    numeral it spells, including a hexadecimal one. A `$null` and an element that may throw are
+    refusals rather than answers, which is what keeps a decoder fold from decoding an argument the
+    host raises on.
     """
-    numbers = collect_integers(node)
-    if numbers is None:
+    facts = collect_facts(node)
+    if facts is None:
         return None
-    try:
-        return bytes(numbers)
-    except (ValueError, OverflowError):
-        return None
+    numbers: list[int] = []
+    for fact in facts:
+        if fact is NULL:
+            return None
+        outcome = convert(fact, _BYTE)
+        if outcome.may_throw:
+            return None
+        number = integer_of(outcome.value)
+        if number is None:
+            return None
+        numbers.append(number)
+    return bytes(numbers)
 
 
 #: A type this module names, resolved through the one resolver rather than spelled here — a name
@@ -270,6 +282,13 @@ _OBJECT_ARRAY = _type('System.Object[]')
 #: distinction the Char-erasure phase exists to keep — a `Char[]` has no literal, so `render` writes
 #: none and a fold that observes one reads its type rather than spelling its value.
 _CHAR_ARRAY = _type('System.Char[]')
+
+#: The array a `[byte[]]` cast builds, read the same way `_CHAR_ARRAY` is and for the same reason:
+#: a decoder fold — `GetString`, `ToString` — asks an argument for its bytes, and the cast over a
+#: literal collection is where the source pins them. A String operand is a scalar to it rather than
+#: a sequence — measured, `[byte[]]'80'` is the one-element array of the numeral, where `'AB'`
+#: throws — so it is the one array here whose String rule is a conversion and not a taking-apart.
+_BYTE_ARRAY = _type('System.Byte[]')
 
 #: The enums whose values the domain computes, which are the two the engine's preference variables
 #: hold. An enum value is a `Ps1Constant` of its type whose payload is the ordinal, and the rules
@@ -1298,7 +1317,7 @@ def _stream(
         inner = outcome.value
         if (
             isinstance(inner, Ps1Constant)
-            and inner.type in (_OBJECT_ARRAY, _CHAR_ARRAY)
+            and inner.type in (_OBJECT_ARRAY, _CHAR_ARRAY, _BYTE_ARRAY)
             and isinstance(inner.payload, tuple)
         ):
             outcomes.extend(Ps1Outcome(outcome.throws, one) for one in inner.payload)
@@ -1350,16 +1369,20 @@ def _cast_spelling(node: Ps1CastExpression) -> Ps1Fact:
     restriction is also what keeps `read` from walking into an expression: the only thing it
     recurses through is another spelling.
 
-    A `char[]` is read here though `render` spells none. It has no literal, so `read(render(fact))`
-    never reaches it and the roundtrip above says nothing about it; it is read because a cast of a
-    literal collection or String to it pins a value the source names — the characters — that a
-    reader of a collection and a `-join` over one both need, and refusing it would leave those folds
-    to the String erasure this phase ends. It stays literal-only for the reason every other target
-    here does: `convert` reads its elements from `read(node.operand)`, so an operator or a variable
+    A `char[]` and a `byte[]` are read here though `render` spells neither. Neither has a literal,
+    so `read(render(fact))` never reaches them and the roundtrip above says nothing about either;
+    both are read because a cast of a literal collection or String to one pins a value the source
+    names — the characters, the bytes — that a reader of a collection, a `-join` over one and a
+    decoder fold over the other need, and refusing them would leave those folds to the String
+    erasure this phase ends. They stay literal-only for the reason every other target here does:
+    `convert` reads their elements from `read(node.operand)`, so an operator or a variable
     underneath the cast answers `UNKNOWN` and the whole cast does too.
     """
     target = resolve_type(node.type_name)
-    if target is None or (target not in _SPELLED_BY_A_CAST and target != _CHAR_ARRAY):
+    if target is None or (
+        target not in _SPELLED_BY_A_CAST
+        and target not in (_CHAR_ARRAY, _BYTE_ARRAY)
+    ):
         return UNKNOWN
     outcome = convert(read(node.operand), target)
     return UNKNOWN if outcome.may_throw else outcome.value
@@ -1886,23 +1909,77 @@ def _to_char_array(fact: Ps1Fact) -> Ps1Outcome:
     `[char[]]'ABC'` is a `Char[]` of three, where `[char]'ABC'` throws — so it is the one operand
     read as a sequence of Chars directly. A collection is each of its elements asked of `convert` to
     a Char, so `[char[]](72, 73)` is `H`, `I` and `[char[]]@('AB')` throws where its element does.
-    Any other operand is refused rather than guessed at: a scalar `Char[]` cast is a one-element
-    array 5.1 builds but no measurement here covers, and `$null` and a nested collection each reach
-    the tree through no fold, so a value for them would answer a question nothing asks.
+    Any other operand reaches `_to_element_array`, which converts and wraps it: measured,
+    `[char[]]65` and `[char[]][char]65` are the one-element array of the character.
     """
     if isinstance(fact, Ps1Constant) and fact.type == _STRING and isinstance(fact.payload, str):
         characters = tuple(Ps1Constant(_CHAR, one) for one in fact.payload)
         return Ps1Outcome(NEVER, Ps1Constant(_CHAR_ARRAY, characters))
+    return _to_element_array(fact, _CHAR_ARRAY, _CHAR)
+
+
+def _to_byte_array(fact: Ps1Fact) -> Ps1Outcome:
+    """
+    What `[byte[]] fact` produces: each element of a collection converted to a Byte, or any other
+    operand converted to one and wrapped into the one-element array a host builds, or `UNKNOWN`
+    where that conversion throws instead.
+
+    A String is a scalar here and not the sequence it is to `_to_char_array` — measured,
+    `[byte[]]'80'` is the one-element array of the numeral while `[byte[]]'AB'` throws — so no
+    String arm stands before the scalar one: `convert` asks the numeral question, and the certain
+    reject of a string that spells no number is the throw the host raises. Measured for the
+    elements a collection may hold: a Char is its code point, a String the numeral it spells
+    including a hexadecimal one, and a `$null` among them the zero a scalar cast of it is.
+    """
+    return _to_element_array(fact, _BYTE_ARRAY, _BYTE)
+
+
+def _to_element_array(fact: Ps1Fact, array: Ps1TypeName, element: Ps1TypeName) -> Ps1Outcome:
+    """
+    What `[array] fact` produces where the array's elements are the one `element` type: a `NULL`
+    stays `NULL`, a collection is each of its elements asked of `convert`, and any other operand is
+    the scalar a host wraps into a one-element array after converting it. Where none of that
+    answers, the measured cell for the operand's type is, which keeps what the grid knows about a
+    cast this cannot compute.
+
+    A scalar is converted first and wrapped only then, which is what makes the wrap uniform:
+    measured, `[byte[]]72`, `[byte[]]$true`, `[byte[]]1.9`, `[byte[]][char]65` and `[byte[]]'80'`
+    are the one-element array of the element conversion's answer, and the ones whose element
+    conversion the grid records no value for — `[char[]]$true`, `[char[]]1.9` — throw on the host
+    and answer here from their cell alone. A `$null` is *not* one of them: measured, `[byte[]]$null`
+    and `[char[]]$null` are `$null` and no array at all, so it is answered before any conversion
+    can read it as the zero a scalar cast of it would be.
+    """
+    if fact is NULL:
+        return Ps1Outcome(NEVER, NULL)
     elements = _elements(fact)
-    if elements is None:
-        return NOTHING
-    converted: list[Ps1Fact] = []
-    for element in elements:
-        outcome = convert(element, _CHAR)
-        if outcome.may_throw or outcome.value is UNKNOWN:
-            return Ps1Outcome(ALWAYS if outcome.certainly_throws else MAYBE, UNKNOWN)
-        converted.append(outcome.value)
-    return Ps1Outcome(NEVER, Ps1Constant(_CHAR_ARRAY, tuple(converted)))
+    if elements is not None:
+        converted: list[Ps1Fact] = []
+        for one in elements:
+            outcome = convert(one, element)
+            if outcome.may_throw or outcome.value is UNKNOWN:
+                return Ps1Outcome(ALWAYS if outcome.certainly_throws else MAYBE, UNKNOWN)
+            converted.append(outcome.value)
+        return Ps1Outcome(NEVER, Ps1Constant(array, tuple(converted)))
+    if isinstance(fact, Ps1Constant):
+        outcome = convert(fact, element)
+        if not outcome.may_throw and outcome.value is not UNKNOWN:
+            return Ps1Outcome(NEVER, Ps1Constant(array, (outcome.value,)))
+        if outcome.certainly_throws:
+            return Ps1Outcome(ALWAYS, UNKNOWN)
+    return _from_grid(fact, array)
+
+
+def _from_grid(fact: Ps1Fact, target: Ps1TypeName) -> Ps1Outcome:
+    """
+    What the measured cell says about `[target] fact` on its own, with nothing computed from the
+    value: the result type the cast's spelling settles, and whether it may throw. The array rows
+    defer here where they cannot answer, so that a cast they refuse keeps the type the grid already
+    read for it rather than trading it for silence.
+    """
+    source = _grid_type(fact)
+    cell = None if source is None else conversion_outcome(target, source)
+    return NOTHING if cell is None else _from_conversion_cell(cell, _spans(fact))
 
 
 def _enum_storage(enum: Ps1TypeName) -> Ps1TypeName | None:
@@ -1987,11 +2064,13 @@ def convert(fact: Ps1Fact, target: Ps1TypeName) -> Ps1Outcome:
     type and stops there, which is `[int]'abc'` still being *an Int32 or a throw* — see
     `_from_conversion_cell` for why a cast may say that where an operator may not.
 
-    A `char[]` target is answered by `_to_char_array` rather than the grid. The grid was captured
-    over scalar targets, so it has no cell for an array one; but the result type of this cast is
-    settled by what is written — always a `Char[]` — so the only thing the source decides is whether
-    an element throws, which is `convert` to a Char asked of each. That is why it is the one target
-    here whose row is composed rather than measured.
+    A `char[]` or `byte[]` target is answered by `_to_char_array` and `_to_byte_array` rather than
+    the grid. The grid was captured over scalar targets, so its cells for an array one record only
+    what a capture saw — a type and whether it *may* throw, under-claiming the throw an element
+    out of range certainly raises; but the result type of this cast is settled by what is written —
+    always a `Char[]`, always a `Byte[]` — so the only thing the source decides is what the elements
+    convert to, which is `convert` asked of each. That is why these are the targets here whose rows
+    are composed rather than measured, and why both defer to their cell where they cannot answer.
 
     An enum in `_FOLDABLE_ENUMS`, as the target or as the operand, is answered by `_to_enum` and
     `_from_enum` rather than the grid, which was captured over the scalar types and holds no cell
@@ -2001,6 +2080,8 @@ def convert(fact: Ps1Fact, target: Ps1TypeName) -> Ps1Outcome:
     """
     if target == _CHAR_ARRAY:
         return _to_char_array(fact)
+    if target == _BYTE_ARRAY:
+        return _to_byte_array(fact)
     if target in _FOLDABLE_ENUMS:
         return _to_enum(fact, target)
     if isinstance(fact, Ps1Constant) and fact.type in _FOLDABLE_ENUMS:

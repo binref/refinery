@@ -108,7 +108,7 @@ class _Coverage(NamedTuple):
 #: being compared cannot hide behind another type's growth — and a row that turns from an answer
 #: into a refusal moves a number here rather than quietly leaving the comparison below.
 COVERAGE: dict[str, _Coverage] = {
-    ''               : _Coverage(3, 0),
+    ''               : _Coverage(5, 2),
     'System.Boolean' : _Coverage(173, 99),
     'System.Byte'    : _Coverage(5, 5),
     'System.Char'    : _Coverage(8, 6),
@@ -134,11 +134,11 @@ TYPES_OUTSIDE_THE_CURRENCY: dict[str, int] = {
 #: How many measured rows write a collection rather than one value. Such a row's two witnesses
 #: disagree by design — writing a collection unrolls it, so the container's type stands on the first
 #: line and its elements' on the rest — and the population is the rows whose witnesses agree.
-COLLECTION_ROWS: int = 7
+COLLECTION_ROWS: int = 18
 
 #: How many measured rows 5.1 produced no value for, by stepping over the erroring statement or by
 #: stopping the run. The population `ANSWERED_THROWS` is drawn from.
-THROWING_ROWS: int = 48
+THROWING_ROWS: int = 49
 
 #: Where the interpreter computes a value 5.1 did not. Each entry is a constant the deobfuscator
 #: folds wrongly into the script it emits.

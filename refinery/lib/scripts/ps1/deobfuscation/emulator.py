@@ -282,6 +282,15 @@ class _CharArray(list):
     """
 
 
+class _ByteArray(list):
+    """
+    A `System.Byte[]` the interpreter carries as the list of bytes it holds, kept apart from an
+    ordinary collection for the reason `_CharArray` is: the domain spells no `Byte[]`, so a value
+    this wide refuses a fold rather than leaving as the `Object[]` of Bytes its elements would
+    spell. Being a `list` subclass it reads as its elements everywhere a collection would.
+    """
+
+
 class _MatchTable:
     """
     The `$Matches` automatic variable, the `System.Hashtable` a successful `-match` leaves behind.
@@ -328,17 +337,19 @@ def _fact_of_value(value: _Value) -> Ps1Fact:
     """
     The fact a computed value denotes, keeping the kinds the interpreter's currency carries: a
     `_Char` builds the Char fact and a `_Byte` the Byte fact, both rather than the wider value the
-    payload alone names; a `_CharArray` names nothing, because a `Char[]` has no spelling; and a
-    plain collection is built elementwise under the same rule, since every producer of one other
-    than the `char[]` cast — a pipeline, an array literal, an `@()` — builds an `Object[]` on the
-    host, whose elements a cast of a numeral spells exactly. Everything else is `fact_of`'s to
-    answer.
+    payload alone names; a `_CharArray` and a `_ByteArray` name nothing, because neither array has
+    a spelling; and a plain collection is built elementwise under the same rule, since every
+    producer of one other than the `char[]` and `byte[]` casts — a pipeline, an array literal,
+    an `@()` — builds an `Object[]` on the host, whose elements a cast of a numeral spells
+    exactly. Everything else is `fact_of`'s to answer.
     """
     if isinstance(value, _Char):
         return char_fact(str(value))
     if isinstance(value, _Byte):
         return integer_at(_BYTE_WIDTH, int(value))
     if isinstance(value, _CharArray):
+        return UNKNOWN
+    if isinstance(value, _ByteArray):
         return UNKNOWN
     if isinstance(value, list):
         return collection_fact(_fact_of_value(one) for one in value)
@@ -1485,10 +1496,17 @@ class _Ps1Interpreter:
     def _decode_byte_list(self, value: _Value, encoding: str) -> str:
         if not isinstance(value, list):
             raise _Ps1InterpreterError
+        raw = bytearray()
+        for item in value:
+            if item is None:
+                raise _Ps1InterpreterError
+            number = self._to_int(item)
+            if not 0 <= number <= 0xFF:
+                raise _Ps1InterpreterError
+            raw.append(number)
         try:
-            raw = bytearray(int(b) for b in value)
             return raw.decode(encoding)
-        except (ValueError, OverflowError, TypeError, UnicodeDecodeError, LookupError):
+        except (UnicodeDecodeError, LookupError):
             raise _Ps1InterpreterError
 
     def _invoke_string_static(self, method: str, args: list[_Value]) -> _Value:
@@ -1646,15 +1664,55 @@ class _Ps1Interpreter:
                     raise _Ps1InterpreterError
             raise _Ps1InterpreterError
         if tn == 'char[]':
-            if isinstance(val, str):
-                return _CharArray(_Char(c) for c in val)
-            raise _Ps1InterpreterError
+            return self._cast_element_array(val, _CHAR_WIDTH)
+        if tn == 'byte[]':
+            return self._cast_element_array(val, _BYTE_WIDTH)
         if tn == 'byte':
             result = self._to_int(val)
             if not 0 <= result <= 0xFF:
                 raise _Ps1InterpreterError
             return _Byte(result)
         raise _Ps1InterpreterError
+
+    def _cast_element_array(self, val: _Value, width: Ps1TypeName) -> _Value:
+        """
+        What a `char[]` or `byte[]` cast builds, mirroring the domain's composed rows: a `$null`
+        stays `$null`, a collection converts each of its elements, and any other operand is the
+        scalar the host converts and wraps into the one-element array. A String is that scalar to
+        a `byte[]` cast — the numeral it spells there, measured `[byte[]]'80'` being the
+        one-element array of `80` — while a `char[]` cast takes it apart into its characters.
+        """
+        if val is None:
+            return None
+        if width == _CHAR_WIDTH and isinstance(val, str) and not isinstance(val, _Char):
+            return _CharArray(_Char(c) for c in val)
+        if isinstance(val, list):
+            items = [self._cast_element(one, width) for one in val]
+            return _ByteArray(items) if width == _BYTE_WIDTH else _CharArray(items)
+        item = self._cast_element(val, width)
+        return _ByteArray((item,)) if width == _BYTE_WIDTH else _CharArray((item,))
+
+    def _cast_element(self, val: _Value, width: Ps1TypeName) -> _Value:
+        """
+        The element a `char[]` or `byte[]` cast converts `val` to, which is the scalar conversion
+        of the element type. A String is the numeral it spells to a Byte — hexadecimal included —
+        while to a Char it is the one-character string and nothing else, measured `[char]'65'`
+        throwing where `[byte]'65'` is `65`; and a number a Char does not hold is the host's
+        throw rather than a character, which is why a Boolean and a real reach no `Char` here.
+        """
+        if width == _CHAR_WIDTH:
+            if isinstance(val, _Char):
+                return val
+            if isinstance(val, str):
+                if len(val) != 1:
+                    raise _Ps1InterpreterError
+                return _Char(val)
+            if not isinstance(val, int) or isinstance(val, bool):
+                raise _Ps1InterpreterError
+        number = self._to_int(val)
+        if integer_at(width, number) is UNKNOWN:
+            raise _Ps1InterpreterError
+        return _Byte(number) if width == _BYTE_WIDTH else _Char(chr(number))
 
     def _add(self, left: _Value, right: _Value) -> _Value:
         if left is None and isinstance(right, str):
