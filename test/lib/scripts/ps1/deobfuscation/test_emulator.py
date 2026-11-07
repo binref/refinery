@@ -491,6 +491,26 @@ class TestPs1EmulatorExtra(TestPs1):
         result = self._apply("function f { 'a'; 'b' }; $x = f", Ps1FunctionEvaluator)
         self.assertEqual(result, "$x = 'a', 'b'")
 
+    def test_an_array_expression_counts_the_null_a_statement_handed_it(self):
+        result = self._apply(
+            'function f { $b = [byte[]]@($null); $b.Count }; $x = f', Ps1FunctionEvaluator)
+        self.assertEqual(result, '$x = 1')
+
+    def test_the_null_an_array_expression_collects_converts_to_the_null_character(self):
+        result = self._apply(
+            'function f { $c = [char[]]@($null); $c.Count }; $x = f', Ps1FunctionEvaluator)
+        self.assertEqual(result, '$x = 1')
+
+    def test_a_null_a_function_body_hands_the_stream_keeps_its_call_from_folding(self):
+        source = cleandoc("""
+            function f {
+              $null
+              1
+            }
+            $x = f
+        """)
+        self.assertEqual(self._apply(source, Ps1FunctionEvaluator), source)
+
     def test_function_trailing_assignment_emits_nothing(self):
         result = self._apply("function g { $r = 'hidden' }; $y = g", Ps1FunctionEvaluator)
         self.assertEqual(result, cleandoc("""

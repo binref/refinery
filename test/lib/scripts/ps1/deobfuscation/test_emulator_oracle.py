@@ -440,6 +440,28 @@ class TestPs1InterpreterComputesWhatWindowsPowerShellComputed(unittest.TestCase)
     def test_the_measured_types_no_value_of_the_currency_denotes_are_the_ones_recorded(self):
         self.assertEqual(_types_outside_the_currency(), TYPES_OUTSIDE_THE_CURRENCY)
 
+    def test_where_it_answers_a_collection_row_it_answers_the_elements_the_host_wrote(self):
+        """
+        A collection row is out of the one-value population because its two witnesses disagree,
+        but the second one — `Write-Output $t` — unrolls the collection into its elements, so an
+        answer for one is still held against the host: elementwise, and as a collection at all,
+        because a scalar folded in place of the array a script counts over is a wrong answer too.
+        """
+        for expression in _collection_rows():
+            outcome = _computed(expression)
+            if not outcome.answered:
+                continue
+            with self.subTest(expression):
+                self.assertIsInstance(outcome.value, list)
+                computed = list(outcome.value)
+                measured = [
+                    _CURRENCY[carried](rendered)
+                    for carried, rendered in map(_witness, _rows()[expression][1:])
+                ]
+                self.assertEqual(computed, measured)
+                for element, answer in zip(computed, measured):
+                    self.assertIs(type(element), type(answer))
+
     def test_the_measured_rows_that_write_a_collection_are_as_many_as_recorded(self):
         self.assertEqual(len(_collection_rows()), COLLECTION_ROWS)
 

@@ -1162,9 +1162,40 @@ class _Ps1Interpreter:
             raise _Ps1InterpreterError
         return result
 
+    @staticmethod
+    def _writes_its_null(expression) -> bool:
+        """
+        Whether a `$null` the expression evaluates to is a value it wrote, rather than the absence
+        of any output: a redirected element that takes its output away, a command whose body
+        emitted nothing, and a subexpression collapsed by `_exec_statements` each evaluate to
+        `None` for a stream that wrote nothing at all.
+        """
+        while isinstance(expression, Ps1ParenExpression) and expression.expression is not None:
+            expression = expression.expression
+        return not isinstance(expression, (Ps1Pipeline, Ps1CommandInvocation, Ps1SubExpression))
+
     def _eval_array_expression(self, expr: Ps1ArrayExpression) -> list:
+        """
+        The elements `@(...)` collects. 5.1 counts the `$null` a statement hands the stream among
+        them — measured, `[byte[]]@($null)` is the one-element array of `0` — so where `_append`
+        drops one for the sake of the collapse every other stream waits on, this stream is the
+        value itself and keeps what the host wrote. A statement whose `None` is the absence of
+        output rather than a `$null` written — `_writes_its_null` names them — still goes through
+        `_emit_stmt`, because dropping one there is the count the host wrote.
+        """
         results: list[_Value] = []
         for stmt in expr.body:
+            if (
+                isinstance(stmt, Ps1ExpressionStatement)
+                and not isinstance(stmt.expression, Ps1AssignmentExpression)
+                and self._writes_its_null(stmt.expression)
+            ):
+                value = self._eval(stmt.expression)
+                if isinstance(value, list):
+                    results.extend(value)
+                else:
+                    results.append(value)
+                continue
             self._emit_stmt(stmt, results)
         return results
 
@@ -1699,8 +1730,12 @@ class _Ps1Interpreter:
         while to a Char it is the one-character string and nothing else, measured `[char]'65'`
         throwing where `[byte]'65'` is `65`; and a number a Char does not hold is the host's
         throw rather than a character, which is why a Boolean and a real reach no `Char` here.
+        A `$null` is the conversion the grid measured for it — the null character to a Char and
+        zero to a Byte, the same answer the domain's `convert` gives.
         """
         if width == _CHAR_WIDTH:
+            if val is None:
+                return _Char('\x00')
             if isinstance(val, _Char):
                 return val
             if isinstance(val, str):
@@ -2264,6 +2299,11 @@ class Ps1FunctionEvaluator(Transformer):
             self._replaced_counts[key] = self._replaced_counts.get(key, 0) + 1
             return replacement
         except _Ps1InterpreterError:
+            return None
+        if interpreter._dropped_null:
+            # The value a call folds is the body's stream collapsed, and 5.1 keeps a `$null` a
+            # statement hands that stream while the interpreter drops it: folding would install a
+            # shorter stream than the one the host assembles.
             return None
         replacement = self._value_to_node(result)
         if replacement is None:

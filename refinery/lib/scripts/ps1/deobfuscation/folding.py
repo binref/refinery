@@ -913,7 +913,7 @@ class Ps1ConstantFolding(Transformer):
                     except LookupError:
                         encoding = 'utf-8'
                     try:
-                        decoded_str = bytes(raw_bytes).decode(encoding)
+                        decoded_str = raw_bytes.decode(encoding)
                     except Exception:
                         return None
                     return make_string_literal(decoded_str)

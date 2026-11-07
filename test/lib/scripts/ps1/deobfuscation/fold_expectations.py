@@ -16,8 +16,6 @@ from refinery.lib.scripts.ps1.model import (
 )
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
-from test.lib.scripts.ps1 import dispatch
-
 
 def _occurs(output: str, texts: tuple[str, ...]) -> bool:
     return all(output.count(text) >= texts.count(text) for text in texts)
@@ -78,11 +76,6 @@ class KeptAsWritten:
 
 
 Expectation = Simplified | Emptied | KeptAsWritten
-
-
-def _dispatched(name: str) -> str:
-    program, preference, on = dispatch.ANCHORS[name]
-    return dispatch.render(program, preference, on)
 
 
 SIMPLIFIED: dict[str, Expectation] = {
@@ -1295,123 +1288,6 @@ SIMPLIFIED: dict[str, Expectation] = {
             lacks=('Set-Variable',),
         ),
 }
-
-_NOT_YET_DISPATCHED: tuple[str, ...] = (
-    'try body, finally / cast / Continue',
-    'catch body / cast / Continue',
-    'finally body, error / cast / Continue',
-    'subexpression / cast / Continue',
-    'try in a try body / cast / Continue',
-    'loop in a try body / cast / Continue',
-    'finally body, error, in a catch body / cast / Continue',
-    'trap body, run from a try / cast / Continue',
-    'try body, catch [RuntimeException] or [InvalidCastException] / cast / Continue',
-    'try body, catch [RuntimeException] or [Exception] / cast / Continue',
-    'try body, catch [untyped] / cast / Continue',
-    'try body, catch [RuntimeException] / cast / Continue',
-    'try body, catch [InvalidCastException] / cast / Continue',
-    'try body, catch [IOException] / cast / Continue',
-    'function in a try body / cast / Continue',
-    'function in a catch body / cast / Continue',
-    'function under a trap / cast / Continue',
-    'script block in a catch body / cast / Continue',
-    'return through a finally / cast / Continue',
-    'continue through a finally / cast / Continue',
-    'exit through a finally / cast / Continue',
-    'return through a finally, function / cast / Continue',
-    'preference written to Stop / cast / Continue',
-    'try body, finally / cast / SilentlyContinue',
-    'catch body / cast / SilentlyContinue',
-    'finally body, error / cast / SilentlyContinue',
-    'subexpression / cast / SilentlyContinue',
-    'try in a try body / cast / SilentlyContinue',
-    'loop in a try body / cast / SilentlyContinue',
-    'finally body, error, in a catch body / cast / SilentlyContinue',
-    'try body, catch [RuntimeException] or [InvalidCastException] / cast / SilentlyContinue',
-    'try body, catch [RuntimeException] or [Exception] / cast / SilentlyContinue',
-    'try body, catch [untyped] / cast / SilentlyContinue',
-    'under a trapped block, continue [untyped] / cast / SilentlyContinue',
-    'under a trapped block, runs off [untyped] / cast / SilentlyContinue',
-    'try body, catch [RuntimeException] / cast / SilentlyContinue',
-    'under a trapped block, continue [RuntimeException] / cast / SilentlyContinue',
-    'under a trapped block, runs off [RuntimeException] / cast / SilentlyContinue',
-    'try body, catch [InvalidCastException] / cast / SilentlyContinue',
-    'under a trapped block, continue [InvalidCastException] / cast / SilentlyContinue',
-    'under a trapped block, runs off [InvalidCastException] / cast / SilentlyContinue',
-    'try body, catch [IOException] / cast / SilentlyContinue',
-    'under a trapped block, continue [IOException] / cast / SilentlyContinue',
-    'under a trapped block, runs off [IOException] / cast / SilentlyContinue',
-    'function in a try body / cast / SilentlyContinue',
-    'function in a catch body / cast / SilentlyContinue',
-    'function under a trap / cast / SilentlyContinue',
-    'script block in a catch body / cast / SilentlyContinue',
-    'return through a finally / cast / SilentlyContinue',
-    'continue through a finally / cast / SilentlyContinue',
-    'exit through a finally / cast / SilentlyContinue',
-    'return through a finally, function / cast / SilentlyContinue',
-    'preference written to Stop / cast / SilentlyContinue',
-    'top / cast / Stop',
-    'loop / cast / Stop',
-    'try body, finally / cast / Stop',
-    'catch body / cast / Stop',
-    'finally body / cast / Stop',
-    'finally body, error / cast / Stop',
-    'trap body / cast / Stop',
-    'subexpression / cast / Stop',
-    'try in a try body / cast / Stop',
-    'loop in a try body / cast / Stop',
-    'finally body, error, in a catch body / cast / Stop',
-    'trap body, run from a try / cast / Stop',
-    'try body, catch [RuntimeException] or [InvalidCastException] / cast / Stop',
-    'try body, catch [RuntimeException] or [Exception] / cast / Stop',
-    'try body, catch [untyped] / cast / Stop',
-    'under a trapped block, continue [untyped] / cast / Stop',
-    'under a trapped block, runs off [untyped] / cast / Stop',
-    'try body, catch [RuntimeException] / cast / Stop',
-    'under a trapped block, continue [RuntimeException] / cast / Stop',
-    'under a trapped block, runs off [RuntimeException] / cast / Stop',
-    'try body, catch [InvalidCastException] / cast / Stop',
-    'under a trapped block, continue [InvalidCastException] / cast / Stop',
-    'under a trapped block, runs off [InvalidCastException] / cast / Stop',
-    'try body, catch [IOException] / cast / Stop',
-    'under a trapped block, continue [IOException] / cast / Stop',
-    'under a trapped block, runs off [IOException] / cast / Stop',
-    'function at script scope / cast / Stop',
-    'function in a try body / cast / Stop',
-    'function in a catch body / cast / Stop',
-    'function under a trap / cast / Stop',
-    'script block in a catch body / cast / Stop',
-    'return through a finally / cast / Stop',
-    'continue through a finally / cast / Stop',
-    'exit through a finally / cast / Stop',
-    'return through a finally, function / cast / Stop',
-    'preference written to Stop / cast / Stop',
-    'under a trapped block, continue [untyped] / throw / SilentlyContinue',
-    'under a trapped block, runs off [untyped] / throw / SilentlyContinue',
-    'under a trapped block, continue [RuntimeException] / throw / SilentlyContinue',
-    'under a trapped block, runs off [RuntimeException] / throw / SilentlyContinue',
-    'under a trapped block, continue [InvalidCastException] / throw / SilentlyContinue',
-    'under a trapped block, runs off [InvalidCastException] / throw / SilentlyContinue',
-    'under a trapped block, continue [IOException] / throw / SilentlyContinue',
-    'under a trapped block, runs off [IOException] / throw / SilentlyContinue',
-    'under a trapped block, continue [untyped] / throw / Stop',
-    'under a trapped block, runs off [untyped] / throw / Stop',
-    'under a trapped block, continue [RuntimeException] / throw / Stop',
-    'under a trapped block, runs off [RuntimeException] / throw / Stop',
-    'under a trapped block, continue [InvalidCastException] / throw / Stop',
-    'under a trapped block, runs off [InvalidCastException] / throw / Stop',
-    'under a trapped block, continue [IOException] / throw / Stop',
-    'under a trapped block, runs off [IOException] / throw / Stop',
-    'failing store / Continue',
-    'failing store under a resuming trap / Continue',
-    'failing store in a function / Continue',
-    'failing store / SilentlyContinue',
-    'failing store under a resuming trap / SilentlyContinue',
-    'failing store in a function / SilentlyContinue',
-    'failing store / Stop',
-    'failing store under a resuming trap / Stop',
-    'failing store in a function / Stop',
-)
 
 NOT_YET_SIMPLIFIED: frozenset[str] = frozenset({
     "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
