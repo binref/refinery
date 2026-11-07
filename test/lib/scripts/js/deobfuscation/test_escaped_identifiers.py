@@ -14,9 +14,10 @@ import unittest
 from collections.abc import Iterable
 
 from test import TestBase
-from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
+from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_source, node_executable
 from test.lib.scripts.js.ledger import (
     before_and_after,
+    deobfuscated_behavior,
     each_program_still_prints,
     folded,
     printed,
@@ -308,20 +309,16 @@ THE_SAME_FILE_WITH_NO_ESCAPE_AT_ALL = (
 )
 
 
-A_PARAMETER_NAMED_EVAL_OR_ARGUMENTS_WITH_AN_ESCAPE = _programs({
-    "'use strict'; function f(evESCAPED[0061]l){ return 1; } console.log(typeof f);":
-        'function\n',
-    "'use strict'; function f(argumentESCAPED[0073]){ return 1; } console.log(typeof f);":
-        'function\n',
-    "'use strict'; var q = function (evESCAPED[0061]l){ return 1; }; console.log(typeof q);":
-        'function\n',
-    "'use strict'; var q = function (argumentESCAPED[0073]){ return 1; }; console.log(typeof q);":
-        'function\n',
-    "'use strict'; var q = { set p(evESCAPED[0061]l){} }; console.log(typeof q);": 'object\n',
-    "'use strict'; var q = { set p(argumentESCAPED[0073]){} }; console.log(typeof q);": 'object\n',
-    'class C { m(evESCAPED[0061]l){} } console.log(typeof C);': 'function\n',
-    'class C { m(argumentESCAPED[0073]){} } console.log(typeof C);': 'function\n',
-})
+A_PARAMETER_NAMED_EVAL_OR_ARGUMENTS_WITH_AN_ESCAPE = tuple(map(_spelled_with_escapes, (
+    "'use strict'; function f(evESCAPED[0061]l){ return 1; } console.log(typeof f);",
+    "'use strict'; function f(argumentESCAPED[0073]){ return 1; } console.log(typeof f);",
+    "'use strict'; var q = function (evESCAPED[0061]l){ return 1; }; console.log(typeof q);",
+    "'use strict'; var q = function (argumentESCAPED[0073]){ return 1; }; console.log(typeof q);",
+    "'use strict'; var q = { set p(evESCAPED[0061]l){} }; console.log(typeof q);",
+    "'use strict'; var q = { set p(argumentESCAPED[0073]){} }; console.log(typeof q);",
+    'class C { m(evESCAPED[0061]l){} } console.log(typeof C);',
+    'class C { m(argumentESCAPED[0073]){} } console.log(typeof C);',
+)))
 
 
 THE_SAME_PARAMETER_WRITTEN_OUT = (
@@ -582,17 +579,17 @@ class TestANameSpellingATerminalWordKeepsTheSpellingThatRuns(TestBase):
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAParameterNamedEvalOrArgumentsKeepsTheSpellingThatRuns(TestBase):
     """
-    Strict code may not bind a parameter named `eval` or `arguments`, and Node checks that over the
-    characters typed rather than over the name they denote: the escaped spelling is accepted and the
-    plain one refused. A class body is strict code without a directive.
+    Strict code may not bind a parameter named `eval` or `arguments`. Node 24 checks that over the
+    characters typed rather than over the name they denote, so it accepts the escaped spelling and
+    refuses the plain one; Node 26 refuses both. A class body is strict code without a directive.
     """
 
-    def test_a_parameter_named_by_an_escape_binds_what_the_plain_spelling_may_not(self):
+    def test_a_parameter_named_by_an_escape_behaves_after_the_deobfuscation_as_before(self):
         rows = A_PARAMETER_NAMED_EVAL_OR_ARGUMENTS_WITH_AN_ESCAPE
         self.assertEqual(_unspelled(rows), [])
         self.assertEqual(
-            {source: before_and_after(source) for source in rows},
-            each_program_still_prints(rows),
+            {source: deobfuscated_behavior(source) for source in rows},
+            {source: behavior(source) for source in rows},
         )
 
     def test_the_same_parameter_written_out_is_no_program(self):

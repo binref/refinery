@@ -7,6 +7,9 @@ inputs:
   os:
     required: true
     description: "Target Operating System"
+  node:
+    required: true
+    description: "Target Node.js Major Version"
 runs:
   using: "composite"
   steps:
@@ -14,10 +17,10 @@ runs:
       uses: actions/setup-python@v6
       with:
         python-version: ${{ inputs.py }}
-    - name: Set up Node.js
+    - name: Set up Node.js ${{ inputs.node }}
       uses: actions/setup-node@v6
       with:
-        node-version: '24'
+        node-version: ${{ inputs.node }}
     - name: Install Dependencies (Linux)
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}

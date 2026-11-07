@@ -13,6 +13,7 @@ from test.lib.scripts.js.ledger import (
     NL,
     FileProgram,
     Reading,
+    Unpinned,
     each_reading_still_prints,
     node_prints_what_each_row_pins,
     prints,
@@ -540,8 +541,8 @@ A_PROGRAM_DECOMPRESSING_ITS_STRINGS = {
     ),
     'Symbol.split on Object.prototype in the inserted shape': FileProgram(
         'Object.prototype[Symbol.split] = function () { return ["x", "y", "z", "w"]; };' + LIB + TAIL + TEMPLATE + USE,
-        prints('x w NaN', 'undefined'),
-        prints('x w NaN', 'undefined'),
+        Unpinned.NODE_VERSIONS_DISAGREE,
+        Unpinned.NODE_VERSIONS_DISAGREE,
         HostEnvironment.node,
     ),
     'the library returned by a wrapper whose parameter is named String': FileProgram(

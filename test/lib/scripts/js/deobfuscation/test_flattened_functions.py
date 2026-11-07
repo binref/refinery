@@ -23,7 +23,15 @@ from test.lib.scripts.js.deobfuscation.test_selfchecks import (
     guarded,
     inserted_at_the_start_of_the_hash_loop,
 )
-from test.lib.scripts.js.ledger import Program, Reading, a_program, prints, wontfix
+from test.lib.scripts.js.ledger import (
+    Program,
+    Reading,
+    Unpinned,
+    a_program,
+    node_prints_what_each_program_pins,
+    prints,
+    wontfix,
+)
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.flatfunctions import JsFunctionUnflattening
@@ -1203,7 +1211,7 @@ FLATTENED: dict[str, Program] = {
             function W(...A) { var O = { c(...args) { return eval(...args); } }; return F(A, O); }
             console.log(W());
             """),
-        ('', 'ReferenceError'),
+        Unpinned.NODE_VERSIONS_DISAGREE,
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
@@ -2571,9 +2579,7 @@ class TestTheFilesTheObfuscationWrote(TestBase):
 class TestAFlattenedFunctionBehavesAsItDid(TestBase):
 
     def test_node_prints_what_each_row_pins(self):
-        for label, row in FLATTENED.items():
-            with self.subTest(label=label):
-                self.assertEqual(row.behaves(), row.prints)
+        node_prints_what_each_program_pins(self, FLATTENED)
 
     def test_each_program_still_prints_it_after_the_deobfuscation(self):
         for label, row in FLATTENED.items():

@@ -5,7 +5,7 @@ import json
 import unittest
 
 from test import TestBase, backlog
-from test.lib.scripts.js.analysis.differential import behavior, node_executable
+from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_source, node_executable
 
 from refinery.lib.scripts.js.analysis.environment import (
     _NODE_ABSENT,
@@ -19,6 +19,7 @@ from refinery.lib.scripts.js.analysis.environment import (
 )
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import JsIdentifier
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 _HOST_CONDITIONAL_ALIASES = ('window', 'self', 'top', 'frames', 'global')
@@ -266,6 +267,15 @@ class TestPresenceIsThreeValued(TestBase):
         self.assertTrue(HostEnvironment.node.provides('navigator'))
         self.assertIs(HostEnvironment.node.presence('navigator'), Presence.PRESENT)
 
+    def test_node_is_certain_of_neither_web_storage_global(self):
+        """
+        Node 24 has neither, Node 26 has `sessionStorage`, and a `localStorage` that is an object
+        when it starts with `--localstorage-file`.
+        """
+        for name in ('localStorage', 'sessionStorage'):
+            with self.subTest(name=name):
+                self.assertIs(HostEnvironment.node.presence(name), Presence.UNKNOWN)
+
     def test_a_dedicated_worker_does_not_call_request_animation_frame_absent(self):
         """
         A dedicated worker has `requestAnimationFrame`, as a window does.
@@ -375,14 +385,40 @@ class TestARequireOfABuiltinModuleRunsNoCode(TestBase):
             with self.subTest(specifier=specifier):
                 self.assertFalse(node_require_runs_no_code(specifier))
 
+    def test_a_stream_module_node_26_no_longer_has_is_a_package(self):
+        for specifier in ('_stream_wrap', '_stream_readable', 'node:_stream_wrap'):
+            with self.subTest(specifier=specifier):
+                self.assertFalse(node_require_runs_no_code(specifier))
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodeAgreesWithTheEnvironment(TestBase):
 
-    def test_the_builtin_modules_are_the_ones_node_lists(self):
-        out, error = behavior('console.log(JSON.stringify(require("module").builtinModules));')
+    def test_every_module_the_environment_counts_as_built_in_is_built_into_node(self):
+        specifiers = sorted({
+            *NODE_BUILTIN_MODULES,
+            *(F'node:{name}' for name in NODE_BUILTIN_MODULES if not name.startswith('node:')),
+        })
+        out, error = behavior(
+            F'const {{ isBuiltin }} = require("module");\n'
+            F'console.log(JSON.stringify({json.dumps(specifiers)}.filter(s => !isBuiltin(s))));'
+        )
         self.assertIsNone(error)
-        self.assertEqual(set(json.loads(out)), NODE_BUILTIN_MODULES)
+        self.assertEqual(json.loads(out), [])
+
+    def test_every_name_present_under_node_has_there_the_type_the_environment_records(self):
+        names = sorted(_SPECS[HostEnvironment.node].provided)
+        out, error = behavior('console.log(JSON.stringify([' + ', '.join(F'typeof {name}' for name in names) + ']));')
+        self.assertIsNone(error)
+        self.assertEqual(
+            dict(zip(names, json.loads(out))),
+            {name: typeof_of_global(name, HostEnvironment.node) for name in names},
+        )
+
+    def test_a_typeof_of_a_web_storage_global_prints_after_the_deobfuscation_what_it_printed(self):
+        source = 'console.log(typeof sessionStorage, typeof localStorage);\n'
+        deobfuscated = deobfuscate_source(source, execution=ExecutionModel.commonjs, environment=HostEnvironment.node)
+        self.assertEqual(behavior(deobfuscated), behavior(source))
 
     def test_every_name_absent_under_node_has_type_undefined_there(self):
         names = sorted(_NODE_ABSENT)

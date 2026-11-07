@@ -285,9 +285,18 @@ class Reading(Enum):
         return deobfuscated_behavior(source, module=self is Reading.ES_MODULE, environment=environment)
 
 
+class Unpinned(Enum):
+    """
+    What a row pins for a program that prints one thing under one major version of Node that is not
+    end-of-life and another under another one: nothing. The program and its deobfuscation are held
+    to print the same under each version the suite runs on.
+    """
+    NODE_VERSIONS_DISAGREE = auto()
+
+
 class Program(NamedTuple):
     text: str
-    prints: Behavior
+    prints: Behavior | Unpinned
     reading: Reading = Reading.MODULE
     environment: HostEnvironment = HostEnvironment.universal
 
@@ -300,14 +309,28 @@ class Program(NamedTuple):
     def deobfuscated(self) -> Behavior:
         return self.reading.deobfuscated(self.text, self.environment)
 
+    @property
+    def is_pinned(self) -> bool:
+        return not isinstance(self.prints, Unpinned)
+
+    def expected(self) -> Behavior:
+        """
+        What the program and its deobfuscation must print: what the row pins, or what the program
+        prints under the Node the suite runs on where the versions of Node disagree on it.
+        """
+        if isinstance(prints := self.prints, Unpinned):
+            return self.behaves()
+        return prints
+
     def required(self) -> tuple[Behavior, Behavior]:
-        return (self.prints, self.prints)
+        expected = self.expected()
+        return (expected, expected)
 
 
 class FileProgram(NamedTuple):
     text: str
-    as_commonjs: Behavior
-    as_an_es_module: Behavior
+    as_commonjs: Behavior | Unpinned
+    as_an_es_module: Behavior | Unpinned
     environment: HostEnvironment = HostEnvironment.universal
 
     def read_as(self, reading: Reading) -> Program:
@@ -330,8 +353,18 @@ def node_prints_what_each_row_pins(test: unittest.TestCase, rows: Mapping[str, F
     for label, row in rows.items():
         for reading in (Reading.COMMONJS, Reading.ES_MODULE):
             program = row.read_as(reading)
+            if not program.is_pinned:
+                continue
             with test.subTest(label=label, reading=reading.name):
                 test.assertEqual(program.behaves(), program.prints)
+
+
+def node_prints_what_each_program_pins(test: unittest.TestCase, rows: Mapping[str, Program]):
+    for label, row in rows.items():
+        if not row.is_pinned:
+            continue
+        with test.subTest(label=label):
+            test.assertEqual(row.behaves(), row.prints)
 
 
 def each_reading_still_prints(
@@ -357,18 +390,22 @@ def one_expected_failure_per_program(
     """
     A class decorator installing two tests for each of *rows*, named after its label: one marked
     with *marker* that asserts the deobfuscation behaves as the row pins, and one that asserts the
-    program itself does.
+    program itself does. A row that pins nothing gets only the first, which asserts that the
+    deobfuscation behaves as the program does.
     """
     def install(entry: type) -> type:
         for label, row in rows.items():
             slug = label.replace(' ', '_').replace('-', '_')
 
             def test(self, row=row):
-                self.assertEqual(row.deobfuscated(), row.prints)
+                self.assertEqual(row.deobfuscated(), row.expected())
             test.__name__ = F'test_{slug}_still_behaves_so'
             if hasattr(entry, test.__name__):
                 raise AssertionError(F'{entry.__name__} already holds {test.__name__}')
             setattr(entry, test.__name__, marker(test))
+
+            if not row.is_pinned:
+                continue
 
             def anchored(self, row=row):
                 self.assertEqual(row.behaves(), row.prints)

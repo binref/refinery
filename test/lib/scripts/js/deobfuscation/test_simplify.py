@@ -2032,8 +2032,8 @@ class TestABinaryOperatorOverTwoPrimitivesIsFoldedToTheValueNodeComputes(TestJsD
 class TestAPowerTheEngineApproximatesIsNotFolded(TestJsDeobfuscator):
     """
     The language leaves the value of most powers to the engine, and engines differ in the last
-    digit: Node computes `16677181699666570` for `9 ** 17`, where the nearest double to the power is
-    `16677181699666568`.
+    digit: for `9 ** 17`, whose nearest double is `16677181699666568`, Node 22 computes that double
+    and Node 24 computes `16677181699666570`.
     """
 
     def test_a_power_the_engine_approximates_stays(self):
@@ -2056,8 +2056,26 @@ class TestAPowerTheEngineApproximatesIsNotFolded(TestJsDeobfuscator):
         self.assertEqual('f(3 ** -1);', self._simplify('f(3 ** -1);'))
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    def test_node_computes_the_last_digit_the_docstring_states(self):
-        self.assertEqual(['16677181699666570', '1024'], code_units(['9 ** 17', '2 ** 10']))
+    def test_each_power_has_after_the_simplification_the_value_node_computes(self):
+        expressions = [
+            '9 ** 17',
+            "'9' ** '17'",
+            'Math.pow(9, 17)',
+            '2 ** 0.5',
+            '2 ** 10',
+            "'2' ** '10'",
+            'Math.pow(2, 10)',
+            '2 ** -1',
+            'Math.pow(2, -8)',
+            '0.5 ** -1',
+            '10 ** -2',
+            '3 ** -1',
+        ]
+        results = _sunk(self._simplify(''.join(F'SINK({e});\n' for e in expressions)))
+        self.assertEqual(
+            code_units(expressions),
+            code_units([JsSynthesizer().convert(result) for result in results]),
+        )
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_node_computes_each_power_of_two_under_a_negative_exponent_as_folded(self):

@@ -13,6 +13,9 @@ are not all plain identifiers may hold no directive at all, so Node refuses both
 
 The octal literal `010` most programs here hold is a SyntaxError in strict code and a number in
 sloppy code, so whether Node refuses a program tells the mode of the position the literal stands in.
+Node 22 runs a class field initializer, a static block, a heritage clause and a computed key strict
+but reads an octal literal in each of them, so the programs that stand there hold `delete x`, which
+every Node refuses in strict code and reads in sloppy code.
 
 SECURITY: every snippet here is hand-authored and benign and is run by Node. Nothing from `samples`
 may ever be fed to this.
@@ -53,6 +56,7 @@ from refinery.lib.scripts.js.model import (
     JsNumericLiteral,
     JsScript,
     JsStringLiteral,
+    JsUnaryExpression,
     strip_parens,
 )
 from refinery.lib.scripts.js.parser import JsParser
@@ -103,9 +107,9 @@ A_BODY_NO_PROLOGUE_OPENS = {
     'a block inside a body'  : "function f() { { 'use strict'; 010; } }",
 }
 
-A_CLASS_STATIC_BLOCK = "class C { static { 'use strict'; 010; } }"
+A_CLASS_STATIC_BLOCK = "class C { static { 'use strict'; delete x; } }"
 
-AN_OCTAL_LITERAL_STANDING_IN = {
+A_STRICT_ERROR_STANDING_IN = {
     'a sloppy script'                    : ('010;', False),
     'a sloppy function body'             : ('function f() { 010; }', False),
     'a strict script'                    : ("'use strict'; 010;", True),
@@ -117,10 +121,10 @@ AN_OCTAL_LITERAL_STANDING_IN = {
     'a catch inside a strict body'       : (
         "function f() { 'use strict'; try {} catch (e) { 010; } }", True),
     'a class method'                     : ('class C { m() { 010; } }', True),
-    'a class field initializer'          : ('class C { p = 010; }', True),
-    'a class static block'               : ('class C { static { 010; } }', True),
-    'a class heritage clause'            : ('class C extends (010, Object) {}', True),
-    'a class computed key'               : ('class C { [010]() {} }', True),
+    'a class field initializer'          : ('class C { p = delete x; }', True),
+    'a class static block'               : ('class C { static { delete x; } }', True),
+    'a class heritage clause'            : ('class C extends (delete x, Object) {}', True),
+    'a class computed key'               : ('class C { [delete x]() {} }', True),
     'a function inside a class method'   : ('class C { m() { function g() { 010; } } }', True),
     'a class expression method'          : ('var C = class { m() { 010; } };', True),
     'a script below a strict function'   : ("function f() { 'use strict'; } 010;", False),
@@ -470,12 +474,13 @@ def _the_binding_named_eval(root: Node) -> JsIdentifier:
     return name
 
 
-def _the_octal_literal(root: Node) -> JsNumericLiteral:
-    literal, = (
+def _the_strict_error(root: Node) -> JsNumericLiteral | JsUnaryExpression:
+    error, = (
         node for node in root.walk()
         if isinstance(node, JsNumericLiteral) and node.raw == '010'
+        or isinstance(node, JsUnaryExpression) and node.operator == 'delete'
     )
-    return literal
+    return error
 
 
 def _the_computed_string_statement(root: Node) -> JsExpressionStatement:
@@ -649,20 +654,20 @@ class TestStrictModeAtAnswersTheModeTheEngineCompiled(TestBase):
 
     def _modes(self, sources: Sequence[str]) -> list[bool]:
         return [
-            strict_mode_at(_the_octal_literal(JsParser(source).parse()))
+            strict_mode_at(_the_strict_error(JsParser(source).parse()))
             for source in sources
         ]
 
-    def test_the_octal_literal_below_a_directive_a_body_reads_stands_in_strict_code(self):
+    def test_the_strict_error_below_a_directive_a_body_reads_stands_in_strict_code(self):
         sources = list(A_BODY_A_PROLOGUE_OPENS.values()) + [A_CLASS_STATIC_BLOCK]
         self.assertEqual(self._modes(sources), [True] * len(sources))
 
-    def test_the_octal_literal_below_a_directive_no_body_reads_stands_in_sloppy_code(self):
+    def test_the_strict_error_below_a_directive_no_body_reads_stands_in_sloppy_code(self):
         sources = list(A_BODY_NO_PROLOGUE_OPENS.values())
         self.assertEqual(self._modes(sources), [False] * len(sources))
 
     def test_a_position_a_strict_body_encloses_inherits_the_mode_of_that_body(self):
-        rows = AN_OCTAL_LITERAL_STANDING_IN
+        rows = A_STRICT_ERROR_STANDING_IN
         self.assertEqual(
             self._modes([source for source, _ in rows.values()]),
             [strict for _, strict in rows.values()],
@@ -687,7 +692,7 @@ class TestStrictModeAtAnswersTheModeTheEngineCompiled(TestBase):
 class TestModeIsInheritedByEverythingAStrictBodyEncloses(TestBase):
 
     def test_node_compiles_each_position_in_the_mode_the_corpus_records(self):
-        rows = AN_OCTAL_LITERAL_STANDING_IN
+        rows = A_STRICT_ERROR_STANDING_IN
         self.assertEqual(
             _refused([source for source, _ in rows.values()]),
             [strict for _, strict in rows.values()],

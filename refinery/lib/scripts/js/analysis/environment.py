@@ -15,16 +15,19 @@ alone, whether a host resolves a name; `SemanticModel.read_may_throw` is the one
 The data is host-partitioned and, per host, built from the language floor (`GUARANTEED_GLOBALS`) plus a
 conservative set of host-conditional globals: a name is listed only where its presence is certain, since
 under-listing costs at most a fold a wider table would recover while over-listing would drop a real
-throw. The `node` set was established by reading the globals out of Node v24 (benign introspection, no
+throw. The `node` sets were established by reading the globals out of Node (benign introspection, no
 sample executed); the `browser` and `worker` sets are the web-platform globals every implementation of
 those scopes exposes.
 
-Each pinned host models its *current mainstream* version — the analyst asserting `-e node`/`-e browser`
-is asserting a present-day runtime, so recently standardized globals (`fetch`, `structuredClone`,
-`navigator` under Node) are treated as present; a sample targeting an older engine is not the case a pin
-serves. `worker` models a *dedicated* worker: its present set carries the dedicated-worker surface
-(`XMLHttpRequest`, the nested `Worker` constructor), which a service worker does not share, so `-e worker`
-is the pin for a dedicated worker rather than a service worker.
+The analyst asserting `-e node` does not know which version of Node a sample meets, so `node` models
+every major version of Node that is not end-of-life: a name is certainly present or certainly absent
+only where all of them agree, and a property their global objects may hold is one any of them holds.
+Globals every such version has (`fetch`, `structuredClone`, `navigator`) are present, and
+`sessionStorage`, which only the newer ones have, is neither. `browser` models a present-day
+browser, so recently standardized globals are treated as present there. `worker` models a
+*dedicated* worker: its present set carries the dedicated-worker surface (`XMLHttpRequest`, the
+nested `Worker` constructor), which a service worker does not share, so `-e worker` is the pin for a
+dedicated worker rather than a service worker.
 """
 from __future__ import annotations
 
@@ -238,7 +241,7 @@ _NODE_GLOBALS = frozenset({
     'Intl',
 })
 """
-Global names a current Node exposes beyond `GUARANTEED_GLOBALS`, read out of Node v24. `global` is Node's
+Global names every Node that is not end-of-life exposes beyond `GUARANTEED_GLOBALS`. `global` is Node's
 same-realm global-object alias. The CommonJS wrapper locals `require`, `module`, `exports`, `__dirname`,
 and `__filename` are deliberately absent: they are injected into a CommonJS file's function scope rather
 than being properties of the global object, and an ES module does not see them at all, so whether a bare
@@ -361,8 +364,6 @@ _NODE_ABSENT = frozenset({
     'location',
     'history',
     'screen',
-    'localStorage',
-    'sessionStorage',
     'alert',
     'confirm',
     'prompt',
@@ -373,13 +374,14 @@ _NODE_ABSENT = frozenset({
     'angular',
 })
 """
-Well-known browser globals a bare read of which is certain to throw under Node, read out of Node
-v24 as `typeof` `'undefined'`, and two a page gets from a library it loads: the `define` of an AMD
-loader and AngularJS's `angular`, which code built to run anywhere probes before it hands itself to
-them. `navigator` is deliberately absent from this set: Node exposes it, so it is a present name,
-not an absent one — the trap a `typeof` fold must not fall into. The set is used only to fold
-`typeof <name>` to `'undefined'` under `-e node`; a name neither provided nor listed here stays
-unknown.
+Well-known browser globals a bare read of which is certain to throw under every Node that is not
+end-of-life, each `typeof` `'undefined'` there, and two a page gets from a library it loads: the
+`define` of an AMD loader and AngularJS's `angular`, which code built to run anywhere probes before
+it hands itself to them. `navigator` is deliberately absent from this set: Node exposes it, so it is
+a present name, not an absent one — the trap a `typeof` fold must not fall into. So are the web
+storage globals: Node 26 defines `sessionStorage`, and a `localStorage` that is an object when
+Node starts with `--localstorage-file`. The set is used only to fold `typeof <name>` to
+`'undefined'` under `-e node`; a name neither provided nor listed here stays unknown.
 """
 
 NODE_BUILTIN_MODULES = frozenset({
@@ -389,12 +391,6 @@ NODE_BUILTIN_MODULES = frozenset({
     '_http_incoming',
     '_http_outgoing',
     '_http_server',
-    '_stream_duplex',
-    '_stream_passthrough',
-    '_stream_readable',
-    '_stream_transform',
-    '_stream_wrap',
-    '_stream_writable',
     '_tls_common',
     '_tls_wrap',
     'assert',
@@ -457,9 +453,11 @@ NODE_BUILTIN_MODULES = frozenset({
     'node:test/reporters',
 })
 """
-The modules Node's `require` loads from itself rather than from a file, read out of Node v24 as
-`require('module').builtinModules`. A name with the `node:` prefix is one Node loads only under that
-prefix; every other one it also loads with the prefix.
+The modules Node's `require` loads from itself rather than from a file in every Node that is not
+end-of-life, each one `require('module').isBuiltin` accepts there. A name with the `node:` prefix
+is one Node loads only under that prefix; every other one it also loads with the prefix. A module
+only some of them load from themselves is left out: Node 26 no longer has `_stream_wrap`, so a
+`require` of it there loads a package of that name.
 """
 
 NODE_MODULES_THAT_RUN_CODE = frozenset({
@@ -584,7 +582,9 @@ def _load_host_globals() -> dict[str, _HostGlobals]:
     The properties of the global object of each host, read out of it and shipped as
     `js-globals.json`: a browser window and a dedicated worker of a current Chromium, and Node.
     The names a wallet added to the window read (`cardano`, `ethereum`, `solana`, `web3`) are left
-    out. Each maps the name of a property to what it is (`HostPropertyKind`).
+    out. Each maps the name of a property to what it is (`HostPropertyKind`). The entry of Node
+    holds every property the global object of some Node that is not end-of-life holds; a property
+    only a version that reached its end holds stays, which keeps at most a fold.
     """
     with datapath('js-globals.json').open('rb') as fp:
         data = loads(fp.read())

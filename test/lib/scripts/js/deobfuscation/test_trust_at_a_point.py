@@ -8,6 +8,7 @@ from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_e
 from test.lib.scripts.js.ledger import (
     FileProgram,
     Reading,
+    Unpinned,
     a_program,
     each_reading_still_prints,
     node_prints_what_each_row_pins,
@@ -336,8 +337,8 @@ A_METHOD_CALL_ON_A_LITERAL_THE_PROGRAM_MAY_REPLACE = {
         a_program("""
             String.prototype[Symbol.split] = function () { return ["pwn"]; }; console.log("a|b".split("|"));globalThis[process.argv.length > 99 ? "a" : "b"] = 2;
             """),
-        prints('[ \'pwn\' ]'),
-        prints('[ \'pwn\' ]'),
+        Unpinned.NODE_VERSIONS_DISAGREE,
+        Unpinned.NODE_VERSIONS_DISAGREE,
         HostEnvironment.node,
     ),
     'split defined by defineProperty': FileProgram(
@@ -368,8 +369,8 @@ A_METHOD_CALL_ON_A_LITERAL_THE_PROGRAM_MAY_REPLACE = {
         a_program("""
             Object.prototype[Symbol.split] = function () { return ["pwn"]; }; console.log("a|b".split("|"));String.prototype[process.argv.length > 99 ? "x" : "split"] = function () { return []; };
             """),
-        prints('[ \'pwn\' ]'),
-        prints('[ \'pwn\' ]'),
+        Unpinned.NODE_VERSIONS_DISAGREE,
+        Unpinned.NODE_VERSIONS_DISAGREE,
         HostEnvironment.node,
     ),
     'split through an alias before, a runtime-keyed String write after': FileProgram(
@@ -392,8 +393,8 @@ A_METHOD_CALL_ON_A_LITERAL_THE_PROGRAM_MAY_REPLACE = {
         a_program("""
             Object.prototype[Symbol.replace] = function () { return "pwn"; }; console.log("abc".replace("b", "x"));String.prototype[process.argv.length > 99 ? "x" : "split"] = function () { return []; };
             """),
-        prints('pwn'),
-        prints('pwn'),
+        Unpinned.NODE_VERSIONS_DISAGREE,
+        Unpinned.NODE_VERSIONS_DISAGREE,
         HostEnvironment.node,
     ),
 }
@@ -414,16 +415,16 @@ A_METHOD_REPLACED_THROUGH_A_SYMBOL_OR_THE_PROTOTYPE_OF_A_LITERAL = {
         a_program("""
             Object.prototype[Symbol.split] = function () { return ["pwn"]; }; console.log("a|b".split("|"));globalThis[process.argv.length > 99 ? "a" : "b"] = 2;
             """),
-        prints('[ \'pwn\' ]'),
-        prints('[ \'pwn\' ]'),
+        Unpinned.NODE_VERSIONS_DISAGREE,
+        Unpinned.NODE_VERSIONS_DISAGREE,
         HostEnvironment.node,
     ),
     'Symbol.split on Object.prototype, without a surface': FileProgram(
         a_program("""
             Object.prototype[Symbol.split] = function () { return ["pwn"]; }; console.log("a|b".split("|"));
             """),
-        prints('[ \'pwn\' ]'),
-        prints('[ \'pwn\' ]'),
+        Unpinned.NODE_VERSIONS_DISAGREE,
+        Unpinned.NODE_VERSIONS_DISAGREE,
         HostEnvironment.node,
     ),
     'split written through an alias of String.prototype': FileProgram(
@@ -438,8 +439,8 @@ A_METHOD_REPLACED_THROUGH_A_SYMBOL_OR_THE_PROTOTYPE_OF_A_LITERAL = {
         a_program("""
             Object.prototype[Symbol.replace] = function () { return "pwn"; }; console.log("abc".replace("b", "x"));globalThis[process.argv.length > 99 ? "a" : "b"] = 2;
             """),
-        prints('pwn'),
-        prints('pwn'),
+        Unpinned.NODE_VERSIONS_DISAGREE,
+        Unpinned.NODE_VERSIONS_DISAGREE,
         HostEnvironment.node,
     ),
     'a write through __proto__ of a literal': FileProgram(

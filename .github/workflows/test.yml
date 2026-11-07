@@ -18,6 +18,18 @@ jobs:
       matrix:
         python-version: ['3.11', '3.13']
         os: [windows-latest, macos-15, ubuntu-latest]
+        node-version: ['26']
+        include:
+          - python-version: '3.13'
+            os: ubuntu-latest
+            node-version: '24'
+            tests: test/lib/scripts/js
+            compiled: 'false'
+          - python-version: '3.13'
+            os: ubuntu-latest
+            node-version: '22'
+            tests: test/lib/scripts/js
+            compiled: 'false'
     steps:
       - name: Debug Logging
         run: |
@@ -43,11 +55,15 @@ jobs:
         with:
           py: ${{ matrix.python-version }}
           os: ${{ matrix.os }}
+          node: ${{ matrix.node-version }}
       - name: Run Tests
         uses: ./.github/actions/test/
         with:
           py: ${{ matrix.python-version }}
           os: ${{ matrix.os }}
+          node: ${{ matrix.node-version }}
+          tests: ${{ matrix.tests || 'test' }}
+          compiled: ${{ matrix.compiled || 'true' }}
 
   audit:
     name: audit dependencies
@@ -112,6 +128,7 @@ jobs:
       with:
         py: '3.13'
         os: windows-latest
+        node: '26'
     - name: Install Coverage Dependencies
       run: |
         python -m uv pip install --python $env:CIPY pytest pytest-cov
@@ -119,10 +136,10 @@ jobs:
       uses: actions/cache/restore@v6
       with:
         path: .pytest_cache/d/node
-        key: node-answers-Windows-${{ github.run_id }}-${{ github.run_attempt }}
+        key: node-answers-Windows-node26-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
-          node-answers-Windows-${{ github.run_id }}-
-          node-answers-Windows-
+          node-answers-Windows-node26-${{ github.run_id }}-
+          node-answers-Windows-node26-
     - name: Run tests and collect coverage
       run: '"%CIPY%" -m pytest --disable-warnings --cov-config=.coveragerc --cov refinery --cov-report=term --cov-report=xml -n=4 --dist=worksteal test 2>nul'
       shell: cmd
