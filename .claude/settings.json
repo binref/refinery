@@ -7,6 +7,7 @@
       "Edit(scripts/**)",
       "Edit(temp/**)",
       "Bash(mkdir *)",
+      "Bash(fnm *)",
       "Bash(rm temp/*)",
       "Bash(rm -f temp/*)",
       "Bash(rm -r temp/*)",
