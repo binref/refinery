@@ -750,6 +750,40 @@ class TestPs1EnvironmentVariableFolding(TestPs1):
         result = self._deobfuscate("[Environment]::GetEnvironmentVariable('CUSTOM_VAR')")
         self.assertIn('GetEnvironmentVariable', result)
 
+    @backlog
+    def test_a_default_the_script_overwrote_is_not_read_back_by_name(self):
+        self._assertDeobfuscatesToOneOf(
+            """
+                $env:ComSpec = 'x'
+                Write-Output ([Environment]::GetEnvironmentVariable('ComSpec'))
+            """,
+            """
+                $env:ComSpec = 'x'
+                Write-Output ([Environment]::GetEnvironmentVariable('ComSpec'))
+            """,
+            """
+                $env:ComSpec = 'x'
+                Write-Output $env:ComSpec
+            """,
+        )
+
+    @backlog
+    def test_a_default_the_script_overwrote_by_method_is_not_read_back(self):
+        self._assertDeobfuscatesToOneOf(
+            """
+                [Environment]::SetEnvironmentVariable('ComSpec', 'x')
+                Write-Output $env:ComSpec
+            """,
+            """
+                [Environment]::SetEnvironmentVariable('ComSpec', 'x')
+                Write-Output $env:ComSpec
+            """,
+            """
+                $env:ComSpec = 'x'
+                Write-Output $env:ComSpec
+            """,
+        )
+
 
 class TestPs1HashtableLookup(TestPs1):
 

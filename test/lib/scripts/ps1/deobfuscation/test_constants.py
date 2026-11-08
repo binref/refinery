@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import opportunity
+from test import backlog, opportunity, todo
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.analysis.values import render
@@ -12,7 +12,9 @@ from refinery.lib.scripts.ps1.deobfuscation.constants import (
     _PS1_DEFAULT_FACTS,
     _PS1_DEFAULT_VARIABLES,
 )
+from refinery.lib.scripts.ps1.options import Ps1DeobfuscationOptions
 from refinery.lib.scripts.ps1.parser import Ps1Parser
+from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
 
 class TestPs1ConstantInlining(TestPs1):
@@ -790,6 +792,14 @@ class TestPs1AConstantInterpolatesAsTheTextItRendersTo(TestPs1):
 
 class TestPs1ALaunchDependentDefaultIsNotInvented(TestPs1):
 
+    @todo
+    def test_the_session_name_depends_on_how_the_script_was_launched(self):
+        self._assertUnchanged('Write-Host $env:SessionName', Ps1ConstantInlining)
+
+    @backlog
+    def test_a_name_the_host_does_not_define_is_not_given_a_processor_count(self):
+        self._assertUnchanged('Write-Host $env:NumberOfProcessors', Ps1ConstantInlining)
+
     def test_a_read_of_a_script_path_name_passes_through_untouched(self):
         for source in (
             'Write-Host $PSCommandPath',
@@ -951,3 +961,39 @@ class TestPs1ASecondNameIsNotACopyWhereUnreadableCodeRunsAfterIt(TestPs1):
             '$y = $x',
             self._deobfuscate('$x = 1, 2, 3; $y = $x; Invoke-Expression $c; Write-Output $x'),
         )
+
+
+class TestPs1TheEnvironmentDriveHoldsTextOnlyWhereEveryHostAgreesOnIt(TestPs1):
+
+    _SOURCE = cleandoc("""
+        $env:Q = 'x'
+        if ($env:Q) { Write-Output 'y' }
+    """)
+
+    def test_the_folding_model_inlines_the_read_and_drops_the_store(self):
+        ast = Ps1Parser(self._SOURCE).parse()
+        Ps1ConstantInlining().visit(ast)
+        self.assertEqual(Ps1Synthesizer().convert(ast), cleandoc("""
+            if ('x') {
+              Write-Output 'y'
+            }
+        """))
+
+    def test_the_preserving_model_keeps_the_store_and_the_read(self):
+        ast = Ps1Parser(self._SOURCE).parse()
+        transform = Ps1ConstantInlining()
+        transform.options = Ps1DeobfuscationOptions(preserve_environment=True)
+        transform.visit(ast)
+        self.assertEqual(Ps1Synthesizer().convert(ast), cleandoc("""
+            $env:Q = 'x'
+            if ($env:Q) {
+              Write-Output 'y'
+            }
+        """))
+
+    def test_a_store_of_a_type_whose_text_depends_on_the_host_keeps_the_read(self):
+        ast = Ps1Parser('$env:Q = 5.5; Write-Output ($env:Q + 1)').parse()
+        Ps1ConstantInlining().visit(ast)
+        self.assertEqual(
+            Ps1Synthesizer().convert(ast),
+            '$env:Q = 5.5\nWrite-Output ($env:Q + 1)')

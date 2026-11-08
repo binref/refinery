@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import wontfix, opportunity
+from test import backlog, opportunity, todo, wontfix
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import (
@@ -63,9 +63,35 @@ class TestPs1UnusedVariableRemoval(TestPs1):
         source = "$env:Q = 'v'\nStart-Process notepad"
         ast = Ps1Parser(source).parse()
         transform = Ps1UnusedVariableRemoval()
-        transform.options = Ps1DeobfuscationOptions(preserve_env_stores=True)
+        transform.options = Ps1DeobfuscationOptions(preserve_environment=True)
         transform.visit(ast)
         self.assertEqual(Ps1Synthesizer().convert(ast), source)
+
+    @todo
+    def test_an_environment_store_read_back_by_method_is_not_unread(self):
+        self._assertDeobfuscatesToOneOf(
+            """
+                $env:Q = 'v'
+                Write-Output ([Environment]::GetEnvironmentVariable('Q'))
+            """,
+            """
+                $env:Q = 'v'
+                Write-Output ([Environment]::GetEnvironmentVariable('Q'))
+            """,
+            """
+                $env:Q = 'v'
+                Write-Output $env:Q
+            """,
+        )
+
+    @backlog
+    def test_an_environment_store_a_listing_of_the_environment_reads_is_not_unread(self):
+        for listing in (
+            'Write-Output (Get-ChildItem Env:)',
+            'Write-Output ([Environment]::GetEnvironmentVariables())',
+        ):
+            with self.subTest(listing):
+                self._assertKept(F"$env:Q = 'v'\n{listing}")
 
     def test_parameter_preserved(self):
         result = self._deobfuscate(

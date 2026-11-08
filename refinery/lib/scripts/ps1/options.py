@@ -74,22 +74,29 @@ class Ps1DeobfuscationOptions:
     The assumption is about code that cannot be read, not about every way a script can reach the
     world.
 
-    *preserve_env_stores* selects what a store to an environment variable that no statement in the
-    file reads is worth. No liveness question inside the tree can settle it, because the environment
-    is a device every child process reads rather than a variable of the script: an `$env:K = 'v'`
-    ahead of a `Start-Process` is how a script hands that child a value.
+    *preserve_environment* selects what the environment is to the script: data of it, or its
+    interface. No liveness question inside the tree can settle it, because the environment is a
+    device every child process reads rather than a variable of the script: an `$env:K = 'v'` ahead
+    of a `Start-Process` is how a script hands that child a value.
 
-    - Stripping model (default, `preserve_env_stores=False`): such a store is deleted as declared
-      noise, which is what an obfuscator pads a script with; a real store ahead of a child process
-      is kept only where something in the file reads it back.
+    - Folding model (default, `preserve_environment=False`): an environment variable is data like
+      a script variable, so a read folds to the value the environment holds and a store nothing
+      reads any more goes — which is what lets a payload stashed in an environment variable
+      decode.
 
-    - Preserving model (`preserve_env_stores=True`): no such store is deleted, for an input whose
-      environment writes are the artifact — a dropper passing values to its payload, or a fragment
+    - Preserving model (`preserve_environment=True`): the environment is the script's interface.
+      Every store to it stays, and a read of a value the script stored stays a read, because a
+      spelling this analysis does not read — a `Set-Content` onto the drive, a .NET method — may
+      have rewritten the name between the store and the read. This is the answer for an input whose
+      environment writes are the artifact: a dropper passing values to its payload, or a fragment
       of a larger script whose children read what this file sets.
+
+    A default of a name the script never writes — `$env:ComSpec`, `$env:OS` — folds under both
+    models: no store of the script's is undone by reading it.
     """
     preserve_bare_output: bool = False
     trust_eval: bool = False
-    preserve_env_stores: bool = False
+    preserve_environment: bool = False
 
 
 def bare_output_is_preserved(options: object | None) -> bool:
@@ -111,11 +118,11 @@ def eval_is_trusted(options: object | None) -> bool:
     return isinstance(options, Ps1DeobfuscationOptions) and options.trust_eval
 
 
-def env_stores_are_preserved(options: object | None) -> bool:
+def environment_is_preserved(options: object | None) -> bool:
     """
-    Whether *options* asks for a store to an environment variable that no statement in the file
-    reads to be kept. Any value that is not a `Ps1DeobfuscationOptions` — a transformer run
-    standalone, or one with no options attached — defaults to the stripping model, which is what
-    the pipeline does unless told.
+    Whether *options* asks for the environment to be kept as the script's interface: every store to
+    it, and every read of a value the script stored. Any value that is not a
+    `Ps1DeobfuscationOptions` — a transformer run standalone, or one with no options attached —
+    defaults to the folding model, which is what the pipeline does unless told.
     """
-    return isinstance(options, Ps1DeobfuscationOptions) and options.preserve_env_stores
+    return isinstance(options, Ps1DeobfuscationOptions) and options.preserve_environment

@@ -333,6 +333,18 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'function it is handed to, so the failing cast ends the call and the snippet writes the '
         'error and `after`; the output writes `f-rest` and `after`. Which bodies a call runs '
         'under a preference is the interprocedural milestone (cluster 1f).',
+    "$env:zq = 'ab'; Set-Content env:zq 'cd'; Write-Output $env:zq":
+        'The read is folded to `ab` where the snippet writes `cd`: `Set-Content` rewrites the '
+        'name on the drive, and a store made through a command the analysis does not read is '
+        'read as storing nothing.',
+    "$env:zq = 'ab'; Remove-Item env:*; Write-Output ($env:zq + 1)":
+        'The read is folded to `ab1` where the snippet writes `1`: `Remove-Item env:*` removes '
+        'every name the drive holds, so the name reads `$null`, which the addition converts to '
+        'the empty string.',
+    "[Environment]::SetEnvironmentVariable('ComSpec', 'x'); Write-Output $env:ComSpec":
+        'The read is folded to the path the machine gave `ComSpec` where the snippet writes `x`: '
+        'the .NET method writes the name of the host process, and no `$env:` occurrence spells '
+        'the store, so the name is read as never written and the ambient default answers.',
 }
 
 
@@ -4699,6 +4711,46 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
 
     def test_no_behaviour_entry_is_both_deliberate_and_a_defect(self):
         self.assertEqual(sorted(set(BEHAVIOUR_DIVERGENCES) & set(BEHAVIOUR_DEFECTS)), [])
+
+
+#: The defects the preserving model heals, which `TestPs1DeobfuscationPreservesTheEnvironmentInterface`
+#: measures the output of. Each is a write the analysis does not read — a `Set-Content` onto the drive,
+#: a `Remove-Item` over every name it holds — between a store and a read of the same name: that model
+#: keeps both the store and the read, so the write the snippet makes is the one the output makes. The
+#: .NET method row of the same group is not among them, for the model never sees that write at all:
+#: the name it writes is read as never written, and the ambient default answers in either model.
+PRESERVED_ENVIRONMENT_HEALS: frozenset[str] = frozenset({
+    "$env:zq = 'ab'; Set-Content env:zq 'cd'; Write-Output $env:zq",
+    "$env:zq = 'ab'; Remove-Item env:*; Write-Output ($env:zq + 1)",
+})
+
+
+@unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
+class TestPs1DeobfuscationPreservesTheEnvironmentInterface(Ps1OracleTest):
+    """
+    The same promise as `TestPs1DeobfuscationPreservesBehaviour`, made of the mode that keeps the
+    environment as the script's interface: `dps1 -e`. That model keeps every `$env:` store and every
+    read of a stored name, so the defects it heals are the ones whose rewrite drops a write a command
+    the analysis does not read makes, and the rest of the defect table stays its cost.
+    """
+
+    def test_each_output_behaves_like_its_input(self):
+        snippets = (*corpus.BEHAVIOURS, *corpus.CLAIMS)
+        measured = dict(zip(snippets, behaviours(snippets)))
+        deobfuscated = rewritten_by(self.ldu('dps1', strict=True, env=True), snippets)
+        rewritten = [snippet for snippet in snippets if deobfuscated(snippet) != snippet]
+        changed = sorted(
+            snippet
+            for snippet, after in zip(rewritten, behaviours(rewritten, deobfuscated))
+            if after != measured[snippet]
+        )
+        expected = (
+            set(BEHAVIOUR_DEFECTS) | set(BEHAVIOUR_DIVERGENCES)
+        ) - PRESERVED_ENVIRONMENT_HEALS
+        self.assertEqual(changed, sorted(expected))
+
+    def test_every_healed_environment_defect_is_a_defect_of_the_folding_model(self):
+        self.assertEqual(sorted(PRESERVED_ENVIRONMENT_HEALS - set(BEHAVIOUR_DEFECTS)), [])
 
 
 #: The corpus snippets the tool emits unchanged. See `TestPs1EverySnippetIsStillRewritten`.

@@ -22,9 +22,11 @@ relaxation: those entries read the command tables of a Windows PowerShell 5.1 in
 the oracle's whole subject. The rule they are still held to is the rest of it, and the reasoning for
 the exception is recorded where they are defined.
 
-A `$env:` assignment is admitted under that rule and a registry or `[Environment]::SetEnvironment`
-write is not, because the two do different things: `$env:z = '7'` writes a variable of the host
-process, which is discarded when it exits, and is therefore exactly as short-lived as `$x = '7'`.
+A `$env:` assignment is admitted under that rule and a registry write is not, because the two do
+different things: `$env:z = '7'` writes a variable of the host process, which is discarded when it
+exits, and is therefore exactly as short-lived as `$x = '7'`. The two-argument
+`[Environment]::SetEnvironmentVariable` writes the process alone and is admitted for the same
+reason; the three-argument form with a `Machine` or `User` target writes the registry and is not.
 Nothing here may write an environment that outlives the process.
 """
 from __future__ import annotations
@@ -414,6 +416,12 @@ BEHAVIOURS: tuple[str, ...] = (
     '$x = 1, 2, 3; function f { , $script:x }; $y = f; $y[0] = 9; Write-Output $x[0]',
     '$x = 1, 2, 3; $a, $b = $x, 9; [Array]::Reverse($a); Write-Output $x',
 
+    #: What the environment drive is asked to preserve the behaviour of. The drive converts what a
+    #: store hands it to the text it holds, so each row stores a value whose text is one on every
+    #: host and reads back the string the conversion left: a number, a boolean, a char, a string, a
+    #: value read through a type constraint, an element of a loop. An array never settles, an empty
+    #: string removes the name rather than holding one, and the last two rows carry the same
+    #: constraint shapes in a script variable, where no drive converts what the store hands it.
     "$env:zq = 5; Write-Output ($env:zq + 1)",
     "$env:zq = $true; Write-Output ($env:zq + 1)",
     "$env:zq = [char]'a'; Write-Output ($env:zq + 1)",
@@ -431,6 +439,26 @@ BEHAVIOURS: tuple[str, ...] = (
     "$env:zq = 'x'; Remove-Item env:zq; Write-Output ($null -eq $env:zq)",
     "[string]$q = '5'; $q -= 1; Write-Output ($q + 1)",
     "[string]$q = ''; foreach ($q in 1, 2) { Write-Output ($q + 1) }",
+
+    #: What the drive's hold on a type is asked to preserve the behaviour of. `Get-Member` lists the
+    #: members of the string the drive holds and not of the value handed to it, whichever type that
+    #: value was: an integer, an element a loop stores, a value under a cast, a string. The last row
+    #: stores a Double, whose text depends on the host, so the store settles nowhere and the script
+    #: stays as written.
+    '$env:zq = 5; Write-Output ($env:zq | Get-Member)[3].Name',
+    'foreach ($env:zq in 1, 2) { Write-Output ($env:zq | Get-Member)[3].Name }',
+    '[int]$env:zq = 5; Write-Output ($env:zq | Get-Member)[3].Name',
+    "$env:zq = 'a'; Write-Output ($env:zq | Get-Member)[3].Name",
+    "foreach ($env:zq in 'a', 'b') { Write-Output ($env:zq | Get-Member)[3].Name }",
+    '$env:zq = 5.5; Write-Output ($env:zq + 1)',
+
+    #: What a write the analysis does not read is asked to preserve the behaviour of. A `Set-Content`
+    #: onto the drive rewrites the name, `Remove-Item env:*` removes every name the drive holds, and
+    #: a .NET method writes a name no `$env:` occurrence spells; the read after each observes the
+    #: value the write left, which the fold of a stored value does not.
+    "$env:zq = 'ab'; Set-Content env:zq 'cd'; Write-Output $env:zq",
+    "$env:zq = 'ab'; Remove-Item env:*; Write-Output ($env:zq + 1)",
+    "[Environment]::SetEnvironmentVariable('ComSpec', 'x'); Write-Output $env:ComSpec",
 
     #: What an array handed on without being put anywhere is asked to preserve the behaviour of.
     #: Each hands the array itself to a second name — a comma-return, a switch that writes it as one

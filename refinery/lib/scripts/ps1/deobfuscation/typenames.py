@@ -8,6 +8,7 @@ from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.calls import Ps1CallReader, call_reader
 from refinery.lib.scripts.ps1.analysis.commands import CommandKind
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
+from refinery.lib.scripts.ps1.analysis.environment import reads_a_stored_environment_name
 from refinery.lib.scripts.ps1.analysis.values import (
     Ps1VariableTyping,
     make_string_literal,
@@ -55,6 +56,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1StringLiteral,
     Ps1Variable,
 )
+from refinery.lib.scripts.ps1.options import environment_is_preserved
 
 _OBJECT = 'System.Object'
 
@@ -401,6 +403,23 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
             return False
         return (denotation.target or '').lower() == 'get-member'
 
+    def _folds_a_read_the_environment_owns(self, pipeline: Ps1Pipeline) -> bool:
+        """
+        Whether folding *pipeline* would remove a read of an `$env:` name the script stores, which
+        the preserving model keeps: the environment is then the script's interface, and a spelling
+        this analysis does not read — a `Set-Content` onto the drive, a .NET method — may have
+        rewritten the name between the store and the read. The receiver is the expression piped
+        into `Get-Member`, which is the read the fold would take with it.
+        """
+        if not environment_is_preserved(self.options) or self._flow is None:
+            return False
+        if len(pipeline.elements) < 2:
+            return False
+        source = pipeline.elements[-2]
+        if not isinstance(source, Ps1PipelineElement) or source.expression is None:
+            return False
+        return reads_a_stored_environment_name(source.expression, self._flow)
+
     def _try_resolve_get_member_index_name(
         self,
         node: Ps1MemberAccess,
@@ -419,6 +438,8 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
             return None
         get_member = _pipeline_get_member(inner)
         if get_member is None or not self._runs_get_member(get_member):
+            return None
+        if self._folds_a_read_the_environment_owns(inner):
             return None
         kind = _members_listed(get_member)
         if kind is None:

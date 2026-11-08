@@ -56,6 +56,8 @@ _REMOVE_VARIABLE = frozenset({'remove-variable', 'rv'})
 _NEW_VARIABLE = frozenset({'new-variable', 'nv'})
 _SET_VARIABLE = frozenset({'set-variable', 'sv', 'set'})
 _GET_VARIABLE = frozenset({'get-variable', 'gv'})
+_SET_CONTENT = frozenset({'set-content', 'sc'})
+_REMOVE_ITEM = frozenset({'remove-item', 'ri', 'rm', 'del', 'erase'})
 _GET_PROCESS = frozenset({'get-process', 'gps', 'ps'})
 _INVOKE_COMMAND = frozenset({'invoke-command', 'icm'})
 _FOREACH_OBJECT = frozenset({'foreach-object', '%'})
@@ -2664,6 +2666,41 @@ class TestPs1AStoreNoOccurrenceOfTheNameSpellsIsStillSeen(_Ps1Ledger):
         tree = self._deobfuscated_tree(source)
         kept = len(_occurrences(tree, 'x')) >= len(_occurrences(Ps1Parser(source).parse(), 'x'))
         self._assertWrites(tree, [['9,2,3']], [['1,2,3']], kept)
+
+
+class TestPs1TheEnvironmentDriveIsWrittenByMoreThanItsAssignments(_Ps1Ledger):
+
+    @todo
+    def test_set_content_onto_the_drive_rewrites_the_name(self):
+        tree = self._deobfuscated_tree("$env:zq = 'ab'; Set-Content env:zq 'cd'; Write-Host $env:zq")
+        self.assertTrue(
+            _invocations(tree, _SET_CONTENT), 'the command that rewrites the name was dropped')
+        self.assertNotIn(
+            'ab', _printed_values(tree), 'the read was folded past the write the command makes')
+
+    @todo
+    def test_remove_item_over_the_drive_removes_the_name(self):
+        tree = self._deobfuscated_tree(
+            "$env:zq = 'ab'; Remove-Item env:*; Write-Host ($env:zq + 1)")
+        self.assertTrue(
+            _invocations(tree, _REMOVE_ITEM), 'the command that removes the name was dropped')
+        self.assertNotIn(
+            'ab1', _printed_values(tree), 'the read was folded past the removal')
+
+    @todo
+    def test_a_dot_net_method_writes_a_name_no_occurrence_spells(self):
+        tree = self._deobfuscated_tree(
+            "[Environment]::SetEnvironmentVariable('ComSpec', 'x'); Write-Host $env:ComSpec")
+        self.assertTrue(
+            _static_calls(tree, 'environment', 'setenvironmentvariable'),
+            'the call that writes the name was dropped')
+        self.assertTrue(
+            any(
+                isinstance(printed, Ps1Variable) and _binding_key(printed) == 'env:comspec'
+                for printed in _printed_expressions(tree)
+            ),
+            'the environment read was replaced by a value the deobfuscator cannot know',
+        )
 
 
 class TestPs1ABodyReadsTheNameItsCallerBinds(_Ps1Ledger):

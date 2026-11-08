@@ -125,7 +125,7 @@ def deobfuscate(
     remove_junk: bool = True,
     preserve_bare_output: bool = False,
     trust_eval: bool = False,
-    preserve_env_stores: bool = False,
+    preserve_environment: bool = False,
 ) -> int:
     """
     Apply all available deobfuscators to the input. When `remove_junk` is `True`, a second pass
@@ -145,8 +145,9 @@ def deobfuscate(
     by the stores its readers can still see, and a store nothing reads is not among them;
     `preserve_bare_output` decides one question inside it — whether a statement whose only effect is
     to write a value to the success output stream may be deleted — and leaves the rest of the pass
-    working; `preserve_env_stores` decides a second one — whether a store to an environment
-    variable that no statement in the file reads may be deleted; `trust_eval` decides nothing about
+    working; `preserve_environment` decides a second one — whether the environment is the script's
+    interface, so that every store to it stays and a read of a value the script stored stays a
+    read; `trust_eval` decides nothing about
     any pass, and instead changes what the analysis every pass reads believes about code it cannot
     see. See `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions` for what each costs and
     the assumption it rests on.
@@ -164,7 +165,7 @@ def deobfuscate(
     options = Ps1DeobfuscationOptions(
         preserve_bare_output=preserve_bare_output,
         trust_eval=trust_eval,
-        preserve_env_stores=preserve_env_stores,
+        preserve_environment=preserve_environment,
     )
     # One analysis cache is built over the script and shared across both phases; the `tree_version`
     # counter keeps it consistent even across the two pipeline runs, so a transform in either phase

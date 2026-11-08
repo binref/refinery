@@ -28,8 +28,10 @@ class dps1(IterativeDeobfuscator):
             'or a fragment of a larger script, where such a value can reach a caller rather than '
             'only the console.'))] = False,
         env: Param[bool, Arg.Switch('-e', '--env', help=(
-            'Keep every assignment to an environment variable, including ones an obfuscator may '
-            'have injected as noise and no statement in the file reads.'))] = False,
+            'Keep the environment as the script\'s interface: every assignment to an environment '
+            'variable stays, and reads of values the script stored stay reads. Use this for a '
+            'dropper handing values to a child process, or a fragment of a larger script; without '
+            'it, an environment variable is folded like a script variable.'))] = False,
         strict: Param[bool, Arg.Switch('-s', help=(
             'Assume that unknown reflectively executed code (iex, a call through a variable) can '
             'change or read anything the rest of the script does. This cleans less junk code but '
@@ -45,7 +47,7 @@ class dps1(IterativeDeobfuscator):
             ast,
             preserve_bare_output=self.args.stdout,
             trust_eval=not self.args.strict,
-            preserve_env_stores=self.args.env,
+            preserve_environment=self.args.env,
         )
 
     def synthesize(self, ast: Ps1Script) -> str:

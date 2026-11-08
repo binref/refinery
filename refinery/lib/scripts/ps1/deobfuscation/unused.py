@@ -50,7 +50,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
 )
-from refinery.lib.scripts.ps1.options import bare_output_is_preserved, env_stores_are_preserved
+from refinery.lib.scripts.ps1.options import bare_output_is_preserved, environment_is_preserved
 
 
 class _MutationEdit(NamedTuple):
@@ -88,7 +88,7 @@ class Ps1UnusedVariableRemoval(Transformer):
 
     A store to an environment variable is removed only as declared noise — no read inside the file
     can prove it dead, because every child process reads the environment, so
-    `refinery.lib.scripts.ps1.options.env_stores_are_preserved` is what keeps it.
+    `refinery.lib.scripts.ps1.options.environment_is_preserved` is what keeps it.
 
     A store of a name the script may read where no occurrence of it stands is never dead — see
     `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache.names_may_be_read_unseen`. A script that
@@ -203,12 +203,12 @@ class Ps1UnusedVariableRemoval(Transformer):
 
         An `$env:` write is removable only under the caller's answer to whether the environment is
         part of the artifact: nothing inside the tree can prove such a store dead, because every
-        child process reads the environment, so the stripping default is a declaration that the
-        input's unread `$env:` stores are noise. `env_stores_are_preserved` holds that answer, and
+        child process reads the environment, so the folding default is a declaration that the
+        input's unread `$env:` stores are noise. `environment_is_preserved` holds that answer, and
         `refinery.lib.scripts.ps1.analysis.effects._skipped_writes` holds the same refusal for the
         trap-skip analysis, where no option is asked for it.
         """
-        keep_env = env_stores_are_preserved(self.options)
+        keep_env = environment_is_preserved(self.options)
         mutations: list[Node] = []
         seen: set[int] = set()
         for write in binding.writes:

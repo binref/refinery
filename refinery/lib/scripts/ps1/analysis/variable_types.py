@@ -19,6 +19,11 @@ from typing import TypeGuard
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1FlowUnknown, Ps1VariableFlow
+from refinery.lib.scripts.ps1.analysis.environment import (
+    ENV_DRIVE_TYPE,
+    as_the_env_drive_holds,
+    text_settles_everywhere,
+)
 from refinery.lib.scripts.ps1.analysis.model import Binding, is_mutated_in_place
 from refinery.lib.scripts.ps1.analysis.values import (
     Ps1Calls,
@@ -28,7 +33,12 @@ from refinery.lib.scripts.ps1.analysis.values import (
     render,
     resolve_expression_type,
 )
-from refinery.lib.scripts.ps1.ast import assignment_of, stored_value, target_constraints
+from refinery.lib.scripts.ps1.ast import (
+    Ps1StoredValue,
+    assignment_of,
+    stored_value,
+    target_constraints,
+)
 from refinery.lib.scripts.ps1.data import named_type, resolve_type
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.model import (
@@ -36,6 +46,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ArrayLiteral,
     Ps1ForEachLoop,
     Ps1HereString,
+    Ps1ScopeModifier,
     Ps1StringLiteral,
     Ps1Variable,
 )
@@ -201,12 +212,38 @@ def _origin_established_by(
     stored = stored_value(write)
     if stored is None or not isinstance(value := stored.value, Expression):
         return None
+    if write.scope is Ps1ScopeModifier.ENV:
+        return _env_store_type(write, stored)
     if stored.constraint is not None:
         converted = value_under_declared_constraint(write, value)
         return None if converted is None else _judged(converted, flow, chased, calls)
     if constraint_converts(flow.semantic.binding_of(write), value):
         return None
     return _judged(value, flow, chased, calls)
+
+
+def _env_store_type(write: Ps1Variable, stored: Ps1StoredValue) -> Ps1TypeName | None:
+    """
+    The type a store to an `$env:` name establishes: the drive's String where the drive model
+    settles what the store leaves, and nothing where it does not — the type layer and the value
+    layer read the one drive model, so a type is never answered for a store whose value the value
+    layer kept a read of.
+
+    A cast on the target converts the value before the drive does, so a constrained store is asked
+    of the value under its cast and the cast answers nothing of its own: `[int]$env:zq = 5` leaves
+    the String `'5'`, where answering the cast's Int32 typed the name out of the drive's hands.
+
+    The empty string removes the name, so a store that settles to one establishes no origin: the
+    read after it observes `$null`, which `as_the_env_drive_holds` already refuses to model.
+    """
+    value = stored.value
+    if stored.constraint is not None:
+        if not isinstance(value, Expression):
+            return None
+        value = value_under_declared_constraint(write, value)
+    if not isinstance(value, Expression):
+        return None
+    return ENV_DRIVE_TYPE if as_the_env_drive_holds(value) is not None else None
 
 
 def _judged(
@@ -285,7 +322,14 @@ def _established_by(write: Node, flow: Ps1VariableFlow) -> Ps1TypeName | None:
         return _assigned_type(write, flow)
     parent = write.parent
     if isinstance(parent, Ps1ForEachLoop) and parent.variable is write:
-        return _element_type(parent.iterable)
+        element = _element_type(parent.iterable)
+        if write.scope is Ps1ScopeModifier.ENV:
+            # Each element the loop stores is converted by the drive on its way in, so the answer
+            # is the drive's String where the element type's conversion settles and nothing where
+            # it does not: an element type whose text depends on the host leaves the name holding
+            # a string this cannot name.
+            return ENV_DRIVE_TYPE if text_settles_everywhere(element) else None
+        return element
     return None
 
 
@@ -301,6 +345,8 @@ def _assigned_type(write: Ps1Variable, flow: Ps1VariableFlow) -> Ps1TypeName | N
     stored = stored_value(write)
     if stored is None:
         return None
+    if write.scope is Ps1ScopeModifier.ENV:
+        return _env_store_type(write, stored)
     if stored.constraint is not None:
         return resolve_type(stored.constraint)
     if not isinstance(value := stored.value, Expression):

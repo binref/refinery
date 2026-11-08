@@ -181,6 +181,59 @@ class TestPs1RealWorldSmall(TestUnitBase):
             """
         ))
 
+    def test_an_environment_store_and_its_read_fold_like_a_script_variable(self):
+        data = b"$env:WX_MODE = 'f'; if ($env:WX_MODE -eq 'f') { Write-Output 'armed' }"
+        self.assertEqual(data | self.load() | str, "Write-Output 'armed'")
+
+    def test_the_env_flag_keeps_an_environment_store_and_its_read(self):
+        data = b"$env:WX_MODE = 'f'; if ($env:WX_MODE -eq 'f') { Write-Output 'armed' }"
+        self.assertEqual(data | self.load(env=True) | str, inspect.cleandoc(
+            """
+            $env:WX_MODE = 'f'
+            if ($env:WX_MODE -Eq 'f') {
+              Write-Output 'armed'
+            }
+            """
+        ))
+
+    def test_an_env_stashed_payload_decodes_without_the_env_flag(self):
+        data = (
+            b"$env:zq = 'aGVsbG8='; "
+            b"Write-Output ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:zq)))"
+        )
+        self.assertEqual(data | self.load() | str, "Write-Output 'hello'")
+
+    def test_an_env_stashed_payload_stays_as_written_with_the_env_flag(self):
+        data = (
+            b"$env:zq = 'aGVsbG8='; "
+            b"Write-Output ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:zq)))"
+        )
+        self.assertEqual(data | self.load(env=True) | str, inspect.cleandoc(
+            """
+            $env:zq = 'aGVsbG8='
+            Write-Output ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:zq)))
+            """
+        ))
+
+    def test_folding_of_byte_array_with_encoding(self):
+        code = (
+            """$bnf=[char]77+[char]112+[char]80+[char]114+[char]101+[char]102+[char]101+[char]114+[char]101+[char]110+["""
+            """char]99+[char]101;$hkhf2=[System.Text.Encoding]::ASCII.GetString([byte[]]@([char]80,[char]85,[char]65,[c"""
+            """har]80,[char]114,[char]111,[char]116,[char]101,[char]99,[char]116,[char]105,[char]111,[char]110));iex('A"""
+            """dd-'+$bnf+' -ExclusionPath $env:localAppdata,$env:ProgramFiles');iex('Set-'+$bnf+' -'+$hkhf2+' Disabled'"""
+            """);iex('Remove-'+$bnf+' -ExclusionExtension exe -ExclusionProcess ''*.exe'',exe -ExclusionPath $env:Temp'"""
+            """);iex('Set-'+$bnf+' -SubmitSamplesConsent NeverSend')"""
+        )
+        goal = inspect.cleandoc(
+            R"""
+            Add-MpPreference -ExclusionPath ($env:LocalAppData, 'C:\Program Files')
+            Set-MpPreference -PUAProtection Disabled
+            Remove-MpPreference -ExclusionExtension exe -ExclusionProcess ('*.exe', 'exe') -ExclusionPath $env:Temp
+            Set-MpPreference -SubmitSamplesConsent NeverSend
+            """
+        )
+        self.assertEqual(code | self.load() | str, goal)
+
     def test_iex_gzip_payload(self):
         code = b"Write-Host 'world'"
         compressed = gzip.compress(code)

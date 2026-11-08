@@ -15,6 +15,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
+from refinery.lib.scripts.ps1.analysis.environment import as_the_env_drive_holds
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.model import (
     NARROWER_QUALIFIERS,
@@ -33,7 +34,6 @@ from refinery.lib.scripts.ps1.analysis.objects import Ps1ObjectFlow
 from refinery.lib.scripts.ps1.analysis.separator import coerced_text_at
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
-    Ps1Constant,
     Ps1Fact,
     char_fact,
     convert,
@@ -65,7 +65,6 @@ from refinery.lib.scripts.ps1.data import (
     SHAPE_MEMBERS,
     VARIABLE_TYPES,
     is_enum,
-    named_type,
     resolve_type,
 )
 from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlans
@@ -100,6 +99,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
     Ps1WhileLoop,
 )
+from refinery.lib.scripts.ps1.options import environment_is_preserved
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 from refinery.lib.scripts.win32const import DEFAULT_ENVIRONMENT_TEMPLATE
 
@@ -253,32 +253,6 @@ def _ancestor_past_parens(node: Node) -> Node | None:
     while isinstance(parent, Ps1ParenExpression):
         parent = parent.parent
     return parent
-
-
-#: The type every value an `$env:` store is converted to on its way in, which is the string the
-#: drive holds and nothing else.
-_ENV_DRIVE_TYPE = named_type('System.String')
-
-
-def _as_the_env_drive_holds(value: Node) -> Expression | None:
-    """
-    The literal an `$env:` store leaves behind, which is the string the drive converted the value
-    to rather than the value itself: measured, `$env:q = 5` reads back `'5'` and `$env:q = $true`
-    reads back `'True'`. A stored empty string removes the name rather than holding one, so a read
-    after it observes `$null` — a removal this refuses to model rather than answer with the empty
-    string the conversion computes. `None` as well where the conversion is not one the domain
-    settles, which a collection never is: the string it becomes needs the session's `$OFS`.
-    """
-    outcome = convert(read(value), _ENV_DRIVE_TYPE)
-    if outcome.may_throw or outcome.value is UNKNOWN:
-        return None
-    rendered = render(outcome.value)
-    if rendered is None:
-        return None
-    fact = read(rendered)
-    if isinstance(fact, Ps1Constant) and fact.type == _ENV_DRIVE_TYPE and fact.payload == '':
-        return None
-    return rendered
 
 
 def _shape_member_of(var: Ps1Variable) -> str | None:
@@ -487,14 +461,14 @@ class _ConstantTable:
     fold and `if ($c) { $x = $y }` refuse.
     """
 
-    def __init__(self, root: Node):
+    def __init__(self, root: Node, options: object | None = None):
         self.by_write: dict[int, Expression] = {}
         self.ambient: dict[str, Expression] = {}
         self.values: defaultdict[str, list[Expression]] = defaultdict(list)
-        self._collect_writes(root)
+        self._collect_writes(root, options)
         self._collect_ambient(root)
 
-    def _collect_writes(self, root: Node):
+    def _collect_writes(self, root: Node, options: object | None):
         """
         Record the value of every plain assignment to one variable. A multi-assignment is not
         recorded even where the value a slot is handed is known: the assignment is removed once
@@ -520,16 +494,21 @@ class _ConstantTable:
                 continue
             value = unwrap_parens(stored.value)
             if target.scope is Ps1ScopeModifier.ENV:
-                # The drive converts what a store hands it (`_as_the_env_drive_holds`), so the value
+                # Under the preserving model the environment is the script's interface, so an
+                # `$env:` store is not recorded here at all: a read of it keeps the name, and the
+                # store is not this pass's to remove. A read of a name the script never writes is
+                # different — that one the ambient table still answers, in either model.
+                if environment_is_preserved(options):
+                    continue
+                # The drive converts what a store hands it (`as_the_env_drive_holds`), so the value
                 # recorded is the string it leaves and a store whose conversion settles not at all
                 # is the refusal — the read keeps the name, and the store is not this pass's to
-                # remove. A read of a name the script never writes is different: that one the
-                # ambient table answers. A store that declares a constraint is refused whole, for
-                # the cast it carries runs before the drive converts and the composition of the
-                # two is not modelled here.
+                # remove. A store that declares a constraint is refused whole, for the cast it
+                # carries runs before the drive converts and the composition of the two is not
+                # modelled here.
                 if stored.constraint is not None:
                     continue
-                value = _as_the_env_drive_holds(value)
+                value = as_the_env_drive_holds(value)
                 if value is None:
                     continue
             self.by_write[id(target)] = value
@@ -682,7 +661,7 @@ class _Inlining:
         if write.scope is Ps1ScopeModifier.ENV:
             # What an accumulating write leaves in an `$env:` name passes through the drive like
             # any other store, so the literal is the string of the value the fold computed.
-            folded = _as_the_env_drive_holds(folded)
+            folded = as_the_env_drive_holds(folded)
             if folded is None:
                 return None
         # A constraint the binding carries converts what the write stores, and none of the three
@@ -729,7 +708,7 @@ class Ps1ConstantInlining(Transformer):
         # script once per inlined variable.
         cache = model_cache(self, node)
         objects = cache.object_flow
-        table = _ConstantTable(node)
+        table = _ConstantTable(node, self.options)
         if not table:
             return None
         unseen = cache.names_may_be_read_unseen
