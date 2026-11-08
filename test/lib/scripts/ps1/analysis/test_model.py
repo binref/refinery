@@ -94,6 +94,19 @@ class TestPs1SemanticModel(TestBase):
         binding = model.script_scope.children[0].bindings['y']
         self.assertFalse(binding.is_dead)
 
+    def test_a_store_to_an_env_name_hands_no_object_to_a_second_name(self):
+        model = self._model('$x = 1, 2, 3\n$env:zq = $x\n[Array]::Reverse($x)')
+        x = model.script_scope.bindings['x']
+        env = model.script_scope.bindings['env:zq']
+        self.assertEqual(model.names_for_one_object(x), (x,))
+        self.assertEqual(model.names_for_one_object(env), (env,))
+
+    def test_a_store_to_a_plain_name_hands_its_object_to_a_second_name(self):
+        model = self._model('$x = 1, 2, 3\n$y = $x\n[Array]::Reverse($x)')
+        x = model.script_scope.bindings['x']
+        y = model.script_scope.bindings['y']
+        self.assertEqual(sorted(model.names_for_one_object(x), key=lambda b: b.name), [x, y])
+
     def test_class_property_declaration_is_not_a_read(self):
         model = self._model('$x = 1\nclass C { [int]$x }')
         self.assertTrue(model.script_scope.bindings['x'].is_dead)

@@ -20,6 +20,7 @@ from refinery.lib.scripts.ps1.deobfuscation.deadcode import Ps1DeadCodeEliminati
 from refinery.lib.scripts.ps1.deobfuscation.emulator import (
     Ps1ForEachPipeline,
     Ps1FunctionEvaluator,
+    Ps1PrefixEvaluator,
     Ps1SubExpressionEvaluator,
 )
 from refinery.lib.scripts.ps1.deobfuscation.expandable import Ps1ExpandableStringHoist
@@ -73,6 +74,7 @@ _emulate = TransformerGroup(
     Ps1ForEachPipeline,
     Ps1FunctionEvaluator,
     Ps1SubExpressionEvaluator,
+    Ps1PrefixEvaluator,
 )
 
 _normalize = TransformerGroup(
@@ -137,7 +139,10 @@ def deobfuscate(
     legitimate deobfuscation, only a runaway loop. Pass `0` to disable the bound entirely.
 
     The four switches are independent. `remove_junk` decides whether that second pass runs at all,
-    so turning it off also keeps every dead store and uncalled function;
+    so turning it off also keeps every dead store and uncalled function — except a store to a
+    name no reader observes, in a top-level prefix the emulator ran to completion
+    (`refinery.lib.scripts.ps1.deobfuscation.emulator.Ps1PrefixEvaluator`): that prefix is replaced
+    by the stores its readers can still see, and a store nothing reads is not among them;
     `preserve_bare_output` decides one question inside it — whether a statement whose only effect is
     to write a value to the success output stream may be deleted — and leaves the rest of the pass
     working; `preserve_env_stores` decides a second one — whether a store to an environment

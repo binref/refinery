@@ -128,6 +128,17 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             'Invoke-Expression $stager',
         )
 
+    @todo
+    def test_a_store_a_literal_iex_payload_reads_survives_the_fold(self):
+        source = cleandoc("""
+            $y = $($x = 'abc'; 'out')
+            iex 'Write-Output $x'
+        """)
+        self.assertEqual(
+            self._deobfuscate(source, trust_eval=True),
+            "Write-Output 'abc'",
+        )
+
     def test_a_read_of_a_name_written_outside_refuses(self):
         self._assertUnchanged(cleandoc("""
             $q = 5
@@ -454,7 +465,6 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             Write-Output $b
         """), Ps1SubExpressionEvaluator)
 
-    @todo
     def test_a_retained_new_object_byte_array_refuses(self):
         self._assertUnchanged(cleandoc("""
             $len = $($b = New-Object byte[] 2

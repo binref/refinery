@@ -1518,6 +1518,110 @@ TYPE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
             'OUT\tSystem.UInt32\t1294967295',
             'OUT\tSystem.UInt32\t1294967295',
         ),
+    '$t = +$null; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Int32\t0',
+            'OUT\tSystem.Int32\t0',
+        ),
+    '$t = +$true; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Int32\t1',
+            'OUT\tSystem.Int32\t1',
+        ),
+    '$t = +[char]65; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Int32\t65',
+            'OUT\tSystem.Int32\t65',
+        ),
+    '$t = +[byte]200; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Int32\t200',
+            'OUT\tSystem.Int32\t200',
+        ),
+    '$t = +[uint16]5; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Int32\t5',
+            'OUT\tSystem.Int32\t5',
+        ),
+    '$t = +[uint32]1; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.UInt32\t1',
+            'OUT\tSystem.UInt32\t1',
+        ),
+    '$t = +[int64]5; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Int64\t5',
+            'OUT\tSystem.Int64\t5',
+        ),
+    '$t = +[single]1.5; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Double\t1.5',
+            'OUT\tSystem.Double\t1.5',
+        ),
+    '$t = +[decimal]1.5; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Decimal\t1.5',
+            'OUT\tSystem.Decimal\t1.5',
+        ),
+    '$t = +72; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Int32\t72',
+            'OUT\tSystem.Int32\t72',
+        ),
+    '$t = +1.5; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Double\t1.5',
+            'OUT\tSystem.Double\t1.5',
+        ),
+    "$t = +'80'; Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.Int32\t80',
+            'OUT\tSystem.Int32\t80',
+        ),
+    "$t = +'0x50'; Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.Int32\t80',
+            'OUT\tSystem.Int32\t80',
+        ),
+    "$t = +'1.5'; Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.Double\t1.5',
+            'OUT\tSystem.Double\t1.5',
+        ),
+    "$t = +'1e3'; Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.Double\t1000',
+            'OUT\tSystem.Double\t1000',
+        ),
+    "$t = +'5L'; Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.Int64\t5',
+            'OUT\tSystem.Int64\t5',
+        ),
+    "$t = +' 5 '; Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.Int32\t5',
+            'OUT\tSystem.Int32\t5',
+        ),
+    "$t = +'-0.0'; Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.Double\t0',
+            'OUT\tSystem.Double\t0',
+        ),
+    "$t = +'abc'; Write-Output (,$t); Write-Output $t": (
+        'ERROR\tInvalidCastFromStringToInteger\tSystem.Management.Automation.RuntimeException',
+        'OUT\t\t<null>',
+        'OUT\t\t<null>',
+    ),
+    "$t = +'0b10'; Write-Output (,$t); Write-Output $t": (
+        'ERROR\tInvalidCastFromStringToInteger\tSystem.Management.Automation.RuntimeException',
+        'OUT\t\t<null>',
+        'OUT\t\t<null>',
+    ),
+    '$t = +@(); Write-Output (,$t)': (
+        'ERROR\tMethodNotFound\tSystem.Management.Automation.RuntimeException',
+        'OUT\t\t<null>',
+    ),
     "$t = 'ab' * 0xFFFFFFFF; Write-Output (,$t); Write-Output $t": (
         'ERROR\tSystem.ArgumentOutOfRangeException\tSystem.ArgumentOutOfRangeException',
         'OUT\t\t<null>',
@@ -4221,6 +4325,25 @@ TYPE_DEFECTS: dict[str, str] = {
         'as the Int32 literals a numeral is, so the values and everything they print agree and the '
         'recorded type of each item does not. The same spelling the fold produces is what the '
         'direct call folds to, so the divergence is the renderer\'s and not the fold\'s.',
+    "$a = New-Object byte[] '0b10'; $t = $a.Count; Write-Output (,$t); Write-Output $t":
+        'The constructor rejects the numeral a based literal is on 5.1 and writes the error the '
+        'transcript starts with, and the value the row measures after it is the zero of an empty '
+        'array. The interpreter reads the numeral the base its spelling states, so the fold answers '
+        'the two elements it counts and the error record alone is the difference.',
+    "$a = New-Object byte[] '0o10'; $t = $a.Count; Write-Output (,$t); Write-Output $t":
+        'The constructor rejects the numeral a based literal is on 5.1 and writes the error the '
+        'transcript starts with, and the value the row measures after it is the zero of an empty '
+        'array. The interpreter reads the numeral the base its spelling states, so the fold answers '
+        'the eight elements it counts and the error record alone is the difference.',
+    "$t = 1 + '1e400'; Write-Output (,$t); Write-Output $t":
+        'The operator converts its right operand to the number its left is on 5.1, and a numeral '
+        'beyond what a Double holds is the InvalidCastFromStringToInteger the row measures. The '
+        'interpreter concatenates where the host converts, so the fold answers the String the '
+        'digits spell.',
+    "$t = 16 + 'file'; Write-Output (,$t); Write-Output $t":
+        'The operator converts its right operand to the number its left is on 5.1, and a word is '
+        'the InvalidCastFromStringToInteger the row measures. The interpreter concatenates where '
+        'the host converts, so the fold answers the String the digits spell.',
 }
 
 #: Which words 5.1 read as a command name, for each script whose corruption entry turns on where a

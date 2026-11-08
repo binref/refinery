@@ -1412,6 +1412,13 @@ class Ps1SemanticModel:
         for write in self._every_write():
             if write.may_define or not isinstance(write.node, Ps1Variable) or write.role.through:
                 continue
+            if write.node.scope is Ps1ScopeModifier.ENV:
+                # The `env:` drive stores the string it converts the value to and never the object
+                # itself, so a write to it hands no object to a second name: measured, the array a
+                # `Reverse` turns around after `$env:q = $x` reaches `$x` alone and the drive keeps
+                # `1 2 3`. Skipping the link here is what keeps the mutation from being read
+                # through the name.
+                continue
             stored = stored_value(write.node)
             if stored is None:
                 continue

@@ -898,6 +898,64 @@ def _measured_negation_fact(expression: str) -> Ps1Fact:
     return _witnessed_fact(_measured_negation(expression))
 
 
+def _affirmation(expression: str) -> Ps1UnaryExpression | None:
+    statement = Ps1Parser(F'$t = {expression}').parse().body[0]
+    if not isinstance(statement, Ps1ExpressionStatement):
+        return None
+    assignment = statement.expression
+    if not isinstance(assignment, Ps1AssignmentExpression):
+        return None
+    applied = assignment.value
+    if not isinstance(applied, Ps1UnaryExpression) or applied.operator != '+':
+        return None
+    return applied
+
+
+def _affirmation_rows() -> dict[str, tuple[str, ...]]:
+    rows: dict[str, tuple[str, ...]] = {}
+    for row, transcript in TYPE_TRANSCRIPTS.items():
+        match = _OPERATION_ROW.fullmatch(row)
+        if match is None:
+            continue
+        expression = match.group('expression')
+        if _affirmation(expression) is not None:
+            rows[expression] = transcript
+    return rows
+
+
+AFFIRMATION_ROWS: dict[str, tuple[str, ...]] = _affirmation_rows()
+
+THROWN_AFFIRMATIONS: tuple[str, ...] = tuple(
+    expression for expression, transcript in AFFIRMATION_ROWS.items() if _throws(transcript)
+)
+
+#: The measured affirmations whose operand `read` declines, each for a reason the operand's own
+#: reader owns: a `Single` names no constant of the domain's, and a cast to a type a literal
+#: spells — `Int64`, `Decimal` — is a conversion rather than a spelling, so the domain's
+#: unary answer for one is a refusal and not a wrong value.
+UNREAD_AFFIRMATIONS: tuple[str, ...] = ('+[int64]5', '+[decimal]1.5', '+[single]1.5')
+
+
+def _affirmed(expression: str) -> Ps1Outcome:
+    applied = _affirmation(expression)
+    assert applied is not None, expression
+    return apply_unary(applied.operator, read_operand(applied.operand))
+
+
+def _affirmed_as_addition(expression: str) -> Ps1Outcome:
+    applied = _affirmation(expression)
+    assert applied is not None, expression
+    return apply('+', Ps1Constant(INT32, 0), read_operand(applied.operand))
+
+
+def _measured_affirmation(expression: str) -> tuple[str, str]:
+    return _printed(AFFIRMATION_ROWS[expression][0])
+
+
+def _measured_affirmation_fact(expression: str) -> Ps1Fact:
+    return _witnessed_fact(_measured_affirmation(expression))
+
+
 def _coerced(text: str) -> Ps1Fact:
     coerced = _coerced_numeral(Ps1Constant(STRING, text))
     assert coerced is not None, text
@@ -922,6 +980,19 @@ NEGATED_STRINGS: tuple[str, ...] = (
     '5',
     '1kb',
     '0xabc',
+    '',
+)
+
+AFFIRMED_STRINGS: tuple[str, ...] = (
+    '80',
+    '0x50',
+    '1.5',
+    '1e3',
+    '5L',
+    ' 5 ',
+    '-0.0',
+    'abc',
+    '0b10',
     '',
 )
 
@@ -1351,7 +1422,7 @@ class TestPs1MeasuredNumerals(unittest.TestCase):
 
     def test_every_numeral_the_corpus_measures_is_selected(self):
         self.assertEqual(
-            len(_NUMERAL_ROWS), 49, 'a measured numeral was added or withdrawn')
+            len(_NUMERAL_ROWS), 51, 'a measured numeral was added or withdrawn')
         self.assertEqual(
             sorted(REFUSED), ['0xFFFFFFFFFFFFFFFFF', '1_0', '79228162514264337593543950336d'])
         self.assertEqual(
@@ -1442,7 +1513,7 @@ class TestPs1WhatCountsAsAnInteger(unittest.TestCase):
             expression: fact for expression, fact in self._integer_rows().items()
             if str(type_of(fact)) in INTEGER_TYPES
         }
-        self.assertEqual(len(rows), 29)
+        self.assertEqual(len(rows), 30)
         self.assertEqual(
             {expression: integer_of(fact) for expression, fact in rows.items()},
             {expression: int(_measured(expression)[1]) for expression in rows},
@@ -2424,7 +2495,7 @@ class TestPs1MeasuredComplement(unittest.TestCase):
         )
 
     def test_an_operator_this_does_not_answer_is_refused_rather_than_complemented(self):
-        for operator in ('-not', '!', '+', '-bxor', '-join'):
+        for operator in ('-not', '!', '-bxor', '-join'):
             with self.subTest(operator):
                 self.assertEqual(apply_unary(operator, MEASURED['0xFF']), NOTHING)
 
@@ -2556,6 +2627,103 @@ class TestPs1MeasuredNegation(unittest.TestCase):
                     _sign_of(apply('-', Ps1Constant(INT32, 0), Ps1Constant(DOUBLE, operand)).value),
                     1.0,
                 )
+
+
+class TestPs1MeasuredAffirmation(unittest.TestCase):
+
+    def test_every_measured_affirmation_is_selected(self):
+        self.assertEqual(
+            len(AFFIRMATION_ROWS), 19, 'a measured affirmation was added or withdrawn'
+        )
+        self.assertEqual(
+            sorted(THROWN_AFFIRMATIONS),
+            sorted(("+'abc'", "+'0b10'", '+@()')),
+        )
+        self.assertEqual(sorted(set(UNREAD_AFFIRMATIONS) - set(AFFIRMATION_ROWS)), [])
+
+    def test_a_measured_affirmation_the_domain_pins_is_pinned_to_the_fact_the_host_printed(self):
+        pinned = {
+            expression: _affirmed(expression)
+            for expression in AFFIRMATION_ROWS
+            if expression not in UNREAD_AFFIRMATIONS
+            and isinstance(_affirmed(expression).value, Ps1Constant)
+        }
+        self.assertEqual(
+            pinned,
+            {
+                expression: Ps1Outcome(NEVER, _measured_affirmation_fact(expression))
+                for expression in pinned
+            },
+        )
+
+    def test_the_affirmations_left_unpinned_are_the_throws_and_the_unread_operands(self):
+        self.assertEqual(
+            sorted(
+                expression for expression in AFFIRMATION_ROWS
+                if not isinstance(_affirmed(expression).value, Ps1Constant)
+            ),
+            sorted((*THROWN_AFFIRMATIONS, *UNREAD_AFFIRMATIONS)),
+        )
+
+    def test_a_single_operand_is_refused_rather_than_widened_by_a_guess(self):
+        self.assertEqual(_affirmed('+[single]1.5'), NOTHING)
+
+    def test_an_affirmation_the_host_threw_on_names_no_value(self):
+        self.assertEqual(
+            {
+                expression: _names_a_value(_affirmed(expression).value)
+                for expression in THROWN_AFFIRMATIONS
+            },
+            {expression: False for expression in THROWN_AFFIRMATIONS},
+        )
+
+    def test_an_affirmation_of_a_text_that_spells_no_number_certainly_throws(self):
+        self.assertTrue(_affirmed("+ 'abc'").certainly_throws)
+
+    def test_no_measured_affirmation_is_answered_with_a_type_the_host_did_not_print(self):
+        named = {
+            expression: type_of(_affirmed(expression).value)
+            for expression in AFFIRMATION_ROWS
+            if type_of(_affirmed(expression).value) is not None
+        }
+        self.assertEqual(
+            named,
+            {expression: _type(_measured_affirmation(expression)[0]) for expression in named},
+        )
+
+    def test_an_affirmation_is_the_addition_against_an_int32_zero_it_is_compiled_into(self):
+        self.assertEqual(
+            {expression: _affirmed(expression) for expression in AFFIRMATION_ROWS},
+            {expression: _affirmed_as_addition(expression) for expression in AFFIRMATION_ROWS},
+        )
+
+    def test_a_floating_zero_affirms_to_a_positive_zero_rather_than_to_the_identity(self):
+        answered = apply_unary('+', Ps1Constant(DOUBLE, -0.0))
+        self.assertEqual(answered, Ps1Outcome(NEVER, Ps1Constant(DOUBLE, 0.0)))
+        self.assertEqual(_sign_of(answered.value), 1.0)
+
+    def test_a_char_operand_affirms_to_its_code_point_rather_than_to_itself(self):
+        self.assertEqual(
+            apply_unary('+', Ps1Constant(CHAR, 'A')),
+            Ps1Outcome(NEVER, Ps1Constant(INT32, 65)),
+        )
+
+    def test_a_string_operand_affirms_at_the_width_the_numeral_inside_it_takes(self):
+        affirmed = {
+            text: apply_unary('+', Ps1Constant(STRING, text)) for text in AFFIRMED_STRINGS
+        }
+        self.assertEqual(
+            {
+                text: (outcome.may_throw, type_of(outcome.value))
+                for text, outcome in affirmed.items()
+                if _coerced(text) is not UNKNOWN
+            },
+            {
+                text: (False, type_of(_coerced(text)))
+                for text in AFFIRMED_STRINGS
+                if _coerced(text) is not UNKNOWN
+            },
+        )
 
 
 class TestPs1MeasuredTruth(unittest.TestCase):
@@ -3361,7 +3529,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
 
     def test_an_expression_the_source_pins_evaluates_to_exactly_what_it_pins(self):
         compared = [site for site in SITES if read(site.node) is not UNKNOWN]
-        self.assertEqual(len(compared), 3054)
+        self.assertEqual(len(compared), 3120)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -3376,7 +3544,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             if resolve_expression_type(site.node) is not None
             and type_of(evaluate(site.node).value) is not None
         ]
-        self.assertEqual(len(compared), 3081)
+        self.assertEqual(len(compared), 3148)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -3392,7 +3560,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             if candidate_types(site.node, CLOSED_WORLD)
             and type_of(evaluate(site.node).value) is not None
         ]
-        self.assertEqual(len(compared), 3081)
+        self.assertEqual(len(compared), 3148)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -3413,12 +3581,12 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
         self.assertIn(OBJECT_ARRAY, candidate_types(_slot('[array]5'), CLOSED_WORLD))
 
     def test_a_string_the_tree_reader_spells_is_the_string_named_here(self):
-        self.assertEqual(len(STRINGS), 1774)
+        self.assertEqual(len(STRINGS), 1824)
         self.assertEqual(
             [row.source for row in STRINGS if row.named != Ps1Constant(STRING, row.text)], [])
 
     def test_the_bytes_the_array_reader_collects_are_the_numbers_the_elements_name(self):
-        self.assertEqual(len(BYTE_ARRAYS), 128)
+        self.assertEqual(len(BYTE_ARRAYS), 129)
         self.assertEqual(
             [row.source for row in BYTE_ARRAYS if list(row.collected) != row.payloads], [])
 
@@ -3437,7 +3605,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             match.group('expression') for row, transcript in TYPE_TRANSCRIPTS.items()
             if (match := _ROW_PATTERN.fullmatch(row)) is not None and _throws(transcript)
         ]
-        self.assertEqual(len(threw), 49)
+        self.assertEqual(len(threw), 51)
         self.assertEqual(
             [expression for expression in threw
              if collect_byte_array(_slot(expression)) is not None], [])
@@ -3447,7 +3615,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
         self.assertEqual(collect_byte_array(_slot('[byte[]][char[]](80, 85)')), b'PU')
 
     def test_a_literal_node_and_the_domain_read_one_spelling_as_one_number(self):
-        self.assertEqual(len(NUMERALS), 535)
+        self.assertEqual(len(NUMERALS), 541)
         self.assertEqual(
             sorted({one.raw for one in NUMERALS if one.named.payload != one.reported}),
             sorted(MISREAD_SPELLINGS),
@@ -3474,7 +3642,7 @@ class TestPs1EvaluateIsNoStrongerThanItsSteps(unittest.TestCase):
 
     def test_a_step_that_can_be_consulted_is_the_whole_answer(self):
         consulted = [step for step in STEPS if step.consultable]
-        self.assertEqual(len(consulted), 583)
+        self.assertEqual(len(consulted), 590)
         self.assertEqual(
             [step.source for step in consulted if step.answered.value != step.step.value], [])
 
@@ -3492,7 +3660,7 @@ class TestPs1EvaluateIsNoStrongerThanItsSteps(unittest.TestCase):
 
     def test_an_array_names_a_value_only_where_every_element_is_one(self):
         named = [row for row in ARRAYS if row.named]
-        self.assertEqual(len(named), 168)
+        self.assertEqual(len(named), 169)
         self.assertEqual([row.source for row in named if not row.elements_named], [])
 
     def test_an_element_that_names_only_a_type_leaves_the_array_unknown(self):
@@ -3517,7 +3685,7 @@ class TestPs1EvaluateCarriesAThrowUp(unittest.TestCase):
             for child in site.node.children()
             if isinstance(child, Expression) and evaluate(child).may_throw
         ]
-        self.assertEqual(len(compared), 2480)
+        self.assertEqual(len(compared), 2549)
         self.assertEqual(
             [site.source for site, _ in compared if not evaluate(site.node).may_throw], [])
 

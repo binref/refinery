@@ -109,17 +109,17 @@ class _Coverage(NamedTuple):
 #: into a refusal moves a number here rather than quietly leaving the comparison below.
 COVERAGE: dict[str, _Coverage] = {
     ''               : _Coverage(5, 2),
-    'System.Boolean' : _Coverage(173, 99),
+    'System.Boolean' : _Coverage(173, 97),
     'System.Byte'    : _Coverage(5, 5),
     'System.Char'    : _Coverage(8, 6),
-    'System.Double'  : _Coverage(40, 21),
+    'System.Double'  : _Coverage(45, 25),
     'System.Int16'   : _Coverage(1, 0),
-    'System.Int32'   : _Coverage(112, 77),
-    'System.Int64'   : _Coverage(27, 20),
+    'System.Int32'   : _Coverage(121, 84),
+    'System.Int64'   : _Coverage(29, 21),
     'System.SByte'   : _Coverage(2, 0),
     'System.String'  : _Coverage(66, 24),
     'System.UInt16'  : _Coverage(2, 0),
-    'System.UInt32'  : _Coverage(4, 0),
+    'System.UInt32'  : _Coverage(5, 0),
     'System.UInt64'  : _Coverage(2, 0),
 }
 
@@ -127,7 +127,7 @@ COVERAGE: dict[str, _Coverage] = {
 #: population. `Decimal` is not a `float` — 5.1 computes it exactly and to a different precision —
 #: and `Single` is not one either, so a row carrying one has nothing here to be right about.
 TYPES_OUTSIDE_THE_CURRENCY: dict[str, int] = {
-    'System.Decimal' : 56,
+    'System.Decimal' : 57,
     'System.Single'  : 1,
 }
 
@@ -138,7 +138,7 @@ COLLECTION_ROWS: int = 18
 
 #: How many measured rows 5.1 produced no value for, by stepping over the erroring statement or by
 #: stopping the run. The population `ANSWERED_THROWS` is drawn from.
-THROWING_ROWS: int = 49
+THROWING_ROWS: int = 51
 
 #: Where the interpreter computes a value 5.1 did not. Each entry is a constant the deobfuscator
 #: folds wrongly into the script it emits.
@@ -215,16 +215,8 @@ DIVERGENCES: dict[str, _Divergence] = {
     '[char]65 -lt [char]97'              : _Divergence(True, False),
     '[char]97 -lt [char]66'              : _Divergence(False, True),
 
-    # Two texts 5.1 counts equal by collating them rather than by their code points. The
-    # interpreter compares the code points, which no expansion of the sharp s reaches.
-    "'ss' -eq [char]0x00DF"              : _Divergence(True, False),
-
     # `-match` is not Python's `re.IGNORECASE`, which folds the long s onto s where .NET does not.
     "'ſ' -match 's'"                     : _Divergence(False, True),
-
-    # A conversion answers inside the width of its target or not at all: a hexadecimal string
-    # reaches Int32 as a bit pattern.
-    "[int]'0xFFFFFFFF'"                  : _Divergence(-1, 4294967295),
 
     # `$null` on the left leaves the type to the right operand, so nothing plus a Boolean is that
     # Boolean rather than the number the interpreter converts it to.
@@ -234,22 +226,10 @@ DIVERGENCES: dict[str, _Divergence] = {
 #: Where 5.1 produced no value and the interpreter answered anyway, with the value it answered. Each
 #: entry is an expression the host has none for, folded into a constant the script could never hold.
 ANSWERED_THROWS: dict[str, _Value] = {
-    # A conversion whose source does not fit its target throws. The interpreter answers the
-    # oversized number for an integer width and the code point Python allows for a Char, each a
-    # value the script could never have held.
-    '[int]2147483648'               : 2147483648,
-    '[char]65536'                   : chr(65536),
-
     # A right operand 5.1 reads as the left's number and refuses: an overflowing numeral and a word.
     # The interpreter leaves each a string beside the number and concatenates the two.
     "1 + '1e400'"                   : '11e400',
     "16 + 'file'"                   : '16file',
-
-    # `Convert.ToInt32` reads a based string as unsigned and rejects the sign in front of it.
-    "[Convert]::ToInt32('-10', 16)" : -16,
-
-    # A repeat count of four billion is a string .NET will not allocate.
-    "'ab' * 0xFFFFFFFF"             : '',
 }
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import cleandoc
 
-from test import lines_executed, wontfix, opportunity, todo, backlog
+from test import lines_executed, wontfix, opportunity, backlog
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib import scripts
@@ -467,7 +467,6 @@ class TestPs1AScriptThatRunsNothingKeepsWhatItPrints(TestPs1):
             'b'
         """)
 
-    @todo
     def test_a_value_beside_a_store_into_an_array_the_script_built_is_kept(self):
         self._assertDeobfuscatesToOneOf("""
             $a = 1, 2

@@ -1582,7 +1582,7 @@ class TestPs1RuntimeSurfacesThatAnswerTheSameInEverySession(TestPs1):
             }
             $x = f
         """)
-        self.assertEqual(self._deobfuscate(source), '$x = 0')
+        self.assertEqual(self._deobfuscate(source), '$x = [byte]0')
 
     def test_the_args_a_call_fills_count_the_arguments_it_was_given(self):
         source = cleandoc("""

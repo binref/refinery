@@ -33,6 +33,7 @@ from refinery.lib.scripts.ps1.analysis.objects import Ps1ObjectFlow
 from refinery.lib.scripts.ps1.analysis.separator import coerced_text_at
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
+    Ps1Constant,
     Ps1Fact,
     char_fact,
     convert,
@@ -64,6 +65,7 @@ from refinery.lib.scripts.ps1.data import (
     SHAPE_MEMBERS,
     VARIABLE_TYPES,
     is_enum,
+    named_type,
     resolve_type,
 )
 from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlans
@@ -251,6 +253,32 @@ def _ancestor_past_parens(node: Node) -> Node | None:
     while isinstance(parent, Ps1ParenExpression):
         parent = parent.parent
     return parent
+
+
+#: The type every value an `$env:` store is converted to on its way in, which is the string the
+#: drive holds and nothing else.
+_ENV_DRIVE_TYPE = named_type('System.String')
+
+
+def _as_the_env_drive_holds(value: Node) -> Expression | None:
+    """
+    The literal an `$env:` store leaves behind, which is the string the drive converted the value
+    to rather than the value itself: measured, `$env:q = 5` reads back `'5'` and `$env:q = $true`
+    reads back `'True'`. A stored empty string removes the name rather than holding one, so a read
+    after it observes `$null` — a removal this refuses to model rather than answer with the empty
+    string the conversion computes. `None` as well where the conversion is not one the domain
+    settles, which a collection never is: the string it becomes needs the session's `$OFS`.
+    """
+    outcome = convert(read(value), _ENV_DRIVE_TYPE)
+    if outcome.may_throw or outcome.value is UNKNOWN:
+        return None
+    rendered = render(outcome.value)
+    if rendered is None:
+        return None
+    fact = read(rendered)
+    if isinstance(fact, Ps1Constant) and fact.type == _ENV_DRIVE_TYPE and fact.payload == '':
+        return None
+    return rendered
 
 
 def _shape_member_of(var: Ps1Variable) -> str | None:
@@ -491,6 +519,19 @@ class _ConstantTable:
             if _constant_value_key(stored.value) is None:
                 continue
             value = unwrap_parens(stored.value)
+            if target.scope is Ps1ScopeModifier.ENV:
+                # The drive converts what a store hands it (`_as_the_env_drive_holds`), so the value
+                # recorded is the string it leaves and a store whose conversion settles not at all
+                # is the refusal — the read keeps the name, and the store is not this pass's to
+                # remove. A read of a name the script never writes is different: that one the
+                # ambient table answers. A store that declares a constraint is refused whole, for
+                # the cast it carries runs before the drive converts and the composition of the
+                # two is not modelled here.
+                if stored.constraint is not None:
+                    continue
+                value = _as_the_env_drive_holds(value)
+                if value is None:
+                    continue
             self.by_write[id(target)] = value
             self.values[key].append(value)
 
@@ -631,10 +672,28 @@ class _Inlining:
             return None
         if accumulation is not None:
             operator, right = accumulation
-            return folded_binary(previous, operator, right)
-        if delta is not None:
-            return folded_increment(previous, delta)
-        return value_after(write, previous)
+            folded = folded_binary(previous, operator, right)
+        elif delta is not None:
+            folded = folded_increment(previous, delta)
+        else:
+            folded = value_after(write, previous)
+        if folded is None:
+            return None
+        if write.scope is Ps1ScopeModifier.ENV:
+            # What an accumulating write leaves in an `$env:` name passes through the drive like
+            # any other store, so the literal is the string of the value the fold computed.
+            folded = _as_the_env_drive_holds(folded)
+            if folded is None:
+                return None
+        # A constraint the binding carries converts what the write stores, and none of the three
+        # ways a write changes a value in place rather than replacing it is exempt: measured,
+        # `[string]$q = '5'; $q -= 1` leaves the String `'4'`, where the fold of `'5' - 1` is the
+        # Int32 `4`. Converting it here is not this pass's to settle — which writes a constraint
+        # declared elsewhere reaches is the ordering question `constraint_converts` already stands
+        # on for a plain write — so the value is refused the same way a plain write's is.
+        if constraint_converts(binding, folded):
+            return None
+        return folded
 
     def _reaches_the_default(self, var: Ps1Variable, key: str) -> bool:
         """

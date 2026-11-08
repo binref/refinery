@@ -442,10 +442,7 @@ class TestPs1NumberedVariableNames(TestPs1):
                     Set-Variable {written} 'payload'
                     ${denoted}
                 """), remove_junk=False)
-                self.assertEqual(result.strip(), cleandoc(F"""
-                    ${written} = 'payload'
-                    ${denoted}
-                """))
+                self.assertEqual(result.strip(), F'${denoted}')
 
     def test_the_assignment_a_write_becomes_targets_the_text_the_number_was_written_as(self):
         for source, expected in (
