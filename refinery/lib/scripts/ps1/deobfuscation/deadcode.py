@@ -820,7 +820,10 @@ class Ps1DeadCodeElimination(Transformer):
             if cond_val is _NO_LITERAL:
                 # A non-constant clause condition might match at runtime; cannot resolve statically.
                 return None
-            if switch_matches(value, cond_val, case_sensitive=node.case_sensitive):
+            match = switch_matches(value, cond_val, case_sensitive=node.case_sensitive)
+            if match is None:
+                return None
+            if match:
                 body = _switch_clause_body(block.body, dispatch, calls, shadowed)
                 if body is None:
                     return None

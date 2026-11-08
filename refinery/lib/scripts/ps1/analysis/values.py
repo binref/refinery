@@ -994,6 +994,21 @@ def pattern_at(target: Ps1TypeName, magnitude: int) -> Ps1Fact:
         return UNKNOWN
 
 
+#: What `[Convert]::To<integer>(string)` reads, which is neither what a cast reads nor what Python's
+#: `int` does: an optional sign and decimal digits. Measured — `'+7'` is 7, `'007'` is 7 and `'-5'`
+#: is -5, while `'0x10'`, `'1_0'`, `'0b1010'`, `'7.5'`, `'1e3'`, `'1,000'` and `''` each throw.
+CONVERT_SIGNED = re.compile(r'[+-]?[0-9]+\Z')
+
+#: What `[Convert]::To<integer>(string, base)` reads for a base that is not ten: the digits of that
+#: base and nothing else, and only base sixteen takes a `0x` prefix — `'0b1010'` at base two throws.
+#: A sign throws and so does whitespace, so neither is written here.
+CONVERT_PATTERN: dict[int, re.Pattern[str]] = {
+    2: re.compile(r'[01]+\Z'),
+    8: re.compile(r'[0-7]+\Z'),
+    16: re.compile(r'(?:0[xX])?[0-9a-fA-F]+\Z'),
+}
+
+
 def text_of(fact: Ps1Fact) -> str | None:
     """
     The `String` a fact names, or `None` for a fact that names anything else. This is what a caller
@@ -1787,41 +1802,41 @@ _BNOT_WIDTH: dict[Ps1TypeName, Ps1TypeName] = {
 }
 
 
-def _negated(operand: Ps1Fact) -> Ps1Outcome:
+def _unary_arithmetic(operand: Ps1Fact, operator: str) -> Ps1Outcome:
     """
-    What `- operand` produces, from the measured unary grid and a kernel checked against it.
+    What a unary `-` or `+` produces, from the measured unary grid and a kernel checked against it.
+
+    **The kernel is the binary operation against an `Int32` zero and not a sign flip or the
+    identity**, because that is what 5.1 runs: its compiler lowers `- x` to the subtraction
+    `0 - x` and `+ x` to the addition `0 + x` and has no unary arm of its own. The two differ from
+    what a sign flip or an identity would answer on values scripts hold — `0 - 0.0` and `0 + -0.0`
+    are a positive zero where the sign the operand spelled would travel on; `- (-2147483648)` is
+    the Double 2147483648; `- [uint32]1` the Double -1; `+ [char]65` the Int32 65; `+ $true` the
+    Int32 1; and `+ [uint16]5` the Int32 5, the widening an addition with an `Int32` left performs.
 
     **A String is read as a numeral first, and the row the type comes out of is the numeral's own.**
     A coerced String keeps the type its spelling has — `'5L'` is an Int64 and `'1e3'` a Double, the
-    same reading every arithmetic operand gets — and negating it produces that type: `- '1e3'` is
-    the Double -1000, measured. The grid's `String` row names `Int32` alone because every witness
-    spelled one, so reading *that* row would stamp `- '5L'` an Int32 where a host answers an Int64.
-    A value stamped with a type the operation never had is what `_typed_result` keeps `apply` from
-    doing; moving the lookup onto the coerced fact is the same refusal spelled for one operand.
+    same reading every arithmetic operand gets — so `- '1e3'` is the Double -1000 and `+ '80'` the
+    Int32 80, measured. The grid's `String` row names `Int32` alone because every witness spelled
+    one, so reading *that* row would stamp `- '5L'` an Int32 where a host answers an Int64. A value
+    stamped with a type the operation never had is what `_typed_result` keeps `apply` from doing;
+    moving the lookup onto the coerced fact is the same refusal spelled for one operand. A numeral
+    that is none — `- 'abc'`, `+ 'abc'`, `+ '0b10'` — is the coercion's throw, which the kernel
+    reports and the grid's `String` row records, and `- ''` and `+ ''` are the Int32 0.
 
     **A cell this cannot compute a value in is refused outright rather than answered with its
     type.** The unary capture is a witnessed lower bound like every other, and there is no spanning
-    claim for the unary grid to license reading a cell as what the operation *does*.
+    claim for the unary grid to license reading a cell as what the operation *does*. A collection
+    reaches no number and `_unary_number` refuses it, which is the answer its cell carries anyway:
+    `- @()` raises a `MethodNotFound`, measured, and no type is named for the row at all.
 
-    A collection reaches no number and `_unary_number` refuses it, which is the answer its
-    cell carries anyway: `- @()` raises a `MethodNotFound`, measured, and no type is named
-    for the row at all.
-
-    **The number is subtracted from zero rather than negated**, because that is what 5.1 runs: its
-    compiler emits `- x` as the binary subtraction `0 - x` and has no unary arm for it at all. The
-    two differ on one value and it is a value scripts hold — `0 - 0.0` is a positive zero where
-    `-(0.0)` is a negative one, and a sign this domain invented travels into every quotient taken
-    from it.
-
-    A `Decimal` is subtracted like every other number, and by the same `_computed` a binary `-`
-    reaches, so the one operation is computed one way. Negating through a sign flip instead would
-    disagree with 5.1 on a zero: Python's `Decimal` has a signed zero, so it makes `- 0d` `-0` where
-    a host writes `0`.
-
-    The result reaches `_decimal_result` for the same reason every binary kernel result does: a
-    number that has left the range a `Decimal` holds is the throw a host raises, one that has
-    overflowed to an infinity is a value this domain does not carry, and one the type holds only a
-    rounding of is not a value this can report.
+    **A `Decimal` is computed by the same `_computed` a binary kernel reaches**, so the one
+    operation is computed one way — negating through a sign flip instead would disagree with 5.1
+    on a zero: Python's `Decimal` has a signed zero, so it makes `- 0d` `-0` where a host writes
+    `0` — and the result reaches `_decimal_result` for the same reason every binary kernel result
+    does: a number that has left the range a `Decimal` holds is the throw a host raises, one that
+    has overflowed to an infinity is a value this domain does not carry, and one the type holds
+    only a rounding of is not a value this can report.
     """
     coerced = _coerced_numeral(operand)
     if coerced is not None:
@@ -1829,58 +1844,15 @@ def _negated(operand: Ps1Fact) -> Ps1Outcome:
             return Ps1Outcome(ALWAYS if _coercion_is_certain_reject(operand) else MAYBE, UNKNOWN)
         operand = coerced
     source = _grid_type(operand)
-    cell = None if source is None else unary_outcome('-', source)
+    cell = None if source is None else unary_outcome(operator, source)
     if cell is None:
         return NOTHING
     number = _unary_number(operand)
     if number is None:
         return NOTHING
+    kernel = operator_module.sub if operator == '-' else operator_module.add
     try:
-        computed = _computed(operator_module.sub, 0, number)
-    except _Throws as throw:
-        return Ps1Outcome(ALWAYS if throw.certain else MAYBE, UNKNOWN)
-    if computed is None:
-        return NOTHING
-    stamped = _stamped(computed, cell.types)
-    return NOTHING if stamped is UNKNOWN else Ps1Outcome(NEVER, stamped)
-
-
-def _positivized(operand: Ps1Fact) -> Ps1Outcome:
-    """
-    What `+ operand` produces, from the measured unary grid and a kernel checked against it.
-
-    **The kernel is `0 + operand` and not the identity**, because that is what 5.1 runs: its
-    compiler lowers `+ x` to the binary addition against an `Int32` zero, the same lowering `-`
-    gets, so the operand is read the way an addition reads it and not handed through unchanged.
-    Measured: `+ [char]65` is the Int32 65 and `+ $true` the Int32 1, each the number a cast reads
-    the operand as; `+ [uint16]5` is the Int32 5, the widening an addition with an `Int32` left
-    performs; and `+ '-0.0'` is a **positive** zero — `0 + -0.0` in IEEE arithmetic — where an
-    identity answer would carry the sign the operand spelled.
-
-    A String is read as a numeral first, exactly as `-` reads one and for the same reason: the
-    coerced fact keeps its literal's own type, so the grid row asked for is the numeral's rather
-    than the String's. Measured: `+ '80'` is the Int32 80, `+ '5L'` the Int64 5 and `+ '1e3'` the
-    Double 1000, while `+ 'abc'` and `+ '0b10'` throw — the coercion's throw, which the kernel
-    reports and the grid's `String` row records, and `+ ''` is the Int32 0, the empty-string
-    coercion's own answer.
-
-    A collection is refused by `_unary_number` where its cell records a throw, which is the same
-    trade `_negated` makes: a refusal costs a fold and never an answer.
-    """
-    coerced = _coerced_numeral(operand)
-    if coerced is not None:
-        if not isinstance(coerced, Ps1Constant):
-            return Ps1Outcome(ALWAYS if _coercion_is_certain_reject(operand) else MAYBE, UNKNOWN)
-        operand = coerced
-    source = _grid_type(operand)
-    cell = None if source is None else unary_outcome('+', source)
-    if cell is None:
-        return NOTHING
-    number = _unary_number(operand)
-    if number is None:
-        return NOTHING
-    try:
-        computed = _computed(operator_module.add, 0, number)
+        computed = _computed(kernel, 0, number)
     except _Throws as throw:
         return Ps1Outcome(ALWAYS if throw.certain else MAYBE, UNKNOWN)
     if computed is None:
@@ -1920,9 +1892,9 @@ def apply_unary(operator: str, operand: Ps1Fact) -> Ps1Outcome:
     A String is negated by being read as a numeral first, which is where the `String` row's recorded
     throw comes from: `- '5'` is -5, `- ' 5 '` is -5, `- ''` is 0 and `- 'abc'` throws. That is the
     same coercion arithmetic performs, so the same reader sees it and the same throws are modelled.
-    `+` reads the same coercion and is the same kernel with a sign flipped: see `_positivized`,
-    which is where its difference from the identity is recorded — a difference it has, which is
-    why it is computed and not handed through.
+    `+` reads the same coercion and computes by the same zero-anchored kernel: see
+    `_unary_arithmetic`, which is where the lowering the two share and its difference from a sign
+    flip and the identity is recorded.
 
     `-not` is absent because it is not this question: it negates a truth value, which `convert` to
     a `Boolean` already answers, and `is_truthy` is what asks.
@@ -1932,10 +1904,8 @@ def apply_unary(operator: str, operand: Ps1Fact) -> Ps1Outcome:
     for its result type as well is recorded work, not done here.
     """
     operator = operator.lower()
-    if operator == '-':
-        return _negated(operand)
-    if operator == '+':
-        return _positivized(operand)
+    if operator in ('-', '+'):
+        return _unary_arithmetic(operand, operator)
     if operator != '-bnot':
         return NOTHING
     source = _grid_type(operand)

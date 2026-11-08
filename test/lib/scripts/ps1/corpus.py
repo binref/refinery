@@ -1055,6 +1055,11 @@ BEHAVIOURS: tuple[str, ...] = (
     "[int]$i = 0; try { throw 'x' } catch { foreach ($i in 'a') { }; $y = 'r' }; Write-Host $y",
     "$b = 0; foreach ($i in 1) { $b = 1 }; while ($b -ne 2) { switch ($b) { 0 { Write-Host 'zero'; $b = 2 } 1 { Write-Host 'one'; $b = 2 } } }",
     "$s = 0; while ($s -ne -1) { switch ($s) { 0 { Write-Host 'a'; $s = -1 } default { break } } }; Write-Host $s",
+    #: What a jump inside a switch clause binds to: the switch itself, unlabelled — a `continue`
+    #: ends the clause scan and the loop body runs on past the switch — and the loop a label
+    #: names, labelled — a `break` to one leaves that loop from inside the switch.
+    "$o = ''; foreach ($i in 1, 2) { switch (1) { default { continue } }; $o = $o + 'x' }; Write-Host $o",
+    "$o = ''; :outer foreach ($i in 1, 2) { switch (1) { default { break outer } }; $o = $o + 'x' }; Write-Host $o",
 )
 
 

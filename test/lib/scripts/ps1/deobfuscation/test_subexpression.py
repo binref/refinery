@@ -128,7 +128,6 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             'Invoke-Expression $stager',
         )
 
-    @todo
     def test_a_store_a_literal_iex_payload_reads_survives_the_fold(self):
         source = cleandoc("""
             $y = $($x = 'abc'; 'out')
@@ -138,6 +137,14 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             self._deobfuscate(source, trust_eval=True),
             "Write-Output 'abc'",
         )
+
+    def test_a_reader_an_alias_of_the_script_runs_keeps_the_body_writes(self):
+        source = cleandoc("""
+            $t = $($j = 700; 'v')
+            sal e iex
+            e '$j'
+        """)
+        self.assertEqual(self._deobfuscate(source, trust_eval=True), '700')
 
     def test_a_read_of_a_name_written_outside_refuses(self):
         self._assertUnchanged(cleandoc("""
@@ -456,6 +463,26 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             """),
         )
 
+    def test_a_subexpression_that_runs_a_switch_keeps_it(self):
+        self._assertUnchanged(cleandoc("""
+            $t = $(switch ('q') {
+              'q' {
+                'yes'
+              }
+            })
+            f $t
+        """), Ps1SubExpressionEvaluator)
+
+    def test_a_subexpression_whose_switch_scans_a_collection_refuses(self):
+        self._assertUnchanged(cleandoc("""
+            $t = $(switch ('q', 'r') {
+              default {
+                'x'
+              }
+            })
+            f $t
+        """), Ps1SubExpressionEvaluator)
+
     def test_two_retained_names_aliasing_one_array_refuses(self):
         self._assertUnchanged(cleandoc("""
             $x = $($a = 1, 2, 3
@@ -480,7 +507,6 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             $b -is [byte[]]
         """), Ps1SubExpressionEvaluator)
 
-    @backlog
     def test_a_collection_the_value_holds_is_the_one_a_retained_name_holds(self):
         source = '''
             $x = $($a = 1, 2, 3; ,$a)
@@ -488,6 +514,14 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             Write-Host $x[0]
         '''
         self._assertDeobfuscatesToOneOf(source, source, 'Write-Host 9')
+
+    def test_a_value_two_routes_reach_is_not_spelled(self):
+        self._assertUnchanged(cleandoc("""
+            $d = $($x = 1, 2
+            $x, $x)
+            $d[0][0] = 9
+            f $d[1][0]
+        """), Ps1SubExpressionEvaluator)
 
     @backlog
     def test_a_retained_integer_keeps_its_declared_width(self):

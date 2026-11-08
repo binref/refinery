@@ -77,6 +77,15 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertNotIn("'a'", result)
         self.assertNotIn("'b'", result)
 
+    def test_a_switch_over_an_ascii_constant_against_a_non_ascii_clause_is_not_pruned(self):
+        self._assertUnchanged(cleandoc("""
+            switch ('ss') {
+              'ß' {
+                'hit'
+              }
+            }
+        """), Ps1DeadCodeElimination)
+
     def test_do_while_false_executes_once(self):
         result = self._deobfuscate("do { Write-Host 'once' } while ($False)")
         self.assertIn('once', result)

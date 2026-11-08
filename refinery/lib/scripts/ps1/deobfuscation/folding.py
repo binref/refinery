@@ -12,6 +12,8 @@ from refinery.lib.scripts import Node, Transformer, canonical, reattach
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.effects import is_fault_free, may_be_dropped
 from refinery.lib.scripts.ps1.analysis.values import (
+    CONVERT_PATTERN,
+    CONVERT_SIGNED,
     NULL,
     Ps1Constant,
     Ps1Fact,
@@ -144,20 +146,6 @@ _TEXT_OPERATORS = frozenset({
 #: The whitespace `[Convert]::To<integer>(string)` strips, measured as `' 5 '` converting to 5. Only
 #: the one-argument form strips anything: `[Convert]::ToInt32(' 5 ', 16)` throws.
 _CONVERT_TRIM = ' \t\r\n'
-
-#: What `[Convert]::To<integer>(string)` reads, which is neither what a cast reads nor what Python's
-#: `int` does: an optional sign and decimal digits. Measured — `'+7'` is 7, `'007'` is 7 and `'-5'`
-#: is -5, while `'0x10'`, `'1_0'`, `'0b1010'`, `'7.5'`, `'1e3'`, `'1,000'` and `''` each throw.
-_CONVERT_SIGNED = re.compile(r'[+-]?[0-9]+\Z')
-
-#: What `[Convert]::To<integer>(string, base)` reads for a base that is not ten: the digits of that
-#: base and nothing else, and only base sixteen takes a `0x` prefix — `'0b1010'` at base two throws.
-#: A sign throws and so does whitespace, so neither is written here.
-_CONVERT_PATTERN: dict[int, re.Pattern[str]] = {
-    2: re.compile(r'[01]+\Z'),
-    8: re.compile(r'[0-7]+\Z'),
-    16: re.compile(r'(?:0[xX])?[0-9a-fA-F]+\Z'),
-}
 
 
 def _is_static_regex_call(node: Ps1InvokeMember) -> bool:
@@ -1029,7 +1017,7 @@ class Ps1ConstantFolding(Transformer):
             if text is None:
                 return _folded(convert(fact, target))
             digits = text.strip(_CONVERT_TRIM)
-            if not _CONVERT_SIGNED.match(digits):
+            if not CONVERT_SIGNED.match(digits):
                 return None
             return render(integer_at(target, int(digits)))
         if len(arguments) != 2:
@@ -1039,10 +1027,10 @@ class Ps1ConstantFolding(Transformer):
         if text is None or base is None:
             return None
         if base == 10:
-            if not _CONVERT_SIGNED.match(text):
+            if not CONVERT_SIGNED.match(text):
                 return None
             return render(integer_at(target, int(text)))
-        digits_of_base = _CONVERT_PATTERN.get(base)
+        digits_of_base = CONVERT_PATTERN.get(base)
         if digits_of_base is None or not digits_of_base.match(text):
             return None
         return render(pattern_at(target, int(text, base)))

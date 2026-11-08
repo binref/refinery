@@ -6,7 +6,7 @@ from __future__ import annotations
 import base64
 import re
 
-from collections import ChainMap
+from collections import ChainMap, defaultdict
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,6 +24,7 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     takes_output_away,
 )
 from refinery.lib.scripts.ps1.analysis.model import (
+    Binding,
     Ps1NameSet,
     Ps1SemanticModel,
     is_write_occurrence,
@@ -31,6 +32,8 @@ from refinery.lib.scripts.ps1.analysis.model import (
 )
 from refinery.lib.scripts.ps1.analysis.separator import OFS_FALLBACK, OFS_NAME
 from refinery.lib.scripts.ps1.analysis.values import (
+    CONVERT_PATTERN,
+    CONVERT_SIGNED,
     UNKNOWN,
     Ps1Constant,
     Ps1Fact,
@@ -44,6 +47,7 @@ from refinery.lib.scripts.ps1.analysis.values import (
     integer_of,
     make_string_literal,
     null_expression,
+    pattern_at,
     read,
     render,
 )
@@ -68,6 +72,7 @@ from refinery.lib.scripts.ps1.data import (
     ENCODING_MAP,
     PS1_AUTOMATIC_VARIABLES,
     PS1_KNOWN_VARIABLES,
+    SIMPLE_IDENTIFIER,
     is_type,
     named_type,
     resolve_type,
@@ -142,10 +147,15 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
     Ps1WhileLoop,
 )
+from refinery.lib.scripts.ps1.options import eval_is_trusted
 
 _MAX_INTERPRETER_ITERATIONS = 100_000
 _MAX_INTERPRETER_STRING_LEN = 1_000_000
 _MAX_INTERPRETER_DEPTH = 64
+
+#: The depth a value's own nesting may not exceed. A fold that builds one — `for () { $a = ,$a }` —
+#: spells it back as a literal recursion this deep, so the run's budget goes to the refusal instead.
+_MAX_INTERPRETER_NESTING = 100
 
 #: What a script may read unseen before the cache of one run has said otherwise: nothing.
 _NOTHING_UNSEEN = Ps1NameSet(False, frozenset())
@@ -180,6 +190,10 @@ _NO_OPERATOR_METHOD_ON_CHAR = frozenset({'*', '-shl', '-shr'})
 _CHAR_WIDTH = named_type('System.UInt16')
 
 _BYTE_WIDTH = named_type('System.Byte')
+
+_INT16_WIDTH = named_type('System.Int16')
+_INT32_WIDTH = named_type('System.Int32')
+_INT64_WIDTH = named_type('System.Int64')
 
 
 def _width_of(spelling: str) -> Ps1TypeName | None:
@@ -373,7 +387,8 @@ def _fact_of_value_on_a_path(value: _Value, path: frozenset[int]) -> Ps1Fact:
         if id(value) in path:
             return UNKNOWN
         return collection_fact(
-            _fact_of_value_on_a_path(one, path | {id(value)}) for one in value)
+            _fact_of_value_on_a_path(one, path | {id(value)}) for one in value
+        )
     return fact_of(value)
 
 
@@ -393,6 +408,20 @@ def _rendered_value(value: _Value) -> Expression | None:
     if expression is None:
         return None
     return expression if read(expression) == fact else None
+
+
+def _deeper_than_the_nesting_bound(value: _Value, depth: int = 0) -> bool:
+    """
+    Whether *value* nests collections deeper than `_MAX_INTERPRETER_NESTING`, which is asked of
+    every collection the interpreter builds: a fold that builds one this deep spells it back as a
+    literal just as deep, so the refusal is paid at the construction rather than in the spelling.
+    The recursion stops at the bound it checks, so measuring a value never runs deeper than it.
+    """
+    if not isinstance(value, list):
+        return False
+    if depth >= _MAX_INTERPRETER_NESTING:
+        return True
+    return any(_deeper_than_the_nesting_bound(one, depth + 1) for one in value)
 
 
 class _Ps1InterpreterError(Exception):
@@ -427,12 +456,47 @@ class InvokeExpression(Exception):
         self.site = site
 
 
-class _BreakSignal(Exception):
+class _JumpSignal(Exception):
+    """
+    A `break` or `continue` unwinding towards the loop it leaves, carrying the label it names or
+    `None` where it names none. 5.1 routes one by label: unlabelled, it leaves the innermost loop
+    the emulation runs; labelled, the loop whose label it names — which a loop this holds none of
+    must pass on rather than answer for the scope outside it.
+    """
+    def __init__(self, label: str | None):
+        self.label = label
+
+
+class _BreakSignal(_JumpSignal):
     pass
 
 
-class _ContinueSignal(Exception):
+class _ContinueSignal(_JumpSignal):
     pass
+
+
+def _jump_label(jump: Ps1BreakStatement | Ps1ContinueStatement) -> str:
+    """
+    The label a `break` or `continue` names, lowercased the way a loop label is stored. A label this
+    cannot read is refused rather than read as none: a jump that names anything acts on a loop
+    outside the spelling this holds.
+    """
+    label = jump.label
+    if label is None:
+        return None
+    if isinstance(label, Ps1StringLiteral) and label.is_bare_word:
+        return label.value.lower()
+    raise _Ps1InterpreterError
+
+
+def _takes_the_jump(signal: _JumpSignal, loop_label: str | None) -> bool:
+    """
+    Whether the loop *loop_label* names is the one *signal* leaves: an unlabelled jump leaves the
+    innermost loop, and a labelled one the loop whose label it names.
+    """
+    if signal.label is None:
+        return True
+    return loop_label is not None and loop_label[1:].lower() == signal.label
 
 
 _WILDCARD_METACHARACTERS = frozenset('()[.?*{}^$+|\\')
@@ -800,9 +864,9 @@ class _Ps1Interpreter:
                 self._append(stream, self._eval(stmt.pipeline))
             raise _ReturnSignal(list(stream))
         if isinstance(stmt, Ps1BreakStatement):
-            raise _BreakSignal
+            raise _BreakSignal(_jump_label(stmt))
         if isinstance(stmt, Ps1ContinueStatement):
-            raise _ContinueSignal
+            raise _ContinueSignal(_jump_label(stmt))
         raise _Ps1InterpreterError
 
     def _exec_pipeline(self, node: Ps1Pipeline) -> _Value:
@@ -834,15 +898,23 @@ class _Ps1Interpreter:
                     break
             try:
                 self._exec_block(node.body, stream)
-            except _BreakSignal:
+            except _BreakSignal as signal:
+                if not _takes_the_jump(signal, node.label):
+                    raise
                 break
-            except _ContinueSignal:
+            except _ContinueSignal as signal:
+                if not _takes_the_jump(signal, node.label):
+                    raise
                 pass
             if node.iterator:
                 self._eval(node.iterator)
 
     def _exec_foreach(self, node: Ps1ForEachLoop, stream: list):
         if not isinstance(node.variable, Ps1Variable):
+            raise _Ps1InterpreterError
+        if node.variable.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
+            # A header bound to a qualified name writes the scope the qualifier names, which the
+            # plain key this stores under is not.
             raise _Ps1InterpreterError
         key = node.variable.name.lower()
         iterable = self._eval(node.iterable)
@@ -855,9 +927,13 @@ class _Ps1Interpreter:
             self._env[key] = item
             try:
                 self._exec_block(node.body, stream)
-            except _BreakSignal:
+            except _BreakSignal as signal:
+                if not _takes_the_jump(signal, node.label):
+                    raise
                 break
-            except _ContinueSignal:
+            except _ContinueSignal as signal:
+                if not _takes_the_jump(signal, node.label):
+                    raise
                 continue
 
     def _exec_while(self, node: Ps1WhileLoop, stream: list):
@@ -867,9 +943,13 @@ class _Ps1Interpreter:
                 break
             try:
                 self._exec_block(node.body, stream)
-            except _BreakSignal:
+            except _BreakSignal as signal:
+                if not _takes_the_jump(signal, node.label):
+                    raise
                 break
-            except _ContinueSignal:
+            except _ContinueSignal as signal:
+                if not _takes_the_jump(signal, node.label):
+                    raise
                 continue
 
     def _exec_do_loop(self, node: Ps1DoLoop, stream: list):
@@ -877,9 +957,13 @@ class _Ps1Interpreter:
             self._tick()
             try:
                 self._exec_block(node.body, stream)
-            except _BreakSignal:
+            except _BreakSignal as signal:
+                if not _takes_the_jump(signal, node.label):
+                    raise
                 break
-            except _ContinueSignal:
+            except _ContinueSignal as signal:
+                if not _takes_the_jump(signal, node.label):
+                    raise
                 pass
             truth = self._truthy(self._eval(node.condition))
             if node.is_until == truth:
@@ -894,9 +978,17 @@ class _Ps1Interpreter:
             self._exec_block(node.else_block, stream)
 
     def _exec_switch(self, node: Ps1SwitchStatement, stream: list):
+        """
+        The clauses a `switch` runs for the one value its input spells. A collection input is
+        refused: 5.1 runs its clause scan once per element, and one scan is not that. A `break`
+        ends the switch and a `continue` the clause scan for the value — with the one value this
+        runs for, the switch — where a label names a loop outside it instead, the signal passes on.
+        """
         if node.regex or node.wildcard or node.file:
             raise _Ps1InterpreterError
         value = self._eval(node.value)
+        if isinstance(value, list):
+            raise _Ps1InterpreterError
         default_block = None
         matched = False
         for condition, block in node.clauses:
@@ -904,17 +996,30 @@ class _Ps1Interpreter:
                 default_block = block
                 continue
             cond_val = self._eval(condition)
-            if switch_matches(value, cond_val, case_sensitive=node.case_sensitive):
+            matches = switch_matches(value, cond_val, case_sensitive=node.case_sensitive)
+            if matches is None:
+                raise _Ps1InterpreterError
+            if matches:
                 matched = True
                 try:
                     self._exec_block(block, stream)
-                except _BreakSignal:
+                except _BreakSignal as signal:
+                    if not _takes_the_jump(signal, node.label):
+                        raise
+                    return
+                except _ContinueSignal as signal:
+                    if not _takes_the_jump(signal, node.label):
+                        raise
                     return
         if not matched and default_block is not None:
             try:
                 self._exec_block(default_block, stream)
-            except _BreakSignal:
-                return
+            except _BreakSignal as signal:
+                if not _takes_the_jump(signal, node.label):
+                    raise
+            except _ContinueSignal as signal:
+                if not _takes_the_jump(signal, node.label):
+                    raise
 
     def _exec_block(self, block, stream: list):
         if block is None:
@@ -994,7 +1099,10 @@ class _Ps1Interpreter:
         if isinstance(expr, Ps1IndexExpression):
             return self._eval_index(expr)
         if isinstance(expr, Ps1ArrayLiteral):
-            return [self._eval(e) for e in expr.elements]
+            elements = [self._eval(e) for e in expr.elements]
+            if _deeper_than_the_nesting_bound(elements):
+                raise _Ps1InterpreterError
+            return elements
         if isinstance(expr, Ps1ArrayExpression):
             return self._eval_array_expression(expr)
         if isinstance(expr, Ps1CastExpression):
@@ -1151,11 +1259,13 @@ class _Ps1Interpreter:
         What `New-Object T[] size` builds. The zero the host writes into every cell is a value of
         the element type, so the array this returns is built the way the casts build theirs: a
         `byte[]` of zero Bytes and a `char[]` of null Chars, each the typed collection the
-        interpreter carries because the domain spells no array of that width, and any other integer
-        width the plain cells of a collection spell elementwise. An element type that is none of
-        these is refused rather than filled with zeros: a reference type — `string[]`, `object[]` —
-        holds `$null` in every cell on the host, and a type the tables do not name is not one this
-        can vouch for at all.
+        interpreter carries because the domain spells no array of that width, and any other
+        integer width the plain cells of a collection spell elementwise. The two typed
+        collections are picked by spelling and not by width, for a `char` and a `uint16` are the
+        same width on 5.1 and only the `char[]` holds Chars. An element type that is none of
+        these is refused rather than filled with zeros: a reference type — `string[]`,
+        `object[]` — holds `$null` in every cell on the host, and a type the tables do not name
+        is not one this can vouch for at all.
         """
         positional = self._collect_positional_args(node)
         if len(positional) != 2:
@@ -1164,7 +1274,7 @@ class _Ps1Interpreter:
         if not isinstance(type_name, str) or not type_name.lower().endswith('[]'):
             raise _Ps1InterpreterError
         spelling = normalize_dotnet_type_name(type_name[:-2])
-        width = _CHAR_WIDTH if spelling == 'char' else resolve_type(spelling)
+        width = _width_of(spelling)
         if width is None or integer_at(width, 0) is UNKNOWN:
             raise _Ps1InterpreterError
         size_arg = positional[1]
@@ -1180,9 +1290,9 @@ class _Ps1Interpreter:
             raise
         if size < 0 or size > self.max_string_len:
             raise _Ps1InterpreterError
-        if width == _CHAR_WIDTH:
+        if spelling == 'char':
             return _CharArray(self._cast_element(None, _CHAR_WIDTH) for _ in range(size))
-        if width == _BYTE_WIDTH:
+        if spelling == 'byte':
             return _ByteArray(self._cast_element(0, _BYTE_WIDTH) for _ in range(size))
         return [0] * size
 
@@ -1239,14 +1349,15 @@ class _Ps1Interpreter:
         return results
 
     def _eval_variable(self, node: Ps1Variable) -> _Value:
-        if node.drive:
-            # A drive-qualified name is a store in a provider the currency models nothing of: the
-            # `env:` drive keeps strings, so what a `$true` stored there reads back as is `'True'`
-            # on the host and `True` here. Reading one as the plain name this would fall through
-            # to is a wrong answer every caller of the interpreter shares, so the refusal lives
-            # here and not in one driver.
-            raise _Ps1InterpreterError
         if node.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
+            # A name qualified by anything but `local:` — `$global:`, `$script:`, the `env:` drive,
+            # any provider drive — is a store outside the currency this body runs on: the `env:`
+            # drive keeps strings, so what a `$true` stored there reads back as is `'True'` on the
+            # host and `True` here, and a `global:` one may be a caller's. Reading one as the plain
+            # name this would fall through to is a wrong answer every caller of the interpreter
+            # shares, so the refusal lives here and not in one driver. The parser spells every
+            # qualification this check sees with a scope, and a drive only ever with the `DRIVE`
+            # one, so no drive needs asking after.
             raise _Ps1InterpreterError
         name = node.name.lower()
         if name == 'true':
@@ -1269,11 +1380,11 @@ class _Ps1Interpreter:
             raise _Ps1InterpreterError
         if name in self._caller_scope_names and not self._written(name):
             # A name an enclosing scope binds, read before this body writes it, is refused rather
-            # than read as `$null`: the caller scope this fold is entered without may hold the value
-            # (see `Ps1SemanticModel.script_scope_write_names`). `$q = $env:Temp; function f { $q + 1
-            # }` is `$env:Temp + 1` on the host, not `1`. A name no enclosing scope writes is
-            # genuinely unset, so an accumulator `$r = $r + …` still reads its first `$r` as `$null`
-            # and folds.
+            # than read as `$null`: the caller scope this fold is entered without may hold the
+            # value (see `Ps1SemanticModel.script_scope_write_names`). `$q = $env:Temp;
+            # function f { $q + 1 }` is `$env:Temp + 1` on the host, not `1`. A name no enclosing
+            # scope writes is genuinely unset, so an accumulator `$r = $r + …` still reads its
+            # first `$r` as `$null` and folds.
             raise _Ps1InterpreterError
         if self._strict and not self._written(name):
             # Under `Set-StrictMode` a read of a never-assigned name is a statement-terminating
@@ -1288,11 +1399,9 @@ class _Ps1Interpreter:
             return self._eval_index_assignment(node)
         if not isinstance(node.target, Ps1Variable):
             raise _Ps1InterpreterError
-        if node.target.drive:
-            # The same refusal `_eval_variable` states of a read: a store into a provider drive is
-            # not a store into the plain name it would land in here.
-            raise _Ps1InterpreterError
         if node.target.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
+            # The same refusal `_eval_variable` states of a read: a store qualified past the local
+            # scope is not a store into the plain name it would land in here.
             raise _Ps1InterpreterError
         key = node.target.name.lower()
         value = self._eval(node.value)
@@ -1410,8 +1519,17 @@ class _Ps1Interpreter:
         if op in ('++', '--'):
             if not isinstance(node.operand, Ps1Variable):
                 raise _Ps1InterpreterError
+            if node.operand.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
+                # The same refusal `_eval_assignment` states of a store: an increment of a name
+                # qualified past the local scope writes the store it names, which is not the plain
+                # one this would write.
+                raise _Ps1InterpreterError
             key = node.operand.name.lower()
-            current = self._lookup(key)
+            if key == 'psitem':
+                # The remap `_eval_variable` performs of the read, so the store lands in the name
+                # the reads of `$_` see.
+                key = '_'
+            current = self._eval_variable(node.operand)
             if not isinstance(current, (int, float)):
                 current = 0
             delta = 1 if op == '++' else -1
@@ -1536,37 +1654,45 @@ class _Ps1Interpreter:
             return self._invoke_math_static(name, args)
         raise _Ps1InterpreterError
 
-    def _based_number(self, args: list[_Value]) -> int:
+    def _based_number(self, args: list[_Value], target: Ps1TypeName) -> int:
         """
-        The numeral a based `Convert` method reads, refused where 5.1 refuses it: the bases it
-        accepts are two, eight, ten and sixteen, and a sign it takes at ten alone, so `'-10'` at
-        sixteen is the `ArgumentException` the host raises rather than the minus sixteen Python's
-        `int` reads.
+        The numeral a based `Convert` method reads as a value of the width *target* names, refused
+        where 5.1 refuses it: the bases it accepts are two, eight, ten and sixteen, and a sign it
+        takes at ten alone, so `'-10'` at sixteen is the `ArgumentException` the host raises rather
+        than the minus sixteen Python's `int` reads. Whitespace is not read either, which the
+        `strip` this once performed got wrong along with Python's `int`. Off base ten the digits
+        are the bit pattern `pattern_at` reads, so `'FFFFFFFF'`
+        at sixteen is the Int32 -1 and a `'1FF'` a Byte refuses rather than masks; at ten they are a
+        magnitude against the range the width holds, so `'-40000'` an Int16 refuses rather than
+        wraps. Both are the answers `_fold_convert_int` folds the call to, measured of the host.
         """
-        source = self._to_str(args[0]).strip()
+        source = self._to_str(args[0])
         base = self._to_int(args[1])
         if base not in (2, 8, 10, 16):
             raise _Ps1InterpreterError
-        if base != 10 and source[:1] in ('+', '-'):
+        if base == 10:
+            if CONVERT_SIGNED.match(source) is None:
+                raise _Ps1InterpreterError
+            fact = integer_at(target, int(source))
+        else:
+            if CONVERT_PATTERN[base].match(source) is None:
+                raise _Ps1InterpreterError
+            fact = pattern_at(target, int(source, base))
+        number = integer_of(fact)
+        if number is None:
             raise _Ps1InterpreterError
-        return int(source, base)
+        return number
 
     def _invoke_convert(self, method: str, args: list[_Value]) -> _Value:
         try:
             if method == 'tobyte' and len(args) == 2:
-                return _Byte(self._based_number(args) & 0xFF)
+                return _Byte(self._based_number(args, _BYTE_WIDTH))
             if method == 'toint16' and len(args) == 2:
-                v = self._based_number(args)
-                if v >= 0x8000:
-                    v -= 0x10000
-                return v
+                return self._based_number(args, _INT16_WIDTH)
             if method == 'toint32' and len(args) == 2:
-                v = self._based_number(args)
-                if v >= 0x80000000:
-                    v -= 0x100000000
-                return v
+                return self._based_number(args, _INT32_WIDTH)
             if method == 'toint64' and len(args) == 2:
-                return self._based_number(args)
+                return self._based_number(args, _INT64_WIDTH)
             if method == 'tochar' and len(args) == 1:
                 return _Char(chr(self._to_int(args[0])))
             if method == 'tostring' and len(args) == 1:
@@ -2043,6 +2169,12 @@ class _Ps1Interpreter:
             if isinstance(second, float):
                 raise _Ps1InterpreterError
             second_string = self._to_str(second)
+            if not first.isascii() or not second_string.isascii():
+                # Case is the host culture's to fold and Python's `lower` folds it differently —
+                # the long s is one it answers `'s'` for and .NET does not — so a text either
+                # side carries beyond ASCII is refused in both case modes rather than compared
+                # with an alphabet the host may not share.
+                raise _Ps1InterpreterError
             if ignore_case:
                 return first.lower() == second_string.lower()
             return first == second_string
@@ -2126,7 +2258,8 @@ class _Ps1Interpreter:
             # A `Double`'s text is the current culture's to write everywhere `_to_str` is reached —
             # string interpolation, a `.ToString()` call, the `$OFS` separator a collection is
             # joined with — so it is refused rather than written as a value 5.1's session may not
-            # share. A string *operator* coerces it culture-invariantly instead; that is `_coerce_str`.
+            # share. A string *operator* coerces it culture-invariantly instead; that is
+            # `_coerce_str`.
             raise _Ps1InterpreterError
         if isinstance(value, list):
             return self._separator().join(self._to_str(item) for item in value)
@@ -2723,7 +2856,16 @@ class Ps1SubExpressionEvaluator(Transformer):
             self._write_sites = cache.model.write_sites()
             self._doubts_names = cache.model.writes_unreadable_names
             self._runs_data_code = runs_code_supplied_as_data(cache.world_measurement)
-            self._unseen = cache.names_may_be_read_unseen
+            # The same readers `Ps1PrefixEvaluator` guards its stores against: code the tree runs
+            # as data — an `iex` payload spelled out or hidden behind an alias of the script's own —
+            # reads a name no occurrence stands for, and the splice that installs it runs after
+            # this pass. Where any site runs such code (`_runs_code_the_tree_cannot_see`), every
+            # written name may be read unseen; the trusting model's lifting of a leak opener is
+            # about payloads it cannot read and not about one standing in the tree.
+            if _runs_code_the_tree_cannot_see(node, cache):
+                self._unseen = _EVERY_NAME_UNSEEN
+            else:
+                self._unseen = cache.names_may_be_read_unseen
             self._strict_v2, self._strict = _strict_mode_flags(cache)
             return super().visit(node)
         finally:
@@ -2756,6 +2898,8 @@ class Ps1SubExpressionEvaluator(Transformer):
         if result is None:
             return None
         value, env = result
+        if _spells_a_shared_container(value, *(env[name] for name in retained if name in env)):
+            return None
         literal = Ps1FunctionEvaluator._value_to_node(value)
         if literal is None:
             return None
@@ -2774,6 +2918,11 @@ class Ps1SubExpressionEvaluator(Transformer):
         return None
 
     def _may_evaluate(self, node: Ps1SubExpression, reads: set[str], written: set[str]) -> bool:
+        if carried_redirections(node):
+            # 5.1 keeps what a redirected stage writes out of the stream this folds, and the
+            # interpreter refuses the spelling already; this is the one scan that keeps the
+            # driver sound should a parser change ever open a path the interpreter does not.
+            return False
         for descendant in node.walk():
             if isinstance(
                 descendant,
@@ -2782,11 +2931,6 @@ class Ps1SubExpressionEvaluator(Transformer):
                 # These act on the scope the sub-expression is written in — a `return` exits the
                 # enclosing function, a `break` the enclosing loop — so the value this would
                 # install is not the value the script produces.
-                return False
-            if getattr(descendant, 'redirections', None):
-                # 5.1 keeps what a redirected stage writes out of the stream this folds, and the
-                # interpreter refuses the spelling already; this is the one scan that keeps the
-                # driver sound should a parser change ever open a path the interpreter does not.
                 return False
         if not self._reads_follow_certain_writes(node, written):
             return False
@@ -2966,8 +3110,9 @@ class Ps1SubExpressionEvaluator(Transformer):
         return value, interpreter._env
 
     def _written_outside(self, node: Ps1SubExpression, name: str) -> bool:
+        region_ids = {id(node)}
         return any(
-            not _is_inside(site, (node,)) for site in self._write_sites.get(name, ())
+            not _is_inside(site, region_ids) for site in self._write_sites.get(name, ())
         )
 
 
@@ -3044,17 +3189,10 @@ class Ps1PrefixEvaluator(Transformer):
         super().__init__()
         self.max_iterations = max_iterations
         self.max_string_len = max_string_len
-        self._entry = False
 
     def visit(self, node: Node):
-        if self._entry or not isinstance(node, Ps1Script):
-            return super().visit(node)
-        self._entry = True
-        try:
+        if isinstance(node, Ps1Script):
             self._fold_prefix(node)
-            return super().visit(node)
-        finally:
-            self._entry = False
 
     def _fold_prefix(self, script: Ps1Script) -> None:
         body = list(script.body)
@@ -3093,10 +3231,10 @@ class Ps1PrefixEvaluator(Transformer):
             if stream or interpreter._dropped_null is not dropped:
                 break
             folded.append(statement)
-            env = dict(interpreter._env)
+            env = _snapshot_env(interpreter._env)
         if not folded:
             return
-        if _spells_a_shared_container(env):
+        if _spells_a_shared_container(*env.values()):
             return
         written = set[str]()
         for statement in folded:
@@ -3138,25 +3276,61 @@ class Ps1PrefixEvaluator(Transformer):
         defines. And should a parser change ever open a path the interpreter does not, the
         redirection scan holds the line.
         """
+        if carried_redirections(statement):
+            return False
         for descendant in statement.walk():
             if isinstance(descendant, (Ps1ClassDefinition, Ps1EnumDefinition)):
-                return False
-            if getattr(descendant, 'redirections', None):
                 return False
         return True
 
 
-def _spells_a_shared_container(env: Mapping[str, _Value]) -> bool:
+def _snapshot_env(env: Mapping[str, _Value]) -> dict[str, _Value]:
     """
-    Whether any value the fold would spell is a container more than one route reaches — under two
-    names, twice within one value, or from itself. The interpreter holds such a value as one object
-    the script can reach two ways and a mutation through either reaches both, which is the reach a
-    spelled literal does not have: it is a second object where one was, so statements after the
-    fold that write through one name would no longer be read through the other. Measured,
+    A snapshot of *env* no interpreter step afterwards can write into, which a fold spells its
+    stores from. A statement that mutates a container in place and then refuses stays in the
+    script and runs again, so the state its prefix leaves is the one before it, while the
+    interpreter keeps its own state for the statements after the fold. One *memo* serves the whole
+    snapshot, so two names holding one container hold one container in it too.
+    """
+    memo: dict[int, _Value] = {}
+    return {name: _detached(value, memo) for name, value in env.items()}
+
+
+def _detached(value: _Value, memo: dict[int, _Value]) -> _Value:
+    """
+    A copy of *value* a mutation of the interpreter's own state cannot reach, or *value* itself
+    where it is one no mutation can write: a container is copied through *memo*, which keeps the
+    aliasing the interpreter's answer carries — the sharing `_spells_a_shared_container` refuses
+    to break — and breaks a cycle the copy would otherwise follow forever. The copy is of the
+    container's own kind, so a typed array stays one: a `_ByteArray` names no fact, which is what
+    keeps a store holding it out of a fold, and a plain list of the same cells would spell as the
+    `Object[]` those cells are on no host at all.
+    """
+    if not isinstance(value, list):
+        return value
+    found = memo.get(id(value))
+    if found is not None:
+        return found
+    copy: list = type(value)()
+    memo[id(value)] = copy
+    copy.extend(_detached(one, memo) for one in value)
+    return copy
+
+
+def _spells_a_shared_container(*spelled: _Value) -> bool:
+    """
+    Whether any value among *spelled* is a container more than one route reaches — under two
+    names, twice within one value, or from itself. The interpreter holds such a value as one
+    object the script can reach two ways and a mutation through either reaches both, which is the
+    reach a spelled literal does not have: it is a second object where one was, so statements
+    after the fold that write through one name would no longer be read through the other. Measured,
     `$a[0] = $x; $a[0][0] = 9` writes the `9` through to `$x`, which is the alias a copy breaks.
+
+    What a caller hands it is its answer to which values its fold spells: the prefix its whole
+    environment, the sub-expression the value it folds to with the stores it retains.
     """
     seen: set[int] = set()
-    return any(_revisits_a_container(one, seen) for one in env.values())
+    return any(_revisits_a_container(one, seen) for one in spelled)
 
 
 def _revisits_a_container(value: _Value, seen: set[int]) -> bool:
@@ -3186,9 +3360,7 @@ def _plain_variable_names(script: Node) -> frozenset[str]:
     return frozenset(names)
 
 
-def _already_spells(
-    folded: Sequence[Statement], stores: Sequence[Statement],
-) -> bool:
+def _already_spells(folded: Sequence[Statement], stores: Sequence[Statement]) -> bool:
     """
     Whether the retained stores spell the statements they would replace, so the edit would
     rewrite the script into itself — the fold a pass that marked it changed anyway would repeat
@@ -3253,7 +3425,10 @@ def _names_read_and_written(root: Node) -> tuple[set[str], set[str]]:
     container a store reaches through — and a write is every occurrence that changes what a
     read observes, `matches` included whenever the subtree holds a `-match` operator that refills
     it. A name a `foreach` header binds is a write and not a read: the header supplies it
-    before the body runs.
+    before the body runs. A `switch` writes the pipeline variable with no occurrence at all —
+    the engine binds `$_` to the value it tests, measured, whatever the clauses spell — so a
+    subtree holding one writes `$_` too, which the engine-variable rule then refuses the fold
+    over rather than delete a write no store can stand in for.
     """
     reads: set[str] = set()
     written: set[str] = set()
@@ -3274,15 +3449,16 @@ def _names_read_and_written(root: Node) -> tuple[set[str], set[str]]:
             and descendant.operator.lower() in MATCH_OPERATORS
         ):
             written.add(_MATCHES_NAME)
+        elif isinstance(descendant, Ps1SwitchStatement):
+            written.add('_')
     return reads, written
 
 
-def _is_inside(inner: Node, region: Sequence[Node]) -> bool:
+def _is_inside(inner: Node, region_ids: set[int]) -> bool:
     """
-    Whether *inner* sits inside the subtree of any one node of *region*.
+    Whether *inner* sits inside the subtree of any one node whose id is among *region_ids*.
     """
     cursor: Node | None = inner
-    region_ids = {id(outer) for outer in region}
     while cursor is not None:
         if id(cursor) in region_ids:
             return True
@@ -3304,8 +3480,8 @@ def _names_a_reader_may_observe(
     so a reader of one observes the write wherever a pass could put a store. Every other written
     name is one a reader could observe for either of two reasons, and either one is answered by
     retention rather than refusal: the script spells a reader outside *region*, which
-    `_occurs_outside` answers through the semantic model — in both models, since a spelled reader
-    is not what the trusting model's contract excuses — or the script may read it where no
+    `_binding_reads_outside` answers through the semantic model — in both models, since a spelled
+    reader is not what the trusting model's contract excuses — or the script may read it where no
     occurrence of it stands, which
     `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache.names_may_be_read_unseen` answers:
     code taken from data, a listing of every variable, a variable handed out. A name with
@@ -3317,7 +3493,40 @@ def _names_a_reader_may_observe(
         return None
     if unseen.every_name:
         return set(written)
-    return {name for name in written if name in unseen or _occurs_outside(model, region, name)}
+    if model is None:
+        return set(written)
+    region_ids = {id(outer) for outer in region}
+    bindings_of: defaultdict[str, set[Binding]] = defaultdict(set)
+    for root in region:
+        for descendant in root.walk():
+            if (
+                isinstance(descendant, Ps1Variable)
+                and descendant.name.lower() in written
+                and (binding := model.binding_of(descendant)) is not None
+            ):
+                bindings_of[descendant.name.lower()].add(binding)
+    return (written & unseen.names) | {
+        name
+        for name in written
+        if name not in bindings_of
+        or _binding_reads_outside(bindings_of[name], region_ids)
+    }
+
+
+def _binding_reads_outside(bindings: set[Binding], region_ids: set[int]) -> bool:
+    """
+    Whether any of *bindings* is read or written anywhere outside the nodes whose ids are
+    *region_ids*: a same-named local of another scope is not a reader of this write, while a reader
+    inside a nested function or a captured scriptblock is, and so is a binding a `$using:` read
+    arrives at.
+    """
+    for binding in bindings:
+        if binding.read_through_using:
+            return True
+        for occurrence in (*binding.reads, *binding.writes):
+            if not _is_inside(occurrence.node, region_ids):
+                return True
+    return False
 
 
 def _runs_code_the_tree_cannot_see(script: Ps1Script, cache: Ps1ModelCache) -> bool:
@@ -3326,16 +3535,22 @@ def _runs_code_the_tree_cannot_see(script: Ps1Script, cache: Ps1ModelCache) -> b
     name can hide in it, so a store this tree shows no reader of is not a store nothing reads.
 
     Two readings of the same question, because neither one alone sees every shape. The suspecting
-    world measurement — `measure_world` handed no options, whatever this run trusts — records the
-    openers that run code out of data, a block made or invoked from an expression among them. And
-    `refinery.lib.scripts.ps1.analysis.commands.Ps1CommandModel.world_role` re-asks the question of
-    every command invocation with the script's own aliases followed, which the world model cannot
-    do: it reads a name one hop through the built-in alias table and no further, so a
+    world measurement records the openers that run code out of data, a block made or invoked from
+    an expression among them; a run that does not trust eval has already measured one over this
+    script in `cache.world_measurement`, while a trusting run must measure it here, for the
+    cached one is the trusting measurement that lifts the very openers this asks about. And
+    `refinery.lib.scripts.ps1.analysis.commands.Ps1CommandModel.world_role` re-asks the question
+    of every command invocation with the script's own aliases followed, which the world model
+    cannot do: it reads a name one hop through the built-in alias table and no further, so a
     `Set-Alias e iex` hides the leak from it. A role that runs unreadable code or names no command
     this model can bound is the answer that keeps the names; a mutation alone is not, since what it
     changes is the type system and the command table rather than which statements read a name.
     """
-    if runs_code_supplied_as_data(measure_world(script)):
+    if eval_is_trusted(cache.options):
+        measurement = measure_world(script)
+    else:
+        measurement = cache.world_measurement
+    if runs_code_supplied_as_data(measurement):
         return True
     commands = cache.commands
     return any(
@@ -3343,41 +3558,6 @@ def _runs_code_the_tree_cannot_see(script: Ps1Script, cache: Ps1ModelCache) -> b
         for invocation in script.walk()
         if isinstance(invocation, Ps1CommandInvocation)
     )
-
-
-def _occurs_outside(model: Ps1SemanticModel | None, region: Sequence[Node], name: str) -> bool:
-    """
-    Whether *name* is referenced anywhere outside *region*'s subtrees. The name is asked through the
-    semantic model: a same-named local of another scope is not a reader of this write, while a
-    reader inside a nested function or a captured scriptblock is, and so is a binding a
-    `$using:` read arrives at.
-
-    Every name this is asked reaches it with a binding, because the caller filters out the engine
-    variables first and `_names_read_and_written` writes only two kinds of name — a variable-spelled
-    store, which the model binds, and `matches`, which is an engine variable — so the only
-    binding-less write never arrives here. A name with no binding is nonetheless treated as read
-    outside, the direction that refuses a fold rather than dropping a store some reader observes.
-    """
-    if model is None:
-        return True
-    bindings = set()
-    for root in region:
-        for descendant in root.walk():
-            if (
-                isinstance(descendant, Ps1Variable)
-                and descendant.name.lower() == name
-                and (binding := model.binding_of(descendant)) is not None
-            ):
-                bindings.add(binding)
-    if not bindings:
-        return True
-    for binding in bindings:
-        if binding.read_through_using:
-            return True
-        for occurrence in (*binding.reads, *binding.writes):
-            if not _is_inside(occurrence.node, region):
-                return True
-    return False
 
 
 def _retained_stores(
@@ -3398,6 +3578,10 @@ def _retained_stores(
 
     Two names holding the one collection are refused. Each store spells a collection of its own,
     and a change made in place through one name would no longer show through the other.
+
+    A store braces its name wherever the bare spelling would not read back as one: `${a-b}` is a
+    name and `$a-b` the variable `$a` less the constant `b`, so a later read of the name would
+    not find it.
     """
     stores: list[Statement] = []
     collections: set[int] = set()
@@ -3414,7 +3598,7 @@ def _retained_stores(
             return None
         stores.append(Ps1ExpressionStatement(
             expression=Ps1AssignmentExpression(
-                target=Ps1Variable(name=name),
+                target=Ps1Variable(name=name, braced=not SIMPLE_IDENTIFIER.match(name)),
                 operator='=',
                 value=spelled,
             ),

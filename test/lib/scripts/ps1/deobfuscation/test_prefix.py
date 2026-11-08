@@ -213,6 +213,174 @@ class TestPs1PrefixEvaluator(TestPs1):
             """),
         )
 
+    def test_a_statement_that_mutates_a_container_and_cannot_fold_keeps_the_store_it_wrote(self):
+        source = cleandoc("""
+            $x = 1, 2
+            foreach ($i in 1, 2) {
+              $x[0] = $x[0] + 1
+              f 2
+            }
+            f $x
+        """)
+        self._assertUnchanged(source, Ps1PrefixEvaluator)
+
+    def test_a_typed_array_the_prefix_stores_stays_unspelled_through_the_snapshot(self):
+        self._assertUnchanged(cleandoc("""
+            $d = [byte[]](0, 0, 0)
+            [Buffer]::BlockCopy($s, 0, $d, 0, 3)
+            Write-Output $d
+        """), Ps1PrefixEvaluator)
+
+    def test_a_nesting_deeper_than_the_bound_ends_the_prefix_rather_than_the_run(self):
+        self._assertUnchanged(
+            cleandoc("""
+                $a = @()
+                for ($i = 0; $i -lt 2000; $i++) {
+                  $a = ,$a
+                }
+                f $a
+            """),
+            Ps1PrefixEvaluator,
+        )
+
+    def test_a_switch_in_the_prefix_ends_it(self):
+        self._assertUnchanged(
+            cleandoc("""
+                $x = 5
+                switch ($x) {
+                  5 {}
+                }
+                f $_
+            """),
+            Ps1PrefixEvaluator,
+        )
+
+    def test_a_switch_over_a_non_ascii_value_ends_the_prefix(self):
+        self._assertUnchanged(
+            cleandoc("""
+                switch ([char]0x00DF) {
+                  'ss' {
+                    'hit'
+                  }
+                }
+                f 1
+            """),
+            Ps1PrefixEvaluator,
+        )
+
+    def test_a_contains_over_a_non_ascii_value_ends_the_prefix(self):
+        self._assertUnchanged(
+            "$t = @('ss') -contains [char]0x00DF\nf $t",
+            Ps1PrefixEvaluator,
+        )
+
+    def test_an_increment_of_a_qualified_name_ends_the_prefix(self):
+        self._assertUnchanged("$o = $env:zq++\nf $o", Ps1PrefixEvaluator)
+
+    def test_an_increment_of_a_caller_bound_name_ends_the_prefix(self):
+        self._assertUnchanged("$o = $i++\nf $o", Ps1PrefixEvaluator)
+
+    def test_an_increment_folds_the_values_the_host_computes(self):
+        source = cleandoc("""
+            $i = 5
+            $o = $i++
+            f $o
+            f $i
+        """)
+        self.assertEqual(
+            self._apply(source, Ps1PrefixEvaluator),
+            cleandoc("""
+                $i = 6
+                $o = 5
+                f $o
+                f $i
+            """),
+        )
+
+    def test_a_foreach_header_bound_to_a_qualified_name_ends_the_prefix(self):
+        self._assertUnchanged(
+            "foreach ($env:zq in 'a', 'b') {}\nf $zq",
+            Ps1PrefixEvaluator,
+        )
+
+    def test_a_store_of_a_name_only_braces_spell_keeps_its_braces(self):
+        source = cleandoc("""
+            ${a-b} = 'x' + 'y'
+            f ${a-b}
+        """)
+        self.assertEqual(
+            self._apply(source, Ps1PrefixEvaluator),
+            cleandoc("""
+                ${a-b} = 'xy'
+                f ${a-b}
+            """),
+        )
+
+    def test_a_labelled_break_folds_to_the_value_the_host_computes(self):
+        source = cleandoc("""
+            $o = ''
+            :outer foreach ($i in 1, 2) {
+              foreach ($j in 1, 2) { break outer }
+              $o = $o + 'inner'
+            }
+            $x = $o + 'end'
+            f $x
+        """)
+        self.assertEqual(
+            self._apply(source, Ps1PrefixEvaluator),
+            cleandoc("""
+                $x = 'end'
+                f $x
+            """),
+        )
+
+    def test_a_labelled_continue_folds_to_the_value_the_host_computes(self):
+        source = cleandoc("""
+            $k = 0
+            :outer foreach ($i in 1, 2) {
+              foreach ($j in 1, 2) { continue outer }
+              $k = $k + 100
+            }
+            $k = $k + 2
+            f $k
+        """)
+        self.assertEqual(
+            self._apply(source, Ps1PrefixEvaluator),
+            cleandoc("""
+                $k = 2
+                f $k
+            """),
+        )
+
+    def test_an_array_of_unsigned_sixteen_bit_cells_folds_like_plain_cells(self):
+        source = cleandoc("""
+            $a = New-Object uint16[] 2
+            $t = $a[0] + 1
+            f $t
+        """)
+        self.assertEqual(
+            self._apply(source, Ps1PrefixEvaluator),
+            cleandoc("""
+                $t = 1
+                f $t
+            """),
+        )
+
+    def test_a_comparison_of_unsigned_sixteen_bit_cells_does_not_fold_to_false(self):
+        source = cleandoc("""
+            $a = New-Object uint16[] 2
+            $t = $a[0] -eq '0'
+            f $t
+        """)
+        self.assertEqual(
+            self._apply(source, Ps1PrefixEvaluator),
+            cleandoc("""
+                $a = 0, 0
+                $t = $a[0] -eq '0'
+                f $t
+            """),
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -262,13 +262,18 @@ def ps_shift_right(value: int, count: int) -> int:
     return value >> (count & (width - 1))
 
 
-def switch_matches(value, condition, *, case_sensitive: bool = False) -> bool:
+def switch_matches(value, condition, *, case_sensitive: bool = False) -> bool | None:
     """
-    PowerShell `switch` clause matching for already-evaluated scalar values. String comparison is
+    PowerShell `switch` clause matching for already-evaluated scalar values, or `None` where the
+    host culture decides the match and this does not: a comparison of two texts is a collation
+    there and not a reading of code points, and the two agree only where both operands are ASCII —
+    measured, `'ss'` matches the sharp s the culture expands it to. String comparison is
     case-insensitive unless `case_sensitive` is set; integers and strings cross-coerce the way
     PowerShell does.
     """
     if isinstance(value, str) and isinstance(condition, str):
+        if not value.isascii() or not condition.isascii():
+            return None
         return value == condition if case_sensitive else value.lower() == condition.lower()
     if isinstance(value, (int, float)) and isinstance(condition, (int, float)):
         return value == condition

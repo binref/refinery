@@ -189,6 +189,92 @@ class TestPs1FunctionEvaluator(TestPs1):
         result = self._deobfuscate(data)
         self.assertIn('255', result)
 
+    def test_a_based_convert_wider_than_its_width_refuses_the_call(self):
+        data = (
+            "Function F ([String]$s){"
+            "$r = [Convert]::ToByte($s, 16);"
+            "$r;}"
+            "$x = F '1FF'\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('function', result.lower())
+
+    def test_a_based_convert_of_a_signed_base_ten_numeral_out_of_range_refuses_the_call(self):
+        data = (
+            "Function F ([String]$s){"
+            "$r = [Convert]::ToInt16($s, 10);"
+            "$r;}"
+            "$x = F '-40000'\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('function', result.lower())
+
+    def test_a_based_convert_of_a_numeral_only_python_reads_refuses_the_call(self):
+        data = (
+            "Function F ([String]$s){"
+            "$r = [Convert]::ToInt32($s, 10);"
+            "$r;}"
+            "$x = F '1_0'\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('function', result.lower())
+
+    def test_a_based_convert_folds_the_pattern_of_the_widest_width(self):
+        data = (
+            "Function F ([String]$s){"
+            "$r = [Convert]::ToInt64($s, 16);"
+            "$r;}"
+            "$x = F 'FFFFFFFFFFFFFFFF'\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('-1', result)
+
+    def test_a_continue_in_a_switch_clause_runs_the_tail_of_its_loop(self):
+        data = (
+            "Function F {"
+            "$o = '';"
+            "Foreach($i in 1, 2){"
+            "Switch(1){default{continue}};"
+            "$o = $o + 'x'};"
+            "$o;}"
+            "$x = F\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertEqual(result, "Write-Output 'xx'")
+
+    def test_a_labelled_break_out_of_a_switch_leaves_the_whole_loop(self):
+        data = (
+            "Function F {"
+            "$o = '';"
+            ":outer Foreach($i in 1, 2){"
+            "Switch(1){default{break outer}};"
+            "$o = $o + 'x'};"
+            "$o;}"
+            "$x = F\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertEqual(result, "Write-Output ''")
+
+    def test_a_switch_over_a_collection_refuses_the_call(self):
+        data = (
+            "Function F {"
+            "$t = '';"
+            "Switch(1, 2){"
+            "1{$t = $t + 'a'}"
+            "2{$t = $t + 'b'}};"
+            "$t;}"
+            "$x = F\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('function', result.lower())
+
     def test_encoding_getstring(self):
         data = (
             "Function F {"
