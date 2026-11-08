@@ -9,14 +9,9 @@ The project's main focus is malware triage.
 
 You are an expert Python developer, malware analyst, and reverse engineer working on this project.
 
-# Mandatory Work Protocol
+## Reporting
 
-Every time you start to write code or start planning code changes,
-you must read the [STYLEGUIDE](STYLEGUIDE.md) and make sure that all written code is compliant with it.
-
-# Reporting
-
-These rules govern everything you say to me.
+The following rules govern everything you say to me.
 I direct this project at a high level.
 Assume I know the goal and nothing about your function names, class names, or file layout.
 
@@ -37,7 +32,26 @@ Assume I know the goal and nothing about your function names, class names, or fi
 
 Do not create memories for any of this. It lives here.
 
-# Style Rules That Differ From PEP 8
+## Rules of Engagement
+
+- Many test samples and test data in binary refinery contain malware.
+  **It is therefore not permitted, under any circumstances, to permit any of these samples to be executed.**
+- For the purpose of testing, it is permitted to read a sample into memory and parse it
+  with existing Binary Refinery code. The existing code is assumed to be safe for processing malware samples.
+- Run your tests using `pytest -n 6`.
+  Restricting to 6 workers ensures that not too much memory is used.
+- Put temporary scripts in a subfolder of `temp/scripts` named for the task.
+- Put samples and all other temporary files in a subfolder of `temp` with an appropriate name, never under `temp/scripts`.
+- When making commits on my behalf, do not include a comment about AI co-authorship.
+- When asked to commit changes to git, only use one-line commit messages;
+  each commit message must fit within 140 characters.
+
+### Mandatory Work Protocol
+
+Every time you start to write code or start planning code changes,
+ you must read the [STYLEGUIDE](STYLEGUIDE.md) and make sure that all written code is compliant with it.
+
+### Style Rules That Differ From PEP 8
 
 The following rules contradict common Python conventions. Check them explicitly:
 
@@ -75,24 +89,7 @@ The following rules contradict common Python conventions. Check them explicitly:
 - **Do not** write comments unless the information absolutely cannot be communicated by naming or structure.
   Never write comments that reference external source code.
 
-# Rules of Engagement
-
-- Many test samples and test data in binary refinery contain malware.
-  **It is therefore not permitted, under any circumstances, to permit any of these samples to be executed.**
-- For the purpose of testing, it is permitted to read a sample into memory and parse it
-  with existing Binary Refinery code. The existing code is assumed to be safe for processing malware samples.
-
-# Development
-
-- Run your tests using `pytest -n 6`.
-  Restricting to 6 workers ensures that not too much memory is used.
-- Put temporary scripts in a subfolder of `temp/scripts` named for the task.
-- Put samples and all other temporary files in a subfolder of `temp` with an appropriate name, never under `temp/scripts`.
-- When making commits on my behalf, do not include a comment about AI co-authorship.
-- When asked to commit changes to git, only use one-line commit messages;
-  each commit message must fit within 140 characters.
-
-# Tool Permissions
+### Tool Permissions
 
 Some sessions run in `dontAsk` mode:
  When this is the case, every tool call that is not pre-approved is refused without a prompt.
@@ -119,7 +116,9 @@ and mind the following notes on permission semantics:
   ```
   and note that `refinery/__unit__.py` maps unit names to modules; do not read the entire file, grep for the unit.
 
-# Architecture is P0
+## Development
+
+### Architecture is P0
 
 - Your highest priority is good architecture, clear separation of concerns, and maintainability.
 - **Do not** choose the simplest fix or solution; look for the one that is the cleanest.
@@ -130,7 +129,7 @@ and mind the following notes on permission semantics:
 - When fixing a bug, **always** identify the root issue first.
 - When a bug has been identified and understood, always write a small, targeted regression test for it.
 
-# Planning
+### Planning
 
 Plan in detail only the phase about to be built; 
 later phases get one line each and their own plan when they start.
@@ -177,7 +176,63 @@ After a plan is finalized, ask for approval:
 - If a decision cannot be explained in plain words with a concrete example, do not ask me.
   Decide it under "Architecture is P0" and tell me what you decided and why.
 
-# Code Review Context
+### Testing
+
+Development is test driven throughout: Tests must be written before development.
+When fixing a defect, you must **fist** write a minimal test that reproduces the issue, then fix it.
+When developing a new feature, tests must be written first to spell out its expected behavior.
+
+Expectations must be based on real measurements or explicit user specification.
+Any expectation spelled out by a test must be aligned with the user's intentions and specifications as well as the project goals:
+If these contradict, you **must immediately pause and clarify**.
+
+A test may never express an undesired or unreasonable expectation: Common failures are tests that:
+- parrot what the current code produces
+- are not based on measurements
+- are not part of the specified goal
+
+Whenever you write a test, consider the test by itself and independent of the implementation it covers and ask yourself:
+- is the expectation reasonable and well aligned?
+- does it cover every use case we are building for?
+
+If the answer is not affirmative to both, adjust.
+
+The goal for test coverage is 95%, but this has very important caveats:
+
+- Do not craft tests to cover a particular code path:
+  Write tests that evaluate consistency and formalize expected behavior.
+- It is better to stay below 95% coverage than to write bad tests.
+- **Never** write tests based on the code you have written or assumptions you have made.
+  In order for tests to be useful, they have to challenge the code, not support it.
+- **Never** use code to synthesize test data.
+  Test data needs to be produced with a known-good source that was not developed by us.
+- One exception to this is the following:
+  It is permitted to use code to modify authentic test data in order to cover error-specific code paths.
+- For example, never write code to synthesize an archive format:
+  Use the original archive software to produce test samples or ask me to provide them.
+
+The name of a test and its code must express its purpose and expectations clearly.
+Test must not have docstrings.
+Only when the name of a test is *truly insufficient* to do this a docstring may be added when the user explicitly permits it.
+Such a docstring must **never** describe the logic or design of the test, it only **documents its expectation**.
+
+As with any code, comments are banned unless there is no other way to make the code explain itself.
+
+A test of a defect that is not fixed yet carries one of the markers from `test/__init__.py`.
+Every marker except `@wontfix` runs the test as an expected failure that only a failed assertion meets.
+Markers are removed when the defect is fixed.
+Rank a defect by how realistic its triggering input is and by how much harm a wrong result does.
+
+| Marker             | Meaning                                                                    |
+|--------------------|----------------------------------------------------------------------------|
+| `@blocker`         | Severe defect. It must be fixed before the next release.                   |
+| `@todo`            | Default category for real defects whose fix is deferred but desired.       |
+| `@backlog`         | A real defect, but of lower priority; TODOs should go first.               |
+| `@wontfix(reason)` | A made-up input shape or out-of-scope scenario that is explicitly skipped. |
+| `@opportunity`     | Not a defect, but a test describing how the code could behave better.      |
+
+
+### Code Review
 
 After each round of implementation, a code review is scheduled.
 Whenever you complete a plan, or when you are asked to provide context for a code review,
@@ -198,40 +253,3 @@ When the code review returns, each discovered defect must be handled in one of t
 
 Never throw around the vague terms "measured", "recorded", or "pinned" in this context.
 State only which bugs are discarded, fixed, and tracked with a test.
-
-# Test Coverage
-
-When you develop a new piece of code, you should also write tests.
-The goal for test coverage is 95%, but this has very important caveats:
-
-- Do not craft tests to cover a particular code path:
-  Write tests that evaluate consistency and formalize expected behavior.
-- It is better to stay below 95% coverage than to write bad tests.
-- **Never** write tests based on the code you have written or assumptions you have made.
-  In order for tests to be useful, they have to challenge the code, not support it.
-- **Never** use code to synthesize test data.
-  Test data needs to be produced with a known-good source that was not developed by us.
-- One exception to this is the following:
-  It is permitted to use code to modify authentic test data in order to cover error-specific code paths.
-- For example, never write code to synthesize an archive format:
-  Use the original archive software to produce test samples or ask me to provide them.
-
-The name of a test and its code should make its purpose and the correctness of its assertion obvious.
-The goal is that a test requires no further narration via comment or docstring.
-In the rare case where either requires an explanation:
-Use docstrings to explain purpose and comments to explain correctness.
-
-## Test Markers
-
-A test of a defect that is not fixed yet carries one of the markers from `test/__init__.py`.
-Every marker except `@wontfix` runs the test as an expected failure that only a failed assertion meets.
-Markers are removed when the defect is fixed.
-Rank a defect by how realistic its triggering input is and by how much harm a wrong result does.
-
-| Marker             | Meaning                                                                    |
-|--------------------|----------------------------------------------------------------------------|
-| `@blocker`         | Severe defect. It must be fixed before the next release.                   |
-| `@todo`            | Default category for real defects whose fix is deferred but desired.       |
-| `@backlog`         | A real defect, but of lower priority; TODOs should go first.               |
-| `@wontfix(reason)` | A made-up input shape or out-of-scope scenario that is explicitly skipped. |
-| `@opportunity`     | Not a defect, but a test describing how the code could behave better.      |
