@@ -2670,7 +2670,6 @@ class TestPs1AStoreNoOccurrenceOfTheNameSpellsIsStillSeen(_Ps1Ledger):
 
 class TestPs1TheEnvironmentDriveIsWrittenByMoreThanItsAssignments(_Ps1Ledger):
 
-    @todo
     def test_set_content_onto_the_drive_rewrites_the_name(self):
         tree = self._deobfuscated_tree("$env:zq = 'ab'; Set-Content env:zq 'cd'; Write-Host $env:zq")
         self.assertTrue(

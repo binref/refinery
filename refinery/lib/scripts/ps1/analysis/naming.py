@@ -141,6 +141,7 @@ _VARIABLE_COMMANDS: dict[str, Ps1NameRole] = {
 #: Commands whose first argument is a *provider path*, which addresses a variable when it names the
 #: `Variable:` or `Env:` drive. `Remove-Item Variable:x` is how `del variable:x` arrives.
 _ITEM_COMMANDS: dict[str, Ps1NameRole] = {
+    'add-content': Ps1NameRole.WRITES,
     'clear-item': Ps1NameRole.WRITES,
     'copy-item': Ps1NameRole.READS,
     'get-childitem': Ps1NameRole.READS,
@@ -149,6 +150,7 @@ _ITEM_COMMANDS: dict[str, Ps1NameRole] = {
     'new-item': Ps1NameRole.WRITES,
     'remove-item': Ps1NameRole.UNBINDS,
     'rename-item': Ps1NameRole.UNBINDS,
+    'set-content': Ps1NameRole.WRITES,
     'set-item': Ps1NameRole.WRITES,
 }
 

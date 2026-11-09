@@ -11,6 +11,8 @@ from typing import Iterator, NamedTuple, TypeGuard
 from refinery.lib.scripts import Node, Transformer, canonical, reattach
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.effects import is_fault_free, may_be_dropped
+from refinery.lib.scripts.ps1.analysis.environment import stores_the_environment_name
+from refinery.lib.scripts.ps1.analysis.model import Ps1SemanticModel
 from refinery.lib.scripts.ps1.analysis.values import (
     CONVERT_PATTERN,
     CONVERT_SIGNED,
@@ -94,6 +96,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
 )
+from refinery.lib.scripts.ps1.options import environment_is_preserved
 
 _REGEX_OPTION_FLAGS: dict[str, int] = {
     'ignorecase'              : re.IGNORECASE,
@@ -571,6 +574,7 @@ class Ps1ConstantFolding(Transformer):
     def __init__(self):
         super().__init__()
         self._world: Ps1WorldReach | None = None
+        self._model: Ps1SemanticModel | None = None
         self._entry = False
 
     def visit(self, node: Node):
@@ -578,7 +582,10 @@ class Ps1ConstantFolding(Transformer):
             return super().visit(node)
         self._entry = True
         try:
-            self._world = model_cache(self, node).world_reach
+            cache = model_cache(self, node)
+            self._world = cache.world_reach
+            if environment_is_preserved(self.options):
+                self._model = cache.model
             return super().visit(node)
         finally:
             self._entry = False
@@ -886,6 +893,16 @@ class Ps1ConstantFolding(Transformer):
             return Ps1ArrayLiteral(elements=elements)
         return None
 
+    def _may_answer_a_default_for(self, name: str) -> bool:
+        """
+        Whether this pass may answer a name the engine establishes before the script runs. Under the
+        preserving model the environment is the script's interface, so a name the script stores is
+        not the engine's to answer: a spelling this pass does not read — a `Set-Content` onto the
+        drive, a .NET method — may have rewritten it between the store and the read, and the read
+        keeps the name.
+        """
+        return self._model is None or not stores_the_environment_name(name, self._model)
+
     def _try_fold_static_method(
         self, node: Ps1InvokeMember, lower: str,
     ) -> Expression | None:
@@ -940,6 +957,7 @@ class Ps1ConstantFolding(Transformer):
             and len(na := node.arguments) == 1
             and (_en := coerced_text(read(na[0]))) is not None
             and (_ev := PS1_ENV_CONSTANTS.get(_en.lower())) is not None
+            and self._may_answer_a_default_for(_en)
         ):
             return make_string_literal(_ev)
         return None

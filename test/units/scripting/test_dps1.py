@@ -215,6 +215,33 @@ class TestPs1RealWorldSmall(TestUnitBase):
             """
         ))
 
+    def test_the_env_flag_keeps_a_dot_net_spelled_read_of_a_stored_name(self):
+        data = (
+            b"$env:ComSpec = 'x'; "
+            b"Write-Output ([Environment]::GetEnvironmentVariable('ComSpec'))"
+        )
+        self.assertEqual(data | self.load(env=True) | str, inspect.cleandoc(
+            """
+            $env:ComSpec = 'x'
+            Write-Output ([Environment]::GetEnvironmentVariable('ComSpec'))
+            """
+        ))
+
+    def test_set_content_onto_the_drive_keeps_a_read_of_the_name(self):
+        data = b"Set-Content env:ComSpec 'x'; Write-Output $env:ComSpec"
+        self.assertEqual(data | self.load(env=True) | str, inspect.cleandoc(
+            """
+            Set-Content env:ComSpec 'x'
+            Write-Output $env:ComSpec
+            """
+        ))
+        self.assertEqual(data | self.load() | str, inspect.cleandoc(
+            """
+            Set-Content env:ComSpec 'x'
+            Write-Output $env:ComSpec
+            """
+        ))
+
     def test_folding_of_byte_array_with_encoding(self):
         code = (
             """$bnf=[char]77+[char]112+[char]80+[char]114+[char]101+[char]102+[char]101+[char]114+[char]101+[char]110+["""

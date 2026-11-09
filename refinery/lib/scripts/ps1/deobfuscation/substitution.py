@@ -2,9 +2,10 @@
 The single route by which a PowerShell cleanup pass puts one part of the tree in another's place.
 
 `refinery.lib.scripts.ps1.deobfuscation.removal` owns the other half of the same question: what a
-pass takes *out* of a statement list. Both routes exist so the rule about what a rewrite must not
-throw away — a redirection that would be dropped — lives in one place rather than at every site that
-could break it.
+pass takes *out* of a statement list. Both routes exist so the rules about what a rewrite must not
+throw away — a redirection that would be dropped, and under the preserving model a read of an
+`$env:` name the script stores — live in one place rather than at every site that could break
+them.
 
 The entry points are named for the slot the node sits in — a direct field, one entry of a child
 list, the whole of one — rather than for the passes that reach them, because the slot is the only
@@ -37,6 +38,8 @@ from refinery.lib.scripts import (
     set_child,
     set_child_list,
 )
+from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
+from refinery.lib.scripts.ps1.analysis.environment import takes_a_read_the_environment_owns
 from refinery.lib.scripts.ps1.deobfuscation.removal import land, raisers_a_splice_moves, rescopes_a_handler
 
 #: What every entry point below accepts on either side of a substitution: a node, nothing, or a
@@ -120,7 +123,13 @@ def _release(part: Part) -> bool:
     return False
 
 
-def substituted(old: Node, new: Node | None, moved: Part = ()) -> Node | None:
+def substituted(
+    old: Node,
+    new: Node | None,
+    moved: Part = (),
+    flow: Ps1VariableFlow | None = None,
+    options: object | None = None,
+) -> Node | None:
     """
     The replacement a `visit_X` method may return for `old`, or `None` to leave it standing.
 
@@ -132,10 +141,20 @@ def substituted(old: Node, new: Node | None, moved: Part = ()) -> Node | None:
 
     A refused replacement is released for the reason `_release` gives: building it adopted the parts
     of `old` it reuses, and those parts are still standing in the tree.
+
+    A replacement may not take a read of an `$env:` name the script stores with it under the
+    preserving model, which is `takes_a_read_the_environment_owns`'s question asked over the whole
+    of `old`: what replaces the node answers something computed off it, and a read inside it is one
+    of the things computed off. A pass hands that question here by naming its flow and its options;
+    one that names neither keeps every read it takes or asks the question itself in its own terms,
+    as one that carries parts of the original into the replacement does.
     """
     if new is None:
         return None
-    if not may_substitute(old, new, moved):
+    if (
+        not may_substitute(old, new, moved)
+        or takes_a_read_the_environment_owns(old, flow, options)
+    ):
         _release(old)
         return None
     return new

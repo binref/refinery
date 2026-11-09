@@ -236,6 +236,23 @@ class TestPs1TypeAt(TestBase):
             with self.subTest(source):
                 self.assertEqual(self._type_at(source, name='s'), expected)
 
+    def test_a_foreach_binding_onto_the_drive_carries_the_string_the_drive_holds(self):
+        for source in [
+            "foreach ($env:q in 'a', 'b') { $env:q.tostring() }",
+            'foreach ($env:q in 1, 2) { $env:q.tostring() }',
+        ]:
+            with self.subTest(source):
+                self.assertEqual(self._type_at(source), 'System.String')
+
+    def test_a_foreach_binding_onto_the_drive_refuses_an_element_that_settles_not(self):
+        for source in [
+            "foreach ($env:q in '', 'ab') { $env:q.tostring() }",
+            'foreach ($env:q in "$b", \'ab\') { $env:q.tostring() }',
+            'foreach ($env:q in $items) { $env:q.tostring() }',
+        ]:
+            with self.subTest(source):
+                self.assertIsNone(self._type_at(source))
+
 
 class TestPs1AWriteThroughAWiderScopeIsNotTheNameABareReadResolves(TestPs1TypeAt):
 

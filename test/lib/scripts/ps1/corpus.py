@@ -452,11 +452,14 @@ BEHAVIOURS: tuple[str, ...] = (
     "foreach ($env:zq in 'a', 'b') { Write-Output ($env:zq | Get-Member)[3].Name }",
     '$env:zq = 5.5; Write-Output ($env:zq + 1)',
 
-    #: What a write the analysis does not read is asked to preserve the behaviour of. A `Set-Content`
-    #: onto the drive rewrites the name, `Remove-Item env:*` removes every name the drive holds, and
-    #: a .NET method writes a name no `$env:` occurrence spells; the read after each observes the
-    #: value the write left, which the fold of a stored value does not.
+    #: What a write onto the drive is asked to preserve the behaviour of. A `Set-Content` onto a
+    #: name is read as a write of it, so the read after it keeps the name: the stored value above
+    #: does not answer, and neither does the default the engine gave the name before the script ran.
+    #: `Remove-Item env:*` removes every name the drive holds and a .NET method writes a name no
+    #: `$env:` occurrence spells, and neither is read as a write, so the read after each observes
+    #: the value the write left, which the fold of a stored value does not.
     "$env:zq = 'ab'; Set-Content env:zq 'cd'; Write-Output $env:zq",
+    "Set-Content env:ComSpec 'cd'; Write-Output $env:ComSpec",
     "$env:zq = 'ab'; Remove-Item env:*; Write-Output ($env:zq + 1)",
     "[Environment]::SetEnvironmentVariable('ComSpec', 'x'); Write-Output $env:ComSpec",
 

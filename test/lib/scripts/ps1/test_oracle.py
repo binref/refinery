@@ -333,10 +333,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'function it is handed to, so the failing cast ends the call and the snippet writes the '
         'error and `after`; the output writes `f-rest` and `after`. Which bodies a call runs '
         'under a preference is the interprocedural milestone (cluster 1f).',
-    "$env:zq = 'ab'; Set-Content env:zq 'cd'; Write-Output $env:zq":
-        'The read is folded to `ab` where the snippet writes `cd`: `Set-Content` rewrites the '
-        'name on the drive, and a store made through a command the analysis does not read is '
-        'read as storing nothing.',
     "$env:zq = 'ab'; Remove-Item env:*; Write-Output ($env:zq + 1)":
         'The read is folded to `ab1` where the snippet writes `1`: `Remove-Item env:*` removes '
         'every name the drive holds, so the name reads `$null`, which the addition converts to '
@@ -4393,6 +4389,19 @@ def rewritten_by(unit, snippets: Sequence[str]) -> Callable[[str], str]:
     return emitted.__getitem__
 
 
+@functools.cache
+def what_each_snippet_writes() -> dict[str, tuple[str, ...]]:
+    """
+    What each snippet of the reviewed corpus writes, measured once and handed to every question
+    that asks: the two differentials below put the same snippets to the same host, and a second
+    measurement of the same run would only set a flaky host apart from a defect by answering the
+    two questions differently. Each differential still measures its own *output*, which is what
+    its model can change.
+    """
+    snippets = (*corpus.BEHAVIOURS, *corpus.CLAIMS)
+    return dict(zip(snippets, behaviours(snippets)))
+
+
 def has_parse_error(source: str) -> bool:
     """
     Whether our parser reported a problem with `source`. This is not `is_well_formed`, which also
@@ -4686,7 +4695,7 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
         this run, so a host that answers differently from the record fails only the first question.
         """
         snippets = (*corpus.BEHAVIOURS, *corpus.CLAIMS)
-        measured = dict(zip(snippets, behaviours(snippets)))
+        measured = what_each_snippet_writes()
         with self.subTest(law='every belief about what a script does is what powershell does'):
             self.assertEqual({claim: measured[claim] for claim in corpus.CLAIMS}, CLAIM_TRANSCRIPTS)
         deobfuscated = rewritten_by(self.ldu('dps1', strict=True), snippets)
@@ -4709,14 +4718,14 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
         self.assertEqual(sorted(set(BEHAVIOUR_DIVERGENCES) & set(BEHAVIOUR_DEFECTS)), [])
 
 
-#: The defects the preserving model heals, which `TestPs1DeobfuscationPreservesTheEnvironmentInterface`
-#: measures the output of. Each is a write the analysis does not read — a `Set-Content` onto the drive,
-#: a `Remove-Item` over every name it holds — between a store and a read of the same name: that model
-#: keeps both the store and the read, so the write the snippet makes is the one the output makes. The
-#: .NET method row of the same group is not among them, for the model never sees that write at all:
-#: the name it writes is read as never written, and the ambient default answers in either model.
+#: The defects the preserving model heals, which the class below measures the output of. Each is a
+#: write the analysis does not read — a `Remove-Item` over every name the drive holds — between a
+#: store and a read of the same name: that model keeps both the store and the read, so the write the
+#: snippet makes is the one the output makes. The .NET method row of the same group is not among
+#: them, for the model never sees that write at all: the name it writes is read as never written,
+#: and the ambient default answers in either model. A `Set-Content` onto a name is read as a write
+#: in either model, so the row that carries it is no defect at all.
 PRESERVED_ENVIRONMENT_HEALS: frozenset[str] = frozenset({
-    "$env:zq = 'ab'; Set-Content env:zq 'cd'; Write-Output $env:zq",
     "$env:zq = 'ab'; Remove-Item env:*; Write-Output ($env:zq + 1)",
 })
 
@@ -4726,13 +4735,13 @@ class TestPs1DeobfuscationPreservesTheEnvironmentInterface(Ps1OracleTest):
     """
     The same promise as `TestPs1DeobfuscationPreservesBehaviour`, made of the mode that keeps the
     environment as the script's interface: `dps1 -e`. That model keeps every `$env:` store and every
-    read of a stored name, so the defects it heals are the ones whose rewrite drops a write a command
-    the analysis does not read makes, and the rest of the defect table stays its cost.
+    read of a stored name, so the defects it heals are the ones whose rewrite drops a write a
+    command the analysis does not read makes, and the rest of the defect table stays its cost.
     """
 
     def test_each_output_behaves_like_its_input(self):
         snippets = (*corpus.BEHAVIOURS, *corpus.CLAIMS)
-        measured = dict(zip(snippets, behaviours(snippets)))
+        measured = what_each_snippet_writes()
         deobfuscated = rewritten_by(self.ldu('dps1', strict=True, env=True), snippets)
         rewritten = [snippet for snippet in snippets if deobfuscated(snippet) != snippet]
         changed = sorted(
@@ -4774,6 +4783,19 @@ class TestPs1EverySnippetIsStillRewritten(TestBase):
 
     def test_every_corpus_snippet_is_rewritten(self):
         unit = self.ldu('dps1', strict=True)
+        untouched = frozenset(
+            snippet for snippet in (*corpus.BEHAVIOURS, *corpus.CLAIMS)
+            if bytes(snippet.encode('utf8') | unit).decode('utf8') == snippet
+        )
+        self.assertEqual(sorted(untouched), sorted(UNREWRITTEN_SNIPPETS))
+
+    def test_every_corpus_snippet_is_rewritten_by_the_environment_preserving_model(self):
+        """
+        The same ratchet for `dps1 -e`, whose refusals are the wider set: a read of a stored `$env:`
+        name is kept there where the sound mode folds it, so a defect in that rule would leave a
+        snippet standing that the mode above rewrites.
+        """
+        unit = self.ldu('dps1', strict=True, env=True)
         untouched = frozenset(
             snippet for snippet in (*corpus.BEHAVIOURS, *corpus.CLAIMS)
             if bytes(snippet.encode('utf8') | unit).decode('utf8') == snippet

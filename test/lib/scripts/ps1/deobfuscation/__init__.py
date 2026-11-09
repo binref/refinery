@@ -20,6 +20,7 @@ class TestPs1(TestBase):
         remove_junk: bool = True,
         preserve_bare_output: bool = False,
         trust_eval: bool = False,
+        preserve_environment: bool = False,
     ) -> str:
         ast = Ps1Parser(source).parse()
         deobfuscate(
@@ -27,6 +28,7 @@ class TestPs1(TestBase):
             remove_junk=remove_junk,
             preserve_bare_output=preserve_bare_output,
             trust_eval=trust_eval,
+            preserve_environment=preserve_environment,
         )
         return Ps1Synthesizer().convert(ast)
 
@@ -37,6 +39,7 @@ class TestPs1(TestBase):
         remove_junk: bool = True,
         preserve_bare_output: bool = False,
         trust_eval: bool = False,
+        preserve_environment: bool = False,
     ) -> str:
         ast = Ps1Parser(source).parse()
         for _ in range(iterations):
@@ -45,6 +48,7 @@ class TestPs1(TestBase):
                 remove_junk=remove_junk,
                 preserve_bare_output=preserve_bare_output,
                 trust_eval=trust_eval,
+                preserve_environment=preserve_environment,
             ):
                 break
         return Ps1Synthesizer().convert(ast)
@@ -64,12 +68,14 @@ class TestPs1(TestBase):
         remove_junk: bool = True,
         preserve_bare_output: bool = False,
         trust_eval: bool = False,
+        preserve_environment: bool = False,
     ) -> None:
         deobfuscated = self._deobfuscate(
             inspect.cleandoc(source),
             remove_junk=remove_junk,
             preserve_bare_output=preserve_bare_output,
             trust_eval=trust_eval,
+            preserve_environment=preserve_environment,
         )
         self.assertEqual(deobfuscated, self._untouched(inspect.cleandoc(expected)))
 
@@ -80,12 +86,14 @@ class TestPs1(TestBase):
         remove_junk: bool = True,
         preserve_bare_output: bool = False,
         trust_eval: bool = False,
+        preserve_environment: bool = False,
     ) -> None:
         deobfuscated = self._deobfuscate(
             inspect.cleandoc(source),
             remove_junk=remove_junk,
             preserve_bare_output=preserve_bare_output,
             trust_eval=trust_eval,
+            preserve_environment=preserve_environment,
         )
         acceptable = tuple(self._untouched(inspect.cleandoc(program)) for program in expected)
         self.assertIn(deobfuscated, acceptable)
@@ -96,6 +104,7 @@ class TestPs1(TestBase):
         remove_junk: bool = True,
         preserve_bare_output: bool = False,
         trust_eval: bool = False,
+        preserve_environment: bool = False,
     ) -> None:
         self._assertDeobfuscatesTo(
             source,
@@ -103,6 +112,7 @@ class TestPs1(TestBase):
             remove_junk=remove_junk,
             preserve_bare_output=preserve_bare_output,
             trust_eval=trust_eval,
+            preserve_environment=preserve_environment,
         )
 
     def _assertRemoved(self, source: str, statement: str, trust_eval: bool = False) -> None:

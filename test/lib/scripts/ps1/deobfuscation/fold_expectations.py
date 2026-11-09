@@ -1287,6 +1287,10 @@ SIMPLIFIED: dict[str, Expectation] = {
             gains=('Write-Output (9, 2, 3)',),
             lacks=('Set-Variable',),
         ),
+    "$env:zq = 'ab'; Set-Content env:zq 'cd'; Write-Output $env:zq":
+        KeptAsWritten(),
+    "Set-Content env:ComSpec 'cd'; Write-Output $env:ComSpec":
+        KeptAsWritten(),
 }
 
 NOT_YET_SIMPLIFIED: frozenset[str] = frozenset({

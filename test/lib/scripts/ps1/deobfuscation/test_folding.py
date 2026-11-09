@@ -750,6 +750,79 @@ class TestPs1EnvironmentVariableFolding(TestPs1):
         result = self._deobfuscate("[Environment]::GetEnvironmentVariable('CUSTOM_VAR')")
         self.assertIn('GetEnvironmentVariable', result)
 
+    def test_the_preserving_model_keeps_a_dot_net_spelled_read_of_a_stored_name(self):
+        self._assertKept(
+            """
+                $env:ComSpec = 'x'
+                Write-Output ([Environment]::GetEnvironmentVariable('ComSpec'))
+            """,
+            preserve_environment=True,
+        )
+
+    def test_set_content_onto_a_name_the_engine_supplied_keeps_the_read(self):
+        """
+        A `Set-Content` onto the drive rewrites the name, so the default the engine gave it before
+        the script ran is not what the read observes: the read keeps the name in either model,
+        where a store nothing reads used to leave the ambient default answering it.
+        """
+        self._assertKept(
+            """
+                Set-Content env:ComSpec 'x'
+                Write-Output $env:ComSpec
+            """,
+            preserve_environment=True,
+        )
+        self._assertKept(
+            """
+                Set-Content env:ComSpec 'x'
+                Write-Output $env:ComSpec
+            """,
+        )
+
+    def test_a_stored_value_does_not_answer_a_read_below_a_set_content(self):
+        """
+        The same command between the store and the read: what the read observes is what the
+        command wrote, so folding it to the stored value above would miscompile in the folding
+        model too.
+        """
+        self._assertKept(
+            """
+                $env:zq = 'ab'
+                Set-Content env:zq 'cd'
+                Write-Output $env:zq
+            """,
+            preserve_environment=True,
+        )
+        self._assertKept(
+            """
+                $env:zq = 'ab'
+                Set-Content env:zq 'cd'
+                Write-Output $env:zq
+            """,
+        )
+
+    def test_a_stored_value_does_not_answer_a_read_below_an_add_content(self):
+        """
+        The appending spelling of the same command, which rewrites the name by appending to what
+        it held: the value the read observes is neither the stored value above nor anything this
+        can compute, so the read keeps the name.
+        """
+        self._assertKept(
+            """
+                $env:zq = 'ab'
+                Add-Content env:zq 'cd'
+                Write-Output $env:zq
+            """,
+            preserve_environment=True,
+        )
+        self._assertKept(
+            """
+                $env:zq = 'ab'
+                Add-Content env:zq 'cd'
+                Write-Output $env:zq
+            """,
+        )
+
     @backlog
     def test_a_default_the_script_overwrote_is_not_read_back_by_name(self):
         self._assertDeobfuscatesToOneOf(

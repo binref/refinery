@@ -58,6 +58,19 @@ class TestPs1TypeSystemSimplifications(TestPs1):
             (self._apply(source), "$q = New-Object Net.WebClient\n'AllowReadStreamBuffering'"),
         )
 
+    def test_a_redirected_get_member_index_name_is_left_standing(self):
+        """
+        The fold replaces the pipeline the redirection is written on, so taking it would leave the
+        file the redirection opens uncreated: PowerShell opens the target as it sets the
+        redirection up, so even a listing that writes nothing touches the file.
+        """
+        source = "Write-Output ('ab' | Get-Member > 'o.txt')[3].Name"
+        self._assertUnchanged(source, Ps1TypeSystemSimplifications)
+        self.assertEqual(
+            self._apply("Write-Output ('ab' | Get-Member)[3].Name", Ps1TypeSystemSimplifications),
+            "Write-Output 'CopyTo'",
+        )
+
     @wontfix('no script reads Name from a quoted method name, which always yields nothing on 5.1')
     def test_the_name_of_a_string_literal_names_no_method(self):
         source = "$x.('GetCmdlets'.Name)('*w-*ct')"

@@ -532,8 +532,11 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
     def test_asking_the_rule_where_a_wildcard_rewrite_decides_is_witnessed(self):
         self._assertWitnessed(
             [_WILDCARD_REDIRECTIONS],
-            patch.object(wildcards, 'substituted', lambda old, new, moved=(): new),
-            notices='test_a_redirected_variable_read_is_not_rewritten_to_the_variable')
+            patch.object(
+                wildcards, 'substituted',
+                lambda old, new, moved=(), flow=None, options=None: new),
+            notices='test_a_redirected_variable_read_is_not_rewritten_to_the_variable',
+        )
 
     def test_asking_the_rule_where_a_foreach_pipeline_fold_decides_is_witnessed(self):
         self._assertWitnessed(

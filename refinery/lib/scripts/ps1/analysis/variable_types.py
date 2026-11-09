@@ -22,7 +22,6 @@ from refinery.lib.scripts.ps1.analysis.dataflow import Ps1FlowUnknown, Ps1Variab
 from refinery.lib.scripts.ps1.analysis.environment import (
     ENV_DRIVE_TYPE,
     as_the_env_drive_holds,
-    text_settles_everywhere,
 )
 from refinery.lib.scripts.ps1.analysis.model import Binding, is_mutated_in_place
 from refinery.lib.scripts.ps1.analysis.values import (
@@ -39,7 +38,7 @@ from refinery.lib.scripts.ps1.ast import (
     stored_value,
     target_constraints,
 )
-from refinery.lib.scripts.ps1.data import named_type, resolve_type
+from refinery.lib.scripts.ps1.data import resolve_type
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -225,9 +224,10 @@ def _origin_established_by(
 def _env_store_type(write: Ps1Variable, stored: Ps1StoredValue) -> Ps1TypeName | None:
     """
     The type a store to an `$env:` name establishes: the drive's String where the drive model
-    settles what the store leaves, and nothing where it does not — the type layer and the value
-    layer read the one drive model, so a type is never answered for a store whose value the value
-    layer kept a read of.
+    settles what the store leaves, and nothing where it does not. Both layers read the one
+    conversion, so they refuse the same plain stores; a store that declares a constraint is where
+    they part, by design — the value layer refuses it whole, while this types what the cast leaves
+    once the drive converts it.
 
     A cast on the target converts the value before the drive does, so a constrained store is asked
     of the value under its cast and the cast answers nothing of its own: `[int]$env:zq = 5` leaves
@@ -322,14 +322,19 @@ def _established_by(write: Node, flow: Ps1VariableFlow) -> Ps1TypeName | None:
         return _assigned_type(write, flow)
     parent = write.parent
     if isinstance(parent, Ps1ForEachLoop) and parent.variable is write:
-        element = _element_type(parent.iterable)
         if write.scope is Ps1ScopeModifier.ENV:
             # Each element the loop stores is converted by the drive on its way in, so the answer
-            # is the drive's String where the element type's conversion settles and nothing where
-            # it does not: an element type whose text depends on the host leaves the name holding
-            # a string this cannot name.
-            return ENV_DRIVE_TYPE if text_settles_everywhere(element) else None
-        return element
+            # is the drive's String where the drive model settles what every element leaves and
+            # nothing where one does not: an element whose text the host renders leaves the name
+            # holding a string this cannot name, and an element that stores the empty string
+            # removes the name rather than holding one, so a read inside the body observes `$null`
+            # on that iteration.
+            elements = _spelled_elements(parent.iterable)
+            if elements is None:
+                return None
+            settled = [as_the_env_drive_holds(element) for element in elements]
+            return ENV_DRIVE_TYPE if all(held is not None for held in settled) else None
+        return _element_type(parent.iterable)
     return None
 
 
@@ -433,23 +438,30 @@ def value_under_declared_constraint(write: Node, value: Expression) -> Expressio
     return None if outcome.may_throw else render(outcome.value)
 
 
-#: What `foreach` yields from a string: the string itself, not its characters.
-_STRING = named_type('System.String')
+def _spelled_elements(iterable: Expression | None) -> list[Expression] | None:
+    """
+    The elements a `foreach` iterable spells out, or `None` where it does not spell them: a string
+    yields itself rather than its characters, which is measured.
+    """
+    if isinstance(iterable, (Ps1StringLiteral, Ps1HereString)):
+        return [iterable]
+    if not isinstance(iterable, Ps1ArrayLiteral) or not iterable.elements:
+        return None
+    if any(not isinstance(element, Expression) for element in iterable.elements):
+        return None
+    return list(iterable.elements)
 
 
 def _element_type(iterable: Expression | None) -> Ps1TypeName | None:
     """
     The type of one element a `foreach` iterable yields, or `None` where its elements do not share
-    one this can name. A string yields itself rather than its characters, which is measured.
+    one this can name.
     """
-    if isinstance(iterable, (Ps1StringLiteral, Ps1HereString)):
-        return _STRING
-    if not isinstance(iterable, Ps1ArrayLiteral) or not iterable.elements:
+    elements = _spelled_elements(iterable)
+    if elements is None:
         return None
     named = set()
-    for element in iterable.elements:
-        if not isinstance(element, Expression):
-            return None
+    for element in elements:
         one = resolve_expression_type(element)
         if one is None:
             return None

@@ -352,6 +352,97 @@ class TestPs1WildcardRedirections(TestPs1):
         self._assertTreeIsIntact(source, source, Ps1WildcardResolution)
 
 
+class TestPs1AWildcardRewriteKeepsAReadTheEnvironmentOwns(TestPs1):
+    """
+    Every rewrite above drops the arguments of the command it resolves, so a read spelled as one
+    of those arguments is a read the rewrite takes with it. Under the preserving model each
+    spelling below declines the rewrite; under the folding model the read folds and the rewrite
+    happens, which is what says the refusal is the model's and not an inability to resolve.
+    """
+
+    def test_a_value_read_with_a_stored_argument_stays_a_command(self):
+        source = """
+            $env:d = 'Description'
+            $x = 1
+            Write-Output (Get-Variable -Name x -Description $env:d).Value
+        """
+        self._assertKept(source, preserve_environment=True)
+        self._assertDeobfuscatesTo(source, 'Write-Output 1')
+
+    def test_an_excluded_path_with_a_stored_argument_stays_a_command(self):
+        source = """
+            $x = 1
+            $env:d = 'x'
+            Write-Output (Get-Item -Path variable:x -Exclude $env:d).Value
+        """
+        self._assertKept(source, preserve_environment=True)
+        self._assertDeobfuscatesTo(source, 'Write-Output 1')
+
+    def test_a_value_only_read_with_a_stored_argument_stays_a_command(self):
+        source = """
+            $env:d = 'Description'
+            $x = 1
+            Write-Output (Get-Variable -Name x -ValueOnly -Description $env:d)
+        """
+        self._assertKept(source, preserve_environment=True)
+        self._assertDeobfuscatesTo(source, 'Write-Output 1')
+
+    def test_a_command_name_lookup_with_a_stored_argument_stays_a_call(self):
+        source = """
+            $env:d = $true
+            & ($ExecutionContext.InvokeCommand.GetCommandName('New-Object', $env:d)) Net.WebClient
+        """
+        self._assertDeobfuscatesTo(
+            source,
+            """
+                $env:d = $True
+                & ($ExecutionContext.InvokeCommand.GetCommandName('New-Object', $env:d)) Net.WebClient
+            """,
+            preserve_environment=True,
+        )
+        self._assertDeobfuscatesTo(source, 'New-Object Net.WebClient')
+
+    def test_a_set_variable_with_a_stored_description_stays_a_command(self):
+        source = """
+            $env:d = 'meta'
+            Set-Variable foo 42 -Description $env:d
+            (Get-Variable foo).Description
+        """
+        self._assertKept(source, preserve_environment=True)
+        self._assertDeobfuscatesTo(
+            source,
+            """
+                $foo = 42
+                (Get-Variable foo).Description
+            """,
+        )
+
+    def test_a_where_object_wildcard_over_a_stored_name_stays_a_pipeline(self):
+        source = """
+            $env:zq = 'ab'
+            Remove-Item env:*
+            Write-Output ($env:zq | Get-Member | Where-Object { $_.Name -like 'ToSt*' })
+        """
+        self._assertDeobfuscatesTo(
+            source,
+            """
+                $env:zq = 'ab'
+                Remove-Item env:*
+                Write-Output ($env:zq | Get-Member | Where-Object {
+                  $_.Name -Like 'ToSt*'
+                })
+            """,
+            preserve_environment=True,
+        )
+        self._assertDeobfuscatesTo(
+            source,
+            """
+                Remove-Item env:*
+                Write-Output 'ToString'
+            """,
+        )
+
+
 class TestPs1VariableCommandScope(TestPs1):
 
     def test_a_scope_the_language_can_name_is_carried_onto_the_reference(self):

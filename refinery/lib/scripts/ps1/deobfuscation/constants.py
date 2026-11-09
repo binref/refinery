@@ -461,7 +461,7 @@ class _ConstantTable:
     fold and `if ($c) { $x = $y }` refuse.
     """
 
-    def __init__(self, root: Node, options: object | None = None):
+    def __init__(self, root: Node, options: object | None):
         self.by_write: dict[int, Expression] = {}
         self.ambient: dict[str, Expression] = {}
         self.values: defaultdict[str, list[Expression]] = defaultdict(list)

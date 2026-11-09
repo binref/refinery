@@ -14,6 +14,7 @@ import re
 from fnmatch import translate as fnmatch_translate
 from typing import Iterable
 
+from refinery.lib.scripts.ps1.analysis.environment import takes_a_read_the_environment_owns
 from refinery.lib.scripts.ps1.analysis.values import (
     Ps1VariableTyping,
     make_string_literal,
@@ -426,22 +427,37 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
         self.generic_visit(node)
-        return substituted(node, self._try_resolve_variable_value(node))
+        return substituted(
+            node,
+            self._try_resolve_variable_value(node),
+            flow=self._flow,
+            options=self.options,
+        )
 
     def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
         self.generic_visit(node)
-        return substituted(node, self._try_resolve_cmdlet_method(node))
+        return substituted(
+            node,
+            self._try_resolve_cmdlet_method(node),
+            flow=self._flow,
+            options=self.options,
+        )
 
     def visit_Ps1Pipeline(self, node: Ps1Pipeline):
         self.generic_visit(node)
-        return substituted(node, self._try_resolve_where_object_wildcard(node))
+        return substituted(
+            node,
+            self._try_resolve_where_object_wildcard(node),
+            flow=self._flow,
+            options=self.options,
+        )
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)
         replacement = self._try_resolve_get_variable_value_only(node)
-        if replacement is None:
-            replacement = self._try_resolve_set_variable(node)
-        return substituted(node, replacement)
+        if replacement is not None:
+            return substituted(node, replacement, flow=self._flow, options=self.options)
+        return substituted(node, self._try_resolve_set_variable(node))
 
     def _try_resolve_variable_value(
         self,
@@ -655,6 +671,27 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
             return self._handle_set_variable(node, command)
         return None
 
+    def _keeps_every_read_the_environment_owns(
+        self,
+        node: Ps1CommandInvocation,
+        carried: list[Expression],
+    ) -> bool:
+        """
+        Whether rewriting *node* as an assignment keeps every read of an `$env:` name the script
+        stores that its arguments hold: the expressions an assignment is built from are carried
+        into it, while a parameter an assignment has no spelling for is dropped together with the
+        read bound to it.
+        """
+        for argument in node.arguments:
+            if not isinstance(argument, Ps1CommandArgument):
+                continue
+            value = argument.value
+            if value is None or value in carried:
+                continue
+            if takes_a_read_the_environment_owns(value, self._flow, self.options):
+                return False
+        return True
+
     def _handle_set_item_variable(
         self,
         node: Ps1CommandInvocation,
@@ -685,6 +722,8 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         var_name = path_str[len(prefix):].lstrip('/\\')
         resolved = _resolve_variable_name(var_name)
         if resolved is None:
+            return None
+        if not self._keeps_every_read_the_environment_owns(node, values):
             return None
         return self._build_assignment(node.offset, resolved, values, Ps1ScopeModifier.NONE)
 
@@ -724,6 +763,8 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         elif positionals:
             values = positionals
         else:
+            return None
+        if not self._keeps_every_read_the_environment_owns(node, values):
             return None
         return self._build_assignment(node.offset, resolved, values, scope)
 

@@ -994,6 +994,7 @@ class TestPs1TheEnvironmentDriveHoldsTextOnlyWhereEveryHostAgreesOnIt(TestPs1):
     def test_a_store_of_a_type_whose_text_depends_on_the_host_keeps_the_read(self):
         ast = Ps1Parser('$env:Q = 5.5; Write-Output ($env:Q + 1)').parse()
         Ps1ConstantInlining().visit(ast)
-        self.assertEqual(
-            Ps1Synthesizer().convert(ast),
-            '$env:Q = 5.5\nWrite-Output ($env:Q + 1)')
+        self.assertEqual(Ps1Synthesizer().convert(ast), cleandoc("""
+            $env:Q = 5.5
+            Write-Output ($env:Q + 1)
+        """))
