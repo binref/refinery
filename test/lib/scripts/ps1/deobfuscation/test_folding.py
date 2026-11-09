@@ -2319,3 +2319,53 @@ class TestPs1AConstraintOnTheNameBeingReadLeavesTheArrayItHandsOver(TestPs1):
             Write-Output $y
         """)
         self.assertEqual(self._deobfuscate(source), source)
+
+
+class TestPs1DigitsNoReaderHolds(TestPs1):
+
+    def test_a_numeral_longer_than_python_reads_leaves_the_expression_alone(self):
+        source = '9' * 5000 + ' + 0'
+        self.assertEqual(self._apply(source, Ps1ConstantFolding), source)
+
+    def test_a_convert_call_reading_more_digits_than_python_does_leaves_the_call_alone(self):
+        source = "[Convert]::ToInt32('" + '9' * 5000 + "')"
+        self.assertEqual(self._apply(source, Ps1ConstantFolding), source)
+
+    def test_a_replace_whose_template_number_is_longer_than_the_host_parses_leaves_it_alone(self):
+        source = "'a' -replace 'a', '$" + '9' * 5000 + "'"
+        self.assertEqual(self._apply(source, Ps1ConstantFolding), source)
+
+    def test_a_replace_whose_template_number_is_above_what_the_host_parses_leaves_it_alone(self):
+        source = "'a' -replace 'a', '$2147483648'"
+        self.assertEqual(self._apply(source, Ps1ConstantFolding), source)
+
+    def test_a_replace_template_braced_number_above_what_the_host_parses_leaves_it_alone(self):
+        source = "'a' -replace 'a', '${" + '9' * 50 + "}'"
+        self.assertEqual(self._apply(source, Ps1ConstantFolding), source)
+
+
+class TestPs1AReplacementTemplateNumberIsReadWhole(TestPs1):
+
+    def test_a_number_the_pattern_has_no_group_of_stays_the_literal_it_is_written_as(self):
+        self.assertEqual(self._apply("'a' -replace 'a', '$9'", Ps1ConstantFolding), "'$9'")
+        self.assertEqual(
+            self._apply("'a' -replace 'a', '$2147483647'", Ps1ConstantFolding),
+            "'$2147483647'",
+        )
+
+    def test_a_number_is_never_read_shorter_than_the_way_it_is_written(self):
+        self.assertEqual(
+            self._apply("'ab' -replace '(a)', '$11'", Ps1ConstantFolding), "'$11b'")
+        self.assertEqual(
+            self._apply("'ab' -replace '(a)', '$1$11'", Ps1ConstantFolding), "'a$11b'")
+
+    def test_a_leading_zero_number_the_pattern_has_no_group_of_stays_the_literal(self):
+        self.assertEqual(self._apply("'a' -replace '(a)', '$09'", Ps1ConstantFolding), "'$09'")
+
+    def test_a_braced_reference_the_pattern_never_bound_stays_the_literal(self):
+        self.assertEqual(self._apply("'a' -replace 'a', '${xyz}'", Ps1ConstantFolding), "'${xyz}'")
+        self.assertEqual(self._apply("'a' -replace 'a', '${9}'", Ps1ConstantFolding), "'${9}'")
+
+    def test_an_unbraced_name_is_never_a_group_reference_and_stays_the_literal(self):
+        self.assertEqual(
+            self._apply("'ab' -replace '(?<g>a)', '$g'", Ps1ConstantFolding), "'$gb'")

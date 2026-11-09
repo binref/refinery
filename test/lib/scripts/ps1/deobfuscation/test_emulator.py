@@ -39,6 +39,25 @@ def _char_cell(operator: str, right: str) -> data.OperatorOutcome:
 
 class TestPs1FunctionEvaluator(TestPs1):
 
+    def test_a_result_two_slots_share_one_container_of_is_not_spelled_as_two(self):
+        source = cleandoc("""
+            function f { $x = 1, 2; ($x, $x) }
+            $a = f
+            $a[0][0] = 9
+            Write-Output $a[1][0]
+        """)
+        self._assertKept(source)
+
+    def test_a_switch_binds_the_pipeline_variable_its_clauses_read(self):
+        data = "function F { foreach ($_ in 'a') { }; switch ('zz') { default { $_ } } }\nF"
+        result = self._deobfuscate(data)
+        self.assertEqual(result, "'zz'")
+
+    def test_a_switch_restores_the_pipeline_variable_once_its_scan_ends(self):
+        data = "function F { foreach ($_ in 'a') { }; switch ('zz') { 'qq' { $_ } }; $_ }\nF"
+        result = self._deobfuscate(data)
+        self.assertEqual(result, "'a'")
+
     def test_stride_extraction(self):
         data = (
             "Function F ([String]$s){"
@@ -246,6 +265,34 @@ class TestPs1FunctionEvaluator(TestPs1):
         )
         result = self._deobfuscate(data)
         self.assertEqual(result, "Write-Output 'xx'")
+
+    def test_a_label_spelled_with_its_colon_ends_the_switch_it_is_written_in(self):
+        data = (
+            "Function F {"
+            "$o = '';"
+            ":outer Foreach($i in 1, 2){"
+            "Switch(1){default{break :outer}};"
+            "$o = $o + 'x'};"
+            "$o;}"
+            "$x = F\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertEqual(result, "Write-Output 'xx'")
+
+    def test_a_label_spelled_with_its_colon_leaves_the_innermost_loop(self):
+        data = (
+            "Function F {"
+            "$o = '';"
+            ":outer Foreach($i in 1, 2){"
+            "Switch(1){default{Foreach($j in 1, 2){break :outer};$o = $o + 'y'}};"
+            "$o = $o + 'x'};"
+            "$o;}"
+            "$x = F\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertEqual(result, "Write-Output 'yxyx'")
 
     def test_a_labelled_break_out_of_a_switch_leaves_the_whole_loop(self):
         data = (
@@ -559,6 +606,11 @@ class TestPs1ForEachPipeline(TestPs1):
         data = "@(65,66,67) | %{[char]$_}"
         result = self._deobfuscate(data)
         self.assertEqual(result, '[char]65, [char]66, [char]67')
+
+    def test_foreach_pipeline_switch_binds_the_pipeline_variable(self):
+        data = "@('x','y') | %{ switch ('zz') { default { $_ } } }"
+        result = self._deobfuscate(data)
+        self.assertEqual(result, "'zz', 'zz'")
 
 
 class TestPs1EmulatorExtra(TestPs1):

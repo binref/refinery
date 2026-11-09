@@ -949,6 +949,21 @@ def integer_of(fact: Ps1Fact) -> int | None:
     return None if isinstance(payload, bool) or not isinstance(payload, int) else payload
 
 
+def integer_of_digits(text: str) -> int | None:
+    """
+    The integer a decimal digit string spells, or `None` where Python refuses to read it: `int`
+    raises `ValueError` for a string of more than 4300 digits rather than answering the number,
+    and every number that long is past the hold of every type a numeral takes, so a caller reading
+    source-spelled digits asks here and takes the `None` as the refusal it already answers a number
+    no type holds. The limit is the decimal algorithm's alone — a hexadecimal pattern is linear to
+    read and never refused — so a caller reading one of those still calls `int` itself.
+    """
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
 def ordinal_of(fact: Ps1Fact) -> int | None:
     """
     The ordinal an enum value carries, or `None` for a fact that is not one. It is `integer_of` for
@@ -1501,7 +1516,10 @@ def _decimal_numeral(text: str, sign: int, multiplier: int) -> Ps1Fact:
     else:
         suffix = ''
     if _DECIMAL_DIGITS.match(text):
-        magnitude = int(text) * multiplier
+        magnitude = integer_of_digits(text)
+        if magnitude is None:
+            return UNKNOWN
+        magnitude *= multiplier
         if suffix == 'l':
             return _long(sign * magnitude)
         if suffix == 'd':

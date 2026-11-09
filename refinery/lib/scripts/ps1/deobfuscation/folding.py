@@ -26,6 +26,7 @@ from refinery.lib.scripts.ps1.analysis.values import (
     convert,
     integer_at,
     integer_of,
+    integer_of_digits,
     invariant_text,
     is_truthy,
     make_string_literal,
@@ -52,6 +53,7 @@ from refinery.lib.scripts.ps1.data import (
 )
 from refinery.lib.scripts.ps1.deobfuscation.constants import PS1_ENV_CONSTANTS
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    DotnetRegexError,
     StringMethodError,
     apply_format_string,
     apply_string_method,
@@ -1019,7 +1021,8 @@ class Ps1ConstantFolding(Transformer):
             digits = text.strip(_CONVERT_TRIM)
             if not CONVERT_SIGNED.match(digits):
                 return None
-            return render(integer_at(target, int(digits)))
+            number = integer_of_digits(digits)
+            return None if number is None else render(integer_at(target, number))
         if len(arguments) != 2:
             return None
         text = text_of(read(arguments[0]))
@@ -1029,7 +1032,8 @@ class Ps1ConstantFolding(Transformer):
         if base == 10:
             if not CONVERT_SIGNED.match(text):
                 return None
-            return render(integer_at(target, int(text)))
+            number = integer_of_digits(text)
+            return None if number is None else render(integer_at(target, number))
         digits_of_base = CONVERT_PATTERN.get(base)
         if digits_of_base is None or not digits_of_base.match(text):
             return None
@@ -1075,7 +1079,7 @@ class Ps1ConstantFolding(Transformer):
             flags, _ = opts
         try:
             result = dotnet_regex_replace(pattern_str, replacement_str, input_str, flags=flags)
-        except re.error:
+        except (re.error, DotnetRegexError):
             return None
         return make_string_literal(result)
 
@@ -1284,7 +1288,7 @@ class Ps1ConstantFolding(Transformer):
         flags = re.IGNORECASE if op != '-creplace' else 0
         try:
             result = dotnet_regex_replace(needle_str, insert_str, haystack, flags=flags)
-        except re.error:
+        except (re.error, DotnetRegexError):
             return None
         return make_string_literal(result)
 

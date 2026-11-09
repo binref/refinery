@@ -4322,10 +4322,6 @@ TYPE_DEFECTS: dict[str, str] = {
         'body produces the one number it ends with. The interpreter contributes the value of every '
         'expression statement, so each increment joins the stream and the call answers a '
         'collection of three.',
-    "function f { $s = 'abc'; $s++; $s }; $t = f; Write-Output (,$t); Write-Output $t":
-        'Incrementing a String throws on 5.1 — the operator wants a number and says so. The '
-        'interpreter substitutes zero for an operand it cannot read as one, so a script that '
-        'stopped answers a collection instead.',
     'function g { ,(1, 2) }; $t = @(g); Write-Output $t.Count; Write-Output (,$t[0])':
         'The unary comma hands out one array, and a pipeline unrolls a collection exactly once, so '
         '@( ) collects the single Object[] the body wrote. The interpreter unrolls it a second '

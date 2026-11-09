@@ -1455,6 +1455,9 @@ class TestPs1MeasuredNumerals(unittest.TestCase):
                 self.assertEqual(_read(expression), UNKNOWN)
                 self.assertEqual(_evaluated(expression).value, MEASURED[expression])
 
+    def test_a_numeral_past_the_hold_of_every_type_is_not_read_here_either(self):
+        self.assertEqual(_read('9' * 5000), UNKNOWN)
+
     def test_a_real_with_a_long_suffix_is_the_rounded_int64_the_host_prints(self):
         for expression in ('1.5L', '2.5L'):
             with self.subTest(expression):

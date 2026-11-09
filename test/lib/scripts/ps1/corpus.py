@@ -862,6 +862,8 @@ BEHAVIOURS: tuple[str, ...] = (
     #: it runs for as `$_`, not what the script stored there.
     "function f { $x }; & { $x = 'a'; f }",
     '$_ = 5; switch (1) { default { Write-Output $_ } }',
+    '$_ = 5; switch (1) { default {} }; Write-Output $_',
+    '$_ = 5; switch (1) { default { $_ = 9 } }; Write-Output $_',
 
     #: What compares the identity of an array is asked to preserve the behaviour of: nothing stores
     #: into the array, and a copy put in place of one read is still told apart from the array the
@@ -1057,9 +1059,44 @@ BEHAVIOURS: tuple[str, ...] = (
     "$s = 0; while ($s -ne -1) { switch ($s) { 0 { Write-Host 'a'; $s = -1 } default { break } } }; Write-Host $s",
     #: What a jump inside a switch clause binds to: the switch itself, unlabelled — a `continue`
     #: ends the clause scan and the loop body runs on past the switch — and the loop a label
-    #: names, labelled — a `break` to one leaves that loop from inside the switch.
+    #: names, labelled — a `break` to one leaves that loop from inside the switch. The label a
+    #: jump names is spelled with or without its colon and behaves as the one name it is.
     "$o = ''; foreach ($i in 1, 2) { switch (1) { default { continue } }; $o = $o + 'x' }; Write-Host $o",
     "$o = ''; :outer foreach ($i in 1, 2) { switch (1) { default { break outer } }; $o = $o + 'x' }; Write-Host $o",
+    "$o = ''; :outer foreach ($i in 1, 2) { switch (1) { default { continue :outer } }; $o = $o + 'x' }; Write-Host $o",
+    "$o = ''; :outer foreach ($i in 1, 2) { switch (1) { default { break :outer } }; $o = $o + 'x' }; Write-Host $o",
+    ":outer foreach ($i in 1, 2) { break :outer; $o = $o + 'x' }; Write-Host $o",
+    ":outer foreach ($i in 1, 2) { continue :outer; $o = $o + 'x' }; Write-Host $o",
+    ":outer foreach ($i in 1, 2) { break inner; $o = $o + 'x' }; Write-Host $o",
+    ":outer foreach ($i in 1, 2) { switch (1) { default { foreach ($j in 1, 2) { break :outer }; "
+    "$o = $o + 'y' } }; $o = $o + 'x' }; Write-Host $o",
+    ":s switch (1) { default { break :s; Write-Host 'tail' } }; Write-Host 'next'",
+
+    #: The rule a replacement template's group references follow, measured: a `$number` is read
+    #: whole — `$11` over one group is the literal and not the group a shorter reading names — and
+    #: one that names no group is the literal it is written as. A number past what .NET parses is
+    #: the `ArgumentException` the call raises, an unbraced `$name` is never a reference, and a
+    #: braced reference the pattern never bound is the literal.
+    "'a' -replace 'a', '$9'",
+    "'ab' -replace '(a)', '$1$11'",
+    "'a' -replace 'a', '${xyz}'",
+    "'a' -replace 'a', '$xyz'",
+    "'ab' -replace '(?<g>a)', '$g'",
+    "'a' -replace 'a', '${9}'",
+    "'a' -replace 'a', '$2147483647'",
+    "'a' -replace 'a', '$2147483648'",
+    "'a' -replace 'a', '$4294967295'",
+    "'a' -replace 'a', '$4294967296'",
+    "'a' -replace 'a', '${" + '9' * 50 + "}'",
+    "'ab' -replace '(a)', '$11'",
+    "'ab' -replace '(a)(b)', '$2$1'",
+    "'a' -replace '(a)', '$09'",
+    "'ab' -replace '(x)?a', '${1}q'",
+    "'ab' -replace '(x)?a', '$1q'",
+
+    #: A `Convert` reading digits past the width it names is the overflow it raises, which is what
+    #: a fold of the call refuses to spell.
+    "$t = [Convert]::ToInt32('" + '9' * 25 + "'); Write-Output $t",
 )
 
 

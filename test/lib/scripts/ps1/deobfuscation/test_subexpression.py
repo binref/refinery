@@ -463,15 +463,21 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             """),
         )
 
-    def test_a_subexpression_that_runs_a_switch_keeps_it(self):
-        self._assertUnchanged(cleandoc("""
-            $t = $(switch ('q') {
-              'q' {
-                'yes'
-              }
-            })
-            f $t
-        """), Ps1SubExpressionEvaluator)
+    def test_a_subexpression_that_runs_a_switch_folds_to_the_value_its_clause_writes(self):
+        self.assertEqual(
+            self._apply(cleandoc("""
+                $t = $(switch ('q') {
+                  'q' {
+                    'yes'
+                  }
+                })
+                f $t
+            """), Ps1SubExpressionEvaluator),
+            cleandoc("""
+                $t = $('yes')
+                f $t
+            """),
+        )
 
     def test_a_subexpression_whose_switch_scans_a_collection_refuses(self):
         self._assertUnchanged(cleandoc("""

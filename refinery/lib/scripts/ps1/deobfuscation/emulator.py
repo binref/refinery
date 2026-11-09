@@ -85,6 +85,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     detect_encoding_chain,
     dotnet_from_base64,
     dotnet_regex_replace,
+    DotnetRegexError,
     extract_foreach_scriptblock,
     ps_divide,
     ps_modulo,
@@ -156,6 +157,11 @@ _MAX_INTERPRETER_DEPTH = 64
 #: The depth a value's own nesting may not exceed. A fold that builds one — `for () { $a = ,$a }` —
 #: spells it back as a literal recursion this deep, so the run's budget goes to the refusal instead.
 _MAX_INTERPRETER_NESTING = 100
+
+#: The absence of a name from the interpreter environment, which a stored `$null` is not: the
+#: pipeline variable is bound for a `switch` clause scan and restored to whichever of the two it
+#: was, and the sentinel keeps a name the environment never held from reading as one it did.
+_UNBOUND = object()
 
 #: What a script may read unseen before the cache of one run has said otherwise: nothing.
 _NOTHING_UNSEEN = Ps1NameSet(False, frozenset())
@@ -370,9 +376,14 @@ def _fact_of_value(value: _Value) -> Ps1Fact:
     producer of one other than the `char[]` and `byte[]` casts — a pipeline, an array literal,
     an `@()` — builds an `Object[]` on the host, whose elements a cast of a numeral spells
     exactly. A collection the emulated code built that holds itself names nothing: no spelling
-    reads back as it, so a store a fold would spell for one is refused. Everything else is
-    `fact_of`'s to answer.
+    reads back as it, so a store a fold would spell for one is refused. A container more than one
+    route reaches names nothing either: its fact would spell each route its own copy, which reads
+    back as a second container where the script holds one, and building it walks a number of
+    routes that doubles with every sharing — the refusal is paid before either. Everything else
+    is `fact_of`'s to answer.
     """
+    if _spells_a_shared_container(value):
+        return UNKNOWN
     return _fact_of_value_on_a_path(value, frozenset())
 
 
@@ -410,18 +421,36 @@ def _rendered_value(value: _Value) -> Expression | None:
     return expression if read(expression) == fact else None
 
 
-def _deeper_than_the_nesting_bound(value: _Value, depth: int = 0) -> bool:
+def _deeper_than_the_nesting_bound(value: _Value) -> bool:
     """
     Whether *value* nests collections deeper than `_MAX_INTERPRETER_NESTING`, which is asked of
     every collection the interpreter builds: a fold that builds one this deep spells it back as a
     literal just as deep, so the refusal is paid at the construction rather than in the spelling.
-    The recursion stops at the bound it checks, so measuring a value never runs deeper than it.
+
+    The deepest route through a container is asked once per container: a value the interpreter
+    builds by sharing one, which the memo answers at no cost in nodes, would otherwise be walked
+    once per route through it, and a value built by doubling a shared container grows those routes
+    exponentially while its containers grow not at all. A container that holds itself spells no
+    literal at all, which this counts as deeper than the bound.
     """
+    return _deepest_nesting(value, {}, set()) > _MAX_INTERPRETER_NESTING
+
+
+def _deepest_nesting(value: _Value, memo: dict[int, int], measuring: set[int]) -> int:
     if not isinstance(value, list):
-        return False
-    if depth >= _MAX_INTERPRETER_NESTING:
-        return True
-    return any(_deeper_than_the_nesting_bound(one, depth + 1) for one in value)
+        return 0
+    if id(value) not in memo:
+        if id(value) in measuring:
+            memo[id(value)] = _MAX_INTERPRETER_NESTING + 1
+        else:
+            measuring.add(id(value))
+            deepest = max(
+                (_deepest_nesting(one, memo, measuring) for one in value),
+                default=0,
+            )
+            measuring.discard(id(value))
+            memo[id(value)] = 1 + deepest
+    return memo[id(value)]
 
 
 class _Ps1InterpreterError(Exception):
@@ -475,16 +504,20 @@ class _ContinueSignal(_JumpSignal):
     pass
 
 
-def _jump_label(jump: Ps1BreakStatement | Ps1ContinueStatement) -> str:
+def _jump_label(jump: Ps1BreakStatement | Ps1ContinueStatement) -> str | None:
     """
     The label a `break` or `continue` names, lowercased the way a loop label is stored. A label this
     cannot read is refused rather than read as none: a jump that names anything acts on a loop
-    outside the spelling this holds.
+    outside the spelling this holds. A label spelled with its colon names nothing: measured, the
+    host reads `break :outer` as an unlabelled break wherever it stands, acting on the construct
+    it is written in, so the colon spelling is the unlabelled one here too.
     """
     label = jump.label
     if label is None:
         return None
     if isinstance(label, Ps1StringLiteral) and label.is_bare_word:
+        if label.value.startswith(':'):
+            return None
         return label.value.lower()
     raise _Ps1InterpreterError
 
@@ -983,12 +1016,25 @@ class _Ps1Interpreter:
         refused: 5.1 runs its clause scan once per element, and one scan is not that. A `break`
         ends the switch and a `continue` the clause scan for the value — with the one value this
         runs for, the switch — where a label names a loop outside it instead, the signal passes on.
+        The scan reads the value as `$_`, and the engine restores what the name held once the scan
+        ends, measured, clause writes included, so this binds it for the scan alone.
         """
         if node.regex or node.wildcard or node.file:
             raise _Ps1InterpreterError
         value = self._eval(node.value)
         if isinstance(value, list):
             raise _Ps1InterpreterError
+        held = self._env.get('_') if '_' in self._env else _UNBOUND
+        self._env['_'] = value
+        try:
+            self._scan_switch_clauses(node, stream, value)
+        finally:
+            if held is _UNBOUND:
+                del self._env['_']
+            else:
+                self._env['_'] = held
+
+    def _scan_switch_clauses(self, node: Ps1SwitchStatement, stream: list, value: _Value):
         default_block = None
         matched = False
         for condition, block in node.clauses:
@@ -1530,8 +1576,13 @@ class _Ps1Interpreter:
                 # the reads of `$_` see.
                 key = '_'
             current = self._eval_variable(node.operand)
-            if not isinstance(current, (int, float)):
+            if current is None:
+                # The one operand 5.1 increments from zero; every other non-number it refuses
+                # the whole statement for, raising OperatorRequiresNumber and leaving the name
+                # holding what it held, so this raises rather than answers a number it computes.
                 current = 0
+            elif not isinstance(current, (int, float)) or isinstance(current, bool):
+                raise _Ps1InterpreterError
             delta = 1 if op == '++' else -1
             new_val = current + delta
             self._env[key] = new_val
@@ -2103,7 +2154,7 @@ class _Ps1Interpreter:
         flags = re.IGNORECASE if op != '-creplace' else 0
         try:
             return dotnet_regex_replace(pattern, replacement, s, flags=flags)
-        except re.error:
+        except (re.error, DotnetRegexError):
             raise _Ps1InterpreterError
 
     def _eval_match(self, left: _Value, right: _Value, op: str) -> bool:
@@ -3425,10 +3476,8 @@ def _names_read_and_written(root: Node) -> tuple[set[str], set[str]]:
     container a store reaches through — and a write is every occurrence that changes what a
     read observes, `matches` included whenever the subtree holds a `-match` operator that refills
     it. A name a `foreach` header binds is a write and not a read: the header supplies it
-    before the body runs. A `switch` writes the pipeline variable with no occurrence at all —
-    the engine binds `$_` to the value it tests, measured, whatever the clauses spell — so a
-    subtree holding one writes `$_` too, which the engine-variable rule then refuses the fold
-    over rather than delete a write no store can stand in for.
+    before the body runs. A `switch` binds the pipeline variable for its clause scan and restores
+    it once the scan ends, measured, so the scan writes no name any reader outside it observes.
     """
     reads: set[str] = set()
     written: set[str] = set()
@@ -3449,8 +3498,6 @@ def _names_read_and_written(root: Node) -> tuple[set[str], set[str]]:
             and descendant.operator.lower() in MATCH_OPERATORS
         ):
             written.add(_MATCHES_NAME)
-        elif isinstance(descendant, Ps1SwitchStatement):
-            written.add('_')
     return reads, written
 
 

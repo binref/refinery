@@ -678,7 +678,11 @@ def positional_scriptblock_sets(command: str) -> frozenset[str]:
     return found
 
 
-SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_]\w*$')
+#: Whether a variable name is one the lexer reads unbraced, which is the language its unbraced
+#: reader accepts: ASCII letters, digits and underscores, a `?` never first. The match has to end
+#: at the end of the name — `$` alone would accept one ending in a newline — and the classes have
+#: to be spelled out — `\w` accepts a letter no lexer rule reads.
+SIMPLE_IDENTIFIER = re.compile(r'[a-zA-Z0-9_][a-zA-Z0-9_?]*\Z')
 
 OBJ_COMMANDS = frozenset({
     'new-object',

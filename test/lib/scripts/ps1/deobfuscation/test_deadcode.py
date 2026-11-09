@@ -86,6 +86,24 @@ class TestPs1DeadCodeElimination(TestPs1):
             }
         """), Ps1DeadCodeElimination)
 
+    def test_a_switch_over_a_boolean_the_host_matches_runs_the_clause(self):
+        self._assertDeobfuscatesTo(
+            "switch ('True') { $true { 'hit' } }",
+            "'hit'",
+        )
+
+    def test_a_switch_over_a_numeral_that_reads_as_no_number_runs_no_clause(self):
+        self._assertDeobfuscatesTo(
+            "switch ('007') { 7 { 'hit' } }",
+            '',
+        )
+
+    def test_a_switch_over_a_number_against_a_numeral_only_python_reads_runs_the_default(self):
+        self._assertDeobfuscatesTo(
+            "switch (10) { '1_0' { 'hit' } default { 'miss' } }",
+            "'miss'",
+        )
+
     def test_do_while_false_executes_once(self):
         result = self._deobfuscate("do { Write-Host 'once' } while ($False)")
         self.assertIn('once', result)

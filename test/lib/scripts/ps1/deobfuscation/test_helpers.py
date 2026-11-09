@@ -20,10 +20,45 @@ def _command_named(tree: Ps1Script, name: str) -> Ps1CommandInvocation:
 
 class TestPs1Helpers(TestPs1):
 
-    def test_switch_matches_bool_int_coercion(self):
-        self.assertTrue(switch_matches(1, True))
-        self.assertTrue(switch_matches(0, False))
-        self.assertFalse(switch_matches(2, True))
+    def test_switch_matches_compares_the_operands_texts(self):
+        for value, condition in (
+            ('True', True),
+            (True, 'True'),
+            ('5', 5),
+            (5, '5'),
+            ('', None),
+        ):
+            with self.subTest(F'{value!r} {condition!r}'):
+                self.assertTrue(switch_matches(value, condition))
+        for value, condition in (
+            (1, True),
+            (0, False),
+            (2, True),
+            (True, 1),
+            ('007', 7),
+            (5, '005'),
+            (5, '5.0'),
+            (None, 0),
+            (None, 'x'),
+            ('abc', True),
+            ('', False),
+        ):
+            with self.subTest(F'{value!r} {condition!r}'):
+                self.assertFalse(switch_matches(value, condition))
+
+    def test_switch_matches_compares_two_numbers_numerically(self):
+        self.assertTrue(switch_matches(5, 5.0))
+        self.assertTrue(switch_matches(5.0, 5))
+        self.assertFalse(switch_matches(5, 5.5))
+
+    def test_switch_matches_refuses_the_texts_the_host_culture_writes(self):
+        for value, condition in (
+            (5.5, '5.5'),
+            ('5.5', 5.5),
+            ('ss', 'ß'),
+        ):
+            with self.subTest(F'{value!r} {condition!r}'):
+                self.assertIsNone(switch_matches(value, condition))
 
 
 class TestPs1CommandNameRewrite(TestPs1):

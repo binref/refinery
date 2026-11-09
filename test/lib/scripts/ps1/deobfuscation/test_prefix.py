@@ -243,16 +243,56 @@ class TestPs1PrefixEvaluator(TestPs1):
             Ps1PrefixEvaluator,
         )
 
-    def test_a_switch_in_the_prefix_ends_it(self):
-        self._assertUnchanged(
+    def test_a_value_built_by_doubling_one_shared_container_is_measured_once_per_container(self):
+        source = '\n'.join(
+            ['$a = @()'] + ['$a = @($a, $a)'] * 60 + ['f $a']
+        )
+        self.assertEqual(self._apply(source, Ps1PrefixEvaluator), source)
+
+    def test_a_switch_whose_clauses_write_nothing_folds_and_keeps_the_pipeline_read(self):
+        self.assertEqual(
+            self._apply(
+                cleandoc("""
+                    $x = 5
+                    switch ($x) {
+                      5 {}
+                    }
+                    f $_
+                """),
+                Ps1PrefixEvaluator,
+            ),
+            'f $_',
+        )
+
+    def test_a_switch_binds_the_pipeline_variable_for_the_clause_it_runs(self):
+        source = cleandoc("""
+            $o = $(switch ('abc') { 'abc' { $_.Length } })
+            f $o
+        """)
+        self.assertEqual(
+            self._apply(source, Ps1PrefixEvaluator),
             cleandoc("""
-                $x = 5
-                switch ($x) {
-                  5 {}
-                }
-                f $_
+                $o = 3
+                f $o
             """),
-            Ps1PrefixEvaluator,
+        )
+
+    def test_a_switch_a_route_the_fold_never_runs_does_not_end_the_prefix(self):
+        source = cleandoc("""
+            $a = 1 + 1
+            foreach ($i in @()) {
+              switch (1) {
+                default { $a = 9 }
+              }
+            }
+            f $a
+        """)
+        self.assertEqual(
+            self._apply(source, Ps1PrefixEvaluator),
+            cleandoc("""
+                $a = 2
+                f $a
+            """),
         )
 
     def test_a_switch_over_a_non_ascii_value_ends_the_prefix(self):
@@ -297,6 +337,29 @@ class TestPs1PrefixEvaluator(TestPs1):
             """),
         )
 
+    def test_an_increment_of_a_string_ends_the_prefix(self):
+        self._assertUnchanged("$s = '5'\n$o = $s++\nf $o", Ps1PrefixEvaluator)
+
+    def test_an_increment_of_a_boolean_ends_the_prefix(self):
+        self._assertUnchanged("$b = $true\n$o = $b++\nf $o", Ps1PrefixEvaluator)
+
+    def test_an_increment_of_a_null_folds_to_the_values_the_host_computes(self):
+        source = cleandoc("""
+            $n = $null
+            $o = $n++
+            f $o
+            f $n
+        """)
+        self.assertEqual(
+            self._apply(source, Ps1PrefixEvaluator),
+            cleandoc("""
+                $n = 1
+                $o = 0
+                f $o
+                f $n
+            """),
+        )
+
     def test_a_foreach_header_bound_to_a_qualified_name_ends_the_prefix(self):
         self._assertUnchanged(
             "foreach ($env:zq in 'a', 'b') {}\nf $zq",
@@ -314,6 +377,20 @@ class TestPs1PrefixEvaluator(TestPs1):
                 ${a-b} = 'xy'
                 f ${a-b}
             """),
+        )
+
+    def test_a_store_of_a_name_ending_in_a_newline_keeps_its_braces(self):
+        source = '${a\n} = \'x\' + \'y\'\nf ${a\n}'
+        self.assertEqual(
+            self._apply(source, Ps1PrefixEvaluator),
+            '${a\n} = \'xy\'\nf ${a\n}',
+        )
+
+    def test_a_store_of_a_name_the_lexer_reads_only_braced_keeps_its_braces(self):
+        source = '${aΩ} = \'x\' + \'y\'\nf ${aΩ}'
+        self.assertEqual(
+            self._apply(source, Ps1PrefixEvaluator),
+            '${aω} = \'xy\'\nf ${aΩ}',
         )
 
     def test_a_labelled_break_folds_to_the_value_the_host_computes(self):
@@ -379,6 +456,12 @@ class TestPs1PrefixEvaluator(TestPs1):
                 $t = $a[0] -eq '0'
                 f $t
             """),
+        )
+
+    def test_a_replace_whose_template_number_is_above_the_hosts_parse_ends_the_prefix(self):
+        self._assertUnchanged(
+            "$o = 'a' -replace 'a', '$2147483648'\nf $o",
+            Ps1PrefixEvaluator,
         )
 
 

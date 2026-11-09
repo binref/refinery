@@ -14,6 +14,7 @@ from refinery.lib.scripts.ps1.analysis.values import (
     coerced_text,
     collect_facts,
     integer_of,
+    integer_of_digits,
     make_string_literal,
 )
 from refinery.lib.scripts.ps1.ast import (
@@ -262,38 +263,85 @@ def ps_shift_right(value: int, count: int) -> int:
     return value >> (count & (width - 1))
 
 
+def switch_text(value) -> str | None:
+    """
+    The text a `switch` clause comparison reads *value* as, or `None` where the host culture
+    writes it: measured, the clause test compares the texts of the two operands once either is not
+    a number, so every other operand reaches the comparison as its text — a `Boolean` as `True`
+    or `False`, `$null` as the empty string, an integer as its digits — and a `Double`'s text is
+    the culture's to write.
+    """
+    if isinstance(value, bool):
+        return 'True' if value else 'False'
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ''
+    if isinstance(value, int):
+        return str(value)
+    return None
+
+
 def switch_matches(value, condition, *, case_sensitive: bool = False) -> bool | None:
     """
     PowerShell `switch` clause matching for already-evaluated scalar values, or `None` where the
-    host culture decides the match and this does not: a comparison of two texts is a collation
-    there and not a reading of code points, and the two agree only where both operands are ASCII —
-    measured, `'ss'` matches the sharp s the culture expands it to. String comparison is
-    case-insensitive unless `case_sensitive` is set; integers and strings cross-coerce the way
-    PowerShell does.
+    host culture decides the match and this does not. Measured, two numbers compare numerically —
+    `5` matches `5.0` — and every other pairing compares the texts of the two operands, which is
+    an answer no `-eq` direction gives: `'True'` matches `$true`, `'007'` does not match `7`, `5`
+    does not match `'005'`, and `$null` matches only `''`. A text either side carries beyond ASCII
+    is a collation there and not a reading of code points, and the two agree only where both
+    operands are ASCII.
     """
-    if isinstance(value, str) and isinstance(condition, str):
-        if not value.isascii() or not condition.isascii():
-            return None
-        return value == condition if case_sensitive else value.lower() == condition.lower()
-    if isinstance(value, (int, float)) and isinstance(condition, (int, float)):
+    if _switches_as_numbers(value, condition):
         return value == condition
-    if isinstance(value, (int, float)) and isinstance(condition, str):
-        try:
-            return value == int(condition)
-        except ValueError:
-            return False
-    if isinstance(value, str) and isinstance(condition, (int, float)):
-        try:
-            return int(value) == condition
-        except ValueError:
-            return False
-    return value is condition
+    left = switch_text(value)
+    right = switch_text(condition)
+    if left is None or right is None:
+        return None
+    if not left.isascii() or not right.isascii():
+        return None
+    return left == right if case_sensitive else left.lower() == right.lower()
+
+
+def _switches_as_numbers(value, condition) -> bool:
+    """
+    Whether both operands are numbers no `Boolean` hides in, the one pairing the clause test
+    answers numerically: measured, `5` matches `5.0` while `$true` matches no number at all.
+    """
+    return (
+        isinstance(value, (int, float))
+        and isinstance(condition, (int, float))
+        and not isinstance(value, bool)
+        and not isinstance(condition, bool)
+    )
+
+
+class DotnetRegexError(Exception):
+    """
+    Raised by a .NET regex helper where the host raises rather than answers: a replacement
+    template whose `$number` names a number .NET's own parse cannot hold is an `ArgumentException`
+    there, and the throw is the behaviour of the call, which a caller that folds refuses rather
+    than spells.
+    """
+    pass
+
+
+#: The largest group number a .NET replacement template parses, past which the host raises the
+#: `ArgumentException` `DotnetRegexError` carries: measured, `$2147483647` over no group at all is
+#: the literal and `$2147483648` is the throw.
+_DOTNET_GROUP_MAX = 2147483647
 
 
 def _dotnet_replacement(template: str, text: str) -> Callable[[re.Match], str]:
     """
     Build an `re.sub` replacement function that expands .NET substitution tokens (`$1`, `${name}`,
     `$&`, `` $` ``, `$'`, `$+`, `$_`, `$$`) in `template`. Backslashes are literal, matching .NET.
+
+    A `$number` is read whole and never shorter, and a number that names no group is the literal it
+    is written as: measured, `$11` over one group is the literal `$11` and not the group a shorter
+    reading of it names, and `$9` over none is `$9`. A number past what .NET parses is the throw
+    `DotnetRegexError` carries, and only a braced `${name}` is a reference by name — `$g` is the
+    literal, measured, where the group `g` exists.
     """
     def repl(m: re.Match) -> str:
         out: list[str] = []
@@ -336,30 +384,27 @@ def _dotnet_replacement(template: str, text: str) -> Callable[[re.Match], str]:
                     i += 1
                     continue
                 name = template[i + 2:end]
+                number = integer_of_digits(name) if name.isdigit() else None
+                if number is not None and number > _DOTNET_GROUP_MAX:
+                    raise DotnetRegexError
+                reference = name if number is None else number
                 try:
-                    grp = m.group(int(name)) if name.isdigit() else m.group(name)
+                    out.append(m.group(reference) or '')
                 except (IndexError, re.error):
-                    grp = None
-                out.append(grp or '')
+                    out.append(template[i:end + 1])
                 i = end + 1
             elif tok.isdigit():
                 j = i + 1
                 while j < n and template[j].isdigit():
                     j += 1
-                digits = template[i + 1:j]
-                grp = None
-                while digits:
-                    num = int(digits)
-                    if num <= m.re.groups:
-                        grp = m.group(num) or ''
-                        break
-                    digits = digits[:-1]
-                if grp is None:
-                    out.append('$')
-                    i += 1
+                number = integer_of_digits(template[i + 1:j])
+                if number is None or number > _DOTNET_GROUP_MAX:
+                    raise DotnetRegexError
+                if number <= m.re.groups:
+                    out.append(m.group(number) or '')
                 else:
-                    out.append(grp)
-                    i = i + 1 + len(digits)
+                    out.append(template[i:j])
+                i = j
             else:
                 out.append('$')
                 i += 1
