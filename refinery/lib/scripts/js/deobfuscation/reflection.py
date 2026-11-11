@@ -120,12 +120,16 @@ class ReflectedScope(enum.Enum):
     """
     The execution scope of reflectively evaluated code, which decides how its free names, `this`, and
     top-level declarations must be treated when the code is inlined at its call site. A
-    `Function`-constructed function and indirect `eval`/string-timer code run in the global sloppy
-    scope; a direct `eval` runs in the caller's scope, which is the inline site itself, so its
-    references and `this` are already correct there and only its declarations need care.
+    `Function`-constructed function, indirect `eval` code, and the classic script a string timer or
+    `execScript` runs all resolve their free names in the global sloppy scope; a direct `eval` runs
+    in the caller's scope, which is the inline site itself, so its references and `this` are already
+    correct there and only its declarations need care. A classic script differs from `eval` code in
+    its declarations alone: a top-level `let`, `const` or `class` of it joins the global scope that
+    every later script finds, where the one of `eval` code is discarded when it returns.
     """
     FUNCTION_CONSTRUCTOR = enum.auto()
     GLOBAL_EVAL = enum.auto()
+    CLASSIC_SCRIPT = enum.auto()
     DIRECT_EVAL = enum.auto()
 
 
@@ -638,9 +642,10 @@ def _landing_scope(binding: Binding, scope: ReflectedScope, site_scope: Scope) -
     The scope a top-level declaration of a reflected body lands in once the body is spliced at a
     site in *site_scope*, where it bound a name of the body's own, or `None` where the splice puts
     it where the body itself would. A `Function`-constructed body's declarations are its own and
-    land where they hoist to at the site. Evaluated code keeps its `let`, `const` and `class` to
-    itself and so lands them at the site; its `var` and function declarations land in the scope
-    they would land in without the splice.
+    land where they hoist to at the site. `eval` code keeps its `let`, `const` and `class` to
+    itself and so lands them at the site, where the classic script a string timer runs keeps none
+    and is declined (`ReflectedScope.CLASSIC_SCRIPT`); its `var` and function declarations land in
+    the scope they would land in without the splice.
     """
     if binding.is_lexical:
         return site_scope
@@ -1229,7 +1234,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             code,
             node,
             root,
-            ReflectedScope.GLOBAL_EVAL,
+            ReflectedScope.CLASSIC_SCRIPT,
             at_global_scope=False,
             destination=function_context(False, False),
         )
@@ -1277,7 +1282,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         )
         if sync is not None:
             parsed = self._resolve_reflected_body(
-                sync, stmt, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,
+                sync, stmt, root, ReflectedScope.CLASSIC_SCRIPT, at_global_scope,
             )
             if parsed is None:
                 return None
@@ -2007,7 +2012,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 if name in site_resolved:
                     continue
                 binding = root_model.lookup(name, site_scope, exclude=exclude)
-                if binding is None or root_model.reaches_global_object(binding):
+                if binding is None or root_model.global_code_finds(binding):
                     continue
                 if scope is not ReflectedScope.FUNCTION_CONSTRUCTOR or not binding.supplied_by_host:
                     return None
@@ -2166,18 +2171,25 @@ class JsReflectionInlining(ScriptLevelTransformer):
         site catches, and a function it declares replaces one of the file only when it runs, where
         the same text spliced in is a redeclaration the file cannot survive or a function that wins
         at hoisting instead.
+
+        The classic script a string timer or `execScript` runs keeps no `let`, `const` or `class`
+        to itself: each joins the global scope, where a later script finds it, and one whose name
+        that scope already binds throws a `SyntaxError` when the script runs. No splice reproduces
+        either, so such a body is declined.
         """
         root = root_model.root
         bindings = body_model.root_scope.bindings
         lexical = {
             renamed.get(binding, name) for name, binding in bindings.items() if binding.is_lexical
         }
+        if lexical and scope is ReflectedScope.CLASSIC_SCRIPT:
+            return False
         if lexical and not root_model.declaration_may_land(lexical, site_scope):
             return False
         hoisted = {name for name, binding in bindings.items() if binding.is_hoisted}
         if not hoisted:
             return True
-        if scope is ReflectedScope.GLOBAL_EVAL:
+        if scope is ReflectedScope.GLOBAL_EVAL or scope is ReflectedScope.CLASSIC_SCRIPT:
             if root_model.file_kind.scopes_declarations_to_the_file or not at_global_scope:
                 return False
         elif self._destination_may_be_strict(site, root) or declares_use_strict(body_model.root):

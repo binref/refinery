@@ -30,6 +30,7 @@ from test.lib.scripts.js.analysis.differential import (
     behavior,
     completion_values,
     deobfuscate_source,
+    host_behavior,
     module_graph_behavior,
     node_executable,
 )
@@ -84,6 +85,7 @@ from test.lib.scripts.js.ledger import (
     one_expected_failure_per_program,
     printed,
     prints,
+    STRING_TIMERS,
     well_formed,
     wontfix,
 )
@@ -5339,3 +5341,93 @@ class TestAStoreOnAFunctionNothingReadsKeepsItsEffect(TestBase):
             {source: behavior(source.encode('utf8') | djs() | str) for source in rows},
             rows,
         )
+
+
+A_TOP_LEVEL_NAME_A_READABLE_BODY_READS_WHERE_THE_BODY_STAYS_PACKED = {
+    'a function constructed with a parameter, reading a let': (
+        "let k = 5; var add = new Function('a', 'return a + k'); console.log(add(1));"
+    ),
+    'a function constructed with a parameter, reading a var': (
+        "var k = 5; var add = new Function('a', 'return a + k'); console.log(add(1));"
+    ),
+    'a body reading its arguments': (
+        "let k = 5; console.log(Function('return k + arguments.length')());"
+    ),
+    'a body called under a local of the same name': (
+        "var k = 5; function g() { var k = 1; return Function('return k')(); } console.log(g());"
+    ),
+    'a string timer declaring a let the file declares': (
+        "let k = 1; setTimeout('let k = 2; console.log(k)', 0);"
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestATopLevelNameAReadableBodyReadsIsKeptWhereTheBodyStaysPacked(TestBase):
+
+    @todo
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        rows = A_TOP_LEVEL_NAME_A_READABLE_BODY_READS_WHERE_THE_BODY_STAYS_PACKED
+        self.assertEqual(
+            {
+                label: host_behavior(source.encode('utf8') | djs() | str, prelude=STRING_TIMERS)
+                for label, source in rows.items()
+            },
+            {label: host_behavior(source, prelude=STRING_TIMERS) for label, source in rows.items()},
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnUnpackedBodyKeepsItsOwnDeclarationsFromTheLaterScriptsOfThePage(TestBase):
+
+    @wontfix(
+        'a later script of the page that looks up a name a packed function body declares for '
+        'itself is a shape made up for the defect'
+    )
+    def test_a_later_script_finds_no_name_the_body_declares(self):
+        source = "let k = process.argv.length; Function('function j() { return k > 0; } console.log(j())')();"
+        output = source.encode('utf8') | djs() | str
+        self.assertEqual(host_behavior(output, calls=('j',)), host_behavior(source, calls=('j',)))
+
+
+class TestAWildcardEntrypointKeepsOnlyTheFunctionsAHostCalls(TestBase):
+
+    @opportunity
+    def test_a_top_level_table_is_folded_under_a_wildcard(self):
+        source = "const _0x1 = ['log', 'hello']; console[_0x1[0]](_0x1[1]);"
+        self.assertEqual(source.encode('utf8') | djs('*') | str, "console.log('hello');")
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestADirectEvalInAnUnpackedBodyReadsWhatTheBodyRead(TestBase):
+
+    @backlog
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        source = "let k = 5; function g() { var k = 1; return Function('return eval(\"k\")')(); } console.log(g());"
+        self.assertEqual(
+            [host_behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)],
+            [host_behavior(source)] * 2,
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionDeclaredInABlockReplacedByCodeRunFromAString(TestBase):
+
+    @wontfix(
+        'a function declared in a block and then replaced through code run from a string is a '
+        'shape made up for the defect'
+    )
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        source = "{ function f() { return 1; } (0, eval)('f = function () { return 2; }'); console.log(f()); } console.log(f());"
+        self.assertEqual(
+            [host_behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)],
+            [host_behavior(source)] * 2,
+        )
+
+
+class TestAReadThroughTheGlobalObjectIsNoReadOfATopLevelLet(TestBase):
+
+    @opportunity
+    def test_the_let_folds_beside_a_store_into_the_property_of_its_name(self):
+        source = 'let k = 1; globalThis.k = 2; var r = k; console.log(r + 0);'
+        self.assertIn('console.log(1);', folded(source))

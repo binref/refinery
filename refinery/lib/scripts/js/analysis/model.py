@@ -1450,6 +1450,14 @@ def annex_b_function_home(
     return None if isinstance(home, JsScript) else home
 
 
+def _itself_or_its_annex_b_copy(binding: Binding, holds: Callable[[Binding], bool]) -> bool:
+    """
+    Whether *holds* is true of *binding* or of a `var` Annex B copies it into: what a lookup of the
+    name outside the block finds of a function declared in it.
+    """
+    return holds(binding) or any(holds(copy.var) for copy in binding.copies_made)
+
+
 def annex_b_suppressor_names(
     declaration: Statement,
     file_kind: FileKind,
@@ -3962,25 +3970,31 @@ class SemanticModel:
 
     def host_reaches_global(self, name: str) -> bool:
         """
-        Whether a host reads the value stored in the property *name* of the global object from
-        outside the file: the host *environment* calls the event handler stored there, navigates to
-        the address stored there, or keeps it for the next page
-        (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.reads_stored_value`), or the
-        analyst declared the name one a host calls (`host_calls_global`).
+        Whether a host reads what the file stores under *name* from outside the file, in one of two
+        ways. The host *environment* reads the property *name* of the global object: it calls the
+        event handler stored there, navigates to the address stored there, or keeps it for the next
+        page (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.reads_stored_value`).
+        Or the analyst declared the name one a host calls by name (`_names_an_entrypoint`), which
+        finds what global code finds under it. A question about a binding asks `named_by_the_host`,
+        which tells the two apart.
         """
-        return self.environment.reads_stored_value(name) or self.host_calls_global(name)
+        return self.environment.reads_stored_value(name) or self._names_an_entrypoint(name)
 
     def host_calls_global(self, name: str) -> bool:
         """
-        Whether a host calls the function stored in the property *name* of the global object from
-        outside the file: the host *environment* calls the event handler stored there
+        Whether a host calls the function the file stores under *name* from outside the file: the
+        host *environment* calls the event handler stored in that property of the global object
         (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.calls_handler`), or the
-        analyst declared the name one it calls (*host_entrypoint*). Every such property is one whose
-        value a host reads (`host_reaches_global`); a browser reads `location` and calls nothing
-        stored there.
+        analyst declared the name one a host calls by name (`_names_an_entrypoint`). Every such name
+        is one whose value a host reads (`host_reaches_global`); a browser reads `location` and
+        calls nothing stored there. A question about a binding asks `called_by_the_host`.
         """
-        if self.environment.calls_handler(name):
-            return True
+        return self.environment.calls_handler(name) or self._names_an_entrypoint(name)
+
+    def _names_an_entrypoint(self, name: str) -> bool:
+        """
+        Whether the analyst declared *name* one a host calls by name (*host_entrypoint*).
+        """
         return self._host_entrypoint is not None and self._host_entrypoint(name)
 
     def lands_on_the_host(self, name: str, scope: Scope) -> bool:
@@ -4001,13 +4015,17 @@ class SemanticModel:
 
     def named_by_the_host(self, binding: Binding) -> bool:
         """
-        Whether a host may reach *binding* by name: it reads the property of the global object
-        under that name (`host_reaches_global`), and the binding is that property
-        (`_is_the_global_property`). A declared object is reached as much as a declared function,
-        and the host converts a value stored in `location` or `name` to a string, which calls the
-        methods it carries.
+        Whether a host may reach *binding* by name: the host *environment* reads the property of
+        the global object under that name
+        (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.reads_stored_value`) and the
+        binding is that property (`_is_the_global_property`), or the host calls it by name
+        (`called_by_name`). A declared object is reached as much as a declared function, and the
+        host converts a value stored in `location` or `name` to a string, which calls the methods it
+        carries.
         """
-        return self.host_reaches_global(binding.name) and self._is_the_global_property(binding)
+        if self.environment.reads_stored_value(binding.name) and self._is_the_global_property(binding):
+            return True
+        return self.called_by_name(binding)
 
     def kept_by_the_host(self, binding: Binding) -> bool:
         """
@@ -4044,22 +4062,36 @@ class SemanticModel:
 
     def called_by_the_host(self, binding: Binding) -> bool:
         """
-        Whether a host may call the function *binding* holds: it calls the function stored in the
-        property of the global object under that name (`host_calls_global`), and the binding is that
-        property (`_is_the_global_property`).
+        Whether a host may call the function *binding* holds: the host *environment* calls the
+        event handler stored in the property of the global object under that name
+        (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.calls_handler`), and the
+        binding is that property (`_is_the_global_property`), as a window calls its `onload`; or
+        the host calls it by name (`called_by_name`).
         """
-        return self.host_calls_global(binding.name) and self._is_the_global_property(binding)
+        if self.environment.calls_handler(binding.name) and self._is_the_global_property(binding):
+            return True
+        return self.called_by_name(binding)
+
+    def called_by_name(self, binding: Binding) -> bool:
+        """
+        Whether a host calls *binding* by its name, which the analyst declared one it calls
+        (`_names_an_entrypoint`), and finds the binding there as global code does
+        (`global_code_finds`), itself or through the `var` Annex B copies it into: a page's
+        `onclick="run()"` finds a top-level `let run` of a script, which is no property of the
+        global object.
+        """
+        return self._names_an_entrypoint(binding.name) and _itself_or_its_annex_b_copy(
+            binding, self.global_code_finds
+        )
 
     def _is_the_global_property(self, binding: Binding) -> bool:
         """
         Whether *binding* is the property of the global object under its name
-        (`reaches_global_object`), itself or through a `var` Annex B copies it into. The name alone
-        does not decide it: a nested binding, a `let`, or anything a module scopes to the file never
-        becomes a property of the global object.
+        (`reaches_global_object`), itself or through the `var` Annex B copies it into. The name
+        alone does not decide it: a nested binding, a `let`, or anything a module scopes to the file
+        never becomes a property of the global object.
         """
-        if any(self.reaches_global_object(copy.var) for copy in binding.copies_made):
-            return True
-        return self.reaches_global_object(binding)
+        return _itself_or_its_annex_b_copy(binding, self.reaches_global_object)
 
     def reached_from_outside(self, binding: Binding) -> bool:
         """
@@ -4297,48 +4329,50 @@ class SemanticModel:
     def opaque_global_write_replacement_sites(self, binding: Binding) -> list[JsMemberExpression] | None:
         """
         The opaque global writes that could replace the value *binding* holds, or `None` when that
-        question cannot be answered in sites. Only a script-scope name is replaceable — it is a
-        property of the global object under the script execution model the write stores to — so a
-        binding in any other scope answers `None`: its reflection hazards, if any, are not this
-        write's. A script-scope name under a reflection surface answers `None` too, since any surface
-        could write the name from anywhere, and so does the fact when it holds without a site
-        (`opaque_global_write_sites`). `None` therefore means the binding is reflection-reachable for
-        reasons no located site spells, and a consumer that turned sites into kills keeps the value
-        volatile instead.
+        question cannot be answered in sites. Only a property of the global object is replaceable,
+        in some way the file may run (`_global_object_may_hold`), so any other binding answers
+        `None`: its reflection hazards, if any, are not this write's. Such a property under a
+        reflection surface answers `None` too, since any surface could write the name from anywhere,
+        and so does the fact when it holds without a site (`opaque_global_write_sites`). `None`
+        therefore means the binding is reflection-reachable for reasons no located site spells, and
+        a consumer that turned sites into kills keeps the value volatile instead.
         """
-        owner = binding.scope.var_scope
-        if owner is None or self._named_by_global_code(binding):
-            if self.has_reflection_surface():
-                return None
-            return self.opaque_global_write_sites()
-        return None
+        if not self._global_object_may_hold(binding) or self.has_reflection_surface():
+            return None
+        return self.opaque_global_write_sites()
 
-    def _named_by_global_code(self, binding: Binding) -> bool:
+    def _global_code_may_name(self, binding: Binding) -> bool:
         """
         Whether code running in the global scope, which every reflective surface but a direct `eval`
-        runs, can name *binding*: an implicit global, and where the file is a script, every binding
-        of its top scope. In a module of either kind a top-level declaration is scoped to the file,
-        but a binding of its top scope that may be absent leaves its name to a global in the reading
-        without it (`Binding.may_be_absent`).
+        runs, can name *binding* in some way the file may run: it finds the binding
+        (`global_code_finds`), or the binding is one of the top scope that may be absent, which
+        leaves its name to a global in the reading without it (`Binding.may_be_absent`).
         """
-        owner = binding.scope.var_scope
-        if owner is None or owner.kind is not ScopeKind.SCRIPT:
-            return False
-        return (
-            binding.kind is BindingKind.IMPLICIT_GLOBAL
-            or binding.may_be_absent
-            or not self.file_kind.scopes_declarations_to_the_file
+        return self.global_code_finds(binding) or (
+            binding.may_be_absent and binding.scope is self.root_scope
+        )
+
+    def _global_object_may_hold(self, binding: Binding) -> bool:
+        """
+        Whether *binding* is a property of the global object in some way the file may run, which a
+        store into the object under a key only the runtime knows may replace: it is one
+        (`reaches_global_object`), or it is a binding of the top scope that may be absent, whose name
+        is left to the global object in the reading without it (`Binding.may_be_absent`). A
+        top-level `let`, `const` or `class` of a script is not, and no such store reaches it.
+        """
+        return self.reaches_global_object(binding) or (
+            binding.may_be_absent and binding.scope is self.root_scope
         )
 
     def _named_by_code_of_its_function(self, binding: Binding) -> bool:
         """
         Whether *binding* belongs to its function, or to the function a CommonJS host wraps around
         the file, in some way the file may run, so that a direct `eval` there can name it: every
-        binding global code alone names is left out (`_named_by_global_code`). A binding of the top
+        binding global code alone names is left out (`_global_code_may_name`). A binding of the top
         scope that may be absent is both, the file's own where it exists and a global's name where
         it does not (`Binding.may_be_absent`).
         """
-        return binding.may_be_absent or not self._named_by_global_code(binding)
+        return binding.may_be_absent or not self._global_code_may_name(binding)
 
     def reflection_can_reach(self, binding: Binding) -> bool:
         """
@@ -4346,7 +4380,8 @@ class SemanticModel:
         records. Derived over the precise dynamic-scope facts. A global is reachable through any
         reflective surface — `eval`, `Function`, a string timer, dynamic global access, `with` — all
         of which run in the global scope, so it defers to the whole-program
-        `has_reflection_surface`, and by an opaque global write rebinding its name
+        `has_reflection_surface`, and, where it is a property of the global object
+        (`_global_object_may_hold`), by an opaque global write rebinding its name
         (`has_opaque_global_write`), which no reference records either. A function-local is
         reachable only from within its own function and only by name: a `with` body that names
         it (a `dynamic_references` entry), a direct `eval` in the function
@@ -4361,8 +4396,10 @@ class SemanticModel:
         from the file's own text only (`reflection_can_reach_from_its_scope`). An implicit global
         stays a global.
         """
-        if self._named_by_global_code(binding):
-            return self.has_reflection_surface() or self.has_opaque_global_write()
+        if self._global_code_may_name(binding):
+            if self.has_reflection_surface():
+                return True
+            return self._global_object_may_hold(binding) and self.has_opaque_global_write()
         return self.reflection_can_reach_from_its_scope(binding)
 
     def reflection_can_reach_from_its_scope(self, binding: Binding) -> bool:
@@ -4413,7 +4450,7 @@ class SemanticModel:
         as a `dynamic_references` entry a caller consults separately.
         """
         owner = binding.scope.var_scope
-        if owner is None or self._named_by_global_code(binding):
+        if owner is None or self._global_code_may_name(binding):
             return self.opaque_reflection_sites()
         return self._direct_eval_sites(owner.node) + self._unread_source_sites(owner.node)
 
@@ -4452,7 +4489,7 @@ class SemanticModel:
         that text spells.
         """
         owner = binding.scope.var_scope
-        if owner is None or self._named_by_global_code(binding):
+        if owner is None or self._global_code_may_name(binding):
             return bool(self._unread_source_sites(self.root))
         return bool(self._unread_source_sites(owner.node))
 
@@ -4566,7 +4603,7 @@ class SemanticModel:
         sites = list(binding.indefinite_writes)
         if owner is not None and self._named_by_code_of_its_function(binding):
             sites.extend(self._direct_eval_sites(owner.node))
-        if owner is None or self._named_by_global_code(binding):
+        if owner is None or self._global_code_may_name(binding):
             sites.extend(self._unread_source_sites(self.root))
         else:
             sites.extend(self._unread_source_sites(owner.node))
@@ -4603,10 +4640,12 @@ class SemanticModel:
         located kills a flow query orders a read against — or `None` when the question has no
         located answer.
 
-        A script-scope binding is replaceable only by an opaque global write, and the existing
-        `opaque_global_write_replacement_sites` answer is the whole of it: `None` under any
-        whole-program reflective surface, which could write the name from anywhere, and the member
-        sites otherwise. A function-local can change value only through a surface standing in its
+        A binding global code names (`_global_code_may_name`) answers `None` under any
+        whole-program reflective surface, which could write the name from anywhere. Without one, a
+        property of the global object is replaceable only by an opaque global write, and the
+        existing `opaque_global_write_replacement_sites` answer is the whole of it, while a top-level
+        `let`, `const` or `class` of a script, which no store into the object reaches, answers no
+        site. A function-local can change value only through a surface standing in its
         own scope: a direct `eval` in its owning function or a span of that function this model
         never read (`reflection_surface_sites`), or a reference a `with` body resolves at runtime
         (`dynamic_references`). Every `with`-governed reference counts, read or not — reading the
@@ -4616,8 +4655,10 @@ class SemanticModel:
         order the kill against; `None` is the volatility it cannot.
         """
         owner = binding.scope.var_scope
-        if owner is None or self._named_by_global_code(binding):
+        if owner is None or self._global_object_may_hold(binding):
             return self.opaque_global_write_replacement_sites(binding)
+        if self._global_code_may_name(binding):
+            return None if self.has_reflection_surface() else []
         return self.reflection_surface_sites(binding) + self.dynamic_references(binding)
 
     def holds_what_the_host_passed(self, binding: Binding) -> bool:
@@ -4695,21 +4736,31 @@ class SemanticModel:
 
     def reaches_global_object(self, binding: Binding) -> bool:
         """
-        Whether *binding* is a property of the global object at runtime — the global a free name in
-        global-scope reflected code (a `Function` body, an indirect `eval`, a string timer) resolves to.
-        An implicit global always is. A top-level `var`/function declaration is where the file is a
-        script; in a module of either kind it is scoped to the file and never reaches the global. A
-        top-level `let`/`const`/`class`, or any binding nested below the script, is a distinct
-        lexical binding that global-scope code cannot see.
+        Whether *binding* is a property of the global object at runtime, which a read through the
+        object such as `globalThis.x` finds: a binding global code finds under its name
+        (`global_code_finds`) that is an implicit global or a `var` or function declaration. A
+        top-level `let`, `const` or `class` of a script is no such property, although global code
+        finds it under its name.
         """
+        return self.global_code_finds(binding) and (
+            binding.kind is BindingKind.IMPLICIT_GLOBAL or binding.is_hoisted
+        )
+
+    def global_code_finds(self, binding: Binding) -> bool:
+        """
+        Whether code running in the global scope finds *binding* under its name, in every way the
+        file may run: a later script of the page, the event handler attribute of an element, a
+        `Function` body, an indirect `eval`, a string timer, and a host calling the name. That is an
+        implicit global, and where the file is a script, every declaration of its top scope itself,
+        a `let`, `const` or `class` as much as a `var` or a function. A binding of a block nested
+        below the top scope, and anything a module of either kind scopes to the file, is found by no
+        such code.
+        """
+        if binding.scope is not self.root_scope:
+            return False
         if binding.kind is BindingKind.IMPLICIT_GLOBAL:
             return True
-        if self.file_kind.scopes_declarations_to_the_file:
-            return False
-        return (
-            binding.scope is self.root_scope
-            and binding.is_hoisted
-        )
+        return not self.file_kind.scopes_declarations_to_the_file
 
     def module_may_be_reentered(self) -> bool:
         """
@@ -6485,8 +6536,9 @@ def build_semantic_model(
     such as the payload of a `Function` construction, is a script. *exports_read_outside* says
     whether code that loads the file may read what it exports; see
     `SemanticModel.module_exports_unread`. *host_entrypoint* says whether the analyst declared a
-    name one a host calls; see `SemanticModel.host_calls_global`. The default declares none, and a
-    host then reaches only the properties *environment* reads (`SemanticModel.host_reaches_global`).
+    name one a host calls by name; see `SemanticModel.called_by_name`. The default declares none,
+    and a host then reaches only the properties *environment* reads
+    (`SemanticModel.host_reaches_global`).
     """
     return SemanticModel(
         root,

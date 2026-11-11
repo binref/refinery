@@ -2112,6 +2112,67 @@ class TestHostEntrypointPreservation(TestBase):
             calls=('run',),
             entrypoints=('run',))
 
+    def test_entrypoint_held_by_a_const_is_still_callable_by_the_host(self):
+        self._check_host(
+            "const run = function() { return 'from-const'; }; console.log(1);",
+            calls=('run',),
+            entrypoints=('run',))
+
+    def test_entrypoint_held_by_a_let_still_reaches_the_function_it_calls(self):
+        self._check_host(
+            "function helper() { return 'h'; }"
+            ' let run = function() { return helper(); };'
+            ' console.log(1);',
+            calls=('run',),
+            entrypoints=('run',))
+
+    def test_a_let_in_a_block_named_like_the_entrypoint_is_out_of_the_hosts_reach(self):
+        self._check_host(
+            '{ let run = function() { return 1; }; } console.log(1);',
+            calls=('run',),
+            entrypoints=('run',))
+
+    def test_entrypoint_declared_in_a_block_is_still_callable_by_the_host(self):
+        self._check_host(
+            '{ function run() { return 1; } } console.log(1);',
+            calls=('run',),
+            entrypoints=('run',))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheHostRunsAClassicScript(TestBase):
+
+    def test_code_run_from_a_string_finds_a_top_level_let(self):
+        self.assertEqual(host_behavior('let k = 5; Function("console.log(k)")();'), ('5\n', None))
+
+    def test_a_host_calls_a_top_level_const_by_name(self):
+        self.assertEqual(
+            host_behavior("const run = function () { return 'r'; };", calls=('run',)),
+            ('run="r"\nglobalThis.run=undefined\n', None),
+        )
+
+    def test_a_host_tells_a_declared_function_from_a_let_holding_one(self):
+        self.assertNotEqual(
+            host_behavior('function run() { return 1; }', calls=('run',)),
+            host_behavior('let run = function () { return 1; };', calls=('run',)),
+        )
+
+    def test_a_top_level_var_cannot_be_deleted(self):
+        self.assertEqual(
+            host_behavior('var k = 1; console.log(delete globalThis.k, typeof k);'),
+            ('false number\n', None),
+        )
+
+    def test_the_script_may_load_a_module(self):
+        self.assertEqual(
+            host_behavior("import('node:path').then(m => console.log(typeof m.join));"),
+            ('function\n', None),
+        )
+
+    def test_an_error_ends_the_run_with_its_type(self):
+        self.assertEqual(host_behavior('let k = 5;\nnull.x;'), ('', 'TypeError'))
+        self.assertEqual(host_behavior('let = ;'), ('', 'SyntaxError'))
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNumericLiteralsAreDoubles(TestBase):

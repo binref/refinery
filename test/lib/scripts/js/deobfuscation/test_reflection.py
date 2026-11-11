@@ -1178,7 +1178,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect("var out = []; { new Function('out.push(1)')(); }"),
         )
 
-    @opportunity
     def test_function_constructor_free_script_let_inlined(self):
         self.assertEqual(
             inspect.cleandoc(

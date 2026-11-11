@@ -453,10 +453,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     self_converging = True
 
-    def __init__(self, preserve_globals: bool = True):
+    def __init__(self):
         super().__init__()
-        self.preserve_globals = preserve_globals
-        self._has_reflection = False
         self._cache: ModelCache | None = None
         self._names_read_in_the_script: set[str] | None = None
 
@@ -491,7 +489,6 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 cache.warm('_liveness')
                 self._cache = cache
                 self._names_read_in_the_script = None
-                self._has_reflection = cache.model.has_reflection_surface()
                 discarded_values = self._remove_discarded_completions(node)
                 self._remove_stores_of_undefined(node)
                 self._remove_dead_stores(node)
@@ -1035,24 +1032,6 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return True
         return self.model.reflection_can_reach(binding)
 
-    def _binds_names_global_code_sees(self, parent: Node) -> bool:
-        """
-        Whether the names *parent* (a body) binds are seen by global code, which names a binding by
-        its name at runtime: the body lies outside every function of a script, where its names are
-        globals. When a reflection surface is present these must be preserved, because such code
-        could read them. In a module of either kind the names of its top scope are the file's own,
-        which only the file's text can name, and each removal asks about every name it takes
-        (`_reflection_reachable`).
-        """
-        if self.model.file_kind.scopes_declarations_to_the_file:
-            return False
-        scope = self.model.scope_of(parent)
-        while scope is not None:
-            if scope.kind is ScopeKind.FUNCTION:
-                return False
-            scope = scope.parent
-        return True
-
     @staticmethod
     def _owns(scope: Scope, binding: Binding | None) -> bool:
         """
@@ -1082,8 +1061,6 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         return isinstance(parent, JsBlockStatement) and isinstance(parent.parent, FUNCTION_NODES)
 
     def _process_body(self, parent: Node, body: list[Statement]):
-        if self.preserve_globals and self._has_reflection and self._binds_names_global_code_sees(parent):
-            return
         removed_functions = self._remove_dead_functions(parent, body)
         dead_variables, preserved = self._remove_dead_variables(parent, body, removed_functions)
         dead_variables |= self._remove_dead_destructuring(

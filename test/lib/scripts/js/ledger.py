@@ -182,6 +182,20 @@ def deobfuscated_host_behavior(
     return host_behavior(folded(source, environment=environment))
 
 
+#: The string timers of a browser, which Node refuses: the HTML standard runs the string as a
+#: classic script of the global scope when the timer fires.
+STRING_TIMERS = a_program("""
+    (function () {
+      var setTimeoutOfNode = setTimeout;
+      globalThis.setTimeout = function (code, delay) {
+        return setTimeoutOfNode(typeof code === 'string' ? function () {
+          require('vm').runInThisContext(code);
+        } : code, delay);
+      };
+    })();
+    """)
+
+
 #: The attributes of a browser window the entries observe, installed on the global object with the
 #: behavior the HTML standard gives each.
 WINDOW_ATTRIBUTES = a_program("""
@@ -229,7 +243,7 @@ WINDOW_ATTRIBUTES = a_program("""
 
 
 def window_behavior(source: str) -> Behavior:
-    return host_behavior(source, calls=('onload',), prelude=WINDOW_ATTRIBUTES)
+    return host_behavior(source, handlers=('onload',), prelude=WINDOW_ATTRIBUTES)
 
 
 def each_program_still_prints(

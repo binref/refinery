@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import unittest
 
-from test import TestBase, backlog, opportunity
+from test import TestBase, backlog
 from test.lib.scripts.js.analysis.differential import host_behavior, node_executable
 from test.lib.scripts.js.ledger import (
     a_program,
@@ -125,7 +125,6 @@ class TestAWriteThatNamesNothingStillFolds(TestBase):
             _THE_DECODER_CALL_FOLDED_AND_THE_DECODER_REMOVED,
         ))
 
-    @opportunity
     def test_a_decoder_a_const_holds_is_removed_once_its_call_folds_across_the_write(self):
         self.assertEqual(
             folded(_A_DECODER_A_CONST_HOLDS_CALLED_ACROSS_THE_WRITE),

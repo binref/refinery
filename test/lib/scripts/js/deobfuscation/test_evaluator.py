@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from test import backlog, opportunity, todo
+from test import backlog, opportunity
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
@@ -2392,7 +2392,6 @@ class TestHostEntrypointDefinitions(TestJsDeobfuscator):
         )
         self.assertEqual(expected, self._evaluate_with(source, 'run'))
 
-    @todo
     def test_entrypoint_held_by_a_let_declarator_is_kept(self):
         """
         A top-level `let` is no property of the global object, yet a host calling `run` by name

@@ -5,7 +5,7 @@ import inspect
 import threading
 import unittest
 
-from test import TestBase, fastest_processor_time, opportunity, processor_time_ratio, todo
+from test import TestBase, fastest_processor_time, opportunity, processor_time_ratio
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -764,7 +764,7 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             """
         )
         ast = JsParser(source).parse()
-        JsUnusedCodeRemoval(preserve_globals=False).visit(ast)
+        JsUnusedCodeRemoval().visit(ast)
         self.assertEqual(source, JsSynthesizer().convert(ast))
 
     def test_reflection_surface_preserves_dead_split_global(self):
@@ -987,7 +987,7 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             """
         )
         ast = JsParser(source).parse()
-        JsUnusedCodeRemoval(preserve_globals=False).visit(ast)
+        JsUnusedCodeRemoval().visit(ast)
         self.assertEqual(source, JsSynthesizer().convert(ast))
 
     def test_bare_dead_declaration_reports_change(self):
@@ -2014,7 +2014,6 @@ class TestHostEntrypoints(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._remove_unused(source, 'run'))
 
-    @todo
     def test_entrypoint_held_by_a_let_declarator_survives(self):
         """
         A top-level `let` of a script is not a property of the global object, but later scripts and

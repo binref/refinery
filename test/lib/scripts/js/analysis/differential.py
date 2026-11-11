@@ -116,37 +116,61 @@ def deobfuscate_within(source: str, seconds: float) -> str | None:
     return out.decode('utf-8')
 
 
-def _as_global_script(source: str, calls: tuple[str, ...], prelude: str = '') -> str:
+def _as_global_script(
+    source: str,
+    calls: tuple[str, ...],
+    handlers: tuple[str, ...],
+    prelude: str = '',
+) -> str:
     """
-    An indirect `eval` runs its argument in the global scope, as a classic script runs, so a
-    top-level declaration of *source* becomes a property of `globalThis`. Run directly, the file is
-    a CommonJS file, whose top-level declarations stay inside it.
+    Node's `vm` runs *source* as a classic script: a top-level `var` or function declaration becomes
+    a property of `globalThis`, and a top-level `let`, `const` or `class` a binding of the global
+    scope that every later script sees, which may load a module with `import()`. Each name in
+    *calls* is then called by a script of its own, which finds it as a page's event handler
+    attribute or a later script does, and called once more as the property of `globalThis` where
+    that property holds something else, as it does for a top-level `let`. Each name in *handlers*
+    is called as that property only, as a window calls its `onload`. Run directly, the file is a
+    CommonJS file, whose top-level declarations stay inside it.
     """
     lines = [prelude] if prelude else []
-    lines.append('const globalEval = eval;')
-    lines.append(F'globalEval({json.dumps(source)});')
+    lines.append(
+        'const runAsAScript = code => require("vm").runInThisContext(code, '
+        '{importModuleDynamically: require("vm").constants.USE_MAIN_CONTEXT_DEFAULT_LOADER});'
+    )
+    lines.append(F'runAsAScript({json.dumps(source)});')
     for name in calls:
-        key = json.dumps(name)
-        lines.append(
-            F'console.log({key} + "=" + JSON.stringify('
-            F'typeof globalThis[{key}] === "function" ? globalThis[{key}]() : undefined));'
-        )
+        call = json.dumps(F'typeof {name} === "function" ? {name}() : undefined')
+        value = json.dumps(F'typeof {name} === "undefined" ? undefined : {name}')
+        lines.append(F'console.log({json.dumps(name)} + "=" + JSON.stringify(runAsAScript({call})));')
+        lines.append(F'if (runAsAScript({value}) !== globalThis[{json.dumps(name)}])')
+        lines.append(F'  {_property_call(name, F"globalThis.{name}")}')
+    for name in handlers:
+        lines.append(_property_call(name, name))
     return '\n'.join(lines)
+
+
+def _property_call(name: str, label: str) -> str:
+    key = json.dumps(name)
+    return (
+        F'console.log({json.dumps(label)} + "=" + JSON.stringify('
+        F'typeof globalThis[{key}] === "function" ? globalThis[{key}]() : undefined));'
+    )
 
 
 def host_behavior(
     source: str,
     *,
     calls: tuple[str, ...] = (),
+    handlers: tuple[str, ...] = (),
     prelude: str = '',
     timeout: float = NODE_TIMEOUT,
 ) -> tuple[str, str | None]:
     """
     The observable behavior of *source* run as a classic global script, including the results of the
-    host calling each name in *calls* once loading finishes. The host code *prelude* runs before the
-    script. Same return shape as `behavior`.
+    host calling each name in *calls* and each handler in *handlers* once loading finishes. The host
+    code *prelude* runs before the script. Same return shape as `behavior`.
     """
-    return behavior(_as_global_script(source, calls, prelude), timeout=timeout)
+    return behavior(_as_global_script(source, calls, handlers, prelude), timeout=timeout)
 
 
 def behavior(

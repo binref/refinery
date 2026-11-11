@@ -68,9 +68,11 @@ def localization_target(
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.has_opaque_global_write`): such a write
     may target the binding's own name, which a relocation would no longer receive. A name no
     declaration binds also needs every store into it to create a property of the global object
-    (`_a_store_creates_a_property`), and a property of the global object needs a file that runs no
-    code its text does not hold
-    (`refinery.lib.scripts.js.analysis.effects.EffectModel.may_run_code_it_does_not_hold`).
+    (`_a_store_creates_a_property`), and a binding global code finds under its name
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.global_code_finds`) needs a file that runs
+    no code its text does not hold
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.may_run_code_it_does_not_hold`), which
+    may read or change it there.
     """
     model = liveness.model
     if model.has_reflection_surface() or model.has_opaque_global_write():
@@ -91,7 +93,7 @@ def localization_target(
     effects = reaching.effects
     if binding.kind is BindingKind.IMPLICIT_GLOBAL and not _a_store_creates_a_property(model, effects, binding):
         return None
-    if model.reaches_global_object(binding) and effects.may_run_code_it_does_not_hold():
+    if model.global_code_finds(binding) and effects.may_run_code_it_does_not_hold():
         return None
     return function
 
