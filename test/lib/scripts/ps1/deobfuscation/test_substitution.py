@@ -49,3 +49,39 @@ class TestPs1Substitution(TestPs1):
         with self.assertRaises(ValueError):
             substitute_statement(script, script.body[0], [])
         self.assertEqual(len(script.body), 1)
+
+
+class TestPs1ASubstitutionKeepsTheBindingErrorsItReplaces(TestPs1):
+
+    @staticmethod
+    def _statement(source: str):
+        return Ps1Parser(source).parse().body[0]
+
+    def test_a_replacement_dropping_an_invocation_the_binder_rejects_is_refused(self):
+        for source in (
+            'Write-Output (Get-Variable x -Bogus).Value',
+            'Write-Output (Get-Variable x zzq -ValueOnly)',
+            "Set-Variable x 'a' 'b'",
+        ):
+            with self.subTest(source):
+                self.assertFalse(may_substitute(self._statement(source), make_string_literal('x')))
+
+    def test_a_replacement_keeping_the_rejected_invocation_is_allowed(self):
+        statement = self._statement('Write-Output (Get-Variable x -Bogus).Value')
+        self.assertTrue(may_substitute(statement, [statement]))
+
+    def test_a_replacement_dropping_an_invocation_the_binder_accepts_is_allowed(self):
+        statement = self._statement('Write-Output (Get-Variable x -ValueOnly)')
+        self.assertTrue(may_substitute(statement, make_string_literal('x')))
+
+    def test_every_pass_keeps_the_binding_error_a_fold_would_drop(self):
+        for source in (
+            "Set-Item -P 'Variable:x' 5\nWrite-Output $x",
+            '$x = 1\nWrite-Output (Get-Variable x -Bogus).Value',
+            '$x = 1\nWrite-Output (Get-Variable x zzq -ValueOnly)',
+            "Set-Item Variable:x 'a' 'b'\nWrite-Output $x",
+            "Set-Variable x 'a' 'b'\nWrite-Output $x",
+            "(Get-Command -N 'wr?te').Name",
+        ):
+            with self.subTest(source):
+                self._assertKept(source)

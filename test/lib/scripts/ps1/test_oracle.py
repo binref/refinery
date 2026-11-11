@@ -215,11 +215,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         '`Ps1Simplifications` rewrites `$($x)` to `$x` before the alias relation is built, minting '
         'a share the script does not have, so the defect is in that pass rather than in the '
         'aliasing.',
-    "function K { $Null = 1 }; K; $Null = (Get-Command K).Name; Write-Host 'A'":
-        'The definition is removed although `Get-Command` names it literally. A literal name that '
-        'matches nothing writes a `CommandNotFoundException` to the error stream whatever is done '
-        'with the result, so the output writes an error record the snippet does not. A pattern '
-        'that matches nothing writes none, which is the neighbouring `*vnMT*` row.',
     "function K { $Null = 1 }; K; $b = { K }; Write-Host $b":
         'The snippet writes ` K `, the text between the braces of the block, and the output writes '
         'that block laid out over three lines. The printer lays out every block anew, so parsing '
@@ -662,6 +657,549 @@ TABLE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
         ('OUT\tSystem.Management.Automation.CommandTypes\tFunction',),
     '(Get-Command gcim -ErrorAction SilentlyContinue).CommandType':
         ('OUT\tSystem.Management.Automation.CommandTypes\tAlias',),
+    '(Get-Command ???t?).Name':
+        ('OUT\tSystem.String\twrite',),
+    "(Get-Command 'wr?te').Name":
+        ('OUT\tSystem.String\twrite',),
+    '(Get-Command WRITE).Name':
+        ('OUT\tSystem.String\twrite',),
+    '(Get-Command Get-Item).Name':
+        ('OUT\tSystem.String\tGet-Item',),
+    "(Get-Command 'Get-Ite?').Name":
+        ('OUT\tSystem.String\tGet-Item',),
+    "(Get-Command 'mor?').Name":
+        ('OUT\tSystem.String\tmore',),
+    "(Get-Command 'mkdi?').Name":
+        ('OUT\tSystem.String\tmkdir',),
+    "(Get-Command 'a?').Name": (
+        'OUT\tSystem.String\tac',
+        'OUT\tSystem.String\tA:',
+    ),
+    "(Get-Command 'hel?*').Name": (
+        'OUT\tSystem.String\thelp',
+        'OUT\tSystem.String\thelp.exe',
+        'OUT\tSystem.String\tHelpPane.exe',
+    ),
+    "(Get-Command '[!x]rite').Name":
+        ('OUT\t\t<null>',),
+    "(Get-Command 'wr[i]te').Name":
+        ('OUT\tSystem.String\twrite',),
+    "(Get-Command 'w`rite').Name":
+        ('OUT\tSystem.String\twrite',),
+    "(Get-Command -Name 'wr?te').Name":
+        ('OUT\tSystem.String\twrite',),
+    "(Get-Command -Name 'wr?te' -CommandType Alias).Name":
+        ('OUT\tSystem.String\twrite',),
+    "(Get-Command -N 'wr?te').Name": (
+        'ERROR\tAmbiguousParameter,Microsoft.PowerShell.Commands.GetCommandCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+    ),
+    "(Get-Command -Na 'wr?te').Name":
+        ('OUT\tSystem.String\twrite',),
+    '(Get-Command where).Name':
+        ('OUT\tSystem.String\twhere',),
+    "(Get-Command 'wh?re').Name":
+        ('OUT\tSystem.String\twhere',),
+    "(Get-Command 'wh?re.exe').Name":
+        ('OUT\tSystem.String\twhere.exe',),
+    "Get-Command 'New-Object'":
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tNew-Object',),
+    "$c = Get-Command 'New-Object'; $c.CommandType":
+        ('OUT\tSystem.Management.Automation.CommandTypes\tCmdlet',),
+    "('mkdir' | Get-Command).Name":
+        ('OUT\tSystem.String\tmkdir',),
+    "& (gcm 'write') 'a'":
+        ('OUT\tSystem.String\ta',),
+    "& (gcm 'wr?te') 'a'":
+        ('OUT\tSystem.String\ta',),
+    "& (gcm 'zzq')": (
+        'ERROR\tCommandNotFoundException,Microsoft.PowerShell.Commands.GetCommandCommand'
+        '\tSystem.Management.Automation.CommandNotFoundException',
+        'ERROR\tBadExpression\tSystem.Management.Automation.RuntimeException',
+    ),
+    "& 'zzq'":
+        ('ERROR\tCommandNotFoundException\tSystem.Management.Automation.CommandNotFoundException',),
+    "$Null = (Get-Command 'zz]x').Name": (),
+    "$Null = (Get-Command 'zz[q]x').Name": (),
+    "$Null = (Get-Command 'wr`?te').Name": (
+        'ERROR\tCommandNotFoundException,Microsoft.PowerShell.Commands.GetCommandCommand'
+        '\tSystem.Management.Automation.CommandNotFoundException',
+    ),
+    "$Null = (Get-Command '[zz').Name": (
+        'ERROR\tRuntimeException,Microsoft.PowerShell.Commands.GetCommandCommand'
+        '\tSystem.Management.Automation.WildcardPatternException',
+    ),
+    "$Null = Get-Command 'zzq*'": (),
+    "(Get-Command | Where-Object { $_.Name -ilike 'wr?te' }).Name":
+        ('OUT\t\t<null>',),
+    "(Get-Command | Where-Object { $_.Name -ilike '*w-*ct' }).Name":
+        ('OUT\tSystem.String\tNew-Object',),
+    "(Get-Command | Where-Object { $_.Name -clike 'new-o*' }).Name":
+        ('OUT\t\t<null>',),
+    "(Get-Command | Where-Object { $_.Name -clike 'New-O*' }).Name":
+        ('OUT\tSystem.String\tNew-Object',),
+    "(Get-Command | Where-Object { $_.Name -like 'mkdi?' }).Name":
+        ('OUT\tSystem.String\tmkdir',),
+    "Write-Output (Get-Command | Where-Object { $_.Name -ilike 'A?' }).Name":
+        ('OUT\tSystem.String\tA:',),
+    "(Get-Command | Where-Object { $_.Name -eq 'iex' }).Name":
+        ('OUT\t\t<null>',),
+    "(Get-Command | Where-Object { $_.Name -eq 'gcim' }).Name":
+        ('OUT\t\t<null>',),
+    "$c = Get-Command | Where-Object { $_.Name -ilike '*w-*ct' }; $c.CommandType":
+        ('OUT\tSystem.Management.Automation.CommandTypes\tCmdlet',),
+    "(Get-Command set-* | Where-Object { $_.Name -ilike 'g*t-item' }).Name":
+        ('OUT\t\t<null>',),
+    "('set-*' | Get-Command | Where-Object { $_.Name -ilike 'g*t-item' }).Name":
+        ('OUT\t\t<null>',),
+    "('wrnte' | Get-Command | Where-Object { $_.Name -ilike 'mkdi?' }).Name": (
+        'ERROR\tCommandNotFoundException,Microsoft.PowerShell.Commands.GetCommandCommand'
+        '\tSystem.Management.Automation.CommandNotFoundException',
+        'OUT\t\t<null>',
+    ),
+    "$ExecutionContext.InvokeCommand.GetCommandName('wr?te', $true, $true)":
+        ('OUT\tSystem.String\twrite',),
+    "$ExecutionContext.InvokeCommand.GetCommandName('???t?', $true, $true)":
+        ('OUT\tSystem.String\twrite',),
+    "$ExecutionContext.InvokeCommand.GetCommandName('a?', $true, $true)": (
+        'OUT\tSystem.String\tac',
+        'OUT\tSystem.String\tA:',
+    ),
+    "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true)":
+        ('OUT\tSystem.String\tNew-Object',),
+    "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $false)":
+        ('OUT\tSystem.String\tNew-Object',),
+    "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $false, $true)": (),
+    "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', '0', $true)":
+        ('OUT\tSystem.String\tNew-Object',),
+    "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', 0, $true)": (),
+    "$ExecutionContext.InvokeCommand.GetCommandName('New-Object', $false, $true)":
+        ('OUT\tSystem.String\tNew-Object',),
+    "$ExecutionContext.InvokeCommand.GetCommandName('New-Object', $true, $true)":
+        ('OUT\tSystem.String\tNew-Object',),
+    "$ExecutionContext.SessionState.InvokeCommand.GetCommandName('*w-*ct', $true, $true)":
+        ('OUT\tSystem.String\tNew-Object',),
+    "$ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')":
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tNew-Object',),
+    "$ExecutionContext.InvokeCommand.GetCmdlets.Invoke('*w-*ct')":
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tNew-Object',),
+    "$ExecutionContext.InvokeCommand.GetCmdlet('New-Object')":
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tNew-Object',),
+    "$ExecutionContext.InvokeCommand.GetCmdlet('New-Obj*')":
+        ('OUT\t\t<null>',),
+    "$ExecutionContext.InvokeCommand.GetCommand('*w-*ct', 'Cmdlet')":
+        ('OUT\t\t<null>',),
+    "$ExecutionContext.InvokeCommand.GetCommand('*w-*ct', 'All')":
+        ('OUT\t\t<null>',),
+    "$ExecutionContext.InvokeCommand.GetCommand('New-Object', 'Cmdlet')":
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tNew-Object',),
+    "$ExecutionContext.InvokeCommand.GetCommand('write', 'Cmdlet')":
+        ('OUT\t\t<null>',),
+    "$ExecutionContext.InvokeCommand.GetCommand('write', 'All')":
+        ('OUT\tSystem.Management.Automation.AliasInfo\twrite',),
+    "$c = $ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct'); $c.CommandType":
+        ('OUT\tSystem.Management.Automation.CommandTypes\tCmdlet',),
+    "$c = $ExecutionContext.InvokeCommand.GetCmdlet('New-Object'); $c.CommandType":
+        ('OUT\tSystem.Management.Automation.CommandTypes\tCmdlet',),
+    "$c = $ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true); $c.GetType().Name":
+        ('OUT\tSystem.String\tList`1',),
+    "Write-Output $ExecutionContext.InvokeCommand.GetCmdlet('New-Object').Name":
+        ('OUT\tSystem.String\tNew-Object',),
+    "Write-Output $ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct').Name":
+        ('OUT\tSystem.String\tNew-Object',),
+    "& ($ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')) Net.WebClient | ForEach-Object { $_.GetType().Name }":
+        ('OUT\tSystem.String\tWebClient',),
+    ". ($ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')) Net.WebClient | ForEach-Object { $_.GetType().Name }":
+        ('OUT\tSystem.String\tWebClient',),
+    "& ($ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true)) Net.WebClient | "
+    'ForEach-Object { $_.GetType().Name }':
+        ('OUT\tSystem.String\tWebClient',),
+    "$ExecutionContext.InvokeCommand.GetCmdlet($ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true))":
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tNew-Object',),
+    "& ($ExecutionContext.InvokeCommand.GetCmdlet($ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', 1, 1))) "
+    'Net.WebClient | ForEach-Object { $_.GetType().Name }':
+        ('OUT\tSystem.String\tWebClient',),
+    "function New-Objectx {}; $ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true)":
+        ('OUT\tSystem.String\tNew-Object',),
+    "function New-Objectx {}; $ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')":
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tNew-Object',),
+    "function zzNew-Object {}; $ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true)": (
+        'OUT\tSystem.String\tzzNew-Object',
+        'OUT\tSystem.String\tNew-Object',
+    ),
+    "function zzNew-Object {}; $ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')":
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tNew-Object',),
+    'function wrnte {}; (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "function wrnte {}; Write-Output (Get-Command 'wrn`te').Name":
+        ('OUT\tSystem.String\twrnte',),
+    'Set-Alias wrnte Get-Date; (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "function Get-Command {}; (gcm 'wr?te').Name":
+        ('OUT\t\t<null>',),
+    "function Get-Command { 'x' }; & (gcm 'write') 'a'":
+        ('ERROR\tCommandNotFoundException\tSystem.Management.Automation.CommandNotFoundException',),
+    'function gcm {}; (gcm ???t?).Name':
+        ('OUT\tSystem.String\twrite',),
+    "class C {}; (Get-Command 'wr?te').Name":
+        ('OUT\tSystem.String\twrite',),
+    "$p = 'function:' + 'wrnte'; Set-Item $p { 1 }; (Get-Command ???t?).Name": (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    'Set-Item -Path function:wrnte -Value { 1 }; Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    'Set-Item function:\\wrnte { 1 }; Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    'New-Item -Path function: -Name wrnte -Value { 1 } | Out-Null; Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "$a = @('functi','on:wr','nte'); $p = $a -join ''; Set-Content $p { 1 }; Write-Output (Get-Command ???t?).Name": (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "function wrnte {}; $a = @('functi','on:wr','nte'); $p = $a -join ''; Clear-Content $p; "
+    'Write-Output (Get-Command ???t?).Name': (
+        'ERROR\tNotSupported,Microsoft.PowerShell.Commands.ClearContentCommand'
+        '\tSystem.Management.Automation.PSNotSupportedException',
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "$a = @('ali','as:wr','nte'); $p = $a -join ''; Set-Content $p 'Get-Date'; Write-Output (Get-Command ???t?).Name": (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "'function:wrnte' | New-Item -Value { 1 } | Out-Null; Write-Output (Get-Command ???t?).Name": (
+        'ERROR\tInputObjectNotBound,Microsoft.PowerShell.Commands.NewItemCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+        'OUT\tSystem.String\twrite',
+    ),
+    "$a = @('functi','on:wr','nte'); $p = $a -join ''; $p | Set-Item -Value { 1 }; "
+    'Write-Output (Get-Command ???t?).Name': (
+        'ERROR\tInputObjectNotBound,Microsoft.PowerShell.Commands.SetItemCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+        'OUT\tSystem.String\twrite',
+    ),
+    "function x {}; $a = @('functi','on:x'); $p = $a -join ''; Get-Item $p | Rename-Item -NewName wrnte; "
+    'Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    '$x = Get-Item function:more; Write-Output (Get-Command ???t?).Name':
+        ('OUT\tSystem.String\twrite',),
+    "$a = @('wr','nte'); New-Alias -Name ($a -join '') -Value Get-Date; Write-Output (Get-Command ???t?).Name": (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "New-PSDrive Q Function '' | Out-Null; Set-Item Q:\\wrnte { 1 }; Write-Output (Get-Command ???t?).Name": (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "New-PSDrive -Name Q -PSProvider Function -Root '' | Out-Null; Set-Item Q:\\wrnte { 1 }; "
+    'Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "New-PSDrive -Name Q -PSProvider Alias -Root '' | Out-Null; Set-Item Q:\\wrnte Get-Date; "
+    'Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "New-PSDrive -Name Q -PSProvider Microsoft.PowerShell.Core\\Function -Root '' | Out-Null; "
+    'Set-Item Q:\\wrnte { 1 }; Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "$ExecutionContext.SessionState.Drive.New((New-Object Management.Automation.PSDriveInfo('Q', $ExecutionContext.SessionState.Provider.GetOne('Function'), '', '', $null)), 'global') | "
+    'Out-Null; Set-Item Q:\\wrnte { 1 }; Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    'Set-Location function:; Set-Item wrnte { 1 }; Set-Location C:\\; Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "$a = @('func','tion:'); Set-Location ($a -join ''); Set-Item wrnte { 1 }; Set-Location C:\\; "
+    'Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "$a = @('func','tion:'); Push-Location ($a -join ''); Set-Item wrnte { 1 }; Pop-Location; "
+    'Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "$a = @('func','tion:'); $ExecutionContext.SessionState.Path.SetLocation($a -join '') | Out-Null; "
+    'Set-Item wrnte { 1 }; Set-Location C:\\; Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "$ExecutionContext.InvokeProvider.Item.New('function:', 'wrnte', 'Function', { 1 }) | Out-Null; "
+    'Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "$ExecutionContext.SessionState.InvokeProvider.Item.Set('function:wrnte', { 1 }); "
+    'Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.Management.Automation.FunctionInfo\twrnte',
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "$s = $ExecutionContext.SessionState; $s.InvokeProvider.Item.Set('function:wrnte', { 1 }); "
+    'Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.Management.Automation.FunctionInfo\twrnte',
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "$ExecutionContext.SessionState.PSVariable.Set('function:wrnte', { 1 }); Write-Output (Get-Command ???t?).Name": (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "$a = @('function:wr','nte'); $ExecutionContext.SessionState.PSVariable.Set(($a -join ''), { 1 }); "
+    'Write-Output (Get-Command ???t?).Name': (
+        'OUT\tSystem.String\twrite',
+        'OUT\tSystem.String\twrnte',
+    ),
+    "Set-Variable -Name 'function:wrnte' -Value { 1 }; Write-Output (Get-Command ???t?).Name":
+        ('OUT\tSystem.String\twrite',),
+    "[runspace]::DefaultRunspace.SessionStateProxy.SetVariable('function:wrnte', { 1 }); "
+    'Write-Output (Get-Command ???t?).Name': (
+        'ERROR\tPSInvalidOperationException\tSystem.Management.Automation.MethodInvocationException',
+        'OUT\tSystem.String\twrite',
+    ),
+    "$ExecutionContext.InvokeProvider.Item.Set('function:Get-Command', { 'x' }); "
+    "Write-Output (Get-Command 'write').Name": (
+        'OUT\tSystem.Management.Automation.FunctionInfo\tGet-Command',
+        'OUT\t\t<null>',
+    ),
+    "([string] | Get-Member -Static | Where-Object { $_.Name -ilike 'Conc?t' }).Name":
+        ('OUT\tSystem.String\tConcat',),
+    "Write-Output ([string] | Get-Member -Static | Where-Object { $_.Name -ilike 'Emp*' }).Name":
+        ('OUT\tSystem.String\tEmpty',),
+    "Write-Output ([string] | Get-Member -Static | Where-Object { $_.Name -ilike 'ne?' }).Name":
+        ('OUT\tSystem.String\tnew',),
+    "Write-Output ([string] | Get-Member -Static -MemberType Method | Where-Object { $_.Name -ilike 'Conc?t' }).Name":
+        ('OUT\tSystem.String\tConcat',),
+    "Write-Output ([datetime] | Get-Member -Static | Where-Object { $_.Name -ilike 'MaxV*' }).Name":
+        ('OUT\tSystem.String\tMaxValue',),
+    "([string] | Get-Member | Where-Object { $_.Name -ilike 'GetMeth*s' }).Name":
+        ('OUT\tSystem.String\tGetMethods',),
+    "([string].psobject.Methods | Where-Object { $_.Name -ilike 'GetMeth*s' }).Name":
+        ('OUT\tSystem.String\tGetMethods',),
+    "([string].psobject.Properties | Where-Object { $_.Name -ilike 'FullN*' }).Name":
+        ('OUT\tSystem.String\tFullName',),
+    "('abc' | Get-Member | Where-Object { $_.Name -ilike 'Conc?t' }).Name":
+        ('OUT\t\t<null>',),
+    "('abc' | Get-Member | Where-Object { $_.Name -ilike 'ToUpperI*' }).Name":
+        ('OUT\tSystem.String\tToUpperInvariant',),
+    "Write-Output ('abc' | Get-Member | Where-Object { $_.Name -ilike 'Char*' }).Name":
+        ('OUT\tSystem.String\tChars',),
+    "('abc' | Get-Member -Static | Where-Object { $_.Name -ilike 'Conc?t' }).Name":
+        ('OUT\tSystem.String\tConcat',),
+    "Write-Output ('abc' | Get-Member -Static:$false | Where-Object { $_.Name -ilike 'Conc?t' }).Name":
+        ('OUT\t\t<null>',),
+    "Write-Output (Get-Member -I 'abc' -S | Where-Object { $_.Name -ilike 'Conc?t' }).Name":
+        ('OUT\tSystem.String\tConcat',),
+    "('abc' | Get-Member -MemberType Property | Where-Object { $_.Name -ilike 'Clo?e' }).Name":
+        ('OUT\t\t<null>',),
+    "Write-Output ('abc' | Get-Member -MemberType Property | Where-Object { $_.Name -ilike 'Ch*' }).Name":
+        ('OUT\t\t<null>',),
+    "Write-Output ('abc' | Get-Member -MemberType Method | Where-Object { $_.Name -ilike 'Clo?e' }).Name":
+        ('OUT\tSystem.String\tClone',),
+    "Write-Output ('abc' | Get-Member -M Method | Where-Object { $_.Name -ilike 'Clo?e' }).Name":
+        ('OUT\tSystem.String\tClone',),
+    "Write-Output ('abc' | Get-Member -Type Method | Where-Object { $_.Name -ilike 'Clo?e' }).Name":
+        ('OUT\tSystem.String\tClone',),
+    "Write-Output ('abc' | Get-Member -MemberType Methods | Where-Object { $_.Name -ilike 'Clo?e' }).Name":
+        ('OUT\tSystem.String\tClone',),
+    "Write-Output ('abc' | Get-Member -MemberType 'Method, Property' | Where-Object { $_.Name -ilike 'Clo?e' }).Name": (
+        'ERROR\tCannotConvertArgumentNoMessage,Microsoft.PowerShell.Commands.GetMemberCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+    ),
+    "Write-Output ('abc' | Get-Member -View Base | Where-Object { $_.Name -ilike 'Clo?e' }).Name":
+        ('OUT\tSystem.String\tClone',),
+    "('abc' | Get-Member -Force | Where-Object { $_.Name -ilike 'get_Len*' }).Name":
+        ('OUT\tSystem.String\tget_Length',),
+    "('abc'.psobject.Methods | Where-Object { $_.Name -ilike 'Conc?t' }).Name":
+        ('OUT\t\t<null>',),
+    "Write-Output ('abc'.psobject.Methods | Where-Object { $_.Name -ilike 'get_Len*' }).Name":
+        ('OUT\tSystem.String\tget_Length',),
+    "('abc'.psobject.Properties | Where-Object { $_.Name -ilike 'Len*' }).Name":
+        ('OUT\tSystem.String\tLength',),
+    "Write-Output ('abc'.psobject.Properties | Where-Object { $_.Name -ilike 'Ch*' }).Name":
+        ('OUT\t\t<null>',),
+    "Write-Output (@{a = 1}.psobject.Properties | Where-Object { $_.Name -ilike 'Ite?' }).Name":
+        ('OUT\t\t<null>',),
+    "(@('abc') | Get-Member | Where-Object { $_.Name -ilike 'Ran?' }).Name":
+        ('OUT\t\t<null>',),
+    "$a = @('abc'); ($a | Get-Member | Where-Object { $_.Name -ilike 'Ran?' }).Name":
+        ('OUT\t\t<null>',),
+    "$w = New-Object Net.WebClient; ($w | Get-Member | Where-Object { $_.Name -ilike 'Downl*g' }).Name":
+        ('OUT\tSystem.String\tDownloadString',),
+    '$w = New-Object Net.WebClient; ($w | Get-Member -MemberType Method | '
+    "Where-Object { $_.Name -ilike 'Downl*g' }).Name":
+        ('OUT\tSystem.String\tDownloadString',),
+    "$w = New-Object Net.WebClient; ($w.psobject.Methods | Where-Object { $_.Name -ilike 'Downl*g' }).Name":
+        ('OUT\tSystem.String\tDownloadString',),
+    "$w = New-Object Net.WebClient; Write-Output ($w | Get-Member | Where-Object { $_.Name -ilike 'Dispos*' }).Name": (
+        'OUT\tSystem.String\tDisposed',
+        'OUT\tSystem.String\tDispose',
+    ),
+    '$w = New-Object Net.WebClient; Write-Output ($w.psobject.Methods | '
+    "Where-Object { $_.Name -ilike '*Dispos*' }).Name": (
+        'OUT\tSystem.String\tadd_Disposed',
+        'OUT\tSystem.String\tremove_Disposed',
+        'OUT\tSystem.String\tDispose',
+    ),
+    "Write-Output (Get-Date | Get-Member | Where-Object { $_.Name -ilike 'Dat*' }).Name": (
+        'OUT\tSystem.String\tDate',
+        'OUT\tSystem.String\tDateTime',
+    ),
+    "Write-Output ((Get-Date).psobject.Properties | Where-Object { $_.Name -ilike 'Dat*' }).Name": (
+        'OUT\tSystem.String\tDateTime',
+        'OUT\tSystem.String\tDate',
+    ),
+    "Write-Output (Get-Date | Get-Member -MemberType Property | Where-Object { $_.Name -ilike 'DateT*' }).Name":
+        ('OUT\t\t<null>',),
+    "Write-Output (Get-Date | Get-Member -MemberType ScriptProperty | Where-Object { $_.Name -ilike 'DateT*' }).Name":
+        ('OUT\tSystem.String\tDateTime',),
+    "Write-Output ((Get-Date).psobject.Properties | Where-Object { $_.Name -ilike 'DateT*' }).Name":
+        ('OUT\tSystem.String\tDateTime',),
+    "Write-Output (Get-Date | Get-Member -MemberType Method | Where-Object { $_.Name -ilike 'get_Da?' }).Name":
+        ('OUT\t\t<null>',),
+    "Write-Output ([datetime]::Now | Get-Member | Where-Object { $_.Name -ilike 'Displ*' }).Name":
+        ('OUT\t\t<null>',),
+    'Write-Output ([datetime]::Now | Get-Member -MemberType ScriptProperty | '
+    "Where-Object { $_.Name -ilike 'DateT*' }).Name":
+        ('OUT\tSystem.String\tDateTime',),
+    "(Get-Variable '*mdr*').Name":
+        ('OUT\tSystem.String\tMaximumDriveCount',),
+    "Write-Output (Get-Variable 'PSHo*').Name":
+        ('OUT\tSystem.String\tPSHOME',),
+    "Write-Output (Get-Variable 'Shel*').Name":
+        ('OUT\tSystem.String\tShellId',),
+    "Write-Output (Get-Variable 'tru?').Name":
+        ('OUT\tSystem.String\ttrue',),
+    "Write-Output (Get-Variable 'Thi?').Name":
+        ('OUT\t\t<null>',),
+    "Write-Output (Get-Variable 'Matc*').Name":
+        ('OUT\t\t<null>',),
+    "'a' -match 'a' | Out-Null; Write-Output (Get-Variable 'Matc*').Name":
+        ('OUT\tSystem.String\tMatches',),
+    "foreach ($i in 1) { Write-Output (Get-Variable 'fore*').Name }":
+        ('OUT\tSystem.String\tforeach',),
+    "1 | ForEach-Object { Write-Output (Get-Variable 'PSIt*').Name }":
+        ('OUT\tSystem.String\tPSItem',),
+    "Write-Output (Get-Variable 'LASTE*').Name":
+        ('OUT\t\t<null>',),
+    "Write-Output (Get-Variable 'OF?').Name":
+        ('OUT\t\t<null>',),
+    "Write-Output (Get-Item 'Variable:Matc*').Value":
+        ('OUT\t\t<null>',),
+    "Write-Output (Get-Item 'Variable:ForE*').Value":
+        ('OUT\t\t<null>',),
+    "Write-Output (Get-Variable 'E*t' -ValueOnly).GetType().Name":
+        ('OUT\tSystem.String\tEngineIntrinsics',),
+    "$Et = 5; Write-Output (Get-Variable 'E*t').Name": (
+        'OUT\tSystem.String\tEt',
+        'OUT\tSystem.String\tExecutionContext',
+    ),
+    "Write-Output (Get-Item 'Variable:E*t').Value.GetType().Name; $Et = 5":
+        ('OUT\tSystem.String\tEngineIntrinsics',),
+    "function f { $Et = 5 }; f; Write-Output (Get-Item 'Variable:E*t').Value.GetType().Name":
+        ('OUT\tSystem.String\tEngineIntrinsics',),
+    "$j = Register-EngineEvent -SourceIdentifier zzq -Action { (Get-Variable 'E*t').Name }; "
+    'New-Event -SourceIdentifier zzq | Out-Null; Start-Sleep -Milliseconds 500; Receive-Job $j': (
+        'OUT\tSystem.String\tevent',
+        'OUT\tSystem.String\tExecutionContext',
+    ),
+    "Write-Output (Get-Item 'Variable:HOME').Value.GetType().Name":
+        ('OUT\tSystem.String\tString',),
+    "Write-Output (Get-Item 'Variable:zzq').Value": (
+        'ERROR\tPathNotFound,Microsoft.PowerShell.Commands.GetItemCommand'
+        '\tSystem.Management.Automation.ItemNotFoundException',
+        'OUT\t\t<null>',
+    ),
+    'Write-Output (Get-Variable zzq -ValueOnly)': (
+        'ERROR\tVariableNotFound,Microsoft.PowerShell.Commands.GetVariableCommand'
+        '\tSystem.Management.Automation.ItemNotFoundException',
+        'OUT\t\t<null>',
+    ),
+    'function f { Write-Output (Get-Variable zzq -ValueOnly) }; $zzq = 1; f':
+        ('OUT\tSystem.Int32\t1',),
+    '$x = 1; Write-Output (Get-Variable x -Exclude x).Value':
+        ('OUT\t\t<null>',),
+    "$x = 1; Write-Output (Get-Item 'Variable:x' -Include y).Value":
+        ('OUT\t\t<null>',),
+    "$x = 1; Write-Output (Get-Variable -Name x -ErrorAction 'Stop').Value":
+        ('OUT\tSystem.Int32\t1',),
+    '$x = 1; Write-Output (Get-Variable x -Verbose).GetType().Name':
+        ('OUT\tSystem.String\tPSVariable',),
+    '$x = 1; Write-Output (Get-Variable x -ValueOnly:$false).GetType().Name':
+        ('OUT\tSystem.String\tPSVariable',),
+    'Set-Variable x -V 5; Write-Output $x': (
+        'ERROR\tAmbiguousParameter,Microsoft.PowerShell.Commands.SetVariableCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+        'OUT\t\t<null>',
+    ),
+    'Set-Variable -N x -Va 5; Write-Output $x':
+        ('OUT\tSystem.Int32\t5',),
+    "$x = 1; Write-Output (Get-Item -P 'Variable:x').Value": (
+        'ERROR\tAmbiguousParameter,Microsoft.PowerShell.Commands.GetItemCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+    ),
+    "Set-Item -P 'Variable:x' 5; Write-Output $x": (
+        'ERROR\tAmbiguousParameter,Microsoft.PowerShell.Commands.SetItemCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+        'OUT\t\t<null>',
+    ),
+    '$x = 1; Write-Output (Get-Variable -N x).Value':
+        ('OUT\tSystem.Int32\t1',),
+    "$x = 1; Write-Output (gi -Pa 'Variable:x').Value":
+        ('OUT\tSystem.Int32\t1',),
+    '$x = 1; Write-Output (Get-Variable x -S 0).Value':
+        ('OUT\tSystem.Int32\t1',),
+    '$x = 1; Write-Output (Get-Variable x -Bogus).Value': (
+        'ERROR\tNamedParameterNotFound,Microsoft.PowerShell.Commands.GetVariableCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+    ),
+    '$x = 1; Write-Output (Get-Variable x zzq -ValueOnly)': (
+        'ERROR\tPositionalParameterNotFound,Microsoft.PowerShell.Commands.GetVariableCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+    ),
+    "Set-Item Variable:x 'a' 'b'; Write-Output $x": (
+        'ERROR\tPositionalParameterNotFound,Microsoft.PowerShell.Commands.SetItemCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+        'OUT\t\t<null>',
+    ),
+    "Set-Variable x 'a' 'b'; Write-Output $x": (
+        'ERROR\tPositionalParameterNotFound,Microsoft.PowerShell.Commands.SetVariableCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+        'OUT\t\t<null>',
+    ),
+    "Write-Host 'a' 'b' -Separator '-'":
+        ('INFO\ta-b',),
+    "Write-Output 'a' 'b'": (
+        'OUT\tSystem.String\ta',
+        'OUT\tSystem.String\tb',
+    ),
+    "Get-Date -- -Format | Out-Null; Write-Output 'after'": (
+        'ERROR\tCannotConvertArgumentNoMessage,Microsoft.PowerShell.Commands.GetDateCommand'
+        '\tSystem.Management.Automation.ParameterBindingException',
+        'OUT\tSystem.String\tafter',
+    ),
+    'function f { param([Parameter()]$a) }; f -b 1':
+        ('ERROR\tNamedParameterNotFound,f\tSystem.Management.Automation.ParameterBindingException',),
+    'function f { param($a) }; f -b 1': (),
 }
 
 
@@ -4952,6 +5490,13 @@ class TestPs1CommandTablesRestOnMeasuredBeliefs(Ps1OracleTest):
         self.assertEqual(
             [line.split('\t')[0] for transcript in measured for line in transcript],
             ['OUT', 'ERROR'],
+        )
+
+    def test_the_aliases_no_module_defines_are_the_ones_the_data_holds(self):
+        measured = behaviour(corpus.MODULELESS_ALIAS_LISTING)
+        self.assertEqual(
+            sorted(line.split('\t')[-1] for line in measured),
+            sorted(data.MODULELESS_ALIASES),
         )
 
 

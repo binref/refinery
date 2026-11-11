@@ -11,7 +11,6 @@ import unittest
 
 _NULL_ASSIGNMENT_GOAL = inspect.cleandoc(
     r"""
-        $Null = (Get-Command ???t?).Name
         $kxYB = ([char[]]($lyA5) | ForEach-Object {
           [byte][char]$_
         })

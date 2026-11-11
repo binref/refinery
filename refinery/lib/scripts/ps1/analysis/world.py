@@ -31,13 +31,16 @@ from __future__ import annotations
 
 import enum
 
-from typing import NamedTuple
+from typing import NamedTuple, TypeGuard
 
 from refinery.lib.scripts import Node, tree_version
 from refinery.lib.scripts.ps1.analysis.aliasdef import extract_alias_definition
 from refinery.lib.scripts.ps1.ast import (
     assignment_target_variables,
+    binds_parameter,
+    bound_argument_value,
     command_name_literal,
+    free_positional_values,
     get_member_name,
     is_execution_context_invoke,
     is_opaque_dispatch,
@@ -54,6 +57,7 @@ from refinery.lib.scripts.ps1.ast import (
     unwrap_assignment_target,
     unwrap_parens,
 )
+from refinery.lib.scripts.ps1.data import LISTING_ENVIRONMENT_NAMES, type_members
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1ArrayLiteral,
@@ -66,14 +70,16 @@ from refinery.lib.scripts.ps1.model import (
     Ps1FunctionDefinition,
     Ps1InvokeMember,
     Ps1MemberAccess,
+    Ps1Pipeline,
+    Ps1PipelineElement,
     Ps1ScopeModifier,
     Ps1Script,
     Ps1ScriptBlock,
     Ps1TypeExpression,
     Ps1Variable,
 )
-from refinery.lib.scripts.ps1.data import type_members
 from refinery.lib.scripts.ps1.options import eval_is_trusted
+from refinery.lib.scripts.ps1.patterns import wildcard_regex
 
 
 class WorldRole(enum.Enum):
@@ -194,6 +200,51 @@ _ITEM_CMDLETS = frozenset({
     'rename-item',
     'set-item',
 })
+
+#: The cmdlets that write the content of a provider item. `Set-Content` writes a function's body
+#: as `Set-Item` does, and every one of them writes an environment variable.
+_CONTENT_CMDLETS = frozenset({
+    'add-content',
+    'clear-content',
+    'set-content',
+})
+
+#: The item cmdlets whose second free argument names a path as well, the item it copies, moves or
+#: renames to.
+_TWO_PATH_CMDLETS = frozenset({'copy-item', 'move-item', 'rename-item'})
+
+#: The parameters an item or content cmdlet takes a path under: the item it writes, and where one
+#: of `_TWO_PATH_CMDLETS` puts it.
+_PATH_PARAMETERS = ('path', 'literalpath')
+_DESTINATION_PARAMETERS = ('destination', 'newname')
+
+#: The commands that change the location, after which a bare item path addresses the drive they
+#: entered.
+_LOCATION_COMMANDS = frozenset({'push-location', 'set-location'})
+
+#: The command that adds a drive of any name over a provider.
+_NEW_DRIVE = 'new-psdrive'
+
+#: The provider names of the environment drive, which holds the names a listing of the command
+#: table reads.
+_ENVIRONMENT_PROVIDERS = ('env', 'environment')
+
+#: The variables through which a script reaches its own session state.
+_SESSION_HOLDERS = frozenset({'executioncontext', 'pscmdlet'})
+
+#: The members of the engine's intrinsics that hand out an object able to write the session's
+#: tables, and the subset that does nothing else.
+_SESSION_INTRINSICS = frozenset({
+    'drive',
+    'invokecommand',
+    'invokeprovider',
+    'module',
+    'path',
+    'provider',
+    'psvariable',
+    'sessionstate',
+})
+_TABLE_WRITING_INTRINSICS = frozenset({'drive', 'invokeprovider', 'module'})
 
 #: The keywords that define a command under a name given as an argument rather than as a definition
 #: node. `workflow NAME { ... }` and `configuration NAME { ... }` each introduce a command named NAME
@@ -327,9 +378,27 @@ class Ps1WorldMeasurement(NamedTuple):
     The opener and site nodes are live tree references, which is why this is a cache record rather
     than a field of the leaf `Ps1TypeWorld`: a slot is dropped whole on the next version bump, so
     its node references are never read against a tree they no longer belong to.
+
+    `openers` is the axis-blind whole — every opener, whichever axis it opened — while
+    `type_openers` and `command_openers` are the two halves, each recording where the matching
+    axis flag was unset, so a flood or a refusal can be taken per axis: a leak sits in both halves,
+    a `Set-Alias` in `command_openers` alone, a `class` in `type_openers` alone. Each half is
+    empty exactly when its axis reads closed, since flag and half are written at the same statement
+    of the same walk.
+
+    `table_writers` are the nodes that may change what a lookup of the command table lists without
+    opening either axis: an item cmdlet whose path nobody can read, which may write a `function:`
+    item, and a store of the environment variables the listing reads (`PATHEXT`, `PSModulePath`).
+    They are kept apart from the openers because opening the command axis on them would cost every
+    trusted call in a script that copies a file by variable, where only a listing read cares. Only
+    `refinery.lib.scripts.ps1.analysis.worldflow.Ps1WorldReach.may_read_the_command_table_at`
+    floods from them.
     """
     world: Ps1TypeWorld
     openers: tuple[Node, ...]
+    type_openers: tuple[Node, ...]
+    command_openers: tuple[Node, ...]
+    table_writers: tuple[Node, ...]
     shadow_sites: tuple[Ps1ShadowSite, ...]
     invoked_command_names: frozenset[str]
     root: Ps1Script
@@ -344,22 +413,16 @@ class Ps1WorldMeasurement(NamedTuple):
 #: cannot tell a read from a write, and binds nothing at all.
 _NAME_BINDING_COMMANDS = (_ALIAS_CMDLETS - {'import-alias'}) | _ITEM_CMDLETS
 
-#: The parameter spellings that carry the binding such a command performs, each a prefix of `-Name`
-#: or `-Value` because PowerShell binds a parameter by any unambiguous prefix of its name. Every
-#: other named parameter — `-Force`, `-Scope`, `-Option`, `-Description` — steers the binding
-#: without saying what it is, and reading one as part of the binding would let a `-Force:$true` make
-#: a fully written-out rebinding look unreadable.
-_BINDING_PARAMETERS = frozenset({
-    'n',
-    'na',
-    'nam',
-    'name',
-    'v',
-    'va',
-    'val',
-    'valu',
-    'value',
-})
+
+def _carries_the_binding(written: str) -> bool:
+    """
+    Whether the parameter spelling *written* may carry the binding such a command performs: a
+    spelling of `-Name` or `-Value`, which PowerShell binds by any unambiguous prefix of the name.
+    Every other named parameter — `-Force`, `-Scope`, `-Option`, `-Description` — steers the
+    binding without saying what it is, and reading one as part of the binding would let a
+    `-Force:$true` make a fully written-out rebinding look unreadable.
+    """
+    return binds_parameter(written, 'name') or binds_parameter(written, 'value')
 
 
 def _runs_unreadable_code(node, role: WorldRole) -> bool:
@@ -386,14 +449,32 @@ def _runs_unreadable_code(node, role: WorldRole) -> bool:
     reached through an alias. The residual is stated rather than left silent — such a name is
     trusted afterwards, and closing that needs the shadow set to record what an aliasing cmdlet
     binds, which is a reading no walk here performs.
+
+    Three more writers of command identity stand in plain sight and are never excused: a
+    location command whose literal path enters the `function:` or `alias:` drive, after which a
+    bare item path names a command; a `New-PSDrive` whose literal provider is one of the two, after
+    which a drive of any name addresses one; and a call reached through `$ExecutionContext` or
+    `$PSCmdlet` with a literal path into either provider among its arguments, which writes it as an
+    item cmdlet does. Measured on 5.1, each of them adds a function a later lookup lists, and
+    `$ExecutionContext.InvokeProvider.Item.Set('function:Get-Command', ...)` takes `Get-Command`
+    over. A `New-PSDrive` whose provider is computed is a binding nobody can read, and excused.
     """
     if role is WorldRole.MUTATION or role is WorldRole.NONE:
         return False
     if _installs_a_command_lookup_hook(node):
         return False
-    if role is not WorldRole.IDENTITY or not isinstance(node, Ps1CommandInvocation):
+    if role is not WorldRole.IDENTITY:
         return True
-    if normalize_command_name(resolve_command_name(node) or '') not in _NAME_BINDING_COMMANDS:
+    if isinstance(node, Ps1InvokeMember):
+        return not _writes_identity_through_the_session(node)
+    if not isinstance(node, Ps1CommandInvocation):
+        return True
+    command = normalize_command_name(resolve_command_name(node) or '')
+    if command in _LOCATION_COMMANDS:
+        return False
+    if command == _NEW_DRIVE:
+        return _drive_provider(node) is not _DriveProvider.IDENTITY
+    if command not in _NAME_BINDING_COMMANDS:
         return True
     return _binds_what_the_walk_cannot_read(node)
 
@@ -414,14 +495,13 @@ def _binds_what_the_walk_cannot_read(cmd: Ps1CommandInvocation) -> bool:
             if not _is_written_out(argument):
                 return True
             continue
-        name = argument.name.lstrip('-').lower()
         if argument.kind is Ps1CommandArgumentKind.SWITCH:
-            pending = name
+            pending = argument.name
             continue
         if argument.kind is Ps1CommandArgumentKind.NAMED:
-            carries = name in _BINDING_PARAMETERS
+            carries = _carries_the_binding(argument.name)
         else:
-            carries = pending is None or pending in _BINDING_PARAMETERS
+            carries = pending is None or _carries_the_binding(pending)
         pending = None
         if carries and not _is_written_out(argument.value):
             return True
@@ -450,11 +530,11 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
     node opens the type system (`_opens_type_system`) and whether any opens the command table
     (`_opens_command_namespace`) — the two independent axes the world carries apart — the set of
     command names the script redefines and the site of each redefinition, every opener node in
-    walk order, and every command name a statically-spelled call may run — its resolved name and
-    the implicit `Get-` retry, both the deny-list way. A single opener anywhere is global and
-    retroactive, so it closes off the axis it opens. The walk cannot short-circuit on the first
-    opener because the shadow set needs every redefinition, wherever it sits, and the floods need
-    every position and every invoked name.
+    walk order with the per-axis halves recorded beside the axis flags, and every command name a
+    statically-spelled call may run — its resolved name and the implicit `Get-` retry, both the
+    deny-list way. A single opener anywhere is global and retroactive, so it closes off the axis
+    it opens. The walk cannot short-circuit on the first opener because the shadow set needs every
+    redefinition, wherever it sits, and the floods need every position and every invoked name.
 
     An opener is yielded as the node itself, not its role. The class or enum definition among them
     opens the world at no position — the engine compiles it before the first statement runs — and is
@@ -463,7 +543,8 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
     Under `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions.trust_eval` an opener
     `_runs_unreadable_code` answers for is not recorded at all, so it neither opens the whole-run
     verdict nor floods a position. The shadow set is untouched by the option: every site in it is a
-    redefinition this walk *did* read, so nothing about it rests on what unreadable code does.
+    redefinition this walk *did* read, so nothing about it rests on what unreadable code does. A
+    table writer nobody can read is left out the same way, and one in plain sight is kept.
     """
     trusting = eval_is_trusted(options)
     type_system_closed = True
@@ -471,11 +552,17 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
     closed_but_for_alias_bindings = True
     shadowed: set[str] = set()
     openers: list[Node] = []
+    type_openers: list[Node] = []
+    command_openers: list[Node] = []
+    table_writers: list[Node] = []
     shadow_sites: list[Ps1ShadowSite] = []
     invoked: set[str] = set()
     for node in root.walk():
         if isinstance(node, Ps1CommandInvocation):
             invoked.update(resolved_command_names(node))
+        written = _writes_the_listing(node)
+        if written is _ListingWrite.PLAIN_SIGHT or (written is _ListingWrite.UNREADABLE and not trusting):
+            table_writers.append(node)
         redefined = _identity_redefinitions(node)
         shadowed.update(record.name for record in redefined)
         shadow_sites.extend(Ps1ShadowSite(record.name, node) for record in redefined)
@@ -485,8 +572,10 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
         openers.append(node)
         if _opens_type_system(role):
             type_system_closed = False
+            type_openers.append(node)
         if _opens_command_namespace(node, role):
             command_table_closed = False
+            command_openers.append(node)
         if not _opens_world_only_by_binding_an_alias(node):
             closed_but_for_alias_bindings = False
     world = Ps1TypeWorld(
@@ -498,6 +587,9 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
     return Ps1WorldMeasurement(
         world,
         tuple(openers),
+        tuple(type_openers),
+        tuple(command_openers),
+        tuple(table_writers),
         tuple(shadow_sites),
         frozenset(invoked),
         root,
@@ -997,6 +1089,8 @@ def _opens_world(node, redefined: tuple[_IdentityRedefinition, ...]) -> WorldRol
             return WorldRole.LEAK
         if _installs_a_command_lookup_hook(node):
             return WorldRole.IDENTITY
+        if _writes_identity_through_the_session(node):
+            return WorldRole.IDENTITY
         return WorldRole.NONE
     if isinstance(node, Ps1AssignmentExpression):
         if _installs_a_command_lookup_hook(node):
@@ -1083,7 +1177,11 @@ def _command_opens_world(cmd: Ps1CommandInvocation) -> WorldRole:
         return WorldRole.LEAK
     if name is None:
         return WorldRole.NONE
-    return WorldRole.IDENTITY if touches_identity_provider(cmd) else WorldRole.NONE
+    if touches_identity_provider(cmd):
+        return WorldRole.IDENTITY
+    if normalize_command_name(name) == _NEW_DRIVE and _drive_provider(cmd) is not _DriveProvider.OTHER:
+        return WorldRole.IDENTITY
+    return WorldRole.NONE
 
 
 def runs_another_script_file(cmd: Ps1CommandInvocation) -> bool:
@@ -1131,12 +1229,8 @@ def touches_identity_provider(cmd: Ps1CommandInvocation) -> bool:
     for arg in cmd.arguments:
         value = arg.value if isinstance(arg, Ps1CommandArgument) else arg
         text = string_value(value)
-        if text is None:
-            continue
-        for spelling in (text, text.rpartition('\\')[2]):
-            drive, separator, _ = spelling.partition(':')
-            if separator and drive.lower() in _IDENTITY_PROVIDERS:
-                return True
+        if text is not None and _names_an_identity_path(text):
+            return True
     return False
 
 
@@ -1191,6 +1285,317 @@ def may_touch_identity_provider(cmd: Ps1CommandInvocation) -> bool:
         string_value(arg.value if isinstance(arg, Ps1CommandArgument) else arg) is None
         for arg in cmd.arguments
     )
+
+
+def _names_an_identity_path(text: str) -> bool:
+    """
+    Whether *text* is a path into the `alias:` or `function:` provider, read in both spellings
+    `touches_identity_provider` reads.
+    """
+    for spelling in (text, text.rpartition('\\')[2]):
+        drive, separator, _ = spelling.partition(':')
+        if separator and drive.lower() in _IDENTITY_PROVIDERS:
+            return True
+    return False
+
+
+def _environment_item(text: str) -> str | None:
+    """
+    The item *text* addresses on the environment drive — the empty string for the drive itself — or
+    `None` where it is a path into no environment drive. Read in both spellings
+    `touches_identity_provider` reads, so `Microsoft.PowerShell.Core\\Environment::PATHEXT` is
+    found as well as `Env:\\PATHEXT`.
+    """
+    for spelling in (text, text.rpartition('\\')[2]):
+        drive, separator, item = spelling.partition(':')
+        if separator and drive.lower() in _ENVIRONMENT_PROVIDERS:
+            return item.lstrip('\\/:')
+    return None
+
+
+def _stores_a_listing_environment_name(text: str) -> bool:
+    """
+    Whether a write of the path *text* may store one of the environment variables a listing of the
+    command table reads: the drive itself, a name of them, or a pattern one of them matches.
+    """
+    item = _environment_item(text)
+    if item is None:
+        return False
+    if not item:
+        return True
+    regex = wildcard_regex(item)
+    return regex is None or any(regex.match(name) for name in LISTING_ENVIRONMENT_NAMES)
+
+
+class _DriveProvider(enum.Enum):
+    """
+    What a `New-PSDrive` adds a drive over, as far as the command table is concerned.
+    """
+    #: The `Alias` or `Function` provider, written out.
+    IDENTITY = enum.auto()
+    #: The `Environment` provider, written out.
+    ENVIRONMENT = enum.auto()
+    #: Any other provider written out, or none at all.
+    OTHER = enum.auto()
+    #: A provider nobody can read.
+    UNREADABLE = enum.auto()
+
+
+def _drive_provider(cmd: Ps1CommandInvocation) -> _DriveProvider:
+    """
+    The provider the `New-PSDrive` *cmd* adds a drive over: the value of `-PSProvider`, or the free
+    argument at its position, the second where `-Name` is not bound by name. A provider name is
+    read after its module qualifier, so `Microsoft.PowerShell.Core\\Function` is the `Function`
+    provider; measured on 5.1, every spelling adds a drive a later `Set-Item` writes functions
+    through.
+    """
+    for argument in cmd.arguments:
+        if not isinstance(argument, Ps1CommandArgument):
+            return _DriveProvider.UNREADABLE
+        if isinstance(argument.value, Ps1Variable) and argument.value.splatted:
+            return _DriveProvider.UNREADABLE
+    provider = bound_argument_value(cmd, 'psprovider')
+    if provider is None:
+        positionals = free_positional_values(cmd, _NEW_DRIVE)
+        index = 0 if bound_argument_value(cmd, 'name') is not None else 1
+        provider = positionals[index] if len(positionals) > index else None
+    if provider is None:
+        return _DriveProvider.OTHER
+    text = string_value(provider)
+    if text is None:
+        return _DriveProvider.UNREADABLE
+    name = text.rpartition('\\')[2].lower()
+    if name in _IDENTITY_PROVIDERS:
+        return _DriveProvider.IDENTITY
+    if name in _ENVIRONMENT_PROVIDERS:
+        return _DriveProvider.ENVIRONMENT
+    return _DriveProvider.OTHER
+
+
+def _session_holder_root(node: Node) -> Ps1Variable | None:
+    """
+    The `$ExecutionContext` or `$PSCmdlet` a member chain ending in *node* is read off, or `None`.
+    """
+    cursor = node
+    while isinstance(cursor, (Ps1MemberAccess, Ps1InvokeMember)):
+        cursor = cursor.object
+    if _is_a_session_holder(cursor):
+        return cursor
+    return None
+
+
+def _is_a_session_holder(node: Node | None) -> TypeGuard[Ps1Variable]:
+    return (
+        isinstance(node, Ps1Variable)
+        and node.scope in _VARIABLE_SCOPES
+        and node.name.lower() in _SESSION_HOLDERS
+    )
+
+
+#: The scopes under which a variable reference reads a variable rather than a provider item.
+_VARIABLE_SCOPES = frozenset({
+    Ps1ScopeModifier.GLOBAL,
+    Ps1ScopeModifier.LOCAL,
+    Ps1ScopeModifier.NONE,
+    Ps1ScopeModifier.PRIVATE,
+    Ps1ScopeModifier.SCRIPT,
+})
+
+
+def _writes_identity_through_the_session(call: Ps1InvokeMember) -> bool:
+    """
+    Whether *call* is reached through the script's session state and hands it a literal path into
+    the `alias:` or `function:` provider: `InvokeProvider.Item.Set('function:x', ...)`,
+    `SessionState.PSVariable.Set('function:x', ...)` and `SessionState.Path.SetLocation('function:')`
+    each write command identity in plain sight. The command lookups of `InvokeCommand` read the
+    table and are not among them.
+    """
+    root = _session_holder_root(call)
+    if root is None:
+        return False
+    first = root.parent
+    if isinstance(first, (Ps1MemberAccess, Ps1InvokeMember)) and first.object is root:
+        member = get_member_name(first.member)
+        if member is not None and member.lower() == 'invokecommand':
+            return False
+    return any(
+        (text := string_value(argument)) is not None and _names_an_identity_path(text)
+        for argument in call.arguments
+    )
+
+
+class _ListingWrite(enum.Enum):
+    """
+    Whether a node may change what a lookup of the command table lists without opening either axis
+    of the world, and whether it does so in plain sight.
+    """
+    NONE = enum.auto()
+    PLAIN_SIGHT = enum.auto()
+    UNREADABLE = enum.auto()
+
+
+def _writes_the_listing(node: Node) -> _ListingWrite:
+    """
+    Whether *node* may change what a lookup of the command table lists, short of opening the
+    command axis: a write nobody can read through which a `function:` or `alias:` item may be
+    written, or a store of an environment variable the listing reads. See `table_writers`.
+    """
+    if isinstance(node, Ps1CommandInvocation):
+        return _command_writes_the_listing(node)
+    if isinstance(node, Ps1Variable):
+        return _session_holder_writes_the_listing(node)
+    if isinstance(node, Ps1AssignmentExpression):
+        if any(
+            variable.scope is Ps1ScopeModifier.ENV
+            and variable.name.lower() in LISTING_ENVIRONMENT_NAMES
+            for variable in assignment_target_variables(node.target)
+        ):
+            return _ListingWrite.PLAIN_SIGHT
+        return _ListingWrite.NONE
+    if isinstance(node, Ps1InvokeMember):
+        return _environment_call_writes_the_listing(node)
+    return _ListingWrite.NONE
+
+
+def _path_arguments(cmd: Ps1CommandInvocation, command: str) -> list[str] | None:
+    """
+    The paths the item or content cmdlet *cmd* writes, read off `-Path` and `-LiteralPath`, off
+    `-Destination` and `-NewName` for the cmdlets that take a second path, and off the free
+    arguments at the positions those leave, or `None` where one of them cannot be read.
+    """
+    for argument in cmd.arguments:
+        if not isinstance(argument, Ps1CommandArgument):
+            return None
+        if isinstance(argument.value, Ps1Variable) and argument.value.splatted:
+            return None
+    groups: list[tuple[str, ...]] = [_PATH_PARAMETERS]
+    if command in _TWO_PATH_CMDLETS:
+        groups.append(_DESTINATION_PARAMETERS)
+    texts: list[str] = []
+    slots = len(groups)
+    for group in groups:
+        for parameter in group:
+            value = bound_argument_value(cmd, parameter)
+            if value is None:
+                continue
+            text = string_value(value)
+            if text is None:
+                return None
+            texts.append(text)
+            slots -= 1
+            break
+    for value in free_positional_values(cmd, command)[:max(slots, 0)]:
+        text = string_value(value)
+        if text is None:
+            return None
+        texts.append(text)
+    return texts
+
+
+def _first_in_its_pipeline(cmd: Ps1CommandInvocation) -> bool:
+    element = cmd.parent
+    if not isinstance(element, Ps1PipelineElement):
+        return True
+    pipeline = element.parent
+    return not isinstance(pipeline, Ps1Pipeline) or not pipeline.elements or pipeline.elements[0] is element
+
+
+def _command_writes_the_listing(cmd: Ps1CommandInvocation) -> _ListingWrite:
+    """
+    `_writes_the_listing` for an invocation: an item or content cmdlet whose path nobody can read
+    or that takes its path from the pipeline, a location command whose path nobody can read, and
+    either of them, or a `New-PSDrive` over the environment, addressing the environment drive.
+    """
+    command = normalize_command_name(resolve_command_name(cmd) or '')
+    if command in _ITEM_CMDLETS or command in _CONTENT_CMDLETS:
+        paths = _path_arguments(cmd, command)
+        if paths is None:
+            return _ListingWrite.UNREADABLE
+        if any(_stores_a_listing_environment_name(text) for text in paths):
+            return _ListingWrite.PLAIN_SIGHT
+        if not _first_in_its_pipeline(cmd):
+            return _ListingWrite.UNREADABLE
+        return _ListingWrite.NONE
+    if command in _LOCATION_COMMANDS:
+        paths = _path_arguments(cmd, command)
+        if paths is None:
+            return _ListingWrite.UNREADABLE
+        if any(_environment_item(text) is not None for text in paths):
+            return _ListingWrite.PLAIN_SIGHT
+        return _ListingWrite.NONE
+    if command == _NEW_DRIVE and _drive_provider(cmd) is _DriveProvider.ENVIRONMENT:
+        return _ListingWrite.PLAIN_SIGHT
+    return _ListingWrite.NONE
+
+
+def _session_holder_writes_the_listing(holder: Ps1Variable) -> _ListingWrite:
+    """
+    `_writes_the_listing` for a read of `$ExecutionContext` or `$PSCmdlet`: the holder kept or
+    handed on, a member nobody can read, the item provider, the drive table, the module table, an
+    intrinsic handed on, and a write of a variable or a location whose name nobody can read. A
+    lookup of `InvokeCommand`, a read of a variable and a property read are none of these.
+    """
+    if not _is_a_session_holder(holder):
+        return _ListingWrite.NONE
+    members: list[str] = []
+    node: Node = holder
+    call: Ps1InvokeMember | None = None
+    while True:
+        parent = node.parent
+        if not isinstance(parent, (Ps1MemberAccess, Ps1InvokeMember)) or parent.object is not node:
+            break
+        member = get_member_name(parent.member)
+        if member is None:
+            return _ListingWrite.UNREADABLE
+        members.append(member.lower())
+        node = parent
+        if isinstance(parent, Ps1InvokeMember):
+            call = parent
+            break
+    if not members:
+        return _ListingWrite.UNREADABLE
+    if any(member in _TABLE_WRITING_INTRINSICS for member in members):
+        return _ListingWrite.UNREADABLE
+    if call is None:
+        return _ListingWrite.UNREADABLE if members[-1] in _SESSION_INTRINSICS else _ListingWrite.NONE
+    method = members[-1]
+    owner = members[-2] if len(members) > 1 else None
+    if (owner, method) not in (
+        ('psvariable', 'set'),
+        ('psvariable', 'remove'),
+        ('path', 'setlocation'),
+        ('path', 'pushcurrentlocation'),
+    ):
+        return _ListingWrite.NONE
+    text = string_value(call.arguments[0]) if call.arguments else None
+    if text is None:
+        return _ListingWrite.UNREADABLE
+    if _environment_item(text) is not None:
+        return _ListingWrite.PLAIN_SIGHT
+    return _ListingWrite.NONE
+
+
+def _environment_call_writes_the_listing(call: Ps1InvokeMember) -> _ListingWrite:
+    """
+    `_writes_the_listing` for a call of `[Environment]`: `SetEnvironmentVariable` of a name the
+    listing reads, of a name nobody can read, or a member nobody can read.
+    """
+    receiver = call.object
+    if call.access is not Ps1AccessKind.STATIC or not isinstance(receiver, Ps1TypeExpression):
+        return _ListingWrite.NONE
+    if normalize_dotnet_type_name(receiver.name) != 'environment':
+        return _ListingWrite.NONE
+    member = get_member_name(call.member)
+    if member is None:
+        return _ListingWrite.UNREADABLE
+    if member.lower() != 'setenvironmentvariable':
+        return _ListingWrite.NONE
+    name = string_value(call.arguments[0]) if call.arguments else None
+    if name is None:
+        return _ListingWrite.UNREADABLE
+    if name.lower() in LISTING_ENVIRONMENT_NAMES:
+        return _ListingWrite.PLAIN_SIGHT
+    return _ListingWrite.NONE
 
 
 def assigns_an_alias_name(node) -> bool:

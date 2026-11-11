@@ -79,13 +79,13 @@ from refinery.lib.scripts.ps1.data import (
 )
 from refinery.lib.scripts.ps1.deobfuscation.constants import PS1_ENGINE_VARIABLES
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    DotnetRegexError,
     StringMethodError,
     apply_format_string,
     apply_string_method,
     detect_encoding_chain,
     dotnet_from_base64,
     dotnet_regex_replace,
-    DotnetRegexError,
     extract_foreach_scriptblock,
     ps_divide,
     ps_modulo,
@@ -149,6 +149,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1WhileLoop,
 )
 from refinery.lib.scripts.ps1.options import eval_is_trusted
+from refinery.lib.scripts.ps1.patterns import wildcard_regex
 
 _MAX_INTERPRETER_ITERATIONS = 100_000
 _MAX_INTERPRETER_STRING_LEN = 1_000_000
@@ -530,89 +531,6 @@ def _takes_the_jump(signal: _JumpSignal, loop_label: str | None) -> bool:
     if signal.label is None:
         return True
     return loop_label is not None and loop_label[1:].lower() == signal.label
-
-
-_WILDCARD_METACHARACTERS = frozenset('()[.?*{}^$+|\\')
-
-
-def _append_wildcard_literal(regex: list[str], char: str) -> None:
-    if char in _WILDCARD_METACHARACTERS:
-        regex.append('\\')
-    regex.append(char)
-
-
-def _append_wildcard_set_member(regex: list[str], char: str) -> None:
-    if char == '[':
-        regex.append('[')
-    elif char == ']':
-        regex.append('\\]')
-    elif char == '-':
-        regex.append('\\x2d')
-    else:
-        _append_wildcard_literal(regex, char)
-
-
-def _append_wildcard_set(regex: list[str], members: list[str], ranges: list[bool]) -> None:
-    regex.append('[')
-    index = 0
-    count = len(members)
-    while index < count:
-        if index + 2 < count and ranges[index + 1]:
-            lower, upper = members[index], members[index + 2]
-            index += 3
-            if lower > upper:
-                raise _Ps1InterpreterError
-            _append_wildcard_set_member(regex, lower)
-            regex.append('-')
-            _append_wildcard_set_member(regex, upper)
-        else:
-            _append_wildcard_set_member(regex, members[index])
-            index += 1
-    regex.append(']')
-
-
-def _wildcard_to_regex(pattern: str) -> str:
-    """
-    Translate a PowerShell wildcard pattern into the regular expression 5.1 compiles it to, so that
-    `-like` reads a pattern the way the host does rather than the way `fnmatch` does. A backtick
-    escapes the character behind it; `*` is any run and `?` is one character; a `[...]` set holds
-    literal characters and `a-z` ranges, and inside it `^`, `[` and `!` are literal, so `[!a]` is
-    the two-character set `!a` and not a negated class. An unterminated set or a reversed range is
-    a pattern 5.1 rejects, so the fold is refused rather than guessed.
-    """
-    regex: list[str] = ['^']
-    escaped = False
-    opened_set = False
-    inside_set = False
-    members: list[str] = []
-    ranges: list[bool] = []
-    for char in pattern:
-        if inside_set:
-            if char == ']' and not opened_set and not escaped:
-                inside_set = False
-                _append_wildcard_set(regex, members, ranges)
-                members, ranges = [], []
-            elif char != '`' or escaped:
-                members.append(char)
-                ranges.append(char == '-' and not escaped)
-            opened_set = False
-        elif char == '*' and not escaped:
-            regex.append('.*')
-        elif char == '?' and not escaped:
-            regex.append('.')
-        elif char == '[' and not escaped:
-            inside_set = True
-            opened_set = True
-            members, ranges = [], []
-        elif char != '`' or escaped:
-            _append_wildcard_literal(regex, char)
-        escaped = char == '`' and not escaped
-    if inside_set:
-        raise _Ps1InterpreterError
-    if escaped and pattern != '`':
-        _append_wildcard_literal(regex, pattern[-1])
-    regex.append('$')
-    return ''.join(regex)
 
 
 def _strict_mode_flags(cache) -> tuple[bool, bool]:
@@ -2268,12 +2186,10 @@ class _Ps1Interpreter:
     def _eval_like(left: _Value, right: _Value, op: str) -> bool:
         if not isinstance(left, str) or not isinstance(right, str):
             raise _Ps1InterpreterError
-        flags = re.DOTALL | (re.IGNORECASE if op[1] != 'c' else 0)
-        pattern = _wildcard_to_regex(right)
-        try:
-            return re.match(pattern, left, flags=flags) is not None
-        except re.error:
+        pattern = wildcard_regex(right, case_sensitive=op[1] == 'c')
+        if pattern is None:
             raise _Ps1InterpreterError
+        return pattern.match(left) is not None
 
     @staticmethod
     def _truthy(value: _Value) -> bool:

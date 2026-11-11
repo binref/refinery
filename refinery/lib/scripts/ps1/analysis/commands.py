@@ -129,7 +129,7 @@ from refinery.lib.scripts.ps1.ast import (
     resolve_command_name,
     string_value,
 )
-from refinery.lib.scripts.ps1.data import KNOWN_ALIAS, KNOWN_CMDLETS
+from refinery.lib.scripts.ps1.data import KNOWN_ALIAS, KNOWN_CMDLETS, abbreviated_parameter
 from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
@@ -206,11 +206,11 @@ _TABLE_READING_COMMANDS = frozenset({'export-alias', 'trace-command'})
 #: to, and a reader the metadata identifies but this does not list reads a name nothing records.
 _NAME_READING_COMMANDS = frozenset({'get-alias', 'get-command', 'get-help', 'help'})
 
-#: The parameters under which the commands above take the name they report on. A bare `n` is not
-#: among them although it is a prefix of `Name`: `Get-Command` also has `-Noun`, so `-N` names
-#: neither on its own, and reading it as the name would record one name for a form that reports on
-#: every command carrying a noun.
-_READ_NAME_PARAMS = frozenset({'na', 'nam', 'name'})
+#: The parameter under which the commands above take the name they report on, read through the
+#: command's own surface: an abbreviation binds it where it names no other parameter of the same
+#: command, so `-n` reads the name on `Get-Alias` and reads nothing on `Get-Command`, where `-Noun`
+#: makes it ambiguous and the call reports on no name at all.
+_READ_NAME_PARAMETER = 'Name'
 
 #: The automatic variable holding whether the last command succeeded. A statement that runs sets it,
 #: so removing one is visible to any read of it.
@@ -290,7 +290,7 @@ def _read_name_arguments(cmd: Ps1CommandInvocation, command: str) -> frozenset[s
         if argument.kind is Ps1CommandArgumentKind.POSITIONAL:
             written.append(argument.value)
             continue
-        if argument.name.lstrip('-').lower() not in _READ_NAME_PARAMS:
+        if abbreviated_parameter(command, argument.name) != _READ_NAME_PARAMETER:
             if consumes_a_value(command, argument.name):
                 return None
             continue

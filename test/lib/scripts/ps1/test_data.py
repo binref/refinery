@@ -4,6 +4,8 @@ import copy
 import tracemalloc
 import unittest
 
+from test import backlog
+
 from refinery.lib.scripts.ps1 import data
 
 
@@ -646,6 +648,119 @@ class TestPs1InheritedStaticShadowing(unittest.TestCase):
         # nothing to compare answers nothing and fails here.
         self.assertGreater(compared, 0)
         self.assertEqual(violations, [])
+
+
+class TestPs1SessionListingFacts(unittest.TestCase):
+
+    def test_every_alias_no_module_defines_is_a_name_of_the_session(self):
+        self.assertEqual(sorted(data.MODULELESS_ALIASES - data.KNOWN_COMMAND_NAMES), [])
+        self.assertEqual(len(data.MODULELESS_ALIASES), 151)
+
+    def test_every_engine_owned_name_is_one_command_of_the_session(self):
+        folded: dict[str, list[str]] = {}
+        for name in data.KNOWN_COMMAND_NAMES:
+            folded.setdefault(name.lower(), []).append(name)
+        twice = {
+            name: spellings for name, spellings in folded.items()
+            if len(spellings) > 1 and name in {owned.lower() for owned in data.ENGINE_COMMAND_NAMES}
+        }
+        self.assertEqual(twice, {})
+
+    def test_the_drive_functions_are_names_of_the_session(self):
+        self.assertEqual(
+            sorted(name for name in data.KNOWN_COMMAND_NAMES if len(name) == 2 and name[1] == ':'),
+            [F'{letter}:' for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'],
+        )
+
+    def test_a_variable_the_engine_creates_while_running_is_none_the_session_starts_with(self):
+        session = {name.lower() for name in data.SESSION_VARIABLES}
+        self.assertEqual(sorted(data.RUNTIME_VARIABLES & session), [])
+        for name in ('matches', 'foreach', '_', 'psitem', 'switch', 'lastexitcode', 'this', 'ofs'):
+            with self.subTest(name):
+                self.assertIn(name, data.RUNTIME_VARIABLES)
+
+    def test_the_static_listing_of_a_string_is_what_the_host_lists(self):
+        self.assertEqual(sorted(data.member_listing('System.String', data.Ps1MemberView.STATIC) or ()), [
+            'Compare',
+            'CompareOrdinal',
+            'Concat',
+            'Copy',
+            'Empty',
+            'Equals',
+            'Format',
+            'Intern',
+            'IsInterned',
+            'IsNullOrEmpty',
+            'IsNullOrWhiteSpace',
+            'Join',
+            'ReferenceEquals',
+            'new',
+        ])
+
+    def test_the_static_listing_takes_the_members_a_type_inherits(self):
+        for type_name, expected in (
+            ('System.Int32', ['Equals', 'MaxValue', 'MinValue', 'Parse', 'ReferenceEquals', 'TryParse']),
+            ('System.Net.WebClient', ['Equals', 'ReferenceEquals', 'new']),
+            ('System.Collections.Hashtable', ['Equals', 'ReferenceEquals', 'Synchronized', 'new']),
+        ):
+            with self.subTest(type_name):
+                self.assertEqual(
+                    sorted(data.member_listing(type_name, data.Ps1MemberView.STATIC) or ()), expected)
+
+    def test_the_instance_listing_of_a_string_is_what_the_host_lists(self):
+        listing = data.member_listing('System.String', data.Ps1MemberView.INSTANCE) or frozenset()
+        self.assertEqual(len(listing), 50)
+        self.assertEqual(sorted(name for name in listing if not name.startswith('To')), [
+            'Chars',
+            'Clone',
+            'CompareTo',
+            'Contains',
+            'CopyTo',
+            'EndsWith',
+            'Equals',
+            'GetEnumerator',
+            'GetHashCode',
+            'GetType',
+            'GetTypeCode',
+            'IndexOf',
+            'IndexOfAny',
+            'Insert',
+            'IsNormalized',
+            'LastIndexOf',
+            'LastIndexOfAny',
+            'Length',
+            'Normalize',
+            'PadLeft',
+            'PadRight',
+            'Remove',
+            'Replace',
+            'Split',
+            'StartsWith',
+            'Substring',
+            'Trim',
+            'TrimEnd',
+            'TrimStart',
+        ])
+
+    def test_the_method_listing_of_a_string_adds_the_property_accessors(self):
+        methods = data.member_listing('System.String', data.Ps1MemberView.METHODS) or frozenset()
+        instance = data.member_listing('System.String', data.Ps1MemberView.INSTANCE) or frozenset()
+        self.assertEqual(len(methods), 50)
+        self.assertEqual(sorted(methods - instance), ['get_Chars', 'get_Length'])
+
+    def test_a_listing_by_kind_is_the_reflection_members_of_that_kind(self):
+        self.assertEqual(
+            sorted(data.member_listing('System.String', data.Ps1MemberView.METHOD) or ()),
+            sorted(
+                name for name in data.member_listing('System.String', data.Ps1MemberView.INSTANCE) or ()
+                if name not in ('Chars', 'Length')
+            ),
+        )
+
+    @backlog
+    def test_the_property_listing_of_a_string_leaves_its_indexer_out(self):
+        self.assertEqual(
+            sorted(data.member_listing('System.String', data.Ps1MemberView.PROPERTIES) or ()), ['Length'])
 
 
 if __name__ == '__main__':

@@ -21,7 +21,10 @@ from refinery.lib.scripts.ps1.data import (
     KNOWN_ALIAS,
     KNOWN_CMDLETS,
     PROGRAM_NAMES,
+    abbreviated_parameter,
+    binds_strictly,
     is_type,
+    parameter_set_layouts,
     value_parameters,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -559,7 +562,32 @@ def is_scriptblock_invoke(expr: Expression) -> bool:
         isinstance(expr, Ps1InvokeMember)
         and expr.access is Ps1AccessKind.INSTANCE
         and member_may_be(expr.member, _SCRIPTBLOCK_INVOKE_METHODS)
+        and not _invokes_a_command_lookup(expr)
     )
+
+
+def _invokes_a_command_lookup(call: Ps1InvokeMember) -> bool:
+    """
+    Whether *call* is the `Invoke` of a command lookup method of `$ExecutionContext.InvokeCommand`,
+    as `.GetCmdlets.Invoke('*w-*ct')` spells it, which runs the lookup and nothing else.
+    """
+    method = get_member_name(call.member)
+    receiver = call.object
+    if method is None or method.lower() != 'invoke' or not isinstance(receiver, Ps1MemberAccess):
+        return False
+    lookup = get_member_name(receiver.member)
+    if lookup is None or lookup.lower() not in COMMAND_LOOKUP_METHODS:
+        return False
+    intrinsics = receiver.object
+    if not isinstance(intrinsics, Ps1MemberAccess):
+        return False
+    holder = get_member_name(intrinsics.member)
+    if holder is None or holder.lower() != 'invokecommand':
+        return False
+    root = intrinsics.object
+    while isinstance(root, Ps1MemberAccess):
+        root = root.object
+    return isinstance(root, Ps1Variable) and root.name.lower() == 'executioncontext'
 
 
 def is_execution_context_invoke(expr: Expression) -> bool:
@@ -567,7 +595,9 @@ def is_execution_context_invoke(expr: Expression) -> bool:
     Whether `expr` invokes a member of `$ExecutionContext.InvokeCommand` — `.InvokeScript(...)`,
     `.NewScriptBlock(...)`, `.ExpandString(...)` — each of which runs or compiles code from a
     string. Matched on the `.InvokeCommand` receiver chain rather than the member name, so the whole
-    command surface is covered.
+    command surface is covered but for the lookups of `COMMAND_LOOKUP_METHODS`, which run nothing:
+    they read the command table as `Get-Command` does, and a member whose name cannot be read may be
+    any member, so it counts.
 
     The chain is followed to whatever it is rooted in rather than being pinned to one depth:
     `$ExecutionContext.SessionState.InvokeCommand` reaches the same
@@ -575,6 +605,9 @@ def is_execution_context_invoke(expr: Expression) -> bool:
     shorter spelling would leave the longer one reading as an ordinary member call.
     """
     if not (isinstance(expr, Ps1InvokeMember) and expr.access is Ps1AccessKind.INSTANCE):
+        return False
+    method = get_member_name(expr.member)
+    if method is not None and method.lower() in COMMAND_LOOKUP_METHODS:
         return False
     middle = expr.object
     if not isinstance(middle, Ps1MemberAccess):
@@ -585,6 +618,18 @@ def is_execution_context_invoke(expr: Expression) -> bool:
     while isinstance(receiver, Ps1MemberAccess):
         receiver = receiver.object
     return isinstance(receiver, Ps1Variable) and receiver.name.lower() == 'executioncontext'
+
+
+#: The methods of `CommandInvocationIntrinsics` that look a command up by a name or a pattern and
+#: hand back what they find, lowercased.
+COMMAND_LOOKUP_METHODS = frozenset({
+    'getcmdlet',
+    'getcmdletbytypename',
+    'getcmdlets',
+    'getcommand',
+    'getcommandname',
+    'getcommands',
+})
 
 
 def is_builtin_variable(
@@ -624,8 +669,12 @@ def binds_parameter(written: str, parameter: str) -> bool:
 
     PowerShell binds any unambiguous abbreviation, so the written name is a *prefix* of the
     parameter and not the other way round. Testing it the other way round matches `-NameFoo`, which
-    is a different parameter, and misses `-Na`, which is this one. An abbreviation short enough to
-    be ambiguous is a runtime error in PowerShell, so accepting it here costs nothing.
+    is a different parameter, and misses `-Na`, which is this one. This is the reading a caller
+    refusing on a parameter needs: it answers whether the written name *may* bind *parameter*, and
+    is asked the same way of every command, including one a script defines. An abbreviation short
+    enough to be ambiguous raises a `ParameterBindingException` on 5.1, and a rewrite that would
+    drop such a call is refused by `refinery.lib.scripts.ps1.deobfuscation.substitution`, which
+    reads `binding_fails`.
     """
     written = written.lstrip('-').lower()
     return bool(written) and parameter.startswith(written)
@@ -700,6 +749,66 @@ def consumes_a_value(command: str, written: str) -> bool:
     and only a value-taking parameter moves the words after it.
     """
     return any(binds_parameter(written, parameter) for parameter in value_parameters(command))
+
+
+def binding_fails(cmd: Ps1CommandInvocation) -> bool:
+    """
+    Whether the binder rejects *cmd* before the command runs, which it reports as a
+    `ParameterBindingException` a rewrite dropping the call would lose. Read off the collected
+    surface of the command the name resolves to through the built-in alias table, and only where
+    that command binds strictly (`refinery.lib.scripts.ps1.data.binds_strictly`):
+
+    - a named argument binds no parameter, because no parameter carries its name and none is
+      prefixed by it unambiguously — measured on 5.1, `Get-Command -N x` is `AmbiguousParameter`
+      between `-Name` and `-Noun`, and `Get-Variable x -Bogus` is `NamedParameterNotFound`;
+    - a value-taking parameter is written last, with no value after it;
+    - the parameters bound by name share no parameter set;
+    - the free arguments outnumber the positions every set the named ones leave open still has,
+      and no such set takes the remaining arguments — `Set-Variable x 'a' 'b'` is
+      `PositionalParameterNotFound`, where `Write-Output 'a' 'b'` binds both to `-InputObject`.
+
+    A splat counts as failing, since what it binds is not written here, and so does an argument
+    the parser left in a shape no parameter reading accepts. A command the surface does not carry,
+    a plain function and a name that is not a literal answer `False`: their binder is not one this
+    can read, and the answer is the one that keeps every rewrite it has.
+    """
+    command = resolve_command_name(cmd)
+    if command is None or not binds_strictly(command):
+        return False
+    bound: set[str] = set()
+    free = 0
+    expecting = False
+    for argument in cmd.arguments:
+        if not isinstance(argument, Ps1CommandArgument):
+            return True
+        value = argument.value
+        if isinstance(value, Ps1Variable) and value.splatted:
+            return True
+        if argument.kind is Ps1CommandArgumentKind.POSITIONAL:
+            if expecting:
+                expecting = False
+            else:
+                free += 1
+            continue
+        if expecting:
+            return True
+        parameter = abbreviated_parameter(command, argument.name)
+        if parameter is None:
+            return True
+        bound.add(parameter)
+        expecting = (
+            argument.kind is Ps1CommandArgumentKind.SWITCH
+            and parameter.lower() in value_parameters(command)
+        )
+    if expecting:
+        return True
+    layouts = [layout for layout in parameter_set_layouts(command) if bound <= layout.parameters]
+    if not layouts:
+        return True
+    return not any(
+        bool(layout.remaining - bound) or len(layout.positional - bound) >= free
+        for layout in layouts
+    )
 
 
 def free_positional_values(

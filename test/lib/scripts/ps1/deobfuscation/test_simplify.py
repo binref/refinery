@@ -5,7 +5,7 @@ import inspect
 from test import backlog
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
-from refinery.lib.scripts.ps1.deobfuscation import Ps1AliasInlining, Ps1Simplifications
+from refinery.lib.scripts.ps1.deobfuscation import Ps1AliasInlining, Ps1Simplifications, Ps1WildcardResolution
 
 
 class TestPS1BracketRemoval(TestPs1):
@@ -183,7 +183,7 @@ class TestPs1SimplifyExtra(TestPs1):
         self.assertEqual(result, "& (Get-Command i*e-e*) 'hi'")
 
     def test_gcm_concrete_name_resolved(self):
-        result = self._apply("& (gcm Write-Output) 'hi'", Ps1Simplifications)
+        result = self._apply("& (gcm Write-Output) 'hi'", Ps1WildcardResolution, Ps1Simplifications)
         self.assertEqual(result, "Write-Output 'hi'")
 
 
@@ -247,16 +247,17 @@ class TestPs1AParameterNameIsCompletedOnlyForACommandThatBindsByName(TestPs1):
 class TestPs1SimplifyRedirections(TestPs1):
 
     def test_a_redirected_gcm_is_not_resolved_into_the_command_name(self):
-        self._assertUnchanged("& (Get-Command 'Write-Host' > C:\\o.txt) 'hi'", Ps1Simplifications)
+        self._assertUnchanged(
+            "& (Get-Command 'Write-Host' > C:\\o.txt) 'hi'", Ps1WildcardResolution, Ps1Simplifications)
 
     def test_an_unredirected_gcm_is_still_resolved(self):
         self.assertEqual(
-            self._apply("& (Get-Command 'Write-Host') 'hi'", Ps1Simplifications),
+            self._apply("& (Get-Command 'Write-Host') 'hi'", Ps1WildcardResolution, Ps1Simplifications),
             "Write-Host 'hi'")
 
     def test_a_refused_resolution_leaves_every_parent_pointer_true(self):
         source = "& (Get-Command 'Write-Host' > C:\\o.txt) 'hi'"
-        self._assertTreeIsIntact(source, source, Ps1Simplifications)
+        self._assertTreeIsIntact(source, source, Ps1WildcardResolution, Ps1Simplifications)
 
 
 class TestPs1CallOperatorRemoval(TestPs1):

@@ -4,6 +4,7 @@ from test import TestBase, opportunity
 
 from inspect import cleandoc
 
+from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.world import (
     Ps1TypeWorld,
     WorldRole,
@@ -848,3 +849,93 @@ class TestPs1AMemberNameNobodyCanReadOnATypeLiteralIsOneOfItsStaticMembers(Ps1Ty
         for call in ("[scriptblock]::($m)('f1')", "[scriptblock]::('Create')('f1')"):
             with self.subTest(call=call):
                 self.assertFalse(self._closed(call))
+
+
+class TestPs1WhatMayChangeTheCommandListing(TestBase):
+
+    _TRUSTING = Ps1DeobfuscationOptions(trust_eval=True)
+
+    @staticmethod
+    def _recorded(source: str, options=None) -> tuple[bool, bool]:
+        measurement = measure_world(Ps1Parser(source).parse(), options)
+        return bool(measurement.command_openers), bool(measurement.table_writers)
+
+    def test_a_writer_in_plain_sight_opens_the_command_table_in_both_models(self):
+        for source in (
+            "New-PSDrive Q Function '' | Out-Null",
+            "New-PSDrive -Name Q -PSProvider Alias -Root ''",
+            "New-PSDrive -Name Q -PSProvider Microsoft.PowerShell.Core\\Function -Root ''",
+            'Set-Location function:',
+            'Push-Location Alias:',
+            'cd function:',
+            "$ExecutionContext.InvokeProvider.Item.New('function:', 'wrnte', 'Function', { 1 })",
+            "$ExecutionContext.SessionState.InvokeProvider.Item.Set('function:wrnte', { 1 })",
+            "$ExecutionContext.SessionState.PSVariable.Set('function:wrnte', { 1 })",
+            "$ExecutionContext.InvokeProvider.Item.Set('function:Get-Command', { 'x' })",
+            "$PSCmdlet.SessionState.Path.SetLocation('function:')",
+        ):
+            for options in (None, self._TRUSTING):
+                with self.subTest(source, options=options):
+                    self.assertEqual(self._recorded(source, options)[0], True)
+
+    def test_a_provider_nobody_can_read_opens_the_command_table_unless_eval_is_trusted(self):
+        self.assertEqual(self._recorded("New-PSDrive Q $p ''")[0], True)
+        self.assertEqual(self._recorded("New-PSDrive Q $p ''", self._TRUSTING), (False, False))
+
+    def test_a_writer_of_a_name_nobody_can_read_is_a_table_writer_unless_eval_is_trusted(self):
+        for source in (
+            'Set-Item $p { 1 }',
+            'Set-Content $p { 1 }',
+            'Remove-Item $p',
+            'Copy-Item $a $b',
+            'Get-Item $p | Rename-Item -NewName wrnte',
+            'Set-Location $p',
+            'Push-Location ($a -join "")',
+            '$ExecutionContext.SessionState.Path.SetLocation($p)',
+            '$s = $ExecutionContext.SessionState',
+            '$ExecutionContext.SessionState.PSVariable.Set($n, { 1 })',
+            '$ExecutionContext.SessionState.Drive.New($d, "global")',
+            '$ExecutionContext.SessionState.Module',
+            '$ExecutionContext.($m).Item.Set("x", 1)',
+            '[Environment]::SetEnvironmentVariable($n, "x")',
+            '[Environment]::($m)("PSModulePath", "x")',
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._recorded(source), (False, True))
+                self.assertEqual(self._recorded(source, self._TRUSTING), (False, False))
+
+    def test_a_store_of_a_name_the_listing_reads_is_a_table_writer_in_both_models(self):
+        for source in (
+            "$env:PSModulePath = 'C:\\m;' + $env:PSModulePath",
+            "$env:PATHEXT += ';.DLL'",
+            "[Environment]::SetEnvironmentVariable('PSModulePath', 'x')",
+            "Set-Item env:PATHEXT '.DLL'",
+            "Remove-Item Env:\\PSModulePath",
+        ):
+            for options in (None, self._TRUSTING):
+                with self.subTest(source, options=options):
+                    self.assertEqual(self._recorded(source, options), (False, True))
+
+    def test_a_read_of_the_session_and_a_store_of_another_name_change_nothing(self):
+        for source in (
+            "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true)",
+            "$ExecutionContext.SessionState.PSVariable.Get('x')",
+            "$ExecutionContext.SessionState.PSVariable.Set('x', 1)",
+            "$env:Path = 'C:\\x'",
+            "[Environment]::SetEnvironmentVariable('Path', 'x')",
+            "Set-Item 'C:\\x.txt' 'v'",
+            "Set-Content -Path 'C:\\x.txt' -Value 'v'",
+            "Set-Location 'C:\\'",
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._recorded(source), (False, False))
+
+    def test_a_table_writer_leaves_command_names_trusted_after_it(self):
+        script = Ps1Parser('Copy-Item $a $b\nGet-Date').parse()
+        call = next(
+            node for node in script.walk()
+            if isinstance(node, Ps1CommandInvocation) and get_command_name(node) == 'Get-Date'
+        )
+        reach = Ps1ModelCache(script).world_reach
+        self.assertEqual(reach.may_trust_command_name_at('Get-Date', call), True)
+        self.assertEqual(reach.may_read_the_command_table_at(call, ['Get-Date']), False)

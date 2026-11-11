@@ -342,19 +342,6 @@ class Ps1Simplifications(Transformer):
             inner = node.name.expression
             if isinstance(inner, Ps1StringLiteral):
                 substitute_field(node, 'name', inner)
-            elif isinstance(inner, Ps1CommandInvocation):
-                c = get_command_name(inner)
-                if c is not None and c.lower() in ('gcm', 'get-command'):
-                    if len(inner.arguments) == 1:
-                        arg = inner.arguments[0]
-                        if isinstance(arg, Ps1CommandArgument):
-                            arg = arg.value
-                        if isinstance(arg, Ps1ParenExpression):
-                            arg = arg.expression
-                        # Only resolve a concrete command name; a wildcard pattern such as
-                        # `gcm i*e-e*` must not be substituted verbatim as the command name.
-                        if isinstance(arg, Ps1StringLiteral) and not has_wildcard(arg.value):
-                            substitute_field(node, 'name', arg)
         if node.name is not old_name:
             self.mark_changed()
         if node.name and isinstance(node.name, Ps1StringLiteral):

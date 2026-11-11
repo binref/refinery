@@ -113,6 +113,8 @@ from refinery.lib.scripts.ps1.ast import (
 from refinery.lib.scripts.ps1.data import PS1_AUTOMATIC_VARIABLES
 from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
+    Ps1InvokeMember,
+    Ps1MemberAccess,
     Ps1ScopeModifier,
     Ps1ScriptBlock,
     Ps1Variable,
@@ -1016,6 +1018,52 @@ class Ps1VariableFlow:
             )
         return self._any_placed
 
+    @property
+    def has_unattributable_writes(self) -> bool:
+        """
+        Whether the script holds a write nobody can attribute to a name anywhere: one a graph
+        places, or one no point stands for. A reader of a name that no write of the script claims
+        observes what the session started with wherever this is `False`, whatever the position.
+        """
+        return self._doubt_without_a_point() or self._any_placed_unattributable_write()
+
+    def unattributable_write_may_precede(self, site: Node) -> bool:
+        """
+        Whether a write nobody can attribute to a name may have run by the time *site* is evaluated
+        in the script's own scope — the question a reader of the names a scope holds asks, where
+        `write_observed_at` asks it of one name.
+
+        A placed write is ordered against the site the way `ambient_value_survives` orders it. A
+        write no point stands for cannot land before what sets it up has been evaluated — the
+        `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel.doubt_sources` — so each source is
+        ordered against the site in its stead: `$ExecutionContext.($m)` may hand the session state
+        on, and a read written inside `$m` is evaluated before the member is. A source that stands
+        in no place the root graph orders, a site the root graph does not evaluate, and a block
+        whose run time nobody can place are refused.
+        """
+        if not self.has_unattributable_writes:
+            return False
+        if self.deferred_unattributable_writes:
+            return True
+        graph = self.flow.graph_of(self.semantic.root)
+        if graph is None:
+            return True
+        use = self.position_of(site, graph)
+        if use is None:
+            return True
+        blocking = set(self._unattributable_kills(graph, site, use))
+        for source in self.semantic.doubt_sources:
+            source = _where_it_is_handed_on(source)
+            position = self.position_of(source, graph)
+            if position is None:
+                return True
+            if position is use:
+                if not self.runs_after(graph, use, site, source):
+                    return True
+                continue
+            blocking.add(id(position))
+        return self._between.any_between(graph, graph.entry, use, frozenset(blocking))
+
     def _doubt_without_a_point(self) -> bool:
         """
         Whether the script holds an unattributable write that no node of any graph stands for.
@@ -1161,6 +1209,24 @@ def _scopes_of(scope: Scope) -> Iterator[Scope]:
     yield scope
     for child in scope.children:
         yield from _scopes_of(child)
+
+
+def _where_it_is_handed_on(source: Node) -> Node:
+    """
+    The node at which the value a doubt source reads becomes something a write can go through: for
+    a read of a variable, the member reads chained off it up to and including the first call, since
+    every member name in that chain is evaluated before the chain yields the object it reads, and
+    a call is the first point that object may write anything.
+    """
+    node = source
+    while True:
+        parent = node.parent
+        if isinstance(parent, Ps1MemberAccess) and parent.object is node:
+            node = parent
+            continue
+        if isinstance(parent, Ps1InvokeMember) and parent.object is node:
+            return parent
+        return node
 
 
 def build_variable_flow(

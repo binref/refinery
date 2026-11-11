@@ -218,5 +218,19 @@ class TestPs1AFunctionTheScriptHandsOutIsReachedWithoutACall(TestBase):
         graph = self._graph("function f1 { 'a' }\nfunction f2 { 'b' }\n$c = Get-Command -Name f1 -CommandType Function")
         self.assertEqual([graph.hands_out('f1'), graph.hands_out('f2')], [True, False])
 
-    def test_reading_only_the_name_of_a_lookup_hands_nothing_out(self):
-        self.assertFalse(self._graph("function f1 { 'a' }\n(Get-Command f1).Name").hands_out('f1'))
+    def test_reading_the_name_of_a_lookup_hands_out_what_it_lists(self):
+        for source, name in (
+            ("function f1 { 'a' }\n(Get-Command f1).Name", 'f1'),
+            ("function wrnte { 'a' }\n(Get-Command 'wrn`te').Name", 'wrnte'),
+            ("function wrnte { 'a' }\n(Get-Command ???t?).Name", 'wrnte'),
+        ):
+            with self.subTest(source):
+                self.assertTrue(self._graph(source).hands_out(name))
+
+    def test_a_discarded_lookup_that_cannot_raise_hands_nothing_out(self):
+        self.assertFalse(self._graph("function f1 { 'a' }\n$Null = (Get-Command f*).Name").hands_out('f1'))
+
+    def test_a_narrowed_listing_hands_out_what_the_narrowing_passes(self):
+        graph = self._graph(
+            "function f1 { 'a' }\nfunction g1 { 'b' }\n$c = Get-Command | Where-Object { $_.Name -like 'f*' }")
+        self.assertEqual([graph.hands_out('f1'), graph.hands_out('g1')], [True, False])

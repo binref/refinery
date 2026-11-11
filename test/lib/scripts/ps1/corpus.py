@@ -224,6 +224,8 @@ BEHAVIOURS: tuple[str, ...] = (
     "'a' + 'b'",
     "'{0}-{1}' -f 'a', 'b'",
     "$x = 'hello'; $x",
+    "$Et = 5; Write-Output (Get-Item 'Variable:E*t').Value",
+    "$m = [string] | Get-Member -Static | Where-Object { $_.Name -ilike 'Conc?t' }; $m.MemberType",
     "('a', 'b', 'c') -join ''",
     "[string]::Join('', ('a', 'b'))",
     "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('aGk='))",
@@ -1295,6 +1297,10 @@ CLAIMS: tuple[str, ...] = (
 )
 
 
+#: Every alias the engine defines without a module, one name per line: the names a listing without
+#: a name leaves out, and the ones no module folder on the machine can list twice.
+MODULELESS_ALIAS_LISTING = "Get-Command * -CommandType Alias | Where-Object { -not $_.Source } | ForEach-Object Name"
+
 #: What the host's own command tables hold, which is the premise the tables in
 #: `refinery.lib.scripts.ps1.data` encode. Those were captured once and have been edited by hand
 #: since; a name added to the alias table that 5.1 does not bind as an alias inverts the resolution
@@ -1303,9 +1309,12 @@ CLAIMS: tuple[str, ...] = (
 #: This is the one place a script is asked about the machine on purpose. The rest of the corpus is
 #: written to be independent of it; these read the state of a Windows PowerShell 5.1 installation,
 #: which is the oracle's whole subject, and the ledger they feed is a claim about 5.1 rather than
-#: about the box that ran it. Nothing here writes anything: `Get-Alias` and `Get-Command` read, and
-#: the one entry that loads a module loads one that ships with the host, which is the same thing
-#: every `Get-Alias` capture does implicitly and the reason the CIM block in `data` exists.
+#: about the box that ran it. Nothing here writes anything outside the host process: `Get-Alias` and
+#: `Get-Command` read, the rows that write the command table write the session of the process that
+#: is discarded once the row has run, and the one entry that loads a module loads one that ships with
+#: the host, which is the same thing every `Get-Alias` capture does implicitly and the reason the CIM
+#: block in `data` exists. A row whose answer depends on what this machine installed beside 5.1 — a
+#: program on `PATH`, a module folder of another PowerShell — is not one of these.
 #:
 #: Each name is asked beside a control, because "the host does not bind this" and "the measurement
 #: found nothing" are the same transcript otherwise: `iex` against the disputed aliases, and
@@ -1326,6 +1335,243 @@ TABLES: tuple[str, ...] = (
     'Get-Command Format-Hex',
     '(Get-Command help).CommandType',
     '(Get-Command gcim -ErrorAction SilentlyContinue).CommandType',
+    #: What a name lookup over the table returns, which the listing folds replace with the one name
+    #: the session lists. A lookup also reaches the applications on `PATH`, which no vocabulary
+    #: lists: `where` is an alias every host binds and `where.exe` an application every Windows
+    #: ships, so the `where` rows ask which of the two a plain name and a pattern find.
+    '(Get-Command ???t?).Name',
+    "(Get-Command 'wr?te').Name",
+    '(Get-Command WRITE).Name',
+    '(Get-Command Get-Item).Name',
+    "(Get-Command 'Get-Ite?').Name",
+    "(Get-Command 'mor?').Name",
+    "(Get-Command 'mkdi?').Name",
+    "(Get-Command 'a?').Name",
+    "(Get-Command 'hel?*').Name",
+    "(Get-Command '[!x]rite').Name",
+    "(Get-Command 'wr[i]te').Name",
+    "(Get-Command 'w`rite').Name",
+    "(Get-Command -Name 'wr?te').Name",
+    "(Get-Command -Name 'wr?te' -CommandType Alias).Name",
+    "(Get-Command -N 'wr?te').Name",
+    "(Get-Command -Na 'wr?te').Name",
+    '(Get-Command where).Name',
+    "(Get-Command 'wh?re').Name",
+    "(Get-Command 'wh?re.exe').Name",
+    "Get-Command 'New-Object'",
+    "$c = Get-Command 'New-Object'; $c.CommandType",
+    "('mkdir' | Get-Command).Name",
+    "& (gcm 'write') 'a'",
+    "& (gcm 'wr?te') 'a'",
+    "& (gcm 'zzq')",
+    "& 'zzq'",
+    #: Which names raise when a lookup finds nothing: a literal and a malformed pattern do, a
+    #: well-formed pattern does not, whatever it matches.
+    "$Null = (Get-Command 'zz]x').Name",
+    "$Null = (Get-Command 'zz[q]x').Name",
+    "$Null = (Get-Command 'wr`?te').Name",
+    "$Null = (Get-Command '[zz').Name",
+    "$Null = Get-Command 'zzq*'",
+    #: The listing without a name, narrowed by a filter on the name: it never holds the aliases no
+    #: module defines, and it hands the narrowed command on as the object a name lookup returns.
+    "(Get-Command | Where-Object { $_.Name -ilike 'wr?te' }).Name",
+    "(Get-Command | Where-Object { $_.Name -ilike '*w-*ct' }).Name",
+    "(Get-Command | Where-Object { $_.Name -clike 'new-o*' }).Name",
+    "(Get-Command | Where-Object { $_.Name -clike 'New-O*' }).Name",
+    "(Get-Command | Where-Object { $_.Name -like 'mkdi?' }).Name",
+    "Write-Output (Get-Command | Where-Object { $_.Name -ilike 'A?' }).Name",
+    "(Get-Command | Where-Object { $_.Name -eq 'iex' }).Name",
+    "(Get-Command | Where-Object { $_.Name -eq 'gcim' }).Name",
+    "$c = Get-Command | Where-Object { $_.Name -ilike '*w-*ct' }; $c.CommandType",
+    "(Get-Command set-* | Where-Object { $_.Name -ilike 'g*t-item' }).Name",
+    "('set-*' | Get-Command | Where-Object { $_.Name -ilike 'g*t-item' }).Name",
+    "('wrnte' | Get-Command | Where-Object { $_.Name -ilike 'mkdi?' }).Name",
+    MODULELESS_ALIAS_LISTING,
+    #: The lookups of the engine's command intrinsics: which take a pattern, which a literal, which
+    #: list cmdlets alone, and what each hands back where its value is kept rather than run.
+    "$ExecutionContext.InvokeCommand.GetCommandName('wr?te', $true, $true)",
+    "$ExecutionContext.InvokeCommand.GetCommandName('???t?', $true, $true)",
+    "$ExecutionContext.InvokeCommand.GetCommandName('a?', $true, $true)",
+    "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true)",
+    "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $false)",
+    "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $false, $true)",
+    "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', '0', $true)",
+    "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', 0, $true)",
+    "$ExecutionContext.InvokeCommand.GetCommandName('New-Object', $false, $true)",
+    "$ExecutionContext.InvokeCommand.GetCommandName('New-Object', $true, $true)",
+    "$ExecutionContext.SessionState.InvokeCommand.GetCommandName('*w-*ct', $true, $true)",
+    "$ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')",
+    "$ExecutionContext.InvokeCommand.GetCmdlets.Invoke('*w-*ct')",
+    "$ExecutionContext.InvokeCommand.GetCmdlet('New-Object')",
+    "$ExecutionContext.InvokeCommand.GetCmdlet('New-Obj*')",
+    "$ExecutionContext.InvokeCommand.GetCommand('*w-*ct', 'Cmdlet')",
+    "$ExecutionContext.InvokeCommand.GetCommand('*w-*ct', 'All')",
+    "$ExecutionContext.InvokeCommand.GetCommand('New-Object', 'Cmdlet')",
+    "$ExecutionContext.InvokeCommand.GetCommand('write', 'Cmdlet')",
+    "$ExecutionContext.InvokeCommand.GetCommand('write', 'All')",
+    "$c = $ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct'); $c.CommandType",
+    "$c = $ExecutionContext.InvokeCommand.GetCmdlet('New-Object'); $c.CommandType",
+    "$c = $ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true); $c.GetType().Name",
+    "Write-Output $ExecutionContext.InvokeCommand.GetCmdlet('New-Object').Name",
+    "Write-Output $ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct').Name",
+    "& ($ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')) Net.WebClient | ForEach-Object { $_.GetType().Name }",
+    ". ($ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')) Net.WebClient | ForEach-Object { $_.GetType().Name }",
+    "& ($ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true)) Net.WebClient "
+    "| ForEach-Object { $_.GetType().Name }",
+    "$ExecutionContext.InvokeCommand.GetCmdlet($ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true))",
+    "& ($ExecutionContext.InvokeCommand.GetCmdlet($ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', 1, 1))) "
+    "Net.WebClient | ForEach-Object { $_.GetType().Name }",
+    "function New-Objectx {}; $ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true)",
+    "function New-Objectx {}; $ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')",
+    "function zzNew-Object {}; $ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $true, $true)",
+    "function zzNew-Object {}; $ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')",
+    #: The same lookups after the script writes the command table, by every spelling a listing fold
+    #: has to see. Each definition, drive and location lives in the host process and is discarded
+    #: with it, which is the standing a `$x` assignment has; every name written is a coined one.
+    'function wrnte {}; (Get-Command ???t?).Name',
+    "function wrnte {}; Write-Output (Get-Command 'wrn`te').Name",
+    'Set-Alias wrnte Get-Date; (Get-Command ???t?).Name',
+    "function Get-Command {}; (gcm 'wr?te').Name",
+    "function Get-Command { 'x' }; & (gcm 'write') 'a'",
+    'function gcm {}; (gcm ???t?).Name',
+    "class C {}; (Get-Command 'wr?te').Name",
+    "$p = 'function:' + 'wrnte'; Set-Item $p { 1 }; (Get-Command ???t?).Name",
+    "Set-Item -Path function:wrnte -Value { 1 }; Write-Output (Get-Command ???t?).Name",
+    "Set-Item function:\\wrnte { 1 }; Write-Output (Get-Command ???t?).Name",
+    "New-Item -Path function: -Name wrnte -Value { 1 } | Out-Null; Write-Output (Get-Command ???t?).Name",
+    "$a = @('functi','on:wr','nte'); $p = $a -join ''; Set-Content $p { 1 }; Write-Output (Get-Command ???t?).Name",
+    "function wrnte {}; $a = @('functi','on:wr','nte'); $p = $a -join ''; Clear-Content $p; "
+    "Write-Output (Get-Command ???t?).Name",
+    "$a = @('ali','as:wr','nte'); $p = $a -join ''; Set-Content $p 'Get-Date'; Write-Output (Get-Command ???t?).Name",
+    "'function:wrnte' | New-Item -Value { 1 } | Out-Null; Write-Output (Get-Command ???t?).Name",
+    "$a = @('functi','on:wr','nte'); $p = $a -join ''; $p | Set-Item -Value { 1 }; Write-Output (Get-Command ???t?).Name",
+    "function x {}; $a = @('functi','on:x'); $p = $a -join ''; Get-Item $p | Rename-Item -NewName wrnte; "
+    "Write-Output (Get-Command ???t?).Name",
+    "$x = Get-Item function:more; Write-Output (Get-Command ???t?).Name",
+    "$a = @('wr','nte'); New-Alias -Name ($a -join '') -Value Get-Date; Write-Output (Get-Command ???t?).Name",
+    "New-PSDrive Q Function '' | Out-Null; Set-Item Q:\\wrnte { 1 }; Write-Output (Get-Command ???t?).Name",
+    "New-PSDrive -Name Q -PSProvider Function -Root '' | Out-Null; Set-Item Q:\\wrnte { 1 }; "
+    "Write-Output (Get-Command ???t?).Name",
+    "New-PSDrive -Name Q -PSProvider Alias -Root '' | Out-Null; Set-Item Q:\\wrnte Get-Date; "
+    "Write-Output (Get-Command ???t?).Name",
+    "New-PSDrive -Name Q -PSProvider Microsoft.PowerShell.Core\\Function -Root '' | Out-Null; "
+    "Set-Item Q:\\wrnte { 1 }; Write-Output (Get-Command ???t?).Name",
+    "$ExecutionContext.SessionState.Drive.New((New-Object Management.Automation.PSDriveInfo('Q', "
+    "$ExecutionContext.SessionState.Provider.GetOne('Function'), '', '', $null)), 'global') | Out-Null; "
+    "Set-Item Q:\\wrnte { 1 }; Write-Output (Get-Command ???t?).Name",
+    "Set-Location function:; Set-Item wrnte { 1 }; Set-Location C:\\; Write-Output (Get-Command ???t?).Name",
+    "$a = @('func','tion:'); Set-Location ($a -join ''); Set-Item wrnte { 1 }; Set-Location C:\\; "
+    "Write-Output (Get-Command ???t?).Name",
+    "$a = @('func','tion:'); Push-Location ($a -join ''); Set-Item wrnte { 1 }; Pop-Location; "
+    "Write-Output (Get-Command ???t?).Name",
+    "$a = @('func','tion:'); $ExecutionContext.SessionState.Path.SetLocation($a -join '') | Out-Null; "
+    "Set-Item wrnte { 1 }; Set-Location C:\\; Write-Output (Get-Command ???t?).Name",
+    "$ExecutionContext.InvokeProvider.Item.New('function:', 'wrnte', 'Function', { 1 }) | Out-Null; "
+    "Write-Output (Get-Command ???t?).Name",
+    "$ExecutionContext.SessionState.InvokeProvider.Item.Set('function:wrnte', { 1 }); Write-Output (Get-Command ???t?).Name",
+    "$s = $ExecutionContext.SessionState; $s.InvokeProvider.Item.Set('function:wrnte', { 1 }); "
+    "Write-Output (Get-Command ???t?).Name",
+    "$ExecutionContext.SessionState.PSVariable.Set('function:wrnte', { 1 }); Write-Output (Get-Command ???t?).Name",
+    "$a = @('function:wr','nte'); $ExecutionContext.SessionState.PSVariable.Set(($a -join ''), { 1 }); "
+    "Write-Output (Get-Command ???t?).Name",
+    "Set-Variable -Name 'function:wrnte' -Value { 1 }; Write-Output (Get-Command ???t?).Name",
+    "[runspace]::DefaultRunspace.SessionStateProxy.SetVariable('function:wrnte', { 1 }); Write-Output (Get-Command ???t?).Name",
+    "$ExecutionContext.InvokeProvider.Item.Set('function:Get-Command', { 'x' }); Write-Output (Get-Command 'write').Name",
+    #: What the member listings hold in each view a fold reads: the instance and static listings of
+    #: `Get-Member`, the listing by kind, and the two `psobject` collections, over types the values
+    #: layer can name.
+    "([string] | Get-Member -Static | Where-Object { $_.Name -ilike 'Conc?t' }).Name",
+    "Write-Output ([string] | Get-Member -Static | Where-Object { $_.Name -ilike 'Emp*' }).Name",
+    "Write-Output ([string] | Get-Member -Static | Where-Object { $_.Name -ilike 'ne?' }).Name",
+    "Write-Output ([string] | Get-Member -Static -MemberType Method | Where-Object { $_.Name -ilike 'Conc?t' }).Name",
+    "Write-Output ([datetime] | Get-Member -Static | Where-Object { $_.Name -ilike 'MaxV*' }).Name",
+    "([string] | Get-Member | Where-Object { $_.Name -ilike 'GetMeth*s' }).Name",
+    "([string].psobject.Methods | Where-Object { $_.Name -ilike 'GetMeth*s' }).Name",
+    "([string].psobject.Properties | Where-Object { $_.Name -ilike 'FullN*' }).Name",
+    "('abc' | Get-Member | Where-Object { $_.Name -ilike 'Conc?t' }).Name",
+    "('abc' | Get-Member | Where-Object { $_.Name -ilike 'ToUpperI*' }).Name",
+    "Write-Output ('abc' | Get-Member | Where-Object { $_.Name -ilike 'Char*' }).Name",
+    "('abc' | Get-Member -Static | Where-Object { $_.Name -ilike 'Conc?t' }).Name",
+    "Write-Output ('abc' | Get-Member -Static:$false | Where-Object { $_.Name -ilike 'Conc?t' }).Name",
+    "Write-Output (Get-Member -I 'abc' -S | Where-Object { $_.Name -ilike 'Conc?t' }).Name",
+    "('abc' | Get-Member -MemberType Property | Where-Object { $_.Name -ilike 'Clo?e' }).Name",
+    "Write-Output ('abc' | Get-Member -MemberType Property | Where-Object { $_.Name -ilike 'Ch*' }).Name",
+    "Write-Output ('abc' | Get-Member -MemberType Method | Where-Object { $_.Name -ilike 'Clo?e' }).Name",
+    "Write-Output ('abc' | Get-Member -M Method | Where-Object { $_.Name -ilike 'Clo?e' }).Name",
+    "Write-Output ('abc' | Get-Member -Type Method | Where-Object { $_.Name -ilike 'Clo?e' }).Name",
+    "Write-Output ('abc' | Get-Member -MemberType Methods | Where-Object { $_.Name -ilike 'Clo?e' }).Name",
+    "Write-Output ('abc' | Get-Member -MemberType 'Method, Property' | Where-Object { $_.Name -ilike 'Clo?e' }).Name",
+    "Write-Output ('abc' | Get-Member -View Base | Where-Object { $_.Name -ilike 'Clo?e' }).Name",
+    "('abc' | Get-Member -Force | Where-Object { $_.Name -ilike 'get_Len*' }).Name",
+    "('abc'.psobject.Methods | Where-Object { $_.Name -ilike 'Conc?t' }).Name",
+    "Write-Output ('abc'.psobject.Methods | Where-Object { $_.Name -ilike 'get_Len*' }).Name",
+    "('abc'.psobject.Properties | Where-Object { $_.Name -ilike 'Len*' }).Name",
+    "Write-Output ('abc'.psobject.Properties | Where-Object { $_.Name -ilike 'Ch*' }).Name",
+    "Write-Output (@{a = 1}.psobject.Properties | Where-Object { $_.Name -ilike 'Ite?' }).Name",
+    "(@('abc') | Get-Member | Where-Object { $_.Name -ilike 'Ran?' }).Name",
+    "$a = @('abc'); ($a | Get-Member | Where-Object { $_.Name -ilike 'Ran?' }).Name",
+    "$w = New-Object Net.WebClient; ($w | Get-Member | Where-Object { $_.Name -ilike 'Downl*g' }).Name",
+    "$w = New-Object Net.WebClient; ($w | Get-Member -MemberType Method | Where-Object { $_.Name -ilike 'Downl*g' }).Name",
+    "$w = New-Object Net.WebClient; ($w.psobject.Methods | Where-Object { $_.Name -ilike 'Downl*g' }).Name",
+    "$w = New-Object Net.WebClient; Write-Output ($w | Get-Member | Where-Object { $_.Name -ilike 'Dispos*' }).Name",
+    "$w = New-Object Net.WebClient; Write-Output ($w.psobject.Methods | Where-Object { $_.Name -ilike '*Dispos*' }).Name",
+    "Write-Output (Get-Date | Get-Member | Where-Object { $_.Name -ilike 'Dat*' }).Name",
+    "Write-Output ((Get-Date).psobject.Properties | Where-Object { $_.Name -ilike 'Dat*' }).Name",
+    "Write-Output (Get-Date | Get-Member -MemberType Property | Where-Object { $_.Name -ilike 'DateT*' }).Name",
+    "Write-Output (Get-Date | Get-Member -MemberType ScriptProperty | Where-Object { $_.Name -ilike 'DateT*' }).Name",
+    "Write-Output ((Get-Date).psobject.Properties | Where-Object { $_.Name -ilike 'DateT*' }).Name",
+    "Write-Output (Get-Date | Get-Member -MemberType Method | Where-Object { $_.Name -ilike 'get_Da?' }).Name",
+    "Write-Output ([datetime]::Now | Get-Member | Where-Object { $_.Name -ilike 'Displ*' }).Name",
+    "Write-Output ([datetime]::Now | Get-Member -MemberType ScriptProperty | Where-Object { $_.Name -ilike 'DateT*' }).Name",
+    #: What the variable table holds where a listing reads it: the names of the session in the case
+    #: the session spells them, the names the script writes, and the names the engine creates only
+    #: once something in the run needs them.
+    "(Get-Variable '*mdr*').Name",
+    "Write-Output (Get-Variable 'PSHo*').Name",
+    "Write-Output (Get-Variable 'Shel*').Name",
+    "Write-Output (Get-Variable 'tru?').Name",
+    "Write-Output (Get-Variable 'Thi?').Name",
+    "Write-Output (Get-Variable 'Matc*').Name",
+    "'a' -match 'a' | Out-Null; Write-Output (Get-Variable 'Matc*').Name",
+    "foreach ($i in 1) { Write-Output (Get-Variable 'fore*').Name }",
+    "1 | ForEach-Object { Write-Output (Get-Variable 'PSIt*').Name }",
+    "Write-Output (Get-Variable 'LASTE*').Name",
+    "Write-Output (Get-Variable 'OF?').Name",
+    "Write-Output (Get-Item 'Variable:Matc*').Value",
+    "Write-Output (Get-Item 'Variable:ForE*').Value",
+    "Write-Output (Get-Variable 'E*t' -ValueOnly).GetType().Name",
+    "$Et = 5; Write-Output (Get-Variable 'E*t').Name",
+    "Write-Output (Get-Item 'Variable:E*t').Value.GetType().Name; $Et = 5",
+    "function f { $Et = 5 }; f; Write-Output (Get-Item 'Variable:E*t').Value.GetType().Name",
+    "$j = Register-EngineEvent -SourceIdentifier zzq -Action { (Get-Variable 'E*t').Name }; "
+    "New-Event -SourceIdentifier zzq | Out-Null; Start-Sleep -Milliseconds 500; Receive-Job $j",
+    "Write-Output (Get-Item 'Variable:HOME').Value.GetType().Name",
+    "Write-Output (Get-Item 'Variable:zzq').Value",
+    'Write-Output (Get-Variable zzq -ValueOnly)',
+    'function f { Write-Output (Get-Variable zzq -ValueOnly) }; $zzq = 1; f',
+    '$x = 1; Write-Output (Get-Variable x -Exclude x).Value',
+    "$x = 1; Write-Output (Get-Item 'Variable:x' -Include y).Value",
+    "$x = 1; Write-Output (Get-Variable -Name x -ErrorAction 'Stop').Value",
+    #: Which spellings of a parameter and how many free arguments the binder takes, against which it
+    #: rejects before the command runs at all.
+    "$x = 1; Write-Output (Get-Variable x -Verbose).GetType().Name",
+    "$x = 1; Write-Output (Get-Variable x -ValueOnly:$false).GetType().Name",
+    'Set-Variable x -V 5; Write-Output $x',
+    'Set-Variable -N x -Va 5; Write-Output $x',
+    "$x = 1; Write-Output (Get-Item -P 'Variable:x').Value",
+    "Set-Item -P 'Variable:x' 5; Write-Output $x",
+    '$x = 1; Write-Output (Get-Variable -N x).Value',
+    "$x = 1; Write-Output (gi -Pa 'Variable:x').Value",
+    '$x = 1; Write-Output (Get-Variable x -S 0).Value',
+    '$x = 1; Write-Output (Get-Variable x -Bogus).Value',
+    '$x = 1; Write-Output (Get-Variable x zzq -ValueOnly)',
+    "Set-Item Variable:x 'a' 'b'; Write-Output $x",
+    "Set-Variable x 'a' 'b'; Write-Output $x",
+    "Write-Host 'a' 'b' -Separator '-'",
+    "Write-Output 'a' 'b'",
+    "Get-Date -- -Format | Out-Null; Write-Output 'after'",
+    'function f { param([Parameter()]$a) }; f -b 1',
+    'function f { param($a) }; f -b 1',
 )
 
 

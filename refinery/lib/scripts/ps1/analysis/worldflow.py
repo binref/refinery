@@ -28,14 +28,17 @@ meanings; trust bounds the unknown ones.
 A wrong grant deletes code that had an effect; a refusal only costs recall, so every uncertainty
 fails toward *open*:
 
-- A `class` or `enum` definition opens the world at no position: the engine compiles it before the
-  first statement runs, so it stands before every read. Its presence anywhere returns the whole-run
-  verdict for the whole file.
+- A `class` or `enum` definition opens the type axis at no position: the engine compiles it
+  before the first statement runs, so it stands before every read. Its presence anywhere returns
+  the whole-run verdict for that axis alone — the command axis it never touches, so a
+  command-table read is still answered positionally beside it.
 - A root `process` block re-runs once per pipeline input, which the per-body graph models as
   straight-line with no back edge, so a leak late in it precedes a read early in it on the next
   item. Its presence returns the whole-run verdict.
 - An opener the graph cannot place — a parameter default, a node in no body's graph — poisons
-  nothing a flood could reach, so it too returns the whole-run verdict.
+  nothing a flood could reach, so it returns the whole-run verdict on each axis it opens: one
+  that opens both refuses both, while a `Set-Alias` nothing can place refuses the command axis
+  and leaves the type axis, which it never opened, answering positionally.
 
 An opener written inside a scriptblock or function body is *lifted* to the root-graph statement that
 runs that body — the value where the block is written, the `function` statement that defines it —
@@ -67,7 +70,8 @@ whole-run verdict this model exists to replace — and are stated rather than le
 """
 from __future__ import annotations
 
-from typing import Callable, Mapping
+from types import MappingProxyType
+from typing import Callable, Collection, Mapping, NamedTuple
 
 from refinery.lib.scripts import Node, tree_version
 from refinery.lib.scripts.analysis.cfg import (
@@ -80,6 +84,7 @@ from refinery.lib.scripts.analysis.cfg import (
     reachable_forward_labels,
     require_sources_in,
 )
+from refinery.lib.scripts.ps1.analysis.aliasdef import extract_alias_definition
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockReach, classify_block
 from refinery.lib.scripts.ps1.analysis.world import (
     Ps1ShadowSite,
@@ -87,7 +92,11 @@ from refinery.lib.scripts.ps1.analysis.world import (
     Ps1WorldMeasurement,
     opens_command_table_only_by_binding,
 )
-from refinery.lib.scripts.ps1.ast import normalize_command_name, resolve_command_name
+from refinery.lib.scripts.ps1.ast import (
+    normalize_command_name,
+    resolve_command_name,
+    resolve_command_spelling,
+)
 from refinery.lib.scripts.ps1.model import (
     Ps1ClassDefinition,
     Ps1CommandInvocation,
@@ -100,6 +109,34 @@ from refinery.lib.scripts.ps1.model import (
     Ps1StringLiteral,
     Ps1Variable,
 )
+from refinery.lib.scripts.ps1.patterns import wildcard_regex
+
+
+class Ps1Flood(NamedTuple):
+    """
+    What one positional query of `Ps1WorldReach` reads: the root-graph positions its sources
+    `poisoned`, keyed by identity; for a source statement no other source and no way back reaches,
+    the sources standing on it directly, which argument order may excuse (`only_by`); whether a
+    source the graphs could not place `refuse`s every position; whether the query had anything to
+    flood from at all (`sourced`); and the command names of the sources that bind one name and do
+    nothing else (`named`), which the query asks about by name rather than flooding from.
+    """
+    poisoned: frozenset[int] = frozenset()
+    only_by: Mapping[int, tuple[Node, ...]] = MappingProxyType({})
+    refuse: bool = False
+    sourced: bool = False
+    named: frozenset[str] = frozenset()
+
+    def spares(self, node: Node, position: CfgNode) -> bool:
+        """
+        Whether *node*, which *position* evaluates, is evaluated before every source of this flood
+        that may have run: its position is not poisoned, or it stands in the arguments of every
+        source its own statement holds.
+        """
+        if id(position) not in self.poisoned:
+            return True
+        sources = self.only_by.get(id(position))
+        return sources is not None and all(_evaluated_before(node, source) for source in sources)
 
 
 class Ps1CommandShadows:
@@ -132,11 +169,12 @@ class Ps1CommandShadows:
 class Ps1WorldReach:
     """
     The world as the purity gate reads it at a position: the whole-run facts of a
-    `refinery.lib.scripts.ps1.analysis.world.Ps1TypeWorld`, plus the two positional queries —
-    `closed_at`, which asks whether the type world is closed at one read rather than anywhere, and
-    `may_trust_command_name_at`, which asks the same of a command name's identity. Held in a
-    `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot and threaded through
-    `refinery.lib.scripts.ps1.analysis.effects` in place of the leaf world. It answers the two
+    `refinery.lib.scripts.ps1.analysis.world.Ps1TypeWorld`, plus the three positional queries —
+    `closed_at`, which asks whether the type world is closed at one read rather than anywhere,
+    `may_trust_command_name_at`, which asks the same of a command name's identity, and
+    `may_read_the_command_table_at`, which asks it of a lookup over the command vocabulary. Held
+    in a `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot and threaded through
+    `refinery.lib.scripts.ps1.analysis.effects` in place of the leaf world. It answers the three
     positional questions, `closed_for_the_whole_run`, and `shadowed_names` — the whole-run shadow
     set, mirrored here because the values layer that reads it holds this wrapper and not the leaf.
     Every other leaf fact is read straight off `Ps1ModelCache.closed_world`, which no staleness can
@@ -144,6 +182,16 @@ class Ps1WorldReach:
     asks for. The whole-run `Ps1TypeWorld.may_trust_command_name` is one of those, and no pass reads
     it: it is the verdict `may_trust_command_name_at` short-circuits on, which is a fact about the
     leaf model and stays with it.
+
+    The three queries read one flood record each (`Ps1Flood`). The type flood and the trust flood
+    are flooded from every opener, whichever axis it opened, and differ only in what refuses them
+    outright: a position-less opener of the type axis refuses `closed_at`, one of the command axis
+    refuses `may_trust_command_name_at`. The table flood is flooded from the command openers and
+    from the table writers of the measurement — the writes nobody can read that may add a command
+    a listing shows without opening either axis — so a read of the session's command names is
+    granted beside a type-only opener that ran before it and refused after a file copy by variable,
+    where trust in a command name holds on. `refuse` breaks statement ordering itself and refuses
+    every positional query.
 
     Built without flow context — `Ps1WorldReach(world)` — it answers each positional query with
     the whole-run verdict at every position, which is what a caller that did not build the graphs,
@@ -166,8 +214,9 @@ class Ps1WorldReach:
         *,
         root: Ps1Script | None = None,
         control_flow: ControlFlowModel | None = None,
-        poisoned: frozenset[int] = frozenset(),
-        poisoned_only_by: Mapping[int, tuple[Node, ...]] | None = None,
+        type_flood: Ps1Flood | None = None,
+        trust_flood: Ps1Flood | None = None,
+        table_flood: Ps1Flood | None = None,
         shadow_poisoned: Ps1CommandShadows | None = None,
         refuse: bool = False,
         build_version: int = 0,
@@ -175,8 +224,9 @@ class Ps1WorldReach:
         self._world = world
         self._root = root
         self._control_flow = control_flow
-        self._poisoned = poisoned
-        self._poisoned_only_by = poisoned_only_by or {}
+        self._type = type_flood or Ps1Flood()
+        self._trust = trust_flood or Ps1Flood()
+        self._table = table_flood or Ps1Flood(sourced=not world.command_table_closed)
         self._shadow_poisoned = shadow_poisoned
         self._refuse = refuse
         self._build_version = build_version
@@ -229,13 +279,19 @@ class Ps1WorldReach:
         A shadowed name missing from the shadow floods is refused everywhere, never read as an
         empty poison set: the missing entry is `build_world_reach` reporting a definition site the
         graphs could not place, and trusting over it would delete a call that site can rebind.
+
+        A call standing in what an opener is handed is evaluated before the opener runs, which is
+        `closed_at`'s rule and holds here for the same reason: `& (gcm 'wr?te') 'a'` dispatches on
+        a value only once `gcm` has run, so the dispatch cannot have taken `gcm` over.
         """
         if self._stale:
             return False
         if self._world.may_trust_command_name(name):
             return True
+        if self._trust.refuse:
+            return False
         position = self._position_in_root(node)
-        return position is not None and self._trusted_at(name, position)
+        return position is not None and self._trusted_at(name, position, node)
 
     def _climb_is_trusted(self, climbed: list[str], position: CfgNode) -> bool:
         """
@@ -245,15 +301,20 @@ class Ps1WorldReach:
         """
         return all(self._trusted_at(name, position) for name in climbed)
 
-    def _trusted_at(self, name: str, position: CfgNode) -> bool:
+    def _trusted_at(self, name: str, position: CfgNode, node: Node | None = None) -> bool:
         """
         `may_trust_command_name_at` once the position is known, which is also the question
         `_position_in_root` asks of every command name it climbs through. Kept apart from the query
-        so that the climb does not have to re-enter the query it is answering.
+        so that the climb does not have to re-enter the query it is answering. The *node* the
+        position evaluates, where one is given, may stand in what the openers of its statement are
+        handed; a climb has no such node and is refused at a poisoned position.
         """
         if self._world.may_trust_command_name(name):
             return True
-        if id(position) in self._poisoned:
+        if node is None:
+            if id(position) in self._trust.poisoned:
+                return False
+        elif not self._trust.spares(node, position):
             return False
         if not self._world.command_shadowed(name):
             return True
@@ -272,6 +333,9 @@ class Ps1WorldReach:
         have opened a world the old walk read shut. The shortcut in turn precedes the
         `_position_in_root` refusals, because a wrapper can be built refused for the identity
         floods' sake while the type axis, with no opener anywhere, still holds at every position.
+        The `refuse` check of the type flood takes the same side of the shortcut: a position-less
+        type opener — a `class`, a default the graphs place nowhere — cannot be ordered against any
+        read, so no position is closed over it.
 
         **An opener's own arguments run before it.** The statement holding an opener is poisoned
         from the opener on, and what the opener is handed is evaluated before it runs: the `Join`
@@ -284,13 +348,50 @@ class Ps1WorldReach:
             return False
         if self.closed_for_the_whole_run:
             return True
+        if self._type.refuse:
+            return False
         position = self._position_in_root(node)
         if position is None:
             return False
-        if id(position) not in self._poisoned:
+        return self._type.spares(node, position)
+
+    def may_read_the_command_table_at(self, node, patterns: Collection[str]) -> bool:
+        """
+        Whether the session's commands matching any of *patterns* are, at `node`, exactly the ones
+        the collected vocabulary lists — the claim a listing fold makes when it replaces a lookup
+        with the one name it yields. What breaks it is an opener of the command axis, which can bind
+        a command the vocabulary does not list, a table writer, which may add one without opening
+        the axis, and a redefinition of a name matching a pattern, each run before the read.
+
+        The patterns are taken, not a precomputed shadow subset: the matcher inside decides what a
+        takeover must match, so a caller with a divergent or case-sensitive matcher hands in a
+        subset the query then under-matches and grants over vacuously. A pattern 5.1 rejects lists
+        nothing a fold could name, and is refused.
+
+        The whole-run fast path — nothing the table flood floods from, and no shadowed name —
+        grants at every position, and soundly over a wrapper built refused: the type axis, a
+        `class`, a root `process` block — none of them adds a command where no command opener and
+        no table writer stands anywhere. The flood takes no binding skip, unlike the trust flood,
+        because a listing read sees aliases no statement invokes. Callee trust is not this query's
+        job: a takeover of the lookup command itself matches no pattern and is invisible to shadow
+        matching, so the folds ask `may_trust_command_name_at` of the invocation separately.
+        """
+        if self._stale:
+            return False
+        if not self._table.sourced and not self._world.shadowed_names:
             return True
-        openers = self._poisoned_only_by.get(id(position))
-        return openers is not None and all(_evaluated_before(node, opener) for opener in openers)
+        if self._table.refuse:
+            return False
+        position = self._position_in_root(node)
+        if position is None or not self._table.spares(node, position):
+            return False
+        regexes = [wildcard_regex(pattern) for pattern in patterns]
+        for name in self._world.shadowed_names.union(self._table.named):
+            if not any(regex is None or regex.match(name) for regex in regexes):
+                continue
+            if self._shadow_poisoned is None or not self._shadow_poisoned.spares(name, position):
+                return False
+        return True
 
     def _position_in_root(self, node) -> CfgNode | None:
         """
@@ -354,26 +455,35 @@ def build_world_reach(
     """
     The flow-sensitive world for `measurement.root`, over its whole-run verdict, its opener
     positions, and its command-redefinition sites. A world closed for the whole run in a script
-    that redefines no command carries no position at all, so it is wrapped with no graph, and
+    that redefines no command and holds no table writer carries no position at all, so it is
+    wrapped with no graph, and
     `control_flow_of` is never called: a clean script never pays for a control-flow build it would
     not read. Otherwise every opener is lifted into the root graph and the poisoned region is the
     forward flood from all of them, and every redefinition site is lifted and flooded the same way
     per name (`_flood_shadow_sites`).
 
-    The verdict falls back to the whole-run answer at every position — a `Ps1WorldReach` built with
-    `refuse` — whenever a position-less opener is present (a `class`/`enum` definition, a root
-    `process` block that re-runs), an opener cannot be placed in the root graph, or the script names
-    its own path (`_names_own_path`), through which a leak could re-run the statements before it.
-    Each is the fail-closed direction the module docstring states: the floods cannot bound where
-    such an opener ran, so no read and no name is granted over it.
+    The verdict falls back to the whole-run answer at every position — a `Ps1WorldReach` built
+    with `refuse` — whenever a root `process` block that re-runs is present, the script names its
+    own path (`_names_own_path`), through which a leak could re-run the statements before it, or
+    the root graph cannot be built. Each breaks statement ordering itself, so no query — type,
+    command, or identity — may read a position under it. The position-less openers refuse per axis
+    instead: a `class`/`enum` definition and a type opener that cannot be placed in the root graph
+    refuse the type flood, a command opener that cannot be placed refuses the trust and the table
+    floods, and one that opens both refuses all three; a table writer that cannot be placed refuses
+    the table flood alone. Each is the fail-closed direction the module docstring states: the
+    floods cannot bound where such an opener ran, so no read on an axis it opens is granted over
+    it, while the other axis — which it never touched — still answers positionally.
 
     An opener that binds one command name the tree never invokes — a `Set-Alias` of a name no
-    statement calls, which `opens_command_table_only_by_binding` names — is left out of the flood
-    and never asked for a position. It runs nothing and rebinds nothing any call reaches, so no
-    position observes it. A script whose every opener is such a binding floods from nothing and
-    grants every position the graphs place: on the command axis because no call reaches a rebound
-    name, on the type axis because a binding touches no type. The whole-run verdict stays open, so
-    the grant is positional and the call graph still reads the command table as open.
+    statement calls, which `opens_command_table_only_by_binding` names — is left out of the
+    trust flood and never asked for a position. It runs nothing and rebinds nothing any call
+    reaches, so no position observes it on the trust axis. The table flood takes no such skip: a
+    listing read sees aliases no statement invokes — `Set-Alias wrnte Get-Date` before a lookup
+    matching `wrnte` — so every command opener floods it whatever it binds, and so does every
+    table writer of the measurement. A script whose every opener is an uninvoked binding floods the
+    trust axis from nothing and grants every position the graphs place there, while the table
+    refuses the position after the binding. The whole-run verdict stays open, so both answers are
+    positional and the call graph still reads the command table as open.
 
     Every wrapper — closed, refused, or measured — is stamped with the root and the version the
     measurement was taken at, so each notices the tree changing under a pass that holds it. A
@@ -384,36 +494,111 @@ def build_world_reach(
     world = measurement.world
     root = measurement.root
     version = measurement.build_version
+    table_sourced = bool(measurement.command_openers or measurement.table_writers)
+    unordered = Ps1Flood(sourced=table_sourced)
     if tree_version(root) != version:
-        return Ps1WorldReach(world, root=root, refuse=True, build_version=version)
-    if world.closed_for_the_whole_run and not measurement.shadow_sites:
+        return Ps1WorldReach(world, root=root, table_flood=unordered, refuse=True, build_version=version)
+    if world.closed_for_the_whole_run and not measurement.shadow_sites and not table_sourced:
         return Ps1WorldReach(world, root=root, build_version=version)
     if root.process_block is not None or _names_own_path(root):
-        return Ps1WorldReach(world, root=root, refuse=True, build_version=version)
+        return Ps1WorldReach(world, root=root, table_flood=unordered, refuse=True, build_version=version)
     control_flow = control_flow_of()
     root_graph = control_flow.graph_of(root)
     if root_graph is None:
-        return Ps1WorldReach(world, root=root, refuse=True, build_version=version)
-    refuse = False
+        return Ps1WorldReach(world, root=root, table_flood=unordered, refuse=True, build_version=version)
+    type_refuse = False
+    command_refuse = False
+    table_refuse = False
+    opens_type = frozenset(id(opener) for opener in measurement.type_openers)
+    opens_command = frozenset(id(opener) for opener in measurement.command_openers)
     sources: list[CfgNode] = []
     standing: dict[int, list[Node | None]] = {}
+    table_sources: list[CfgNode] = []
+    table_standing: dict[int, list[Node | None]] = {}
+    binding_sites: list[Ps1ShadowSite] = []
+
+    def place(node: Node, landing: CfgNode, on: list[CfgNode], stand: dict[int, list[Node | None]]):
+        located = control_flow.locate(node)
+        direct = located is not None and located[1] is landing
+        on.append(landing)
+        stand.setdefault(id(landing), []).append(node if direct else None)
+
     for opener in measurement.openers:
         if isinstance(opener, (Ps1ClassDefinition, Ps1EnumDefinition)):
-            refuse = True
+            type_refuse = True
             continue
         bound = opens_command_table_only_by_binding(opener)
-        if bound is not None and bound not in measurement.invoked_command_names:
-            continue
+        skipped = bound is not None and bound not in measurement.invoked_command_names
         landing = _lift_to_root(control_flow, opener, root_graph)
         if landing is None:
-            refuse = True
+            if id(opener) in opens_type:
+                type_refuse = True
+            if id(opener) in opens_command:
+                command_refuse = True
+                table_refuse = True
             continue
-        sources.append(landing)
-        located = control_flow.locate(opener)
-        direct = located is not None and located[1] is landing
-        standing.setdefault(id(landing), []).append(opener if direct else None)
-    if refuse:
-        return Ps1WorldReach(world, root=root, refuse=True, build_version=version)
+        if not skipped:
+            place(opener, landing, sources, standing)
+        if id(opener) not in opens_command:
+            continue
+        listed = _names_a_binding_lists(opener)
+        if listed:
+            binding_sites.extend(Ps1ShadowSite(name, opener) for name in listed)
+        else:
+            place(opener, landing, table_sources, table_standing)
+    for writer in measurement.table_writers:
+        landing = _lift_to_root(control_flow, writer, root_graph)
+        if landing is None:
+            table_refuse = True
+            continue
+        place(writer, landing, table_sources, table_standing)
+    poisoned, only_by = _flood_positions(root_graph, sources, standing)
+    table_poisoned, table_only_by = _flood_positions(root_graph, table_sources, table_standing)
+    named = frozenset(site.name for site in binding_sites)
+    return Ps1WorldReach(
+        world,
+        root=root,
+        control_flow=control_flow,
+        type_flood=Ps1Flood(poisoned, only_by, type_refuse, bool(sources)),
+        trust_flood=Ps1Flood(poisoned, only_by, command_refuse, bool(sources)),
+        table_flood=Ps1Flood(table_poisoned, table_only_by, table_refuse, table_sourced, named),
+        shadow_poisoned=_flood_shadow_sites(
+            (*measurement.shadow_sites, *binding_sites), control_flow, root_graph),
+        build_version=version,
+    )
+
+
+def _names_a_binding_lists(opener: Node) -> tuple[str, ...]:
+    """
+    The command names a listing of the command table may show for the opener *opener*, where
+    binding one name is the whole of what it does: the alias it binds under its own name, and the
+    name that spelling resolves to, read the deny-list way so that a match is never missed. Empty
+    for an opener that does anything else, which floods instead.
+    """
+    if opens_command_table_only_by_binding(opener) is None or not isinstance(opener, Ps1CommandInvocation):
+        return ()
+    alias = extract_alias_definition(opener)
+    if alias is None:
+        return ()
+    return tuple(dict.fromkeys((
+        normalize_command_name(alias.name),
+        resolve_command_spelling(alias.name),
+    )))
+
+
+def _flood_positions(
+    root_graph: ControlFlowGraph,
+    sources: list[CfgNode],
+    standing: Mapping[int, list[Node | None]],
+) -> tuple[frozenset[int], dict[int, tuple[Node, ...]]]:
+    """
+    The poisoned region of one axis' flood with its only-by refinement: the forward flood from
+    every source, and for each source statement its own successors do not return to — neither
+    through the resumption hub nor by standing in the region after the other sources — the openers
+    placed on it directly, keyed by the statement's identity. A poisoned position whose statement
+    holds no entry is poisoned by openers argument order cannot excuse, and `_evaluated_before` is
+    the only thing that lifts it.
+    """
     after = reachable_forward_from_any(root_graph, [
         successor for source in sources for successor in Projection.FORWARD.successors(source)])
     poisoned_only_by: dict[int, tuple[Node, ...]] = {}
@@ -422,15 +607,7 @@ def build_world_reach(
         if id(source) in after or id(source) in root_graph.hub_bound or None in openers:
             continue
         poisoned_only_by[id(source)] = tuple(opener for opener in openers if opener is not None)
-    return Ps1WorldReach(
-        world,
-        root=root,
-        control_flow=control_flow,
-        poisoned=reachable_forward_from_any(root_graph, sources),
-        poisoned_only_by=poisoned_only_by,
-        shadow_poisoned=_flood_shadow_sites(measurement.shadow_sites, control_flow, root_graph),
-        build_version=version,
-    )
+    return reachable_forward_from_any(root_graph, sources), poisoned_only_by
 
 
 def _evaluated_before(node: Node, opener: Node) -> bool:

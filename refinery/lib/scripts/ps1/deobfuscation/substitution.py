@@ -3,9 +3,9 @@ The single route by which a PowerShell cleanup pass puts one part of the tree in
 
 `refinery.lib.scripts.ps1.deobfuscation.removal` owns the other half of the same question: what a
 pass takes *out* of a statement list. Both routes exist so the rules about what a rewrite must not
-throw away — a redirection that would be dropped, and under the preserving model a read of an
-`$env:` name the script stores — live in one place rather than at every site that could break
-them.
+throw away — a redirection that would be dropped, a call whose arguments the binder rejects, and
+under the preserving model a read of an `$env:` name the script stores — live in one place rather
+than at every site that could break them.
 
 The entry points are named for the slot the node sits in — a direct field, one entry of a child
 list, the whole of one — rather than for the passes that reach them, because the slot is the only
@@ -40,7 +40,13 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.environment import takes_a_read_the_environment_owns
-from refinery.lib.scripts.ps1.deobfuscation.removal import land, raisers_a_splice_moves, rescopes_a_handler
+from refinery.lib.scripts.ps1.ast import binding_fails
+from refinery.lib.scripts.ps1.deobfuscation.removal import (
+    land,
+    raisers_a_splice_moves,
+    rescopes_a_handler,
+)
+from refinery.lib.scripts.ps1.model import Ps1CommandInvocation
 
 #: What every entry point below accepts on either side of a substitution: a node, nothing, or a
 #: list of either. A pass that splits one statement into several has a list on one side and a single
@@ -95,17 +101,40 @@ def may_substitute(removed: Part, installed: Part, moved: Part = ()) -> bool:
     identity, not equality: a rebuilt redirection is refused though it wrote the same thing, the
     conservative direction.
 
+    A call the binder rejects is the other thing a replacement cannot carry: it raises a
+    `ParameterBindingException` before the command runs, so a fold that answers what the command
+    would have returned answers for a call that never returned — `(Get-Variable x -Bogus).Value`
+    is an error on 5.1 and not `$x`. Such a call is refused on the same terms as a redirection:
+    unless the very invocation survives into the replacement, the substitution does not happen.
+    See `refinery.lib.scripts.ps1.ast.binding_fails`.
+
     `moved` names nodes the caller lifts out of `removed` and re-installs elsewhere in the same edit
     — `Ps1ExpandableStringHoist` hoists an assignment carrying a redirection out of a string — so a
     redirection that leaves and returns is not counted lost. Nothing checks the claim; the caller
     owes it, the way `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlans.propose_in`
     owes the list it names.
     """
-    lost = carried_redirections(removed)
+    lost = carried_redirections(removed) + carried_binding_failures(removed)
     if not lost:
         return True
-    kept = {id(redirection) for redirection in carried_redirections(installed, moved)}
-    return all(id(redirection) in kept for redirection in lost)
+    kept = {
+        id(node) for node in (
+            carried_redirections(installed, moved) + carried_binding_failures(installed, moved))
+    }
+    return all(id(node) in kept for node in lost)
+
+
+def carried_binding_failures(*parts: Part) -> list:
+    """
+    Every invocation anywhere in the subtrees at `parts` that the binder rejects.
+    """
+    return [
+        descendant
+        for part in parts
+        for node in _nodes(part)
+        for descendant in node.walk()
+        if isinstance(descendant, Ps1CommandInvocation) and binding_fails(descendant)
+    ]
 
 
 def _release(part: Part) -> bool:

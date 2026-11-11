@@ -1294,6 +1294,7 @@ SIMPLIFIED: dict[str, Expectation] = {
 }
 
 NOT_YET_SIMPLIFIED: frozenset[str] = frozenset({
+    "$Null = (Get-Command K).Name; function K { $Null = 1 }; K; Write-Host 'A'",
     "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
     "[System.IO.IOException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
     "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "

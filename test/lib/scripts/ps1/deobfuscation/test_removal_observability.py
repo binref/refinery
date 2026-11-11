@@ -74,7 +74,6 @@ class TestPs1TheFunctionDriveObservesADefinition(TestPs1):
 
 class TestPs1ACommandTableReaderObservesADefinitionItNames(TestPs1):
 
-    @todo
     def test_a_definition_a_literal_read_names_is_kept(self):
         self._assertKept(F"""
             function K {{ }}
@@ -83,6 +82,44 @@ class TestPs1ACommandTableReaderObservesADefinitionItNames(TestPs1):
             {_ANCHOR}
         """)
 
+    def test_a_definition_an_escaped_literal_read_names_is_kept(self):
+        self._assertKept(F"""
+            function wrnte {{ }}
+            wrnte
+            Write-Output (Get-Command 'wrn`te').Name
+            {_ANCHOR}
+        """)
+
+    def test_a_definition_a_pattern_whose_listing_is_read_matches_is_kept(self):
+        self._assertKept(F"""
+            function wrnte {{ }}
+            wrnte
+            Write-Output (Get-Command ???t?).Name
+            {_ANCHOR}
+        """)
+
+    def test_a_definition_no_narrowing_of_the_listing_matches_is_removed(self):
+        self._assertDeobfuscatesTo(F"""
+            function vnMTH {{ }}
+            vnMTH
+            Write-Host (Get-Command | Where-Object {{ $_.Name -like 'zzq*' }}).Name
+            {_ANCHOR}
+        """, F"""
+            Write-Host (Get-Command | Where-Object {{ $_.Name -like 'zzq*' }}).Name
+            {_ANCHOR}
+        """)
+
+    def test_an_alias_definition_a_lookup_of_another_name_reads_is_removed(self):
+        self._assertDeobfuscatesTo("""
+            Set-Alias vnMTH Write-Output
+            vnMTH 'hi'
+            Get-Alias -n zzq
+        """, """
+            Write-Output 'hi'
+            Get-Alias -Name zzq
+        """)
+
+    @opportunity
     def test_a_definition_written_below_the_read_is_removed(self):
         self._assertDeobfuscatesTo(F"""
             $Null = (Get-Command K).Name
@@ -740,6 +777,16 @@ class TestPs1ARaiseAResumingTrapSkipsPastIsKept(TestPs1):
             Write-Host 'after'
         """))
         self.assertIn("[int]'a'", output)
+
+
+class TestPs1ACallTheBinderRejectsRaisesWhereItStands(TestPs1):
+
+    @todo
+    def test_a_discarded_call_whose_arguments_do_not_bind_is_kept(self):
+        self._assertKept("""
+            Get-Date -- -Format | Out-Null
+            Write-Output 'after'
+        """)
 
 
 class TestPs1ACallMeasuredNeverToFailSkipsNothing(TestPs1):

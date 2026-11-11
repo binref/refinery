@@ -340,8 +340,9 @@ KNOWN_ALIAS: dict[str, str] = {
 #: The CimCmdlets short forms are module-provided aliases, and a bare pristine `Get-Alias` does not
 #: list them even though their target cmdlets are collected. `run-pwsh.ps1` now imports the modules
 #: before enumerating aliases, but the shipped data predates that fix, so they are restored here
-#: until the next regeneration; each target is a canonical name already in `KNOWN_CMDLETS`.
-for _cim_alias, _cim_command in {
+#: until the next regeneration; each target is a canonical name already in `KNOWN_CMDLETS`. Every
+#: name is spelled lowercase because that is the case the host reports it in.
+_CIM_CMDLET_ALIASES: dict[str, str] = {
     'gcai' : 'Get-CimAssociatedInstance',
     'gcim' : 'Get-CimInstance',
     'gcls' : 'Get-CimClass',
@@ -354,7 +355,9 @@ for _cim_alias, _cim_command in {
     'rcim' : 'Remove-CimInstance',
     'rcms' : 'Remove-CimSession',
     'scim' : 'Set-CimInstance',
-}.items():
+}
+
+for _cim_alias, _cim_command in _CIM_CMDLET_ALIASES.items():
     KNOWN_ALIAS.setdefault(_cim_alias, _cim_command)
 
 KNOWN_PS_OPERATORS: dict[str, str] = {name.lower(): name for name in [
@@ -414,6 +417,246 @@ KNOWN_CMDLETS.setdefault('powershell', 'PowerShell')
 
 for _n in KNOWN_ALIAS.values():
     KNOWN_CMDLETS.setdefault(_n.lower(), _n)
+
+#: The functions 5.1 defines for every drive letter, `A:` through `Z:`, each of which changes the
+#: location to its drive. The generator leaves them out of the command records because they carry
+#: nothing a call needs to know, and they are restored here because a listing of the command table
+#: holds them: `Get-Command | ? { $_.Name -like 'A?' }` lists `A:` and nothing else.
+_DRIVE_FUNCTIONS = frozenset(F'{_letter}:' for _letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+
+#: Every name the session's command table holds: each collected command, every alias the host
+#: binds, and the drive functions, in the case `.Name` reports it. The alias half is taken from the
+#: capture's own keys rather than from `KNOWN_ALIAS`, whose keys are lowercased, so a case-carrying
+#: alias such as `CFS` folds `(gcm 'CF?').Name` to `'CFS'` and not to a wrong-case literal. An
+#: alias naming a command the host cannot run is withheld with the command itself, because the
+#: universe a listing fold draws its candidates from must not contain a name no host can run.
+KNOWN_COMMAND_NAMES: frozenset[str] = (
+    frozenset(_COMMAND_TABLE)
+    | frozenset(_CIM_CMDLET_ALIASES)
+    | _DRIVE_FUNCTIONS
+    | frozenset(
+        _name
+        for _name, _target in _COMMANDS['aliases'].items()
+        if _target.lower() not in _MISCOLLECTED_COMMANDS
+    )
+)
+
+#: The cmdlets among `KNOWN_COMMAND_NAMES`, which is what a lookup of cmdlets alone lists.
+KNOWN_CMDLET_NAMES: frozenset[str] = frozenset(
+    _name for _name, _record in _COMMAND_TABLE.items() if _record['kind'] == 'Cmdlet')
+
+#: The aliases the engine defines without a module, as the capture names them. A listing of the
+#: whole command table never holds one of these, where it holds every alias a module exports, and no
+#: module folder a machine adds can list one twice. Read off the capture where it records the module
+#: each alias comes from; the shipped data predates that record, so the measured list stands in for
+#: it until the next regeneration, pinned against the host by the oracle.
+_MODULELESS_ALIASES_UNTIL_REGENERATED = frozenset({
+    '%',
+    '?',
+    'ac',
+    'asnp',
+    'cat',
+    'cd',
+    'chdir',
+    'clc',
+    'clear',
+    'clhy',
+    'cli',
+    'clp',
+    'cls',
+    'clv',
+    'cnsn',
+    'compare',
+    'copy',
+    'cp',
+    'cpi',
+    'cpp',
+    'curl',
+    'cvpa',
+    'dbp',
+    'del',
+    'diff',
+    'dir',
+    'dnsn',
+    'ebp',
+    'echo',
+    'epal',
+    'epcsv',
+    'epsn',
+    'erase',
+    'etsn',
+    'exsn',
+    'fc',
+    'fl',
+    'foreach',
+    'ft',
+    'fw',
+    'gal',
+    'gbp',
+    'gc',
+    'gci',
+    'gcm',
+    'gcs',
+    'gdr',
+    'ghy',
+    'gi',
+    'gjb',
+    'gl',
+    'gm',
+    'gmo',
+    'gp',
+    'gps',
+    'gpv',
+    'group',
+    'gsn',
+    'gsnp',
+    'gsv',
+    'gu',
+    'gv',
+    'gwmi',
+    'h',
+    'history',
+    'icm',
+    'iex',
+    'ihy',
+    'ii',
+    'ipal',
+    'ipcsv',
+    'ipmo',
+    'ipsn',
+    'irm',
+    'ise',
+    'iwmi',
+    'iwr',
+    'kill',
+    'lp',
+    'ls',
+    'man',
+    'md',
+    'measure',
+    'mi',
+    'mount',
+    'move',
+    'mp',
+    'mv',
+    'nal',
+    'ndr',
+    'ni',
+    'nmo',
+    'npssc',
+    'nsn',
+    'nv',
+    'ogv',
+    'oh',
+    'popd',
+    'ps',
+    'pushd',
+    'pwd',
+    'r',
+    'rbp',
+    'rcjb',
+    'rcsn',
+    'rd',
+    'rdr',
+    'ren',
+    'ri',
+    'rjb',
+    'rm',
+    'rmdir',
+    'rmo',
+    'rni',
+    'rnp',
+    'rp',
+    'rsn',
+    'rsnp',
+    'rujb',
+    'rv',
+    'rvpa',
+    'rwmi',
+    'sajb',
+    'sal',
+    'saps',
+    'sasv',
+    'sbp',
+    'sc',
+    'select',
+    'set',
+    'shcm',
+    'si',
+    'sl',
+    'sleep',
+    'sls',
+    'sort',
+    'sp',
+    'spjb',
+    'spps',
+    'spsv',
+    'start',
+    'sujb',
+    'sv',
+    'swmi',
+    'tee',
+    'trcm',
+    'type',
+    'wget',
+    'where',
+    'wjb',
+    'write',
+})
+
+_ALIAS_MODULES: dict[str, str] | None = _COMMANDS.get('alias_modules')
+
+MODULELESS_ALIASES: frozenset[str] = (
+    _MODULELESS_ALIASES_UNTIL_REGENERATED if _ALIAS_MODULES is None else frozenset(
+        _name for _name, _module in _ALIAS_MODULES.items() if not _module)
+)
+
+#: The modules of the engine itself — the commands it defines without a module and the six
+#: snap-in modules every 5.1 session loads. Their commands are listed once whatever module folders a
+#: machine adds, where a module that ships in more than one folder is listed once per copy.
+ENGINE_MODULES = frozenset({
+    '',
+    'Microsoft.PowerShell.Core',
+    'Microsoft.PowerShell.Diagnostics',
+    'Microsoft.PowerShell.Host',
+    'Microsoft.PowerShell.Management',
+    'Microsoft.PowerShell.Security',
+    'Microsoft.PowerShell.Utility',
+})
+
+#: The names a listing of the command table holds exactly once on any 5.1 host: the commands of
+#: `ENGINE_MODULES`, the aliases no module defines, and the drive functions. A listing fold names
+#: only one of these; a name a module exports may be listed once per module folder that ships it.
+ENGINE_COMMAND_NAMES: frozenset[str] = (
+    frozenset(_name for _name, _record in _COMMAND_TABLE.items() if _record['module'] in ENGINE_MODULES)
+    | MODULELESS_ALIASES
+    | _DRIVE_FUNCTIONS
+)
+
+#: The extensions under which a lookup of a pattern lists a file on `PATH`: the measured `PATHEXT`
+#: of a 5.1 host, and `.ps1` for the scripts it lists beside the programs. A program is listed under
+#: its full file name, so a pattern no name with one of these endings matches lists no program.
+PROGRAM_EXTENSIONS = (
+    '.bat',
+    '.cmd',
+    '.com',
+    '.cpl',
+    '.exe',
+    '.js',
+    '.jse',
+    '.msc',
+    '.ps1',
+    '.py',
+    '.pyw',
+    '.vbe',
+    '.vbs',
+    '.wsf',
+    '.wsh',
+)
+
+#: The environment variables whose value decides what a lookup of the command table lists: which
+#: file endings make a program, and which module folders contribute commands.
+LISTING_ENVIRONMENT_NAMES = frozenset({'pathext', 'psmodulepath'})
 
 CMDLET_PARAMETERS: dict[str, list[str]] = {
     _name.lower(): [
@@ -678,6 +921,69 @@ def positional_scriptblock_sets(command: str) -> frozenset[str]:
     return found
 
 
+def binds_strictly(command: str) -> bool:
+    """
+    Whether the binder rejects a call to *command* whose arguments it cannot place, rather than
+    handing them to the command: a cmdlet, or a function whose record carries the common
+    parameters, which `[CmdletBinding()]` or a `[Parameter()]` attribute gives it. Measured on 5.1,
+    `function f { param($a) }; f -b 1` takes `-b` into `$args`, where the same call to a function
+    whose parameter carries `[Parameter()]` raises `NamedParameterNotFound`. `False` for a command
+    the collected surface does not carry.
+    """
+    record = _COMMAND_RECORDS.get(command.lower())
+    if record is None:
+        return False
+    if record['kind'] == 'Cmdlet':
+        return True
+    return any(_info['common'] for _info in record['parameters'].values())
+
+
+class Ps1ParameterSetLayout(typing.NamedTuple):
+    """
+    What one parameter set of a command binds by position: the full names of its parameters, the
+    ones among them that take a position, and the ones that take the arguments left over.
+    """
+    parameters: frozenset[str]
+    positional: frozenset[str]
+    remaining: frozenset[str]
+
+
+_PARAMETER_SET_LAYOUTS: dict[str, tuple[Ps1ParameterSetLayout, ...]] = {}
+
+
+def parameter_set_layouts(command: str) -> tuple[Ps1ParameterSetLayout, ...]:
+    """
+    One `Ps1ParameterSetLayout` per parameter set of *command*, a parameter that belongs to every
+    set counted in each of them; a command whose parameters all belong to every set has the one.
+    Empty for a command the collected surface does not carry.
+    """
+    command = command.lower()
+    found = _PARAMETER_SET_LAYOUTS.get(command)
+    if found is not None:
+        return found
+    parameters: dict[str, dict] = _COMMAND_RECORDS.get(command, {}).get('parameters', {})
+    names = {_set['set'] for _info in parameters.values() for _set in _info['sets']}
+    names.discard(EVERY_PARAMETER_SET)
+    layouts: list[Ps1ParameterSetLayout] = []
+    for name in sorted(names) or [EVERY_PARAMETER_SET]:
+        members: set[str] = set()
+        positional: set[str] = set()
+        remaining: set[str] = set()
+        for _parameter, _info in parameters.items():
+            for _set in _info['sets']:
+                if _set['set'] not in (name, EVERY_PARAMETER_SET):
+                    continue
+                members.add(_parameter)
+                if _set['position'] >= 0:
+                    positional.add(_parameter)
+                if _set['remaining']:
+                    remaining.add(_parameter)
+        layouts.append(Ps1ParameterSetLayout(
+            frozenset(members), frozenset(positional), frozenset(remaining)))
+    found = _PARAMETER_SET_LAYOUTS[command] = tuple(layouts) if parameters else ()
+    return found
+
+
 #: Whether a variable name is one the lexer reads unbraced, which is the language its unbraced
 #: reader accepts: ASCII letters, digits and underscores, a `?` never first. The match has to end
 #: at the end of the name — `$` alone would accept one ending in a newline — and the classes have
@@ -762,6 +1068,33 @@ PS1_AUTOMATIC_VARIABLES = frozenset({
     'this',
     'true',
 })
+
+#: The variables a session starts with, as the collected table spells them, which is the spelling
+#: `Get-Variable` reports: `PSHOME`, `ShellId`, `true`.
+SESSION_VARIABLES: frozenset[str] = frozenset(_VARIABLES['variables'])
+
+#: The automatic variables that exist only inside the action block of an event subscription,
+#: where the engine binds them for each event it delivers. Measured on 5.1, `Get-Variable 'E*t'`
+#: run in a `Register-EngineEvent -Action` block lists `event` beside `ExecutionContext`.
+EVENT_ACTION_VARIABLES = frozenset({
+    'event',
+    'eventargs',
+    'eventsubscriber',
+    'sender',
+    'sourceargs',
+    'sourceeventargs',
+})
+
+#: The automatic variables, lowercased, that a session does not start with and the engine may
+#: create while the script runs, outside an event action: `$Matches` at the first `-match`,
+#: `$foreach` in a `foreach` loop, `$_` and `$PSItem` in a pipeline body, `$LASTEXITCODE` once a
+#: program has run. A listing of the variable table names one of these only where the run has made
+#: it, which nothing here decides.
+RUNTIME_VARIABLES: frozenset[str] = (
+    PS1_AUTOMATIC_VARIABLES
+    - frozenset(_name.lower() for _name in SESSION_VARIABLES)
+    - EVENT_ACTION_VARIABLES
+)
 
 PS1_KNOWN_VARIABLES: dict[str, str] = {
     name.lower(): name for name in [
@@ -1332,6 +1665,98 @@ def member_names(name: str | Ps1TypeName) -> list[str] | None:
     """
     members = view_members(name)
     return None if members is None else sorted(members)
+
+
+class Ps1MemberView(enum.Enum):
+    """
+    The listings of a value's members a script can filter by name, each as 5.1 builds it.
+    """
+    #: `Get-Member` on a value: its instance methods and properties and its extended members.
+    INSTANCE = 'instance'
+    #: `Get-Member -Static` on a type: its static methods, properties and fields, those it inherits
+    #: included, and `new` where the type has a constructor.
+    STATIC = 'static'
+    #: `.psobject.Methods`: the instance methods, the accessors of the instance properties, and the
+    #: extended methods.
+    METHODS = 'methods'
+    #: `.psobject.Properties`: the instance properties and the extended properties.
+    PROPERTIES = 'properties'
+    #: `Get-Member -MemberType Method` on a value: its reflected instance methods.
+    METHOD = 'method'
+    #: `Get-Member -MemberType Property` on a value: its reflected instance properties.
+    PROPERTY = 'property'
+
+
+#: The views that list a reflected instance method, a reflected instance property, an extended
+#: method and an extended property, in that order.
+_METHOD_VIEWS = frozenset({Ps1MemberView.INSTANCE, Ps1MemberView.METHODS, Ps1MemberView.METHOD})
+_PROPERTY_VIEWS = frozenset({Ps1MemberView.INSTANCE, Ps1MemberView.PROPERTIES, Ps1MemberView.PROPERTY})
+_EXTENDED_METHOD_VIEWS = frozenset({Ps1MemberView.INSTANCE, Ps1MemberView.METHODS})
+_EXTENDED_PROPERTY_VIEWS = frozenset({Ps1MemberView.INSTANCE, Ps1MemberView.PROPERTIES})
+
+
+def _member_is_static(member: dict) -> tuple[bool, bool]:
+    """
+    Whether *member* has an instance form and whether it has a static one; a method may have both
+    among its overloads.
+    """
+    if member['kind'] == 'method':
+        flags = {overload['static'] for overload in member['overloads']}
+        return False in flags, True in flags
+    static = bool(member.get('static'))
+    return not static, static
+
+
+def member_listing(name: str | Ps1TypeName, view: Ps1MemberView) -> frozenset[str] | None:
+    """
+    The member names 5.1 lists for a value of the type *name* in *view*, or `None` where the type
+    does not resolve, is an enum, or is a WMI class, whose listings no measurement here describes.
+
+    Measured on eight types against the host's own listings, this equals them up to three gaps the
+    collected surface cannot close: an event and its `add_` and `remove_` accessors are not collected,
+    nor is a property set, so the host lists more than this does; and an indexer is not marked, so
+    `PROPERTIES` and `PROPERTY` hold one the host leaves out — `Chars` on a string. Each gap goes one
+    way within a view, so a pattern the host matches exactly once matches nothing else here.
+    """
+    key = _member_surface(name)
+    if key is None or key in _WMI_TYPES:
+        return None
+    record = _type_record(key)
+    if record is None or record.get('kind') == 'enum':
+        return None
+    names: set[str] = set()
+    if view is Ps1MemberView.STATIC:
+        if record.get('constructors'):
+            names.add('new')
+        cursor: dict | None = record
+        while cursor is not None:
+            for member_name, member in cursor['members'].items():
+                if member['source'] == 'reflection' and _member_is_static(member)[1]:
+                    names.add(member_name)
+            base = cursor.get('base')
+            surface = _member_surface(base) if base else None
+            cursor = _type_record(surface) if surface else None
+        return frozenset(names)
+    for member_name, member in record['members'].items():
+        kind = member['kind']
+        if member['source'] == 'ets':
+            views = _EXTENDED_METHOD_VIEWS if kind.endswith('method') else _EXTENDED_PROPERTY_VIEWS
+            if view in views:
+                names.add(member_name)
+            continue
+        if member['source'] != 'reflection' or kind not in _VIEW_MEMBER_KINDS:
+            continue
+        if not _member_is_static(member)[0]:
+            continue
+        method = kind == 'method'
+        if view in (_METHOD_VIEWS if method else _PROPERTY_VIEWS):
+            names.add(member_name)
+        if view is Ps1MemberView.METHODS and not method:
+            if member.get('readable'):
+                names.add(F'get_{member_name}')
+            if member.get('writable'):
+                names.add(F'set_{member_name}')
+    return frozenset(names)
 
 
 def _enum_of(name: str | Ps1TypeName) -> _EnumTable | None:

@@ -4,6 +4,7 @@ from test import TestBase
 
 from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.ps1.ast import (
+    binding_fails,
     bound_argument_value,
     free_positional_values,
     get_command_name,
@@ -338,6 +339,39 @@ class TestPs1FreePositionalValues(TestBase):
 
     def test_an_unknown_command_binds_every_positional(self):
         self.assertEqual(self._values("Frobnicate -Foo x 'b'", 'frobnicate'), ['x', 'b'])
+
+
+class TestPs1BindingFails(TestBase):
+
+    def test_an_invocation_the_binder_rejects_fails(self):
+        for source in (
+            "Get-Command -N 'x'",
+            "Set-Item -P 'Variable:x' 5",
+            'Get-Variable x -Bogus',
+            'Get-Variable x zzq -ValueOnly',
+            "Set-Variable x 'a' 'b'",
+            "Set-Item Variable:x 'a' 'b'",
+            'Get-Date @a',
+            'mkdir -Bogus x',
+        ):
+            with self.subTest(source):
+                self.assertTrue(binding_fails(_command(source)))
+
+    def test_an_invocation_the_binder_accepts_does_not_fail(self):
+        for source in (
+            "Get-Command -Na 'x'",
+            'Get-Variable x -v',
+            'Set-Variable -N x -Va 5',
+            "Write-Output 'a' 'b'",
+            "Write-Host 'a' 'b' -Separator '-'",
+            'powershell.exe -e x',
+            'Clear-Host -Bogus',
+            'zzq -Bogus a b c',
+            "Set-Variable -Scope Global y 'b'",
+            "Set-Item -Path Variable:y -Value 'b'",
+        ):
+            with self.subTest(source):
+                self.assertFalse(binding_fails(_command(source)))
 
 
 class TestPs1ImplicitGetRetry(TestBase):

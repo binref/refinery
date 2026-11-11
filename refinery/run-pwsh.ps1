@@ -812,10 +812,17 @@ foreach ($available in Get-Module -ListAvailable) {
     catch { Write-Error ("import {0}: {1}" -f $available.Name, $_.Exception.Message) }
 }
 Get-Alias | Sort-Object Name | ForEach-Object {
-    [pscustomobject]@{ Name = $_.Name; Definition = $_.Definition }
+    [pscustomobject]@{ Name = $_.Name; Definition = $_.Definition; Module = [string]$_.ModuleName }
 }
 '@
-    foreach ($record in $aliasRecords) { $aliases[$record.Name] = $record.Definition }
+    # The module an alias comes from is kept apart from its definition: a listing of the whole
+    # command table never holds the aliases the engine defines without a module, and no module
+    # folder the machine adds can list one of them twice.
+    $aliasModules = [ordered]@{}
+    foreach ($record in $aliasRecords) {
+        $aliases[$record.Name] = $record.Definition
+        $aliasModules[$record.Name] = $record.Module
+    }
 
     $variables = [ordered]@{}
     $variableRecords = Invoke-Pristine -Label 'Get-Variable' -Script @'
@@ -919,6 +926,7 @@ Get-Variable | Sort-Object Name | ForEach-Object {
             common_parameters = @($commonParameters)
             commands          = $commands
             aliases           = $aliases
+            alias_modules     = $aliasModules
         }
         'pwsh-variables.json' = [ordered]@{ variables = $variables }
         'pwsh-wmi.json'       = [ordered]@{ namespaces = $namespaces }

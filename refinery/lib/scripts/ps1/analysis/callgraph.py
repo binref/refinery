@@ -23,33 +23,43 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.analysis.dominance import DominatorModel
 
 from refinery.lib.scripts import Node
+from refinery.lib.scripts.ps1.analysis.listing import (
+    Ps1Listed,
+    Ps1NameNarrowing,
+    functions_listed,
+    get_command_selection,
+    lookup_may_raise,
+    lookup_selection,
+    name_narrowing,
+)
 from refinery.lib.scripts.ps1.analysis.world import (
     Ps1TypeWorld,
     command_definition_keyword_binding,
     runs_code_it_cannot_read,
 )
 from refinery.lib.scripts.ps1.ast import (
+    COMMAND_LOOKUP_METHODS,
     assignment_target_variables,
-    bound_argument_value,
-    free_positional_values,
     get_command_name,
     get_member_name,
     get_param_block,
     has_wildcard,
     implicit_get_retry,
     is_execution_context_invoke,
+    is_null_discard,
     is_opaque_dispatch,
     is_scriptblock_invoke,
+    is_void_cast,
     may_create_a_scriptblock,
     member_may_be,
     normalize_command_name,
     resolve_command_name,
-    string_value,
 )
 from refinery.lib.scripts.ps1.data import KNOWN_CMDLETS
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1AssignmentExpression,
+    Ps1CastExpression,
     Ps1CommandArgument,
     Ps1CommandInvocation,
     Ps1FunctionDefinition,
@@ -177,8 +187,7 @@ class Ps1CallGraph:
         unattributed_sites: Sequence[Node],
         readable: bool,
         exports: bool,
-        handed_out: frozenset[str] = frozenset(),
-        hands_out_every: bool = False,
+        handed_out: Ps1Listed = Ps1Listed(),
     ):
         self._definitions = dict(definitions)
         self._keyword_definitions = dict(keyword_definitions)
@@ -187,18 +196,17 @@ class Ps1CallGraph:
         self._readable = readable
         self._exports = exports
         self._handed_out = handed_out
-        self._hands_out_every = hands_out_every
 
     def hands_out(self, name: str) -> bool:
         """
         Whether the script may reach the body of the function *name* other than by calling it by
-        name: it reads `$function:K`, writes a path into the `function:` drive, asks `Get-Command`
-        for it, looks a command up through `$ExecutionContext` or `$PSCmdlet`, reads
-        `$MyInvocation` inside it, or does any of these where the name cannot be read. A body handed
-        out this way may run wherever something runs a block, so no list of call sites is the list of
-        places it runs.
+        name: it reads `$function:K`, writes a path into the `function:` drive, looks the command
+        table up by `Get-Command` or through `$ExecutionContext` or `$PSCmdlet` in a way that may
+        list it, reads `$MyInvocation` inside it, or does any of these where the name cannot be
+        read. A body handed out this way may run wherever something runs a block, so no list of
+        call sites is the list of places it runs.
         """
-        return self._hands_out_every or normalize_command_name(name) in self._handed_out
+        return self._handed_out.holds(normalize_command_name(name))
 
     def named_callers(self, body: Node) -> list[Node] | None:
         """
@@ -373,10 +381,11 @@ class Ps1CallGraph:
         An unreadable graph answers with every name it saw, defined or called, since a name reached
         from outside is reached by a path this cannot trace.
         """
-        if not self._readable or self._hands_out_every:
+        if not self._readable or self._handed_out.every:
             return frozenset(self._definitions) | frozenset(self._call_sites)
         calls_from: dict[str | None, set[str]] = {}
-        calls_from[None] = set(self._handed_out)
+        calls_from[None] = set(self._handed_out.names) | {
+            name for name in self._definitions if self._handed_out.holds(name)}
         for name, sites in self._call_sites.items():
             for site in sites:
                 calls_from.setdefault(site.caller, set()).add(name)
@@ -670,15 +679,17 @@ def build_call_graph(
     readable = world.command_table_closed
     exports = False
     handed_out: set[str] = set()
+    handed_out_patterns: list[str] = []
     hands_out_every = False
     for node in root.walk_in_order():
         if isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember)) and runs_code_it_cannot_read(node):
             unattributed_sites.append(node)
         handing = _functions_handed_out(node)
-        if handing is None:
+        if handing is None or handing.every:
             hands_out_every = True
         else:
-            handed_out.update(handing)
+            handed_out.update(handing.names)
+            handed_out_patterns.extend(handing.patterns)
         if isinstance(node, Ps1FunctionDefinition):
             if not _is_class_method(node):
                 definitions.setdefault(normalize_command_name(node.name), []).append(node)
@@ -719,97 +730,103 @@ def build_call_graph(
         unattributed_sites,
         readable,
         exports,
-        frozenset(handed_out),
-        hands_out_every,
+        Ps1Listed(frozenset(handed_out), tuple(handed_out_patterns), hands_out_every),
     )
 
 
-_COMMAND_LOOKUPS = frozenset({
-    'getcmdlet',
-    'getcmdletbytypename',
-    'getcmdlets',
-    'getcommand',
-    'getcommandname',
-    'getcommands',
-})
-
-
-def _functions_handed_out(node: Node) -> tuple[str, ...] | None:
+def _functions_handed_out(node: Node) -> Ps1Listed | None:
     """
-    The keys of the functions *node* may hand out as a value rather than call, or `None` where it
-    may hand out any of them: a `$function:K` occurrence; a string that names a path into
-    the `function:` drive; `Get-Command`; a command lookup through `$ExecutionContext` or
-    `$PSCmdlet`; `$MyInvocation` read inside a function body, which hands out that function. An item
-    command whose path cannot be read is the residual the world model documents for the same
-    commands: refusing on it would refuse every script that copies or deletes a file by variable.
+    The functions *node* may hand out as a value rather than call, or `None` where it may hand out
+    any of them: a `$function:K` occurrence; a string that names a path into the `function:` drive;
+    a lookup of the command table by `Get-Command` or through `$ExecutionContext` or `$PSCmdlet`;
+    `$MyInvocation` read inside a function body, which hands out that function. An item command
+    whose path cannot be read is the residual the world model documents for the same commands:
+    refusing on it would refuse every script that copies or deletes a file by variable.
+
+    A lookup hands out what it lists (`refinery.lib.scripts.ps1.analysis.listing.functions_listed`):
+    the function a literal names once its escapes are removed, those a pattern matches, and every
+    function where it names none, narrowed by a `Where-Object` filter on the name it is piped into.
+    Whatever is read off its result — its `.Name` as much as the object — tells the function's
+    presence apart from its absence, so a lookup hands out nothing only where its value is
+    discarded and it cannot raise: a literal that finds nothing raises, a pattern does not.
     """
     if isinstance(node, Ps1Variable):
         if node.scope is Ps1ScopeModifier.FUNCTION:
-            return (normalize_command_name(node.name),)
+            return Ps1Listed(names=frozenset({normalize_command_name(node.name)}))
         if node.scope is Ps1ScopeModifier.NONE and node.name.lower() == 'myinvocation':
             cursor = node.parent
             while cursor is not None:
                 if isinstance(cursor, Ps1FunctionDefinition):
-                    return (normalize_command_name(cursor.name),)
+                    return Ps1Listed(names=frozenset({normalize_command_name(cursor.name)}))
                 cursor = cursor.parent
-        return ()
+        return Ps1Listed()
     if isinstance(node, (Ps1StringLiteral, Ps1HereString)):
-        return _function_paths_in(node.value)
+        names = _function_paths_in(node.value)
+        return None if names is None else Ps1Listed(names=frozenset(names))
     if isinstance(node, Ps1CommandInvocation):
-        if resolve_command_name(node) == 'get-command' and not _only_a_member_is_read(node):
-            return _command_looked_up(node)
-        return ()
+        if resolve_command_name(node) != 'get-command':
+            return Ps1Listed()
+        selection = get_command_selection(node)
+        if selection is not None and _value_is_discarded(node) and not lookup_may_raise(selection):
+            return Ps1Listed()
+        return functions_listed(selection, _narrowing_after(node))
     if isinstance(node, Ps1InvokeMember) and node.access is Ps1AccessKind.INSTANCE:
-        if not member_may_be(node.member, _COMMAND_LOOKUPS):
-            return ()
+        if not member_may_be(node.member, COMMAND_LOOKUP_METHODS | {'invoke'}):
+            return Ps1Listed()
         receiver = node.object
         while isinstance(receiver, Ps1MemberAccess):
             receiver = receiver.object
         if isinstance(receiver, Ps1Variable) and receiver.name.lower() in ('executioncontext', 'pscmdlet'):
-            return None
-    return ()
+            return functions_listed(lookup_selection(node))
+    return Ps1Listed()
 
 
-def _command_looked_up(command: Ps1CommandInvocation) -> tuple[str, ...] | None:
+def _narrowing_after(command: Ps1CommandInvocation) -> Ps1NameNarrowing | None:
     """
-    The key of the function `Get-Command` *command* looks up by name, or `None` where it may list
-    any of them: the name is the value bound to `-Name`, written as such or as the first argument
-    no parameter takes. Every other selection, `-CommandType Function` and `-Verb` among them, and
-    a splat, whose table this cannot see into, lists every function its filter passes.
+    The narrowing of the `Where-Object` stage *command* is piped into, if it is one.
     """
-    for argument in command.arguments:
-        if not isinstance(argument, Ps1CommandArgument):
-            return None
-        value = argument.value
-        if isinstance(value, Ps1Variable) and value.splatted:
-            return None
-    written = bound_argument_value(command, 'name')
-    if written is None:
-        written = next(iter(free_positional_values(command, 'get-command')), None)
-    text = None if written is None else string_value(written)
-    if text is None or has_wildcard(text):
+    element = command.parent
+    if not isinstance(element, Ps1PipelineElement):
         return None
-    return (normalize_command_name(text),)
+    pipeline = element.parent
+    if not isinstance(pipeline, Ps1Pipeline):
+        return None
+    elements = pipeline.elements
+    for index, candidate in enumerate(elements[:-1]):
+        if candidate is element:
+            return name_narrowing(elements[index + 1])
+    return None
 
 
-def _only_a_member_is_read(command: Ps1CommandInvocation) -> bool:
+def _value_is_discarded(command: Ps1CommandInvocation) -> bool:
     """
-    Whether what *command* writes out is used only for one member other than the block it carries,
-    where it stands, as `(Get-Command K).Name` uses it: nothing that runs the body leaves.
+    Whether what *command* writes out is thrown away where it stands, as `$Null = (Get-Command
+    K).Name` throws it away: the target of a `$Null` assignment holds it, or a `[void]` cast, read
+    through the parentheses, the one-stage pipeline and the member reads between them. Nothing that
+    runs a block is read, so a `.ScriptBlock` on the way keeps it.
     """
     cursor: Node = command
     parent = cursor.parent
-    if isinstance(parent, Ps1PipelineElement) and not parent.redirections:
-        pipeline = parent.parent
-        if not isinstance(pipeline, Ps1Pipeline) or len(pipeline.elements) != 1:
-            return False
-        cursor, parent = pipeline, pipeline.parent
-    while isinstance(parent, Ps1ParenExpression):
-        cursor, parent = parent, parent.parent
-    if not isinstance(parent, Ps1MemberAccess) or parent.object is not cursor:
-        return False
-    name = get_member_name(parent.member)
-    return name is not None and name.lower() != 'scriptblock'
+    while True:
+        if isinstance(parent, Ps1PipelineElement) and not parent.redirections:
+            pipeline = parent.parent
+            if not isinstance(pipeline, Ps1Pipeline) or len(pipeline.elements) != 1:
+                return False
+            cursor, parent = pipeline, pipeline.parent
+            continue
+        if isinstance(parent, Ps1ParenExpression):
+            cursor, parent = parent, parent.parent
+            continue
+        if isinstance(parent, Ps1MemberAccess) and parent.object is cursor:
+            name = get_member_name(parent.member)
+            if name is None or name.lower() == 'scriptblock':
+                return False
+            cursor, parent = parent, parent.parent
+            continue
+        break
+    if isinstance(parent, Ps1AssignmentExpression) and parent.value is cursor:
+        return is_null_discard(parent)
+    return isinstance(parent, Ps1CastExpression) and is_void_cast(parent)
 
 
 def _function_paths_in(text: str) -> tuple[str, ...] | None:

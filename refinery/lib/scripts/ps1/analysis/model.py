@@ -867,6 +867,7 @@ class Ps1SemanticModel:
         self._removed: set[str] = set()
         self._constrained: set[str] = set()
         self._doubts_every_scope = False
+        self._doubt_sources: list[Node] = []
         self._populate(self.root_scope)
         if self._doubts_every_scope:
             for scope in self.scopes():
@@ -1097,6 +1098,17 @@ class Ps1SemanticModel:
         """
         return any(scope.writes_unreadable_names for scope in self.scopes())
 
+    @property
+    def doubt_sources(self) -> tuple[Node, ...]:
+        """
+        The nodes that set up a write `writes_unreadable_names` records: a command aiming a name
+        nobody can read at the script scope or at a scope no lexical chain names, and a read of the
+        session state that may hand it on. The write itself has no point anything orders, but it
+        cannot land before its source has been evaluated, so a read every source runs after is a
+        read no such write precedes.
+        """
+        return tuple(self._doubt_sources)
+
     def _populate(self, scope: Scope):
         for node in scope_local_nodes(scope.node):
             if isinstance(node, Ps1ScriptBlock):
@@ -1177,7 +1189,7 @@ class Ps1SemanticModel:
         lexical chain cannot name — is a fact about the scope as a whole.
         """
         if unreadable is not None and unreadable is not Ps1NameTarget.LOCAL:
-            self._doubt(unreadable, current)
+            self._doubt(unreadable, current, node)
         if reads_unreadable_name(node):
             self._reads_unreadable_names = True
         for reference in references:
@@ -1203,19 +1215,21 @@ class Ps1SemanticModel:
             return self.root_scope
         if reference.target is Ps1NameTarget.LOCAL:
             return current
-        self._doubt(Ps1NameTarget.UNREADABLE, current)
+        self._doubt(Ps1NameTarget.UNREADABLE, current, reference.node)
         return None
 
-    def _doubt(self, target: Ps1NameTarget, current: Scope) -> None:
+    def _doubt(self, target: Ps1NameTarget, current: Scope, source: Node) -> None:
         """
         Record that a write nobody can attribute lands in *target*, so every binding it could reach
-        is in doubt.
+        is in doubt, and that *source* is where it is set up: no such write can land before *source*
+        has been evaluated, which is what `doubt_sources` are kept for.
 
         A target the lexical chain cannot name reaches anywhere: a variable handed out of a listing,
         or the session state handed on, is written through from whatever scope runs the store, which
         may be any body of the script. So every scope is marked, once the walk has made them all:
         under-marking here is a fold across a write, which is the direction that corrupts.
         """
+        self._doubt_sources.append(source)
         if target is Ps1NameTarget.SCRIPT:
             self.root_scope.writes_unreadable_names = True
             return
