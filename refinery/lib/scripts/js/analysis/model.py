@@ -496,9 +496,8 @@ class AnnexBCopy:
     def observed(self) -> bool:
         """
         Whether anything may read what the copy stores: *var* is read, named inside a `with` body,
-        exported, or carried by an object the program hands a call. A direct `eval` or another
-        reflective surface that could name *var* could name *block* too, the two sharing a variable
-        scope, and `SemanticModel.reflection_can_reach` answers that question for both.
+        exported, or carried by an object the program hands a call. Reflection is not asked here:
+        `SemanticModel.reflection_can_reach` answers for *block* whatever reaches *var*.
         """
         var = self.var
         return bool(
@@ -3980,17 +3979,6 @@ class SemanticModel:
         """
         return self.environment.reads_stored_value(name) or self._names_an_entrypoint(name)
 
-    def host_calls_global(self, name: str) -> bool:
-        """
-        Whether a host calls the function the file stores under *name* from outside the file: the
-        host *environment* calls the event handler stored in that property of the global object
-        (`refinery.lib.scripts.js.analysis.environment.HostEnvironment.calls_handler`), or the
-        analyst declared the name one a host calls by name (`_names_an_entrypoint`). Every such name
-        is one whose value a host reads (`host_reaches_global`); a browser reads `location` and
-        calls nothing stored there. A question about a binding asks `called_by_the_host`.
-        """
-        return self.environment.calls_handler(name) or self._names_an_entrypoint(name)
-
     def _names_an_entrypoint(self, name: str) -> bool:
         """
         Whether the analyst declared *name* one a host calls by name (*host_entrypoint*).
@@ -4345,24 +4333,27 @@ class SemanticModel:
         """
         Whether code running in the global scope, which every reflective surface but a direct `eval`
         runs, can name *binding* in some way the file may run: it finds the binding
-        (`global_code_finds`), or the binding is one of the top scope that may be absent, which
-        leaves its name to a global in the reading without it (`Binding.may_be_absent`).
+        (`global_code_finds`), or the binding leaves its name to a global where it is absent
+        (`_leaves_its_name_to_a_global`).
         """
-        return self.global_code_finds(binding) or (
-            binding.may_be_absent and binding.scope is self.root_scope
-        )
+        return self.global_code_finds(binding) or self._leaves_its_name_to_a_global(binding)
 
     def _global_object_may_hold(self, binding: Binding) -> bool:
         """
         Whether *binding* is a property of the global object in some way the file may run, which a
         store into the object under a key only the runtime knows may replace: it is one
-        (`reaches_global_object`), or it is a binding of the top scope that may be absent, whose name
-        is left to the global object in the reading without it (`Binding.may_be_absent`). A
-        top-level `let`, `const` or `class` of a script is not, and no such store reaches it.
+        (`reaches_global_object`), or it leaves its name to the global object where it is absent
+        (`_leaves_its_name_to_a_global`). A top-level `let`, `const` or `class` of a script is not,
+        and no such store reaches it.
         """
-        return self.reaches_global_object(binding) or (
-            binding.may_be_absent and binding.scope is self.root_scope
-        )
+        return self.reaches_global_object(binding) or self._leaves_its_name_to_a_global(binding)
+
+    def _leaves_its_name_to_a_global(self, binding: Binding) -> bool:
+        """
+        Whether *binding* is one of the top scope that may be absent, which leaves its name to a
+        global in the reading without it (`Binding.may_be_absent`).
+        """
+        return binding.may_be_absent and binding.scope is self.root_scope
 
     def _named_by_code_of_its_function(self, binding: Binding) -> bool:
         """
@@ -4395,6 +4386,17 @@ class SemanticModel:
         the file: global-scope code cannot name it, so it is reached the way a function-local is,
         from the file's own text only (`reflection_can_reach_from_its_scope`). An implicit global
         stays a global.
+
+        A function declared in a block is reached wherever the `var` Annex B copies it into is
+        (`AnnexBCopy.observed`): code run from a string at the top of a script calls such a
+        function through the copy, never through the binding of the block.
+        """
+        return _itself_or_its_annex_b_copy(binding, self._reflection_can_name)
+
+    def _reflection_can_name(self, binding: Binding) -> bool:
+        """
+        Whether a runtime name lookup could read or write *binding* under its own name, as
+        `reflection_can_reach` describes it.
         """
         if self._global_code_may_name(binding):
             if self.has_reflection_surface():
@@ -4643,9 +4645,9 @@ class SemanticModel:
         A binding global code names (`_global_code_may_name`) answers `None` under any
         whole-program reflective surface, which could write the name from anywhere. Without one, a
         property of the global object is replaceable only by an opaque global write, and the
-        existing `opaque_global_write_replacement_sites` answer is the whole of it, while a top-level
-        `let`, `const` or `class` of a script, which no store into the object reaches, answers no
-        site. A function-local can change value only through a surface standing in its
+        existing `opaque_global_write_replacement_sites` answer is the whole of it, while a
+        top-level `let`, `const` or `class` of a script, which no store into the object reaches,
+        answers no site. A function-local can change value only through a surface standing in its
         own scope: a direct `eval` in its owning function or a span of that function this model
         never read (`reflection_surface_sites`), or a reference a `with` body resolves at runtime
         (`dynamic_references`). Every `with`-governed reference counts, read or not — reading the

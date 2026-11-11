@@ -69,8 +69,8 @@ def localization_target(
     may target the binding's own name, which a relocation would no longer receive. A name no
     declaration binds also needs every store into it to create a property of the global object
     (`_a_store_creates_a_property`), and a binding global code finds under its name
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.global_code_finds`) needs a file that runs
-    no code its text does not hold
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.global_code_finds`) needs a file that
+    runs no code its text does not hold
     (`refinery.lib.scripts.js.analysis.effects.EffectModel.may_run_code_it_does_not_hold`), which
     may read or change it there.
     """

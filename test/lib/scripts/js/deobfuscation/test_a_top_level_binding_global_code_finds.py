@@ -3,6 +3,9 @@ from __future__ import annotations
 import inspect
 import unittest
 
+from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.units.scripting.djs import djs
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, host_behavior, node_executable
@@ -173,6 +176,29 @@ class TestALetInABlockIsNoNameGlobalCodeFinds(TestBase):
         output = deobfuscated(source, strict=True)
         self.assertNotIn('dead', output)
         self.assertEqual(host_behavior(source), host_behavior(output), output)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestCodeRunFromAStringCallsAFunctionDeclaredInABlockThroughItsCopy(TestBase):
+
+    _SOURCE = inspect.cleandoc(
+        """
+        {
+          function f() {
+            return 'x';
+          }
+          console.log(f());
+        }
+        Function(process.argv.length > 99 ? '' : 'console.log(f())')();
+        """
+    )
+
+    def test_the_function_evaluator_keeps_the_function(self):
+        ast = JsParser(self._SOURCE).parse()
+        JsFunctionEvaluator().visit(ast)
+        output = JsSynthesizer().convert(ast)
+        self.assertEqual(host_behavior(self._SOURCE), ('x\nx\n', None))
+        self.assertEqual(host_behavior(self._SOURCE), host_behavior(output), output)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

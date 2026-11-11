@@ -25,6 +25,7 @@ from test.lib.scripts.js.analysis.differential import (
     host_behavior,
     node_executable,
 )
+from test.lib.scripts.js.ledger import STRING_TIMERS
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -2172,6 +2173,14 @@ class TestTheHostRunsAClassicScript(TestBase):
     def test_an_error_ends_the_run_with_its_type(self):
         self.assertEqual(host_behavior('let k = 5;\nnull.x;'), ('', 'TypeError'))
         self.assertEqual(host_behavior('let = ;'), ('', 'SyntaxError'))
+
+    def test_a_string_timer_runs_its_string_as_a_classic_script(self):
+        source = "setTimeout('let k = 1;', 0);\nsetTimeout('console.log(k)', 10);"
+        self.assertEqual(host_behavior(source, prelude=STRING_TIMERS), ('1\n', None))
+
+    def test_a_timer_hands_its_function_every_argument_the_call_passes(self):
+        source = "setTimeout(function (a) { console.log(a); }, 0, 'x');"
+        self.assertEqual(host_behavior(source, prelude=STRING_TIMERS), ('x\n', None))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

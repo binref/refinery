@@ -182,15 +182,16 @@ def deobfuscated_host_behavior(
     return host_behavior(folded(source, environment=environment))
 
 
-#: The string timers of a browser, which Node refuses: the HTML standard runs the string as a
-#: classic script of the global scope when the timer fires.
+#: The string form of the `setTimeout` of a browser, which Node refuses: the HTML standard runs the
+#: string as a classic script of the global scope when the timer fires. A function is scheduled
+#: with every argument the call passes.
 STRING_TIMERS = a_program("""
     (function () {
       var setTimeoutOfNode = setTimeout;
-      globalThis.setTimeout = function (code, delay) {
+      globalThis.setTimeout = function (code, ...rest) {
         return setTimeoutOfNode(typeof code === 'string' ? function () {
           require('vm').runInThisContext(code);
-        } : code, delay);
+        } : code, ...rest);
       };
     })();
     """)

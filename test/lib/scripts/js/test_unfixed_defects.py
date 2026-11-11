@@ -5389,6 +5389,67 @@ class TestAnUnpackedBodyKeepsItsOwnDeclarationsFromTheLaterScriptsOfThePage(Test
         output = source.encode('utf8') | djs() | str
         self.assertEqual(host_behavior(output, calls=('j',)), host_behavior(source, calls=('j',)))
 
+    @wontfix(
+        'code the file runs from a string it cannot read that looks up a name a packed function '
+        'body declares for itself is a shape made up for the defect'
+    )
+    def test_code_run_from_a_string_the_file_cannot_read_finds_no_name_the_body_declares(self):
+        source = (
+            "Function('let k = 1; console.log(k)')();\n"
+            "setTimeout(process.argv.length > 99 ? '' : 'console.log(typeof k)', 0);"
+        )
+        output = source.encode('utf8') | djs(strict=True) | str
+        self.assertEqual(
+            host_behavior(output, prelude=STRING_TIMERS),
+            host_behavior(source, prelude=STRING_TIMERS),
+        )
+
+
+A_WRAPPER_CODE_OUTSIDE_THE_TEXT_CALLS = {
+    'an entrypoint the analyst names': (
+        "function run() { return 'x'; }\nconsole.log(run());",
+        ('run',),
+    ),
+    'the onload handler of a window': (
+        "function onload() { return 'x'; }\nconsole.log(onload());",
+        (),
+    ),
+    'code run from a string the file cannot read': (
+        "function f() { return 'x'; }\nconsole.log(f());\n"
+        "Function(process.argv.length > 99 ? '' : 'console.log(f())')();",
+        (),
+    ),
+    'code run from a string the file cannot read, calling a function declared in a block': (
+        "{ function f() { return 'x'; } console.log(f()); }\n"
+        "Function(process.argv.length > 99 ? '' : 'console.log(f())')();",
+        (),
+    ),
+}
+
+
+def behavior_where_a_host_calls_run_and_onload(source: str) -> tuple[str, str | None]:
+    return host_behavior(source, calls=('run',), handlers=('onload',))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAWrapperFunctionIsKeptWhereCodeOutsideTheTextCallsIt(TestBase):
+
+    @todo
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        rows = A_WRAPPER_CODE_OUTSIDE_THE_TEXT_CALLS
+        self.assertEqual(
+            {
+                label: behavior_where_a_host_calls_run_and_onload(
+                    source.encode('utf8') | djs(*entrypoints) | str
+                )
+                for label, (source, entrypoints) in rows.items()
+            },
+            {
+                label: behavior_where_a_host_calls_run_and_onload(source)
+                for label, (source, _) in rows.items()
+            },
+        )
+
 
 class TestAWildcardEntrypointKeepsOnlyTheFunctionsAHostCalls(TestBase):
 

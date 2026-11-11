@@ -125,7 +125,8 @@ def _as_global_script(
     """
     Node's `vm` runs *source* as a classic script: a top-level `var` or function declaration becomes
     a property of `globalThis`, and a top-level `let`, `const` or `class` a binding of the global
-    scope that every later script sees, which may load a module with `import()`. Each name in
+    scope that every later script sees, which may load a module with `import()` where Node has the
+    loader for it; without one the script still runs and only its `import()` throws. Each name in
     *calls* is then called by a script of its own, which finds it as a page's event handler
     attribute or a later script does, and called once more as the property of `globalThis` where
     that property holds something else, as it does for a top-level `let`. Each name in *handlers*
@@ -134,8 +135,9 @@ def _as_global_script(
     """
     lines = [prelude] if prelude else []
     lines.append(
-        'const runAsAScript = code => require("vm").runInThisContext(code, '
-        '{importModuleDynamically: require("vm").constants.USE_MAIN_CONTEXT_DEFAULT_LOADER});'
+        'const runAsAScript = (vm => code => vm.runInThisContext(code, vm.constants === undefined'
+        ' ? {} : {importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER}))'
+        '(require("vm"));'
     )
     lines.append(F'runAsAScript({json.dumps(source)});')
     for name in calls:
