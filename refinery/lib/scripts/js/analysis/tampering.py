@@ -561,9 +561,10 @@ class TamperingModel:
         code outside the file
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.callable_from_outside`), a
         script-scope name under any opaque surface (executable text in the global scope can
-        re-invoke it by name), or a function-local name reflection can reach in its own scope. A
-        function whose enumeration is complete is one whose listed invocations are every way its
-        body runs.
+        re-invoke it by name) or named by code a string spells
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.named_by_spelled_code`), or a
+        function-local name reflection can reach in its own scope. A function whose enumeration is
+        complete is one whose listed invocations are every way its body runs.
         """
         if self.model.callable_from_outside(function):
             return False
@@ -571,7 +572,7 @@ class TamperingModel:
         for binding in () if names is None else names.bindings:
             owner = binding.scope.var_scope
             if owner is None or owner.kind is ScopeKind.SCRIPT:
-                if self.model.has_reflection_surface():
+                if self.model.has_reflection_surface() or self.model.named_by_spelled_code(binding):
                     return False
             elif self.model.reflection_can_reach(binding):
                 return False

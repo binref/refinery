@@ -724,6 +724,10 @@ A_DEFAULT_THAT_RUNS_CODE_READING_AN_ELEMENT = greeted(
     "[scope.B.name, scope.B.mark = eval('scope.B.name')] = arg;"
 ).replace('{ A: scope.A, B: {} }', '{ B: {} }')
 
+A_DEFAULT_THAT_RUNS_CODE_THE_FILE_CANNOT_READ = A_DEFAULT_THAT_RUNS_CODE_READING_AN_ELEMENT.replace(
+    "eval('scope.B.name')", 'eval(code)'
+)
+
 A_MACHINE_INSIDE_A_FUNCTION_OF_A_MACHINE_WITH_A_WRAPPER_OF_THE_SAME_NAMES = PRELUDE + '\n' + inspect.cleandoc(
     """
     function grade(n) {
@@ -1031,15 +1035,23 @@ class TestArrayMachines(TestJsDeobfuscator):
             self._recovered(A_DEFAULT_THAT_IS_A_FUNCTION_WITHOUT_A_NAME),
         )
 
-    def test_a_default_that_runs_code_stays_in_the_argument_store_where_eval_is_trusted(self):
-        ast = JsParser(A_DEFAULT_THAT_RUNS_CODE_READING_AN_ELEMENT).parse()
+    @staticmethod
+    def _recovered_where_eval_is_trusted(source: str) -> str:
+        ast = JsParser(source).parse()
         for transformer in (JsFunctionEvaluator, JsStateMachineUnflattening):
             instance = transformer()
             instance.options = DeobfuscationOptions(trust_eval=True)
             instance.visit(ast)
-        recovered = JsSynthesizer().convert(ast)
+        return JsSynthesizer().convert(ast)
+
+    def test_a_default_that_runs_code_the_file_cannot_read_stays_in_the_argument_store_where_eval_is_trusted(self):
+        recovered = self._recovered_where_eval_is_trusted(A_DEFAULT_THAT_RUNS_CODE_THE_FILE_CANNOT_READ)
         self.assertNotIn('switch (sum(states))', recovered)
-        self.assertIn("[B.name, B.mark = eval('scope.B.name')] = r;", recovered)
+        self.assertIn('[B.name, B.mark = eval(code)] = r;', recovered)
+
+    def test_a_default_that_runs_code_reading_a_slot_of_the_store_keeps_the_machine_where_eval_is_trusted(self):
+        recovered = self._recovered_where_eval_is_trusted(A_DEFAULT_THAT_RUNS_CODE_READING_AN_ELEMENT)
+        self.assertIn('switch (sum(states))', recovered)
 
     @opportunity
     def test_a_machine_whose_class_reads_its_instance_under_a_key_from_a_table_of_the_machine_is_recovered(self):

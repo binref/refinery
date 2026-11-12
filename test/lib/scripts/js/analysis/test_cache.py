@@ -460,7 +460,7 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         body = '\n'.join(F"var c{i} = 'a' + 'b' + '{i}';" for i in range(count))
         return F'{body}\nSINK({", ".join(F"c{i}" for i in range(count))});'
 
-    def _builds(self, source: str) -> tuple[int, int, str]:
+    def _builds(self, source: str, options: DeobfuscationOptions | None = None) -> tuple[int, int, str]:
         counts = {'model': 0, 'effects': 0}
         real_model = cache_module.build_semantic_model
         real_effects = cache_module.build_effects
@@ -477,7 +477,10 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         cache_module.build_semantic_model = counting_model
         cache_module.build_effects = counting_effects
         try:
-            JsSimplifications().visit(script)
+            transform = JsSimplifications()
+            if options is not None:
+                transform.options = options
+            transform.visit(script)
         finally:
             cache_module.build_semantic_model = real_model
             cache_module.build_effects = real_effects
@@ -522,6 +525,13 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
     def test_a_number_fold_completing_a_key_read_as_naming_nothing_renews_the_models(self):
         completed = self._builds("window['a' + (1 + 1)] = 5;")[0]
         never = self._builds("window['a' + g()] = 5;")[0]
+        self.assertGreater(completed, never)
+
+    @a_property_of_the_pin_itself
+    def test_a_fold_spelling_the_code_a_call_runs_renews_the_models_of_the_trusting_model(self):
+        trusting = DeobfuscationOptions(trust_eval=True)
+        completed = self._builds("var k = 5;\nsetTimeout(atob('ayA9IDc='), 0);", trusting)[0]
+        never = self._builds('var k = 5;\nsetTimeout(atob(g()), 0);', trusting)[0]
         self.assertGreater(completed, never)
 
     @a_property_of_the_pin_itself

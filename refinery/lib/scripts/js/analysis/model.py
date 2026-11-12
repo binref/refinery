@@ -29,11 +29,12 @@ denote a property of the `with` object rather than a global.
 from __future__ import annotations
 
 import enum
+import functools
 
 from dataclasses import dataclass, field
 from typing import Callable, Collection, Iterator, NamedTuple, Sequence
 
-from refinery.lib.scripts import Node, Statement
+from refinery.lib.scripts import Node, Statement, spells_its_source
 from refinery.lib.scripts.js.analysis.environment import (
     COMMONJS_WRAPPER_PARAMETERS,
     FileKind,
@@ -53,6 +54,7 @@ from refinery.lib.scripts.js.keys import (
     key_named,
     key_spells,
     key_text,
+    spelled_text,
     string_spells,
 )
 from refinery.lib.scripts.js.lexer import is_identifier_name
@@ -132,7 +134,9 @@ from refinery.lib.scripts.js.model import (
     value_is_discarded,
 )
 from refinery.lib.scripts.js.numbers import canonical_array_index
+from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.strict import (
+    declares_use_strict,
     has_parameter_expressions,
     strict_mode_at,
 )
@@ -2625,6 +2629,161 @@ def _is_string_timer(call: JsCallExpression, assumptions: KeyAssumptions) -> boo
     return not isinstance(call.arguments[0], (JsFunctionExpression, JsArrowFunctionExpression))
 
 
+class SpelledCodeKind(enum.Enum):
+    """
+    The kind of code a call runs from a string, which decides how its text parses and where its
+    declarations land: the body of a function a construction of `Function` builds, the classic
+    script a string timer or `execScript` runs, or the eval code of a direct `eval`.
+    """
+    FUNCTION_BODY = 'function body'
+    CLASSIC_SCRIPT = 'classic script'
+    EVAL_CODE = 'eval code'
+
+
+class SpelledUse(enum.Enum):
+    """
+    How code a string spells uses a name: it reads it, writes it where the call running the code
+    stands, or writes it at some later time, from a function the code makes or from a timer.
+    """
+    READ = 'read'
+    WRITE_IN_PLACE = 'write in place'
+    WRITE_LATER = 'write later'
+
+
+class SpelledName(NamedTuple):
+    """
+    A name code a string spells uses outside itself, and how. A name *through_the_global_object*
+    is reached as a property of the global object under a fixed key (`globalThis.k`), any other as
+    a bare name.
+    """
+    name: str
+    through_the_global_object: bool
+    use: SpelledUse
+
+
+class SpelledCode(NamedTuple):
+    """
+    The reading of code a string spells (`read_spelled_code`): the model of its text, and every
+    name it uses outside itself.
+    """
+    fragment: SemanticModel
+    names: frozenset[SpelledName]
+
+
+class SpelledCodeSite(NamedTuple):
+    """
+    A call that runs code a string spells, the kind of that code, and its reading, `None` where the
+    code is opaque (`read_spelled_code`).
+    """
+    call: JsCallExpression | JsNewExpression
+    kind: SpelledCodeKind
+    code: SpelledCode | None
+
+
+class _SpelledUseSite(NamedTuple):
+    """
+    A call running code a string spells, and how that code uses one name.
+    """
+    site: JsCallExpression | JsNewExpression
+    use: SpelledUse
+
+
+_FUNCTION_ALIAS_HOPS = 3
+"""
+The longest chain of names, each declared with the next as its value, that the recognizer of a
+construction of `Function` follows to the intrinsic (`SemanticModel._constructs_a_function`).
+"""
+
+
+def construction_text(parameters: str, body: str) -> str:
+    """
+    The text of the function a construction of `Function` builds from the source of its
+    *parameters* and of its *body*, as an expression. The language ends each of the two with a line
+    feed, so a line comment in either ends there.
+    """
+    return F'(function ({parameters}\n) {{\n{body}\n}})'
+
+
+@functools.lru_cache(maxsize=512)
+def read_spelled_code(
+    kind: SpelledCodeKind,
+    parameters: str,
+    code: str,
+    strict: bool,
+    runs_in_place: bool,
+) -> SpelledCode | None:
+    """
+    Read *code* of the given *kind* as the trusting model reads a file: *parameters* are those of a
+    function body, *strict* says that eval code runs in strict mode, and *runs_in_place* that the
+    code runs where the call running it stands rather than later. The code is opaque, and the answer
+    `None`, where the text does not parse to a tree that spells it, or holds a reflective surface or
+    a store into the global object under a key only the runtime knows: either may name anything.
+    Otherwise the reading lists every name the code uses outside itself:
+
+    - each name a reference of it leaves free (`SemanticModel.free_references`);
+    - each name it reaches through the global object under a fixed key
+      (`SemanticModel.may_name_a_global`);
+    - each name the code it spells in turn uses, other than one a direct `eval` in it finds bound
+      in the code itself; such code may write it at any time;
+    - each declaration it lands outside itself: every one of a classic script, and the `var` and
+      function declarations of sloppy eval code.
+
+    A write is in place only where the code runs in place, outside every function it declares.
+    Memoized on the strings, so that a model rebuilt over the same file reads no text again.
+    """
+    text = construction_text(parameters, code) if kind is SpelledCodeKind.FUNCTION_BODY else code
+    try:
+        parsed = JsParser(text).parse()
+    except Exception:
+        return None
+    if not spells_its_source(parsed) or any(is_unread_source(node) for node in parsed.walk()):
+        return None
+    fragment = build_semantic_model(parsed, trust_eval=True)
+    if fragment.has_reflection_surface() or fragment.has_opaque_global_write():
+        return None
+    names: set[SpelledName] = set()
+
+    def written(node: Node) -> SpelledUse:
+        if runs_in_place and enclosing_function(node) is None:
+            return SpelledUse.WRITE_IN_PLACE
+        return SpelledUse.WRITE_LATER
+
+    for reference in fragment.free_references():
+        use = SpelledUse.READ if reference_role(reference) is Role.READ else written(reference)
+        names.add(SpelledName(reference.name, False, use))
+    for node in parsed.walk():
+        if not isinstance(node, JsMemberExpression):
+            continue
+        name = fragment.may_name_a_global(node)
+        if name is None:
+            continue
+        names.add(SpelledName(name, True, SpelledUse.READ))
+        if is_member_write_target(node):
+            names.add(SpelledName(name, True, written(node)))
+    for site in fragment.spelled_code_sites():
+        if site.code is None:
+            continue
+        for spelled in site.code.names:
+            if site.kind is SpelledCodeKind.EVAL_CODE and not spelled.through_the_global_object:
+                binding = fragment.lookup(spelled.name, fragment.scope_of(site.call))
+                if binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL:
+                    continue
+            use = SpelledUse.READ if spelled.use is SpelledUse.READ else SpelledUse.WRITE_LATER
+            names.add(SpelledName(spelled.name, spelled.through_the_global_object, use))
+    if (
+        kind is SpelledCodeKind.CLASSIC_SCRIPT
+        or (kind is SpelledCodeKind.EVAL_CODE and not strict and not declares_use_strict(parsed))
+    ):
+        landing = SpelledUse.WRITE_IN_PLACE if runs_in_place else SpelledUse.WRITE_LATER
+        for binding in fragment.root_scope.bindings.values():
+            if binding.kind is BindingKind.IMPLICIT_GLOBAL:
+                continue
+            if kind is SpelledCodeKind.EVAL_CODE and binding.is_lexical:
+                continue
+            names.add(SpelledName(binding.name, False, landing))
+    return SpelledCode(fragment, frozenset(names))
+
+
 class SemanticModel:
     """
     The resolved scope/binding/def-use model for one script. Build it with `build_semantic_model` and
@@ -2661,6 +2820,8 @@ class SemanticModel:
         self._dispatch_surface_reached: bool | None = None
         self._function_direct_eval_sites: dict[int, list[Node]] = {}
         self._function_unread_source_sites: dict[int, list[Node]] = {}
+        self._spelled_code_sites: list[SpelledCodeSite] | None = None
+        self._spelled_code_reach_of: dict[Binding, list[_SpelledUseSite]] | None = None
         self._dynamic_rebind_sites: dict[Binding, list[Node] | None] = {}
         self._built = False
         self._spells_caller: bool | None = None
@@ -2785,6 +2946,19 @@ class SemanticModel:
         if not self.is_reference(ref):
             return None
         return self.lookup(ref.name, self._node_scope.get(ref))
+
+    def free_references(self) -> Iterator[JsIdentifier]:
+        """
+        Every reference of the program to a name it does not declare: one that `resolve` resolves to
+        no binding or to an implicit global (`BindingKind.IMPLICIT_GLOBAL`). Run as code a string
+        spells, the program reads and writes these names in the scope its text runs in.
+        """
+        for node in self.root.walk():
+            if not isinstance(node, JsIdentifier) or not self.is_reference(node):
+                continue
+            binding = self.resolve(node)
+            if binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:
+                yield node
 
     def references(
         self, binding: Binding, *, exclude: Node | None = None,
@@ -4390,14 +4564,194 @@ class SemanticModel:
         A function declared in a block is reached wherever the `var` Annex B copies it into is
         (`AnnexBCopy.observed`): code run from a string at the top of a script calls such a
         function through the copy, never through the binding of the block.
+
+        Code a string spells is read where the trusting model reads it (`spelled_code_sites`), and
+        reaches exactly the names it uses (`named_by_spelled_code`).
         """
         return _itself_or_its_annex_b_copy(binding, self._reflection_can_name)
+
+    def spelled_code_sites(self) -> list[SpelledCodeSite]:
+        """
+        Every call of the program that runs code a string spells, as the trusting model reads it
+        (`_spelled_code_at`). The other model reads no such code: it takes every call that runs a
+        string for a reflective surface. Memoized once the model is built; while it is, the names
+        the recognizer of `Function` follows are not all resolved yet.
+        """
+        if self._spelled_code_sites is not None:
+            return self._spelled_code_sites
+        sites: list[SpelledCodeSite] = []
+        if self.trust_eval:
+            for node in self.root.walk():
+                if isinstance(node, (JsCallExpression, JsNewExpression)):
+                    site = self._spelled_code_at(node)
+                    if site is not None:
+                        sites.append(site)
+        if self._built:
+            self._spelled_code_sites = sites
+        return sites
+
+    def _spelled_code_at(self, call: JsCallExpression | JsNewExpression) -> SpelledCodeSite | None:
+        """
+        The code *call* runs from strings, where it runs any and the program spells every string it
+        runs (`refinery.lib.scripts.js.keys.spelled_text`): a direct `eval` of the intrinsic runs
+        its first argument as eval code in place, a string timer its first as a classic script later
+        and `execScript` in place, and a construction of `Function` (`_constructs_a_function`)
+        builds a function body from its last argument and the parameters from the others. `None`
+        where the call runs no string, or one the program does not spell, which the trusting model
+        trusts.
+        """
+        runs_in_place = True
+        if isinstance(call, JsCallExpression) and is_direct_eval_call(call):
+            callee = strip_parens(call.callee)
+            if not isinstance(callee, JsIdentifier) or not self._reads_reflective_intrinsic(callee):
+                return None
+            kind = SpelledCodeKind.EVAL_CODE
+            texts = call.arguments[:1]
+        elif isinstance(call, JsCallExpression) and _is_string_timer(call, self.assumed_keys):
+            kind = SpelledCodeKind.CLASSIC_SCRIPT
+            texts = call.arguments[:1]
+            runs_in_place = timer_callee_name(call.callee, self.assumed_keys) in SYNC_EVAL_NAMES
+        elif self._constructs_a_function(call.callee):
+            kind = SpelledCodeKind.FUNCTION_BODY
+            texts = call.arguments
+            runs_in_place = False
+        else:
+            return None
+        strings: list[str] = []
+        for text in texts:
+            string = spelled_text(text, self.assumed_keys)
+            if string is None:
+                return None
+            strings.append(string)
+        parameters = ''
+        if kind is SpelledCodeKind.FUNCTION_BODY:
+            parameters = ','.join(strings[:-1])
+            strings = strings[-1:]
+        code = strings[0] if strings else ''
+        strict = kind is SpelledCodeKind.EVAL_CODE and strict_mode_at(call)
+        reading = read_spelled_code(kind, parameters, code, strict, runs_in_place)
+        return SpelledCodeSite(call, kind, reading)
+
+    def _constructs_a_function(self, callee: Node | None, hops: int = 0) -> bool:
+        """
+        Whether *callee*, called or constructed, certainly builds a function from text: the
+        `Function` intrinsic read by its name or under the key `Function`, a name declared once with
+        one of these as its value and never written, or a `constructor` read off a function literal
+        or off another `constructor` read. A `constructor` read off any other value is not followed:
+        it is `String` or `Number` as often as `Function`. A name is followed through its
+        declaration rather than through `singular_value`, which asks the reflection questions this
+        answer feeds.
+        """
+        callee = strip_parens(callee)
+        if isinstance(callee, JsIdentifier):
+            if callee.name == 'Function' and self._reads_reflective_intrinsic(callee):
+                return True
+            if hops >= _FUNCTION_ALIAS_HOPS:
+                return False
+            binding = self.resolve(callee)
+            if (
+                binding is None
+                or binding.writes
+                or binding.indefinite_writes
+                or binding.dynamic_refs
+                or len(binding.declarations) != 1
+            ):
+                return False
+            declaration = binding.declarations[0]
+            declarator = declaration.parent
+            if not isinstance(declarator, JsVariableDeclarator) or declarator.id is not declaration:
+                return False
+            return self._constructs_a_function(declarator.init, hops + 1)
+        if not isinstance(callee, JsMemberExpression):
+            return False
+        if key_is(callee, _FUNCTION, self.assumed_keys):
+            return True
+        if not key_is(callee, _CONSTRUCTOR, self.assumed_keys):
+            return False
+        base = strip_parens(callee.object)
+        if isinstance(base, (JsFunctionExpression, JsArrowFunctionExpression)):
+            return True
+        return isinstance(base, JsMemberExpression) and key_is(base, _CONSTRUCTOR, self.assumed_keys)
+
+    def trusts_the_code_at(self, call: Node) -> bool:
+        """
+        Whether the trusting model takes the direct `eval` *call* for one that names nothing: it
+        trusts only code it cannot read, and reads the text of an `eval` the program spells
+        (`refinery.lib.scripts.js.keys.spelled_text`) as it reads the file's own.
+        """
+        if not self.trust_eval or not isinstance(call, JsCallExpression):
+            return False
+        return any(spelled_text(text, self.assumed_keys) is None for text in call.arguments[:1])
+
+    def _spelled_code_reach(self) -> dict[Binding, list[_SpelledUseSite]]:
+        """
+        For every binding code a string spells names, each call running such code and how it uses
+        the binding. A bare name of eval code resolves where its call stands; one of a function
+        body or a classic script to a binding of the top scope that global code may name
+        (`_global_code_may_name`); one reached through the global object to one the object may hold
+        (`_global_object_may_hold`). Memoized once the model is built, as `spelled_code_sites` is.
+        """
+        if self._spelled_code_reach_of is not None:
+            return self._spelled_code_reach_of
+        reach: dict[Binding, list[_SpelledUseSite]] = {}
+        for call, kind, code in self.spelled_code_sites():
+            if code is None:
+                continue
+            for name, through_the_global_object, use in code.names:
+                binding: Binding | None
+                if through_the_global_object:
+                    binding = self.root_scope.bindings.get(name)
+                    if binding is not None and not self._global_object_may_hold(binding):
+                        binding = None
+                elif kind is SpelledCodeKind.EVAL_CODE:
+                    binding = self.lookup(name, self.scope_of(call))
+                else:
+                    binding = self.root_scope.bindings.get(name)
+                    if binding is not None and not self._global_code_may_name(binding):
+                        binding = None
+                if binding is not None:
+                    reach.setdefault(binding, []).append(_SpelledUseSite(call, use))
+        if self._built:
+            self._spelled_code_reach_of = reach
+        return reach
+
+    def spelled_code_fragments(self) -> list[SemanticModel]:
+        """
+        The models of the code strings spell that this model reads (`spelled_code_sites`), opaque
+        code left out.
+        """
+        return [site.code.fragment for site in self.spelled_code_sites() if site.code is not None]
+
+    def named_by_spelled_code(self, binding: Binding) -> bool:
+        """
+        Whether code a string spells names *binding* (`spelled_code_sites`), which no reference of
+        this model records.
+        """
+        return bool(self._spelled_code_reach().get(binding))
+
+    def _spelled_code_sites_of(self, binding: Binding) -> list[Node]:
+        return [use.site for use in self._spelled_code_reach().get(binding, ())]
+
+    def _spelled_code_writes_of(self, binding: Binding) -> list[Node] | None:
+        """
+        The calls running code a string spells that write *binding* where they stand, or `None`
+        where such code may write it later, at no site a caller can order a read against.
+        """
+        sites: list[Node] = []
+        for site, use in self._spelled_code_reach().get(binding, ()):
+            if use is SpelledUse.WRITE_LATER:
+                return None
+            if use is SpelledUse.WRITE_IN_PLACE:
+                sites.append(site)
+        return sites
 
     def _reflection_can_name(self, binding: Binding) -> bool:
         """
         Whether a runtime name lookup could read or write *binding* under its own name, as
         `reflection_can_reach` describes it.
         """
+        if self.named_by_spelled_code(binding):
+            return True
         if self._global_code_may_name(binding):
             if self.has_reflection_surface():
                 return True
@@ -4411,8 +4765,11 @@ class SemanticModel:
         model never read. The scope of an implicit global is the global scope, where every
         reflective surface runs. Code in the global scope outside the file is not asked about, which
         is the whole question for a binding scoped to a function or to a module and one half of it
-        for a declaration of a script's top scope (`reflection_can_reach`).
+        for a declaration of a script's top scope (`reflection_can_reach`). Code a string spells
+        that names the binding (`named_by_spelled_code`) stands in the file and is asked about.
         """
+        if self.named_by_spelled_code(binding):
+            return True
         owner = binding.scope.var_scope
         if owner is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:
             return self.has_reflection_surface() or self.has_opaque_global_write()
@@ -4449,12 +4806,14 @@ class SemanticModel:
         this model never read (`_unread_source_sites`), the only opaque surfaces that stand in the
         local's own scope and can name it. Empty exactly when the binding is not opaque-reflection
         reachable. A `with` surface is not included — a `with` that names the binding is attributed
-        as a `dynamic_references` entry a caller consults separately.
+        as a `dynamic_references` entry a caller consults separately. Each call running code a
+        string spells that names the binding (`named_by_spelled_code`) is one more site.
         """
         owner = binding.scope.var_scope
+        spelled = self._spelled_code_sites_of(binding)
         if owner is None or self._global_code_may_name(binding):
-            return self.opaque_reflection_sites()
-        return self._direct_eval_sites(owner.node) + self._unread_source_sites(owner.node)
+            return self.opaque_reflection_sites() + spelled
+        return self._direct_eval_sites(owner.node) + self._unread_source_sites(owner.node) + spelled
 
     def local_reachable_by_direct_eval(self, binding: Binding) -> bool:
         """
@@ -4467,12 +4826,13 @@ class SemanticModel:
         this query asserts. The `with` surface is not counted — a `with` body's accesses are attributed
         precisely as `dynamic_references`, so only the opaque `eval` case needs this per-function answer.
         A binding of the top scope that may be absent is a local of the CommonJS wrapper where it
-        exists, and counts as one (`_named_by_code_of_its_function`).
+        exists, and counts as one (`_named_by_code_of_its_function`). Code a string spells that
+        names the binding (`named_by_spelled_code`) counts as such an `eval`.
         """
         owner = binding.scope.var_scope
         if owner is None or not self._named_by_code_of_its_function(binding):
             return False
-        return self._function_has_direct_eval(owner.node)
+        return self._function_has_direct_eval(owner.node) or self.named_by_spelled_code(binding)
 
     def unread_source_can_reach(self, binding: Binding) -> bool:
         """
@@ -4574,9 +4934,11 @@ class SemanticModel:
 
     def binding_dynamic_rebind_sites(self, binding: Binding) -> list[Node] | None:
         """
-        The AST nodes at which a dynamic scope could rebind *binding*, or `None` for the one such
-        rebind that holds no node to order — the write a call makes on entry (`written_at_entry`),
-        which the text does not spell. The located form of
+        The AST nodes at which a dynamic scope could rebind *binding*, or `None` for the rebinds
+        that hold no node to order — the write a call makes on entry (`written_at_entry`), which
+        the text does not spell, and a write that code a string spells makes at some later time
+        (`_spelled_code_writes_of`). A call running such code that writes the name where it stands
+        is one more node. The located form of
         `binding_maybe_reassigned_dynamically`, which is re-derived from this answer, so the two
         can never disagree about which bindings are volatile: a consumer that gets a list holds a
         hazard per node, and one that gets `None` holds the nodeless kill. Each leg of the boolean
@@ -4601,8 +4963,11 @@ class SemanticModel:
     def _dynamic_rebind_sites_of(self, binding: Binding) -> list[Node] | None:
         if binding.written_at_entry:
             return None
+        spelled = self._spelled_code_writes_of(binding)
+        if spelled is None:
+            return None
         owner = binding.scope.var_scope
-        sites = list(binding.indefinite_writes)
+        sites: list[Node] = [*binding.indefinite_writes, *spelled]
         if owner is not None and self._named_by_code_of_its_function(binding):
             sites.extend(self._direct_eval_sites(owner.node))
         if owner is None or self._global_code_may_name(binding):
@@ -4655,12 +5020,19 @@ class SemanticModel:
         the local — so only a located answer keeps that hazard orderable rather than refusing on
         it. Each site is a node a consumer that has ordered a definition against a use can also
         order the kill against; `None` is the volatility it cannot.
+
+        Code a string spells kills the binding at the call that runs it where it writes the name in
+        place, and answers `None` where it may write the name later (`_spelled_code_writes_of`).
         """
+        spelled = self._spelled_code_writes_of(binding)
+        if spelled is None:
+            return None
         owner = binding.scope.var_scope
         if owner is None or self._global_object_may_hold(binding):
-            return self.opaque_global_write_replacement_sites(binding)
+            replacements = self.opaque_global_write_replacement_sites(binding)
+            return None if replacements is None else [*replacements, *spelled]
         if self._global_code_may_name(binding):
-            return None if self.has_reflection_surface() else []
+            return None if self.has_reflection_surface() else spelled
         return self.reflection_surface_sites(binding) + self.dynamic_references(binding)
 
     def holds_what_the_host_passed(self, binding: Binding) -> bool:
@@ -4785,17 +5157,18 @@ class SemanticModel:
         model is built (`_record_def_use_references`), and computed once and memoized for any other
         node.
 
-        The trusting model (`trust_eval`) answers no sites: a direct `eval` whose argument cannot be
-        resolved is the one surface that model assumes inert, so every consumer that freezes a local
-        on it — the rebind hazards, the reflection surfaces, the install question a free name asks —
-        loses the eval leg alone, and the other legs a `with` body or an unread span carries keep
-        refusing.
+        The trusting model (`trust_eval`) answers only the direct `eval`s whose text the program
+        spells (`trusts_the_code_at`): one whose argument cannot be resolved is the one surface that
+        model assumes inert, so every consumer that freezes a local on it — the rebind hazards, the
+        reflection surfaces, the install question a free name asks — loses the eval leg alone, and
+        the other legs a `with` body or an unread span carries keep refusing.
         """
-        if self.trust_eval:
-            return []
         cached = self._function_direct_eval_sites.get(id(function))
         if cached is None:
-            cached = [node for node in function.walk() if is_direct_eval_call(node)]
+            cached = [
+                node for node in function.walk()
+                if is_direct_eval_call(node) and not self.trusts_the_code_at(node)
+            ]
             self._function_direct_eval_sites[id(function)] = cached
         return cached
 
@@ -4996,7 +5369,8 @@ class SemanticModel:
 
         The trusting model (`trust_eval`) declines to count the surfaces of the kinds it assumes
         inert — the question `_surface_is_trusted` answers per node — so the whole-program surface
-        and the site list lose exactly those and keep the rest.
+        and the site list lose exactly those and keep the rest. Of the calls running code a string
+        spells that it reads instead (`spelled_code_sites`), the one whose code is opaque is a site.
         """
         if self._reflection_surface is not None:
             return
@@ -5032,6 +5406,7 @@ class SemanticModel:
                     and not self._surface_is_trusted(node)
                 ):
                     sites.append(node)
+        sites.extend(site.call for site in self.spelled_code_sites() if site.code is None)
         self._opaque_surface_sites = sites
         self._reflection_surface = saw_with or bool(sites)
 
@@ -5057,6 +5432,10 @@ class SemanticModel:
         which runs in the global scope; and a computed read of an unknown global consults no code
         this model cannot read. A span of source this model never read, a `with` body, and an
         `import()` reach this walk through their own branches and stay kept under both models.
+
+        A kind trusted here is trusted only where the code is not read: the call running code a
+        string spells is read as the file is (`spelled_code_sites`), and is a site of its own where
+        that code is opaque.
         """
         if not self.trust_eval:
             return False
@@ -5232,7 +5611,7 @@ class SemanticModel:
                 self._mark_export_declaration(node)
             if _lets_another_module_run(node):
                 self._module_may_be_reentered = True
-            if is_direct_eval_call(node):
+            if is_direct_eval_call(node) and not self.trusts_the_code_at(node):
                 self._file_reflective_site(node, self._function_direct_eval_sites)
             elif is_unread_source(node):
                 self._file_reflective_site(node, self._function_unread_source_sites)
@@ -6532,7 +6911,8 @@ def build_semantic_model(
     Build the `SemanticModel` for a parsed script, resolving bare global reads against *environment*.
     The default `universal` environment asserts only `GUARANTEED_GLOBALS`, so the model answers
     `read_may_throw` exactly as an unpinned run; a pinned host recovers the reads that host guarantees.
-    *trust_eval* selects the trusting model, which assumes code supplied as data is inert; see
+    *trust_eval* selects the trusting model, which assumes code supplied as data that it cannot read
+    is inert; see
     `refinery.lib.scripts.js.options.DeobfuscationOptions`. *file_kind* is what the file is, which
     `refinery.lib.scripts.js.options.file_kind` decides for a run; text that runs as global code,
     such as the payload of a `Function` construction, is a script. *exports_read_outside* says

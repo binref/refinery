@@ -17,6 +17,10 @@ and `a[0]` reads `0` to every reader. A reader asks one of three questions of a 
 A reader asks its key question after its other conditions, so a reader whose answer is decided, or
 whose other conditions fail, records nothing. The readers of `STRINGS_READ_ANYWHERE` look at every
 string, not only at keys.
+
+The code a call runs from a string is read the same way (`spelled_text`): an argument without a
+text is code the reader cannot read, recorded as such, and a fold that spells it renews the models
+just as a fold that spells a key does.
 """
 from __future__ import annotations
 
@@ -132,7 +136,8 @@ class KeyAssumptions:
     """
     The keys the answers of one model assumed are none of the names their readers looked for: each
     key without a `key_text` that `key_is` answered no for, with those names, and each one
-    `key_named` read as naming nothing, with any name.
+    `key_named` read as naming nothing, with any name. The code texts a call runs that
+    `spelled_text` could not read are recorded as keys naming nothing, with any text.
     """
 
     def __init__(self):
@@ -211,6 +216,18 @@ def key_named(owner: Keyed, assumptions: KeyAssumptions) -> str | None:
     text = key_text(owner)
     if text is None and (key := _key_of(owner)) is not None:
         assumptions.assume(key, None)
+    return text
+
+
+def spelled_text(node: Node | None, assumptions: KeyAssumptions) -> str | None:
+    """
+    The string *node* certainly evaluates to, for a reader of the code a call runs from a string,
+    which reads an expression without one as code it cannot read: *assumptions* records that it was
+    read so, for any text.
+    """
+    text = static_string(node)
+    if text is None and node is not None:
+        assumptions.assume(node, None)
     return text
 
 

@@ -63,7 +63,9 @@ def localization_target(
     once it leaves the global object — it is not exported (an importer reads its value where the
     module leaves it, which a body local cannot answer), code outside the file does not reach it by
     name (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`), the program
-    keeps no reflection surface that could read it by name, and the program stores no property on
+    keeps no reflection surface that could read it by name and runs no code a string spells that
+    names it (`refinery.lib.scripts.js.analysis.model.SemanticModel.named_by_spelled_code`), and
+    the program stores no property on
     the global object under a runtime key
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.has_opaque_global_write`): such a write
     may target the binding's own name, which a relocation would no longer receive. A name no
@@ -76,6 +78,8 @@ def localization_target(
     """
     model = liveness.model
     if model.has_reflection_surface() or model.has_opaque_global_write():
+        return None
+    if model.named_by_spelled_code(binding):
         return None
     if binding.exported:
         return None

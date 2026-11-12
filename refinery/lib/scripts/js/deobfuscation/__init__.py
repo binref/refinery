@@ -134,8 +134,8 @@ def deobfuscate(
     *execution* selects the execution model the input is assumed to run under, *entrypoints* names
     top-level functions a host calls by name, and *environment* pins the host whose global names are
     assumed present; see `refinery.lib.scripts.js.options.DeobfuscationOptions`. *trust_eval*
-    selects the trusting model, which assumes code supplied as data is inert and is deliberately
-    unsound; the default is the suspecting model, so a caller that reads this function's output as
+    selects the trusting model, which assumes code supplied as data that it cannot read is inert
+    and is deliberately unsound; the default is the suspecting model, so a caller that reads this function's output as
     equivalent to its input keeps that claim. *loaded_by_other_files* says that code may load the
     input and read what it exports. *clock* is the window of times a run reads from the host's
     clock. *observer* is called around every transformer, which is how a property of the tree is

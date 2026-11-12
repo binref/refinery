@@ -432,6 +432,15 @@ class TestAGlobalObjectReturnedAsAFunctionsThisKeepsTheWritesReadThroughIt(TestB
             each_program_still_prints(rows),
         )
 
+    @todo
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_var_code_a_string_spells_reads_back_through_a_returned_this_is_kept(self):
+        source = (
+            "var k = 5; var g = new Function('a', 'var G = Function(\"return this\")(); return a + G.k');"
+            " console.log(g(1));"
+        )
+        self.assertEqual(host_behavior(source.encode('utf8') | djs() | str), host_behavior(source))
+
 
 A_DEGENERATE_FINDER_THAT_THROWS_A_TYPEERROR = {
     'function g() { var o = null; return o.x || globalThis; }\nvar x = g();\nconsole.log(x);\n':
@@ -2555,6 +2564,21 @@ class TestCodeRunThroughAConstructorReadInPlaceIsAReflectionSurface(TestBase):
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
+        )
+
+    @backlog
+    def test_the_suspecting_model_keeps_a_top_level_name_the_code_reads(self):
+        rows = {
+            'the constructor of a function': (
+                "var k = 5; var add = (function () {}).constructor('a', 'return a + k'); console.log(add(1));"
+            ),
+            'the constructor of a constructor': (
+                "var k = 5; var add = [].constructor.constructor('a', 'return a + k'); console.log(add(1));"
+            ),
+        }
+        self.assertEqual(
+            {label: host_behavior(source.encode('utf8') | djs(strict=True) | str) for label, source in rows.items()},
+            {label: host_behavior(source) for label, source in rows.items()},
         )
 
 
@@ -5343,37 +5367,114 @@ class TestAStoreOnAFunctionNothingReadsKeepsItsEffect(TestBase):
         )
 
 
-A_TOP_LEVEL_NAME_A_READABLE_BODY_READS_WHERE_THE_BODY_STAYS_PACKED = {
-    'a function constructed with a parameter, reading a let': (
-        "let k = 5; var add = new Function('a', 'return a + k'); console.log(add(1));"
-    ),
-    'a function constructed with a parameter, reading a var': (
-        "var k = 5; var add = new Function('a', 'return a + k'); console.log(add(1));"
-    ),
-    'a body reading its arguments': (
-        "let k = 5; console.log(Function('return k + arguments.length')());"
-    ),
-    'a body called under a local of the same name': (
-        "var k = 5; function g() { var k = 1; return Function('return k')(); } console.log(g());"
-    ),
-    'a string timer declaring a let the file declares': (
-        "let k = 1; setTimeout('let k = 2; console.log(k)', 0);"
-    ),
-}
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheTrustingModelFollowsAFunctionConstructorHandedOn(TestBase):
+
+    @backlog
+    def test_a_body_a_helper_constructs_from_its_parameter_keeps_the_name_it_reads(self):
+        source = "function mk(src) { return new Function('a', src); } var k = 5; console.log(mk('return a + k')(1));"
+        self.assertEqual(host_behavior(source.encode('utf8') | djs() | str), host_behavior(source))
+
+    @wontfix(
+        'a body that reads a top-level name and is constructed through Function.call, '
+        'Function.apply, Reflect.construct or a Function destructured out of the global object is '
+        'made up for the defect'
+    )
+    def test_a_body_constructed_through_another_spelling_keeps_the_name_it_reads(self):
+        rows = {
+            'Function.call': (
+                "var k = 5; var add = Function.call(null, 'a', 'return a + k'); console.log(add(1));"
+            ),
+            'Function.apply': (
+                "var k = 5; var add = Function.apply(null, ['a', 'return a + k']); console.log(add(1));"
+            ),
+            'Reflect.construct': (
+                "var k = 5; var add = Reflect.construct(Function, ['a', 'return a + k']); console.log(add(1));"
+            ),
+            'a destructured Function': (
+                "const { Function: F } = globalThis; var k = 5; console.log(F('a', 'return a + k')(1));"
+            ),
+        }
+        self.assertEqual(
+            {label: host_behavior(source.encode('utf8') | djs() | str) for label, source in rows.items()},
+            {label: host_behavior(source) for label, source in rows.items()},
+        )
+
+    @wontfix(
+        'a body that reads the name holding its own text is made up for the defect, and the '
+        'unpacking retires that name'
+    )
+    def test_a_body_reading_the_name_that_holds_its_text_finds_it(self):
+        source = "var s = 'return typeof s'; var f = new Function(s); console.log(f());"
+        self.assertEqual(host_behavior(source.encode('utf8') | djs() | str), host_behavior(source))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestATopLevelNameAReadableBodyReadsIsKeptWhereTheBodyStaysPacked(TestBase):
+class TestAVarAnEvalDeclaresOnOneBranchShadowsTheGlobalTheFunctionReads(TestBase):
 
-    @todo
+    @backlog
+    def test_an_eval_the_file_spells_under_the_suspecting_model(self):
+        source = "var x = 1; function f(c) { if (c) eval('var x = 4'); return x; } console.log(f(1), f(0));"
+        self.assertEqual(host_behavior(source.encode('utf8') | djs(strict=True) | str), host_behavior(source))
+
+    @backlog
+    def test_an_eval_the_file_cannot_read_under_either_model(self):
+        source = (
+            "var x = 1; function f(c) { if (c) eval(process.argv.length > 99 ? '' : 'var x = 4'); return x; }"
+            " console.log(f(1), f(0));"
+        )
+        self.assertEqual(
+            [host_behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)],
+            [host_behavior(source)] * 2,
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAClosureAnEvalAnswersWritesALocalDeclaredAfterTheEval(TestBase):
+
+    @backlog
+    def test_the_suspecting_model_keeps_the_write(self):
+        source = (
+            "function f() { var set = eval('\"use strict\"; (function (v) { k = v; })'); var k = 1; set(2);"
+            " return k; } console.log(f());"
+        )
+        self.assertEqual(host_behavior(source.encode('utf8') | djs(strict=True) | str), host_behavior(source))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheSuspectingModelKeepsANameCodeAStringSpellsWrites(TestBase):
+
+    @backlog
     def test_the_deobfuscation_behaves_as_the_program_does(self):
-        rows = A_TOP_LEVEL_NAME_A_READABLE_BODY_READS_WHERE_THE_BODY_STAYS_PACKED
+        rows = {
+            'a string timer in a body, writing': (
+                "var k = 5; var set = new Function('v', 'setTimeout(\"k = 7\", 0)'); set(7);"
+                " setTimeout(function () { console.log(k); }, 10);"
+            ),
+            'a body in a strict eval, writing': (
+                "var k = 1; function f() { eval('\"use strict\"; Function(\"k = 2\")()'); return k; } console.log(f());"
+            ),
+            'a string timer declaring a var the file declares': (
+                "var k = 1; setTimeout('var k = 2; console.log(k)', 0); setTimeout(function () { console.log(k); }, 10);"
+            ),
+        }
         self.assertEqual(
             {
-                label: host_behavior(source.encode('utf8') | djs() | str, prelude=STRING_TIMERS)
+                label: host_behavior(source.encode('utf8') | djs(strict=True) | str, prelude=STRING_TIMERS)
                 for label, source in rows.items()
             },
             {label: host_behavior(source, prelude=STRING_TIMERS) for label, source in rows.items()},
+        )
+
+
+class TestAFunctionAJavaScriptAddressCallsIsKept(TestBase):
+
+    @backlog
+    def test_under_either_model(self):
+        source = "function run() { console.log(1); }\nlocation.href = 'javascript:run()';"
+        self.assertEqual(
+            ['function run()' in (source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)],
+            [True, True],
         )
 
 
@@ -5422,6 +5523,16 @@ A_WRAPPER_CODE_OUTSIDE_THE_TEXT_CALLS = {
     'code run from a string the file cannot read, calling a function declared in a block': (
         "{ function f() { return 'x'; } console.log(f()); }\n"
         "Function(process.argv.length > 99 ? '' : 'console.log(f())')();",
+        (),
+    ),
+    'code run from a string the file spells, calling a wrapper': (
+        "function w() { return 'x'; }\nconsole.log(w());\n"
+        "var g = new Function('a', 'return a + w()');\nconsole.log(g(1));",
+        (),
+    ),
+    'code run from a string the file spells, calling a function the file evaluates': (
+        "function f() { return 'x' + 1; }\nconsole.log(f());\n"
+        "var g = new Function('a', 'return a + f()');\nconsole.log(g(1));",
         (),
     ),
 }

@@ -14,6 +14,7 @@ for it. The registry of intrinsics the scan watches lives here for the same reas
 from __future__ import annotations
 
 import enum
+import functools
 
 from typing import Iterator, NamedTuple, Sequence
 
@@ -686,6 +687,15 @@ class UnfollowedWriteRefusals:
         self.refused = True
 
 
+@functools.lru_cache(maxsize=512)
+def _spelled_code_writes(fragment: SemanticModel) -> IntrinsicWrites:
+    """
+    The `build_intrinsic_writes` scan of code a string spells, memoized as its reading is
+    (`refinery.lib.scripts.js.analysis.model.read_spelled_code`).
+    """
+    return build_intrinsic_writes(fragment)
+
+
 def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
     """
     The set of global names the program does anything with beyond reading them, and the property
@@ -730,6 +740,10 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
     properties can change — a binding that shadows it, a value that escapes, a computed key, a
     descriptor read from a value this analysis cannot read — bounds no key at all and is recorded
     as unbounded.
+
+    Code a string spells that the model reads (`SemanticModel.spelled_code_fragments`) is part of
+    the program: the scan of each such text is merged into this one, so a body that replaces
+    `String.prototype.charAt` writes `String` for the program that runs it.
     """
     names: set[str] = set()
     keys: dict[str, set[str] | None] = {}
@@ -796,6 +810,17 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
             written_global = model.may_name_a_global(member)
             if written_global is not None:
                 record(frozenset({written_global}), None)
+    for fragment in model.spelled_code_fragments():
+        spelled = _spelled_code_writes(fragment)
+        names.update(spelled.names)
+        followable = followable and spelled.followable
+        for name, written in spelled.keys.items():
+            if written is None:
+                keys[name] = None
+                continue
+            known = keys.setdefault(name, set())
+            if known is not None:
+                known.update(written)
     return IntrinsicWrites(
         frozenset(names),
         {name: None if written is None else frozenset(written) for name, written in keys.items()},

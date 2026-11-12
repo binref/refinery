@@ -91,8 +91,9 @@ class DeobfuscationOptions:
     `with` body that writes a name, a span of source this model never read, a store on the global
     object under a key only the runtime resolves, an `import()`, and an indirect `eval` — a value
     read of the intrinsic that is not the callee of a direct call — still open the world under both
-    models, and so does every write the text spells. The assumption is about code that cannot be
-    read, not about every way a script can reach the world.
+    models, and so does every write the text spells, the text of a string the script runs as code
+    included. The assumption is about code that cannot be read, not about every way a script can
+    reach the world.
 
     *loaded_by_other_files* says that other files may load the input and read what it exports: a
     CommonJS file another one requires, or a package's main file. By default no code loads it, and
