@@ -505,10 +505,11 @@ _CLOSED_OUTPUT_CMDLETS = frozenset({
 _PIPELINE_VARIABLES = frozenset({'_', 'psitem'})
 
 
-def _is_pipeline_variable(node) -> bool:
+def is_pipeline_variable(node) -> typing.TypeGuard[Ps1Variable]:
     """
     Whether *node* reads the current pipeline object. A splatted or scope-qualified spelling is not
-    one: neither reads the automatic variable the pipeline binds.
+    one: neither reads the automatic variable the pipeline binds. Measured on 5.1, a filter block
+    inside a function reads `$null` through `$global:_`, where `$_` is the object it filters.
     """
     return (
         isinstance(node, Ps1Variable)
@@ -589,7 +590,7 @@ def candidate_types(
         return _static_method_candidates(expr)
     if isinstance(expr, Ps1CommandInvocation):
         return _command_candidates(expr, world, type_of_variable)
-    if _is_pipeline_variable(expr):
+    if is_pipeline_variable(expr):
         return _pipeline_variable_candidates(expr, world, type_of_variable)
     single = resolve_expression_type(expr, type_of_variable)
     return frozenset() if single is None else frozenset({single})

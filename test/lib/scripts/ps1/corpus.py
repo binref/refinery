@@ -1102,6 +1102,65 @@ BEHAVIOURS: tuple[str, ...] = (
     #: A `Convert` reading digits past the width it names is the overflow it raises, which is what
     #: a fold of the call refuses to spell.
     "$t = [Convert]::ToInt32('" + '9' * 25 + "'); Write-Output $t",
+
+    #: A listing or a variable command a function of the same name takes over runs the function, so
+    #: neither the listing nor the variable it addresses is what the command would have answered.
+    "function Get-Member { 'zzz' }; Write-Output ('abc' | Get-Member -MemberType Method | Where-Object { $_.Name -like 'Clo?e' }).Name",
+    "function Get-Variable { 'zzz' }; Write-Output (Get-Variable 'E*t').Value",
+    "function Get-Variable { 'zzz' }; $x = 1; Write-Output (Get-Variable x -ValueOnly)",
+    "function Get-Item { 'zzz' }; Write-Output (Get-Item 'Variable:E*t').Value",
+    "function Set-Variable { Write-Output 'zzz' }; Set-Variable Cf 5; Write-Output $Cf",
+    "function Set-Item { Write-Output 'zzz' }; Set-Item Variable:Cf 5; Write-Output $Cf",
+    #: A filter narrows a listing on the name of the current object only where it reads that object:
+    #: a qualified spelling of it is another variable, and a static read off it names a member of
+    #: its type rather than its name.
+    "Write-Output ('abc' | Get-Member -MemberType Method | Where-Object { $global:_.Name -ilike 'Clo?e' }).Name",
+    "function f { Write-Output ('abc' | Get-Member -MemberType Method | Where-Object { $global:_.Name -ilike 'Clo?e' }).Name }; f",
+    "Write-Output ('abc' | Get-Member -MemberType Method | Where-Object { $_::Name -ilike 'Clo?e' }).Name",
+    "Write-Output (Get-Command | Where-Object { $script:PSItem.Name -ilike '*w-*ct' }).Name",
+    "Write-Output (Get-Command | Where-Object { $_::Name -ilike '*w-*ct' }).Name",
+    #: Which qualifiers a variable command reads off the front of the name it is handed, and what
+    #: it makes of any other prefix: the variable a listing then finds.
+    "Set-Variable 'e:pathext' 5; Write-Output (Get-Variable 'E*t').Name",
+    "Set-Variable 'env:zq' 5; Write-Output $env:zq; Write-Output (Get-Variable 'env:zq').Name",
+    "Set-Variable 'variable:zq' 5; Write-Output $zq; Write-Output (Get-Variable 'variable:zq').Name",
+    "New-Variable 'e:pathext' 5; Write-Output (Get-Item 'Variable:E*t').Name",
+    "Set-Item 'Variable:e:pathext' 5; Write-Output (Get-Variable 'E*t').Name",
+    "function f { Set-Item 'Variable:global:zq' 5; Write-Output (Get-Variable '*zq').Name }; f; Write-Output $zq",
+    "function f { Set-Item 'Variable:global:zq' 5 }; f; Write-Output (Get-Variable '*zq').Name",
+    "Set-Variable 'env:et' 5; Write-Output (Get-Variable 'E*t').Name",
+    "$env:Et = 5; Write-Output (Get-Variable 'E*t').Name",
+    #: Parameters of a variable command no assignment can carry: a forced write past an option and
+    #: a filter on the name.
+    "New-Variable x 1 -Option ReadOnly; Set-Item Variable:x 5 -Force; Write-Output $x",
+    "$x = 1; Set-Item Variable:x 5 -Exclude x; Write-Output $x",
+    #: Input piped into a variable command whose name is bound already.
+    "$x = 1; Write-Output (123 | Get-Variable x -ValueOnly); Write-Output 'after'",
+    "$x = 1; Write-Output (123 | Get-Variable x).Value",
+    "$x = 1; 123 | Set-Variable x -Value 6; Write-Output $x",
+    #: A variable command written where its output is used: one that writes nothing, and one that
+    #: writes the value out whole rather than one element at a time.
+    "Set-Variable x 5 | Out-Null; Write-Output $x",
+    "Write-Output (Set-Variable x 5); Write-Output $x",
+    "$y = Set-Variable x 5; Write-Output $y; Write-Output $x",
+    "$x = 1, 2; Get-Variable x -ValueOnly",
+    "$x = 1, 2; Write-Output @(Get-Variable x -ValueOnly).Count",
+    "$x = 1, 2; Get-Variable x -ValueOnly | ForEach-Object { 'item' }",
+    "$x = 1, 2; Write-Output (Get-Variable x -ValueOnly).Count",
+    "$x = 1, 2; $y = Get-Variable x -ValueOnly; Write-Output $y.Count",
+    "$x = , 5; Write-Output $(Get-Variable x -ValueOnly).GetType().Name",
+    "Get-Variable ExecutionContext -ValueOnly | ForEach-Object { $_.GetType().Name }",
+    #: Where `-like` anchors the end of the pattern: the absolute end of the text, or before a final
+    #: line break; and whether a wildcard matches a line break.
+    "Write-Output (('abc' + [char]10) -like 'abc')",
+    "Write-Output (('abc' + [char]10) -like '*c')",
+    "function d { param($x) if ($x -like 'abc') { 'yes' } else { 'no' } }; d ('abc' + [char]10)",
+    "function d { param($x) if ($x -like 'abc?') { 'yes' } else { 'no' } }; d ('abc' + [char]10)",
+    "function d { param($x) if ($x -like 'a*c') { 'yes' } else { 'no' } }; d ('a' + [char]10 + 'c')",
+    #: A command missing a mandatory parameter is rejected before it runs where the host cannot ask.
+    "Get-Variable -ValueOnly | Out-Null; Write-Output 'after'",
+    "Set-Variable -Value 5; Write-Output 'after'",
+    "Get-Item -Filter x | Out-Null; Write-Output 'after'",
 )
 
 

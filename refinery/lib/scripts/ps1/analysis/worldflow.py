@@ -93,6 +93,7 @@ from refinery.lib.scripts.ps1.analysis.world import (
     opens_command_table_only_by_binding,
 )
 from refinery.lib.scripts.ps1.ast import (
+    get_command_name,
     normalize_command_name,
     resolve_command_name,
     resolve_command_spelling,
@@ -183,15 +184,16 @@ class Ps1WorldReach:
     it: it is the verdict `may_trust_command_name_at` short-circuits on, which is a fact about the
     leaf model and stays with it.
 
-    The three queries read one flood record each (`Ps1Flood`). The type flood and the trust flood
+    The queries read one flood record each (`Ps1Flood`). The type flood and the trust flood
     are flooded from every opener, whichever axis it opened, and differ only in what refuses them
     outright: a position-less opener of the type axis refuses `closed_at`, one of the command axis
-    refuses `may_trust_command_name_at`. The table flood is flooded from the command openers and
-    from the table writers of the measurement — the writes nobody can read that may add a command
-    a listing shows without opening either axis — so a read of the session's command names is
-    granted beside a type-only opener that ran before it and refused after a file copy by variable,
-    where trust in a command name holds on. `refuse` breaks statement ordering itself and refuses
-    every positional query.
+    refuses `may_trust_command_name_at`. The command flood, which `may_trust_invocation` reads, is
+    flooded from the command openers alone and refused like the trust flood. The table flood is
+    flooded from the command openers and from the table writers of the measurement — the writes
+    nobody can read that may add a command a listing shows without opening either axis — so a
+    read of the session's command names is granted beside a type-only opener that ran before it
+    and refused after a file copy by variable, where trust in a command name holds on. `refuse`
+    breaks statement ordering itself and refuses every positional query.
 
     Built without flow context — `Ps1WorldReach(world)` — it answers each positional query with
     the whole-run verdict at every position, which is what a caller that did not build the graphs,
@@ -216,6 +218,7 @@ class Ps1WorldReach:
         control_flow: ControlFlowModel | None = None,
         type_flood: Ps1Flood | None = None,
         trust_flood: Ps1Flood | None = None,
+        command_flood: Ps1Flood | None = None,
         table_flood: Ps1Flood | None = None,
         shadow_poisoned: Ps1CommandShadows | None = None,
         refuse: bool = False,
@@ -226,6 +229,7 @@ class Ps1WorldReach:
         self._control_flow = control_flow
         self._type = type_flood or Ps1Flood()
         self._trust = trust_flood or Ps1Flood()
+        self._command = command_flood or Ps1Flood()
         self._table = table_flood or Ps1Flood(sourced=not world.command_table_closed)
         self._shadow_poisoned = shadow_poisoned
         self._refuse = refuse
@@ -293,6 +297,37 @@ class Ps1WorldReach:
         position = self._position_in_root(node)
         return position is not None and self._trusted_at(name, position, node)
 
+    def may_trust_invocation(self, invocation: Ps1CommandInvocation) -> bool:
+        """
+        Whether *invocation* still runs the command it names where it stands: neither the spelling
+        it is written in nor the canonical name that spelling resolves to can have been taken over
+        before it, because a `function` taking the canonical name over captures every alias
+        resolving to it, while the written spelling of such a call shadows nothing.
+
+        The positional successor of `Ps1TypeWorld.runs_the_command_it_names`, and like it the
+        command axis alone: it reads the command flood, which floods from the openers of the command
+        table and not from those of the type system. An `Add-Type` changes what a type name denotes
+        and never what a command name runs, where `may_trust_command_name_at` answers for the
+        metadata of a command as a whole and is refused after one.
+        """
+        if self._stale:
+            return False
+        written = get_command_name(invocation)
+        resolved = resolve_command_name(invocation)
+        if written is None or resolved is None:
+            return False
+        names = (written, resolved)
+        if all(self._world.runs_the_command_it_names(name) for name in names):
+            return True
+        if self._command.refuse:
+            return False
+        position = self._position_in_root(invocation)
+        return position is not None and all(
+            self._world.runs_the_command_it_names(name)
+            or self._unshadowed_where_spared(name, position, invocation, self._command)
+            for name in names
+        )
+
     def _climb_is_trusted(self, climbed: list[str], position: CfgNode) -> bool:
         """
         Whether every command name `_position_in_root` climbed through still denotes what the
@@ -311,10 +346,23 @@ class Ps1WorldReach:
         """
         if self._world.may_trust_command_name(name):
             return True
+        return self._unshadowed_where_spared(name, position, node, self._trust)
+
+    def _unshadowed_where_spared(
+        self,
+        name: str,
+        position: CfgNode,
+        node: Node | None,
+        flood: Ps1Flood,
+    ) -> bool:
+        """
+        Whether *flood* spares *position*, and with it *node* where one is given, and no
+        redefinition of the command *name* can have run before it.
+        """
         if node is None:
-            if id(position) in self._trust.poisoned:
+            if id(position) in flood.poisoned:
                 return False
-        elif not self._trust.spares(node, position):
+        elif not flood.spares(node, position):
             return False
         if not self._world.command_shadowed(name):
             return True
@@ -374,7 +422,7 @@ class Ps1WorldReach:
         no table writer stands anywhere. The flood takes no binding skip, unlike the trust flood,
         because a listing read sees aliases no statement invokes. Callee trust is not this query's
         job: a takeover of the lookup command itself matches no pattern and is invisible to shadow
-        matching, so the folds ask `may_trust_command_name_at` of the invocation separately.
+        matching, so the folds ask `may_trust_invocation` of the invocation separately.
         """
         if self._stale:
             return False
@@ -513,6 +561,8 @@ def build_world_reach(
     opens_command = frozenset(id(opener) for opener in measurement.command_openers)
     sources: list[CfgNode] = []
     standing: dict[int, list[Node | None]] = {}
+    command_sources: list[CfgNode] = []
+    command_standing: dict[int, list[Node | None]] = {}
     table_sources: list[CfgNode] = []
     table_standing: dict[int, list[Node | None]] = {}
     binding_sites: list[Ps1ShadowSite] = []
@@ -541,6 +591,8 @@ def build_world_reach(
             place(opener, landing, sources, standing)
         if id(opener) not in opens_command:
             continue
+        if not skipped:
+            place(opener, landing, command_sources, command_standing)
         listed = _names_a_binding_lists(opener)
         if listed:
             binding_sites.extend(Ps1ShadowSite(name, opener) for name in listed)
@@ -553,6 +605,7 @@ def build_world_reach(
             continue
         place(writer, landing, table_sources, table_standing)
     poisoned, only_by = _flood_positions(root_graph, sources, standing)
+    command_poisoned, command_only_by = _flood_positions(root_graph, command_sources, command_standing)
     table_poisoned, table_only_by = _flood_positions(root_graph, table_sources, table_standing)
     named = frozenset(site.name for site in binding_sites)
     return Ps1WorldReach(
@@ -561,6 +614,7 @@ def build_world_reach(
         control_flow=control_flow,
         type_flood=Ps1Flood(poisoned, only_by, type_refuse, bool(sources)),
         trust_flood=Ps1Flood(poisoned, only_by, command_refuse, bool(sources)),
+        command_flood=Ps1Flood(command_poisoned, command_only_by, command_refuse, bool(command_sources)),
         table_flood=Ps1Flood(table_poisoned, table_only_by, table_refuse, table_sourced, named),
         shadow_poisoned=_flood_shadow_sites(
             (*measurement.shadow_sites, *binding_sites), control_flow, root_graph),

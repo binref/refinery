@@ -78,6 +78,30 @@ class TestPs1CommandTrustIsPositionalWhereTheWorldStaysClosed(TestBase):
                     cache.world_reach.may_trust_command_name_at('Start-Process', statement))
 
 
+class TestPs1AnInvocationRunsTheCommandItNamesUntilTheCommandTableOpens(TestBase):
+
+    @staticmethod
+    def _trusted(source: str) -> bool:
+        script = Ps1Parser(source).parse()
+        lookup = next(
+            node for node in script.walk()
+            if isinstance(node, Ps1CommandInvocation) and resolve_command_name(node) == 'get-item'
+        )
+        return Ps1ModelCache(script).world_reach.may_trust_invocation(lookup)
+
+    def test_a_type_opener_before_the_invocation_leaves_it_trusted(self):
+        self.assertTrue(self._trusted("Add-Type -AssemblyName System.Xml\nGet-Item 'Variable:x'"))
+
+    def test_a_command_opener_before_the_invocation_refuses_it(self):
+        self.assertFalse(self._trusted("iex $c\nGet-Item 'Variable:x'"))
+
+    def test_a_command_opener_after_the_invocation_leaves_it_trusted(self):
+        self.assertTrue(self._trusted("Get-Item 'Variable:x'\niex $c"))
+
+    def test_a_definition_of_the_name_an_alias_resolves_to_refuses_it(self):
+        self.assertFalse(self._trusted("function Get-Item { 1 }\ngi 'Variable:x'"))
+
+
 class TestPs1FloodsGoForwardThroughAResumingTrap(TestBase):
 
     def _reach(self, source: str) -> tuple[Ps1Script, Ps1WorldReach]:

@@ -62,6 +62,7 @@ from refinery.lib.scripts.ps1.ast import (
     get_command_name,
     get_member_name,
     is_builtin_variable,
+    is_piped_into,
     normalize_command_name,
     normalize_dotnet_type_name,
     standalone_command_statement,
@@ -91,7 +92,6 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     ps_modulo,
     ps_shift_left,
     ps_shift_right,
-    stands_where_only_a_command_may,
     switch_matches,
 )
 from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan, Ps1RemovalPlans
@@ -2431,7 +2431,7 @@ class Ps1FunctionEvaluator(Transformer):
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)
-        if stands_where_only_a_command_may(node):
+        if is_piped_into(node):
             return None
         name_str = get_command_name(node)
         if name_str is None:

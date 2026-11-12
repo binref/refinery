@@ -29,6 +29,7 @@ from refinery.lib.scripts.ps1.analysis.listing import (
     listed_member,
     listed_variable,
     lookup_selection,
+    member_listing_holds_at,
     member_selection,
     name_narrowing,
     variable_listing_holds_at,
@@ -36,17 +37,16 @@ from refinery.lib.scripts.ps1.analysis.listing import (
 from refinery.lib.scripts.ps1.analysis.values import make_string_literal, resolve_expression_type
 from refinery.lib.scripts.ps1.ast import (
     argument_text,
-    binds_parameter,
     bound_argument_value,
     free_positional_values,
-    get_command_name,
     get_member_name,
+    is_piped_into,
     resolve_command_name,
     string_value,
     switch_setting,
     unwrap_parens,
 )
-from refinery.lib.scripts.ps1.data import OUT_VARIABLE_PARAMETERS, SESSION_VARIABLES, is_type
+from refinery.lib.scripts.ps1.data import SESSION_VARIABLES, abbreviated_parameter, is_enumerable, is_type
 from refinery.lib.scripts.ps1.deobfuscation.substitution import substitute_field, substituted
 from refinery.lib.scripts.ps1.deobfuscation.typenames import VariableTypeAwareTransformer
 from refinery.lib.scripts.ps1.model import (
@@ -72,7 +72,6 @@ _GET_ITEM_COMMANDS = frozenset({'get-item', 'get-childitem'})
 _GET_VARIABLE = 'get-variable'
 _SET_ITEM = 'set-item'
 _SET_VARIABLE = 'set-variable'
-_WHERE_OBJECT = 'where-object'
 _VARIABLE_DRIVE = 'variable:'
 
 #: The type whose methods look a command up by a name or a pattern: what `InvokeCommand` holds.
@@ -93,31 +92,34 @@ _EXPRESSIBLE_SCOPES: dict[str, Ps1ScopeModifier] = {
     'script': Ps1ScopeModifier.SCRIPT,
 }
 
-#: Parameters whose effect a reference or an assignment cannot carry, so binding one declines the
-#: rewrite.
+#: The variable commands a reference or an assignment may stand in for, each with the parameters
+#: of its own whose effect the replacement carries: the name or path it addresses, the value it
+#: writes, the scope a qualifier spells, and `-ValueOnly`, which decides the fold.
 #:
-#: Measured: after `New-Variable x -Option ReadOnly` a later `$x = …` raises
-#: `SessionStateUnauthorizedAccessException`, where after `$x = …` it succeeds — so the option is
-#: not decoration, it decides what every later store in the script does. `-PassThru` makes the
-#: command emit the variable object, which an assignment does not emit, and `-Force` is what lets a
-#: write land on a name an option protects. `-Include`, `-Exclude` and `-Filter` filter the result
-#: by name: measured, `$x = 1; (Get-Variable x -Exclude x).Value` is `$null`, not `1`.
-#:
-#: `-Description` is deliberately absent: it is metadata no read or write observes. Anything not
-#: listed is *allowed*, which is the wrong polarity for a corruption and the right one for a
-#: rewrite — see `refinery.lib.scripts.ps1.analysis.naming` on why the two tables differ. The
-#: common parameters that fill a variable of their own, `-OutVariable` among them, are refused
-#: beside these: a reference fills none.
-_INEXPRESSIBLE_PARAMETERS = (
-    'exclude',
-    'filter',
-    'force',
-    'include',
-    'option',
-    'passthru',
-    'visibility',
-    *sorted(OUT_VARIABLE_PARAMETERS),
-)
+#: Every other parameter declines the rewrite. Measured on 5.1: after `New-Variable x -Option
+#: ReadOnly` a later `$x = …` raises where `Set-Item Variable:x 5 -Force` writes; `-Exclude`,
+#: `-Include` and `-Filter` filter by name — `$x = 1; (Get-Variable x -Exclude x).Value` is
+#: `$null` — `-WhatIf` writes nothing at all, and a `-Description` is what the variable object a
+#: later `Get-Variable` hands out reports. An allowance that misses a parameter withholds a
+#: rewrite; a refusal that misses one drops an effect.
+_EXPRESSIBLE_PARAMETERS: dict[str, frozenset[str]] = {
+    'get-childitem': frozenset({'path'}),
+    'get-item': frozenset({'path'}),
+    'get-variable': frozenset({'name', 'scope', 'valueonly'}),
+    'set-item': frozenset({'path', 'value'}),
+    'set-variable': frozenset({'name', 'scope', 'value'}),
+}
+
+#: The common parameters whose effect the replacement of a variable command carries: what to do
+#: with an error, which these commands raise only where the replacement already differs from them,
+#: and with a warning or a message, which they write none of; and the size of an output buffer.
+#: Every common parameter that fills a variable, writes a stream or asks before it writes declines.
+_EXPRESSIBLE_COMMON_PARAMETERS = frozenset({
+    'erroraction',
+    'informationaction',
+    'outbuffer',
+    'warningaction',
+})
 
 #: The qualifiers a variable command reads off the front of the name it is handed, mapped to the
 #: qualifier a reference spells them with: `Set-Variable global:y 1` writes `$global:y`.
@@ -129,15 +131,21 @@ _NAME_QUALIFIERS: dict[str, Ps1ScopeModifier] = {
 }
 
 
-def _expresses_every_effect(cmd: Ps1CommandInvocation) -> bool:
+def _expresses_every_effect(cmd: Ps1CommandInvocation, command: str) -> bool:
     """
-    Whether a variable reference or an assignment carries everything *cmd* does, or drops an
-    effect on the floor.
+    Whether a variable reference or an assignment carries everything the variable command *cmd*,
+    which runs *command*, does with its arguments, or drops an effect on the floor.
     """
+    allowed = _EXPRESSIBLE_PARAMETERS[command] | _EXPRESSIBLE_COMMON_PARAMETERS
     for argument in cmd.arguments:
         if not isinstance(argument, Ps1CommandArgument):
+            return False
+        if isinstance(argument.value, Ps1Variable) and argument.value.splatted:
+            return False
+        if argument.kind is Ps1CommandArgumentKind.POSITIONAL:
             continue
-        if any(binds_parameter(argument.name, name) for name in _INEXPRESSIBLE_PARAMETERS):
+        parameter = abbreviated_parameter(command, argument.name)
+        if parameter is None or parameter.lower() not in allowed:
             return False
     return True
 
@@ -225,6 +233,22 @@ def _stands_as_a_statement(node: Node) -> bool:
     return False
 
 
+def _output_is_collected(node: Node) -> bool:
+    """
+    Whether what *node* writes out is collected into one value where it stands, which unrolls
+    nothing: it is the expression of a parenthesis, or the value of an assignment. Measured on 5.1,
+    with `$x = 1, 2` both `(Get-Variable x -ValueOnly).Count` and the `Count` of
+    `$y = Get-Variable x -ValueOnly` are `2`, where `@(Get-Variable x -ValueOnly).Count` is `1`,
+    and `$(…)` writes its value back out one object at a time.
+    """
+    parent = node.parent
+    if isinstance(parent, Ps1ParenExpression):
+        return parent.expression is node
+    if isinstance(parent, Ps1AssignmentExpression):
+        return parent.value is node
+    return False
+
+
 class Ps1WildcardResolution(VariableTypeAwareTransformer):
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
@@ -266,22 +290,8 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
             return substituted(node, replacement, flow=self._flow, options=self.options)
         return substituted(node, self._try_resolve_set_variable(node))
 
-    def _callee_is_trusted(self, invocation: Ps1CommandInvocation) -> bool:
-        """
-        Whether the command *invocation* spells still runs the command it names: trusted under both
-        the written spelling and the canonical name it resolves to, because a `function` taking the
-        canonical name over captures every alias that resolves to it while the written spelling of
-        such a call shadows nothing.
-        """
-        written = get_command_name(invocation)
-        resolved = resolve_command_name(invocation)
-        if written is None or resolved is None:
-            return False
-        reach = model_cache(self, invocation).world_reach
-        return (
-            reach.may_trust_command_name_at(written, invocation)
-            and reach.may_trust_command_name_at(resolved, invocation)
-        )
+    def _runs_what_it_names(self, invocation: Ps1CommandInvocation) -> bool:
+        return model_cache(self, invocation).world_reach.may_trust_invocation(invocation)
 
     def _command_listed_by(
         self,
@@ -303,7 +313,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
             where = narrowed_by.expression if isinstance(narrowed_by, Ps1PipelineElement) else narrowed_by
             if narrowing is None or not isinstance(where, Ps1CommandInvocation):
                 return None
-            if not self._callee_is_trusted(where):
+            if not self._runs_what_it_names(where):
                 return None
         name = listed_command(selection, narrowing)
         if name is None:
@@ -464,14 +474,28 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         where = last.expression
         if narrowing is None or not isinstance(where, Ps1CommandInvocation):
             return None
-        if not self._callee_is_trusted(where):
+        if not self._runs_what_it_names(where):
             return None
-        if not model_cache(self, pipeline).world_reach.closed_at(pipeline):
+        if not member_listing_holds_at(pipeline, model_cache(self, pipeline)):
             return None
         selection = member_selection(stages, self._type_of_variable)
         if selection is None:
             return None
         return listed_member(selection, narrowing)
+
+    def _variable_command(self, node: Ps1CommandInvocation) -> str | None:
+        """
+        The variable command *node* runs, where a reference or an assignment may stand in for it
+        whatever it is about: it still runs the command it names, no input is piped into it — which
+        binds a parameter of its own, or raises `InputObjectNotBound` where its name is bound
+        already — and it binds no parameter whose effect the replacement drops.
+        """
+        command = resolve_command_name(node)
+        if command not in _EXPRESSIBLE_PARAMETERS or is_piped_into(node):
+            return None
+        if not _expresses_every_effect(node, command) or not self._runs_what_it_names(node):
+            return None
+        return command
 
     def _variable_named_by(
         self,
@@ -537,19 +561,21 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
 
         The qualifier is `None` for a `-Scope` no reference can name, which only the `.Value`
         rewrite has to decline: the name a command is about is that name whichever scope it reads.
+        A `Get-Variable` told `-ValueOnly` hands out the value rather than the variable, whose own
+        members are what the read would then name.
         """
         inner = unwrap_parens(expr)
-        if not isinstance(inner, Ps1CommandInvocation) or not _expresses_every_effect(inner):
+        if not isinstance(inner, Ps1CommandInvocation):
             return None
-        command = resolve_command_name(inner)
-        if command is None:
-            return None
+        command = self._variable_command(inner)
         if command in _GET_ITEM_COMMANDS:
             arg_value = _subject_argument_value(inner, command, 'path')
             if arg_value is None or not arg_value.lower().startswith(_VARIABLE_DRIVE):
                 return None
             pattern = arg_value[len(_VARIABLE_DRIVE):].lstrip('/\\')
         elif command == _GET_VARIABLE:
+            if switch_setting(inner, 'valueonly') is not False:
+                return None
             pattern = _subject_argument_value(inner, command, 'name')
             if pattern is None:
                 return None
@@ -565,12 +591,15 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         node: Ps1CommandInvocation,
     ) -> Expression | None:
         """
-        Resolve `Get-Variable X -ValueOnly` to `$X`.
+        Resolve `Get-Variable X -ValueOnly` to `$X` where the two write out the same: the command
+        writes the value out whole, as one object, and the reference is unrolled where it stands as
+        a pipeline's value. They agree where the output is collected into one value or where the
+        value is not one the pipeline unrolls (`_writes_one_object`).
         """
-        command = resolve_command_name(node)
-        if command != _GET_VARIABLE:
+        if resolve_command_name(node) != _GET_VARIABLE or switch_setting(node, 'valueonly') is not True:
             return None
-        if switch_setting(node, 'valueonly') is not True or not _expresses_every_effect(node):
+        command = self._variable_command(node)
+        if command is None:
             return None
         arg_value = _subject_argument_value(node, command, 'name')
         if arg_value is None:
@@ -584,25 +613,44 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         name, scope = reference
         if scope is None:
             return None
+        if not _output_is_collected(node) and not self._writes_one_object(name, node):
+            return None
         return Ps1Variable(
             offset=node.offset,
             name=name,
             scope=scope,
         )
 
+    def _writes_one_object(self, name: str, site: Node) -> bool:
+        """
+        Whether the variable *name* holds, where *site* reads it, a value the pipeline does not
+        unroll: a variable of the session no write of the script can have replaced before *site*,
+        whose type is not enumerable. Measured on 5.1, `Get-Variable ExecutionContext -ValueOnly`
+        and `$ExecutionContext` both pipe one `EngineIntrinsics`.
+        """
+        typed = resolve_expression_type(Ps1Variable(offset=site.offset, name=name))
+        if typed is None or is_enumerable(typed) is not False:
+            return False
+        return variable_listing_holds_at(name, site, model_cache(self, site))
+
     def _try_resolve_set_variable(
         self,
         node: Ps1CommandInvocation,
     ) -> Expression | None:
         """
-        Resolve Set-Item Variable:X value or Set-Variable X value to $X = value.
+        Resolve `Set-Item Variable:X value` or `Set-Variable X value` to `$X = value` where it
+        stands as a statement: the command writes nothing out, and an assignment written where its
+        value is used is that value — `Write-Output (Set-Variable x 5)` writes nothing and
+        `Write-Output ($x = 5)` writes `5`, while `$x = 5 | Out-Null` stores what `Out-Null` writes.
         """
         command = resolve_command_name(node)
+        if command not in (_SET_ITEM, _SET_VARIABLE) or not _stands_as_a_statement(node):
+            return None
+        if self._variable_command(node) is None:
+            return None
         if command == _SET_ITEM:
             return self._handle_set_item_variable(node, command)
-        if command == _SET_VARIABLE:
-            return self._handle_set_variable(node, command)
-        return None
+        return self._handle_set_variable(node, command)
 
     def _keeps_every_read_the_environment_owns(
         self,
@@ -651,7 +699,10 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         Set-Item Variable:/X val → $X = val
 
         `-Path` and `-Value` name the same two arguments the positional spelling does, and a command
-        binding either of them by name leaves nothing free for the positional reading to find.
+        binding either of them by name leaves nothing free for the positional reading to find. A
+        name holding a colon is declined: no reference spells it — `$e:x` reads the item `x` of the
+        drive `e:` — and measured on 5.1, `Set-Item 'Variable:global:x' 1` writes `$global:x` under
+        a variable whose name lists as `global:x`, where `$global:x = 1` lists as `x`.
         """
         positionals = free_positional_values(node, command)
         path_expr = bound_argument_value(node, 'path')
@@ -669,7 +720,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         if is_wildcard_pattern(written):
             return None
         var_name = literal_name(written)
-        if var_name is None:
+        if var_name is None or ':' in var_name:
             return None
         if not self._keeps_every_read_the_environment_owns(node, value):
             return None
@@ -683,8 +734,6 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         """
         Set-Variable X val or Set-Variable -Name X -Value val → $X = val
         """
-        if not _expresses_every_effect(node):
-            return None
         positionals = free_positional_values(node, command)
         name_expr = bound_argument_value(node, 'name')
         if name_expr is not None:

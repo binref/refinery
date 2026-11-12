@@ -5,17 +5,21 @@ from test import TestBase
 from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.ps1.ast import (
     binding_fails,
+    binding_key,
     bound_argument_value,
+    bound_parameter_value,
     free_positional_values,
     get_command_name,
     implicit_get_retry,
     in_evaluation_order,
+    is_piped_into,
     is_reference_cast,
     is_soft_error_source,
     resolved_command_names,
     standalone_command_statement,
     stored_value,
     switch_setting,
+    variable_key,
 )
 from refinery.lib.scripts.ps1.data import (
     KNOWN_ALIAS,
@@ -267,6 +271,63 @@ class TestPs1BoundArgumentValue(TestBase):
         self.assertIsNone(self._value('Get-Process -ov p', 'outvariable'))
 
 
+class TestPs1BoundParameterValue(TestBase):
+
+    def _value(self, source: str, command: str, parameter: str) -> str | None:
+        found = bound_parameter_value(_command(source), command, parameter)
+        return None if found is None else found.value
+
+    def test_every_spelling_the_command_binds_a_parameter_by_finds_its_value(self):
+        for source in (
+            'Set-Content -LiteralPath env:x 5',
+            'Set-Content -PSPath env:x 5',
+            'Set-Content -PSPath:env:x 5',
+            'Set-Content -Lit env:x 5',
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._value(source, 'set-content', 'literalpath'), 'env:x')
+
+    def test_a_spelling_of_another_parameter_binds_nothing(self):
+        self.assertIsNone(self._value('Set-Content -Path env:x 5', 'set-content', 'literalpath'))
+        self.assertIsNone(self._value('Set-Content -P env:x 5', 'set-content', 'path'))
+
+
+class TestPs1VariableKey(TestBase):
+
+    @staticmethod
+    def _key(source: str) -> str:
+        for node in Ps1Parser(source).parse().walk():
+            if isinstance(node, Ps1Variable):
+                return binding_key(node)
+        raise LookupError(source)
+
+    def test_a_plain_name_is_keyed_as_a_reference_to_it_is(self):
+        self.assertEqual(variable_key('Zq'), self._key('$zq'))
+
+    def test_a_name_holding_a_colon_is_keyed_apart_from_the_environment_variable_it_spells(self):
+        self.assertNotEqual(variable_key('env:zq'), self._key('$env:zq'))
+        self.assertEqual(variable_key('env:zq'), self._key('${variable:env:zq}'))
+
+
+class TestPs1IsPipedInto(TestBase):
+
+    @staticmethod
+    def _get_item(source: str) -> Ps1CommandInvocation:
+        for node in Ps1Parser(source).parse().walk():
+            if isinstance(node, Ps1CommandInvocation) and get_command_name(node) == 'Get-Item':
+                return node
+        raise LookupError(source)
+
+    def test_only_an_element_behind_the_first_is_piped_into(self):
+        for source, expected in (
+            ("'x' | Get-Item", True),
+            ('Get-Item x | Out-Null', False),
+            ('Get-Item x', False),
+        ):
+            with self.subTest(source):
+                self.assertEqual(is_piped_into(self._get_item(source)), expected)
+
+
 class TestPs1SwitchSetting(TestBase):
     """
     Whether a command turns a switch on. A switch takes a value only through a colon, and one bound
@@ -353,6 +414,8 @@ class TestPs1BindingFails(TestBase):
             "Set-Item Variable:x 'a' 'b'",
             'Get-Date @a',
             'mkdir -Bogus x',
+            'Set-Variable -Value 5',
+            'Get-Item -Filter x',
         ):
             with self.subTest(source):
                 self.assertTrue(binding_fails(_command(source)))
@@ -369,6 +432,9 @@ class TestPs1BindingFails(TestBase):
             'zzq -Bogus a b c',
             "Set-Variable -Scope Global y 'b'",
             "Set-Item -Path Variable:y -Value 'b'",
+            'Get-Variable -ValueOnly',
+            "Set-Variable -Value 5 x",
+            "'Variable:x' | Get-Item",
         ):
             with self.subTest(source):
                 self.assertFalse(binding_fails(_command(source)))

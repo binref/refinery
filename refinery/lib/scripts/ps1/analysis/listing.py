@@ -30,20 +30,27 @@ What each listing holds was measured on Windows PowerShell 5.1:
 """
 from __future__ import annotations
 
-from typing import NamedTuple, Sequence
+import functools
+
+from typing import Collection, Mapping, NamedTuple, Sequence
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1ObservedWrite
-from refinery.lib.scripts.ps1.analysis.values import Ps1VariableTyping, resolve_expression_type
+from refinery.lib.scripts.ps1.analysis.values import (
+    Ps1VariableTyping,
+    is_pipeline_variable,
+    resolve_expression_type,
+)
 from refinery.lib.scripts.ps1.ast import (
-    get_command_name,
     get_member_name,
     is_builtin_variable,
+    is_piped_into,
     normalize_command_name,
     resolve_command_name,
     string_value,
     switch_setting,
     unwrap_parens,
+    variable_table_name,
 )
 from refinery.lib.scripts.ps1.data import (
     ENGINE_COMMAND_NAMES,
@@ -108,9 +115,6 @@ _LIKE_OPERATORS = {
 
 #: The members of `$_` a narrowing filters on, which is the name in every listing here.
 _NARROWED_MEMBERS = frozenset({'name'})
-
-#: The variables a `Where-Object` body reads the current object through.
-_CURRENT_OBJECT = frozenset({'_', 'psitem'})
 
 
 class Ps1CommandSelection(NamedTuple):
@@ -177,11 +181,8 @@ def get_command_selection(invocation: Ps1CommandInvocation) -> Ps1CommandSelecti
     the parameter, then a positional holding the value — so the two are paired here; the colon
     spelling `-Name:'wr?te'` reaches it as one named argument with its value.
     """
-    element = invocation.parent
-    if isinstance(element, Ps1PipelineElement):
-        pipeline = element.parent
-        if isinstance(pipeline, Ps1Pipeline) and pipeline.elements and pipeline.elements[0] is not element:
-            return None
+    if is_piped_into(invocation):
+        return None
     name: str | None = None
     named = False
     shaped = False
@@ -314,7 +315,11 @@ def _command_types_member(node: Node) -> str | None:
 def name_narrowing(element: Node) -> Ps1NameNarrowing | None:
     """
     The narrowing *element* applies to a listing piped into it, or `None` where it is no
-    `Where-Object` stage whose one statement compares `$_.Name` against a literal pattern.
+    `Where-Object` stage whose one statement compares the name of the current object against a
+    literal pattern. Only `$_` and `$PSItem` read the current object
+    (`refinery.lib.scripts.ps1.analysis.values.is_pipeline_variable`), and only an instance member
+    of it is its name: measured, `$_::Name` reads a static member of its type, which the listings
+    here have not, and filters out every object.
     """
     invocation = element.expression if isinstance(element, Ps1PipelineElement) else element
     if not isinstance(invocation, Ps1CommandInvocation):
@@ -342,9 +347,11 @@ def name_narrowing(element: Node) -> Ps1NameNarrowing | None:
     if case_sensitive is None:
         return None
     left = expression.left
-    if not isinstance(left, Ps1MemberAccess) or not isinstance(left.object, Ps1Variable):
-        return None
-    if left.object.name.lower() not in _CURRENT_OBJECT:
+    if (
+        not isinstance(left, Ps1MemberAccess)
+        or left.access is not Ps1AccessKind.INSTANCE
+        or not is_pipeline_variable(left.object)
+    ):
         return None
     member = get_member_name(left.member)
     if member is None or member.lower() not in _NARROWED_MEMBERS:
@@ -422,6 +429,39 @@ def _member_type_view(value: Node | None) -> Ps1MemberView | None:
     return {'method': Ps1MemberView.METHOD, 'property': Ps1MemberView.PROPERTY}.get(text.lower())
 
 
+def _member_listing(stages: Sequence[Node]) -> tuple[Node, Ps1MemberView, Ps1CommandInvocation | None] | None:
+    """
+    The value the pipeline *stages* list the members of, the view they list, and the `Get-Member`
+    invocation that lists them where one does: a value piped into `Get-Member`, or the
+    `psobject.Methods` or `psobject.Properties` of one, possibly inside parentheses.
+    """
+    if len(stages) == 1:
+        stage = stages[0]
+        expression = stage.expression if isinstance(stage, Ps1PipelineElement) else stage
+        if expression is None:
+            return None
+        inner = unwrap_parens(expression)
+        if isinstance(inner, Ps1Pipeline):
+            return _member_listing(inner.elements)
+        found = _psobject_view(expression)
+        if found is None:
+            return None
+        value, view = found
+        return value, view, None
+    if len(stages) != 2:
+        return None
+    source, lister = stages
+    if not isinstance(source, Ps1PipelineElement) or not isinstance(lister, Ps1PipelineElement):
+        return None
+    invocation = lister.expression
+    if not isinstance(invocation, Ps1CommandInvocation) or resolve_command_name(invocation) != _GET_MEMBER:
+        return None
+    view = _get_member_view(invocation)
+    if view is None or source.expression is None:
+        return None
+    return source.expression, view, invocation
+
+
 def member_selection(
     stages: Sequence[Node],
     type_of_variable: Ps1VariableTyping | None = None,
@@ -437,29 +477,11 @@ def member_selection(
     since its elements are listed rather than itself, and so is a type literal outside the static
     view: piped in, it is a `System.RuntimeType` whose own members no listing here holds.
     """
-    if len(stages) == 1:
-        stage = stages[0]
-        expression = stage.expression if isinstance(stage, Ps1PipelineElement) else stage
-        inner = unwrap_parens(expression) if expression is not None else None
-        if isinstance(inner, Ps1Pipeline):
-            return member_selection(inner.elements, type_of_variable)
-        found = _psobject_view(expression) if expression is not None else None
-        if found is None:
-            return None
-        value, view = found
-        return _typed_selection(value, view, type_of_variable)
-    if len(stages) != 2:
+    found = _member_listing(stages)
+    if found is None:
         return None
-    source, lister = stages
-    if not isinstance(source, Ps1PipelineElement) or not isinstance(lister, Ps1PipelineElement):
-        return None
-    invocation = lister.expression
-    if not isinstance(invocation, Ps1CommandInvocation) or resolve_command_name(invocation) != _GET_MEMBER:
-        return None
-    view = _get_member_view(invocation)
-    if view is None or source.expression is None:
-        return None
-    return _typed_selection(source.expression, view, type_of_variable)
+    value, view, _ = found
+    return _typed_selection(value, view, type_of_variable)
 
 
 def _typed_selection(
@@ -493,6 +515,28 @@ def _the_one_match(names, pattern: str, case_sensitive: bool = False) -> str | N
     return matches[0] if len(matches) == 1 else None
 
 
+def _by_folded_name(names: frozenset[str]) -> Mapping[str, tuple[str, ...]]:
+    found: dict[str, list[str]] = {}
+    for name in names:
+        found.setdefault(name.casefold(), []).append(name)
+    return {folded: tuple(spellings) for folded, spellings in found.items()}
+
+
+#: The vocabulary a literal lookup reads, keyed by the name it spells: what a lookup of commands
+#: and one of cmdlets alone may find under each name.
+_LISTED_BY_NAME = {
+    False: _by_folded_name(KNOWN_COMMAND_NAMES),
+    True: _by_folded_name(KNOWN_CMDLET_NAMES),
+}
+
+#: The vocabulary a lookup of no name lists, without the aliases no module defines: what a lookup
+#: of commands and one of cmdlets alone lists.
+_LISTED_WITHOUT_A_NAME = {
+    False: KNOWN_COMMAND_NAMES - MODULELESS_ALIASES,
+    True: KNOWN_CMDLET_NAMES - MODULELESS_ALIASES,
+}
+
+
 def listed_command(
     selection: Ps1CommandSelection,
     narrowing: Ps1NameNarrowing | None = None,
@@ -511,14 +555,14 @@ def listed_command(
         return None
     candidates = KNOWN_CMDLET_NAMES if selection.cmdlets_only else KNOWN_COMMAND_NAMES
     name = selection.name
+    listed: Collection[str]
     if name is None:
         if narrowing is None:
             return None
-        listed = candidates - MODULELESS_ALIASES
+        listed = _LISTED_WITHOUT_A_NAME[selection.cmdlets_only]
     elif not selection.pattern:
         literal = name if is_wildcard_pattern(name) else literal_name(name)
-        folded = (literal or '').casefold()
-        found = [candidate for candidate in candidates if candidate.casefold() == folded]
+        found = _LISTED_BY_NAME[selection.cmdlets_only].get((literal or '').casefold(), ())
         if len(found) != 1:
             return None
         listed = found
@@ -609,29 +653,90 @@ def functions_listed(
 def command_listing_holds_at(node: Node, patterns: Sequence[str], cache) -> bool:
     """
     Whether the collected vocabulary is what the session's command table lists at *node* for every
-    pattern of *patterns*: a lookup invoked by name still runs the lookup command under both the
-    spelling it is written in and the name that spelling resolves to, and no writer of the table
-    and no definition matching a pattern ran before it. *cache* is the
+    pattern of *patterns*: a lookup invoked by name still runs the lookup command it names, and no
+    writer of the table and no definition matching a pattern ran before it. *cache* is the
     `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` of the tree *node* stands in.
     """
     reach = cache.world_reach
-    if isinstance(node, Ps1CommandInvocation):
-        written = get_command_name(node)
-        resolved = resolve_command_name(node)
-        if written is None or resolved is None:
-            return False
-        if not reach.may_trust_command_name_at(written, node):
-            return False
-        if not reach.may_trust_command_name_at(resolved, node):
-            return False
+    if isinstance(node, Ps1CommandInvocation) and not reach.may_trust_invocation(node):
+        return False
     return reach.may_read_the_command_table_at(node, patterns)
 
 
-def _subscribes_an_event_action(root: Node) -> bool:
-    return any(
+def member_listing_holds_at(pipeline: Ps1Pipeline, cache) -> bool:
+    """
+    Whether the collected surface is what the member listing *pipeline* pipes into the narrowing
+    at its end lists where it stands: the `Get-Member` it lists through, where it lists through
+    one, still runs the command it names, and no code the analysis cannot read can have changed a
+    type before it. *cache* is the `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` of the
+    tree *pipeline* stands in.
+    """
+    found = _member_listing(pipeline.elements[:-1])
+    if found is None:
+        return False
+    reach = cache.world_reach
+    lister = found[2]
+    if lister is not None and not reach.may_trust_invocation(lister):
+        return False
+    return reach.closed_at(pipeline)
+
+
+class Ps1VariableTableWrites:
+    """
+    What the guard of a variable listing reads of the whole script, read once per tree: every name
+    the script writes into the variable table, each with the key its writes are filed under, and
+    whether the script subscribes an event action. Which written names a pattern matches is
+    answered once per pattern.
+    """
+
+    def __init__(self, keys: Mapping[str, str], subscribes_an_event_action: bool):
+        self._keys = keys
+        self._matched: dict[str, tuple[str, ...]] = {}
+        self.subscribes_an_event_action = subscribes_an_event_action
+
+    def matching(self, pattern: str) -> tuple[str, ...]:
+        """
+        The keys of the written names *pattern* matches; none for a pattern 5.1 rejects.
+        """
+        matched = self._matched.get(pattern)
+        if matched is None:
+            regex = wildcard_regex(pattern)
+            matched = () if regex is None else tuple(
+                key for name, key in self._keys.items() if regex.match(name))
+            self._matched[pattern] = matched
+        return matched
+
+
+def variable_table_writes(root: Node, write_sites: Mapping[str, object]) -> Ps1VariableTableWrites:
+    """
+    The `Ps1VariableTableWrites` of *root*, whose writes are the keys of *write_sites* as
+    `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel.write_sites` files them. The key of
+    an environment variable names nothing in the variable table and is left out.
+    """
+    keys: dict[str, str] = {}
+    for key in write_sites:
+        name = variable_table_name(key)
+        if name is not None:
+            keys[name] = key
+    subscribes = any(
         isinstance(node, Ps1CommandInvocation) and resolve_command_name(node) in _EVENT_SUBSCRIBERS
         for node in root.walk()
     )
+    return Ps1VariableTableWrites(keys, subscribes)
+
+
+@functools.lru_cache(maxsize=1024)
+def _session_keys_matching(pattern: str) -> frozenset[str]:
+    regex = wildcard_regex(pattern)
+    if regex is None:
+        return frozenset()
+    return frozenset(name.lower() for name in SESSION_VARIABLES if regex.match(name))
+
+
+@functools.lru_cache(maxsize=1024)
+def _matches_an_event_action_variable(pattern: str) -> bool:
+    regex = wildcard_regex(pattern)
+    return regex is not None and any(regex.match(name) for name in EVENT_ACTION_VARIABLES)
 
 
 def variable_listing_holds_at(pattern: str, site: Node, cache) -> bool:
@@ -646,21 +751,25 @@ def variable_listing_holds_at(pattern: str, site: Node, cache) -> bool:
     orders those; in a script that holds none the listing holds anywhere, which keeps a listing
     inside a function body foldable.
 
+    The names written are the names the variable table lists, read off the keys of the writes
+    (`refinery.lib.scripts.ps1.ast.variable_table_name`), including those holding a colon: measured
+    on 5.1, after `Set-Variable 'e:x' 1` a listing of `E*t` holds `e:x` beside `ExecutionContext`.
+
     A pattern matching a variable an event action binds is refused where the script subscribes one,
     since a listing in the action block, or in a function it calls, lists that variable as well.
     """
-    regex = wildcard_regex(pattern)
-    if regex is None:
+    if wildcard_regex(pattern) is None:
         return False
-    if any(regex.match(name) for name in EVENT_ACTION_VARIABLES) and _subscribes_an_event_action(cache.root):
+    writes = cache.variable_table_writes
+    if writes.subscribes_an_event_action and _matches_an_event_action_variable(pattern):
         return False
     flow = cache.variable_flow
-    written = [key for key in flow.semantic.write_sites() if ':' not in key and regex.match(key)]
+    written = writes.matching(pattern)
     if not written:
         if not flow.has_unattributable_writes:
             return True
         return not flow.unattributable_write_may_precede(site)
-    keys = {name.lower() for name in SESSION_VARIABLES if regex.match(name)}
+    keys = set(_session_keys_matching(pattern))
     keys.update(written)
     keys.add(pattern.lower())
     return all(flow.write_observed_at(key, site) is Ps1ObservedWrite.NOTHING for key in keys)

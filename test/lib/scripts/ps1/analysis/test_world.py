@@ -911,6 +911,8 @@ class TestPs1WhatMayChangeTheCommandListing(TestBase):
             "[Environment]::SetEnvironmentVariable('PSModulePath', 'x')",
             "Set-Item env:PATHEXT '.DLL'",
             "Remove-Item Env:\\PSModulePath",
+            "Set-Content -PSPath env:PSModulePath 'C:\\m'",
+            "Set-Content -PSPath:env:PSModulePath 'C:\\m'",
         ):
             for options in (None, self._TRUSTING):
                 with self.subTest(source, options=options):

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from test import TestBase
+from test import TestBase, lines_executed
 
+from refinery.lib.scripts.ps1.analysis import listing, model
+from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.listing import (
     Ps1CommandSelection,
     Ps1MemberSelection,
@@ -14,6 +16,7 @@ from refinery.lib.scripts.ps1.analysis.listing import (
     lookup_selection,
     member_selection,
     name_narrowing,
+    variable_listing_holds_at,
 )
 from refinery.lib.scripts.ps1.ast import get_command_name
 from refinery.lib.scripts.ps1.data import Ps1MemberView
@@ -74,6 +77,10 @@ class TestPs1ListedCommand(TestBase):
         for written in ('wr`?te', 'nosuch', 'where.exe'):
             with self.subTest(written):
                 self.assertIsNone(listed_command(_literal(written)))
+
+    def test_a_literal_is_looked_up_without_reading_the_whole_vocabulary(self):
+        listed_command(_literal('Get-Item'))
+        self.assertLess(lines_executed(lambda: listed_command(_literal('Get-Item')), listing), 50)
 
     def test_a_pattern_one_engine_command_matches_lists_it(self):
         for pattern, expected in (
@@ -223,6 +230,16 @@ class TestPs1NameNarrowing(TestBase):
         pipeline = _first("x | ? { $_.Source -like 'wr?te' }", Ps1Pipeline)
         self.assertIsNone(name_narrowing(pipeline.elements[-1]))
 
+    def test_the_long_spelling_of_the_current_object_narrows(self):
+        pipeline = _first("x | ? { $PSItem.Name -like 'wr?te' }", Ps1Pipeline)
+        self.assertEqual(name_narrowing(pipeline.elements[-1]), _like('wr?te'))
+
+    def test_a_qualified_or_static_read_off_the_current_object_does_not_narrow(self):
+        for read in ('$global:_.Name', '$script:PSItem.Name', '$_::Name'):
+            with self.subTest(read):
+                pipeline = _first(F"x | ? {{ {read} -like 'wr?te' }}", Ps1Pipeline)
+                self.assertIsNone(name_narrowing(pipeline.elements[-1]))
+
 
 class TestPs1MemberSelection(TestBase):
 
@@ -296,3 +313,42 @@ class TestPs1ListedVariable(TestBase):
         for pattern in ('Matc*', 'fore*', 'Thi?', 'PSIt*', 'LASTE*', 'OF?'):
             with self.subTest(pattern):
                 self.assertIsNone(listed_variable(pattern))
+
+
+class TestPs1VariableListingHoldsAt(TestBase):
+
+    @staticmethod
+    def _site_and_cache(source: str) -> tuple[Ps1CommandInvocation, Ps1ModelCache]:
+        script = Ps1Parser(source).parse()
+        site = next(
+            node for node in script.walk()
+            if isinstance(node, Ps1CommandInvocation) and get_command_name(node) == 'Write-Output'
+        )
+        return site, Ps1ModelCache(script)
+
+    def _holds(self, source: str, pattern: str) -> bool:
+        site, cache = self._site_and_cache(source)
+        return variable_listing_holds_at(pattern, site, cache)
+
+    def test_a_variable_a_command_names_with_a_prefix_that_is_no_scope_is_listed(self):
+        for writer in (
+            "Set-Variable 'e:pathext' 5",
+            "New-Variable 'e:pathext' 5",
+            "Set-Item 'Variable:e:pathext' 5",
+            "Set-Variable 'env:et' 5",
+        ):
+            with self.subTest(writer):
+                self.assertFalse(self._holds(F"{writer}\nWrite-Output 'x'", 'E*t'))
+
+    def test_an_environment_variable_is_not_listed(self):
+        self.assertTrue(self._holds("$env:Et = 5\nWrite-Output 'x'", 'E*t'))
+
+    def test_a_second_guard_on_one_tree_reads_nothing_of_the_tree_again(self):
+        counts = []
+        for size in (40, 80):
+            assignments = '\n'.join(F'$a{index} = {index}' for index in range(size))
+            site, cache = self._site_and_cache(F"{assignments}\nWrite-Output 'x'")
+            variable_listing_holds_at('E*t', site, cache)
+            counts.append(lines_executed(
+                lambda: variable_listing_holds_at('E*t', site, cache), listing, model))
+        self.assertEqual(counts[0], counts[1])

@@ -336,6 +336,9 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The read is folded to the path the machine gave `ComSpec` where the snippet writes `x`: '
         'the .NET method writes the name of the host process, and no `$env:` occurrence spells '
         'the store, so the name is read as never written and the ambient default answers.',
+    "Get-Item -Filter x | Out-Null; Write-Output 'after'":
+        'The lookup is removed where the snippet writes `MissingMandatoryParameter` before it '
+        'runs: its output is discarded, and a removal does not ask whether the binder rejects it.',
 }
 
 

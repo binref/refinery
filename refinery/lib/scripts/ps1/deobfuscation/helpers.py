@@ -38,8 +38,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParenExpression,
-    Ps1Pipeline,
-    Ps1PipelineElement,
     Ps1ScopeModifier,
     Ps1ScriptBlock,
     Ps1StringLiteral,
@@ -179,27 +177,6 @@ def extract_foreach_scriptblock(
     if isinstance(arg, Ps1ScriptBlock):
         return arg
     return None
-
-
-def stands_where_only_a_command_may(node: Node) -> bool:
-    """
-    Whether *node* fills a pipeline element that only a command may fill, so replacing it with a
-    value writes a script PowerShell will not parse.
-
-    An expression is allowed as the *first* element of a pipeline and nowhere else. Measured on 5.1:
-    `function zzqf { 'H' }; $r = 'x' | zzqf; Write-Host ('r=' + $r)` prints `r=H`, and the same
-    script with the call replaced by its value writes `ExpressionsMustBeFirstInPipeline` and runs
-    nothing at all.
-
-    A single-element pipeline is not one of these: its only element is the first.
-    """
-    element = node.parent
-    if not isinstance(element, Ps1PipelineElement):
-        return False
-    pipeline = element.parent
-    if not isinstance(pipeline, Ps1Pipeline):
-        return False
-    return bool(pipeline.elements) and pipeline.elements[0] is not element
 
 
 def is_pipeline_item(node: Node | None) -> TypeGuard[Ps1Variable]:

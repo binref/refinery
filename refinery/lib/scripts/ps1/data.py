@@ -940,12 +940,16 @@ def binds_strictly(command: str) -> bool:
 
 class Ps1ParameterSetLayout(typing.NamedTuple):
     """
-    What one parameter set of a command binds by position: the full names of its parameters, the
-    ones among them that take a position, and the ones that take the arguments left over.
+    What one parameter set of a command binds and requires: the full names of its parameters, the
+    ones among them that take a position in the order of their positions, the ones that take the
+    arguments left over, the ones the set cannot run without, and the ones input piped into the
+    command may bind, by value or by the name of a property.
     """
     parameters: frozenset[str]
-    positional: frozenset[str]
+    positions: tuple[str, ...]
     remaining: frozenset[str]
+    mandatory: frozenset[str]
+    piped: frozenset[str]
 
 
 _PARAMETER_SET_LAYOUTS: dict[str, tuple[Ps1ParameterSetLayout, ...]] = {}
@@ -967,19 +971,30 @@ def parameter_set_layouts(command: str) -> tuple[Ps1ParameterSetLayout, ...]:
     layouts: list[Ps1ParameterSetLayout] = []
     for name in sorted(names) or [EVERY_PARAMETER_SET]:
         members: set[str] = set()
-        positional: set[str] = set()
+        positions: list[tuple[int, str]] = []
         remaining: set[str] = set()
+        mandatory: set[str] = set()
+        piped: set[str] = set()
         for _parameter, _info in parameters.items():
             for _set in _info['sets']:
                 if _set['set'] not in (name, EVERY_PARAMETER_SET):
                     continue
                 members.add(_parameter)
                 if _set['position'] >= 0:
-                    positional.add(_parameter)
+                    positions.append((_set['position'], _parameter))
                 if _set['remaining']:
                     remaining.add(_parameter)
+                if _set['mandatory']:
+                    mandatory.add(_parameter)
+                if _set['pipeline'] or _set['pipeline_by_name']:
+                    piped.add(_parameter)
         layouts.append(Ps1ParameterSetLayout(
-            frozenset(members), frozenset(positional), frozenset(remaining)))
+            frozenset(members),
+            tuple(_parameter for _, _parameter in sorted(positions)),
+            frozenset(remaining),
+            frozenset(mandatory),
+            frozenset(piped),
+        ))
     found = _PARAMETER_SET_LAYOUTS[command] = tuple(layouts) if parameters else ()
     return found
 

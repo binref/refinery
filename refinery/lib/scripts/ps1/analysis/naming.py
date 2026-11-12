@@ -51,6 +51,7 @@ from refinery.lib.scripts.ps1.ast import (
     string_value,
     switch_setting,
     unwrap_parens,
+    variable_key,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -398,7 +399,7 @@ def _subject_references(
     if role is not None:
         written = _subject_name(cmd, command, 'name')
         if written is not None and not has_wildcard(written):
-            yield from _resolve(
+            yield _variable_reference(
                 cmd, written, role, _declared_target(cmd), _hands_out(cmd, command))
         return
     role = _ITEM_COMMANDS.get(command)
@@ -411,13 +412,7 @@ def _subject_references(
     prefix = _NAME_DRIVES.get(drive)
     if prefix is None or not rest or has_wildcard(rest):
         return
-    yield Ps1NamedReference(
-        key=F'{prefix}{rest.lower()}',
-        role=role,
-        target=Ps1NameTarget.SCRIPT if prefix else _declared_target(cmd),
-        node=cmd,
-        hands_out=not prefix and _hands_out(cmd, command),
-    )
+    yield _drive_reference(cmd, prefix, rest, role, _declared_target(cmd), _hands_out(cmd, command))
 
 
 def _second_item_references(
@@ -456,12 +451,7 @@ def _second_item_references(
     prefix = _NAME_DRIVES.get(drive)
     if prefix is None or not rest or has_wildcard(rest):
         return
-    yield Ps1NamedReference(
-        key=F'{prefix}{rest.lower()}',
-        role=Ps1NameRole.WRITES,
-        target=Ps1NameTarget.SCRIPT if prefix else _declared_target(cmd),
-        node=cmd,
-    )
+    yield _drive_reference(cmd, prefix, rest, Ps1NameRole.WRITES, _declared_target(cmd))
 
 
 def _out_variable_references(cmd: Ps1CommandInvocation) -> Iterator[Ps1NamedReference]:
@@ -564,29 +554,68 @@ def _resolve(
     hands_out: bool = False,
 ) -> Iterator[Ps1NamedReference]:
     """
-    One reference, with a qualifier written into the name string resolved against *target*.
+    One reference, read off *written* the way the session state reads a variable path: a name drive
+    in front of the name addresses the item it names there, a qualifier of a scope places the name,
+    and a path on any other drive addresses no variable. Measured on 5.1, the session state's
+    `PSVariable.Set('function:x', …)` defines the function `x`; the variable commands read a name
+    otherwise, which `_variable_reference` answers.
     """
     qualifier, _, rest = written.partition(':')
     if rest:
         lowered = qualifier.lower()
         prefix = _NAME_DRIVES.get(lowered)
         if prefix is not None:
-            yield Ps1NamedReference(
-                key=F'{prefix}{rest.lower()}',
-                role=role,
-                target=Ps1NameTarget.SCRIPT if prefix else target,
-                node=node,
-                hands_out=hands_out and not prefix,
-            )
+            yield _drive_reference(node, prefix, rest, role, target, hands_out)
             return
         placed = _QUALIFIER_TARGETS.get(lowered)
         if placed is None:
             return
         yield Ps1NamedReference(
-            key=rest.lower(), role=role, target=placed, node=node, hands_out=hands_out)
+            key=variable_key(rest), role=role, target=placed, node=node, hands_out=hands_out)
         return
     yield Ps1NamedReference(
-        key=written.lower(), role=role, target=target, node=node, hands_out=hands_out)
+        key=variable_key(written), role=role, target=target, node=node, hands_out=hands_out)
+
+
+def _drive_reference(
+    node: Node,
+    prefix: str,
+    rest: str,
+    role: Ps1NameRole,
+    target: Ps1NameTarget,
+    hands_out: bool = False,
+) -> Ps1NamedReference:
+    """
+    The reference to the item *rest* on the name drive whose key prefix is *prefix*: the environment
+    variable of that name, or the variable `_variable_reference` reads it as.
+    """
+    if prefix:
+        return Ps1NamedReference(
+            key=F'{prefix}{rest.lower()}', role=role, target=Ps1NameTarget.SCRIPT, node=node)
+    return _variable_reference(node, rest, role, target, hands_out)
+
+
+def _variable_reference(
+    node: Node,
+    written: str,
+    role: Ps1NameRole,
+    target: Ps1NameTarget,
+    hands_out: bool = False,
+) -> Ps1NamedReference:
+    """
+    The reference to the variable a variable command or an item of the `Variable:` drive addresses
+    as *written*: a qualifier of a scope in front of the name places it as it places a reference,
+    and any other prefix is part of the name. Measured on 5.1, `Set-Variable 'env:x' 1` makes a
+    variable named `env:x` and leaves `$env:x` alone, `Set-Item 'Variable:e:x' 1` makes one named
+    `e:x`, and `Set-Item 'Variable:global:x' 1` writes `$global:x`.
+    """
+    qualifier, separator, rest = written.partition(':')
+    placed = _QUALIFIER_TARGETS.get(qualifier.lower()) if separator and rest else None
+    if placed is not None:
+        return Ps1NamedReference(
+            key=variable_key(rest), role=role, target=placed, node=node, hands_out=hands_out)
+    return Ps1NamedReference(
+        key=variable_key(written), role=role, target=target, node=node, hands_out=hands_out)
 
 
 def _is_a_pattern(cmd: Ps1CommandInvocation, command: str) -> bool:
@@ -859,8 +888,8 @@ def _intrinsic_name(call: Ps1InvokeMember) -> str | None:
 def _intrinsic_references(call: Ps1InvokeMember) -> Iterator[Ps1NamedReference]:
     """
     The reference a call of the session state's `PSVariable` makes to the name it is handed, which
-    it resolves the way the commands do: in the scope the call runs in unless the name is qualified.
-    `Get` hands out the variable itself.
+    it reads as a variable path (`_resolve`): in the scope the call runs in unless the name is
+    qualified. `Get` hands out the variable itself.
     """
     method = _intrinsic_method(call)
     if not method:

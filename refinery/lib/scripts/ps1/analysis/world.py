@@ -39,11 +39,13 @@ from refinery.lib.scripts.ps1.ast import (
     assignment_target_variables,
     binds_parameter,
     bound_argument_value,
+    bound_parameter_value,
     command_name_literal,
     free_positional_values,
     get_member_name,
     is_execution_context_invoke,
     is_opaque_dispatch,
+    is_piped_into,
     is_scriptblock_invoke,
     is_using_statement,
     may_create_a_scriptblock,
@@ -70,8 +72,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1FunctionDefinition,
     Ps1InvokeMember,
     Ps1MemberAccess,
-    Ps1Pipeline,
-    Ps1PipelineElement,
     Ps1ScopeModifier,
     Ps1Script,
     Ps1ScriptBlock,
@@ -558,11 +558,15 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
     shadow_sites: list[Ps1ShadowSite] = []
     invoked: set[str] = set()
     for node in root.walk():
+        resolved = None
         if isinstance(node, Ps1CommandInvocation):
-            invoked.update(resolved_command_names(node))
-        written = _writes_the_listing(node)
-        if written is _ListingWrite.PLAIN_SIGHT or (written is _ListingWrite.UNREADABLE and not trusting):
-            table_writers.append(node)
+            names = resolved_command_names(node)
+            invoked.update(names)
+            resolved = names[0] if names else None
+        if isinstance(node, _LISTING_WRITER_NODES):
+            written = _writes_the_listing(node, resolved)
+            if written is _ListingWrite.PLAIN_SIGHT or (written is _ListingWrite.UNREADABLE and not trusting):
+                table_writers.append(node)
         redefined = _identity_redefinitions(node)
         shadowed.update(record.name for record in redefined)
         shadow_sites.extend(Ps1ShadowSite(record.name, node) for record in redefined)
@@ -1434,14 +1438,24 @@ class _ListingWrite(enum.Enum):
     UNREADABLE = enum.auto()
 
 
-def _writes_the_listing(node: Node) -> _ListingWrite:
+#: The nodes `_writes_the_listing` may find a write of the listing in.
+_LISTING_WRITER_NODES = (
+    Ps1AssignmentExpression,
+    Ps1CommandInvocation,
+    Ps1InvokeMember,
+    Ps1Variable,
+)
+
+
+def _writes_the_listing(node: Node, resolved: str | None = None) -> _ListingWrite:
     """
     Whether *node* may change what a lookup of the command table lists, short of opening the
     command axis: a write nobody can read through which a `function:` or `alias:` item may be
-    written, or a store of an environment variable the listing reads. See `table_writers`.
+    written, or a store of an environment variable the listing reads. See `table_writers`. For an
+    invocation, *resolved* is the name its spelling resolves to.
     """
     if isinstance(node, Ps1CommandInvocation):
-        return _command_writes_the_listing(node)
+        return _command_writes_the_listing(node, resolved)
     if isinstance(node, Ps1Variable):
         return _session_holder_writes_the_listing(node)
     if isinstance(node, Ps1AssignmentExpression):
@@ -1461,7 +1475,9 @@ def _path_arguments(cmd: Ps1CommandInvocation, command: str) -> list[str] | None
     """
     The paths the item or content cmdlet *cmd* writes, read off `-Path` and `-LiteralPath`, off
     `-Destination` and `-NewName` for the cmdlets that take a second path, and off the free
-    arguments at the positions those leave, or `None` where one of them cannot be read.
+    arguments at the positions those leave, or `None` where one of them cannot be read. Each
+    parameter is read under every spelling the cmdlet binds it by, `-PSPath` for `-LiteralPath`
+    among them.
     """
     for argument in cmd.arguments:
         if not isinstance(argument, Ps1CommandArgument):
@@ -1475,7 +1491,7 @@ def _path_arguments(cmd: Ps1CommandInvocation, command: str) -> list[str] | None
     slots = len(groups)
     for group in groups:
         for parameter in group:
-            value = bound_argument_value(cmd, parameter)
+            value = bound_parameter_value(cmd, command, parameter)
             if value is None:
                 continue
             text = string_value(value)
@@ -1492,28 +1508,21 @@ def _path_arguments(cmd: Ps1CommandInvocation, command: str) -> list[str] | None
     return texts
 
 
-def _first_in_its_pipeline(cmd: Ps1CommandInvocation) -> bool:
-    element = cmd.parent
-    if not isinstance(element, Ps1PipelineElement):
-        return True
-    pipeline = element.parent
-    return not isinstance(pipeline, Ps1Pipeline) or not pipeline.elements or pipeline.elements[0] is element
-
-
-def _command_writes_the_listing(cmd: Ps1CommandInvocation) -> _ListingWrite:
+def _command_writes_the_listing(cmd: Ps1CommandInvocation, resolved: str | None) -> _ListingWrite:
     """
-    `_writes_the_listing` for an invocation: an item or content cmdlet whose path nobody can read
-    or that takes its path from the pipeline, a location command whose path nobody can read, and
-    either of them, or a `New-PSDrive` over the environment, addressing the environment drive.
+    `_writes_the_listing` for an invocation whose name resolves to *resolved*: an item or content
+    cmdlet whose path nobody can read or that takes its path from the pipeline, a location command
+    whose path nobody can read, and either of them, or a `New-PSDrive` over the environment,
+    addressing the environment drive.
     """
-    command = normalize_command_name(resolve_command_name(cmd) or '')
+    command = normalize_command_name(resolved or '')
     if command in _ITEM_CMDLETS or command in _CONTENT_CMDLETS:
         paths = _path_arguments(cmd, command)
         if paths is None:
             return _ListingWrite.UNREADABLE
         if any(_stores_a_listing_environment_name(text) for text in paths):
             return _ListingWrite.PLAIN_SIGHT
-        if not _first_in_its_pipeline(cmd):
+        if is_piped_into(cmd):
             return _ListingWrite.UNREADABLE
         return _ListingWrite.NONE
     if command in _LOCATION_COMMANDS:

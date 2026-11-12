@@ -37,6 +37,7 @@ from refinery.lib.scripts.ps1.analysis.errorstate import (
 )
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach, build_fault_reach
 from refinery.lib.scripts.ps1.analysis.handoff import Ps1CallTrust
+from refinery.lib.scripts.ps1.analysis.listing import Ps1VariableTableWrites, variable_table_writes
 from refinery.lib.scripts.ps1.analysis.model import Ps1NameSet, Ps1SemanticModel, build_semantic_model
 from refinery.lib.scripts.ps1.analysis.objects import Ps1ObjectFlow, build_object_flow
 from refinery.lib.scripts.ps1.analysis.raising import Ps1RaiseModel
@@ -78,6 +79,7 @@ class Ps1ModelCache(ModelCacheBase):
         '_blocks',
         '_cycles',
         '_variable_flow',
+        '_variable_table_writes',
         '_object_flow',
         '_commands',
         '_error_state',
@@ -104,6 +106,7 @@ class Ps1ModelCache(ModelCacheBase):
     _blocks: Ps1BlockModel | None
     _cycles: CycleModel | None
     _variable_flow: Ps1VariableFlow | None
+    _variable_table_writes: Ps1VariableTableWrites | None
     _object_flow: Ps1ObjectFlow | None
     _commands: Ps1CommandModel | None
     _error_state: Ps1ErrorStateReach | None
@@ -339,6 +342,15 @@ class Ps1ModelCache(ModelCacheBase):
         at a point asks here rather than walking the tree for an assignment that looks near enough.
         """
         return self._lazy('_variable_flow', self._build_variable_flow)
+
+    @property
+    def variable_table_writes(self) -> Ps1VariableTableWrites:
+        """
+        The names this root writes into the variable table, over `model`, which every guard of a
+        variable listing reads; read once per tree rather than once per listing.
+        """
+        return self._lazy('_variable_table_writes', lambda: variable_table_writes(
+            self.root, self.model.write_sites()))
 
     def _build_variable_flow(self) -> Ps1VariableFlow:
         raises = self.raises(True)

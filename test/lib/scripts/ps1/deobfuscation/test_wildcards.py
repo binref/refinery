@@ -63,14 +63,14 @@ class TestPs1VariableDriveResolution(TestPs1):
         self.assertEqual(result.strip(), '$ExecutionContext')
 
     def test_get_variable_value_only_abbreviated(self):
-        result = self._deobfuscate('Get-Variable Cf -ValueO')
-        self.assertEqual(result.strip(), '$Cf')
+        result = self._deobfuscate('Write-Output (Get-Variable Cf -ValueO)')
+        self.assertEqual(result.strip(), 'Write-Output ($Cf)')
 
     def test_get_variable_value_abbreviated_short(self):
         for switch in ('-V', '-Va', '-Val', '-Valu', '-Value', '-ValueO', '-ValueOn', '-ValueOnl', '-ValueOnly'):
             with self.subTest(switch=switch):
-                result = self._deobfuscate(F'Get-Variable Cf {switch}')
-                self.assertEqual(result.strip(), '$Cf')
+                result = self._deobfuscate(F'Write-Output (Get-Variable Cf {switch})')
+                self.assertEqual(result.strip(), 'Write-Output ($Cf)')
 
     def test_get_childitem_variable_drive_resolved(self):
         result = self._deobfuscate("(Get-ChildItem 'Variable:ExecutionContext').Value")
@@ -327,17 +327,19 @@ class TestPs1WildcardRedirections(TestPs1):
 
     def test_a_redirected_variable_read_is_not_rewritten_to_the_variable(self):
         self._assertUnchanged(
-            'Get-Variable payload -ValueOnly > C:\\out.txt', Ps1WildcardResolution)
+            'Get-Variable ExecutionContext -ValueOnly > C:\\out.txt', Ps1WildcardResolution)
 
     def test_a_redirected_variable_write_is_not_rewritten_to_an_assignment(self):
         self._assertUnchanged("Set-Variable x 'v' > C:\\out.txt", Ps1WildcardResolution)
 
     def test_an_unredirected_variable_read_is_still_rewritten(self):
         self.assertEqual(
-            self._apply('Get-Variable payload -ValueOnly', Ps1WildcardResolution), '$payload')
+            self._apply('Get-Variable ExecutionContext -ValueOnly', Ps1WildcardResolution),
+            '$ExecutionContext',
+        )
 
     def test_a_refused_rewrite_leaves_every_parent_pointer_true(self):
-        source = 'Get-Variable payload -ValueOnly > C:\\out.txt'
+        source = 'Get-Variable ExecutionContext -ValueOnly > C:\\out.txt'
         self._assertTreeIsIntact(source, source, Ps1WildcardResolution)
 
     def test_a_refused_variable_write_leaves_every_parent_pointer_true(self):
@@ -395,20 +397,14 @@ class TestPs1AWildcardRewriteKeepsAReadTheEnvironmentOwns(TestPs1):
         )
         self._assertDeobfuscatesTo(source, 'New-Object Net.WebClient')
 
-    def test_a_set_variable_with_a_stored_description_stays_a_command(self):
+    def test_a_set_variable_with_a_stored_argument_stays_a_command(self):
         source = """
-            $env:d = 'meta'
-            Set-Variable foo 42 -Description $env:d
-            (Get-Variable foo).Description
+            $env:d = 'Stop'
+            Set-Variable foo 42 -ErrorAction $env:d
+            Write-Output $foo
         """
         self._assertKept(source, preserve_environment=True)
-        self._assertDeobfuscatesTo(
-            source,
-            """
-                $foo = 42
-                (Get-Variable foo).Description
-            """,
-        )
+        self._assertDeobfuscatesTo(source, 'Write-Output 42')
 
     def test_a_where_object_wildcard_over_a_stored_name_stays_a_pipeline(self):
         source = """
@@ -455,7 +451,7 @@ class TestPs1VariableCommandScope(TestPs1):
 
     def test_the_value_of_a_parameter_is_not_part_of_the_value_assigned(self):
         self.assertEqual(
-            self._apply("Set-Variable y 'b' -Description 'd'", Ps1WildcardResolution),
+            self._apply("Set-Variable y 'b' -Scope Local", Ps1WildcardResolution),
             "$y = 'b'")
 
     def test_a_parameter_an_assignment_cannot_carry_declines_the_rewrite(self):
@@ -465,6 +461,7 @@ class TestPs1VariableCommandScope(TestPs1):
             "Set-Variable y 'b' -Force",
             "Set-Variable y 'b' -PassThru",
             "Set-Variable y 'b' -Visibility Private",
+            "Set-Variable y 'b' -Description 'd'",
         ):
             with self.subTest(source):
                 self._assertUnchanged(source, Ps1WildcardResolution)
@@ -474,9 +471,9 @@ class TestPs1VariableCommandScope(TestPs1):
 
     def test_a_read_carries_its_scope_and_declines_what_it_cannot_name(self):
         self.assertEqual(
-            self._apply('Get-Variable -Scope Global y -ValueOnly', Ps1WildcardResolution),
-            '$global:y')
-        self._assertUnchanged('Get-Variable y -ValueOnly -Scope 1', Ps1WildcardResolution)
+            self._apply('$v = Get-Variable -Scope Global y -ValueOnly', Ps1WildcardResolution),
+            '$v = $global:y')
+        self._assertUnchanged('$v = Get-Variable y -ValueOnly -Scope 1', Ps1WildcardResolution)
 
     def test_the_value_property_carries_the_scope_the_ValueOnly_spelling_does(self):
         self.assertEqual(
@@ -490,7 +487,7 @@ class TestPs1VariableCommandScope(TestPs1):
 
     def test_a_subject_bound_by_name_is_read_like_a_positional_one(self):
         for source, expected in (
-            ('Get-Variable -Name y -ValueOnly', '$y'),
+            ('$v = Get-Variable -Name y -ValueOnly', '$v = $y'),
             ('(Get-Variable -Name y).Value', '$y'),
             ('(Get-Item -Path Variable:y).Value', '$y'),
             ("Set-Item -Path Variable:y -Value 'b'", "$y = 'b'"),
@@ -534,9 +531,9 @@ class TestPs1NumberedVariableNames(TestPs1):
 
     def test_the_reference_a_read_becomes_names_the_text_the_number_was_written_as(self):
         for source, expected in (
-            ('Get-Variable 007 -ValueOnly', '$007'),
-            ('Get-Variable 0x10 -ValueOnly', '$0x10'),
-            ('Get-Variable 1_000 -ValueOnly', '$1_000'),
+            ('$v = Get-Variable 007 -ValueOnly', '$v = $007'),
+            ('$v = Get-Variable 0x10 -ValueOnly', '$v = $0x10'),
+            ('$v = Get-Variable 1_000 -ValueOnly', '$v = $1_000'),
             ('(Get-Item Variable:0x10).Value', '$0x10'),
         ):
             with self.subTest(source):
@@ -544,7 +541,7 @@ class TestPs1NumberedVariableNames(TestPs1):
 
     def test_the_value_property_names_what_the_ValueOnly_spelling_names(self):
         self.assertEqual(
-            self._apply('Get-Variable 0x10 -ValueOnly', Ps1WildcardResolution), '$0x10')
+            self._apply('$v = Get-Variable 0x10 -ValueOnly', Ps1WildcardResolution), '$v = $0x10')
         self.assertEqual(
             self._apply('(Get-Variable 0x10).Value', Ps1WildcardResolution), '$0x10')
 
@@ -762,6 +759,7 @@ class TestPs1AWriterOfTheCommandTableKeepsTheListingBelowIt(TestPs1):
         "$s = $ExecutionContext.SessionState\n$s.InvokeProvider.Item.Set('function:wrnte', {\n  1\n})",
         "$env:PSModulePath = 'C:\\m;' + $env:PSModulePath",
         "[Environment]::SetEnvironmentVariable('PSModulePath', 'C:\\m;' + $env:PSModulePath)",
+        "Set-Content -PSPath env:PSModulePath 'C:\\m'",
     )
 
     def test_a_writer_that_ran_before_the_listing_keeps_it(self):
@@ -895,6 +893,13 @@ class TestPs1AMemberListingFoldsOnlyUnderANameRead(TestPs1):
         self._assertUnchanged(
             "('abc'.psobject.Properties | ? {\n  $_.Name -ilike 'Ch*'\n}).Name", Ps1WildcardResolution)
 
+    @backlog
+    def test_a_property_listing_by_member_type_leaves_the_indexer_out(self):
+        self._assertUnchanged(
+            "('abc' | Get-Member -MemberType Property | ? {\n  $_.Name -ilike 'Ch*'\n}).Name",
+            Ps1WildcardResolution,
+        )
+
 
 class TestPs1AVariableListingFoldsWhereNothingWroteAMatchingName(TestPs1):
 
@@ -987,7 +992,7 @@ class TestPs1ABindingErrorKeepsTheVariableCommand(TestPs1):
     def test_a_command_the_binder_accepts_folds(self):
         for source, expected in (
             ('Set-Variable -N x -Va 5', '$x = 5'),
-            ('Get-Variable x -ValueOnly', '$x'),
+            ('$y = Get-Variable x -ValueOnly', '$y = $x'),
         ):
             with self.subTest(source):
                 self.assertEqual(self._apply(source, Ps1WildcardResolution), expected)
@@ -998,3 +1003,135 @@ class TestPs1ABindingErrorKeepsTheVariableCommand(TestPs1):
     @backlog
     def test_a_lookup_of_a_name_the_script_never_sets_keeps_its_error(self):
         self._assertUnchanged('Write-Output (Get-Variable zzq -ValueOnly)', Ps1WildcardResolution)
+
+
+class TestPs1ALookupAFunctionTakesOverIsNotReadAsTheSession(TestPs1):
+
+    def test_a_member_listing_through_a_lister_a_function_takes_over_stays(self):
+        self._assertUnchanged(cleandoc("""
+            function Get-Member {
+              'zzz'
+            }
+            ('abc' | Get-Member -MemberType Method | Where-Object {
+              $_.Name -like 'Clo?e'
+            }).Name
+        """), Ps1WildcardResolution)
+
+    def test_a_variable_command_a_function_takes_over_stays(self):
+        for command, use in (
+            ('Get-Variable', "(Get-Variable 'E*t').Value"),
+            ('Get-Variable', "(gv 'E*t').Value"),
+            ('Get-Variable', '$y = Get-Variable x -ValueOnly'),
+            ('Get-Item', "(Get-Item 'Variable:E*t').Value"),
+            ('Set-Variable', 'Set-Variable Cf 5'),
+            ('Set-Item', 'Set-Item Variable:Cf 5'),
+        ):
+            source = F"function {command} {{\n  'zzz'\n}}\n{use}"
+            with self.subTest(source):
+                self._assertUnchanged(source, Ps1WildcardResolution)
+
+    def test_a_type_mutation_before_a_variable_command_does_not_take_it_over(self):
+        self.assertEqual(
+            self._apply(
+                "Add-Type -AssemblyName System.Xml\n(Get-Item 'Variable:E*t').Value",
+                Ps1WildcardResolution,
+            ),
+            'Add-Type -AssemblyName System.Xml\n$ExecutionContext',
+        )
+
+
+class TestPs1ANarrowingFiltersOnlyOnTheNameOfTheCurrentObject(TestPs1):
+
+    def test_a_read_of_anything_but_the_name_of_the_current_object_does_not_narrow(self):
+        for source in (
+            cleandoc("""
+                function f {
+                  ('abc' | Get-Member -MemberType Method | Where-Object {
+                    $global:_.Name -ilike 'Clo?e'
+                  }).Name
+                }
+            """),
+            "('abc' | Get-Member -MemberType Method | Where-Object {\n  $_::Name -ilike 'Clo?e'\n}).Name",
+            "(Get-Command | Where-Object {\n  $_::Name -ilike '*w-*ct'\n}).Name",
+        ):
+            with self.subTest(source):
+                self._assertUnchanged(source, Ps1WildcardResolution)
+
+
+class TestPs1AVariableCommandFoldsWhereItsReplacementWritesWhatItWrites(TestPs1):
+
+    def test_a_write_whose_output_is_used_stays_a_command(self):
+        for source in (
+            'Set-Variable x 5 | Out-Null',
+            'Write-Output (Set-Variable x 5)',
+            '$y = Set-Variable x 5',
+            'Set-Item Variable:x 5 | Out-Null',
+            'Write-Output (Set-Item Variable:x 5)',
+        ):
+            with self.subTest(source):
+                self._assertUnchanged(source, Ps1WildcardResolution)
+
+    def test_a_write_standing_as_a_statement_becomes_an_assignment(self):
+        self.assertEqual(
+            self._apply('if ($true) {\n  Set-Variable x 5\n}', Ps1WildcardResolution),
+            'if ($true) {\n  $x = 5\n}',
+        )
+
+    def test_a_command_input_is_piped_into_stays(self):
+        for source in (
+            '123 | Get-Variable x -ValueOnly',
+            '123 | Set-Variable x -Value 6',
+            '123 | Get-Variable ExecutionContext -ValueOnly',
+        ):
+            with self.subTest(source):
+                self._assertUnchanged(source, Ps1WildcardResolution)
+
+    def test_a_value_only_lookup_folds_where_its_output_is_collected_into_one_value(self):
+        for source, expected in (
+            ('Write-Output (Get-Variable x -ValueOnly).Count', 'Write-Output ($x).Count'),
+            ('$y = Get-Variable x -ValueOnly', '$y = $x'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._apply(source, Ps1WildcardResolution), expected)
+
+    def test_a_value_only_lookup_whose_output_the_pipeline_unrolls_stays(self):
+        for source in (
+            'Get-Variable x -ValueOnly',
+            'Write-Output @(Get-Variable x -ValueOnly).Count',
+            "Get-Variable x -ValueOnly | ForEach-Object {\n  'item'\n}",
+            'Write-Output $(Get-Variable x -ValueOnly).GetType().Name',
+        ):
+            with self.subTest(source):
+                self._assertUnchanged(source, Ps1WildcardResolution)
+
+    def test_a_value_only_lookup_of_a_value_the_pipeline_does_not_unroll_folds_anywhere(self):
+        self.assertEqual(
+            self._apply(
+                'Get-Variable ExecutionContext -ValueOnly | ForEach-Object {\n  $_.GetType().Name\n}',
+                Ps1WildcardResolution,
+            ),
+            '$ExecutionContext | ForEach-Object {\n  $_.GetType().Name\n}',
+        )
+
+    def test_an_item_write_of_a_name_holding_a_colon_stays(self):
+        for source in (
+            "Set-Item 'Variable:e:pathext' 5",
+            "Set-Item 'Variable:global:zq' 5",
+        ):
+            with self.subTest(source):
+                self._assertUnchanged(source, Ps1WildcardResolution)
+
+    def test_a_parameter_neither_a_reference_nor_an_assignment_carries_stays(self):
+        for source in (
+            'Set-Item Variable:x 5 -Force',
+            'Set-Item Variable:x 5 -Exclude x',
+            'Set-Item Variable:x 5 -WhatIf',
+            'Set-Variable x 5 -WhatIf',
+            'Set-Variable x 5 -Confirm',
+            'Set-Variable x 5 -Verbose',
+            "Set-Variable x 5 -Description 'd'",
+            "(Get-Item 'Variable:x' -Force).Value",
+            '(Get-Variable x -ValueOnly:$v).Value',
+        ):
+            with self.subTest(source):
+                self._assertUnchanged(source, Ps1WildcardResolution)

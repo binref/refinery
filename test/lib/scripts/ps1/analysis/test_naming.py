@@ -10,6 +10,7 @@ from refinery.lib.scripts.ps1.analysis.naming import (
     reads_unreadable_name,
     unreadable_name_target,
 )
+from refinery.lib.scripts.ps1.ast import variable_key
 from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1InvokeMember, Ps1Variable
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
@@ -100,6 +101,23 @@ class TestPs1NameCensus(TestBase):
         for source in ("Set-Item C:\\file 5", "Set-Item Function:f 5", "Get-Item HKLM:\\Key"):
             with self.subTest(source):
                 self.assertEqual(self._refs(source), [])
+
+    def test_a_variable_command_reads_no_prefix_but_a_scope_off_the_name(self):
+        for source, written, role in (
+            ("Set-Variable 'env:zq' 5", 'env:zq', 'WRITES'),
+            ("Set-Variable 'variable:zq' 5", 'variable:zq', 'WRITES'),
+            ("Set-Variable 'e:pathext' 5", 'e:pathext', 'WRITES'),
+            ("New-Variable 'e:pathext' 5", 'e:pathext', 'WRITES'),
+            ("Get-Variable 'variable:zq'", 'variable:zq', 'READS'),
+            ("Remove-Variable 'env:zq'", 'env:zq', 'UNBINDS'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._refs(source), [(variable_key(written), role, 'LOCAL')])
+
+    def test_an_item_on_the_variable_drive_reads_a_scope_off_its_name(self):
+        self.assertEqual(self._refs("Set-Item 'Variable:global:zq' 5"), [('zq', 'WRITES', 'SCRIPT')])
+        self.assertEqual(
+            self._refs("Set-Item 'Variable:e:pathext' 5"), [(variable_key('e:pathext'), 'WRITES', 'LOCAL')])
 
     def test_an_out_variable_parameter_writes_the_name_it_binds(self):
         for source in (

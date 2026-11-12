@@ -651,15 +651,43 @@ def binding_key(var: Ps1Variable) -> str:
     """
     The key a variable binds under within a scope's binding table: its lowercased name, prefixed
     with `env:` for an environment variable so the process-global `$env:X` namespace stays distinct
-    from a script variable `$X` of the same name.
+    from a script variable `$X` of the same name, and keyed through `variable_key` otherwise.
 
     This lives here rather than with the semantic model because a name addressed as a *string* —
     `Set-Variable X` — has to be keyed the same way as one addressed as a variable, and the layer
     that recognises those cannot depend on the model that consumes them.
     """
     if var.scope is Ps1ScopeModifier.ENV:
-        return F'env:{var.name.lower()}'
-    return var.name.lower()
+        return F'{_ENVIRONMENT_KEY}{var.name.lower()}'
+    return variable_key(var.name)
+
+
+#: The prefix of the key an environment variable binds under.
+_ENVIRONMENT_KEY = 'env:'
+
+#: The prefix of the key a variable whose name holds a colon binds under.
+_COLON_NAME_KEY = 'variable:'
+
+
+def variable_key(name: str) -> str:
+    """
+    The key the variable named *name* binds under: its lowercased name. A name holding a colon is
+    one only a command or a braced `${variable:…}` reference spells — measured on 5.1,
+    `Set-Variable 'env:x' 1` makes a variable named `env:x` and leaves `$env:x` alone — and its key
+    is prefixed so that it cannot be the key of the environment variable the same text spells.
+    """
+    lowered = name.lower()
+    return F'{_COLON_NAME_KEY}{lowered}' if ':' in lowered else lowered
+
+
+def variable_table_name(key: str) -> str | None:
+    """
+    The name the variable table lists under the binding *key*, lowercased, or `None` for the key of
+    an environment variable, which the table does not hold.
+    """
+    if key.startswith(_ENVIRONMENT_KEY):
+        return None
+    return key.removeprefix(_COLON_NAME_KEY)
 
 
 def binds_parameter(written: str, parameter: str) -> bool:
@@ -735,6 +763,53 @@ def bound_argument_value(
     return None
 
 
+def bound_parameter_value(
+    cmd: Ps1CommandInvocation, command: str, parameter: str,
+) -> Expression | None:
+    """
+    The value *cmd* binds to the parameter of *command* named *parameter*, given in full and
+    lowercased, under any spelling the collected surface of *command* binds it by: its name, an
+    alias, or an unambiguous abbreviation of either — `Set-Content -PSPath x` binds `-LiteralPath`.
+    `None` where no argument binds the parameter or the one that does is given no value.
+
+    `bound_argument_value` reads a spelling as a prefix of one parameter alone, which every command
+    a script may define has to be asked by; this is the reading of a command whose surface is known.
+    """
+    arguments = [
+        argument for argument in cmd.arguments if isinstance(argument, Ps1CommandArgument)
+    ]
+    for index, argument in enumerate(arguments):
+        if argument.kind is Ps1CommandArgumentKind.POSITIONAL:
+            continue
+        found = abbreviated_parameter(command, argument.name)
+        if found is None or found.lower() != parameter:
+            continue
+        if argument.kind is Ps1CommandArgumentKind.NAMED and argument.value is not None:
+            return argument.value
+        if argument.kind is Ps1CommandArgumentKind.SWITCH:
+            following = arguments[index + 1] if index + 1 < len(arguments) else None
+            if following is not None and following.kind is Ps1CommandArgumentKind.POSITIONAL:
+                return following.value
+    return None
+
+
+def is_piped_into(node: Node) -> bool:
+    """
+    Whether *node* fills an element of a pipeline behind its first one: the elements in front of it
+    hand it their output, which binds a parameter of a command standing there, and only a command
+    may stand there. Measured on 5.1, `function zzqf { 'H' }; $r = 'x' | zzqf` stores `H`, and the
+    same script with the call replaced by its value writes `ExpressionsMustBeFirstInPipeline` and
+    runs nothing at all.
+    """
+    element = node.parent
+    if not isinstance(element, Ps1PipelineElement):
+        return False
+    pipeline = element.parent
+    if not isinstance(pipeline, Ps1Pipeline):
+        return False
+    return bool(pipeline.elements) and pipeline.elements[0] is not element
+
+
 def consumes_a_value(command: str, written: str) -> bool:
     """
     Whether the parameter *written* in a call to *command* takes the bare word that follows it as
@@ -765,7 +840,10 @@ def binding_fails(cmd: Ps1CommandInvocation) -> bool:
     - the parameters bound by name share no parameter set;
     - the free arguments outnumber the positions every set the named ones leave open still has,
       and no such set takes the remaining arguments — `Set-Variable x 'a' 'b'` is
-      `PositionalParameterNotFound`, where `Write-Output 'a' 'b'` binds both to `-InputObject`.
+      `PositionalParameterNotFound`, where `Write-Output 'a' 'b'` binds both to `-InputObject`;
+    - every such set leaves a mandatory parameter unbound that no input piped into the command
+      may bind — `Set-Variable -Value 5` and `Get-Item -Filter x` are `MissingMandatoryParameter`
+      on a host that cannot ask for the value, where `Get-Variable -ValueOnly` lists every value.
 
     A splat counts as failing, since what it binds is not written here, and so does an argument
     the parser left in a shape no parameter reading accepts. A command the surface does not carry,
@@ -802,13 +880,23 @@ def binding_fails(cmd: Ps1CommandInvocation) -> bool:
         )
     if expecting:
         return True
-    layouts = [layout for layout in parameter_set_layouts(command) if bound <= layout.parameters]
-    if not layouts:
-        return True
-    return not any(
-        bool(layout.remaining - bound) or len(layout.positional - bound) >= free
-        for layout in layouts
-    )
+    piped = is_piped_into(cmd)
+    for layout in parameter_set_layouts(command):
+        if not bound <= layout.parameters:
+            continue
+        open_positions = [parameter for parameter in layout.positions if parameter not in bound]
+        filled = bound.union(open_positions[:free])
+        if free > len(open_positions):
+            remaining = layout.remaining - bound
+            if not remaining:
+                continue
+            filled.update(remaining)
+        missing = layout.mandatory - filled
+        if piped:
+            missing -= layout.piped
+        if not missing:
+            return False
+    return True
 
 
 def free_positional_values(

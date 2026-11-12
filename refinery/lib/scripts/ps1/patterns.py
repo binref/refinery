@@ -21,6 +21,7 @@ The rules, measured on 5.1:
 """
 from __future__ import annotations
 
+import functools
 import re
 
 from typing import NamedTuple
@@ -113,8 +114,6 @@ def _set_token(members: list[str], ranges: list[bool]) -> _Token:
 
 
 def _token_regex(token: _Token) -> str:
-    if token.star:
-        return '.*'
     if token.members is None:
         return '.'
     if not token.ranges and len(token.members) == 1:
@@ -124,19 +123,46 @@ def _token_regex(token: _Token) -> str:
     return F'[{body}]'
 
 
+def _segments(tokens: list[_Token]) -> list[str]:
+    """
+    The regular expressions of the runs of tokens the stars of a pattern separate, one more than
+    there are stars.
+    """
+    segments: list[list[_Token]] = [[]]
+    for token in tokens:
+        if token.star:
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    return [''.join(_token_regex(token) for token in segment) for segment in segments]
+
+
+@functools.lru_cache(maxsize=4096)
 def wildcard_regex(pattern: str, case_sensitive: bool = False) -> re.Pattern | None:
     """
     The regular expression 5.1 compiles *pattern* to, matched against a whole name and ignoring
     case unless *case_sensitive* asks for the `-clike` reading, or `None` for a pattern 5.1
     rejects. A caller evaluating the pattern raises where this answers `None`; a caller folding a
     lookup refuses.
+
+    Every run between two stars matches a fixed number of characters, so the earliest place it
+    matches after the run before it leaves the most room to the runs behind it, and is where the
+    expression commits it: the cost of a match is linear in the name for each run. A plain `.*`
+    per star retries every split of the name between the stars, which grows with the name to the
+    power of their number, and both the patterns and the names come from the script.
     """
     try:
         tokens = _tokens(pattern)
     except _MalformedPattern:
         return None
+    head, *rest = _segments(tokens)
+    body = head
+    if rest:
+        *middle, tail = rest
+        body += ''.join(F'(?>.*?{segment})' for segment in middle if segment)
+        body += F'.*{tail}'
     flags = re.DOTALL | (0 if case_sensitive else re.IGNORECASE)
-    return re.compile(F"^{''.join(_token_regex(token) for token in tokens)}\\Z", flags)
+    return re.compile(F'^{body}\\Z', flags)
 
 
 def is_wildcard_pattern(text: str) -> bool:
