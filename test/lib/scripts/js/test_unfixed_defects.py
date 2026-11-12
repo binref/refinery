@@ -442,6 +442,18 @@ class TestAGlobalObjectReturnedAsAFunctionsThisKeepsTheWritesReadThroughIt(TestB
         self.assertEqual(host_behavior(source.encode('utf8') | djs() | str), host_behavior(source))
 
 
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAWriteThroughANameHoldingTheGlobalObjectInAFunctionIsKept(TestBase):
+
+    @todo
+    def test_under_either_model(self):
+        source = 'var k = 5; var G = globalThis; function f() { G.k = 1; } f(); console.log(k);'
+        self.assertEqual(
+            [host_behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)],
+            [host_behavior(source)] * 2,
+        )
+
+
 A_DEGENERATE_FINDER_THAT_THROWS_A_TYPEERROR = {
     'function g() { var o = null; return o.x || globalThis; }\nvar x = g();\nconsole.log(x);\n':
         'function g() {\n  return null.x || globalThis;\n}\nvar x = g();\nconsole.log(x);',
@@ -5410,6 +5422,35 @@ class TestTheTrustingModelFollowsAFunctionConstructorHandedOn(TestBase):
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABodyWhoseTextAFoldSpellsKeepsTheNamesItReads(TestBase):
+
+    @todo
+    def test_a_name_the_file_reads_as_well(self):
+        rows = {
+            'a property holding the text, copied after the object it reads is folded': (
+                "var t = { x: 5 }; var o = { body: 'return a + t.x' }; console.log(t.x);"
+                " var g = new Function('a', o.body); console.log(g(1));"
+            ),
+            'an element holding the text, read after the object it reads is folded': (
+                "var p = ['return a + t.x']; var t = { x: 5 }; console.log(t.x);"
+                " var g = new Function('a', p[0]); console.log(g(1));"
+            ),
+            'a call answering the text, evaluated in the step that folds the name it writes': (
+                "function dec(s) { return s.split('').reverse().join(''); } var k = 1;"
+                " function get() { return k; } Function('q', dec('q = k'))(2); console.log(get());"
+            ),
+            'a callee folded into the intrinsic in the step that folds the method its text replaces': (
+                "(0, Function)('q', 'String.prototype.charAt = function () { return q; }')('X');"
+                " console.log('abc'.charAt(0));"
+            ),
+        }
+        self.assertEqual(
+            {label: host_behavior(source.encode('utf8') | djs() | str) for label, source in rows.items()},
+            {label: host_behavior(source) for label, source in rows.items()},
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAVarAnEvalDeclaresOnOneBranchShadowsTheGlobalTheFunctionReads(TestBase):
 
     @backlog
@@ -5418,15 +5459,12 @@ class TestAVarAnEvalDeclaresOnOneBranchShadowsTheGlobalTheFunctionReads(TestBase
         self.assertEqual(host_behavior(source.encode('utf8') | djs(strict=True) | str), host_behavior(source))
 
     @backlog
-    def test_an_eval_the_file_cannot_read_under_either_model(self):
+    def test_an_eval_the_file_cannot_read_under_the_suspecting_model(self):
         source = (
             "var x = 1; function f(c) { if (c) eval(process.argv.length > 99 ? '' : 'var x = 4'); return x; }"
             " console.log(f(1), f(0));"
         )
-        self.assertEqual(
-            [host_behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)],
-            [host_behavior(source)] * 2,
-        )
+        self.assertEqual(host_behavior(source.encode('utf8') | djs(strict=True) | str), host_behavior(source))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -5464,6 +5502,55 @@ class TestTheSuspectingModelKeepsANameCodeAStringSpellsWrites(TestBase):
                 for label, source in rows.items()
             },
             {label: host_behavior(source, prelude=STRING_TIMERS) for label, source in rows.items()},
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheTrustingModelReadsEverySpellingOfARunOfCode(TestBase):
+
+    @backlog
+    def test_an_optional_call_of_eval_is_an_indirect_eval(self):
+        source = "var s = 'ab'; eval?.(process.argv.length > 99 ? '' : 's = \"abc\"'); console.log(s.length);"
+        self.assertEqual(host_behavior(source.encode('utf8') | djs() | str), host_behavior(source))
+
+    @backlog
+    def test_a_body_constructed_through_the_constructor_of_a_built_in_method_keeps_the_name_it_reads(self):
+        source = "var k = 5; var add = []['filter']['constructor']('a', 'return a + k'); console.log(add(1));"
+        self.assertEqual(host_behavior(source.encode('utf8') | djs() | str), host_behavior(source))
+
+    @wontfix(
+        'a body that reads a top-level name and is built by a tagged template on Function is made up '
+        'for the defect'
+    )
+    def test_a_body_built_by_a_tagged_template_keeps_the_name_it_reads(self):
+        source = 'var k = 5; var add = Function`return k`; console.log(add());'
+        self.assertEqual(host_behavior(source.encode('utf8') | djs() | str), host_behavior(source))
+
+    @wontfix(
+        'a constructor property the program replaces on its own function and calls with text is made '
+        'up for the defect'
+    )
+    def test_a_constructor_the_program_replaces_is_not_unpacked_as_function(self):
+        source = (
+            "function f() {} f.constructor = function () { return function () { return 'mine'; }; };"
+            " console.log(f.constructor('return 1')());"
+        )
+        self.assertEqual(host_behavior(source.encode('utf8') | djs() | str), host_behavior(source))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAGlobalAHostFunctionCalledFromCodeAStringSpellsWritesStaysGlobal(TestBase):
+
+    @backlog
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        host = 'globalThis.hostRun = function () { globalThis.result = 42; };'
+        source = (
+            "function stage() { result = 0; new Function('a', 'hostRun(a)')(1); return result; }"
+            ' console.log(stage());'
+        )
+        self.assertEqual(
+            host_behavior(source.encode('utf8') | djs() | str, prelude=host),
+            host_behavior(source, prelude=host),
         )
 
 
@@ -5525,15 +5612,16 @@ A_WRAPPER_CODE_OUTSIDE_THE_TEXT_CALLS = {
         "Function(process.argv.length > 99 ? '' : 'console.log(f())')();",
         (),
     ),
-    'code run from a string the file spells, calling a wrapper': (
+}
+
+A_WRAPPER_CODE_A_STRING_SPELLS_CALLS = {
+    'a wrapper': (
         "function w() { return 'x'; }\nconsole.log(w());\n"
-        "var g = new Function('a', 'return a + w()');\nconsole.log(g(1));",
-        (),
+        "var g = new Function('a', 'return a + w()');\nconsole.log(g(1));"
     ),
-    'code run from a string the file spells, calling a function the file evaluates': (
+    'a function the file evaluates': (
         "function f() { return 'x' + 1; }\nconsole.log(f());\n"
-        "var g = new Function('a', 'return a + f()');\nconsole.log(g(1));",
-        (),
+        "var g = new Function('a', 'return a + f()');\nconsole.log(g(1));"
     ),
 }
 
@@ -5559,6 +5647,14 @@ class TestAWrapperFunctionIsKeptWhereCodeOutsideTheTextCallsIt(TestBase):
                 label: behavior_where_a_host_calls_run_and_onload(source)
                 for label, (source, _) in rows.items()
             },
+        )
+
+    @todo
+    def test_a_wrapper_code_a_string_spells_calls_is_kept(self):
+        rows = A_WRAPPER_CODE_A_STRING_SPELLS_CALLS
+        self.assertEqual(
+            {label: host_behavior(source.encode('utf8') | djs() | str) for label, source in rows.items()},
+            {label: host_behavior(source) for label, source in rows.items()},
         )
 
 

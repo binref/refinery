@@ -65,8 +65,7 @@ def localization_target(
     name (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`), the program
     keeps no reflection surface that could read it by name and runs no code a string spells that
     names it (`refinery.lib.scripts.js.analysis.model.SemanticModel.named_by_spelled_code`), and
-    the program stores no property on
-    the global object under a runtime key
+    the program stores no property on the global object under a runtime key
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.has_opaque_global_write`): such a write
     may target the binding's own name, which a relocation would no longer receive. A name no
     declaration binds also needs every store into it to create a property of the global object

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import inspect
+import weakref
 
 from contextlib import contextmanager
 
@@ -123,6 +124,16 @@ class TestModelCache(TestBase):
             [id(n) for n in cache.liveness.dead_stores()],
             [id(n) for n in live_fresh.dead_stores()],
         )
+
+    def test_the_models_of_the_code_a_string_spells_go_with_the_cache(self):
+        script = self._script("var k = 5; var g = new Function('a', 'return a + k'); SINK(g);")
+        cache = ModelCache(script, DeobfuscationOptions(trust_eval=True))
+        fragments = [weakref.ref(fragment) for fragment in cache.model.spelled_code_fragments()]
+        self.assertTrue(cache.intrinsic_writes.names)
+        del cache
+        gc.collect()
+        self.assertEqual(len(fragments), 1)
+        self.assertIsNone(fragments[0]())
 
 
 @a_property_of_the_pin_itself
@@ -530,9 +541,23 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
     @a_property_of_the_pin_itself
     def test_a_fold_spelling_the_code_a_call_runs_renews_the_models_of_the_trusting_model(self):
         trusting = DeobfuscationOptions(trust_eval=True)
-        completed = self._builds("var k = 5;\nsetTimeout(atob('ayA9IDc='), 0);", trusting)[0]
-        never = self._builds('var k = 5;\nsetTimeout(atob(g()), 0);', trusting)[0]
+        completed = self._builds("var k = 5; setTimeout(atob('ayA9IDc='), 0);", trusting)[0]
+        never = self._builds('var k = 5; setTimeout(atob(g()), 0);', trusting)[0]
         self.assertGreater(completed, never)
+
+    @staticmethod
+    def _decoded_evals(count: int) -> str:
+        body = '\n'.join(F"function f{i}() {{ return eval(atob('InVzZSBzdHJpY3QiOyAx')); }}" for i in range(count))
+        return F'{body}\nSINK({", ".join(F"f{i}" for i in range(count))});'
+
+    @todo
+    @a_property_of_the_pin_itself
+    def test_folds_spelling_the_code_calls_run_do_not_multiply_model_builds(self):
+        trusting = DeobfuscationOptions(trust_eval=True)
+        self.assertEqual(
+            self._builds(self._decoded_evals(10), trusting)[:2],
+            self._builds(self._decoded_evals(40), trusting)[:2],
+        )
 
     @a_property_of_the_pin_itself
     def test_folds_spelling_caller_in_an_array_do_not_multiply_model_builds(self):

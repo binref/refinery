@@ -32,7 +32,11 @@ from refinery.lib.scripts.js.analysis.intrinsics import (
     build_intrinsic_writes,
 )
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
-from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
+from refinery.lib.scripts.js.analysis.model import (
+    SemanticModel,
+    SpelledCodeReadings,
+    build_semantic_model,
+)
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel, build_reaching
 from refinery.lib.scripts.js.analysis.tampering import TamperingModel, build_tampering
 from refinery.lib.scripts.js.model import JsCallExpression, JsIdentifier, JsNewExpression, JsScript
@@ -83,6 +87,10 @@ class ModelCache(ModelCacheBase):
     (`refinery.lib.scripts.js.analysis.intrinsics.UnfollowedWriteRefusals`). A run that assumes
     that every write the scan does not follow writes nothing runs inside `speculating`, which hands
     every build of the scan to the record of that assumption.
+
+    The code strings spell that the semantic models of this cache read is read once for all of
+    them (`refinery.lib.scripts.js.analysis.model.SpelledCodeReadings`), and what was read goes
+    with the cache.
     """
 
     _SLOTS = (
@@ -148,6 +156,7 @@ class ModelCache(ModelCacheBase):
     ):
         self.settlement = settlement
         self.refusals = refusals
+        self.spelled_code_readings = SpelledCodeReadings()
         self._speculation: WriteSpeculation | None = None
         super().__init__(root, options)
         self.file_kind = file_kind(self.options, self.root)
@@ -189,6 +198,7 @@ class ModelCache(ModelCacheBase):
             self.file_kind,
             exports_are_read_outside(self.options),
             partial(is_host_entrypoint, self.options),
+            self.spelled_code_readings,
         ))
 
     @property

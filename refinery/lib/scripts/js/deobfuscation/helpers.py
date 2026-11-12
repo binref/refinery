@@ -2963,7 +2963,9 @@ def nothing_still_names(model: SemanticModel, removed: Sequence[Node]) -> bool:
     the object supplies it or the binding does, and which one is a runtime question. It is counted as
     a reference here, since a removal made on the strength of it denoting the object is a removal that
     strands it whenever the object does not carry the property. An exported binding is named by the
-    export itself, which an importer reads and which a removal would leave declaring nothing.
+    export itself, which an importer reads and which a removal would leave declaring nothing. So is
+    a binding code a string spells names, wherever the call running that code stays
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.spelled_code_sites_naming`).
     """
     inside = {id(node) for root in removed for node in root.walk()}
     asked: set[Binding] = set()
@@ -2980,6 +2982,8 @@ def nothing_still_names(model: SemanticModel, removed: Sequence[Node]) -> bool:
             if binding.exported or binding_has_references(model, binding, exclude_ids=inside):
                 return False
             if any(id(ref) not in inside for ref in model.dynamic_references(binding)):
+                return False
+            if any(id(site) not in inside for site in model.spelled_code_sites_naming(binding)):
                 return False
     return True
 

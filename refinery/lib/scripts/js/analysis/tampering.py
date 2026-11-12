@@ -677,8 +677,9 @@ class TamperingModel:
         The reads of the binding *node* is stored into by *parent* — a declarator initializer or
         the right side of an `=` assignment — or `None` when *node*'s position neither stores it in
         a name nor drops it as an expression statement, so the value escapes the walk's reading. A
-        binding with dynamic references or an unattributed write also escapes: its reads do not
-        enumerate what could invoke the value.
+        binding with dynamic references, an unattributed write, or a name code a string spells uses
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.named_by_spelled_code`) also
+        escapes: its reads do not enumerate what could invoke the value.
         """
         target: JsIdentifier | None = None
         if isinstance(parent, JsVariableDeclarator) and parent.init is node:
@@ -699,7 +700,12 @@ class TamperingModel:
         if target is None:
             return None
         binding = self.model.lookup(target.name, self.model.scope_of(target))
-        if binding is None or binding.dynamic_refs or binding.has_indefinite_write:
+        if (
+            binding is None
+            or binding.dynamic_refs
+            or binding.has_indefinite_write
+            or self.model.named_by_spelled_code(binding)
+        ):
             return None
         return list(binding.reads)
 

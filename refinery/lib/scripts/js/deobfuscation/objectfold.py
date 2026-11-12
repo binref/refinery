@@ -23,7 +23,6 @@ from refinery.lib.scripts.js.analysis.model import (
     Binding,
     Scope,
     SemanticModel,
-    is_direct_eval_call,
     is_use_position,
     timer_callee_name,
     walk_receiver_scope,
@@ -290,15 +289,12 @@ def _call_of(member: JsMemberExpression) -> JsCallExpression | None:
 def _runs_code_in_its_scope(model: SemanticModel, value: Node) -> bool:
     """
     Whether *value* holds a direct `eval` the model reads as code that may name any binding in
-    scope where it runs. A copy closed over the scope it is copied into would read and write the
-    names of that scope instead of the ones around the literal, which no comparison of the names
-    the value spells can see. The trusting model reads code the program does not spell as naming
-    nothing (`refinery.lib.scripts.js.analysis.model.SemanticModel.trusts_the_code_at`).
+    scope where it runs (`refinery.lib.scripts.js.analysis.model.SemanticModel.names_its_scope`).
+    A copy closed over the scope it is copied into would read and write the names of that scope
+    instead of the ones around the literal, which no comparison of the names the value spells can
+    see. The trusting model reads code the program does not spell as naming nothing.
     """
-    return any(
-        is_direct_eval_call(node) and not model.trusts_the_code_at(node)
-        for node in value.walk()
-    )
+    return any(model.names_its_scope(node) for node in value.walk())
 
 
 class _Folded(NamedTuple):

@@ -240,6 +240,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
                 and (
                     model.reached_from_outside(binding)
                     or model.local_reachable_by_direct_eval(binding)
+                    or model.named_by_spelled_code(binding)
                 )
             ):
                 return None

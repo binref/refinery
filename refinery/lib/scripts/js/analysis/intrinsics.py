@@ -14,9 +14,9 @@ for it. The registry of intrinsics the scan watches lives here for the same reas
 from __future__ import annotations
 
 import enum
-import functools
+import weakref
 
-from typing import Iterator, NamedTuple, Sequence
+from typing import Iterable, Iterator, NamedTuple, Sequence
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.components import strongly_connected_components
@@ -687,13 +687,37 @@ class UnfollowedWriteRefusals:
         self.refused = True
 
 
-@functools.lru_cache(maxsize=512)
-def _spelled_code_writes(fragment: SemanticModel) -> IntrinsicWrites:
+class _WrittenBySpelledCode(NamedTuple):
     """
-    The `build_intrinsic_writes` scan of code a string spells, memoized as its reading is
-    (`refinery.lib.scripts.js.analysis.model.read_spelled_code`).
+    What the scan of code a string spells contributes to the scan of the program that runs it:
+    the names it writes, the keys it writes on them, and whether it follows every write.
     """
-    return build_intrinsic_writes(fragment)
+    names: frozenset[str]
+    keys: dict[str, frozenset[str] | None]
+    followable: bool
+
+
+_WRITTEN_BY_SPELLED_CODE: weakref.WeakKeyDictionary[SemanticModel, _WrittenBySpelledCode] = (
+    weakref.WeakKeyDictionary()
+)
+"""
+The scans of the code strings spell, one for each model of such code, which lives exactly as long
+as the reading holding that model
+(`refinery.lib.scripts.js.analysis.model.SpelledCodeReadings`): an entry holds nothing of the model.
+"""
+
+
+def _spelled_code_writes(fragment: SemanticModel) -> _WrittenBySpelledCode:
+    """
+    The `build_intrinsic_writes` scan of code a string spells, made once for each model of it.
+    """
+    written = _WRITTEN_BY_SPELLED_CODE.get(fragment)
+    if written is None:
+        scan = build_intrinsic_writes(fragment)
+        written = _WRITTEN_BY_SPELLED_CODE[fragment] = _WrittenBySpelledCode(
+            scan.names, scan.keys, scan.followable
+        )
+    return written
 
 
 def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
@@ -741,21 +765,29 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
     descriptor read from a value this analysis cannot read — bounds no key at all and is recorded
     as unbounded.
 
-    Code a string spells that the model reads (`SemanticModel.spelled_code_fragments`) is part of
-    the program: the scan of each such text is merged into this one, so a body that replaces
-    `String.prototype.charAt` writes `String` for the program that runs it.
+    Code a string spells that the model reads
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.spelled_code_fragments`) is part of the
+    program: the scan of each such text is merged into this one, so a body that replaces
+    `String.prototype.charAt` writes `String` for the program that runs it. That scan reads the
+    text apart from the file and follows no name of the file to the built-in it holds, so a name
+    such code uses
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.bindings_named_by_spelled_code`) hands
+    what it may hold to code whose writes this scan does not enumerate.
     """
     names: set[str] = set()
     keys: dict[str, set[str] | None] = {}
 
+    def join_keys(name: str, written: Iterable[str] | None) -> None:
+        if written is None:
+            keys[name] = None
+            return
+        known = keys.setdefault(name, set())
+        if known is not None:
+            known.update(written)
+
     def record_keys(found: frozenset[str], key: str | None) -> None:
         for name in found & KEYED_WRITE_ROOTS:
-            if key is None:
-                keys[name] = None
-                continue
-            known = keys.setdefault(name, set())
-            if known is not None:
-                known.add(key)
+            join_keys(name, None if key is None else (key,))
 
     def record(found: frozenset[str], key: str | None) -> None:
         names.update(found)
@@ -810,17 +842,16 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
             written_global = model.may_name_a_global(member)
             if written_global is not None:
                 record(frozenset({written_global}), None)
+    for binding in model.bindings_named_by_spelled_code():
+        watched = aliases.names_of(binding) & ESCAPE_WATCHED_ROOTS
+        if watched:
+            record_escape(watched)
     for fragment in model.spelled_code_fragments():
         spelled = _spelled_code_writes(fragment)
         names.update(spelled.names)
         followable = followable and spelled.followable
         for name, written in spelled.keys.items():
-            if written is None:
-                keys[name] = None
-                continue
-            known = keys.setdefault(name, set())
-            if known is not None:
-                known.update(written)
+            join_keys(name, written)
     return IntrinsicWrites(
         frozenset(names),
         {name: None if written is None else frozenset(written) for name, written in keys.items()},

@@ -62,6 +62,10 @@ class TestJsTrustedEvalExcusesTheSurfacesThatRunUnreadableCode(TestJsDeobfuscato
                     on_separate_lines(_printed(opener), _JUNK_FOLDED),
                 )
 
+    def test_an_eval_handed_nothing_leaves_the_locals_beside_it_to_fold_under_the_option(self):
+        deobfuscated = _deobfuscated('function f() { var k = 1; eval(); return k; } SINK(f());', trust_eval=True)
+        self.assertIn('return 1;', deobfuscated)
+
 
 class TestJsTrustedEvalDoesNotExcuseAMutationTheScriptWritesDown(TestJsDeobfuscator):
 
@@ -365,6 +369,170 @@ class TestJsTrustedEvalReadsTheCodeAStringSpells(TestBase):
             ),
             'a body writing this.k': (
                 "var k = 5; var g = new Function('v', 'this.k = v; return arguments.length'); g(7); console.log(k);"
+            ),
+        })
+
+    def test_global_code_spelled_inside_eval_code_finds_the_global_past_a_local(self):
+        self.assertDeobfuscationBehavesAsTheProgramDoes({
+            'a body built in an eval, beside a var of the same name': (
+                "var k = 1; function f() { var k = 0; eval('\"use strict\"; Function(\"k = 2\")()'); return k; }"
+                " console.log(f(), k);"
+            ),
+            'a body built in an eval, beside a let of the same name': (
+                "let k = 1; function f() { let k = 0; eval('\"use strict\"; Function(\"k = 2\")()'); return k; }"
+                " console.log(f(), k);"
+            ),
+        })
+
+    def test_a_function_constructor_behind_a_chain_of_aliases_is_read(self):
+        self.assertDeobfuscationBehavesAsTheProgramDoes({
+            'four names': (
+                "var k = 1; var A = Function, B = A, C = B, D = C; var f = new D('a', 'k = a; return a');"
+                " console.log(f(5), k);"
+            ),
+        })
+
+    def test_a_name_holding_the_global_object_hands_the_code_every_global(self):
+        self.assertDeobfuscationBehavesAsTheProgramDoes({
+            'a body reading a global through a name holding this': (
+                "var k = 5; var G = this; var g = new Function('a', 'return a + G.k'); console.log(g(1));"
+            ),
+            'a body writing a global through a name holding globalThis': (
+                "var k = 5; var G = globalThis; var g = new Function('v', 'G.k = v'); g(1); console.log(k);"
+            ),
+        })
+
+    def test_an_object_the_code_names_is_neither_folded_nor_removed(self):
+        self.assertDeobfuscationBehavesAsTheProgramDoes({
+            'a body writing a property of an object': (
+                "var o = { x: 1 }; var g = new Function('v', 'o.x = v'); g(7); console.log(o.x);"
+            ),
+            'a body writing an element of an array': (
+                "var t = ['x', 'y']; var g = new Function('v', 't[0] = v'); g('z'); console.log(t[0]);"
+            ),
+            'a body reading an object the file reads': (
+                "var t = { a: 'hi' }; console.log(t.a); var g = new Function('k', 'return t[k]'); console.log(g('a'));"
+            ),
+            'a string timer reading an object the file reads': (
+                "var t = { a: 'hi' }; console.log(t.a); setTimeout('var q = t.a; console.log(q)', 0);"
+            ),
+            'an eval in a function writing a property of a global object': (
+                "var o = { x: 1 }; function f(c) { if (c) eval('o.x = 7'); return o.x; } console.log(f(1));"
+            ),
+            'a body reading a namespace the file reads': (
+                "var ns = {}; ns.a = 1; ns.b = 2; console.log(ns.a + ns.b);"
+                " var g = new Function('x', 'return ns.a + x'); console.log(g(1));"
+            ),
+        })
+
+    def test_a_declaration_moved_to_the_top_leaves_the_names_the_code_reads_alone(self):
+        self.assertDeobfuscationBehavesAsTheProgramDoes({
+            'a local of a function called once': (
+                "function main() { var k = [1, 2]; console.log(k.length); } main();"
+                " var g = new Function('a', 'return typeof k'); console.log(g(0));"
+            ),
+            'a local of a body constructed and called in place': (
+                "new Function('var k = [1]; console.log(k.length)')();"
+                " var g = new Function('a', 'return typeof k'); console.log(g(0));"
+            ),
+        })
+
+    def test_text_a_name_holds_is_read_where_the_file_also_reads_the_names_it_uses(self):
+        self.assertDeobfuscationBehavesAsTheProgramDoes({
+            'an eval of a constant': (
+                "var k = 1; var code = 'k = 2'; eval(code); console.log(k);"
+            ),
+            'an eval of a constant in a function': (
+                "var k = 1; function f() { var code = 'k = 2; 0'; return eval(code); } f(); console.log(k);"
+            ),
+            'a string timer running a constant': (
+                "var k = 1; var code = 'k = 2; var z = 0'; setTimeout(code, 0);"
+                " setTimeout(function () { console.log(k); }, 10);"
+            ),
+            'a body held by a constant, writing': (
+                "var k = 1; var body = 'k = a'; var g = new Function('a', body); g(2); console.log(k);"
+            ),
+            'a body held by a constant read twice': (
+                "var k = 5; var s = 'return a + k; /* padding padding padding padding padding padding */';"
+                " var add = new Function('a', s); var add2 = new Function('a', s); console.log(add(1), add2(2));"
+            ),
+            'a body held by a constant, reading a constant the file reads': (
+                "var s = 'return a + k'; var k = 5; console.log(k); var g = new Function('a', s); console.log(g(1));"
+            ),
+            'a body held by a constant, reading an object the file reads': (
+                "var s = 'return a + t.x'; var t = { x: 5 }; console.log(t.x); var g = new Function('a', s);"
+                " console.log(g(1));"
+            ),
+        })
+
+    def test_a_built_in_the_code_replaces_through_a_name_of_the_file_is_not_folded(self):
+        self.assertDeobfuscationBehavesAsTheProgramDoes({
+            'a name holding String': (
+                "var S = String; var p = new Function('v', 'S.prototype.charAt = function () { return v; }');"
+                " p('x'); console.log('abc'.charAt(1));"
+            ),
+            'a name holding Math': (
+                "var M = Math; var p = new Function('v', 'M.floor = function () { return v; }'); p(7);"
+                " console.log(Math.floor(1.5));"
+            ),
+        })
+
+    def test_a_built_in_the_code_replaces_is_not_taken_for_one_that_runs_nothing(self):
+        self.assertDeobfuscationBehavesAsTheProgramDoes({
+            'a method the code replaces, called for nothing': (
+                "var p = new Function('v', 'Math.max = function () { console.log(v); return 0; }'); p('x');"
+                " var unused = Math.max(1, 2);"
+            ),
+            'a constructor the code replaces, read through a name of the file': (
+                "var A = Array; var p = new Function('v', 'Array = function () { return [v]; }; return 0'); p('x');"
+                " function make() { return A(2).length; } console.log(make());"
+            ),
+        })
+
+    def test_a_function_the_code_calls_keeps_what_it_does(self):
+        self.assertDeobfuscationBehavesAsTheProgramDoes({
+            'a function writing a global, called by a body a callback runs': (
+                "var k = 1; function setK() { k = 2; } var g = new Function('a', 'setK(); return a');"
+                " [0].forEach(g); console.log(k);"
+            ),
+            'a function whose value a body reads': (
+                "var h; (function () { function inner() { console.log('ran'); return 42; } h = inner; inner(); })();"
+                " var g = new Function('a', 'return h() + a'); console.log(g(1));"
+            ),
+            'the decoder of a string array a string timer calls': (
+                "function _0x5e03(){var a=['300xyz','800abc','secret_value','another_string','500target'];"
+                "_0x5e03=function(){return a;};return _0x5e03();}"
+                "function _0x1169(p,q){p=p-0x1f0;var arr=_0x5e03();var r=arr[p];return r;}"
+                "(function(a,t){"
+                "var _0x221ff1=_0x1169,_0x5f2282={_0x2bb395:0x1f0,_0x56f5b5:0x1f1};"
+                "var b=a();"
+                "while(true){try{"
+                "var c=parseInt(_0x221ff1(_0x5f2282._0x2bb395))/0x1"
+                "+parseInt(_0x221ff1(_0x5f2282._0x56f5b5))/0x2;"
+                "if(c===t)break;b.push(b.shift());}catch(e){b.push(b.shift());}}}(_0x5e03,0x2bc));"
+                "var x=_0x1169(0x1f2);"
+                "setTimeout('var t; console.log(_0x1169(0x1f3))', 0);"
+                "console.log(x);"
+            ),
+        })
+
+    def test_a_write_eval_code_leaves_to_a_later_run_is_not_one_where_the_eval_stands(self):
+        self.assertDeobfuscationBehavesAsTheProgramDoes({
+            'a closure writing a var the eval declares': (
+                "function f() { var k; var r = eval('var k; globalThis.g = function () { k = 2 }; 0'); k = 1; g();"
+                " return k + r; } console.log(f());"
+            ),
+            'a field initializer writing a local': (
+                "function f() { var k; var r = eval('var C = class { x = (k = 2) }; 0'); k = 1; new C();"
+                " return k + r; } console.log(f());"
+            ),
+        })
+
+    def test_a_construction_whose_text_closes_the_function_still_throws(self):
+        self.assertDeobfuscationBehavesAsTheProgramDoes({
+            'a body closing the wrapper': (
+                "try { console.log(Function('a', 'return a }); (function () {')(1)); }"
+                " catch (e) { console.log(e.name); }"
             ),
         })
 

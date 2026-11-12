@@ -1158,7 +1158,10 @@ class EffectModel:
         outside the file may call it by a name it reaches
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.called_from_outside`): a host calls
         a declared entry point whenever the script hands it control, and code loading a library
-        calls its functions once the file has run, as an importer calls an export.
+        calls its functions once the file has run, as an importer calls an export. So may code a
+        string spells that names it
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.named_by_spelled_code`), whenever
+        that code runs.
 
         A call to such a function can land at a point no call site pins down; a function only ever
         called directly by name has all its invocations enumerated by those call sites. Memoized
@@ -1181,6 +1184,7 @@ class EffectModel:
             if (
                 binding.exported
                 or self.model.called_from_outside(binding)
+                or self.model.named_by_spelled_code(binding)
                 or binding.writes
                 or binding.dynamic_refs
                 or len(binding.declarations) != 1
@@ -1473,7 +1477,8 @@ class EffectModel:
         through a dynamic scope is modelled: a `with` body that names the container — a member
         write, method call, reassignment, or escape — is attributed to it as a dynamic reference and
         judged by the same role logic, so a `with` that never names it keeps it foldable, and a
-        direct `eval` in a local container's own function makes it mutable. The one residual is a
+        direct `eval` in a local container's own function makes it mutable, as does code a string
+        spells that names the container, wherever it is declared. The one residual is a
         script-scope container reached by an opaque global surface — a direct `eval`, `Function`,
         timer, or dynamic global write whose code cannot be read — which cannot be frozen without
         also freezing the lookup arrays real samples fold, so it is left to the caller's reflection
@@ -1571,13 +1576,19 @@ class EffectModel:
         local container's own function can rewrite it opaquely — a global is left to the caller's
         reflection reasoning, since freezing every global on any surface over-blocks — unless the
         caller has ordered the eval sites against its read (*direct_eval_ordered*), which carries
-        the promise the public query documents. A `with` body's accesses are attributed by name: a
-        member write, a reassignment, or an escape mutates it or may alias it out, and a method
-        call may mutate it unless the caller vouches that its methods cannot; only a plain member
-        read leaves it intact, so a `with` that never names the container is no threat. A dynamic
-        escape or reassignment cannot be alias-followed or ordered the way a resolved one can, so
-        either is treated as mutating.
+        the promise the public query documents. Code a string spells that names the container, a
+        global as much as a local
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.named_by_spelled_code`), may write
+        through the name or hand the container on, which no ordering of a kill covers: its reading
+        records that it uses the name, not what it does with the value. A `with` body's accesses
+        are attributed by name: a member write, a reassignment, or an escape mutates it or may
+        alias it out, and a method call may mutate it unless the caller vouches that its methods
+        cannot; only a plain member read leaves it intact, so a `with` that never names the
+        container is no threat. A dynamic escape or reassignment cannot be alias-followed or
+        ordered the way a resolved one can, so either is treated as mutating.
         """
+        if self.model.named_by_spelled_code(binding):
+            return True
         if not direct_eval_ordered and self.model.local_reachable_by_direct_eval(binding):
             return True
         for ref in self.model.dynamic_references(binding, exclude=exclude):
@@ -3466,7 +3477,10 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
     root nor writes a property on one, nor shadows one with a binding of its own, nor contains a
     reflection surface through which an intrinsic could be replaced at runtime, nor stores a
     property on the global object under a runtime key, which may replace an intrinsic the same
-    way. Only then may a call to a registry intrinsic be trusted to behave as specified.
+    way. Only then may a call to a registry intrinsic be trusted to behave as specified. Code a
+    string spells that the model reads
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.spelled_code_fragments`) is part of the
+    program and is asked the same.
     """
     if model.has_reflection_surface() or model.has_opaque_global_write():
         return False
@@ -3492,7 +3506,7 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
                 and target.object.name in PURE_INTRINSIC_ROOTS
             ):
                 return False
-    return True
+    return all(_intrinsics_pristine(fragment) for fragment in model.spelled_code_fragments())
 
 
 def _writes_the_global_prototype(model: SemanticModel, member: JsMemberExpression, assumptions: KeyAssumptions) -> bool:
@@ -3548,6 +3562,10 @@ def _global_installs(model: SemanticModel, assumptions: KeyAssumptions) -> _Glob
     that reveals an installer there renews the models. The global object carrying one —
     `globalThis[k] = v` — is the one computed key that *is* an install for this question: it may give
     the read property a new value or setter, so `has_opaque_global_write` refuses here.
+
+    Code a string spells that the model reads
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.spelled_code_fragments`) is part of the
+    program, and what it installs is installed by the program.
     """
     if model.has_reflection_surface() or model.has_opaque_global_write():
         return _ANY_INSTALL
@@ -3575,6 +3593,12 @@ def _global_installs(model: SemanticModel, assumptions: KeyAssumptions) -> _Glob
             continue
         if _writes_the_global_prototype(model, node, assumptions):
             return _ANY_INSTALL
+    for fragment in model.spelled_code_fragments():
+        spelled = _global_installs(fragment, fragment.assumed_keys)
+        if spelled.keys is None:
+            return _ANY_INSTALL
+        pristine = pristine and spelled.pristine
+        keys.update(spelled.keys)
     return _GlobalInstalls(pristine, frozenset(keys))
 
 

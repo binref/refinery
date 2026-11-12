@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import inspect
 
-from test import TestBase, backlog, opportunity
+from test import TestBase, backlog, lines_executed, opportunity
 from test.lib.scripts.js.analysis.write_positions import WRITE_POSITIONS
 
 from refinery.lib.scripts import Node
+from refinery.lib.scripts.js.analysis import model as model_module
 from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
@@ -2365,3 +2366,19 @@ class TestWhatCodeOutsideTheFileReaches(TestBase):
                 binding = model.binding_of(function.id)
                 assert binding is not None
                 self.assertEqual(model.reached_without_a_read(binding), expected)
+
+
+class TestTheTrustingModelIsBuiltInLinearWork(TestBase):
+
+    @staticmethod
+    def _work(statement: str):
+        def work(count: int) -> int:
+            ast = JsParser('\n'.join(statement.format(i=i) for i in range(count))).parse()
+            return lines_executed(lambda: build_semantic_model(ast, trust_eval=True), model_module)
+        return work
+
+    def test_over_calls_handed_the_global_object(self):
+        self.assertWorkGrowsLinearly(self._work('(function (w) {{ w.v{i} = {i}; }})(this);'), 20)
+
+    def test_over_functions_declared_in_blocks(self):
+        self.assertWorkGrowsLinearly(self._work('var f{i}; {{ function f{i}() {{ return {i}; }} }}'), 20)
