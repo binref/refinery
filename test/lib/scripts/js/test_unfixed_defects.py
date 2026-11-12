@@ -5459,12 +5459,15 @@ class TestAVarAnEvalDeclaresOnOneBranchShadowsTheGlobalTheFunctionReads(TestBase
         self.assertEqual(host_behavior(source.encode('utf8') | djs(strict=True) | str), host_behavior(source))
 
     @backlog
-    def test_an_eval_the_file_cannot_read_under_the_suspecting_model(self):
+    def test_an_eval_the_file_cannot_read_under_either_model(self):
         source = (
             "var x = 1; function f(c) { if (c) eval(process.argv.length > 99 ? '' : 'var x = 4'); return x; }"
             " console.log(f(1), f(0));"
         )
-        self.assertEqual(host_behavior(source.encode('utf8') | djs(strict=True) | str), host_behavior(source))
+        self.assertEqual(
+            [host_behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)],
+            [host_behavior(source)] * 2,
+        )
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
