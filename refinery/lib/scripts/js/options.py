@@ -76,7 +76,9 @@ class DeobfuscationOptions:
 
     - Suspecting model (default, `trust_eval=False`): such a surface may read or write anything the
       scope it runs in can reach, and every fold resting on the contrary is refused. This is the
-      only sound answer, because the code being run can do anything the runtime allows.
+      only sound answer, because the code being run can do anything the runtime allows. Code a
+      string spells is read as both models read it, except a text through which the global object
+      escapes as a value, which this model takes for one it cannot read.
 
     - Trusting model (`trust_eval=True`): such a surface is assumed inert, so the junk written around
       it is removed as if it were not there. **This is unsound, deliberately.** In the packed script

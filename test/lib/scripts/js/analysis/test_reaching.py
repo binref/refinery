@@ -164,6 +164,11 @@ class TestReaching(TestBase):
     @opportunity
     def test_reaches_a_read_before_a_reflection_surface_beside_the_write(self):
         self.assertTrue(self._query(
+            "var x = 'ab'; var k = e; console.log(x.length); eval(input); globalThis[k] = 0;"
+        ))
+
+    def test_reaches_a_read_before_code_an_eval_spells_that_names_nothing_beside_the_write(self):
+        self.assertTrue(self._query(
             "var x = 'ab'; var k = e; console.log(x.length); eval('1'); globalThis[k] = 0;"
         ))
 

@@ -890,11 +890,16 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
     def _unwrap(self, scope: Node, dispatcher: _Dispatcher) -> None:
         """
         Decide the whole unwrap on the tree as it stands, then make it in one go. No model is asked
-        anything after the first edit.
+        anything after the first edit. A dispatch rewritten into a call of its entry leaves no frame
+        of the router behind, which only reading the `caller` of a function can tell, so nothing is
+        unwrapped where the program may read one
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`).
         """
         assert self._root is not None
         cache = model_cache(self, self._root)
         model = cache.model
+        if model.spells_caller():
+            return
         entries: dict[str, _Entry] = {}
         for key, function in dispatcher.entries.items():
             entry = _read_entry(function, dispatcher, model)

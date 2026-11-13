@@ -49,17 +49,17 @@ from refinery.lib.scripts.js.analysis.liveness import LivenessModel
 from refinery.lib.scripts.js.analysis.localization import localizable_bindings
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
-    GLOBAL_OBJECT_ALIASES,
     SAME_REALM_GLOBAL_OBJECT_ALIASES,
     Binding,
     BindingKind,
     Scope,
     ScopeKind,
     SemanticModel,
+    SpelledFragment,
     annex_b_suppressor_names,
     enclosing_function,
     is_simple_assignment_target,
-    is_the_this_of_a_script,
+    is_unread_source,
     may_be_global_object_base,
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
@@ -81,19 +81,14 @@ from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrayPattern,
     JsAssignmentExpression,
-    JsBinaryExpression,
     JsBlockStatement,
     JsBooleanLiteral,
     JsCallExpression,
-    JsConditionalExpression,
     JsDebuggerStatement,
-    JsDoWhileStatement,
     JsEmptyStatement,
     JsExpressionStatement,
-    JsForStatement,
     JsFunctionDeclaration,
     JsIdentifier,
-    JsIfStatement,
     JsLabeledStatement,
     JsMemberExpression,
     JsNewExpression,
@@ -106,12 +101,9 @@ from refinery.lib.scripts.js.model import (
     JsReturnStatement,
     JsScript,
     JsStringLiteral,
-    JsThisExpression,
-    JsUnaryExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
-    JsWhileStatement,
     Statement,
     object_member_access_runs_accessor,
     strip_parens,
@@ -142,8 +134,9 @@ def _global_alias_read_names(model: SemanticModel, root: Node) -> frozenset[str]
 
     A computed access with a statically known string key (`globalThis['g']`) reads the same name its
     dot spelling reads, so it counts here through `access_key`; one whose key the text does not state
-    is not a read of any one name but of potentially all of them, which is
-    `_the_global_object_escapes`'s question rather than this scan's.
+    is not a read of any one name but of potentially all of them, which is the question
+    `refinery.lib.scripts.js.analysis.model.SemanticModel.global_object_escapes` answers rather
+    than this scan.
     """
     names: set[str] = set()
     for node in root.walk():
@@ -160,74 +153,15 @@ def _global_alias_read_names(model: SemanticModel, root: Node) -> frozenset[str]
     return frozenset(names)
 
 
-_IDENTITY_OBSERVING_UNARY = frozenset({'typeof', 'void', '!'})
-
-_IDENTITY_COMPARISONS = frozenset({'===', '!=='})
-
-
-def _observes_no_global_property(node: Node) -> bool:
+def _stands_inside(node: Node, functions: set[int]) -> bool:
     """
-    Whether the position *node* stands in cannot read a property of the global object it denotes:
-    the base of a member access whose key `access_key` states, a plain overwrite of the name, a
-    `typeof`/`void`/`!` operand, an operand of a strict comparison, the test of a branch or a loop,
-    or an expression statement whose value nothing takes. Every other position — a call or `new`
-    argument, a `for-in` subject, an initializer, a return value, a computed access with no static
-    key — hands the object itself onward, where its properties are readable without being spelled.
+    Whether *node* is, or stands inside, a node whose identity is in *functions*.
     """
-    parent = node.parent
-    while isinstance(parent, JsParenthesizedExpression):
-        parent = parent.parent
-    if isinstance(parent, JsMemberExpression) and strip_parens(parent.object) is node:
-        return access_key(parent) is not None
-    if isinstance(parent, JsUnaryExpression):
-        return (
-            parent.operator in _IDENTITY_OBSERVING_UNARY
-            and strip_parens(parent.operand) is node
-        )
-    if isinstance(parent, JsBinaryExpression):
-        return parent.operator in _IDENTITY_COMPARISONS
-    if isinstance(parent, (
-        JsConditionalExpression,
-        JsDoWhileStatement,
-        JsIfStatement,
-        JsWhileStatement,
-    )):
-        return strip_parens(parent.test) is node
-    if isinstance(parent, JsForStatement):
-        return parent.test is not None and strip_parens(parent.test) is node
-    if isinstance(parent, JsExpressionStatement):
-        return strip_parens(parent.expression) is node
-    return is_simple_assignment_target(node)
-
-
-def _the_global_object_escapes(model: SemanticModel, root: Node) -> bool:
-    """
-    Whether the global object itself reaches a position the per-name scans cannot read through: a
-    spelling of it that nothing else binds, the `this` of the top level, or a name the model says
-    holds it, standing anywhere `_observes_no_global_property` does not accept. From such a position
-    every global is readable without its name being spelled — `Object.keys(globalThis)` holds them
-    all, a `for-in` walks them, and `(function (w) { ... })(window)` reads them through `w` — so
-    while one exists no global-property write can be proven unread.
-
-    The `this` question is the narrow one every rewrite-driving reader of the model asks. A method's
-    `this` is its receiver, and taking every escaping method `this` for the global object would turn
-    the sweep off for ordinary object code, the same trade `_is_reflective_member` writes down.
-    """
-    for node in root.walk():
-        if isinstance(node, JsThisExpression):
-            if is_the_this_of_a_script(node) and not _observes_no_global_property(node):
-                return True
-            continue
-        if not isinstance(node, JsIdentifier) or not model.is_reference(node):
-            continue
-        if _observes_no_global_property(node):
-            continue
-        if node.name in GLOBAL_OBJECT_ALIASES:
-            binding = model.resolve(node)
-            if binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:
-                return True
-        if model.names_the_global_object(node):
+    cursor: Node | None = node
+    while cursor is not None:
+        if id(cursor) in functions:
             return True
+        cursor = cursor.parent
     return False
 
 
@@ -1032,6 +966,22 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return True
         return self.model.reflection_can_reach(binding)
 
+    def _reached_from_live_code(self, binding: Binding, dead: set[int]) -> bool:
+        """
+        Whether code reaches the function *binding* holds where the file spells no reference to it
+        (`_reached_without_a_reference`), not counting reflection that stands inside one of the
+        functions *dead* holds the identities of: those are not called, so what they would run never
+        runs. A function such reflection would reach is then not reached either, and the remover's
+        walk keeps every function a function it keeps calls. A span of source the model never read
+        counts wherever it stands: nothing says where it ends.
+        """
+        if binding.reachable_through_a_handed_object or binding.exported:
+            return True
+        return any(
+            site is None or is_unread_source(site) or not _stands_inside(site, dead)
+            for site in self.model.reflection_reach_sites(binding)
+        )
+
     @staticmethod
     def _owns(scope: Scope, binding: Binding | None) -> bool:
         """
@@ -1079,14 +1029,20 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return set()
         roots = self._host_entrypoints(functions)
         roots |= self._referenced_outside(body, functions)
-        reachable, write_only_stmts = _reachable_functions(body, functions, roots, self._is_removable)
-        kept_by_reflection = {
-            name for name, func in functions.items()
-            if isinstance(func.id, JsIdentifier)
-            and (binding := self.model.binding_of(func.id)) is not None
-            and self._reached_without_a_reference(binding)
-        }
-        unreachable = (set(functions.keys()) - reachable) - kept_by_reflection
+        while True:
+            reachable, write_only_stmts = _reachable_functions(body, functions, roots, self._is_removable)
+            dead = {id(func) for name, func in functions.items() if name not in reachable}
+            reached = {
+                name for name, func in functions.items()
+                if name not in reachable
+                and isinstance(func.id, JsIdentifier)
+                and (binding := self.model.binding_of(func.id)) is not None
+                and self._reached_from_live_code(binding, dead)
+            }
+            if not reached:
+                break
+            roots |= reached
+        unreachable = set(functions.keys()) - reachable
         if not unreachable:
             return set()
         if isinstance(parent, JsBlockStatement) and self._may_give_the_script_its_value(parent):
@@ -1115,6 +1071,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         is copied into the enclosing function by Annex B (§B.3.3), and a call after the block
         reaches it from a list that walk never sees, as does a host reading the copy at the top of a
         script (`refinery.lib.scripts.js.analysis.model.SemanticModel.annex_b_copy_observed`).
+        Reflection reaching the copy is the caller's to ask, where it can tell whether that
+        reflection runs.
         """
         members = {id(stmt) for stmt in body}
         names: set[str] = set()
@@ -1124,7 +1082,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             binding = self.model.binding_of(func.id)
             if binding is None:
                 continue
-            if self.model.annex_b_copy_observed(func):
+            if self.model.annex_b_copy_observed(func, reflection=False):
                 names.add(name)
                 continue
             for reference in self.model.references(binding):
@@ -1448,8 +1406,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         The same whole-object read exists for the global object itself, and needs no declaration:
         `Object.keys(globalThis)` holds every dead-looking name, a `for-in` walks them, and
         `(function (w) { ... })(window)` hands the object to a body that reads them through `w`.
-        While `_the_global_object_escapes` finds any such position, nothing is removed, because no
-        property can be proven unread.
+        While the model finds any such position in the file or in code a string spells
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.global_object_escapes`, with the
+        `this` of a function a construction builds), nothing is removed, because no property can be
+        proven unread.
 
         A base whose own read may throw is no candidate at all: `window.x = 1` reads `window` before it
         writes, so in a host without `window` the statement raises a `ReferenceError` that removing it
@@ -1493,19 +1453,23 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 write_stmts.setdefault(name, []).append(node)
         if not write_stmts:
             return set()
-        if _the_global_object_escapes(self.model, parent):
+        programs = [SpelledFragment(self.model, None), *self.model.spelled_programs()]
+        if any(program.model.global_object_escapes(program.built) for program in programs):
             return set()
-        alias_reads = _global_alias_read_names(self.model, parent)
+        alias_reads: set[str] = set()
         bare_refs: set[str] = set()
-        for node in parent.walk():
-            if not isinstance(node, JsIdentifier) or node.name not in write_stmts:
-                continue
-            if is_binding_site(node):
-                continue
-            p = node.parent
-            if isinstance(p, JsMemberExpression) and p.property is node and not p.computed:
-                continue
-            bare_refs.add(node.name)
+        for model, _ in programs:
+            root = parent if model is self.model else model.root
+            alias_reads.update(_global_alias_read_names(model, root))
+            for node in root.walk():
+                if not isinstance(node, JsIdentifier) or node.name not in write_stmts:
+                    continue
+                if is_binding_site(node):
+                    continue
+                p = node.parent
+                if isinstance(p, JsMemberExpression) and p.property is node and not p.computed:
+                    continue
+                bare_refs.add(node.name)
         lists = ListRemoval()
         kept_for_effect: list[JsExpressionStatement] = []
         dead: set[str] = set()

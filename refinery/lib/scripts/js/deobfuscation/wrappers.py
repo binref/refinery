@@ -11,11 +11,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import NamedTuple
 
-from refinery.lib.scripts import (
-    Node,
-    _remove_from_parent,
-    _replace_in_parent,
-)
+from refinery.lib.scripts import Node, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
@@ -121,7 +117,10 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
     Detect trivial call wrapper functions and inline them at every call site the wrapper's value has
     reached. A function declared in the scope it names has that value before any statement runs, so
     every call site qualifies; one Annex B copies into the scope around a block has it only from the
-    declaration onwards, and a call written before that reads `undefined` and throws.
+    declaration onwards, and a call written before that reads `undefined` and throws. An inlined
+    call leaves no call of the wrapper behind, which only reading the `caller` of a function can
+    tell, so nothing is inlined where the program, the code it spells included, may read one
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`).
     """
 
     def _process_script(self, node: JsScript):
@@ -133,14 +132,11 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
             # replacement's edit. Warming the root-reading models at entry keeps every such late
             # build a pure function of held bases, so none reads a tree the pin's edits moved.
             cache.warm()
+            if cache.model.spells_caller():
+                return
             inlined = self._inline_the_calls_the_wrappers_reach(node, wrappers, cache)
-        if not inlined:
-            return
-        kept = self._wrappers_to_keep(node, wrappers)
-        for name, info in wrappers.items():
-            if name not in kept:
-                _remove_from_parent(info.node)
-        self.mark_changed()
+        if inlined:
+            self.mark_changed()
 
     def _inline_the_calls_the_wrappers_reach(
         self, node: JsScript, wrappers: dict[str, _WrapperInfo], cache: ModelCache,
@@ -264,32 +260,3 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
             if cursor is not None and cursor in index:
                 on_cycle.update(path[index[cursor]:])
         return on_cycle
-
-    @staticmethod
-    def _wrappers_to_keep(
-        node: JsScript, wrappers: dict[str, _WrapperInfo]
-    ) -> set[str]:
-        """
-        The wrapper names still referenced after inlining, so the rest may be removed. A wrapper is
-        kept when its name is referenced from live code: code outside every wrapper body, or the body
-        of a wrapper that is itself kept. The keep-set is grown to a fixpoint so that a wrapper reached
-        only from another surviving (un-inlined, e.g. arity-mismatched) wrapper is retained rather than
-        deleted into a dangling call. A reference inside a body that will itself be removed does not
-        count, since that body goes away with it.
-        """
-        kept: set[str] = set()
-        changed = True
-        while changed:
-            changed = False
-            dead_body_ids: set[int] = set()
-            for name, info in wrappers.items():
-                if name not in kept:
-                    for n in info.node.walk():
-                        dead_body_ids.add(id(n))
-            for n in node.walk():
-                if id(n) in dead_body_ids:
-                    continue
-                if isinstance(n, JsIdentifier) and n.name in wrappers and n.name not in kept:
-                    kept.add(n.name)
-                    changed = True
-        return kept

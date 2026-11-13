@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import inspect
+import unittest
 
+from test import TestBase, todo
+from test.lib.scripts.js.analysis.differential import host_behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
 from refinery.lib.scripts.js.parser import JsParser
+from refinery.units.scripting.djs import djs
 
 A_CHAIN_OF_WRAPPERS = (
     'function target(a) { return a; }'
@@ -33,15 +38,17 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
             "function target(a, b) { return a + b; }"
             "function wrapper(x, y, z, w) { return target(w - -10, y); }"
             "var result = wrapper(1, 2, 3, 4);"
+            "console.log(result);"
         )
         self.assertEqual(
-            self._run_transformer(source, JsCallWrapperInliner),
+            self._run_transformers(source, JsCallWrapperInliner, JsUnusedCodeRemoval),
             inspect.cleandoc(
                 """
                 function target(a, b) {
                   return a + b;
                 }
                 var result = target(4 - -10, 2);
+                console.log(result);
                 """
             ),
         )
@@ -51,15 +58,17 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
             "function target(a) { return a + 1; }"
             "function wrapper(x) { return target(x); }"
             "var r = wrapper(String.fromCharCode(65));"
+            "console.log(r);"
         )
         self.assertEqual(
-            self._run_transformer(source, JsCallWrapperInliner),
+            self._run_transformers(source, JsCallWrapperInliner, JsUnusedCodeRemoval),
             inspect.cleandoc(
                 """
                 function target(a) {
                   return a + 1;
                 }
                 var r = target(String.fromCharCode(65));
+                console.log(r);
                 """
             ),
         )
@@ -106,7 +115,11 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
 
     def test_one_visit_inlines_the_outer_wrapper_of_a_chain_or_the_whole_chain(self):
         self.assertIn(
-            self._run_transformer(F'{A_CHAIN_OF_WRAPPERS}var r = outer(1, 2, 3);', JsCallWrapperInliner),
+            self._run_transformers(
+                F'{A_CHAIN_OF_WRAPPERS}var r = outer(1, 2, 3);console.log(r);',
+                JsCallWrapperInliner,
+                JsUnusedCodeRemoval,
+            ),
             (
                 inspect.cleandoc(
                     """
@@ -117,6 +130,7 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
                       return target(y - -5);
                     }
                     var r = inner(1, 3 - -10);
+                    console.log(r);
                     """
                 ),
                 inspect.cleandoc(
@@ -125,6 +139,7 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
                       return a;
                     }
                     var r = target(3 - -10 - -5);
+                    console.log(r);
                     """
                 ),
             ),
@@ -172,6 +187,9 @@ class TestAnArgumentBoundToEvalStaysAnIndirectCall(TestJsDeobfuscator):
 
     def test_an_argument_bound_to_eval_is_inlined_as_an_indirect_call(self):
         self.assertEqual(
+            'function w(cb, s) {\n'
+            '  return cb(s);\n'
+            '}\n'
             'function f() {\n'
             '  var loc = 7;\n'
             '  try {\n'
@@ -187,6 +205,38 @@ class TestAnArgumentBoundToEvalStaysAnIndirectCall(TestJsDeobfuscator):
                 " try { return w(eval, 'loc'); } catch (e) { return e.constructor.name; } }"
                 ' console.log(f());',
                 JsCallWrapperInliner,
+            ),
+        )
+
+    @todo
+    def test_the_wrapper_is_removed_once_nothing_calls_it(self):
+        self.assertEqual(
+            'function f() {\n'
+            '  var loc = 7;\n'
+            '  try {\n'
+            "    return (0, eval)('loc');\n"
+            '  } catch (e) {\n'
+            '    return e.constructor.name;\n'
+            '  }\n'
+            '}\n'
+            'console.log(f());',
+            self._run_transformers(
+                'function w(cb, s) { return cb(s); }'
+                ' function f(){ var loc = 7;'
+                " try { return w(eval, 'loc'); } catch (e) { return e.constructor.name; } }"
+                ' console.log(f());',
+                JsCallWrapperInliner,
+                JsUnusedCodeRemoval,
+            ),
+        )
+
+    @todo
+    def test_a_function_nothing_calls_is_removed_beside_eval_called_under_another_name(self):
+        self.assertEqual(
+            "var e = eval;\ne('console.log(1)');",
+            self._run_transformer(
+                "function unused() { return 2; } var e = eval; e('console.log(1)');",
+                JsUnusedCodeRemoval,
             ),
         )
 
@@ -256,7 +306,7 @@ class TestAWrapperArgumentIsNotDuplicated(TestJsDeobfuscator):
                 console.log(h(u, u));
                 """
             ),
-            self._run_transformer(source, JsCallWrapperInliner),
+            self._run_transformers(source, JsCallWrapperInliner, JsUnusedCodeRemoval),
         )
 
 
@@ -332,8 +382,9 @@ class TestAWrapperArgumentUnderANestedScopeIsNotInlined(TestJsDeobfuscator):
                 console.log(h(() => 5)());
                 """
             ),
-            self._run_transformer(source, JsCallWrapperInliner),
+            self._run_transformers(source, JsCallWrapperInliner, JsUnusedCodeRemoval),
         )
+
 
 class TestAConstantWrapperMayCallThroughALiteral(TestJsDeobfuscator):
 
@@ -349,5 +400,41 @@ class TestAConstantWrapperMayCallThroughALiteral(TestJsDeobfuscator):
                 }
                 """
             ),
-            self._run_transformer(source, JsCallWrapperInliner),
+            self._run_transformers(source, JsCallWrapperInliner, JsUnusedCodeRemoval),
+        )
+
+
+def _behavior_where_a_host_calls_run_and_onload(source: str) -> tuple[str, str | None]:
+    return host_behavior(source, calls=('run',), handlers=('onload',))
+
+
+def _deobfuscated(source: str, entrypoints: tuple[str, ...], strict: bool) -> str:
+    return source.encode('utf8') | djs(*entrypoints, strict=strict) | str
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAWrapperIsKeptWhereCodeOutsideTheTextCallsIt(TestBase):
+
+    def test_the_deobfuscation_behaves_as_the_program_does_under_either_model(self):
+        rows = {
+            'an entrypoint the analyst names': (
+                "function run() { return 'x'; }\nconsole.log(run());",
+                ('run',),
+            ),
+            'the onload handler of a window': (
+                "function onload() { return 'x'; }\nconsole.log(onload());",
+                (),
+            ),
+        }
+        self.assertEqual(
+            {
+                (label, strict): _behavior_where_a_host_calls_run_and_onload(_deobfuscated(source, entrypoints, strict))
+                for label, (source, entrypoints) in rows.items()
+                for strict in (False, True)
+            },
+            {
+                (label, strict): _behavior_where_a_host_calls_run_and_onload(source)
+                for label, (source, _) in rows.items()
+                for strict in (False, True)
+            },
         )

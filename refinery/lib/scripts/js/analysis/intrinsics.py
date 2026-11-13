@@ -14,7 +14,6 @@ for it. The registry of intrinsics the scan watches lives here for the same reas
 from __future__ import annotations
 
 import enum
-import weakref
 
 from typing import Iterable, Iterator, NamedTuple, Sequence
 
@@ -697,27 +696,20 @@ class _WrittenBySpelledCode(NamedTuple):
     followable: bool
 
 
-_WRITTEN_BY_SPELLED_CODE: weakref.WeakKeyDictionary[SemanticModel, _WrittenBySpelledCode] = (
-    weakref.WeakKeyDictionary()
-)
-"""
-The scans of the code strings spell, one for each model of such code, which lives exactly as long
-as the reading holding that model
-(`refinery.lib.scripts.js.analysis.model.SpelledCodeReadings`): an entry holds nothing of the model.
-"""
-
-
 def _spelled_code_writes(fragment: SemanticModel) -> _WrittenBySpelledCode:
     """
-    The `build_intrinsic_writes` scan of code a string spells, made once for each model of it.
+    The `build_intrinsic_writes` scan of code a string spells, made once for each model of it by
+    the readings that hold it (`refinery.lib.scripts.js.analysis.model.SpelledCodeReadings.analysis`).
     """
-    written = _WRITTEN_BY_SPELLED_CODE.get(fragment)
-    if written is None:
-        scan = build_intrinsic_writes(fragment)
-        written = _WRITTEN_BY_SPELLED_CODE[fragment] = _WrittenBySpelledCode(
-            scan.names, scan.keys, scan.followable
-        )
-    return written
+    return fragment.spelled_code_readings.analysis(fragment, _scan_spelled_code_writes)
+
+
+def _scan_spelled_code_writes(fragment: SemanticModel) -> _WrittenBySpelledCode:
+    """
+    The scan `_spelled_code_writes` makes once.
+    """
+    scan = build_intrinsic_writes(fragment)
+    return _WrittenBySpelledCode(scan.names, scan.keys, scan.followable)
 
 
 def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:

@@ -1117,6 +1117,15 @@ class EffectModel:
         self._compute()
         self.conversion_installs = ConversionInstalls(self)
 
+    def spelled_code_may_convert_any_function(self) -> bool:
+        """
+        Whether code a string spells that the model reads
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.spelled_code_fragments`) may give a
+        function of the program a conversion of its own: such code reads apart from the file, so an
+        install it makes on a value it does not create itself may reach any function the file holds.
+        """
+        return any(_converts_any_function(fragment) for fragment in self.model.spelled_code_fragments())
+
     def summary_of(self, func: Node) -> EffectSummary:
         """
         The effect summary of a function node (or the script). An unknown node is reported as impure.
@@ -3749,6 +3758,22 @@ class AnchoredTrust:
         `EffectModel.call_is_foldable` at the anchor.
         """
         return self._effects.call_is_foldable(node, receiver_type=receiver_type, trust=self)
+
+
+def _converts_any_function(fragment: SemanticModel) -> bool:
+    """
+    Whether an install of the code *fragment* models may give any function a conversion of its own,
+    made once for each model of such code by the readings that hold it
+    (`refinery.lib.scripts.js.analysis.model.SpelledCodeReadings.analysis`).
+    """
+    return fragment.spelled_code_readings.analysis(fragment, _scan_for_conversions_of_any_function)
+
+
+def _scan_for_conversions_of_any_function(fragment: SemanticModel) -> bool:
+    """
+    The scan `_converts_any_function` makes once.
+    """
+    return build_effects(fragment).conversion_installs.reach is None
 
 
 def build_effects(

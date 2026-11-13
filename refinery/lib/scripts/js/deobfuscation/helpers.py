@@ -2531,6 +2531,10 @@ def try_inline_trivial_function(
 
     Which functions have a return expression to inline at all is `expression_a_call_answers`, which
     is where the refusal to inline an async function or a generator lives.
+
+    An inlined call leaves no frame of *func* behind, which only reading the `caller` of a function
+    can tell, so nothing is inlined in a script that may read one
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`).
     """
     answered = expression_a_call_answers(func)
     if answered is None:
@@ -2544,6 +2548,9 @@ def try_inline_trivial_function(
     if not is_safe_iife_inline(
         expr, param_names, call_args, call_pure, read_effect, call_established, arg_may_throw,
     ):
+        return None
+    root = tree_root(func)
+    if isinstance(root, JsScript) and model_cache(transformer, root).model.spells_caller():
         return None
     return substitute_params(expr, func.params, call_args, transformer=transformer)
 

@@ -881,11 +881,15 @@ class TestSemanticModel(TestBase):
         self.assertTrue(model.has_reflection_surface())
 
     def test_function_constructor_is_a_reflection_surface(self):
-        _, model = self._model("var f = Function('return 1'); new Function('a');")
+        _, model = self._model('var f = Function(payload); new Function(payload);')
         self.assertTrue(model.has_reflection_surface())
 
+    def test_code_a_string_spells_that_names_nothing_is_no_reflection_surface(self):
+        _, model = self._model("var f = Function('return 1'); new Function('a'); setTimeout('1', 10);")
+        self.assertFalse(model.has_reflection_surface())
+
     def test_string_timer_is_a_reflection_surface(self):
-        _, model = self._model("setTimeout('x()', 10);")
+        _, model = self._model('setTimeout(code, 10);')
         self.assertTrue(model.has_reflection_surface())
 
     def test_function_timer_is_not_a_reflection_surface(self):
@@ -893,11 +897,11 @@ class TestSemanticModel(TestBase):
         self.assertFalse(model.has_reflection_surface())
 
     def test_member_form_string_timer_is_a_reflection_surface(self):
-        _, model = self._model("window.setTimeout('x()', 10);")
+        _, model = self._model('window.setTimeout(code, 10);')
         self.assertTrue(model.has_reflection_surface())
 
     def test_member_form_computed_string_timer_is_a_reflection_surface(self):
-        _, model = self._model("globalThis['setInterval']('x()', 10);")
+        _, model = self._model("globalThis['setInterval'](code, 10);")
         self.assertTrue(model.has_reflection_surface())
 
     def test_member_form_function_timer_is_not_a_reflection_surface(self):
@@ -1048,7 +1052,7 @@ class TestSemanticModel(TestBase):
         self.assertFalse(model.reflection_can_reach(self._binding(ast, model, 'x')))
 
     def test_opaque_reflection_reaches_global_through_function_and_timer(self):
-        ast, model = self._model("var x; var g = Function('return 1'); setTimeout('y()', 1);")
+        ast, model = self._model('var x; var g = Function(payload); setTimeout(code, 1);')
         self.assertTrue(model.reachable_by_opaque_reflection(self._binding(ast, model, 'x')))
 
     def test_opaque_reflection_absent_without_surface(self):

@@ -984,7 +984,11 @@ class ConversionInstalls:
         """
         The function literals some install may reach, or `None` when one may reach any function.
         """
-        if self._installers_escape or self._model.has_reflection_surface():
+        if (
+            self._installers_escape
+            or self._model.has_reflection_surface()
+            or self._effects.spelled_code_may_convert_any_function()
+        ):
             return None
         sites: list[Node | None] = []
         copies: list[Node | None] = []

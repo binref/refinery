@@ -84,7 +84,10 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         the wrapper by name once it is gone. A declaration that would land on a property of the
         global object a host reads takes a name nothing spells instead
         (`refinery.lib.scripts.js.deobfuscation.helpers.host_landing_names`): the body's own
-        `var location` stays a variable rather than navigating the window.
+        `var location` stays a variable rather than navigating the window. The moved body runs in
+        the frame of the script rather than of the wrapper, which only reading the `caller` of a
+        function can tell, so nothing moves where the program may read one
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`).
         """
         model = cache.model
         if (
@@ -94,6 +97,8 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
             or declaration.generator
             or declaration.is_async
         ):
+            return False
+        if model.spells_caller():
             return False
         binding = model.binding_of(declaration.id)
         if (

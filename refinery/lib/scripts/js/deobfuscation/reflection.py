@@ -893,7 +893,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
         lower — can name the temporary at runtime with no reference any model records, so any such
         site outside the candidates' own constructions refuses the retirement; the constructions
         themselves are the one surface whose code this pass parsed, which is what makes them
-        transparent rather than opaque.
+        transparent rather than opaque, whether the surface stands at the callee read or, where the
+        model reads the code as opaque, at the construction.
         """
         if not self._retire_candidates:
             return
@@ -911,7 +912,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             construction = strip_parens(declarator.init)
             if not isinstance(construction, (JsCallExpression, JsNewExpression)):
                 continue
-            transparent.add(id(construction.callee))
+            transparent.update((id(construction), id(construction.callee)))
             candidates.append((binding, declarator, construction))
         retired: list[JsVariableDeclarator] = []
         for binding, declarator, construction in candidates:
@@ -1929,7 +1930,18 @@ class JsReflectionInlining(ScriptLevelTransformer):
         exists. The declined site is untouched and inlines on the next pass, whose model has seen
         the splice. A body that only reads names no splice bound contributes nothing to that veto,
         so a chain of sites sharing free reads still inlines in one pass.
+
+        A body that runs in a call of its own, that of a function a construction builds or of the
+        function whose `eval` runs it (*origin*), leaves that call behind when it is inlined, and so
+        changes what the `caller` of a function answers; while the program, the code it spells
+        included, may read one
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`), such a body declines.
         """
+        if (
+            (scope is ReflectedScope.FUNCTION_CONSTRUCTOR or origin is not None)
+            and model_cache(self, root).model.spells_caller()
+        ):
+            return None
         resolves_globally = scope is not ReflectedScope.DIRECT_EVAL
         site_is_strict = strict_mode_at(site)
         if declares_use_strict(parsed) and (resolves_globally or not site_is_strict):
