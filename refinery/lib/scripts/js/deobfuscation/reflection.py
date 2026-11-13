@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import enum
 
-from typing import Callable, Collection, Mapping
+from typing import Callable, Collection, Mapping, Sequence
 
 from refinery.lib.scripts import (
     Expression,
@@ -79,12 +79,20 @@ from refinery.lib.scripts.js.model import (
     CodeContext,
     JsAwaitExpression,
     JsBlockStatement,
+    JsBreakStatement,
     JsCallExpression,
+    JsClassDeclaration,
+    JsContinueStatement,
+    JsDoWhileStatement,
     JsExpressionStatement,
+    JsForInStatement,
     JsForOfStatement,
+    JsForStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsIfStatement,
+    JsLabeledStatement,
     JsMemberExpression,
     JsNewExpression,
     JsNumericLiteral,
@@ -95,9 +103,15 @@ from refinery.lib.scripts.js.model import (
     JsSequenceExpression,
     JsSpreadElement,
     JsStringLiteral,
+    JsSwitchCase,
+    JsSwitchStatement,
+    JsTryStatement,
     JsUnaryExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    JsVarKind,
+    JsWhileStatement,
+    JsWithStatement,
     Statement,
     code_context_at,
     function_context,
@@ -106,6 +120,7 @@ from refinery.lib.scripts.js.model import (
 from refinery.lib.scripts.js.numbers import TRIMMABLE_WHITESPACE
 from refinery.lib.scripts.js.options import preserves_script_return
 from refinery.lib.scripts.js.strict import (
+    _target_identifiers,
     collect_strict_violations,
     declares_use_strict,
     directive_prologue,
@@ -229,6 +244,8 @@ def _try_parse(
     if _has_top_level_await(parsed.body):
         return None
     if collect_strict_violations(parsed, strict=strict, module=module, context=context):
+        return None
+    if _jump_leaves_its_target(parsed) or _redeclares_a_lexical_name(parsed):
         return None
     return parsed
 
@@ -643,6 +660,174 @@ def _body_free_names(body_model: SemanticModel, parsed: JsScript) -> set[str]:
         if binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:
             free.add(ident.name)
     return free
+
+
+_LOOP_STATEMENTS = (
+    JsDoWhileStatement,
+    JsForStatement,
+    JsForInStatement,
+    JsForOfStatement,
+    JsWhileStatement,
+)
+
+
+def _labels_a_loop(body: Statement | None) -> bool:
+    """
+    Whether *body*, the statement a label is written on, is an iteration statement once every label
+    nested inside it is unwrapped, which is the statement a labeled `continue` has to name.
+    """
+    while isinstance(body, JsLabeledStatement):
+        body = body.body
+    return isinstance(body, _LOOP_STATEMENTS)
+
+
+def _jump_leaves_its_target(script: JsScript) -> bool:
+    """
+    Whether *script* holds a `break` or `continue` no statement around it answers: an unlabeled one
+    outside every loop — a `continue` that a `switch` alone stands around as well — or one whose label
+    no statement around it spells, or whose label names no loop where the jump is a `continue`. The
+    language refuses such a text before it runs, so it is a `SyntaxError` at the call that evaluates
+    it, whatever the destination would read; the parser here reads it anyway, so the question is
+    asked of the tree. A jump written inside a nested function is asked there, of the statements of
+    that function alone.
+    """
+    stack: list[tuple[Node, bool, bool, frozenset[tuple[str, bool]]]] = [
+        (stmt, False, False, frozenset()) for stmt in reversed(script.body)
+    ]
+    while stack:
+        node, in_loop, in_switch, labels = stack.pop()
+        child_loop, child_switch, child_labels = in_loop, in_switch, labels
+        if isinstance(node, JsBreakStatement):
+            if node.label is None:
+                if not in_loop and not in_switch:
+                    return True
+            elif all(node.label.name != name for name, _ in labels):
+                return True
+        elif isinstance(node, JsContinueStatement):
+            if node.label is None:
+                if not in_loop:
+                    return True
+            elif (node.label.name, True) not in labels:
+                return True
+        elif isinstance(node, _LOOP_STATEMENTS):
+            child_loop = True
+        elif isinstance(node, JsSwitchStatement):
+            child_switch = True
+        elif isinstance(node, JsLabeledStatement) and node.label is not None:
+            child_labels = labels | {(node.label.name, _labels_a_loop(node.body))}
+        elif isinstance(node, FUNCTION_NODES):
+            child_loop = False
+            child_switch = False
+            child_labels = frozenset()
+        for child in node.children():
+            stack.append((child, child_loop, child_switch, child_labels))
+    return False
+
+
+def _parameter_names(func: Node) -> list[str]:
+    """
+    The names *func* binds for its parameters, flattening binding patterns to their leaves.
+    """
+    names: list[str] = []
+    for param in getattr(func, 'params', None) or []:
+        names.extend(identifier.name for identifier in _target_identifiers(param))
+    return names
+
+
+def _scope_redeclares(stmts: Sequence[Statement], prebound: frozenset[str]) -> bool:
+    """
+    Whether one of *stmts* binds a name its own scope already binds where the language refuses the
+    second: a `let`, `const` or `class` declaration of a name the same scope binds lexically, with
+    `var`, with a function declaration, or in *prebound*, the parameters or `catch` binding of the
+    scope. A nested block is a scope of its own, so a `let` shadowing an outer name there is no
+    redeclaration; a `var` and a lexical name of the same scope are one either way round.
+    """
+    lex: set[str] = set()
+    var: set[str] = set()
+    pending: list[tuple[Sequence[Statement], frozenset[str]]] = []
+    for stmt in stmts:
+        current = stmt
+        while isinstance(current, JsLabeledStatement):
+            current = current.body
+        if current is None:
+            continue
+        if isinstance(current, JsVariableDeclaration):
+            for decl in current.declarations:
+                if not isinstance(decl, JsVariableDeclarator) or not isinstance(decl.id, JsIdentifier):
+                    continue
+                name = decl.id.name
+                if current.kind is JsVarKind.VAR:
+                    var.add(name)
+                elif name in lex or name in var or name in prebound:
+                    return True
+                else:
+                    lex.add(name)
+        elif isinstance(current, JsFunctionDeclaration):
+            if current.id is not None:
+                var.add(current.id.name)
+        elif isinstance(current, JsClassDeclaration):
+            if current.id is None:
+                continue
+            if current.id.name in lex or current.id.name in var or current.id.name in prebound:
+                return True
+            lex.add(current.id.name)
+        elif isinstance(current, FUNCTION_NODES):
+            body = current.body
+            if isinstance(body, JsBlockStatement):
+                pending.append((body.body, frozenset(_parameter_names(current))))
+        elif isinstance(current, JsBlockStatement):
+            pending.append((current.body, frozenset()))
+        elif isinstance(current, JsIfStatement):
+            for branch in (current.consequent, current.alternate):
+                if branch is not None:
+                    pending.append(([branch], frozenset()))
+        elif isinstance(current, JsForStatement):
+            head: list[Statement] = []
+            if isinstance(current.init, JsVariableDeclaration):
+                head.append(current.init)
+            if current.body is not None:
+                head.append(current.body)
+            pending.append((head, frozenset()))
+        elif isinstance(current, (JsForInStatement, JsForOfStatement)):
+            parts: list[Statement] = []
+            if isinstance(current.left, JsVariableDeclaration):
+                parts.append(current.left)
+            if current.body is not None:
+                parts.append(current.body)
+            pending.append((parts, frozenset()))
+        elif isinstance(current, (JsWhileStatement, JsDoWhileStatement, JsWithStatement)):
+            if current.body is not None:
+                pending.append(([current.body], frozenset()))
+        elif isinstance(current, JsSwitchStatement):
+            cases = [case.body for case in current.cases if isinstance(case, JsSwitchCase)]
+            pending.append(([stmt for body in cases for stmt in body], frozenset()))
+        elif isinstance(current, JsTryStatement):
+            if current.block is not None:
+                pending.append((current.block.body, frozenset()))
+            if current.finalizer is not None:
+                pending.append((current.finalizer.body, frozenset()))
+            if current.handler is not None and current.handler.body is not None:
+                caught = frozenset(
+                    identifier.name for identifier in _target_identifiers(current.handler.param)
+                )
+                pending.append((current.handler.body.body, caught))
+        else:
+            for nested in walk_scope(current):
+                if isinstance(nested, FUNCTION_NODES) and isinstance(nested.body, JsBlockStatement):
+                    pending.append((nested.body.body, frozenset(_parameter_names(nested))))
+    if lex & var or lex & prebound:
+        return True
+    return any(_scope_redeclares(nested, pre) for nested, pre in pending)
+
+
+def _redeclares_a_lexical_name(script: JsScript) -> bool:
+    """
+    Whether *script* binds one name twice where the language refuses the second, in any scope it
+    holds, nested functions included. Such a text is a `SyntaxError` at the call that evaluates it,
+    whatever the destination would read; the parser here reads it anyway, so the question is asked
+    of the tree.
+    """
+    return _scope_redeclares(script.body, frozenset())
 
 
 def _body_declared_bindings(body_model: SemanticModel) -> list[Binding]:

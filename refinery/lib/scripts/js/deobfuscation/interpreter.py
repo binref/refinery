@@ -790,6 +790,18 @@ def _element_read(value: Value) -> Value:
     return None if value is JS_HOLE else value
 
 
+def _element_at(arr: list, index: int) -> Value:
+    """
+    The element *arr* holds at *index*, or a hole where it holds none there: a higher-order
+    method fixes the range of indices it visits before its first call, and a callback that has
+    deleted positions since leaves the method a range of positions the array no longer answers,
+    which it visits no more than a hole the text spells.
+    """
+    if 0 <= index < len(arr):
+        return arr[index]
+    return JS_HOLE
+
+
 def _same_value_zero(a: Value, b: Value) -> bool:
     """
     Compare two interpreter values with SameValueZero, the equality `includes` uses: strict
@@ -1513,6 +1525,9 @@ class JsInterpreter:
         program answers `undefined`. For the same reason a body ends it where one of its blocks
         declares a name the body also uses for another binding (`_shadows_a_name_in_a_block`).
 
+        A `break` or `continue` no statement around it answers ends it as well: the language
+        refuses such a body before it runs, and this reads it only because the parser does.
+
         The function joins the ones this fold has entered (`_bound_in_an_entered_function`) before
         any statement of its body runs.
         """
@@ -1558,6 +1573,8 @@ class JsInterpreter:
                 if self._depth == 0:
                     raise InterpreterError
                 raise
+            except (_BreakSignal, _ContinueSignal):
+                raise InterpreterError
             return None
         if body is not None:
             try:
@@ -2578,12 +2595,15 @@ class JsInterpreter:
             raise InterpreterError
         if not self._callback_is_contained(callback):
             raise InterpreterError
-        # Every higher-order method asks the array whether it has a property at each index
-        # before it calls, so a hole is a position no callback runs at and no filter keeps.
-        # `find` and `findIndex` are the exception: they read the element directly and visit a
-        # hole as the `undefined` the read yields.
+        # Every higher-order method fixes the range of indices it visits before its first call and
+        # asks the array whether it has a property at each index before it calls, so a hole is a
+        # position no callback runs at and no filter keeps, and so is a position the callback has
+        # deleted since (`_element_at`). `find` and `findIndex` are the exception: they read the
+        # element directly and visit a hole as the `undefined` the read yields.
+        length = len(arr)
         if method == 'every':
-            for i, item in enumerate(arr):
+            for i in range(length):
+                item = _element_at(arr, i)
                 if item is JS_HOLE:
                     continue
                 self._tick()
@@ -2591,7 +2611,8 @@ class JsInterpreter:
                     return False
             return True
         if method == 'some':
-            for i, item in enumerate(arr):
+            for i in range(length):
+                item = _element_at(arr, i)
                 if item is JS_HOLE:
                     continue
                 self._tick()
@@ -2600,7 +2621,8 @@ class JsInterpreter:
             return False
         if method == 'map':
             mapped: list[Value] = []
-            for i, item in enumerate(arr):
+            for i in range(length):
+                item = _element_at(arr, i)
                 if item is JS_HOLE:
                     mapped.append(JS_HOLE)
                     continue
@@ -2609,7 +2631,8 @@ class JsInterpreter:
             return mapped
         if method == 'filter':
             filtered: list[Value] = []
-            for i, item in enumerate(arr):
+            for i in range(length):
+                item = _element_at(arr, i)
                 if item is JS_HOLE:
                     continue
                 self._tick()
@@ -2617,19 +2640,22 @@ class JsInterpreter:
                     filtered.append(item)
             return filtered
         if method == 'find':
-            for i, item in enumerate(arr):
+            for i in range(length):
                 self._tick()
-                if to_boolean(self._call_function(callback, [_element_read(item), i, arr])):
-                    return _element_read(item)
+                element = _element_read(_element_at(arr, i))
+                if to_boolean(self._call_function(callback, [element, i, arr])):
+                    return element
             return None
         if method == 'findIndex':
-            for i, item in enumerate(arr):
+            for i in range(length):
                 self._tick()
-                if to_boolean(self._call_function(callback, [_element_read(item), i, arr])):
+                element = _element_read(_element_at(arr, i))
+                if to_boolean(self._call_function(callback, [element, i, arr])):
                     return i
             return -1
         if method == 'forEach':
-            for i, item in enumerate(arr):
+            for i in range(length):
+                item = _element_at(arr, i)
                 if item is JS_HOLE:
                     continue
                 self._tick()
@@ -2647,11 +2673,12 @@ class JsInterpreter:
                     _js_throw('TypeError', 'Reduce of empty array with no initial value')
                 acc = arr[start]
                 start += 1
-            for i in range(start, len(arr)):
-                if arr[i] is JS_HOLE:
+            for i in range(start, length):
+                item = _element_at(arr, i)
+                if item is JS_HOLE:
                     continue
                 self._tick()
-                acc = self._call_function(callback, [acc, arr[i], i, arr])
+                acc = self._call_function(callback, [acc, item, i, arr])
             return acc
         raise InterpreterError
 

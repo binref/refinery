@@ -6,7 +6,7 @@ import unittest
 
 from typing import NamedTuple
 
-from test import TestBase, backlog, opportunity
+from test import TestBase, backlog, opportunity, todo
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -2972,6 +2972,14 @@ class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
                 deobfuscated = deobfuscate_source(program, execution=ExecutionModel.commonjs)
                 self.assertEqual(behavior(deobfuscated), behavior(program))
 
+    @todo
+    def test_a_construction_calling_a_helper_it_declares_answers(self):
+        source = "var r = Function('a', 'function h(){return 5;} return h() + a;')(2); console.log(r);"
+        self.assertEqual(
+            deobfuscate_source(source, execution=ExecutionModel.commonjs),
+            'console.log(7);',
+        )
+
     def test_a_name_an_earlier_site_of_the_same_pass_spliced_in_declines(self):
         source = (
             "eval('String = function (x) { return 99; };');"
@@ -3278,6 +3286,55 @@ class TestAConstructionInvokedInsideAnExpression(TestJsDeobfuscator):
                 with self.subTest(program=program):
                     deobfuscated = deobfuscate_source(program, execution=ExecutionModel.commonjs)
                     self.assertEqual(behavior(deobfuscated), behavior(program))
+
+
+_A_CONSTRUCTION_WHOSE_BODY_IS_NO_PROGRAM: dict[str, tuple[str, str | None]] = {
+    "var r = Function('var a = 1; break; return 2;')(); console.log(r);": ('', 'SyntaxError'),
+    "var r = Function('var a = 1; continue; return 2;')(); console.log(r);": ('', 'SyntaxError'),
+    "var r = Function('return 2; break;')(); console.log(r);": ('', 'SyntaxError'),
+    "var r = Function('let a = 1; let a = 2; return a;')(); console.log(r);": ('', 'SyntaxError'),
+    "try { var r = Function('return 2; break;')(); } catch (e) { console.log('caught', e.name); } console.log('after');":
+        ('caught SyntaxError\nafter\n', None),
+    "var r = (function () { eval('var a = 1; break;'); return 2; })(); console.log(r);": ('', 'SyntaxError'),
+}
+
+_A_CONSTRUCTION_WHOSE_BODY_JUMPS_WITHIN_ITS_LOOPS: dict[str, str] = {
+    "var r = Function('for (var i = 0; i < 3; i++) { if (i === 1) break; } return 5;')(); console.log(r);": '5\n',
+    "var r = Function('var a = 1; var a = 2; function f() {} function f() {} return a;')(); console.log(r);": '2\n',
+    "var r = Function('outer: for (var i = 0; i < 3; i++) { for (var j = 0; j < 3; j++) { if (j === 1) continue outer; } } return 6;')(); console.log(r);":
+        '6\n',
+}
+
+
+class TestAConstructionWhoseBodyIsNoProgram(TestJsDeobfuscator):
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def test_each_construction_is_left_standing(self):
+        for source in _A_CONSTRUCTION_WHOSE_BODY_IS_NO_PROGRAM:
+            with self.subTest(source=source):
+                self.assertEqual(self._reflect(source), printed(source))
+
+    @unittest.skipUnless(node_executable() is not None, 'node.js is required')
+    def test_node_prints_what_each_row_records(self):
+        for source, answer in _A_CONSTRUCTION_WHOSE_BODY_IS_NO_PROGRAM.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(source), answer)
+
+    @unittest.skipUnless(node_executable() is not None, 'node.js is required')
+    def test_each_deobfuscation_prints_what_the_program_printed(self):
+        for source in _A_CONSTRUCTION_WHOSE_BODY_IS_NO_PROGRAM:
+            with self.subTest(source=source):
+                deobfuscated = deobfuscate_source(source, execution=ExecutionModel.commonjs)
+                self.assertEqual(behavior(deobfuscated), behavior(source))
+
+    @unittest.skipUnless(node_executable() is not None, 'node.js is required')
+    def test_each_construction_whose_body_jumps_within_its_loops_folds(self):
+        for source, prints in _A_CONSTRUCTION_WHOSE_BODY_JUMPS_WITHIN_ITS_LOOPS.items():
+            with self.subTest(source=source):
+                deobfuscated = deobfuscate_source(source, execution=ExecutionModel.commonjs)
+                self.assertEqual(behavior(deobfuscated), (prints, None))
 
 
 _A_DECODER_UNDER_A_LATER_EVAL: list[str] = [

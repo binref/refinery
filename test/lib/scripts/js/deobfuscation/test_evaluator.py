@@ -2477,6 +2477,40 @@ class TestACallbackTheFoldRuns(TestJsDeobfuscator):
         )
 
 
+_A_CALLBACK_CHANGING_THE_ARRAY_IT_IS_GIVEN: dict[str, str] = {
+    'var r = [1, 2].map(function (x, i, a) { if (i === 0) a.push(9); return x * 10; }); console.log(r);':
+        '[ 10, 20 ]\n',
+    'var r = [1, 2].map(function (x, i, a) { a.pop(); return x; }); console.log(r.length);': '2\n',
+    'var r = [1, 2].filter(function (x, i, a) { a.push(9); return x > 0; }); console.log(r.length);': '2\n',
+    'var r = [1, 2].find(function (x, i, a) { a.push(9); return x === 9; }); console.log(r);': 'undefined\n',
+    inspect.cleandoc("""
+        function mut(v) {
+          v.pop();
+          return 1;
+        }
+        var r = [1, 2].map(function (x, i, a) {
+          return mut(a) + x;
+        });
+        console.log(r.length);
+    """): '2\n',
+    'var r = [1, 2].reduce(function (a, x, i, t) { t.pop(); return a + x; }, 0); console.log(r);': '1\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestACallbackChangingTheArrayItIsGiven(TestJsDeobfuscator):
+
+    def test_node_prints_what_each_row_records(self):
+        for source, prints in _A_CALLBACK_CHANGING_THE_ARRAY_IT_IS_GIVEN.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(source), (prints, None))
+
+    def test_each_deobfuscation_prints_it_too(self):
+        for source, prints in _A_CALLBACK_CHANGING_THE_ARRAY_IT_IS_GIVEN.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(self._deobfuscate(source)), (prints, None))
+
+
 class TestHostEntrypointDefinitions(TestJsDeobfuscator):
 
     def _evaluate_with(self, source: str, *entrypoints: str) -> str:
