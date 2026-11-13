@@ -2872,6 +2872,14 @@ _EVERY_WRITE_FORM_A_CONSTRUCTED_BODY_CAN_STORE = [
     "var r = Function('[q] = [1]; return 2')();",
 ]
 
+_EVERY_WRITE_FORM_CALLED_IN_PLACE = [
+    'var r = function() {\n  q = 1;\n  return 2;\n}();',
+    'var r = function() {\n  q += 1;\n  return 2;\n}();',
+    'var r = function() {\n  q++;\n  return 2;\n}();',
+    'var r = function() {\n  for (q in o) {\n    ;\n  }\n  return 2;\n}();',
+    'var r = function() {\n  [q] = [1];\n  return 2;\n}();',
+]
+
 _A_ROOT_BINDING_A_CONSTRUCTED_BODY_READS = {
     "var g = 5; var f = Function('a', 'return g + arguments[0]'); var r = f(1);":
         inspect.cleandoc("""
@@ -2899,17 +2907,23 @@ _A_GLOBAL_STORE_NO_STATIC_GATE_NAMES = [
     "var r = Function('var w = globalThis; w.String = 9; return 1')();",
 ]
 
+_A_GLOBAL_STORE_CALLED_IN_PLACE = [
+    'var r = function() {\n  globalThis.String = 9;\n  return 1;\n}();',
+    'var r = function() {\n  globalThis.String = 9;\n  return 1;\n}();',
+    'var r = function() {\n  var w = globalThis;\n  w.String = 9;\n  return 1;\n}();',
+]
+
 
 class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
 
-    def test_every_write_form_a_constructed_body_stores_a_free_name_with_declines(self):
+    def test_every_write_form_a_constructed_body_stores_a_free_name_with_is_called_in_place(self):
         rows = _EVERY_WRITE_FORM_A_CONSTRUCTED_BODY_CAN_STORE
         self.assertEqual(
-            {source: self._reflect(source) for source in rows},
-            {source: source for source in rows},
+            [self._reflect(source) for source in rows],
+            _EVERY_WRITE_FORM_CALLED_IN_PLACE,
         )
 
     def test_a_root_binding_a_constructed_body_reads_declines(self):
@@ -2943,12 +2957,20 @@ class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
         source = 'var r = Function("a", "return a")(oo.x);'
         self.assertEqual(source, self._reflect(source))
 
-    def test_a_global_store_no_static_gate_names_declines(self):
+    def test_a_global_store_no_static_gate_names_is_called_in_place(self):
         rows = _A_GLOBAL_STORE_NO_STATIC_GATE_NAMES
         self.assertEqual(
-            {source: self._reflect(source) for source in rows},
-            {source: source for source in rows},
+            [self._reflect(source) for source in rows],
+            _A_GLOBAL_STORE_CALLED_IN_PLACE,
         )
+
+    @unittest.skipUnless(node_executable() is not None, 'node.js is required')
+    def test_each_deobfuscation_of_a_global_store_keeps_it(self):
+        for source in _A_GLOBAL_STORE_NO_STATIC_GATE_NAMES:
+            program = F'{source} console.log(r, typeof String);'
+            with self.subTest(source=source):
+                deobfuscated = deobfuscate_source(program, execution=ExecutionModel.commonjs)
+                self.assertEqual(behavior(deobfuscated), behavior(program))
 
     def test_a_name_an_earlier_site_of_the_same_pass_spliced_in_declines(self):
         source = (
@@ -3089,6 +3111,173 @@ class TestAnInvocationPassingArgumentsToAConstruction(TestJsDeobfuscator):
         self.assertEqual(
             'console.log(42);',
             self._reflect("var f = Function('', 'return arguments[0]'); console.log(f(42));"))
+
+
+_A_CONSTRUCTION_INVOKED_INSIDE_AN_EXPRESSION: dict[str, tuple[str, str]] = {
+    "globalThis.o = new Function('var a = 1; var b = a + 1; return {a: a, b: b};')();\nconsole.log(o.a, o.b);": (
+        '1 2\n',
+        inspect.cleandoc(
+            """
+            globalThis.o = function() {
+              var a = 1;
+              var b = a + 1;
+              return { a: a, b: b };
+            }();
+            console.log(o.a, o.b);
+            """
+        ),
+    ),
+    "var o = Function('var a = 1; var b = a + 1; return a + b;')();\nconsole.log(o);": (
+        '3\n',
+        inspect.cleandoc(
+            """
+            var o = function() {
+              var a = 1;
+              var b = a + 1;
+              return a + b;
+            }();
+            console.log(o);
+            """
+        ),
+    ),
+    "var o = (0, Function('var a = 1; return a + 1;')());\nconsole.log(o);": (
+        '2\n',
+        inspect.cleandoc(
+            """
+            var o = (0, function() {
+              var a = 1;
+              return a + 1;
+            }());
+            console.log(o);
+            """
+        ),
+    ),
+    "console.log(Function('var a = 1; var b = 2; return a + b;')());": (
+        '3\n',
+        inspect.cleandoc(
+            """
+            console.log(function() {
+              var a = 1;
+              var b = 2;
+              return a + b;
+            }());
+            """
+        ),
+    ),
+    "var o = Function('var a = 1; globalThis.k = a;')();\nconsole.log(o, k);": (
+        'undefined 1\n',
+        inspect.cleandoc(
+            """
+            var o = function() {
+              var a = 1;
+              globalThis.k = a;
+            }();
+            console.log(o, k);
+            """
+        ),
+    ),
+}
+
+_A_DECLARATION_THE_SITE_ALSO_NAMES: dict[str, tuple[str, str]] = {
+    "var o = Function('function g() { return 3; } return g();')();\nconsole.log(o, typeof g);": (
+        '3 undefined\n',
+        inspect.cleandoc(
+            """
+            var o = function() {
+              function g() {
+                return 3;
+              }
+              return g();
+            }();
+            console.log(o, typeof g);
+            """
+        ),
+    ),
+    "var a = 5;\nvar o = Function('var a = String(1); return a + 1;')();\nconsole.log(o, a);": (
+        '11 5\n',
+        inspect.cleandoc(
+            """
+            var a = 5;
+            var o = function() {
+              var a = String(1);
+              return a + 1;
+            }();
+            console.log(o, a);
+            """
+        ),
+    ),
+}
+
+_AN_EVAL_INSIDE_AN_EXPRESSION: dict[str, str] = {
+    "var o = eval('var leaked = 9; 4');\nconsole.log(o, leaked);": '4 9\n',
+    "var o = (0, eval)('var leaked = 9; 4');\nconsole.log(o, leaked);": '4 9\n',
+    "var o = eval('var a = 1; a + 1');\nconsole.log(o, a);": '2 1\n',
+}
+
+_A_CONSTRUCTION_THE_WRAPPER_MAY_NOT_HOLD: dict[str, tuple[str, str | None]] = {
+    "var q = 1;\nfunction f() { var q = 2; return Function('var a = 1; return q + a;')(); }\nconsole.log(f());": ('', 'ReferenceError'),
+    "'use strict';\nvar o = Function('var a = 010; return a + this.x;')();\nconsole.log(o);": ('NaN\n', None),
+    "var o = Function('var a = arguments.length; return a + 1;')(sink());\nfunction sink() { console.log('s'); }\nconsole.log(o);": ('s\n2\n', None),
+}
+
+
+class TestAConstructionInvokedInsideAnExpression(TestJsDeobfuscator):
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def _every_row(self) -> dict[str, tuple[str, str | None]]:
+        constructions = _A_CONSTRUCTION_INVOKED_INSIDE_AN_EXPRESSION | _A_DECLARATION_THE_SITE_ALSO_NAMES
+        rows = {source: (output, None) for source, (output, _) in constructions.items()}
+        rows |= {source: (output, None) for source, output in _AN_EVAL_INSIDE_AN_EXPRESSION.items()}
+        return rows | _A_CONSTRUCTION_THE_WRAPPER_MAY_NOT_HOLD
+
+    def test_a_body_of_many_statements_becomes_the_function_it_builds_called_in_place(self):
+        for source, (_, inlined) in _A_CONSTRUCTION_INVOKED_INSIDE_AN_EXPRESSION.items():
+            with self.subTest(source=source):
+                self.assertEqual(self._reflect(source), inlined)
+
+    @opportunity
+    def test_a_body_declaring_a_name_the_site_also_names_is_called_in_place(self):
+        for source, (_, inlined) in _A_DECLARATION_THE_SITE_ALSO_NAMES.items():
+            with self.subTest(source=source):
+                self.assertEqual(self._reflect(source), inlined)
+
+    def test_an_eval_inside_an_expression_is_left_standing(self):
+        for source in _AN_EVAL_INSIDE_AN_EXPRESSION:
+            with self.subTest(source=source):
+                self.assertEqual(self._reflect(source), printed(source))
+
+    @unittest.skipUnless(node_executable() is not None, 'node.js is required')
+    def test_node_prints_what_each_row_records(self):
+        for source, answer in self._every_row().items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(source), answer)
+
+    @unittest.skipUnless(node_executable() is not None, 'node.js is required')
+    def test_node_prints_the_same_for_each_body_called_in_place(self):
+        constructions = _A_CONSTRUCTION_INVOKED_INSIDE_AN_EXPRESSION | _A_DECLARATION_THE_SITE_ALSO_NAMES
+        for source, (output, inlined) in constructions.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(inlined), (output, None))
+
+    @unittest.skipUnless(node_executable() is not None, 'node.js is required')
+    def test_each_deobfuscation_prints_what_the_program_printed(self):
+        for source, answer in self._every_row().items():
+            with self.subTest(source=source):
+                deobfuscated = deobfuscate_source(source, execution=ExecutionModel.commonjs)
+                self.assertEqual(behavior(deobfuscated), answer)
+
+    @unittest.skipUnless(node_executable() is not None, 'node.js is required')
+    def test_each_store_a_constructed_body_makes_is_kept(self):
+        for source in _EVERY_WRITE_FORM_A_CONSTRUCTED_BODY_CAN_STORE:
+            for program in (
+                F'var o = {{}}; var q = 0; {source} console.log(r, q);',
+                F'function f() {{ var o = {{}}; var q = 0; {source} return [r, q]; }} console.log(f(), globalThis.q);',
+            ):
+                with self.subTest(program=program):
+                    deobfuscated = deobfuscate_source(program, execution=ExecutionModel.commonjs)
+                    self.assertEqual(behavior(deobfuscated), behavior(program))
 
 
 _A_DECODER_UNDER_A_LATER_EVAL: list[str] = [

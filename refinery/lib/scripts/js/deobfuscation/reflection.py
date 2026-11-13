@@ -1350,16 +1350,47 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         scope, parsed = resolved
         body = parsed.body
+        if scope is ReflectedScope.FUNCTION_CONSTRUCTOR:
+            if len(body) == 1 and isinstance(stmt := body[0], JsReturnStatement) and stmt.argument is not None:
+                return stmt.argument
+            return self._called_in_place(parsed, node, root)
         if len(body) != 1:
             return None
         stmt = body[0]
-        if scope is ReflectedScope.FUNCTION_CONSTRUCTOR:
-            if isinstance(stmt, JsReturnStatement) and stmt.argument is not None:
-                return stmt.argument
-            return None
         if isinstance(stmt, JsExpressionStatement) and stmt.expression is not None:
             return stmt.expression
         return None
+
+    def _called_in_place(self, parsed: JsScript, node: JsCallExpression, root: JsScript) -> Expression | None:
+        """
+        The function a `Function` construction builds, written out with the admitted body *parsed*
+        and called where its invocation *node* stood, or `None` where the body may not be held by a
+        plain function written there. This is what the construction was: a sloppy function of no
+        parameters, called with no receiver. An `eval` has no such form, since its value is the
+        completion of its code and its declarations land in the scope that runs it.
+
+        The admission weighed the body as statements spliced at *node*, whose declarations land in
+        the scope around it; inside the function they stay its own, as they were. It is therefore
+        stricter than the function needs and never admits a body the function would change. What it
+        does not ask is whether the text is legal where it now stands, because it read the text in
+        the context of *node*, which may read `await` and `yield` as operators where the function
+        reads them as names.
+        """
+        if collect_strict_violations(
+            parsed,
+            strict=self._destination_may_be_strict(node, root),
+            module=model_cache(self, root).model.file_kind.may_be_an_es_module,
+            context=function_context(False, False),
+        ):
+            return None
+        block = JsBlockStatement(body=parsed.body)
+        function = JsFunctionExpression(params=[], body=block)
+        call = JsCallExpression(callee=function, arguments=[])
+        block.parent = function
+        function.parent = call
+        for stmt in parsed.body:
+            stmt.parent = block
+        return call
 
     def _resolve_reflected_call(
         self,
