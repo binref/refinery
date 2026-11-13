@@ -1226,6 +1226,25 @@ def _object_entries(args: list[Value]) -> Value:
     raise InterpreterError
 
 
+@_register((None, 'Array'))
+def _global_array(args: list[Value]) -> Value:
+    """
+    The array `Array` builds when it is called: its arguments in order, except that one argument
+    which is a number is the length of an array of holes, and a `RangeError` where that number is
+    no length an array can have (`_to_array_length`). A boolean is not a number, so `Array(false)`
+    is `[false]`. An array of more than `MAX_ARRAY_LEN` holes is refused.
+    """
+    if len(args) != 1:
+        return list(args)
+    length = args[0]
+    if isinstance(length, bool) or not isinstance(length, (int, float)):
+        return [length]
+    count = _to_array_length(length)
+    if count > MAX_ARRAY_LEN:
+        raise InterpreterError
+    return [JS_HOLE] * count
+
+
 @_register(('Array', 'from'))
 def _array_from(args: list[Value]) -> Value:
     if not args:

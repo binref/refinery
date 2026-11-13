@@ -222,6 +222,59 @@ _A_BUILTIN_FUNCTION_CHANGED: dict[str, str] = {
     "globalThis.String = 5; console.log(typeof ''.constructor);": 'function\n',
 }
 
+_ARRAY_CALLED: dict[str, str] = {
+    'Array()'             : '[]',
+    'Array(false)'        : '[false]',
+    'Array(false)[0]'     : 'false',
+    'Array(true)'         : '[true]',
+    "Array('3')"          : "['3']",
+    'Array(null)'         : '[null]',
+    'Array(undefined)'    : '[void 0]',
+    'Array(1, 2)'         : '[1, 2]',
+    "Array(3, 'a')"       : "[3, 'a']",
+    'Array([1])'          : '[[1]]',
+    'Array(0)'            : '[]',
+    'Array(-0)'           : '[]',
+    "Array(3).join('-')"  : "'--'",
+}
+
+_ARRAY_OF_HOLES_READ: dict[str, str] = {
+    'Array(3).length'     : '3',
+    'Array(3)[0]'         : 'void 0',
+}
+
+_ARRAY_OF_INVALID_LENGTH = [
+    'Array(3.5)',
+    'Array(-1)',
+    'Array(-0.5)',
+    'Array(NaN)',
+    'Array(Infinity)',
+    'Array(2 ** 32)',
+    'Array(2 ** 53)',
+]
+
+_ARRAY_CALL_PRINTS: dict[str, str] = {
+    'console.log(Array(3));': '[ <3 empty items> ]\n',
+    'console.log(Array(2 ** 32 - 1).length);': '4294967295\n',
+    'console.log(Array(...[3]), Array(...[1, 2]));': '[ <3 empty items> ] [ 1, 2 ]\n',
+    'var o = {}; console.log(Array(o)[0] === o);': 'true\n',
+    'try { Array(-1); } catch (e) { console.log(e.name); }': 'RangeError\n',
+    'console.log(new Array(false)[0]);': 'false\n',
+}
+
+_ARRAY_REPLACED: dict[str, str] = {
+    'var Array = function () { return [7]; }; console.log(Array(false)[0]);': '7\n',
+    'Array = function () { return [7]; }; console.log(Array(false)[0]);': '7\n',
+    'globalThis.Array = function () { return [7]; }; console.log(Array(false)[0]);': '7\n',
+    "globalThis['Arr' + 'ay'] = function () { return [7]; }; console.log(Array(false)[0]);": '7\n',
+    'function f(Array) { return Array(false)[0]; } console.log(f(function () { return [9]; }));': '9\n',
+    inspect.cleandoc("""
+        globalThis.Array = function () { return [7]; };
+        function g() { return Array(false)[0]; }
+        console.log(g());
+    """): '7\n',
+}
+
 _FOLDED_PROGRAM = "var a = false + [], b = [] + [], c = 1 + [0], d = [][[]] + '', e = 'abc'.nope + ''; console.log(a, b, c, d, e);"
 
 
@@ -362,6 +415,54 @@ class TestAFunctionTheLanguageInstalls(TestBase):
             for strict, environment in _EVERY_MODE:
                 with self.subTest(source=source, strict=strict, environment=environment):
                     self.assertEqual(behavior(_deobfuscated(source, strict, environment)), (prints, None))
+
+
+class TestTheArrayConstructorCalledAsAFunction(TestBase):
+
+    def test_each_call_folds_to_the_array_it_builds(self):
+        for expression, folded in _ARRAY_CALLED.items():
+            for strict in (True, False):
+                with self.subTest(expression=expression, strict=strict):
+                    printed = _deobfuscated(F'console.log({expression});', strict)
+                    self.assertEqual(printed, F'console.log({folded});')
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_answers_each_call_with_the_array_it_folds_to(self):
+        rows = _ARRAY_CALLED | _ARRAY_OF_HOLES_READ
+        self.assertEqual(code_units(list(rows)), code_units(list(rows.values())))
+
+    @opportunity
+    def test_a_read_off_an_array_of_holes_folds_to_the_value_it_reads(self):
+        for expression, folded in _ARRAY_OF_HOLES_READ.items():
+            with self.subTest(expression=expression):
+                self.assertEqual(_fold(expression), folded)
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_throws_a_range_error_for_each_invalid_length(self):
+        for expression in _ARRAY_OF_INVALID_LENGTH:
+            with self.subTest(expression=expression):
+                self.assertEqual(behavior(F'console.log({expression});'), ('', 'RangeError'))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_each_deobfuscation_of_a_call_with_an_invalid_length_still_throws_it(self):
+        for expression in _ARRAY_OF_INVALID_LENGTH:
+            for strict in (True, False):
+                with self.subTest(expression=expression, strict=strict):
+                    deobfuscated = _deobfuscated(F'console.log({expression});', strict)
+                    self.assertEqual(behavior(deobfuscated), ('', 'RangeError'))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_what_each_row_records(self):
+        for source, prints in (_ARRAY_CALL_PRINTS | _ARRAY_REPLACED).items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(source), (prints, None))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_each_deobfuscation_prints_it_too(self):
+        for source, prints in (_ARRAY_CALL_PRINTS | _ARRAY_REPLACED).items():
+            for strict in (True, False):
+                with self.subTest(source=source, strict=strict):
+                    self.assertEqual(behavior(_deobfuscated(source, strict)), (prints, None))
 
 
 class TestTheGuardOfTheFolds(TestBase):
