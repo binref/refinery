@@ -1123,6 +1123,13 @@ class EffectModel:
         """
         return self._summaries.get(id(func), EffectSummary(calls_unknown=True))
 
+    def summarizes(self, func: Node) -> bool:
+        """
+        Whether `summary_of` answers for *func* with what the scan found, rather than with the summary
+        of an unknown node, which records no write.
+        """
+        return id(func) in self._summaries
+
     def mutated_bindings(self, func: Node) -> frozenset[Binding]:
         """
         The outer bindings (captured locals and globals) a call to *func* may write, directly or through
@@ -3032,10 +3039,12 @@ class EffectModel:
           call on another call — a chain link — is judged by asking this whole question of that inner call.
           `receiver_type` covers the remaining case, a caller holding an already-evaluated receiver whose
           type it knows and this model does not.
-        - Every function-valued argument writes nothing outside itself. `is_effect_free_when_discarded` is
-          the right predicate rather than `is_pure`: a callback that mutates a fresh local and returns it —
-          the `reduce` accumulator idiom — is not pure, but that mutation is the value being computed and an
-          evaluator that runs the call reproduces it.
+        - Every function-valued argument writes nothing outside itself. `is_literal_replaceable` is the
+          right predicate: the fold runs the call and writes the value it computed as a literal, so a
+          callback that throws or calls something this model cannot name loses nothing — the run throws
+          or makes that call, and the interpreter refuses a function it reaches that writes. A callback
+          that mutates a fresh local and returns it — the `reduce` accumulator idiom — is not pure, but
+          that mutation is the value being computed.
         - Nothing in the argument list is itself a call this gate does not also clear, so admitting an outer
           call cannot smuggle in an inner one. A nested built-in (`Math.floor(Math.abs(-1.7))`) is fine
           precisely because the same questions are asked of it.
@@ -3151,7 +3160,7 @@ class EffectModel:
         node = strip_parens(arg)
         if isinstance(node, FUNCTION_NODES):
             summary = self.summary_of(node)
-            return summary.is_effect_free_when_discarded
+            return summary.is_literal_replaceable
         if isinstance(node, JsCallExpression):
             return self.call_is_foldable(node, trust=trust)
         return self._stores_nothing(node)

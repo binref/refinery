@@ -1247,8 +1247,15 @@ def _global_array(args: list[Value]) -> Value:
 
 @_register(('Array', 'from'))
 def _array_from(args: list[Value]) -> Value:
+    """
+    The array `Array.from` copies out of a string or an array. A second argument other than
+    `undefined` is a function the copy calls on each element, or a `TypeError` where it is not
+    one, and a function of the registry cannot call one: such a call is refused.
+    """
     if not args:
         return []
+    if len(args) > 1 and args[1] is not None:
+        raise InterpreterError
     src = args[0]
     if isinstance(src, str):
         return code_points(src)
@@ -2550,15 +2557,15 @@ class JsInterpreter:
         has an effect the resulting literal cannot carry: `[1,2].map(function (x) { n += x; return x; })`
         yields the right array while leaving `n` unchanged.
 
-        It asks `is_effect_free_when_discarded` rather than `is_pure`, which is stricter than this
-        position needs: a mutation the callback confines to a fresh local it returns is tolerated, while
-        a throw the summary records in `throws` is not.
+        The method's value becomes a literal, so this asks `is_literal_replaceable`. A throw or a call
+        of something the model cannot name is no loss, because the run performs it: a throw ends the
+        fold, and a function it calls is refused there if it writes (`_callee_writes`).
         """
         effects = self._effects
         if effects is None:
             return True
         summary = effects.summary_of(callback)
-        return summary.is_effect_free_when_discarded
+        return summary.is_literal_replaceable
 
     def _eval_array_hof(self, arr: list, method: str, args: list[Value]) -> Value:
         if not args:
@@ -2697,15 +2704,38 @@ class JsInterpreter:
                 return True
         return False
 
+    def _callee_writes(self, func: JsFunctionNode) -> bool:
+        """
+        Whether a call to *func* may write a binding that outlives it — a global or one an enclosing
+        function owns — or is one the effect model has no summary for. A fold keeps only the value
+        the run computes, so such a write would be lost. The gates in front of a fold vouch for the
+        functions the model sees called; this interpreter also calls functions the model cannot
+        name, such as one a conditional chose (`var h = V ? A : B; h()`) or one read off an object
+        (`obj.f()`), and only the summary of the function actually reached can answer for those.
+        Without an effect model the assumption is the caller's.
+        """
+        effects = self._effects
+        if effects is None:
+            return False
+        if not effects.summarizes(func):
+            return True
+        summary = effects.summary_of(func)
+        return summary.writes_global or summary.writes_captured
+
     def _call_function(self, func: JsFunctionNode, args: list[Value]) -> Value:
         """
         The value a call to *func* answers, computed by a child interpreter. What a call answers at
         all is `execute`'s question and is refused there, so that the refusal covers the entry a
         caller outside this class reaches as well.
+
+        Every function this interpreter calls goes through here, so this is where a call that would
+        write is refused (`_callee_writes`).
         """
         if self._depth >= self.max_recursion:
             raise InterpreterError
         if self._mutates_captured_binding(func):
+            raise InterpreterError
+        if self._callee_writes(func):
             raise InterpreterError
         child = JsInterpreter(
             max_iterations=max(1, self.max_iterations - self._iterations),

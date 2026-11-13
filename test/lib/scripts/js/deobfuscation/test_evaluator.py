@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import inspect
+import unittest
 
 from test import backlog, opportunity
+from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import a_program
 
@@ -2217,27 +2219,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual("var r = ['abc'];", result)
 
-    def test_buffer_reduce_into_an_array_stands_or_is_an_array_in_node(self):
-        source = inspect.cleandoc(
-            """
-            const f = () => Array.isArray(
-                Buffer.from([1, 2, 3]).reduce((acc, v) => { acc.push(v * 2); return acc; }, [])
-            );
-            var r = f();
-            """
-        )
-        standing = inspect.cleandoc(
-            """
-            const f = () => Array.isArray(Buffer.from([1, 2, 3]).reduce((acc, v) => {
-              acc.push(v * 2);
-              return acc;
-            }, []));
-            var r = f();
-            """
-        )
-        self.assertIn(self._evaluate_in(source, HostEnvironment.node), (standing, 'var r = true;'))
-
-    @opportunity
     def test_buffer_reduce_into_an_array_is_an_array_in_node(self):
         source = inspect.cleandoc(
             """
@@ -2304,6 +2285,195 @@ class TestAHofCallbackReadingADeadZoneBindingKeepsItsThrow(TestJsDeobfuscator):
                 """
             ),
             self._deobfuscate(source),
+        )
+
+
+_ARRAY_FROM_WITH_A_SECOND_ARGUMENT: dict[str, tuple[str, str | None]] = {
+    'console.log(Array.from([1, 2], V => V + 1));': ('[ 2, 3 ]\n', None),
+    "console.log(Array.from('ab', V => V + '!'));": ("[ 'a!', 'b!' ]\n", None),
+    'console.log(Array.from([1, 2], function (V, i) { return V * 10 + i; }));': ('[ 10, 21 ]\n', None),
+    'console.log(Array.from([1, 2], 5));': ('', 'TypeError'),
+    'console.log(Array.from([1, 2], null));': ('', 'TypeError'),
+    'console.log(Array.from([1, 2], undefined));': ('[ 1, 2 ]\n', None),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestArrayFromWithASecondArgument(TestJsDeobfuscator):
+
+    def test_node_prints_what_each_row_records(self):
+        for source, answer in _ARRAY_FROM_WITH_A_SECOND_ARGUMENT.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(source), answer)
+
+    def test_each_deobfuscation_prints_it_too(self):
+        for source, answer in _ARRAY_FROM_WITH_A_SECOND_ARGUMENT.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(self._deobfuscate(source)), answer)
+
+    def test_an_undefined_second_argument_still_folds(self):
+        self.assertEqual(
+            self._deobfuscate('console.log(Array.from([1, 2], undefined));'),
+            'console.log([1, 2]);',
+        )
+
+
+_A_CALLBACK_CALLING_A_METHOD_OF_ITS_PARAMETER: dict[str, tuple[str, str]] = {
+    inspect.cleandoc("""
+        function h(V) { return V.toString(16); }
+        console.log([65, 255].map(h));
+    """): (
+        "[ '41', 'ff' ]\n",
+        "console.log(['41', 'ff']);",
+    ),
+    inspect.cleandoc("""
+        function h(V) { return V.toString(16); }
+        console.log([65, 255].reduce(function (s, V) { return s + h(V); }, ''));
+    """): (
+        '41ff\n',
+        "console.log('41ff');",
+    ),
+    inspect.cleandoc("""
+        function L(V) { return 1 === (V = V.toString(16).toLowerCase()).length && (V = '0' + V), V; }
+        function D(V) { return V.reduce((s, R) => s + L(R & 255) + L(R >> 8 & 255), ''); }
+        console.log(D([0x4142, 0x0a0b]), D([]));
+    """): (
+        '42410b0a \n',
+        "console.log('42410b0a', '');",
+    ),
+}
+
+_A_CALL_WHOSE_CALLEE_WRITES: dict[str, str] = {
+    inspect.cleandoc("""
+        var g = 0;
+        function W(V) { g = g + 1; return V; }
+        console.log([1, 2].map(function (V) { return W(V).toString(16); }), g);
+    """): "[ '1', '2' ] 2\n",
+    inspect.cleandoc("""
+        function W(V) { h = V; return V; }
+        console.log([1, 2].map(function (V) { return W(V).toString(16); }), h);
+    """): "[ '1', '2' ] 2\n",
+    inspect.cleandoc("""
+        function outer() {
+          var c = 0;
+          function W(V) { c = c + 1; return V; }
+          var s = [1, 2].map(function (V) { return W(V).toString(16); });
+          return s + c;
+        }
+        console.log(outer());
+    """): '1,22\n',
+    inspect.cleandoc("""
+        var g = 0;
+        function A() { g = 1; return 5; }
+        function B() { return 6; }
+        function cb(V) { var h = V ? A : B; return h() + V; }
+        console.log([1].map(cb), g);
+    """): '[ 6 ] 1\n',
+    inspect.cleandoc("""
+        var g = 0;
+        function A() { g = 1; return 5; }
+        function B() { return 6; }
+        function cb(V) { var h = V ? A : B; return h.call(null) + V; }
+        console.log([1].map(cb), g);
+    """): '[ 6 ] 1\n',
+    inspect.cleandoc("""
+        var g = 0;
+        var obj = { f: function () { g = 1; return 5; } };
+        console.log([1].map(function (V) { return obj.f() + V; }), g);
+    """): '[ 6 ] 1\n',
+    inspect.cleandoc("""
+        function outer() {
+          var c = 0;
+          function A() { c = 1; return 5; }
+          function B() { return 6; }
+          var s = [1].map(function (V) { var h = V ? A : B; return h() + V; });
+          return s + c;
+        }
+        console.log(outer());
+    """): '61\n',
+    inspect.cleandoc("""
+        function outer() {
+          var c = 0;
+          function A() { c = 1; return 5; }
+          function B() { return 6; }
+          function cb(V) { var h = V ? A : B; return h() + V; }
+          var s = cb(1);
+          return s + c;
+        }
+        console.log(outer());
+    """): '7\n',
+    inspect.cleandoc("""
+        var g = 0;
+        function A() { g = 1; return 5; }
+        function B() { return 6; }
+        function cb(V) { var h = V ? A : B; return h() + V; }
+        console.log(cb(1), g);
+    """): '6 1\n',
+}
+
+_A_CALLBACK_CHANGING_AN_OUTER_CONTAINER: dict[str, str] = {
+    'var s = [9];\nvar r = [1, 2].map(function (x) { s.push(x); return x; });\nconsole.log(r, s);': '[ 1, 2 ] [ 9, 1, 2 ]\n',
+    'const s = [9];\nconst r = [1, 2].map(x => { s.push(x); return x + s[0]; });\nconsole.log(r);\nconsole.log(s);': '[ 10, 11 ]\n[ 9, 1, 2 ]\n',
+    'var s = [9];\nfunction add(a, x) { a.push(x); return x; }\nvar r = [1, 2].map(function (x) { return add(s, x); });\nconsole.log(r, s);': '[ 1, 2 ] [ 9, 1, 2 ]\n',
+    'const s = [9];\nfunction add(x) { s.push(x); return x; }\nconst r = [1, 2].map(x => add(x) + s[0]);\nconsole.log(r);\nconsole.log(s);': '[ 10, 11 ]\n[ 9, 1, 2 ]\n',
+    'var s = [9, 8, 7];\nvar r = [1].map(function (x) { s.splice(0, 1); return x; });\nconsole.log(r, s);': '[ 1 ] [ 8, 7 ]\n',
+    'const s = [9, 8];\nconst r = [0].map(x => (s.reverse(), s[x]));\nconsole.log(r);\nconsole.log(s);': '[ 8 ]\n[ 8, 9 ]\n',
+    'var s = [9];\nvar r = [1, 2].reduce(function (a, x) { s.push(x); return a + x; }, 0);\nconsole.log(r, s);': '3 [ 9, 1, 2 ]\n',
+    'var o = {};\nvar r = [1, 2].map(function (x) { o.k = x; return x; });\nconsole.log(r, o);': '[ 1, 2 ] { k: 2 }\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestACallbackTheFoldRuns(TestJsDeobfuscator):
+
+    def test_node_prints_what_each_row_records(self):
+        rows = {source: prints for source, (prints, _) in _A_CALLBACK_CALLING_A_METHOD_OF_ITS_PARAMETER.items()}
+        rows |= _A_CALL_WHOSE_CALLEE_WRITES | _A_CALLBACK_CHANGING_AN_OUTER_CONTAINER
+        for source, prints in rows.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(source), (prints, None))
+
+    def test_a_callback_calling_a_method_of_its_parameter_folds(self):
+        for source, (_, folded) in _A_CALLBACK_CALLING_A_METHOD_OF_ITS_PARAMETER.items():
+            with self.subTest(source=source):
+                self.assertEqual(self._deobfuscate(source), folded)
+
+    def test_each_deobfuscation_of_a_call_whose_callee_writes_keeps_the_write(self):
+        for source, prints in _A_CALL_WHOSE_CALLEE_WRITES.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(self._deobfuscate(source)), (prints, None))
+
+    def test_each_deobfuscation_of_a_callback_changing_an_outer_container_keeps_the_change(self):
+        for source, prints in _A_CALLBACK_CHANGING_AN_OUTER_CONTAINER.items():
+            with self.subTest(source=source):
+                self.assertEqual(behavior(self._deobfuscate(source)), (prints, None))
+
+    def test_a_callback_calling_a_name_nothing_binds_is_not_folded(self):
+        source = 'console.log([1, 2].map(function (V) { return unknownFn(V).toString(16); }));'
+        self.assertEqual(
+            self._deobfuscate(source),
+            inspect.cleandoc(
+                """
+                console.log([1, 2].map(function(V) {
+                  return unknownFn(V).toString(16);
+                }));
+                """
+            ),
+        )
+
+    def test_a_discarded_method_call_of_a_parameter_is_kept(self):
+        source = 'function f(x) { x.toString(); return 1; }\nsink(f);\n'
+        self.assertEqual(
+            self._deobfuscate(source),
+            inspect.cleandoc(
+                """
+                function f(x) {
+                  x.toString();
+                  return 1;
+                }
+                sink(f);
+                """
+            ),
         )
 
 

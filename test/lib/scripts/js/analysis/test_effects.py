@@ -1932,17 +1932,21 @@ class TestCallIsFoldable(TestBase):
         self.assertFalse(self._foldable(
             'var r = [1, 2].map(function (x) { globalThis.q = x; return x; });', list))
 
-    def test_callback_calling_an_unknown_function_is_refused(self):
-        self.assertFalse(self._foldable(
+    def test_callback_calling_an_unknown_function_is_admitted_for_the_run_to_decide(self):
+        self.assertTrue(self._foldable(
             'var r = [1, 2].map(function (x) { return WScript.f(x); });', list))
 
-    def test_throwing_callback_is_refused(self):
-        self.assertFalse(self._foldable(
+    def test_throwing_callback_is_admitted_for_the_run_to_decide(self):
+        self.assertTrue(self._foldable(
             "var r = [1, 2].map(function (x) { throw 'boom'; });", list))
 
-    def test_callback_mutating_an_outer_container_is_refused(self):
+    def test_callback_storing_into_an_outer_container_is_refused(self):
         self.assertFalse(self._foldable(
-            'var s = [9]; var r = [1, 2].map(function (x) { s.push(x); return x; });', list))
+            'var s = [9]; var r = [1, 2].map(function (x) { s[x] = x; return x; }); f(s);', list))
+
+    def test_asynchronous_callback_is_refused(self):
+        self.assertFalse(self._foldable(
+            'var r = [1, 2].map(async function (x) { return x; });', list))
 
     def test_trusted_call_valued_argument_is_admitted(self):
         self.assertTrue(self._foldable('var r = Math.floor(Math.abs(-1.7));'))
