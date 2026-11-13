@@ -31,6 +31,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Scope,
     SemanticModel,
     build_semantic_model,
+    built_function,
     construction_text,
     crosses_dynamic_scope,
     enclosing_function,
@@ -436,13 +437,7 @@ def _parse_construction_function(ctor_call: Node, code: str) -> tuple[JsScript, 
         module=False,
         context=function_context(False, False),
     )
-    if parsed is None or len(parsed.body) != 1:
-        return None
-    statement = parsed.body[0]
-    if not isinstance(statement, JsExpressionStatement) or statement.expression is None:
-        return None
-    function = strip_parens(statement.expression)
-    if not isinstance(function, JsFunctionExpression):
+    if parsed is None or (function := built_function(parsed)) is None:
         return None
     if not all(isinstance(param, JsIdentifier) for param in function.params):
         return None
@@ -1200,7 +1195,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         that a plain function body cannot host declines the lowering, leaving the string timer intact.
         The body lands inside that wrapper and not as text at the site, so the words it is weighed
         against are those a plain function reads: `await` and `yield` are names there, and
-        `arguments` is the wrapper's own, whatever the site reads them as.
+        `arguments` is the wrapper's own, whatever the site reads them as. The wrapper is also a
+        call the classic script never made: a function the code calls finds it as its `caller`,
+        where it found none, so nothing is lowered where the program may read one
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`).
         """
         code = _extract_string_call_code(
             node,
@@ -1210,6 +1208,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
             eval_string=self._eval_string,
         )
         if code is None:
+            return
+        if model_cache(self, root).model.spells_caller():
             return
         resolved = self._resolve_reflected_body(
             code,
@@ -1935,7 +1935,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
         function whose `eval` runs it (*origin*), leaves that call behind when it is inlined, and so
         changes what the `caller` of a function answers; while the program, the code it spells
         included, may read one
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`), such a body declines.
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`), such a body
+        declines.
         """
         if (
             (scope is ReflectedScope.FUNCTION_CONSTRUCTOR or origin is not None)

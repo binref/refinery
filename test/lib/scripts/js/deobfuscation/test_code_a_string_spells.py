@@ -7,7 +7,7 @@ from __future__ import annotations
 import functools
 import unittest
 
-from test import TestBase, fastest_processor_time, processor_time_ratio
+from test import TestBase, fastest_processor_time, processor_time_ratio, todo
 from test.lib.scripts.js.analysis.differential import behavior, host_behavior, node_executable
 from test.lib.scripts.js.deobfuscation.test_dispatcher import a_dispatcher
 from test.lib.scripts.js.ledger import STRING_TIMERS
@@ -198,6 +198,55 @@ class TestEitherModelReadsTheCodeAStringSpells(_NodeDecides):
             ),
         })
 
+    def test_global_code_a_body_runs_finds_the_global_past_a_parameter_of_the_same_name(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'a body built in a body, reading': (
+                "var k = 5; console.log(Function('k', 'return Function(\"return k\")()')(0));"
+            ),
+            'a body built in a stored body, reading': (
+                "var k = 5; var g = new Function('k', 'return Function(\"return k\")()'); console.log(g(0));"
+            ),
+            'a body built in a body, writing': (
+                "var k = 1; Function('k', 'Function(\"k = 2\")()')(0); console.log(k);"
+            ),
+            'a body built in a default of a parameter, writing': (
+                "var k = 1; Function('a = Function(\"k = 2\")(), k', 'return a')(); console.log(k);"
+            ),
+            'a string timer in a body, writing': (
+                "var k = 1; Function('k', 'setTimeout(\"k = 2\", 0)')(0); setTimeout(function () { console.log(k); }, 10);"
+            ),
+        })
+
+    def test_global_code_spelled_inside_eval_code_finds_the_global_past_a_local(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'a body built in an eval, beside a var of the same name': (
+                "var k = 1; function f() { var k = 0; eval('\"use strict\"; Function(\"k = 2\")()'); return k; }"
+                " console.log(f(), k);"
+            ),
+            'a body built in an eval, beside a let of the same name': (
+                "let k = 1; function f() { let k = 0; eval('\"use strict\"; Function(\"k = 2\")()'); return k; }"
+                " console.log(f(), k);"
+            ),
+        })
+
+    def test_a_function_constructor_behind_a_chain_of_aliases_is_read(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'four names': (
+                "var k = 1; var A = Function, B = A, C = B, D = C; var f = new D('a', 'k = a; return a');"
+                " console.log(f(5), k);"
+            ),
+        })
+
+    def test_a_name_holding_the_global_object_hands_the_code_every_global(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'a body reading a global through a name holding this': (
+                "var k = 5; var G = this; var g = new Function('a', 'return a + G.k'); console.log(g(1));"
+            ),
+            'a body writing a global through a name holding globalThis': (
+                "var k = 5; var G = globalThis; var g = new Function('v', 'G.k = v'); g(1); console.log(k);"
+            ),
+        })
+
     def test_a_spelled_direct_eval_runs_in_its_function(self):
         self.assertEachModelBehavesAsTheProgramDoes({
             'a strict eval reading a local': (
@@ -330,6 +379,10 @@ class TestEitherModelReadsTheCodeAStringSpells(_NodeDecides):
             'eval code in a stored body reading a global property': (
                 "globalThis.x = 5; var g = new Function('a', 'return eval(\"a + x\")'); console.log(g(1));"
             ),
+            'a stored body reading a global property under a key it concatenates': (
+                "globalThis.ab = 1; var g = new Function('n', 'return n + globalThis[\"a\" + \"b\"]');"
+                " console.log([1, 2].map(g).join());"
+            ),
         })
 
     def test_a_global_object_the_code_answers_is_read_through(self):
@@ -356,6 +409,29 @@ class TestEitherModelReadsTheCodeAStringSpells(_NodeDecides):
             ),
             'stored by a body in a name of the file, written through': (
                 "var k = 5; var g; Function('g = this')(); g.k = 7; console.log(k);"
+            ),
+        })
+
+    def test_a_global_object_the_code_hands_back_or_looks_into_is_read_through(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'an eval answering the global object it chooses': (
+                "globalThis.k = 1; var g = eval(process.argv.length > 99 ? 'this' : 'globalThis'); console.log(g.k);"
+            ),
+            'an eval in a function answering its this': (
+                "globalThis.k = 1; function f() { return eval(process.argv.length > 99 ? '0' : 'this'); }"
+                " console.log(f().k);"
+            ),
+            'a body answering the global object under a name of its own': (
+                "globalThis.k = 1; var g = Function(process.argv.length > 99 ? 'return 0' : 'return this.globalThis')();"
+                " console.log(g.k);"
+            ),
+            'a body answering the global object through valueOf': (
+                "globalThis.k = 1; var g = Function(process.argv.length > 99 ? 'return 0' : 'return this.valueOf()')();"
+                " console.log(g.k);"
+            ),
+            'a body testing a global property under a key it is handed': (
+                "globalThis.x = 5; var g = new Function('n', 'return globalThis.hasOwnProperty(n)');"
+                " console.log([0].map(function () { return g('x'); })[0]);"
             ),
         })
 
@@ -936,6 +1012,15 @@ class TestEitherModelReadsTheTextAHelperHandsToTheCodeItRuns(_NodeDecides):
             ),
         })
 
+    def test_a_table_under_a_second_name_is_no_second_name_of_its_function(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'an entry named call': (
+                "var t = { call: function (a) { if (!a) { a = function () { return 'default'; }; } return a(); } };"
+                " var t2 = t; console.log(t2.call(function () { return 'passed'; }));"
+                " console.log(t2.call(function () { return 'again'; }));"
+            ),
+        })
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestEitherModelReadsAChoiceBetweenTextsAsEachText(_NodeDecides):
@@ -1036,6 +1121,13 @@ class TestTheTextsOfAProgramAreReadInTimeThatGrowsWithTheProgram(TestBase):
             return F"var c = process.argv.length > 99; {chain} var a{depth} = 'x = 1'; eval(a0);"
         _assert_the_deobfuscation_takes_time_that_grows_with_the_program(self, program(320), program(1280))
 
+    @todo
+    def test_the_texts_a_helper_is_handed_once_a_fold_spells_them(self):
+        def program(count: int) -> str:
+            calls = ''.join(F"out.push(run(['retu', 'rn {i}'].join('')));" for i in range(count))
+            return F'var out = []; function run(code) {{ return new Function(code)(); }} {calls} console.log(out.length);'
+        _assert_the_deobfuscation_takes_time_that_grows_with_the_program(self, program(25), program(100))
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestTheSuspectingModelReadsNoCodeThroughWhichTheGlobalObjectEscapes(_NodeDecides):
@@ -1070,6 +1162,18 @@ class TestTheSuspectingModelReadsNoCodeThroughWhichTheGlobalObjectEscapes(_NodeD
             'a nested function reading its this under a computed key': (
                 "globalThis.x = 5; var g = new Function('a', 'return (function () { return this[a]; })()');"
                 " console.log(g('x'));"
+            ),
+            'the global object under a name of its own, read under a computed key': (
+                "var k = 5; console.log(Function('n', 'return globalThis.globalThis[n]')('k'));"
+            ),
+            'the global object under a name of its own, written under a computed key': (
+                "var k = 5; Function('n', 'globalThis.globalThis[n] = 7')('k'); console.log(k);"
+            ),
+            'the global object under a name of its own, walked by a string timer': (
+                "var k = 5; setTimeout('var g = global.global; for (var p in g) if (p === \"k\") console.log(g[p]);', 0);"
+            ),
+            'the global object valueOf answers, read under a computed key': (
+                "var k = 5; console.log(Function('n', 'return globalThis.valueOf()[n]')('k'));"
             ),
         }, models=_THE_SUSPECTING_MODEL)
 
@@ -1123,6 +1227,11 @@ class TestTheSuspectingModelReadsNoCodeThroughWhichTheGlobalObjectEscapes(_NodeD
             ),
             'a function running its parameter': (
                 "function live(s) { return Function(s)(); } var k = 5; console.log(live(process.argv.slice(99) + 'return k'));"
+            ),
+            'a text the global object handed to a call replaces': (
+                "var code = 'k = 1'; function f() { Object.assign(this, { code:"
+                " 'String.prototype.toUpperCase = function () { return \"patched\"; };' }); }"
+                " function h(g) { f.call(g); } h(this); eval(code); console.log('ab'.toUpperCase());"
             ),
         }, models=_THE_SUSPECTING_MODEL)
 
@@ -1242,6 +1351,47 @@ class TestAPassRemovingACallFrameKeepsWhatCallerReads(_NodeDecides):
             'a stored body calling its caller': (
                 "function A(x) { if (x === 1) return h(); return x; } var h = new Function('return h.caller(5)');"
                 ' console.log(A(1));'
+            ),
+        })
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestACallCodeInAStringMayMakeIsNotTakenForNone(_NodeDecides):
+
+    def test_a_call_of_a_function_through_call_the_code_replaces(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'the call of every function': (
+                "function f(a, d) { if (!d) { d = function (x) { return 'local ' + x; }; } return d(a); }"
+                " var h = new Function('Object.getPrototypeOf(function () {}).call = function (t, x) {"
+                " return this.apply(t, [x, function (y) { return \"hijacked \" + y; }]); }; return arguments.length;');"
+                " h(); console.log(f.call(null, 1));"
+            ),
+            'the call of a function the file hands the global object to': (
+                "var secret = 'S'; function h() {} function f(g) { h.call(g); }"
+                " var p = new Function('h.call = function (t) { console.log(t.secret); }; return arguments.length;');"
+                " p(); f(this);"
+            ),
+        })
+
+    def test_a_construction_through_the_constructor_of_an_instance(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'in eval code': (
+                "function C(a, d) { if (!d) { d = function (x) { return 'local ' + x; }; } this.v = d(a); }"
+                " var o = new C(1); console.log(o.v); eval(process.argv.length > 99 ? '' :"
+                " 'var K = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(o), \"constructor\").value;"
+                " var p = new K(2, function (y) { return \"passed \" + y; }); console.log(p.v);');"
+            ),
+        })
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAStringTimerKeepsWhatCallerReads(_NodeDecides):
+
+    def test_a_function_a_string_timer_calls_finds_no_caller(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'a caller the file reads': F"{_A_FUNCTION_READING_ITS_CALLER} setTimeout('console.log(inner())', 0);",
+            'a caller code in a string reads': (
+                F"{_A_FUNCTION_READING_ITS_CALLER_IN_A_BODY} setTimeout('console.log(inner())', 0);"
             ),
         })
 

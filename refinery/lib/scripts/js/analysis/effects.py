@@ -3489,7 +3489,8 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
     way. Only then may a call to a registry intrinsic be trusted to behave as specified. Code a
     string spells that the model reads
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.spelled_code_fragments`) is part of the
-    program and is asked the same.
+    program and is asked the same, once for each model of it
+    (`refinery.lib.scripts.js.analysis.model.SpelledCodeReadings.analysis`).
     """
     if model.has_reflection_surface() or model.has_opaque_global_write():
         return False
@@ -3515,7 +3516,10 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
                 and target.object.name in PURE_INTRINSIC_ROOTS
             ):
                 return False
-    return all(_intrinsics_pristine(fragment) for fragment in model.spelled_code_fragments())
+    return all(
+        fragment.spelled_code_readings.analysis(fragment, _intrinsics_pristine)
+        for fragment in model.spelled_code_fragments()
+    )
 
 
 def _writes_the_global_prototype(model: SemanticModel, member: JsMemberExpression, assumptions: KeyAssumptions) -> bool:
@@ -3574,7 +3578,8 @@ def _global_installs(model: SemanticModel, assumptions: KeyAssumptions) -> _Glob
 
     Code a string spells that the model reads
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.spelled_code_fragments`) is part of the
-    program, and what it installs is installed by the program.
+    program, and what it installs is installed by the program; each model of it is scanned once
+    (`_spelled_global_installs`).
     """
     if model.has_reflection_surface() or model.has_opaque_global_write():
         return _ANY_INSTALL
@@ -3603,12 +3608,20 @@ def _global_installs(model: SemanticModel, assumptions: KeyAssumptions) -> _Glob
         if _writes_the_global_prototype(model, node, assumptions):
             return _ANY_INSTALL
     for fragment in model.spelled_code_fragments():
-        spelled = _global_installs(fragment, fragment.assumed_keys)
+        spelled = fragment.spelled_code_readings.analysis(fragment, _spelled_global_installs)
         if spelled.keys is None:
             return _ANY_INSTALL
         pristine = pristine and spelled.pristine
         keys.update(spelled.keys)
     return _GlobalInstalls(pristine, frozenset(keys))
+
+
+def _spelled_global_installs(fragment: SemanticModel) -> _GlobalInstalls:
+    """
+    The scan `_global_installs` makes of the model of code a string spells, made once for each by
+    the readings that hold it.
+    """
+    return _global_installs(fragment, fragment.assumed_keys)
 
 
 def _destructures_an_installer(node: Node, assumptions: KeyAssumptions) -> bool:

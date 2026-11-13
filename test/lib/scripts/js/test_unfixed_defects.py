@@ -1397,6 +1397,48 @@ class TestANameAGlobalWriteUnderARuntimeKeyReplacesIsNotReadAsItsDeclaration(Tes
     pass
 
 
+A_TEXT_A_NAME_HOLDS_THAT_OTHER_CODE_REPLACES = {
+    'code in a string replacing the text': Program(
+        a_program("""
+            let x = 5;
+            var code = 'console.log(1)';
+            eval(process.argv.length > 99 ? '' : "code = 'console.log(x)'");
+            eval(code);
+            """),
+        prints('5'),
+        Reading.SCRIPT,
+    ),
+    'a stored body replacing the text': Program(
+        a_program("""
+            var k = 5;
+            var s = '0';
+            [1].forEach(new Function('s = "k = 9"'));
+            eval(s);
+            console.log(k);
+            """),
+        prints('9'),
+        Reading.SCRIPT,
+    ),
+    'a store under a runtime key replacing the text': Program(
+        a_program("""
+            let x = 5;
+            var code = 'console.log(1)';
+            var k = process.argv.length > 99 ? 'zzz' : 'code';
+            globalThis[k] = 'console.log(x)';
+            eval(code);
+            """),
+        prints('5'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_TEXT_A_NAME_HOLDS_THAT_OTHER_CODE_REPLACES, todo)
+class TestTheSuspectingModelReadsNoTextANameHoldsThatOtherCodeMayReplace(TestBase):
+    pass
+
+
 A_FUNCTION_HANDED_ON_BESIDE_AN_INSTALLER_USED_AS_A_TAG = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -4814,6 +4856,68 @@ class TestACallerReadUnderAKeyBuiltAtRunTimeIsSeenToRunTheFunctionAgain(TestBase
     def test_the_deobfuscation_prints_what_the_program_prints(self):
         row = A_CALLER_READ_UNDER_A_KEY_BUILT_AT_RUN_TIME
         self.assertEqual(row.deobfuscated(), row.prints)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheSuspectingModelKeepsAFrameCodeItCannotReadMayFindAsACaller(TestBase):
+
+    @wontfix('no program reads the caller of a function through code it builds at run time')
+    def test_the_frame_of_a_wrapper_stays(self):
+        source = (
+            "function inner() { return eval(process.argv.slice(99) + 'inner.caller').name; }"
+            ' (function () { function w(a) { return inner(a); } console.log(w(1), w(2)); })();'
+        )
+        self.assertEqual(host_behavior(source.encode('utf8') | djs(strict=True) | str), host_behavior(source))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestCodeInAStringCopyingAConversionOntoAFunctionKeepsItsText(TestBase):
+
+    @wontfix('no program copies a conversion of an object of the file onto a function from code in a string')
+    def test_under_either_model(self):
+        source = (
+            "function f() { return 1; } var src = { toString: function () { return 'X'; } };"
+            " var g = Function('Object.assign(f, src)'); [0].forEach(g);"
+            ' function check() { return String(f).length; } console.log(check());'
+        )
+        self.assertEqual(
+            [host_behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)],
+            [host_behavior(source)] * 2,
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheTrustingModelReadsTheDefaultOfAParameterAnUndefinedArgumentLeaves(TestBase):
+
+    @wontfix('no program hands undefined to a helper whose parameter defaults to code')
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        source = "function mk(src = 'return k') { return Function(src); } var k = 5; console.log(mk(undefined)());"
+        self.assertEqual(host_behavior(source.encode('utf8') | djs() | str), host_behavior(source))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPassRemovingACallFrameKeepsWhatAFrameAccessorReads(TestBase):
+
+    @wontfix('no program reads the arguments of a running function through it, or compares a caller with a method')
+    def test_under_either_model(self):
+        rows = {
+            'the arguments of a wrapper read through the wrapper': (
+                "function inner(x) { return w.arguments === null ? 'top' : 'w' + w.arguments[0]; }"
+                ' function w(a) { return inner(a); } console.log(w(5));'
+            ),
+            'the caller compared with a method of an object literal': (
+                'var o = { f: function (a) { return inner(a); } };'
+                " function inner(x) { return inner.caller === o.f ? 'f' : 'other'; } console.log(o.f(5));"
+            ),
+        }
+        self.assertEqual(
+            {
+                (label, strict): host_behavior(source.encode('utf8') | djs(strict=strict) | str)
+                for label, source in rows.items()
+                for strict in (False, True)
+            },
+            {(label, strict): host_behavior(source) for label, source in rows.items() for strict in (False, True)},
+        )
 
 
 A_FUNCTION_EXPRESSION_ASSIGNING_TO_ITS_OWN_NAME = Program(

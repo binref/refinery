@@ -2515,6 +2515,40 @@ class TestNodePrintsTheSameAboutABlockFunctionCalledFromOutsideItsBlock(TestJsDe
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameWhereAMemberOfTheGlobalObjectReadsAGlobalProperty(TestBase):
+
+    def test_a_key_the_text_spells_keeps_the_write_of_its_property_under_either_model(self):
+        rows = [
+            'globalThis.ab = 1; console.log(globalThis[`ab`]);',
+            'globalThis.ab = 1; function f() { return globalThis[`ab`]; } console.log(f(), f());',
+            'globalThis.null = 1; console.log(globalThis[null]);',
+        ]
+        self.assertEqual(
+            {
+                (source, strict): behavior(source.encode('utf8') | djs(strict=strict) | str)
+                for source in rows
+                for strict in (False, True)
+            },
+            {(source, strict): behavior(source) for source in rows for strict in (False, True)},
+        )
+
+    def test_a_global_object_a_property_of_it_hands_back_keeps_every_write_under_either_model(self):
+        rows = [
+            'globalThis.k = 1; var g = globalThis.valueOf(); console.log(g.k);',
+            'globalThis.k = 1; var g = globalThis.globalThis; console.log(g.k);',
+            "globalThis.x = 5; console.log(globalThis.hasOwnProperty(process.argv.length > 99 ? 'y' : 'x'));",
+        ]
+        self.assertEqual(
+            {
+                (source, strict): behavior(source.encode('utf8') | djs(strict=strict) | str)
+                for source in rows
+                for strict in (False, True)
+            },
+            {(source, strict): behavior(source) for source in rows for strict in (False, True)},
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameWhereTheGlobalObjectEscapes(TestJsDeobfuscator):
 
     def test_each_program_prints_what_it_printed_before(self):
@@ -3952,4 +3986,27 @@ class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
         ratio, output = self._cost_ratio(small, large)
         calls = ''.join(F'  SINK({i});\n' for i in range(8000))
         self.assertEqual(output, F'(function() {{\n{calls}}})();')
+        self.assertLess(ratio, 2 * len(large) / len(small))
+
+    def test_functions_code_in_a_string_inside_one_another_reaches_are_kept_in_time_that_grows_with_them(self):
+        def source(count: int) -> str:
+            lines = [F"function f{i}() {{ setTimeout('\"use strict\"; f{i + 1}()', 1); }}" for i in range(count)]
+            lines.append(F'function f{count}() {{}}')
+            lines.append('f0();')
+            return '\n'.join(lines)
+
+        small, large = source(400), source(3200)
+        ratio, output = self._cost_ratio(small, large)
+        self.assertEqual(output, JsSynthesizer().convert(JsParser(large).parse()))
+        self.assertLess(ratio, 2 * len(large) / len(small))
+
+    def test_functions_nothing_calls_holding_a_surface_each_are_removed_in_time_that_grows_with_them(self):
+        def source(count: int) -> str:
+            lines = [F'function d{i}(k) {{ return window[k]; }}' for i in range(count)]
+            lines.append('console.log(1);')
+            return '\n'.join(lines)
+
+        small, large = source(500), source(4000)
+        ratio, output = self._cost_ratio(small, large)
+        self.assertEqual(output, 'console.log(1);')
         self.assertLess(ratio, 2 * len(large) / len(small))

@@ -1677,44 +1677,42 @@ def receiver_owner(node: Node) -> Node | None:
     return None
 
 
-_IDENTITY_OBSERVING_UNARY = frozenset({'typeof', 'void', '!'})
+_KEYS_HANDING_ON_THE_GLOBAL_OBJECT = GLOBAL_OBJECT_ALIASES | frozenset({
+    'hasOwnProperty',
+    'parent',
+    'propertyIsEnumerable',
+    'valueOf',
+    '__lookupGetter__',
+    '__lookupSetter__',
+})
+"""
+The keys under which a global object holds or answers a global object, under one of its own
+spellings, as the window of a frame, or as the value it converts to, and the methods every object
+inherits that look up a property under the key a call hands them.
+"""
 
-_IDENTITY_COMPARISONS = frozenset({'===', '!=='})
 
-
-def observes_no_global_property(node: Node) -> bool:
+def observes_no_global_property(node: Node, *, answers_completion: bool = False) -> bool:
     """
     Whether the position *node* stands in cannot read a property of the global object it denotes:
-    the base of a member access whose key the text spells, a plain overwrite of the name, a
-    `typeof`/`void`/`!` operand, an operand of a strict comparison, the test of a branch or a loop,
-    or an expression statement whose value nothing takes. Every other position — a call or `new`
-    argument, a `for-in` subject, an initializer, a return value, a computed access with no static
-    key — hands the object itself onward, where its properties are readable without being spelled.
+    the base of a member access whose key the text spells, unless the key hands the object on or
+    looks into it (`_KEYS_HANDING_ON_THE_GLOBAL_OBJECT`), a plain overwrite of the name, a position
+    that consumes the value for a verdict (`_read_forwards_no_alias`), or an expression statement
+    whose value nothing takes. Where *answers_completion* says that a call answers the value the
+    code completes with, as `eval` does, a statement outside every function of the code may be the
+    one that gives it. Every other position — a call or `new` argument, a `for-in` subject, an
+    initializer, a return value, a computed access with no static key — hands the object itself
+    onward, where its properties are readable without being spelled.
     """
-    parent = node.parent
-    while isinstance(parent, JsParenthesizedExpression):
-        parent = parent.parent
+    parent = enclosing_operator(node)
     if isinstance(parent, JsMemberExpression) and strip_parens(parent.object) is node:
-        return key_text(parent) is not None
-    if isinstance(parent, JsUnaryExpression):
-        return (
-            parent.operator in _IDENTITY_OBSERVING_UNARY
-            and strip_parens(parent.operand) is node
-        )
-    if isinstance(parent, JsBinaryExpression):
-        return parent.operator in _IDENTITY_COMPARISONS
-    if isinstance(parent, (
-        JsConditionalExpression,
-        JsDoWhileStatement,
-        JsIfStatement,
-        JsWhileStatement,
-    )):
-        return strip_parens(parent.test) is node
-    if isinstance(parent, JsForStatement):
-        return parent.test is not None and strip_parens(parent.test) is node
+        return not key_may_be(parent, _KEYS_HANDING_ON_THE_GLOBAL_OBJECT)
     if isinstance(parent, JsExpressionStatement):
-        return strip_parens(parent.expression) is node
-    return is_simple_assignment_target(node)
+        return (
+            strip_parens(parent.expression) is node
+            and (not answers_completion or enclosing_function(parent) is not None)
+        )
+    return _read_forwards_no_alias(node) or is_simple_assignment_target(node)
 
 
 def references_own_arguments(fn: Node) -> bool:
@@ -2044,13 +2042,15 @@ class _Way(NamedTuple):
     through which it may reach what it is called through, and what it has to hold alone for those
     to be every way there, `None` where whatever else it holds changes nothing: the own name of a
     function or class expression, and the name of a table, which is reached through its reads
-    alone. Of a table, *unkeyed* are the nodes that select under a key only the run knows, which
-    may name what the table inherits rather than one of its own entries.
+    alone. Of a table (*table*), a node is an access that selects an entry, or a read of the table
+    itself that selects none; *unkeyed* are the nodes that select under a key only the run knows,
+    which may name what the table inherits rather than one of its own entries.
     """
     binding: Binding
     nodes: Sequence[Node]
     alone: Node | None
     unkeyed: frozenset[Node] = frozenset()
+    table: bool = False
 
 
 def _passed_at(call: ShownCall, position: int) -> tuple[Node | None, bool]:
@@ -2714,10 +2714,12 @@ class SpelledFragment(NamedTuple):
     """
     The model of one text of code a string spells, and for the body of a function a construction of
     `Function` builds, that function as the model reads it: its `this` is the global object
-    wherever it is called on no receiver.
+    wherever it is called on no receiver. Of eval code, the call running it answers the value it
+    completes with (*answers_completion*).
     """
     model: SemanticModel
     built: JsFunctionExpression | None
+    answers_completion: bool = False
 
 
 class SpelledCode(NamedTuple):
@@ -2729,17 +2731,41 @@ class SpelledCode(NamedTuple):
     names: frozenset[SpelledName]
 
 
+def _names_left_by(reading: SpelledCode, bound: frozenset[str]) -> Iterator[SpelledName]:
+    """
+    The names of *reading*, the reading of the body or the parameter list of a construction made
+    without the list, that stay names of global code where the list binds the names *bound*: the
+    text and the eval code it runs look a name up in the function first and find the parameter
+    there, but the code it runs from a string in the global scope never sees one.
+    """
+    run_in_global_code = {
+        spelled.name
+        for fragment in reading.fragments
+        for site in fragment.model.spelled_code_sites() if site.code is not None
+        for spelled in site.code.names
+        if spelled.reach is SpelledReach.IN_GLOBAL_CODE
+    }
+    for spelled in reading.names:
+        if (
+            spelled.reach is not SpelledReach.IN_GLOBAL_CODE
+            or spelled.name not in bound
+            or spelled.name in run_in_global_code
+        ):
+            yield spelled
+
+
 def _joined_readings(readings: list[SpelledCode | None]) -> SpelledCode | None:
     """
     The reading of a call that may run any of the texts *readings* read: opaque where one of them
-    is, and otherwise every fragment and every name of each.
+    is, and otherwise every fragment and every name of each, a fragment that several of them share
+    (the body a construction builds with each of many parameter lists) once.
     """
-    fragments: list[SpelledFragment] = []
+    fragments: dict[SpelledFragment, None] = {}
     names: set[SpelledName] = set()
     for reading in readings:
         if reading is None:
             return None
-        fragments.extend(reading.fragments)
+        fragments.update(dict.fromkeys(reading.fragments))
         names.update(reading.names)
     return SpelledCode(tuple(fragments), frozenset(names))
 
@@ -2781,10 +2807,7 @@ def construction_text(parameters: str, body: str) -> str:
     return F'(function ({parameters}\n) {{\n{body}\n}})'
 
 
-_A = TypeVar('_A')
-
-
-def _built_function(parsed: JsScript) -> JsFunctionExpression | None:
+def built_function(parsed: JsScript) -> JsFunctionExpression | None:
     """
     The function a text `construction_text` makes is the expression of, or `None` where the text a
     construction was handed closes that function and goes on, which the construction refuses.
@@ -2796,6 +2819,9 @@ def _built_function(parsed: JsScript) -> JsFunctionExpression | None:
         return None
     function = strip_parens(statement.expression)
     return function if isinstance(function, JsFunctionExpression) else None
+
+
+_A = TypeVar('_A')
 
 
 class SpelledCodeReadings:
@@ -2854,34 +2880,29 @@ class SpelledCodeReadings:
 
     def _with_parameters(self, body: SpelledCode, parameters: str, trust_eval: bool) -> SpelledCode | None:
         """
-        The reading of the body *body* reads, built with the parameter list *parameters*: the names
-        of the body the list binds are no names of global code, and the code of the list, where it
-        holds any (a default, a pattern), is read as a text of its own. `None` where the list is
-        opaque. The model of the body read without its parameters takes each of them for a global
-        name, which asks more of every scan of it than its own text does, never less.
+        The reading of the body *body* reads, built with the parameter list *parameters*: a name
+        the list binds is no name of global code where the body looks it up, while the code the
+        body runs from a string in the global scope never sees the list (`_names_left_by`). The
+        code of the list, where it holds any (a default, a pattern), is read as a text of its own
+        and kept the same way. `None` where the list is opaque. The model of the body read without
+        its parameters takes each of them for a global name, which asks more of every scan of it
+        than its own text does, never less.
         """
         listed = self._parameter_list(parameters, trust_eval)
         if listed is None:
             return None
         bound, code = listed
-        names = {
-            spelled for spelled in body.names
-            if spelled.reach is not SpelledReach.IN_GLOBAL_CODE or spelled.name not in bound
-        }
-        fragments = body.fragments
-        if code is not None:
-            fragments += code.fragments
-            names.update(
-                spelled for spelled in code.names
-                if spelled.reach is not SpelledReach.IN_GLOBAL_CODE or spelled.name not in bound
-            )
-        return SpelledCode(fragments, frozenset(names))
+        readings = [body] if code is None else [body, code]
+        return SpelledCode(
+            tuple(fragment for reading in readings for fragment in reading.fragments),
+            frozenset(spelled for reading in readings for spelled in _names_left_by(reading, bound)),
+        )
 
     def _parameter_list(self, parameters: str, trust_eval: bool) -> tuple[frozenset[str], SpelledCode | None] | None:
         """
         The names the parameter list *parameters* of a function a construction builds binds, and the
-        reading of the list as code where it holds any; `None` where it is opaque. Made once for each
-        list.
+        reading of the list as code where it holds any; `None` where it is opaque. Made once for
+        each list.
         """
         key = parameters, trust_eval
         if key in self._parameter_lists:
@@ -2893,23 +2914,24 @@ class SpelledCodeReadings:
             parsed = None
         built = None
         if parsed is not None and spells_its_source(parsed) and not any(is_unread_source(n) for n in parsed.walk()):
-            built = _built_function(parsed)
+            built = built_function(parsed)
         if built is not None:
             if all(isinstance(parameter, JsIdentifier) for parameter in built.params):
                 listed = frozenset(parameter.name for parameter in built.params if isinstance(parameter, JsIdentifier)), None
             else:
                 code = read_spelled_code(SpelledCodeKind.FUNCTION_BODY, parameters, '', False, False, trust_eval, self)
                 if code is not None:
-                    model, function = code.fragments[0]
+                    model, function, _ = code.fragments[0]
                     assert function is not None
-                    listed = frozenset(
+                    bound = frozenset(
                         node.name
                         for parameter in function.params
                         for node in parameter.walk()
                         if isinstance(node, JsIdentifier)
                         and (binding := model.binding_of(node)) is not None
                         and binding.scope.node is function
-                    ), code
+                    )
+                    listed = bound, code
         self._parameter_lists[key] = listed
         return listed
 
@@ -2928,10 +2950,10 @@ def read_spelled_code(
     are those of a function body, *strict* says that eval code runs in strict mode, and
     *runs_in_place* that the code runs where the call running it stands rather than later; the
     code the text spells in turn is read into *readings*, which hold this reading too
-    (`SpelledCodeReadings.read`). The code is
-    opaque, and the answer `None`, where the text does not parse to a tree that spells it, or holds
-    a reflective surface or a store into the global object under a key only the runtime knows:
-    either may name anything. Otherwise the reading lists every name the code uses outside itself:
+    (`SpelledCodeReadings.read`). The code is opaque, and the answer `None`, where the text does
+    not parse to a tree that spells it, or holds a reflective surface or a store into the global
+    object under a key only the runtime knows: either may name anything. Otherwise the reading
+    lists every name the code uses outside itself:
 
     - each name a reference of it leaves free (`SemanticModel.free_references`);
     - each name it reaches through the global object under a fixed key
@@ -2960,12 +2982,13 @@ def read_spelled_code(
     if not spells_its_source(parsed) or any(is_unread_source(node) for node in parsed.walk()):
         return None
     built = None
-    if kind is SpelledCodeKind.FUNCTION_BODY and (built := _built_function(parsed)) is None:
+    if kind is SpelledCodeKind.FUNCTION_BODY and (built := built_function(parsed)) is None:
         return None
     fragment = build_semantic_model(parsed, trust_eval=trust_eval, spelled_code_readings=readings)
     if fragment.has_reflection_surface() or fragment.has_opaque_global_write():
         return None
-    if not trust_eval and fragment.global_object_escapes(every_this=True):
+    answers_completion = kind is SpelledCodeKind.EVAL_CODE
+    if not trust_eval and fragment.global_object_escapes(every_this=True, answers_completion=answers_completion):
         return None
     names: set[SpelledName] = set()
     free = SpelledReach.AT_THE_CALL if kind is SpelledCodeKind.EVAL_CODE else SpelledReach.IN_GLOBAL_CODE
@@ -3015,7 +3038,14 @@ def read_spelled_code(
             ):
                 landing = SpelledUse.WRITE_LATER
             names.add(SpelledName(binding.name, free, landing))
-    return SpelledCode((SpelledFragment(fragment, built),), frozenset(names))
+    return SpelledCode((SpelledFragment(fragment, built, answers_completion),), frozenset(names))
+
+
+_AN_UNLOCATED_WRITE: tuple[None] = (None,)
+"""
+The group of sites `SemanticModel.reflection_reach_sites` gives for a store on the global object
+that no node locates, one sequence for every binding it reaches.
+"""
 
 
 class SemanticModel:
@@ -3911,7 +3941,7 @@ class SemanticModel:
             if not known:
                 unkeyed.add(access)
             nodes.append(access)
-        return _Way(holder, nodes, None, frozenset(unkeyed))
+        return _Way(holder, nodes, None, frozenset(unkeyed), table=True)
 
     def _keys_a_call_spells(self, access: JsMemberExpression) -> tuple[set[str], bool]:
         """
@@ -4023,7 +4053,9 @@ class SemanticModel:
         The one walk behind `_calls_shown` and `_listed_calls`: every call the names of *function*
         or of its class show, and, where *reflective*, whether no call can come another way. A read
         of one of those names that a declarator or an assignment statement stores into a further
-        name (`name_holding`) is followed to that name, which then has to hold the read alone.
+        name (`name_holding`) is followed to that name, which then has to hold the read alone; a
+        read of a table that selects no entry is the table, and the name it is stored into holds no
+        function.
         """
         calls: list[ShownCall] = []
         complete = not reflective or not self.reached_without_its_name(function)
@@ -4034,9 +4066,10 @@ class SemanticModel:
             held = pending.pop()
             cls = held if isinstance(held, (JsClassDeclaration, JsClassExpression)) else None
             forwards = held is root or (cls is not None and _super_calls(cls) is None)
-            if reflective and cls is not None and (
-                _constructed_without_its_name(cls)
-                or self._extends_beyond_the_program(cls)
+            if (
+                reflective
+                and cls is not None
+                and (_constructed_without_its_name(cls) or self._extends_beyond_the_program(cls))
             ):
                 complete = False
             direct = self._invocation_at(held, reflective)
@@ -4069,7 +4102,10 @@ class SemanticModel:
                         if subclass not in seen:
                             seen.add(subclass)
                             pending.append(subclass)
-                    elif (holder := self.name_holding(read)) is not None:
+                    elif (
+                        (not way.table or isinstance(read, JsMemberExpression))
+                        and (holder := self.name_holding(read)) is not None
+                    ):
                         if holder not in followed:
                             followed.add(holder)
                             ways.append(_Way(holder, holder.reads, read))
@@ -4684,11 +4720,14 @@ class SemanticModel:
         Whether a function the program constructs may be constructed with arguments no call the
         text shows passes it: a constructor may escape (`constructors_may_escape`), or the program
         constructs one without naming it (`_constructs_unseen`), through a `constructor` property or
-        through `new.target`. Memoized.
+        through `new.target`. Code a string spells that this model reads
+        (`spelled_code_fragments`) is part of the program. Memoized.
         """
         if self._constructions_hidden is None:
-            self._constructions_hidden = self.constructors_may_escape() or any(
-                _constructs_unseen(node, self.assumed_keys) for node in self.root.walk()
+            self._constructions_hidden = (
+                self.constructors_may_escape()
+                or any(_constructs_unseen(node, self.assumed_keys) for node in self.root.walk())
+                or any(fragment.constructions_may_be_hidden() for fragment in self.spelled_code_fragments())
             )
         return self._constructions_hidden
 
@@ -4725,7 +4764,8 @@ class SemanticModel:
         program spells `"constructor"` in a string or in a concatenation of constant strings, reads
         a `constructor` property other than to construct with it, compare it, read its name or test
         it, or destructures one. An instance reaches the function that built it through that
-        property, and so does its prototype. Memoized.
+        property, and so does its prototype. Code a string spells that this model reads
+        (`spelled_code_fragments`) is part of the program. Memoized.
         """
         if self._constructors_escape is None:
             concatenations: list[JsBinaryExpression] = []
@@ -4737,7 +4777,11 @@ class SemanticModel:
                 elif _lets_a_constructor_escape(node):
                     escapes = True
                     break
-            self._constructors_escape = escapes or concatenation_spells(concatenations, 'constructor')
+            self._constructors_escape = (
+                escapes
+                or concatenation_spells(concatenations, 'constructor')
+                or any(fragment.constructors_may_escape() for fragment in self.spelled_code_fragments())
+            )
         return self._constructors_escape
 
     def strings_still_unseen(self) -> frozenset[str]:
@@ -4900,57 +4944,57 @@ class SemanticModel:
 
         Derived from `reflection_reach_sites`, so the two can never disagree.
         """
-        return any(True for _ in self.reflection_reach_sites(binding))
+        return any(self.reflection_reach_sites(binding))
 
-    def reflection_reach_sites(self, binding: Binding) -> Iterator[Node | None]:
+    def reflection_reach_sites(self, binding: Binding) -> Iterator[Sequence[Node | None]]:
         """
-        The located form of `reflection_can_reach`, lazily: the node of each surface and of each
-        call running code a string spells through which that answer holds, so that a caller can
-        tell whether all of them stand in code that never runs, and `None` for a store on the
-        global object no node locates (`opaque_global_write_sites`). Empty exactly where
-        `reflection_can_reach` is false.
+        The located form of `reflection_can_reach`, lazily and in groups: the node of each surface
+        and of each call running code a string spells through which that answer holds, so that a
+        caller can tell whether all of them stand in code that never runs, and `None` for a store on
+        the global object no node locates (`opaque_global_write_sites`). A group the whole program
+        shares, its `with` statements, its opaque surface sites or its opaque stores on the global
+        object, is the same sequence for every binding it reaches, so that a caller judging the
+        sites of many bindings judges each such group once. A group holds a node exactly where
+        `reflection_can_reach` is true.
         """
         for named in (binding, *(copy.var for copy in binding.copies_made)):
-            yield from self.spelled_code_sites_naming(named)
+            yield self.spelled_code_sites_naming(named)
             if self._global_code_may_name(named):
                 yield from self._whole_program_surface()
                 if self._global_object_may_hold(named):
-                    yield from self._opaque_global_writes()
+                    yield self._opaque_global_writes()
             else:
                 yield from self._surfaces_in_its_scope(named)
 
-    def _whole_program_surface(self) -> Iterator[Node]:
+    def _whole_program_surface(self) -> Iterator[Sequence[Node]]:
         """
-        The located form of `has_reflection_surface`: every `with` statement and every opaque
-        surface site (`opaque_reflection_sites`).
+        The located form of `has_reflection_surface`, in two groups: every `with` statement, and
+        every opaque surface site (`opaque_reflection_sites`).
         """
         self._ensure_reflection_detected()
-        yield from self._with_statements
-        yield from self.opaque_reflection_sites()
+        yield self._with_statements
+        yield self.opaque_reflection_sites()
 
-    def _opaque_global_writes(self) -> Iterator[Node | None]:
+    def _opaque_global_writes(self) -> Sequence[Node | None]:
         """
         The located form of `has_opaque_global_write`, `None` standing for a write no node locates.
         """
         sites = self.opaque_global_write_sites()
-        if sites is None:
-            yield None
-        else:
-            yield from sites
+        return _AN_UNLOCATED_WRITE if sites is None else sites
 
-    def _surfaces_in_its_scope(self, binding: Binding) -> Iterator[Node | None]:
+    def _surfaces_in_its_scope(self, binding: Binding) -> Iterator[Sequence[Node | None]]:
         """
         The located form of `reflection_can_reach_from_its_scope`, but for the calls running code a
-        string spells that name *binding*.
+        string spells that name *binding*, in groups as `reflection_reach_sites` gives them.
         """
         owner = binding.scope.var_scope
         if owner is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:
             yield from self._whole_program_surface()
-            yield from self._opaque_global_writes()
+            yield self._opaque_global_writes()
             return
-        yield from binding.dynamic_refs
-        yield from self._direct_eval_sites(owner.node)
-        yield from self._unread_source_sites(owner.node)
+        yield binding.dynamic_refs
+        yield self._direct_eval_sites(owner.node)
+        yield self._unread_source_sites(owner.node)
 
     def spelled_code_sites(self) -> list[SpelledCodeSite]:
         """
@@ -5014,7 +5058,13 @@ class SemanticModel:
                 strings = strings[-1:]
             code = strings[0] if strings else ''
             readings.append(self.spelled_code_readings.read(
-                kind, parameters, code, strict, runs_in_place, self.trust_eval))
+                kind,
+                parameters,
+                code,
+                strict,
+                runs_in_place,
+                self.trust_eval,
+            ))
         return SpelledCodeSite(call, kind, _joined_readings(readings))
 
     def _held_through_declarations(self, node: Node | None) -> Iterator[Node]:
@@ -5262,27 +5312,33 @@ class SemanticModel:
     def spelled_code_fragments(self) -> list[SemanticModel]:
         """
         The models of the code strings spell that this model reads (`spelled_code_sites`), opaque
-        code left out. A whole-program question asks each of them in turn, which asks the code it
-        spells again; one that reads the text of each asks `spelled_programs`.
+        code left out, each once however many calls run it. A whole-program question asks each of
+        them in turn, which asks the code it spells again; one that reads the text of each asks
+        `spelled_programs`.
         """
-        return [
+        return list(dict.fromkeys(
             fragment.model
             for site in self.spelled_code_sites() if site.code is not None
             for fragment in site.code.fragments
-        ]
+        ))
 
     def spelled_programs(self) -> Iterator[SpelledFragment]:
         """
         Every text of code strings spell that this model reads, and that the code it spells in turn
-        reads, with its model: the program is the file together with these, and a scan of the
-        whole program's text scans each.
+        reads, with its model, each once however many calls run it: the program is the file
+        together with these, and a scan of the whole program's text scans each.
         """
-        for site in self.spelled_code_sites():
-            if site.code is None:
-                continue
-            for fragment in site.code.fragments:
-                yield fragment
-                yield from fragment.model.spelled_programs()
+        seen: set[SpelledFragment] = set()
+        pending: list[SemanticModel] = [self]
+        while pending:
+            for site in pending.pop().spelled_code_sites():
+                if site.code is None:
+                    continue
+                for fragment in site.code.fragments:
+                    if fragment not in seen:
+                        seen.add(fragment)
+                        pending.append(fragment.model)
+                        yield fragment
 
     def bindings_named_by_spelled_code(self) -> Collection[Binding]:
         """
@@ -5345,7 +5401,7 @@ class SemanticModel:
         """
         if self.named_by_spelled_code(binding):
             return True
-        return any(True for _ in self._surfaces_in_its_scope(binding))
+        return any(self._surfaces_in_its_scope(binding))
 
     def reachable_by_opaque_reflection(self, binding: Binding) -> bool:
         """
@@ -6113,13 +6169,25 @@ class SemanticModel:
         the recognizer of `Function` reads the writes of the names it follows
         (`_constructs_a_function`), and a step of `_build_def_use` that records writes may take an
         alias of the intrinsic for some other value. The calls the reader follows a text through
-        (`_listed_calls`) are read off references such a step records too.
+        (`_listed_calls`) are read off references such a step records too. Every memo whose answer
+        reads those sites goes with them: the reflection surface they stand among
+        (`_ensure_reflection_detected`), the whole-program scans that read the code they run, and
+        the calls of a function, which ask both.
         """
         self._spelled_code_sites = None
         self._spelled_code_reach_of = None
         self._listed_calls_of.clear()
-        for key in [key for key in self._table_ways if not key[1]]:
-            del self._table_ways[key]
+        self._table_ways.clear()
+        self._reflection_surface = None
+        self._opaque_surface_sites = None
+        self._with_statements = []
+        self._spells_caller = None
+        self._dispatch_surface_reached = None
+        self._constructors_escape = None
+        self._constructions_hidden = None
+        self._reached_unnamed.clear()
+        self._shown_calls.clear()
+        self._values_through_calls.clear()
 
     def _record_copy_reads(self):
         """
@@ -6423,14 +6491,22 @@ class SemanticModel:
         node = strip_parens(node)
         return isinstance(node, JsIdentifier) and self.resolve(node) in self._global_object_holders
 
-    def global_object_escapes(self, built: Node | None = None, *, every_this: bool = False) -> bool:
+    def global_object_escapes(
+        self,
+        built: Node | None = None,
+        *,
+        every_this: bool = False,
+        answers_completion: bool = False,
+    ) -> bool:
         """
         Whether the global object itself reaches a position the per-name readings cannot read
         through: a spelling of it that nothing else binds, the `this` of the top level, or a name
         this model says holds it, standing anywhere `observes_no_global_property` does not accept.
         From such a position every global is readable without its name being spelled —
         `Object.keys(globalThis)` holds them all, a `for-in` walks them, and
-        `(function (w) { ... })(window)` reads them through `w`.
+        `(function (w) { ... })(window)` reads them through `w`. Where *answers_completion* says
+        that the call running this code answers the value it completes with, as `eval` does, an
+        expression statement may hand the object to that call.
 
         The `this` of a method is its receiver, and taking every escaping `this` for the global
         object would make ordinary object code read as reaching every global, the trade
@@ -6447,12 +6523,12 @@ class SemanticModel:
                     and (built is None or receiver_owner(node) is not built)
                 ):
                     continue
-                if not observes_no_global_property(node):
+                if not observes_no_global_property(node, answers_completion=answers_completion):
                     return True
                 continue
             if not isinstance(node, JsIdentifier) or not self.is_reference(node):
                 continue
-            if observes_no_global_property(node):
+            if observes_no_global_property(node, answers_completion=answers_completion):
                 continue
             if node.name in GLOBAL_OBJECT_ALIASES:
                 binding = self.resolve(node)
@@ -6956,8 +7032,12 @@ class SemanticModel:
         of the binding rather than of the object, weighed by `values_at_call` and recorded as a
         write, so it never appears among the reads walked here. Which key an install stores is
         never asked: a computed write names no fixed key, and refusing every install keeps the
-        answer independent of the folds that would reveal one.
+        answer independent of the folds that would reveal one. Code a string spells that names the
+        binding (`named_by_spelled_code`) is read apart from the file, and no value is followed into
+        it, so it may install on the object.
         """
+        if self.named_by_spelled_code(binding):
+            return True
         for reference in binding.reads:
             role = container_reference_role(reference)
             if role is ContainerRole.MEMBER_WRITE:
@@ -7014,11 +7094,13 @@ class SemanticModel:
         counts where it reaches its prototype (`_function_reaches_its_prototype`): the trusting
         model takes what it runs for inert and does not count its read as a reflection surface,
         but a write through its prototype is no code it runs. A key is read by
-        `refinery.lib.scripts.js.keys.key_is`, which records one it cannot read.
+        `refinery.lib.scripts.js.keys.key_is`, which records one it cannot read. Code a string
+        spells that this model reads (`spelled_code_fragments`) is part of the program.
         """
         if self._dispatch_surface_reached is None:
-            self._dispatch_surface_reached = any(
-                self._reaches_dispatch_surface(node) for node in self.root.walk()
+            self._dispatch_surface_reached = (
+                any(self._reaches_dispatch_surface(node) for node in self.root.walk())
+                or any(fragment._dispatch_surface_reachable() for fragment in self.spelled_code_fragments())
             )
         return self._dispatch_surface_reached
 

@@ -686,30 +686,13 @@ class UnfollowedWriteRefusals:
         self.refused = True
 
 
-class _WrittenBySpelledCode(NamedTuple):
-    """
-    What the scan of code a string spells contributes to the scan of the program that runs it:
-    the names it writes, the keys it writes on them, and whether it follows every write.
-    """
-    names: frozenset[str]
-    keys: dict[str, frozenset[str] | None]
-    followable: bool
-
-
-def _spelled_code_writes(fragment: SemanticModel) -> _WrittenBySpelledCode:
+def _spelled_code_writes(fragment: SemanticModel) -> IntrinsicWrites:
     """
     The `build_intrinsic_writes` scan of code a string spells, made once for each model of it by
-    the readings that hold it (`refinery.lib.scripts.js.analysis.model.SpelledCodeReadings.analysis`).
+    the readings that hold it
+    (`refinery.lib.scripts.js.analysis.model.SpelledCodeReadings.analysis`).
     """
-    return fragment.spelled_code_readings.analysis(fragment, _scan_spelled_code_writes)
-
-
-def _scan_spelled_code_writes(fragment: SemanticModel) -> _WrittenBySpelledCode:
-    """
-    The scan `_spelled_code_writes` makes once.
-    """
-    scan = build_intrinsic_writes(fragment)
-    return _WrittenBySpelledCode(scan.names, scan.keys, scan.followable)
+    return fragment.spelled_code_readings.analysis(fragment, build_intrinsic_writes)
 
 
 def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
