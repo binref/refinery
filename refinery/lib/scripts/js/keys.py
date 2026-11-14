@@ -24,7 +24,7 @@ just as a fold that spells a key does.
 """
 from __future__ import annotations
 
-from typing import Iterator, NamedTuple
+from typing import Callable, Iterator, NamedTuple
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.model import (
@@ -142,6 +142,14 @@ class KeyAssumptions:
 
     def __init__(self):
         self._names: dict[Node, frozenset[str] | None] = {}
+        self._texts: dict[Node, str] = {}
+
+    def read_as(self, node: Node, text: str) -> None:
+        """
+        Record that an answer read the code text *node* as *text*, which a fold had not yet
+        written there (`spelled_text`).
+        """
+        self._texts[node] = text
 
     def assume(self, key: Node, names: frozenset[str] | None) -> None:
         """
@@ -156,12 +164,14 @@ class KeyAssumptions:
 
     def revealed_by(self, key: Node, text: str) -> bool:
         """
-        Whether *text*, written at the key *key*, is a name an answer assumed it is not.
+        Whether *text*, written at the key *key*, is a name an answer assumed it is not, or a text
+        other than the one an answer read it as.
         """
-        if key not in self._names:
-            return False
-        names = self._names[key]
-        return names is None or text in names
+        if key in self._names:
+            names = self._names[key]
+            return names is None or text in names
+        read = self._texts.get(key)
+        return read is not None and read != text
 
 
 class _Unrecorded(KeyAssumptions):
@@ -219,15 +229,23 @@ def key_named(owner: Keyed, assumptions: KeyAssumptions) -> str | None:
     return text
 
 
-def spelled_text(node: Node | None, assumptions: KeyAssumptions) -> str | None:
+def spelled_text(
+    node: Node | None,
+    assumptions: KeyAssumptions,
+    folded: Callable[[Node], str | None] | None = None,
+) -> str | None:
     """
     The string *node* certainly evaluates to, for a reader of the code a call runs from a string,
     which reads an expression without one as code it cannot read: *assumptions* records that it was
-    read so, for any text.
+    read so, for any text. A reader given *folded* reads such an expression as the text it answers,
+    the one a fold would write in its place, and *assumptions* records that text.
     """
     text = static_string(node)
     if text is None and node is not None:
-        assumptions.assume(node, None)
+        if folded is not None and (text := folded(node)) is not None:
+            assumptions.read_as(node, text)
+        else:
+            assumptions.assume(node, None)
     return text
 
 

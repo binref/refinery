@@ -288,6 +288,54 @@ def registered_builtin(key: tuple, environment: HostEnvironment) -> RegisteredBu
     return builtin
 
 
+def registered_method(receiver: Value, method: str, environment: HostEnvironment) -> RegisteredBuiltin | None:
+    """
+    The function `BUILTIN_REGISTRY` holds for the method *method* of *receiver*
+    (`registered_builtin`): the one its type owns, and for an array of a type of its own, such as a
+    `refinery.lib.scripts.js.values.JsBuffer`, the one every array has where its type owns none.
+    """
+    kind = type(receiver)
+    builtin = registered_builtin((kind, method), environment)
+    if builtin is None and kind is not list and isinstance(receiver, list):
+        builtin = registered_builtin((list, method), environment)
+    return builtin
+
+
+def call_registered_method(builtin: RegisteredBuiltin, receiver: Value, arguments: list[Value]) -> Value:
+    """
+    What a call of the method *builtin* (`registered_method`) of *receiver* answers: a method of every
+    array that answers an array answers one of the type of a `refinery.lib.scripts.js.values.JsBuffer`
+    it is called on.
+    """
+    result = builtin.function(receiver, arguments)
+    if isinstance(receiver, JsBuffer) and isinstance(result, list) and not isinstance(result, JsBuffer):
+        result = JsBuffer(result)
+    return result
+
+
+def folded_call(builtin: RegisteredBuiltin, arguments: list[Value]) -> tuple[bool, Value]:
+    """
+    What a fold writes for a call of the free or static built-in *builtin* with *arguments*, as
+    `(True, value)`, or `(False, None)` where the call throws or fails: a call that answers no value
+    is left for the program to run.
+    """
+    try:
+        return True, builtin.function(arguments)
+    except Exception:
+        return False, None
+
+
+def folded_method_call(builtin: RegisteredBuiltin, receiver: Value, arguments: list[Value]) -> tuple[bool, Value]:
+    """
+    What a fold writes for a call of the method *builtin* of *receiver* (`call_registered_method`),
+    as `folded_call` answers it.
+    """
+    try:
+        return True, call_registered_method(builtin, receiver, arguments)
+    except Exception:
+        return False, None
+
+
 def _in_code_units(fn: Callable) -> Callable:
     """
     Wrap a builtin so a bare string it produces is held as UTF-16 code units before it enters the
@@ -463,14 +511,22 @@ def _expand_replacement(replacement: str, s: str, start: int, matched: str) -> s
     return ''.join(out)
 
 
+def _search_and_replacement(args: list[Value]) -> tuple[str, str]:
+    """
+    The texts `replace` and `replaceAll` search for and replace with when handed *args*: an argument
+    not handed is `undefined`, which converts to that word. A function handed as the replacement is
+    called with each match, which no fold here runs.
+    """
+    search = args[0] if args else None
+    replacement = args[1] if len(args) > 1 else None
+    if isinstance(replacement, FUNCTION_NODES):
+        raise InterpreterError
+    return to_string(search), to_string(replacement)
+
+
 @_register((str, 'replace'))
 def _str_replace(s: str, args: list[Value]) -> Value:
-    if len(args) < 2:
-        return s
-    if isinstance(args[1], FUNCTION_NODES):
-        raise InterpreterError
-    search = to_string(args[0])
-    replacement = to_string(args[1])
+    search, replacement = _search_and_replacement(args)
     index = s.find(search)
     if index < 0:
         return s
@@ -480,12 +536,7 @@ def _str_replace(s: str, args: list[Value]) -> Value:
 
 @_register((str, 'replaceAll'))
 def _str_replace_all(s: str, args: list[Value]) -> Value:
-    if len(args) < 2:
-        return s
-    if isinstance(args[1], FUNCTION_NODES):
-        raise InterpreterError
-    search = to_string(args[0])
-    replacement = to_string(args[1])
+    search, replacement = _search_and_replacement(args)
     if not search:
         raise InterpreterError
     out: list[str] = []
@@ -531,6 +582,8 @@ def _str_repeat(s: str, args: list[Value]) -> Value:
     count = _to_index(args[0]) if args else 0
     if count < 0 or count > 0x10000000:
         _js_throw('RangeError', 'Invalid count value')
+    if len(s) * count > MAX_STRING_LEN:
+        raise InterpreterError
     return s * count
 
 
@@ -542,6 +595,8 @@ def _str_pad(s: str, args: list[Value], prepend: bool) -> Value:
     needed = target_len - len(s)
     if needed <= 0 or not fill:
         return s
+    if target_len > MAX_STRING_LEN:
+        raise InterpreterError
     pad = (fill * (needed // len(fill) + 1))[:needed]
     return pad + s if prepend else s + pad
 
@@ -719,6 +774,11 @@ def _arr_to_string(arr: list, args: list[Value]) -> Value:
 @_register((int, 'toString'))
 @_register((float, 'toString'))
 def _number_to_string(num: int | float, args: list[Value]) -> Value:
+    """
+    The text `toString` writes for *num* in the radix *args* name. In a radix other than ten, a
+    fraction is refused, and so is an integer of `2 ** 53` or more in a radix that is no power of
+    two, whose digits the engine computes only as far as a double holds them.
+    """
     radix = _to_int(args[0]) if args and args[0] is not None else 10
     if radix == 10:
         return to_string(num)
@@ -730,6 +790,8 @@ def _number_to_string(num: int | float, args: list[Value]) -> Value:
     if value != int(value):
         raise InterpreterError
     integer = abs(int(value))
+    if integer >= 1 << 53 and radix & (radix - 1):
+        raise InterpreterError
     if integer == 0:
         return '0'
     digits = '0123456789abcdefghijklmnopqrstuvwxyz'
@@ -2380,17 +2442,12 @@ class JsInterpreter:
             # effect or a throw inside one is not lost to this TypeError.
             _js_throw('TypeError', F'{to_string(obj)}.{method_name} is not a function')
         obj_type = type(obj)
-        builtin = registered_builtin((obj_type, method_name), self._environment)
-        if builtin is None and obj_type is not list and isinstance(obj, list):
-            builtin = registered_builtin((list, method_name), self._environment)
+        builtin = registered_method(obj, method_name, self._environment)
         if builtin is not None:
             if not self._prototype_is_intact(obj_type):
                 raise InterpreterError
             self._require_convertible_arguments(args)
-            result = builtin.function(obj, args)
-            if isinstance(obj, JsBuffer) and isinstance(result, list) and not isinstance(result, JsBuffer):
-                result = JsBuffer(result)
-            return result
+            return call_registered_method(builtin, obj, args)
         if isinstance(obj, list) and method_name in _ARRAY_HOF_METHODS:
             if not self._prototype_is_intact(obj_type):
                 raise InterpreterError

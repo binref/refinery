@@ -18,8 +18,10 @@ from refinery.lib.scripts.analysis.cfg import ElementLocator
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.liveness import build_liveness
+from refinery.lib.scripts.js.analysis.model import TextFolding
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.cff import JsStateMachineUnflattening
+from refinery.lib.scripts.js.deobfuscation.closedtext import closed_text
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
@@ -28,6 +30,7 @@ from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
 from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.model import (
+    JsCallExpression,
     JsFunctionDeclaration,
     JsIdentifier,
     JsVariableDeclaration,
@@ -471,7 +474,12 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         body = '\n'.join(F"var c{i} = 'a' + 'b' + '{i}';" for i in range(count))
         return F'{body}\nSINK({", ".join(F"c{i}" for i in range(count))});'
 
-    def _builds(self, source: str, options: DeobfuscationOptions | None = None) -> tuple[int, int, str]:
+    def _builds(
+        self,
+        source: str,
+        options: DeobfuscationOptions | None = None,
+        text_folding: TextFolding | None = None,
+    ) -> tuple[int, int, str]:
         counts = {'model': 0, 'effects': 0}
         real_model = cache_module.build_semantic_model
         real_effects = cache_module.build_effects
@@ -491,6 +499,8 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
             transform = JsSimplifications()
             if options is not None:
                 transform.options = options
+            if text_folding is not None:
+                transform.models = ModelCache(script, transform.options, text_folding=text_folding)
             transform.visit(script)
         finally:
             cache_module.build_semantic_model = real_model
@@ -545,19 +555,43 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         never = self._builds('var k = 5; setTimeout(atob(g()), 0);', trusting)[0]
         self.assertGreater(completed, never)
 
+    @a_property_of_the_pin_itself
+    def test_a_fold_spelling_code_the_folding_models_cannot_read_beforehand_still_renews_them(self):
+        trusting = DeobfuscationOptions(trust_eval=True)
+        completed = self._builds("var k = 5; setTimeout('k = ' + undefined, 0);", trusting, closed_text)[0]
+        never = self._builds("var k = 5; setTimeout('k = ' + g(), 0);", trusting, closed_text)[0]
+        self.assertGreater(completed, never)
+
+    def test_a_code_text_read_as_the_text_a_fold_would_write_is_revealed_only_by_another_text(self):
+        script = JsParser("var k = 5; eval(atob('ayA9IDc='));").parse()
+        model = ModelCache(script, DeobfuscationOptions(trust_eval=True), text_folding=closed_text).model
+        decoder = next(
+            node for node in script.walk()
+            if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier) and node.callee.name == 'atob'
+        )
+        self.assertEqual(
+            (model.assumed_keys.revealed_by(decoder, 'k = 7'), model.assumed_keys.revealed_by(decoder, 'k = 8')),
+            (False, True),
+        )
+
     @staticmethod
-    def _decoded_evals(count: int) -> str:
-        body = '\n'.join(F"function f{i}() {{ return eval(atob('InVzZSBzdHJpY3QiOyAx')); }}" for i in range(count))
+    def _evals(argument: str, count: int) -> str:
+        body = '\n'.join(F'function f{i}() {{ return eval({argument}); }}' for i in range(count))
         return F'{body}\nSINK({", ".join(F"f{i}" for i in range(count))});'
 
-    @todo
     @a_property_of_the_pin_itself
     def test_folds_spelling_the_code_calls_run_do_not_multiply_model_builds(self):
         trusting = DeobfuscationOptions(trust_eval=True)
-        self.assertEqual(
-            self._builds(self._decoded_evals(10), trusting)[:2],
-            self._builds(self._decoded_evals(40), trusting)[:2],
-        )
+        for argument in (
+            "atob('InVzZSBzdHJpY3QiOyAx')",
+            "atob('InVzZSBzdHJpY3Qi') + atob('OyAx')",
+            'String.fromCharCode(34, 117, 115, 101, 32, 115, 116, 114, 105, 99, 116, 34, 59, 32, 48 + 1)',
+        ):
+            with self.subTest(argument):
+                self.assertEqual(
+                    self._builds(self._evals(argument, 10), trusting, closed_text)[:2],
+                    self._builds(self._evals(argument, 40), trusting, closed_text)[:2],
+                )
 
     @a_property_of_the_pin_itself
     def test_folds_spelling_caller_in_an_array_do_not_multiply_model_builds(self):

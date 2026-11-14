@@ -2386,3 +2386,40 @@ class TestTheTrustingModelIsBuiltInLinearWork(TestBase):
 
     def test_over_functions_declared_in_blocks(self):
         self.assertWorkGrowsLinearly(self._work('var f{i}; {{ function f{i}() {{ return {i}; }} }}'), 20)
+
+
+def _texts_the_last_statement_runs(source: str) -> list[str] | None:
+    ast = JsParser(source).parse()
+    model = build_semantic_model(ast)
+    last = ast.body[-1]
+    assert isinstance(last, JsExpressionStatement)
+    site = next(site for site in model.spelled_code_sites() if site.call is last.expression)
+    if site.code is None:
+        return None
+    return [JsSynthesizer().convert(fragment.model.root) for fragment in site.code.fragments]
+
+
+class TestTheSuspectingModelReadsNoTextOtherCodeMayReplace(TestBase):
+
+    def test_a_text_code_in_a_string_may_replace_is_read_only_without_that_code(self):
+        self.assertEqual(
+            (
+                _texts_the_last_statement_runs(
+                    "let x = 5; var code = 'console.log(1)';"
+                    " eval(process.argv.length > 99 ? '' : \"code = 'console.log(x)'\"); eval(code);"
+                ),
+                _texts_the_last_statement_runs("let x = 5; var code = 'console.log(1)'; eval(code);"),
+            ),
+            (None, ['console.log(1);']),
+        )
+
+    def test_a_stage_whose_name_the_file_fills_is_read_only_without_the_filling_function(self):
+        self.assertEqual(
+            (
+                _texts_the_last_statement_runs(
+                    "var k = 5; function load() { next = 'console.log(k)'; } eval(\"var next = ''; load(); eval(next);\");"
+                ),
+                _texts_the_last_statement_runs("var k = 5; eval(\"var next = ''; eval(next);\");"),
+            ),
+            (None, ["var next = '';\neval(next);"]),
+        )

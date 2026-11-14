@@ -5,7 +5,7 @@ import inspect
 import threading
 import unittest
 
-from test import TestBase, fastest_processor_time, opportunity, processor_time_ratio
+from test import TestBase, fastest_processor_time, opportunity, processor_time_ratio, todo
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -4009,4 +4009,14 @@ class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
         small, large = source(500), source(4000)
         ratio, output = self._cost_ratio(small, large)
         self.assertEqual(output, 'console.log(1);')
+        self.assertLess(ratio, 2 * len(large) / len(small))
+
+    @todo
+    def test_vars_nothing_reads_beside_lexical_declarations_are_removed_in_time_that_grows_with_them(self):
+        def source(count: int) -> str:
+            return '\n'.join(F'var t{i} = {i}; let k{i} = {i}; console.log(k{i});' for i in range(count))
+
+        small, large = source(100), source(400)
+        ratio, output = self._cost_ratio(small, large)
+        self.assertEqual(output, '\n'.join(F'let k{i} = {i};\nconsole.log(k{i});' for i in range(400)))
         self.assertLess(ratio, 2 * len(large) / len(small))

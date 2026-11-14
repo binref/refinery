@@ -3808,3 +3808,15 @@ def build_effects(
     `EffectModel.builtin_writes_followed` answered no.
     """
     return EffectModel(model, dominance, intrinsic_writes, settlement, refusals)
+
+
+def refused_folded_texts(effects: EffectModel) -> frozenset[Node]:
+    """
+    Every code argument the semantic model of *effects* read as the text a fold would write there
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.folded_texts`) that rests on a call the
+    fold gate refuses (`EffectModel.call_is_foldable`), asked of the program that model reads.
+    """
+    return frozenset(
+        node for node, folded in effects.model.folded_texts().items()
+        if not all(effects.call_is_foldable(call, receiver_type=receiver) for call, receiver in folded.calls)
+    )

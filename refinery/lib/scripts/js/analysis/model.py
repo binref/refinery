@@ -2725,10 +2725,14 @@ class SpelledFragment(NamedTuple):
 class SpelledCode(NamedTuple):
     """
     The reading of code a string spells (`read_spelled_code`): the model of each text the call may
-    run, and every name one of them uses outside itself.
+    run, and every name one of them uses outside itself. Of these, *read_through* are the names the
+    code declares where the code running it looks them up, and reads a text it runs through the
+    value it declares them with: the code around it may write them in between, which only that
+    code can tell.
     """
     fragments: tuple[SpelledFragment, ...]
     names: frozenset[SpelledName]
+    read_through: frozenset[SpelledName] = frozenset()
 
 
 def _names_left_by(reading: SpelledCode, bound: frozenset[str]) -> Iterator[SpelledName]:
@@ -2762,12 +2766,33 @@ def _joined_readings(readings: list[SpelledCode | None]) -> SpelledCode | None:
     """
     fragments: dict[SpelledFragment, None] = {}
     names: set[SpelledName] = set()
+    read_through: set[SpelledName] = set()
     for reading in readings:
         if reading is None:
             return None
         fragments.update(dict.fromkeys(reading.fragments))
         names.update(reading.names)
-    return SpelledCode(tuple(fragments), frozenset(names))
+        read_through.update(reading.read_through)
+    return SpelledCode(tuple(fragments), frozenset(names), frozenset(read_through))
+
+
+class FoldedText(NamedTuple):
+    """
+    The text a code argument the program does not spell evaluates to where it is built from
+    literals by operators and built-ins alone, the one a fold writes in its place, and each call of
+    a built-in it rests on, with the type of its receiver where the call is a method of one. Those
+    calls answer the text only where each built-in is intact, which the fold gate judges
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.call_is_foldable`).
+    """
+    text: str
+    calls: tuple[tuple[JsCallExpression, type | None], ...]
+
+
+TextFolding = Callable[[Node, HostEnvironment], 'FoldedText | None']
+"""
+What computes the `FoldedText` of a code argument for a host, which a pass of the layer above
+hands down (`refinery.lib.scripts.js.deobfuscation.closedtext.closed_text`).
+"""
 
 
 class _SpelledTexts(NamedTuple):
@@ -2796,6 +2821,53 @@ class _SpelledUseSite(NamedTuple):
     """
     site: JsCallExpression | JsNewExpression
     use: SpelledUse
+
+
+class _LandedName(NamedTuple):
+    """
+    A name the code *call* runs declares where *call* looks it up, and reads a text it runs through
+    the value it declares it with (`SpelledCode.read_through`): the binding of this model the name
+    lands on, or `None` where none holds it there.
+    """
+    call: JsCallExpression | JsNewExpression
+    name: str
+    binding: Binding | None
+
+
+class _SpelledCodeReading:
+    """
+    One reading of the code strings spell (`SemanticModel.spelled_code_sites`) and every answer read
+    off it. A model replaces it whole where a step of its build may change what the reading finds
+    (`SemanticModel._forget_spelled_code_sites`), so no answer outlives the reading it was read off,
+    and the suspecting model replaces it for each round of its reading, handing on only the names it
+    no longer follows (*not_followed*) and the calls it reads as opaque (*read_as_opaque*).
+    """
+
+    def __init__(
+        self,
+        not_followed: frozenset[Binding] = frozenset(),
+        read_as_opaque: frozenset[Node] = frozenset(),
+    ):
+        self.not_followed = not_followed
+        self.read_as_opaque = read_as_opaque
+        self.sites: list[SpelledCodeSite] | None = None
+        self.read_through: dict[Binding, None] = {}
+        self.landed_read_through: list[_LandedName] = []
+        self.reach_of: dict[Binding, list[_SpelledUseSite]] | None = None
+        self.dynamic_rebind_sites: dict[Binding, list[Node] | None] = {}
+        self.module_exports_unread: bool | None = None
+        self.listed_calls_of: dict[Node, list[ShownCall]] = {}
+        self.table_ways: dict[tuple[JsObjectExpression, bool], _Way | None] = {}
+        self.reflection_surface: bool | None = None
+        self.opaque_surface_sites: list[Node] | None = None
+        self.with_statements: list[JsWithStatement] = []
+        self.spells_caller: bool | None = None
+        self.dispatch_surface_reached: bool | None = None
+        self.constructors_escape: bool | None = None
+        self.constructions_hidden: bool | None = None
+        self.reached_unnamed: dict[Node, bool] = {}
+        self.shown_calls: dict[tuple[Node, bool], tuple[list[ShownCall], bool]] = {}
+        self.values_through_calls: dict[Binding, tuple[list[Node], bool]] = {}
 
 
 def construction_text(parameters: str, body: str) -> str:
@@ -2896,6 +2968,7 @@ class SpelledCodeReadings:
         return SpelledCode(
             tuple(fragment for reading in readings for fragment in reading.fragments),
             frozenset(spelled for reading in readings for spelled in _names_left_by(reading, bound)),
+            frozenset(spelled for reading in readings for spelled in reading.read_through),
         )
 
     def _parameter_list(self, parameters: str, trust_eval: bool) -> tuple[frozenset[str], SpelledCode | None] | None:
@@ -2991,6 +3064,7 @@ def read_spelled_code(
     if not trust_eval and fragment.global_object_escapes(every_this=True, answers_completion=answers_completion):
         return None
     names: set[SpelledName] = set()
+    read_through: set[SpelledName] = set()
     free = SpelledReach.AT_THE_CALL if kind is SpelledCodeKind.EVAL_CODE else SpelledReach.IN_GLOBAL_CODE
 
     def written(node: Node) -> SpelledUse:
@@ -3026,6 +3100,7 @@ def read_spelled_code(
         kind is SpelledCodeKind.CLASSIC_SCRIPT
         or (kind is SpelledCodeKind.EVAL_CODE and not strict and not declares_use_strict(parsed))
     ):
+        held = frozenset() if trust_eval else fragment.names_read_through()
         for binding in fragment.root_scope.bindings.values():
             if binding.kind is BindingKind.IMPLICIT_GLOBAL:
                 continue
@@ -3038,7 +3113,16 @@ def read_spelled_code(
             ):
                 landing = SpelledUse.WRITE_LATER
             names.add(SpelledName(binding.name, free, landing))
-    return SpelledCode((SpelledFragment(fragment, built, answers_completion),), frozenset(names))
+            if binding in held:
+                read_through.add(SpelledName(binding.name, free, landing))
+        if not trust_eval:
+            for name in fragment.unbound_names_read_through():
+                read_through.add(SpelledName(name, free, SpelledUse.WRITE_LATER))
+    return SpelledCode(
+        (SpelledFragment(fragment, built, answers_completion),),
+        frozenset(names),
+        frozenset(read_through),
+    )
 
 
 _AN_UNLOCATED_WRITE: tuple[None] = (None,)
@@ -3064,9 +3148,14 @@ class SemanticModel:
         exports_read_outside: bool = True,
         host_entrypoint: Callable[[str], bool] | None = None,
         spelled_code_readings: SpelledCodeReadings | None = None,
+        text_folding: TextFolding | None = None,
+        unfolded: frozenset[Node] = frozenset(),
     ):
         self.root = root
         self.assumed_keys = KeyAssumptions()
+        self._text_folding = text_folding if trust_eval else None
+        self._unfolded = unfolded
+        self._folded: dict[Node, FoldedText | None] = {}
         self.environment = environment
         self.trust_eval = trust_eval
         if spelled_code_readings is None:
@@ -3075,33 +3164,18 @@ class SemanticModel:
         self.file_kind = file_kind
         self.exports_read_outside = exports_read_outside
         self._host_entrypoint = host_entrypoint
-        self._module_exports_unread: bool | None = None
         self._code_load_sites: list[Node] | None = None
         self._node_scope: dict[Node, Scope] = {}
         self._binding_of: dict[Node, Binding] = {}
-        self._reflection_surface: bool | None = None
-        self._opaque_surface_sites: list[Node] | None = None
-        self._with_statements: list[JsWithStatement] = []
         self._opaque_global_write: bool | None = None
         self._opaque_global_write_sites: list[JsMemberExpression] | None = None
         self._opaque_global_write_sites_known = False
         self._recording_def_use = False
-        self._dispatch_surface_reached: bool | None = None
         self._function_direct_eval_sites: dict[int, list[Node]] = {}
         self._function_unread_source_sites: dict[int, list[Node]] = {}
-        self._spelled_code_sites: list[SpelledCodeSite] | None = None
-        self._spelled_code_reach_of: dict[Binding, list[_SpelledUseSite]] | None = None
-        self._dynamic_rebind_sites: dict[Binding, list[Node] | None] = {}
         self._built = False
-        self._spells_caller: bool | None = None
-        self._reached_unnamed: dict[Node, bool] = {}
-        self._constructors_escape: bool | None = None
-        self._constructions_hidden: bool | None = None
+        self._reading = _SpelledCodeReading()
         self._declares_only_functions: bool | None = None
-        self._values_through_calls: dict[Binding, tuple[list[Node], bool]] = {}
-        self._shown_calls: dict[tuple[Node, bool], tuple[list[ShownCall], bool]] = {}
-        self._listed_calls_of: dict[Node, list[ShownCall]] = {}
-        self._table_ways: dict[tuple[JsObjectExpression, bool], _Way | None] = {}
         self._module_may_be_reentered = False
         self._annex_b_copies: list[AnnexBCopy] = []
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
@@ -3758,7 +3832,7 @@ class SemanticModel:
         declared = _declared_parameter(binding.declarations[0])
         if declared is None:
             return self.binding_values(binding)
-        cached = self._values_through_calls.get(binding)
+        cached = self._reading.values_through_calls.get(binding)
         if cached is not None:
             return cached
         function, position, default = declared
@@ -3782,7 +3856,7 @@ class SemanticModel:
                 list_value(value)
         if default is not None:
             list_value(default)
-        cached = self._values_through_calls[binding] = values, complete
+        cached = self._reading.values_through_calls[binding] = values, complete
         return cached
 
     def arguments_through_calls(self, function: JsFunctionNode, position: int | None) -> tuple[list[Node], bool]:
@@ -3878,10 +3952,10 @@ class SemanticModel:
         if not isinstance(table, JsObjectExpression):
             return None
         key = table, reflective
-        if key not in self._table_ways:
-            self._table_ways[key] = None
-            self._table_ways[key] = self._table_way(table, reflective)
-        return self._table_ways[key]
+        if key not in self._reading.table_ways:
+            self._reading.table_ways[key] = None
+            self._reading.table_ways[key] = self._table_way(table, reflective)
+        return self._reading.table_ways[key]
 
     def _table_way(self, table: JsObjectExpression, reflective: bool = True) -> _Way | None:
         """
@@ -4020,9 +4094,9 @@ class SemanticModel:
         literal's own: an assumption only a caller that has argued it may make. Memoized per
         function and assumption.
         """
-        cached = self._shown_calls.get((function, own_keys))
+        cached = self._reading.shown_calls.get((function, own_keys))
         if cached is None:
-            cached = self._shown_calls[function, own_keys] = self._walk_calls(function, own_keys, True)
+            cached = self._reading.shown_calls[function, own_keys] = self._walk_calls(function, own_keys, True)
         return cached
 
     def _listed_calls(self, function: JsFunctionNode) -> list[ShownCall]:
@@ -4033,9 +4107,9 @@ class SemanticModel:
         call may come. A reader the reflection questions read asks this, never `_calls_shown`, so
         that it asks none of them. Memoized per function.
         """
-        cached = self._listed_calls_of.get(function)
+        cached = self._reading.listed_calls_of.get(function)
         if cached is None:
-            cached = self._listed_calls_of[function] = self._walk_calls(function, True, False)[0]
+            cached = self._reading.listed_calls_of[function] = self._walk_calls(function, True, False)[0]
         return cached
 
     def _invocation_at(self, read: Node, reflective: bool) -> ShownCall | None:
@@ -4451,8 +4525,8 @@ class SemanticModel:
         (`has_opaque_global_write` owns that question) and is not counted here.
         """
         self._ensure_reflection_detected()
-        assert self._reflection_surface is not None
-        return self._reflection_surface
+        assert self._reading.reflection_surface is not None
+        return self._reading.reflection_surface
 
     def reached_without_its_name(self, function: Node) -> bool:
         """
@@ -4464,9 +4538,9 @@ class SemanticModel:
         answer every reader asking how a function may be invoked or obtained shares, memoized per
         function.
         """
-        cached = self._reached_unnamed.get(function)
+        cached = self._reading.reached_unnamed.get(function)
         if cached is None:
-            cached = self._reached_unnamed[function] = (
+            cached = self._reading.reached_unnamed[function] = (
                 self.spells_caller()
                 or arguments_name_their_function(function)
                 or references_new_target(function)
@@ -4483,12 +4557,12 @@ class SemanticModel:
         a class read no such property. Code a string spells that this model reads
         (`spelled_code_fragments`) is part of the program. Memoized.
         """
-        if self._spells_caller is None:
-            self._spells_caller = (
+        if self._reading.spells_caller is None:
+            self._reading.spells_caller = (
                 any(self._may_read_caller_at(node) for node in self.root.walk())
                 or any(fragment.spells_caller() for fragment in self.spelled_code_fragments())
             )
-        return self._spells_caller
+        return self._reading.spells_caller
 
     def _may_read_caller_at(self, node: Node) -> bool:
         """
@@ -4723,13 +4797,13 @@ class SemanticModel:
         through `new.target`. Code a string spells that this model reads
         (`spelled_code_fragments`) is part of the program. Memoized.
         """
-        if self._constructions_hidden is None:
-            self._constructions_hidden = (
+        if self._reading.constructions_hidden is None:
+            self._reading.constructions_hidden = (
                 self.constructors_may_escape()
                 or any(_constructs_unseen(node, self.assumed_keys) for node in self.root.walk())
                 or any(fragment.constructions_may_be_hidden() for fragment in self.spelled_code_fragments())
             )
-        return self._constructions_hidden
+        return self._reading.constructions_hidden
 
     def _extends_beyond_the_program(self, cls: JsClassDeclaration | JsClassExpression) -> bool:
         """
@@ -4767,7 +4841,7 @@ class SemanticModel:
         property, and so does its prototype. Code a string spells that this model reads
         (`spelled_code_fragments`) is part of the program. Memoized.
         """
-        if self._constructors_escape is None:
+        if self._reading.constructors_escape is None:
             concatenations: list[JsBinaryExpression] = []
             escapes = False
             for node in self.root.walk():
@@ -4777,12 +4851,12 @@ class SemanticModel:
                 elif _lets_a_constructor_escape(node):
                     escapes = True
                     break
-            self._constructors_escape = (
+            self._reading.constructors_escape = (
                 escapes
                 or concatenation_spells(concatenations, 'constructor')
                 or any(fragment.constructors_may_escape() for fragment in self.spelled_code_fragments())
             )
-        return self._constructors_escape
+        return self._reading.constructors_escape
 
     def strings_still_unseen(self) -> frozenset[str]:
         """
@@ -4972,7 +5046,7 @@ class SemanticModel:
         every opaque surface site (`opaque_reflection_sites`).
         """
         self._ensure_reflection_detected()
-        yield self._with_statements
+        yield self._reading.with_statements
         yield self.opaque_reflection_sites()
 
     def _opaque_global_writes(self) -> Sequence[Node | None]:
@@ -5003,16 +5077,102 @@ class SemanticModel:
         after each step that records writes the recognizer of `Function` reads
         (`_forget_spelled_code_sites`), so that the steps asking in between walk the tree once.
         """
-        if self._spelled_code_sites is not None:
-            return self._spelled_code_sites
-        sites: list[SpelledCodeSite] = []
-        for node in self.root.walk():
-            if isinstance(node, (JsCallExpression, JsNewExpression)):
-                site = self._spelled_code_at(node)
-                if site is not None:
-                    sites.append(site)
-        self._spelled_code_sites = sites
-        return sites
+        if self._reading.sites is not None:
+            return self._reading.sites
+        while True:
+            reading = self._reading
+            sites: list[SpelledCodeSite] = []
+            for node in self.root.walk():
+                if isinstance(node, (JsCallExpression, JsNewExpression)):
+                    site = self._spelled_code_at(node)
+                    if site is not None:
+                        sites.append(site)
+            reading.sites = sites
+            if self.trust_eval:
+                return sites
+            cut = frozenset(
+                binding for binding in reading.read_through
+                if binding not in reading.not_followed and self._may_be_replaced_out_of_sight(binding)
+            )
+            opened = frozenset(
+                landed.call for landed in reading.landed_read_through
+                if landed.call not in reading.read_as_opaque and self._written_beside_the_code_at(landed)
+            )
+            if not cut and not opened:
+                return sites
+            self._reading = _SpelledCodeReading(reading.not_followed | cut, reading.read_as_opaque | opened)
+
+    def names_read_through(self) -> frozenset[Binding]:
+        """
+        Every binding the code a string spells that this model reads (`spelled_code_sites`) is read
+        through: a name a text of it is held in through its declaration, and a name such code
+        declares where a call of this model looks it up and reads a text through
+        (`SpelledCode.read_through`).
+        """
+        self.spelled_code_sites()
+        landed = (landed.binding for landed in self._reading.landed_read_through if landed.binding is not None)
+        return frozenset((*self._reading.read_through, *landed))
+
+    def unbound_names_read_through(self) -> frozenset[str]:
+        """
+        Every name code a string spells declares at the top of this model and reads a text through
+        where no binding of this model holds it (`SpelledCode.read_through`): the code declares it
+        where this model's own declarations land.
+        """
+        self.spelled_code_sites()
+        return frozenset(
+            landed.name for landed in self._reading.landed_read_through
+            if landed.binding is None and self._var_scope_of(landed.call) is self.root_scope
+        )
+
+    def _var_scope_of(self, node: Node) -> Scope | None:
+        scope = self.scope_of(node)
+        return None if scope is None else scope.var_scope
+
+    def _may_be_replaced_out_of_sight(self, binding: Binding) -> bool:
+        """
+        Whether something the file's own writes do not show may give *binding* a value: a dynamic
+        scope or code a string spells (`binding_maybe_reassigned_dynamically`), a reflective surface
+        or a store on the global object under a key only the runtime knows
+        (`binding_reflection_kill_sites`).
+        """
+        return (
+            self.binding_maybe_reassigned_dynamically(binding)
+            or self.binding_reflection_kill_sites(binding) != []
+        )
+
+    def _written_beside_the_code_at(self, landed: _LandedName) -> bool:
+        """
+        Whether anything but the code *landed* names runs may give the name it declares a value: the
+        file stores into the binding it lands on, the host keeps the name's value, or anything else
+        may write it (`_may_be_replaced_out_of_sight`) at a node other than that call. Where no
+        binding of this model holds the name, the file names it nowhere, and only a reflective
+        surface, a store on the global object under a key only the runtime knows, or other code a
+        string spells may write it.
+        """
+        binding = landed.binding
+        call = landed.call
+        if binding is None:
+            return (
+                self.has_reflection_surface()
+                or self.has_opaque_global_write()
+                or any(
+                    site.call is not call
+                    and spelled.name == landed.name
+                    and spelled.use is not SpelledUse.READ
+                    for site in self.spelled_code_sites() if site.code is not None
+                    for spelled in site.code.names
+                )
+            )
+        if binding.store_sites or binding.supplied_by_host or self.kept_by_the_host(binding):
+            return True
+        for sites in (
+            self.binding_dynamic_rebind_sites(binding),
+            self.binding_reflection_kill_sites(binding),
+        ):
+            if sites is None or any(site is not call for site in sites):
+                return True
+        return False
 
     def _spelled_code_at(self, call: JsCallExpression | JsNewExpression) -> SpelledCodeSite | None:
         """
@@ -5027,6 +5187,7 @@ class SemanticModel:
         call runs no string, or where the trusting model reads none.
         """
         runs_in_place = True
+        followed: set[Binding] = set()
         if isinstance(call, JsCallExpression) and is_direct_eval_call(call):
             callee = strip_parens(call.callee)
             if not isinstance(callee, JsIdentifier) or not self._reads_reflective_intrinsic(callee):
@@ -5037,14 +5198,16 @@ class SemanticModel:
             kind = SpelledCodeKind.CLASSIC_SCRIPT
             texts = call.arguments[:1]
             runs_in_place = timer_callee_name(call.callee, self.assumed_keys) in SYNC_EVAL_NAMES
-        elif self._constructs_a_function(call.callee):
+        elif self._constructs_a_function(call.callee, followed):
             kind = SpelledCodeKind.FUNCTION_BODY
             texts = call.arguments
             runs_in_place = False
         else:
             return None
+        if call in self._reading.read_as_opaque:
+            return SpelledCodeSite(call, kind, None)
         handed_on = self.trust_eval and kind is not SpelledCodeKind.EVAL_CODE
-        spelled = self._spelled_texts_at(texts, handed_on)
+        spelled = self._spelled_texts_at(texts, handed_on, followed)
         if spelled.unread and not self.trust_eval:
             return SpelledCodeSite(call, kind, None)
         if not spelled.texts:
@@ -5065,41 +5228,74 @@ class SemanticModel:
                 runs_in_place,
                 self.trust_eval,
             ))
-        return SpelledCodeSite(call, kind, _joined_readings(readings))
+        site = SpelledCodeSite(call, kind, _joined_readings(readings))
+        if site.code is not None:
+            self._reading.read_through.update(dict.fromkeys(followed))
+            for spelled in site.code.read_through:
+                binding = self._binding_named_in_spelled_code(site, spelled)
+                self._reading.landed_read_through.append(_LandedName(call, spelled.name, binding))
+        return site
 
-    def _held_through_declarations(self, node: Node | None) -> Iterator[Node]:
+    def _held_through_declarations(
+        self,
+        node: Node | None,
+        followed: set[Binding] | None = None,
+    ) -> Iterator[Node]:
         """
-        *node*, and while it is a name declared once with a value and never written, the value that
-        declaration gives it, in turn: each is what the name before it certainly holds wherever it
-        is read once that declaration has run. A name is followed through its declaration rather
-        than through `singular_value`, which asks the reflection questions the readers of code a
-        string spells feed, and through every name such a declaration hands on, since a pass may
-        collapse the whole chain into the value at its end.
+        *node*, and while it is a name whose one declaration gives it the one value the file stores
+        in it (`_declared_value`), that value, in turn: each is what the name before it certainly
+        holds wherever it is read once that declaration has run. A name is followed through its
+        declaration rather than through `singular_value`, which asks the reflection questions the
+        readers of code a string spells feed, and through every name such a declaration hands on,
+        since a pass may collapse the whole chain into the value at its end. Those questions are
+        asked of each name followed once the reading is made (`spelled_code_sites`), and a name
+        they find code out of the file's sight may write is not followed (`_not_followed`). Each
+        name followed joins *followed*.
         """
-        followed: set[Binding] = set()
+        seen: set[Binding] = set()
         node = strip_parens(node)
         while node is not None:
             yield node
             if not isinstance(node, JsIdentifier):
                 return
             binding = self.resolve(node)
-            if (
-                binding is None
-                or binding in followed
-                or binding.writes
-                or binding.indefinite_writes
-                or binding.dynamic_refs
-                or len(binding.declarations) != 1
-            ):
+            if binding is None or binding in seen or binding in self._reading.not_followed:
                 return
-            followed.add(binding)
-            declaration = binding.declarations[0]
-            declarator = declaration.parent
-            if not isinstance(declarator, JsVariableDeclarator) or declarator.id is not declaration:
+            value = self._declared_value(binding)
+            if value is None:
                 return
-            node = strip_parens(declarator.init)
+            seen.add(binding)
+            if followed is not None:
+                followed.add(binding)
+            node = strip_parens(value)
 
-    def _spelled_texts_at(self, arguments: Sequence[Node], handed_on: bool = False) -> _SpelledTexts:
+    def _declared_value(self, binding: Binding) -> Node | None:
+        """
+        The value the one declaration of *binding* gives it where that is the one value the file
+        stores in it (`binding_values`, asked without the rebinds a reading of code a string spells
+        decides), and nothing writes it through an alias or a dynamic scope; `None` otherwise.
+        """
+        if len(binding.declarations) != 1 or binding.indefinite_writes or binding.dynamic_refs:
+            return None
+        declaration = binding.declarations[0]
+        declarator = declaration.parent
+        if (
+            not isinstance(declarator, JsVariableDeclarator)
+            or declarator.id is not declaration
+            or declarator.init is None
+        ):
+            return None
+        values, complete = self.binding_values(binding, ignore_dynamic_rebinds=True)
+        if not complete or len(values) != 1 or values[0] is not declarator.init:
+            return None
+        return declarator.init
+
+    def _spelled_texts_at(
+        self,
+        arguments: Sequence[Node],
+        handed_on: bool = False,
+        followed: set[Binding] | None = None,
+    ) -> _SpelledTexts:
         """
         The strings the *arguments* of a call that runs them as code may evaluate to that the
         program spells, one tuple for each way they may evaluate together: a string spelled in
@@ -5137,14 +5333,14 @@ class SemanticModel:
             pending = state[position]
             assert not isinstance(pending, str)
             last: Node | None = None
-            for value in self._held_through_declarations(pending):
+            for value in self._held_through_declarations(pending, followed):
                 last = value
                 branches: tuple[Node | str | None, ...]
                 if isinstance(value, JsConditionalExpression):
                     branches = (value.consequent, value.alternate)
                 elif isinstance(value, JsLogicalExpression):
                     branches = (value.left, value.right)
-                elif (string := spelled_text(value, self.assumed_keys)) is not None:
+                elif (string := spelled_text(value, self.assumed_keys, self._fold)) is not None:
                     branches = (string,)
                 elif isinstance(value, JsIdentifier):
                     continue
@@ -5188,6 +5384,32 @@ class SemanticModel:
                         states.append(tuple(successor))
         return _SpelledTexts(tuple(dict.fromkeys(texts)), unread)
 
+    def _fold(self, node: Node) -> str | None:
+        """
+        The text a fold would write in place of the code argument *node* (`FoldedText`): only the
+        trusting model of a run that hands down a folding reads one, and none for a node the cache
+        found a call of which the fold gate refuses (*unfolded*). Each node is folded once for the
+        model, whichever reader asks.
+        """
+        folding = self._text_folding
+        if folding is None or node in self._unfolded:
+            return None
+        try:
+            folded = self._folded[node]
+        except KeyError:
+            folded = self._folded[node] = folding(node, self.environment)
+        return None if folded is None else folded.text
+
+    def folded_texts(self) -> dict[Node, FoldedText]:
+        """
+        Every code argument this model read as the text a fold would write there (`_fold`), with that
+        text and the calls it rests on. The readers of code texts are the build, which asks whether
+        each direct `eval` names its scope (`names_its_scope`), and `spelled_code_sites`, which this
+        reads first: no other reader reads a code text, so every text the model reads is listed.
+        """
+        self.spelled_code_sites()
+        return {node: folded for node, folded in self._folded.items() if folded is not None}
+
     def _parameter_held_at(self, node: Node | None) -> tuple[JsFunctionNode, int, Node | None] | None:
         """
         Where *node* holds, through names declared once (`_held_through_declarations`), a parameter
@@ -5212,7 +5434,7 @@ class SemanticModel:
             return None
         return _declared_parameter(binding.declarations[0])
 
-    def _constructs_a_function(self, callee: Node | None) -> bool:
+    def _constructs_a_function(self, callee: Node | None, followed: set[Binding] | None = None) -> bool:
         """
         Whether *callee*, called or constructed, certainly builds a function from text: the
         `Function` intrinsic read by its name or under the key `Function`, a name holding one of
@@ -5220,7 +5442,7 @@ class SemanticModel:
         function literal or off another `constructor` read. A `constructor` read off any other value
         is not followed: it is `String` or `Number` as often as `Function`.
         """
-        for value in self._held_through_declarations(callee):
+        for value in self._held_through_declarations(callee, followed):
             if isinstance(value, JsIdentifier):
                 if value.name == 'Function' and self._reads_reflective_intrinsic(value):
                     return True
@@ -5264,8 +5486,8 @@ class SemanticModel:
         (`_global_code_may_name`); one reached through the global object to one the object may hold
         (`_global_object_may_hold`). Memoized as `spelled_code_sites` is.
         """
-        if self._spelled_code_reach_of is not None:
-            return self._spelled_code_reach_of
+        if self._reading.reach_of is not None:
+            return self._reading.reach_of
         reach: dict[Binding, list[_SpelledUseSite]] = {}
         for site in self.spelled_code_sites():
             if site.code is None:
@@ -5274,7 +5496,7 @@ class SemanticModel:
                 binding = self._binding_named_in_spelled_code(site, spelled)
                 if binding is not None:
                     reach.setdefault(binding, []).append(_SpelledUseSite(site.call, spelled.use))
-        self._spelled_code_reach_of = reach
+        self._reading.reach_of = reach
         return reach
 
     def _binding_named_in_spelled_code(self, site: SpelledCodeSite, spelled: SpelledName) -> Binding | None:
@@ -5578,11 +5800,11 @@ class SemanticModel:
         binding are still being recorded, and an answer taken then would depend on how far that had
         got.
         """
-        if binding in self._dynamic_rebind_sites:
-            return self._dynamic_rebind_sites[binding]
+        if binding in self._reading.dynamic_rebind_sites:
+            return self._reading.dynamic_rebind_sites[binding]
         sites = self._dynamic_rebind_sites_of(binding)
         if self._built:
-            self._dynamic_rebind_sites[binding] = sites
+            self._reading.dynamic_rebind_sites[binding] = sites
         return sites
 
     def _dynamic_rebind_sites_of(self, binding: Binding) -> list[Node] | None:
@@ -5687,9 +5909,9 @@ class SemanticModel:
         and through the `arguments` of the function the host wraps around the file, which the file
         does not name, nor reaches through a function's `caller`. Memoized.
         """
-        if self._module_exports_unread is None:
-            self._module_exports_unread = self._compute_module_exports_unread()
-        return self._module_exports_unread
+        if self._reading.module_exports_unread is None:
+            self._reading.module_exports_unread = self._compute_module_exports_unread()
+        return self._reading.module_exports_unread
 
     def _compute_module_exports_unread(self) -> bool:
         if self.exports_read_outside or not self.file_kind.may_be_commonjs:
@@ -5995,7 +6217,7 @@ class SemanticModel:
         spells that it reads instead (`spelled_code_sites`), the one whose code is opaque or reaches
         the global object through a name of the file is a site (`_spelled_code_opens_the_world`).
         """
-        if self._reflection_surface is not None:
+        if self._reading.reflection_surface is not None:
             return
         sites: list[Node] = []
         withs: list[JsWithStatement] = []
@@ -6038,9 +6260,9 @@ class SemanticModel:
                 ):
                     sites.append(node)
         sites.extend(site.call for site in spelled if self._spelled_code_opens_the_world(site))
-        self._opaque_surface_sites = sites
-        self._with_statements = withs
-        self._reflection_surface = bool(withs) or bool(sites)
+        self._reading.opaque_surface_sites = sites
+        self._reading.with_statements = withs
+        self._reading.reflection_surface = bool(withs) or bool(sites)
 
     def _trusted_surface_keys(self) -> frozenset[str]:
         """
@@ -6137,8 +6359,8 @@ class SemanticModel:
         `_has_opaque_reflection_surface` reports as its non-emptiness.
         """
         self._ensure_reflection_detected()
-        assert self._opaque_surface_sites is not None
-        return self._opaque_surface_sites
+        assert self._reading.opaque_surface_sites is not None
+        return self._reading.opaque_surface_sites
 
     def _has_opaque_reflection_surface(self) -> bool:
         return bool(self.opaque_reflection_sites())
@@ -6172,22 +6394,10 @@ class SemanticModel:
         (`_listed_calls`) are read off references such a step records too. Every memo whose answer
         reads those sites goes with them: the reflection surface they stand among
         (`_ensure_reflection_detected`), the whole-program scans that read the code they run, and
-        the calls of a function, which ask both.
+        the calls of a function, which ask both: all of them live in the reading
+        (`_SpelledCodeReading`), which is replaced whole.
         """
-        self._spelled_code_sites = None
-        self._spelled_code_reach_of = None
-        self._listed_calls_of.clear()
-        self._table_ways.clear()
-        self._reflection_surface = None
-        self._opaque_surface_sites = None
-        self._with_statements = []
-        self._spells_caller = None
-        self._dispatch_surface_reached = None
-        self._constructors_escape = None
-        self._constructions_hidden = None
-        self._reached_unnamed.clear()
-        self._shown_calls.clear()
-        self._values_through_calls.clear()
+        self._reading = _SpelledCodeReading()
 
     def _record_copy_reads(self):
         """
@@ -7097,12 +7307,12 @@ class SemanticModel:
         `refinery.lib.scripts.js.keys.key_is`, which records one it cannot read. Code a string
         spells that this model reads (`spelled_code_fragments`) is part of the program.
         """
-        if self._dispatch_surface_reached is None:
-            self._dispatch_surface_reached = (
+        if self._reading.dispatch_surface_reached is None:
+            self._reading.dispatch_surface_reached = (
                 any(self._reaches_dispatch_surface(node) for node in self.root.walk())
                 or any(fragment._dispatch_surface_reachable() for fragment in self.spelled_code_fragments())
             )
-        return self._dispatch_surface_reached
+        return self._reading.dispatch_surface_reached
 
     def _reaches_dispatch_surface(self, node: Node) -> bool:
         """
@@ -7620,6 +7830,8 @@ def build_semantic_model(
     exports_read_outside: bool = True,
     host_entrypoint: Callable[[str], bool] | None = None,
     spelled_code_readings: SpelledCodeReadings | None = None,
+    text_folding: TextFolding | None = None,
+    unfolded: frozenset[Node] = frozenset(),
 ) -> SemanticModel:
     """
     Build the `SemanticModel` for a parsed script, resolving bare global reads against *environment*.
@@ -7644,4 +7856,6 @@ def build_semantic_model(
         exports_read_outside,
         host_entrypoint,
         spelled_code_readings,
+        text_folding,
+        unfolded,
     )

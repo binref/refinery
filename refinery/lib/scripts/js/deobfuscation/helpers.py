@@ -1137,17 +1137,12 @@ def _denoted_value(
             return False, None
         return True, GLOBAL_VALUE_NAMES[node.name]
     if isinstance(node, JsUnaryExpression):
-        apply = UNARY_OPS.get(node.operator)
-        if apply is None:
+        if node.operator not in UNARY_OPS:
             return False, None
         known, value = denoted_value(node.operand, model, uninterceptable, effects, undecided)
         if not known:
             return False, None
-        if node.operator in COERCING_UNARY_OPERATORS:
-            known, value = converted_operand(value, uninterceptable, effects, gated=False)
-            if not known:
-                return False, None
-        return True, apply(value)
+        return unary_value(node.operator, value, uninterceptable, effects)
     if effects is not None:
         if isinstance(node, JsMemberExpression) and not is_member_write_target(node):
             return denoted_member(node, model, uninterceptable, effects, undecided)
@@ -1246,7 +1241,48 @@ def _denoted_binary(
     known, right = denoted_value(node.right, model, uninterceptable, effects, undecided)
     if not known:
         return False, None
-    convert_left, convert_right = converted_operands(node.operator, left, right)
+    return binary_value(node.operator, left, right, uninterceptable, effects)
+
+
+def unary_value(
+    operator: str,
+    value: Value,
+    uninterceptable: Callable[[Value], bool],
+    effects: Callable[[], EffectModel] | None,
+) -> tuple[bool, Value]:
+    """
+    The value the unary *operator* of `refinery.lib.scripts.js.values.UNARY_OPS` computes from the
+    decided *value*, which an operator that converts its operand converts as `converted_operand`
+    converts it first; `(False, None)` where nothing decides it.
+    """
+    apply = UNARY_OPS.get(operator)
+    if apply is None:
+        return False, None
+    if operator in COERCING_UNARY_OPERATORS:
+        known, value = converted_operand(value, uninterceptable, effects, gated=False)
+        if not known:
+            return False, None
+    return True, apply(value)
+
+
+def binary_value(
+    operator: str,
+    left: Value,
+    right: Value,
+    uninterceptable: Callable[[Value], bool],
+    effects: Callable[[], EffectModel] | None,
+) -> tuple[bool, Value]:
+    """
+    The value the binary *operator* of `refinery.lib.scripts.js.values.BINARY_OPS` computes from
+    the decided *left* and *right*, each operand it converts
+    (`refinery.lib.scripts.js.values.converted_operands`) converted as `converted_operand` converts
+    it first; `(False, None)` where nothing decides it. A power whose value the language leaves to
+    the engine is not decided.
+    """
+    apply = BINARY_OPS.get(operator)
+    if apply is None:
+        return False, None
+    convert_left, convert_right = converted_operands(operator, left, right)
     if convert_left:
         known, left = converted_operand(left, uninterceptable, effects, gated=True)
         if not known:
@@ -1256,7 +1292,7 @@ def _denoted_binary(
         if not known:
             return False, None
     try:
-        return True, BINARY_OPS[node.operator](left, right)
+        return True, apply(left, right)
     except HostApproximated:
         return False, None
 

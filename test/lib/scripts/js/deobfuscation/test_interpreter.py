@@ -1722,3 +1722,37 @@ class TestAReplacementFunctionIsCalledRatherThanConverted(TestJsDeobfuscator):
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+def _deobfuscated_by_either_model(source: str) -> dict[bool, str]:
+    return {strict: source.encode('utf8') | djs(strict=strict) | str for strict in (False, True)}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABuiltInIsFoldedToWhatTheEngineAnswers(TestJsDeobfuscator):
+
+    def test_a_replacement_not_handed_is_the_word_undefined(self):
+        rows = (
+            "console.log('abc'.replace('a'));",
+            "console.log('abc'.replaceAll('a'));",
+        )
+        self.assertEqual(
+            {
+                source: {strict: behavior(output) for strict, output in _deobfuscated_by_either_model(source).items()}
+                for source in rows
+            },
+            {source: {strict: behavior(source) for strict in (False, True)} for source in rows},
+        )
+
+    def test_an_integer_of_two_to_the_53_or_more_in_a_radix_no_power_of_two_prints_what_the_engine_prints(self):
+        source = 'console.log((1e21).toString(36));'
+        self.assertEqual(
+            {strict: behavior(output) for strict, output in _deobfuscated_by_either_model(source).items()},
+            {strict: behavior(source) for strict in (False, True)},
+        )
+
+    def test_an_integer_of_two_to_the_53_or_more_in_a_radix_that_is_a_power_of_two_is_folded(self):
+        self.assertEqual(
+            _deobfuscated_by_either_model('console.log((2 ** 60).toString(16));'),
+            {strict: "console.log('1000000000000000');" for strict in (False, True)},
+        )

@@ -62,6 +62,8 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.deobfuscation.interpreter import (
     STATIC_OBJECTS,
     RegisteredBuiltin,
+    folded_call,
+    folded_method_call,
     registered_builtin,
 )
 from refinery.lib.scripts.js.keys import expression_key, spelled_upward
@@ -765,9 +767,8 @@ class JsSimplifications(PinnedTransformer):
         args = self._builtin_arguments(node, builtin)
         if args is None:
             return None
-        try:
-            result = builtin.function(args)
-        except Exception:
+        known, result = folded_call(builtin, args)
+        if not known:
             return None
         return folded_literal(result)
 
@@ -783,9 +784,8 @@ class JsSimplifications(PinnedTransformer):
         args = self._builtin_arguments(node, builtin)
         if args is None:
             return None
-        try:
-            result = builtin.function(args)
-        except Exception:
+        known, result = folded_call(builtin, args)
+        if not known:
             return None
         return folded_literal(result)
 
@@ -814,9 +814,8 @@ class JsSimplifications(PinnedTransformer):
         args = self._builtin_arguments(node, builtin)
         if args is None:
             return None
-        try:
-            result = builtin.function(receiver, args)
-        except Exception:
+        known, result = folded_method_call(builtin, receiver, args)
+        if not known:
             return None
         return folded_literal(result)
 

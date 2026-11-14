@@ -23,7 +23,12 @@ from refinery.lib.scripts.js.analysis.assignment import (
 from refinery.lib.scripts.js.analysis.cfg import ControlFlowModel, build_control_flow_model
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
-from refinery.lib.scripts.js.analysis.effects import AnchoredTrust, EffectModel, build_effects
+from refinery.lib.scripts.js.analysis.effects import (
+    AnchoredTrust,
+    EffectModel,
+    build_effects,
+    refused_folded_texts,
+)
 from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.intrinsics import (
     IntrinsicWrites,
@@ -35,6 +40,7 @@ from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liven
 from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     SpelledCodeReadings,
+    TextFolding,
     build_semantic_model,
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel, build_reaching
@@ -153,9 +159,11 @@ class ModelCache(ModelCacheBase):
         options: object | None = None,
         settlement: ConversionSettlement | None = None,
         refusals: UnfollowedWriteRefusals | None = None,
+        text_folding: TextFolding | None = None,
     ):
         self.settlement = settlement
         self.refusals = refusals
+        self.text_folding = text_folding
         self.spelled_code_readings = SpelledCodeReadings()
         self._speculation: WriteSpeculation | None = None
         super().__init__(root, options)
@@ -191,15 +199,39 @@ class ModelCache(ModelCacheBase):
         return model
 
     def _semantic_model(self) -> SemanticModel:
-        return self._lazy('_model', lambda: build_semantic_model(
-            self.root,
-            host_environment(self.options),
-            eval_is_trusted(self.options),
-            self.file_kind,
-            exports_are_read_outside(self.options),
-            partial(is_host_entrypoint, self.options),
-            self.spelled_code_readings,
-        ))
+        return self._lazy('_model', self._confirmed_semantic_model)
+
+    def _confirmed_semantic_model(self) -> SemanticModel:
+        unfolded: frozenset[Node] = frozenset()
+        while True:
+            model = build_semantic_model(
+                self.root,
+                host_environment(self.options),
+                eval_is_trusted(self.options),
+                self.file_kind,
+                exports_are_read_outside(self.options),
+                partial(is_host_entrypoint, self.options),
+                self.spelled_code_readings,
+                self.text_folding,
+                unfolded,
+            )
+            if not model.folded_texts():
+                return model
+            writes = build_intrinsic_writes(model)
+            speculation = self._speculation
+            if speculation is not None:
+                writes = speculation.observe(writes)
+            control_flow = build_control_flow_model(self.root)
+            dominance = build_dominance(model, control_flow, intrinsic_writes=writes)
+            effects = build_effects(model, dominance, writes, self.settlement, self.refusals)
+            refused = refused_folded_texts(effects)
+            if not refused:
+                self._intrinsic_writes = writes
+                self._control_flow = control_flow
+                self._dominance = dominance
+                self._effects = effects
+                return model
+            unfolded |= refused
 
     @property
     def intrinsic_writes(self) -> IntrinsicWrites:

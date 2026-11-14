@@ -460,6 +460,10 @@ class TestAGlobalObjectReturnedAsAFunctionsThisKeepsTheWritesReadThroughIt(TestB
             'stored in a name of the file': (
                 'var k = 5; var g; (function () { g = this; })(); g.k = 7; console.log(k);'
             ),
+            'returned and written, replacing a text a name holds': (
+                "let x = 5; var code = 'console.log(1)';"
+                " (function () { return this; })().code = 'console.log(x)'; eval(code);"
+            ),
         }
         self.assertEqual(
             {
@@ -1397,46 +1401,62 @@ class TestANameAGlobalWriteUnderARuntimeKeyReplacesIsNotReadAsItsDeclaration(Tes
     pass
 
 
-A_TEXT_A_NAME_HOLDS_THAT_OTHER_CODE_REPLACES = {
-    'code in a string replacing the text': Program(
-        a_program("""
-            let x = 5;
-            var code = 'console.log(1)';
-            eval(process.argv.length > 99 ? '' : "code = 'console.log(x)'");
-            eval(code);
-            """),
-        prints('5'),
-        Reading.SCRIPT,
-    ),
-    'a stored body replacing the text': Program(
-        a_program("""
-            var k = 5;
-            var s = '0';
-            [1].forEach(new Function('s = "k = 9"'));
-            eval(s);
-            console.log(k);
-            """),
-        prints('9'),
-        Reading.SCRIPT,
-    ),
-    'a store under a runtime key replacing the text': Program(
-        a_program("""
-            let x = 5;
-            var code = 'console.log(1)';
-            var k = process.argv.length > 99 ? 'zzz' : 'code';
-            globalThis[k] = 'console.log(x)';
-            eval(code);
-            """),
-        prints('5'),
-        Reading.SCRIPT,
-    ),
-}
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheDefaultModelReadsEachTextANameMayHold(TestBase):
+
+    @todo
+    def test_a_text_written_into_a_name_beside_its_declared_text_is_read(self):
+        rows = {
+            'a stage storing the next stage in a name the file declares empty': (
+                "var k = 5; var next = ''; eval(atob('bmV4dCA9ICJjb25zb2xlLmxvZyhrKSI=')); eval(next);"
+            ),
+            'a loader the stage calls storing the next stage in a name the stage declares': (
+                "var k = 5; function load() { next = 'console.log(k)'; } eval(\"var next = ''; load(); eval(next);\");"
+            ),
+            'a store through the global object': (
+                "let x = 5; var code = 'console.log(1)'; globalThis.code = 'console.log(x)'; eval(code);"
+            ),
+            'code in a string storing into the name': (
+                "let x = 5; var code = 'console.log(1)';"
+                " eval(process.argv.length > 99 ? '' : \"code = 'console.log(x)'\"); eval(code);"
+            ),
+            'a store on the global object under a key only the run knows': (
+                "let x = 5; var code = 'console.log(1)'; var k = process.argv.length > 99 ? 'zzz' : 'code';"
+                " globalThis[k] = 'console.log(x)'; eval(code);"
+            ),
+            'a store on the this of the script under a key only the run knows': (
+                "let x = 5; var code = 'console.log(1)'; var k = process.argv.length > 99 ? 'zzz' : 'code';"
+                " this[k] = 'console.log(x)'; eval(code);"
+            ),
+        }
+        self.assertEqual(
+            {label: host_behavior(source.encode('utf8') | djs() | str) for label, source in rows.items()},
+            {label: host_behavior(source) for label, source in rows.items()},
+        )
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_TEXT_A_NAME_HOLDS_THAT_OTHER_CODE_REPLACES, todo)
-class TestTheSuspectingModelReadsNoTextANameHoldsThatOtherCodeMayReplace(TestBase):
-    pass
+class TestAVarWhoseNameTheProgramDefinedAsAGetterStillThrows(TestBase):
+
+    @wontfix('no program redefines a var of its own through __defineGetter__')
+    def test_under_either_model(self):
+        source = (
+            "let x = 5; globalThis.__defineGetter__('code', function () { return 'console.log(x)'; });"
+            " var code = 'console.log(1)'; eval(code);"
+        )
+        self.assertEqual(
+            {strict: host_behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)},
+            {strict: host_behavior(source) for strict in (False, True)},
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheDefaultModelReadsAForInVariableAsHoldingEachKey(TestBase):
+
+    @wontfix('no program declares a for-in variable with an initializer, a form only sloppy scripts still parse')
+    def test_a_text_held_by_a_for_in_variable_is_read_as_each_key(self):
+        source = "let x = 5; var o = {'console.log(x)': 1}; for (var code = 'console.log(1)' in o) {} eval(code);"
+        self.assertEqual(host_behavior(source.encode('utf8') | djs() | str), host_behavior(source))
 
 
 A_FUNCTION_HANDED_ON_BESIDE_AN_INSTALLER_USED_AS_A_TAG = {
@@ -1671,6 +1691,22 @@ class TestABuiltInReplacedWithoutSpellingItsNameIsNotFolded(TestBase):
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
+        )
+
+    @wontfix(
+        'no obfuscator and no program replaces a built-in this way: a prototype or a constructor '
+        'reached from a literal is made up for the defect'
+    )
+    def test_the_default_model_reads_no_code_text_decoded_with_it(self):
+        rows = {
+            "[].constructor.prototype.join = function () { return 'console.log(2)'; };"
+            " eval(['console.log(1)'].join(''));": '2\n',
+            "''.constructor.fromCharCode = function () { return 'console.log(2)'; };"
+            ' eval(String.fromCharCode(99, 111, 110, 115, 111, 108, 101, 46, 108, 111, 103, 40, 49, 41));': '2\n',
+        }
+        self.assertEqual(
+            {source: behavior(source.encode('utf8') | djs() | str) for source in rows},
+            {source: (output, None) for source, output in rows.items()},
         )
 
 
@@ -2756,6 +2792,76 @@ class TestCodeRunThroughEvalOrFunctionReplacedOnTheGlobalObjectIsNotUnpacked(Tes
                 for strict in (False, True)
             },
             {(label, strict): host_behavior(source) for label, source in rows.items() for strict in (False, True)},
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestCodeDecodedWithABuiltInReplacedOnTheGlobalObjectIsNotUnpacked(TestBase):
+
+    @backlog
+    def test_under_either_model(self):
+        rows = {
+            'the this of a function called plainly': (
+                "function g() { this.atob = function () { return 'console.log(2)'; }; } g();"
+                " eval(atob('Y29uc29sZS5sb2coMSk='));"
+            ),
+            'the this of a function called plainly, decoding in a function called twice': (
+                "function g() { this.atob = function () { return 'console.log(2)'; }; } g();"
+                " function f() { return eval(atob('Y29uc29sZS5sb2coMSk=')); } f(); f();"
+            ),
+            'Object.assign': (
+                "Object.assign(globalThis, {atob: function () { return 'console.log(2)'; }});"
+                " eval(atob('Y29uc29sZS5sb2coMSk='));"
+            ),
+            'Object.assign, decoding in a function called twice': (
+                "Object.assign(globalThis, { atob: function () { return 'console.log(2)'; } });"
+                " function f() { return eval(atob('Y29uc29sZS5sb2coMSk=')); } f(); f();"
+            ),
+            'a parameter holding the global object': (
+                "function patch(o) { o.atob = function () { return 'console.log(2)'; }; } patch(globalThis);"
+                " eval(atob('Y29uc29sZS5sb2coMSk='));"
+            ),
+            'a parameter holding the global object, decoding in a function called twice': (
+                "function patch(o) { o.atob = function () { return 'console.log(2)'; }; } patch(globalThis);"
+                " function f() { return eval(atob('Y29uc29sZS5sb2coMSk=')); } f(); f();"
+            ),
+            'an element of an array': (
+                "[globalThis][0].atob = function () { return 'console.log(2)'; }; eval(atob('Y29uc29sZS5sb2coMSk='));"
+            ),
+            'the this an immediately called function returns': (
+                "(function () { return this; })().atob = function () { return 'console.log(2)'; };"
+                " eval(atob('Y29uc29sZS5sb2coMSk='));"
+            ),
+        }
+        self.assertEqual(
+            {
+                (label, strict): host_behavior(source.encode('utf8') | djs(strict=strict) | str)
+                for label, source in rows.items()
+                for strict in (False, True)
+            },
+            {(label, strict): host_behavior(source) for label, source in rows.items() for strict in (False, True)},
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheDefaultModelReadsNoTextDecodedAfterTheTextThatReplacesItsDecoder(TestBase):
+
+    @backlog
+    def test_a_decoded_text_replacing_its_decoder_changes_what_the_decoder_writes_after_it(self):
+        rows = {
+            'a text declaring the decoder in the function that decodes': (
+                "function f() { eval(atob('dmFyIGF0b2IgPSBmdW5jdGlvbiAoKSB7IHJldHVybiAiY29uc29sZS5sb2coMikiOyB9Ow=='));"
+                " eval(atob('Y29uc29sZS5sb2coMSk=')); } f();"
+            ),
+            'a text replacing the decoder that decoded it, decoded twice': (
+                'function f() { return eval(atob('
+                "'YXRvYiA9IGZ1bmN0aW9uICgpIHsgcmV0dXJuICJjb25zb2xlLmxvZygyKSI7IH07IGNvbnNvbGUubG9nKDEpOw=='"
+                ')); } f(); f();'
+            ),
+        }
+        self.assertEqual(
+            {label: host_behavior(source.encode('utf8') | djs() | str) for label, source in rows.items()},
+            {label: host_behavior(source) for label, source in rows.items()},
         )
 
 

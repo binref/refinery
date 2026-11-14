@@ -20,6 +20,7 @@ from refinery.lib.scripts.js.deobfuscation.cff import (
     JsControlFlowUnflattening,
     JsStateMachineUnflattening,
 )
+from refinery.lib.scripts.js.deobfuscation.closedtext import closed_text
 from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.dispatcher import JsDispatcherUnwrapper
@@ -174,7 +175,7 @@ def deobfuscate(
     )
     settlement = ConversionSettlement()
     refusals = UnfollowedWriteRefusals()
-    models = ModelCache(ast, options, settlement, refusals)
+    models = ModelCache(ast, options, settlement, refusals, closed_text)
     JsLZStringDecoder.read_input(models)
     run = _Run(ast, max_steps, models, options, settlement)
     steps = run.to_settlement(0, observer)

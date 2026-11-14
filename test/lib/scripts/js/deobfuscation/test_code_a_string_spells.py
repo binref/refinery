@@ -7,7 +7,7 @@ from __future__ import annotations
 import functools
 import unittest
 
-from test import TestBase, fastest_processor_time, processor_time_ratio, todo
+from test import TestBase, fastest_processor_time, processor_time_ratio
 from test.lib.scripts.js.analysis.differential import behavior, host_behavior, node_executable
 from test.lib.scripts.js.deobfuscation.test_dispatcher import a_dispatcher
 from test.lib.scripts.js.ledger import STRING_TIMERS
@@ -1107,6 +1107,142 @@ class TestEitherModelReadsAChoiceBetweenTextsAsEachText(_NodeDecides):
         })
 
 
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheSuspectingModelReadsNoTextANameHoldsThatOtherCodeMayReplace(_NodeDecides):
+
+    def test_a_text_other_code_may_replace_is_not_read_as_the_declared_one(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'code in a string replacing the text': (
+                "let x = 5; var code = 'console.log(1)';"
+                " eval(process.argv.length > 99 ? '' : \"code = 'console.log(x)'\"); eval(code);"
+            ),
+            'a stored body replacing the text': (
+                "var k = 5; var s = '0'; [1].forEach(new Function('s = \"k = 9\"')); eval(s); console.log(k);"
+            ),
+            'a store on the global object under a key only the run knows': (
+                "let x = 5; var code = 'console.log(1)'; var k = process.argv.length > 99 ? 'zzz' : 'code';"
+                " globalThis[k] = 'console.log(x)'; eval(code);"
+            ),
+            'a text replacing itself in a loop': (
+                "let x = 5; var p = \"p = 'console.log(x)'\"; for (var i = 0; i < 2; i++) eval(p);"
+            ),
+            'a constructed body replacing the text when called later': (
+                "let x = 5; var code = 'console.log(1)';"
+                " var g = new Function(process.argv.length > 99 ? '' : \"code = 'console.log(x)'\"); g(); eval(code);"
+            ),
+            'a store on the this of the script under a key only the run knows': (
+                "let x = 5; var code = 'console.log(1)'; var k = process.argv.length > 99 ? 'zzz' : 'code';"
+                " this[k] = 'console.log(x)'; eval(code);"
+            ),
+            'code in a string a function runs replacing the text': (
+                "let x = 5; var code = 'console.log(1)';"
+                " function g() { eval(process.argv.length > 99 ? '' : \"code = 'console.log(x)'\"); } g(); eval(code);"
+            ),
+            'a constructed body replacing the text of a let': (
+                "let x = 5; let code = 'console.log(1)';"
+                " Function(process.argv.length > 99 ? '' : \"code = 'console.log(x)'\")(); eval(code);"
+            ),
+            'a loader the stage calls filling a name the stage declares': (
+                "var k = 5; function load() { next = 'console.log(k)'; } eval(\"var next = ''; load(); eval(next);\");"
+            ),
+            'a function the stage calls replacing a text the stage declares': (
+                "let x = 5; function f() { code = 'console.log(x)'; }"
+                " eval(\"var code = 'console.log(1)'; f(); eval(code);\");"
+            ),
+            'a loader the stage calls storing under a key only the run knows': (
+                "let x = 5; function f(k) { globalThis[k] = 'console.log(x)'; }"
+                " eval(\"var next = ''; f(process.argv.length > 99 ? 'zzz' : 'next'); eval(next);\");"
+            ),
+            'an inner stage declaring the name of the stage again': (
+                "let x = 5; eval(\"var next = ''; eval(\\\"var next = 'console.log(x)'\\\"); eval(next);\");"
+            ),
+            'a for-in head assigning each key to the name it declares': (
+                "let x = 5; var o = {'console.log(x)': 1}; for (var code = 'console.log(1)' in o) {} eval(code);"
+            ),
+        }, models=_THE_SUSPECTING_MODEL)
+
+    def test_a_text_nothing_else_writes_is_still_read(self):
+        self.assertEachModelPrints({
+            "var p = 'console.log(p.length)'; eval(p);": 'console.log(21);',
+            (
+                "let x = 5; var code = 'console.log(x)'; var other = 1;"
+                " eval(process.argv.length > 99 ? '' : 'other = 2'); eval(code);"
+            ): "var other = 1;\neval(process.argv.length > 99 ? '' : 'other = 2');\nconsole.log(5);",
+            "let x = 5; eval(\"var p = 'console.log(x)'; eval(p);\");": 'console.log(5);',
+        }, models=_THE_SUSPECTING_MODEL)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestEitherModelReadsTheTextAFoldWouldWrite(_NodeDecides):
+
+    def test_a_text_a_fold_would_write_runs_as_the_program_runs_it(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'a decoded text replacing the decoder before the next one': (
+                "eval(atob('YXRvYiA9IGZ1bmN0aW9uICgpIHsgcmV0dXJuICJjb25zb2xlLmxvZygyKSI7IH07'));"
+                " eval(atob('Y29uc29sZS5sb2coMSk='));"
+            ),
+            'a decoded text replacing join before a joined one': (
+                'eval(atob('
+                "'QXJyYXkucHJvdG90eXBlLmpvaW4gPSBmdW5jdGlvbiAoKSB7IHJldHVybiAiY29uc29sZS5sb2coMikiOyB9Ow=='"
+                ")); eval(['console.log(1)'].join(''));"
+            ),
+            'a decoded text writing a var': (
+                "var k = 5; eval(atob('ayA9IDc=')); console.log(k);"
+            ),
+            'a joined text a helper runs writing a var': (
+                "var k = 5; function run(code) { return new Function(code)(); } run(['k = ', '7'].join('')); console.log(k);"
+            ),
+            'a decoded text and a sum': (
+                "var k = 5; eval(atob('ayA9IA==') + (3 + 4)); console.log(k);"
+            ),
+            'two decoded halves': (
+                "var k = 5; eval(atob('ayA9') + atob('IDc=')); console.log(k);"
+            ),
+            'character codes and a sum': (
+                'var k = 5; eval(String.fromCharCode(107, 32, 61, 32, 48 + 7)); console.log(k);'
+            ),
+            'a template and a sum': (
+                'var k = 5; eval(`k = ${3 + 4}`); console.log(k);'
+            ),
+        })
+
+    def test_a_text_holding_a_number_the_engine_approximates_runs_as_the_program_runs_it(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'a power': "var k = 5; eval('k = ' + 2 ** 0.5); console.log(k > 1);",
+            'Math.pow': "var k = 5; eval('k = ' + Math.pow(2, 0.5)); console.log(k > 1);",
+            'a power in a template': 'var k = 5; eval(`k = ${2 ** 0.5}`); console.log(k > 1);',
+        })
+
+    def test_a_buffer_converted_to_text_runs_as_the_program_runs_it(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'hex': (
+                "var k = 5; try { eval(Buffer.from('k = 7').toString('hex')); } catch (e) { console.log(e.name); }"
+                ' console.log(k);'
+            ),
+            'base64': (
+                "var k = 5; try { eval(Buffer.from('k = 7').toString('base64')); } catch (e) { console.log(e.name); }"
+                ' console.log(k);'
+            ),
+            'the default encoding': "var k = 5; eval(Buffer.from('k = 7').toString()); console.log(k);",
+        }, environment='node')
+
+    def test_the_suspecting_model_reads_no_text_decoded_with_a_built_in_replaced_without_its_name(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'join through the prototype of an array': (
+                "Object.getPrototypeOf([]).join = function () { return 'console.log(2)'; };"
+                " eval(['console.log(1)'].join(''));"
+            ),
+            'join through the constructor of an array': (
+                "[].constructor.prototype.join = function () { return 'console.log(2)'; };"
+                " eval(['console.log(1)'].join(''));"
+            ),
+            'fromCharCode through the constructor of a string': (
+                "''.constructor.fromCharCode = function () { return 'console.log(2)'; };"
+                ' eval(String.fromCharCode(99, 111, 110, 115, 111, 108, 101, 46, 108, 111, 103, 40, 49, 41));'
+            ),
+        }, models=_THE_SUSPECTING_MODEL)
+
+
 class TestTheTextsOfAProgramAreReadInTimeThatGrowsWithTheProgram(TestBase):
 
     def test_the_calls_of_a_two_text_helper(self):
@@ -1121,12 +1257,18 @@ class TestTheTextsOfAProgramAreReadInTimeThatGrowsWithTheProgram(TestBase):
             return F"var c = process.argv.length > 99; {chain} var a{depth} = 'x = 1'; eval(a0);"
         _assert_the_deobfuscation_takes_time_that_grows_with_the_program(self, program(320), program(1280))
 
-    @todo
     def test_the_texts_a_helper_is_handed_once_a_fold_spells_them(self):
         def program(count: int) -> str:
             calls = ''.join(F"out.push(run(['retu', 'rn {i}'].join('')));" for i in range(count))
             return F'var out = []; function run(code) {{ return new Function(code)(); }} {calls} console.log(out.length);'
-        _assert_the_deobfuscation_takes_time_that_grows_with_the_program(self, program(25), program(100))
+        _assert_the_deobfuscation_takes_time_that_grows_with_the_program(self, program(100), program(400))
+
+    def test_a_string_longer_than_any_the_engine_folds_is_not_built(self):
+        source = "eval(['/*', 'x'.repeat(40000000), '*/ console.log(1)'].join(''));"
+        for strict in _EITHER_MODEL:
+            with self.subTest(_model(strict)):
+                self.assertLess(_fastest_deobfuscation(source, strict), 1.0)
+                self.assertIn("'x'.repeat(40000000)", _deobfuscated(source, strict))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
