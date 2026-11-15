@@ -63,7 +63,10 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_a_constant_fold_before_a_sibling_construction_check_does_not_trip_the_pin(self):
         self.assertEqual(
-            "var y = new Function('a', 'return a')(z);\nvar x = 1;",
+            inspect.cleandoc("""
+                var y = new Function('a', 'return a')(z);
+                var x = 1;
+            """),
             self._reflect("var y = new Function('a','return a')(z); var x = new Function('return 1')();"),
         )
 
@@ -207,7 +210,10 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_indirect_eval_established_identifier_prefix_outside_with_still_inlined(self):
         self.assertEqual(
-            'var e = 1;\nf();',
+            inspect.cleandoc("""
+                var e = 1;
+                f();
+            """),
             self._reflect("var e = 1; (e, eval)('f()');"))
 
     def test_indirect_eval_unbound_identifier_prefix_is_not_dropped(self):
@@ -216,12 +222,20 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_settimeout_string_lowered_in_a_browser(self):
         self.assertEqual(
-            'setTimeout(function() {\n  alert(1);\n}, 0);',
+            inspect.cleandoc("""
+                setTimeout(function() {
+                  alert(1);
+                }, 0);
+            """),
             self._reflect_in_a_browser("setTimeout('alert(1)', 0);"))
 
     def test_setinterval_string_lowered_in_a_browser(self):
         self.assertEqual(
-            'setInterval(function() {\n  doStuff();\n}, 1000);',
+            inspect.cleandoc("""
+                setInterval(function() {
+                  doStuff();
+                }, 1000);
+            """),
             self._reflect_in_a_browser("setInterval('doStuff()', 1000);"))
 
     def test_settimeout_non_string_not_inlined(self):
@@ -229,17 +243,32 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_string_timer_this_rewritten_to_global_in_a_browser(self):
         self.assertEqual(
-            'setTimeout(function() {\n  globalThis.foo();\n}, 0);',
+            inspect.cleandoc("""
+                setTimeout(function() {
+                  globalThis.foo();
+                }, 0);
+            """),
             self._reflect_in_a_browser("setTimeout('this.foo()', 0);"))
 
     def test_string_timer_with_shadowed_free_name_not_lowered(self):
         self.assertEqual(
-            'function f() {\n  var alert = 1;\n  setTimeout("alert(1)", 0);\n}',
+            inspect.cleandoc("""
+                function f() {
+                  var alert = 1;
+                  setTimeout("alert(1)", 0);
+                }
+            """),
             self._reflect('function f(){ var alert = 1; setTimeout("alert(1)", 0); }'))
 
     def test_string_timer_in_with_body_not_lowered(self):
         self.assertEqual(
-            'function f() {\n  with (o) {\n    setTimeout("foo()", 0);\n  }\n}',
+            inspect.cleandoc("""
+                function f() {
+                  with (o) {
+                    setTimeout("foo()", 0);
+                  }
+                }
+            """),
             self._reflect('function f(){ with (o) { setTimeout("foo()", 0); } }'))
 
     def test_module_indirect_eval_declaration_not_inlined(self):
@@ -253,7 +282,10 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect_module("setTimeout('var x = 1;', 0);"))
 
     def test_module_direct_eval_declaration_read_not_inlined(self):
-        source = "eval('var x = 1;');\nconsole.log(typeof x);"
+        source = inspect.cleandoc("""
+            eval('var x = 1;');
+            console.log(typeof x);
+        """)
         self.assertEqual(source, self._reflect_module(source))
 
     def test_module_direct_eval_strict_only_syntax_not_inlined(self):
@@ -271,23 +303,36 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_indirect_eval_binding_await_inlined_as_a_script(self):
         self.assertEqual(
-            'console.log(function(await) {\n  return await + 2;\n}(1));',
+            inspect.cleandoc("""
+                console.log(function(await) {
+                  return await + 2;
+                }(1));
+            """),
             self._reflect("(0, eval)('console.log(function (await) { return await + 2; }(1));');"))
 
     def test_module_function_constructor_binding_await_not_inlined(self):
         self.assertEqual(
-            "var _m = Function('return function (await) { return await; }')();\nsink(_m);",
+            inspect.cleandoc("""
+                var _m = Function('return function (await) { return await; }')();
+                sink(_m);
+            """),
             self._reflect_module(
                 "var _m = Function('return function (await) { return await; }')(); sink(_m);"))
 
     def test_function_constructor_reading_top_level_var_inlined_in_script_mode(self):
         self.assertEqual(
-            'var out = [];\nout.push(1);',
+            inspect.cleandoc("""
+                var out = [];
+                out.push(1);
+            """),
             self._reflect("var out = []; new Function('out.push(1)')();"))
 
     def test_module_function_constructor_reading_top_level_var_not_inlined(self):
         self.assertEqual(
-            "var out = [];\nnew Function('out.push(1)')();",
+            inspect.cleandoc("""
+                var out = [];
+                new Function('out.push(1)')();
+            """),
             self._reflect_module("var out = []; new Function('out.push(1)')();"))
 
     def test_indirect_eval_declaration_not_inlined_into_function(self):
@@ -337,12 +382,20 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_member_form_string_timer_lowered(self):
         self.assertEqual(
-            'window.setTimeout(function() {\n  alert(1);\n}, 0);',
+            inspect.cleandoc("""
+                window.setTimeout(function() {
+                  alert(1);
+                }, 0);
+            """),
             self._reflect("window.setTimeout('alert(1)', 0);"))
 
     def test_member_form_string_interval_lowered_in_a_browser(self):
         self.assertEqual(
-            'globalThis.setInterval(function() {\n  tick();\n}, 100);',
+            inspect.cleandoc("""
+                globalThis.setInterval(function() {
+                  tick();
+                }, 100);
+            """),
             self._reflect_in_a_browser("globalThis.setInterval('tick()', 100);"))
 
     def test_execscript_string_inlined_in_place(self):
@@ -453,42 +506,70 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_a_constructor_alias_off_a_function_name_inlines(self):
         self.assertEqual(
-            'function d() {}\nvar g = d.constructor;\nvar x = 42;',
+            inspect.cleandoc("""
+                function d() {}
+                var g = d.constructor;
+                var x = 42;
+            """),
             self._reflect('function d() {} var g = d.constructor; var x = g("return 42")();'))
 
     def test_a_constructor_alias_through_a_resolved_computed_key_inlines(self):
         self.assertEqual(
-            "function d() {}\nvar g = d['con' + 'structor'];\nvar x = 42;",
+            inspect.cleandoc("""
+                function d() {}
+                var g = d['con' + 'structor'];
+                var x = 42;
+            """),
             self._reflect(
                 "function d() {} var g = d['con' + 'structor']; var x = g('return 42')();"))
 
     def test_a_constructor_alias_through_a_name_chain_inlines(self):
         self.assertEqual(
-            'function d() {}\nvar g = d.constructor;\nvar h = g;\nvar x = 42;',
+            inspect.cleandoc("""
+                function d() {}
+                var g = d.constructor;
+                var h = g;
+                var x = 42;
+            """),
             self._reflect(
                 'function d() {} var g = d.constructor; var h = g; var x = h("return 42")();'))
 
     def test_a_construction_held_through_an_alias_folds_and_retires_the_temporary(self):
         self.assertEqual(
-            'function d() {}\nvar x = 42;',
+            inspect.cleandoc("""
+                function d() {}
+                var x = 42;
+            """),
             self._reflect("function d() {} var c = d.constructor('return 42'); var x = c();"))
 
     def test_a_constructor_alias_off_an_async_function_declines(self):
         source = 'async function d() {} var g = d.constructor; var x = g("return 42")();'
         self.assertEqual(
-            'async function d() {}\nvar g = d.constructor;\nvar x = g("return 42")();',
+            inspect.cleandoc("""
+                async function d() {}
+                var g = d.constructor;
+                var x = g("return 42")();
+            """),
             self._reflect(source))
 
     def test_a_constructor_alias_off_a_generator_function_declines(self):
         source = 'function* d() {} var g = d.constructor; var x = g("return 42")();'
         self.assertEqual(
-            'function* d() {}\nvar g = d.constructor;\nvar x = g("return 42")();',
+            inspect.cleandoc("""
+                function* d() {}
+                var g = d.constructor;
+                var x = g("return 42")();
+            """),
             self._reflect(source))
 
     def test_a_constructor_alias_read_before_its_base_holds_its_value_declines(self):
         source = 'var g = d.constructor; let d = function () {}; var x = g("return 42")();'
         self.assertEqual(
-            'var g = d.constructor;\nlet d = function() {};\nvar x = g("return 42")();',
+            inspect.cleandoc("""
+                var g = d.constructor;
+                let d = function() {};
+                var x = g("return 42")();
+            """),
             self._reflect(source))
 
     def test_a_constructor_alias_off_a_base_reassigned_to_a_string_declines(self):
@@ -521,19 +602,32 @@ class TestReflectionInlining(TestJsDeobfuscator):
     def test_a_constructor_alias_that_may_hold_another_value_declines(self):
         source = 'var e = function () {}; var g = d.constructor; g = e; var x = g("return 42")();'
         self.assertEqual(
-            'var e = function() {};\nvar g = d.constructor;\ng = e;\nvar x = g("return 42")();',
+            inspect.cleandoc("""
+                var e = function() {};
+                var g = d.constructor;
+                g = e;
+                var x = g("return 42")();
+            """),
             self._reflect(source))
 
     def test_a_bare_call_through_a_constructor_alias_is_not_an_invocation(self):
         source = "function d() {} var g = d.constructor; var f = g('return 42');"
         self.assertEqual(
-            'function d() {}\nvar g = d.constructor;\nvar f = g(\'return 42\');',
+            inspect.cleandoc("""
+                function d() {}
+                var g = d.constructor;
+                var f = g('return 42');
+            """),
             self._reflect(source))
 
     def test_a_bare_constructor_alias_call_at_statement_position_is_not_run(self):
         source = "function d() {} var g = d.constructor; g('console.log(1)');"
         self.assertEqual(
-            'function d() {}\nvar g = d.constructor;\ng(\'console.log(1)\');',
+            inspect.cleandoc("""
+                function d() {}
+                var g = d.constructor;
+                g('console.log(1)');
+            """),
             self._reflect(source))
 
     def test_a_single_empty_parameter_argument_names_no_parameters(self):
@@ -547,17 +641,31 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_a_constructor_alias_with_a_named_parameter_folds_by_evaluation(self):
         self.assertEqual(
-            "function d() {}\nvar g = d.constructor;\nvar x = 42;",
+            inspect.cleandoc("""
+                function d() {}
+                var g = d.constructor;
+                var x = 42;
+            """),
             self._reflect("function d() {} var g = d.constructor; var x = g('a', 'return 42')(1);"))
 
     def test_separated_temporary_with_another_read_is_kept(self):
         self.assertEqual(
-            "const m = Function('return 1');\nuse(m);\nvar x = 1;",
+            inspect.cleandoc("""
+                const m = Function('return 1');
+                use(m);
+                var x = 1;
+            """),
             self._reflect("const m = Function('return 1'); use(m); var x = m();"))
 
     def test_separated_temporary_named_in_with_body_is_kept(self):
         self.assertEqual(
-            "const m = Function('return 1');\nwith (obj) {\n  use(m);\n}\nvar x = 1;",
+            inspect.cleandoc("""
+                const m = Function('return 1');
+                with (obj) {
+                  use(m);
+                }
+                var x = 1;
+            """),
             self._reflect("const m = Function('return 1'); with (obj) { use(m); } var x = m();"))
 
     def test_a_site_reading_an_earlier_splices_declaration_folds_by_the_fixpoint(self):
@@ -583,7 +691,13 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_fold_of_a_temporary_a_same_pass_splice_rebinds_is_declined(self):
         self.assertEqual(
-            "var m = Function('return 1');\nm = function() {\n  return 2;\n};\nconsole.log(m());",
+            inspect.cleandoc("""
+                var m = Function('return 1');
+                m = function() {
+                  return 2;
+                };
+                console.log(m());
+            """),
             self._reflect(
                 "var m = Function('return 1');"
                 " eval('m = function () { return 2; };');"
@@ -605,7 +719,10 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_separated_temporary_the_analyst_names_an_entrypoint_is_kept(self):
         self.assertEqual(
-            "var m = Function('return 41');\nconsole.log(41);",
+            inspect.cleandoc("""
+                var m = Function('return 41');
+                console.log(41);
+            """),
             self._run_transformer(
                 "var m = Function('return 41'); console.log(m());",
                 JsReflectionInlining,
@@ -619,7 +736,11 @@ class TestReflectionInlining(TestJsDeobfuscator):
                 source, JsReflectionInlining, DeobfuscationOptions(entrypoints=('m*',))))
 
     def test_separated_reassigned_temporary_not_inlined(self):
-        source = "let m = Function('return 1');\nm = other;\nvar x = m();"
+        source = inspect.cleandoc("""
+            let m = Function('return 1');
+            m = other;
+            var x = m();
+        """)
         self.assertEqual(
             source, self._reflect("let m = Function('return 1'); m = other; var x = m();"))
 
@@ -629,7 +750,10 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect("const m = Function('a','return a'); var x = m(1);"))
 
     def test_separated_temporary_used_before_established_not_inlined(self):
-        source = "var x = m();\nconst m = Function('return 1');"
+        source = inspect.cleandoc("""
+            var x = m();
+            const m = Function('return 1');
+        """)
         self.assertEqual(source, self._reflect("var x = m(); const m = Function('return 1');"))
 
     def test_an_alias_hop_read_before_its_declarator_runs_does_not_fold(self):
@@ -638,13 +762,22 @@ class TestReflectionInlining(TestJsDeobfuscator):
             " var c = a('return 1'); c();"
         )
         self.assertEqual(
-            "var a = b;\nvar b = function() {}.constructor;\nvar c = a('return 1');\nc();",
+            inspect.cleandoc("""
+                var a = b;
+                var b = function() {}.constructor;
+                var c = a('return 1');
+                c();
+            """),
             self._reflect(source))
 
     def test_a_callee_read_before_its_declarator_runs_does_not_fold(self):
         source = "var c = g('return 1'); c(); var g = Function;"
         self.assertEqual(
-            "var c = g('return 1');\nc();\nvar g = Function;",
+            inspect.cleandoc("""
+                var c = g('return 1');
+                c();
+                var g = Function;
+            """),
             self._reflect(source))
 
     def test_payload_clashing_with_the_consumed_temporaries_folds_atomically(self):
@@ -818,7 +951,11 @@ class TestReflectionInlining(TestJsDeobfuscator):
     def test_a_body_redeclaring_an_unused_lexical_name_at_the_site_is_refused(self):
         source = "let x; var f = Function('var x; print(1);'); f();"
         self.assertEqual(
-            "let x;\nvar f = Function('var x; print(1);');\nf();",
+            inspect.cleandoc("""
+                let x;
+                var f = Function('var x; print(1);');
+                f();
+            """),
             self._reflect(source))
 
 
@@ -828,7 +965,10 @@ class TestReflectionInlining(TestJsDeobfuscator):
         fold hands that object to `sink`, which may read it.
         """
         self.assertEqual(
-            "var _m = Function('return this');\nsink(globalThis);",
+            inspect.cleandoc("""
+                var _m = Function('return this');
+                sink(globalThis);
+            """),
             self._deobfuscate(_STRING_ARRAY_REVEALS_A_GLOBAL_FINDER))
 
     def test_eval_expression_position_single_expr(self):
@@ -994,7 +1134,12 @@ class TestReflectionInlining(TestJsDeobfuscator):
             Function('o', 'with(z){ 1; } o.a;')({ get 'a'() { return x; } });
             """
         )
-        self.assertEqual('with (z) {\n  1;\n}\nx;', self._reflect(source))
+        self.assertEqual(inspect.cleandoc("""
+            with (z) {
+              1;
+            }
+            x;
+        """), self._reflect(source))
 
     def test_module_pack_setter_target_naming_a_module_var_still_inlined(self):
         source = inspect.cleandoc(
@@ -1135,13 +1280,20 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_function_constructor_multi_statement_this_becomes_globalthis(self):
         self.assertEqual(
-            'globalThis.x = 1;\nglobalThis.y = 2;',
+            inspect.cleandoc("""
+                globalThis.x = 1;
+                globalThis.y = 2;
+            """),
             self._reflect("new Function('this.x = 1; this.y = 2;')();"),
         )
 
     def test_function_constructor_nested_function_this_preserved(self):
         self.assertEqual(
-            '(function() {\n  return this;\n});',
+            inspect.cleandoc("""
+                (function() {
+                  return this;
+                });
+            """),
             self._reflect("new Function('return function(){ return this; }')();"),
         )
 
@@ -1406,9 +1558,15 @@ class TestReflectionInlining(TestJsDeobfuscator):
             "function f() { 'use strict'; return new Function('return 010')(); }"))
 
     def test_function_constructor_octal_body_folds_to_its_value_in_strict_script(self):
-        source = "'use strict';\nvar x = 8;"
+        source = inspect.cleandoc("""
+            'use strict';
+            var x = 8;
+        """)
         self.assertEqual(
-            source, self._reflect("'use strict';\nvar x = new Function('return 010')();"))
+            source, self._reflect(inspect.cleandoc("""
+                'use strict';
+                var x = new Function('return 010')();
+            """)))
 
     def test_function_constructor_pure_body_inlined_in_strict_function(self):
         source = inspect.cleandoc(
@@ -1582,13 +1740,37 @@ A_SURFACE_THAT_EVALUATES_A_STRING = {
 }
 
 A_PACK_WHOSE_PAYLOAD_IS_READ_OR_REFUSED = {
-    'Function("p", "((a, a) => p.k);")({ get k() {\n  return x;\n} });':
-        'Function("p", "((a, a) => p.k);")({ get k() {\n  return x;\n} });',
-    'Function("p", "((a, b) => p.k);")({ get k() {\n  return x;\n} });':
+    inspect.cleandoc("""
+        Function("p", "((a, a) => p.k);")({ get k() {
+          return x;
+        } });
+    """):
+        inspect.cleandoc("""
+            Function("p", "((a, a) => p.k);")({ get k() {
+              return x;
+            } });
+        """),
+    inspect.cleandoc("""
+        Function("p", "((a, b) => p.k);")({ get k() {
+          return x;
+        } });
+    """):
         '((a, b) => x);',
-    'Function("p", "p.k = ((a, a) => 0);")({ set k(v) {\n  x = v;\n} });':
-        'Function("p", "p.k = ((a, a) => 0);")({ set k(v) {\n  x = v;\n} });',
-    'Function("p", "p.k = ((a, b) => 0);")({ set k(v) {\n  x = v;\n} });':
+    inspect.cleandoc("""
+        Function("p", "p.k = ((a, a) => 0);")({ set k(v) {
+          x = v;
+        } });
+    """):
+        inspect.cleandoc("""
+            Function("p", "p.k = ((a, a) => 0);")({ set k(v) {
+              x = v;
+            } });
+        """),
+    inspect.cleandoc("""
+        Function("p", "p.k = ((a, b) => 0);")({ set k(v) {
+          x = v;
+        } });
+    """):
         'x = ((a, b) => 0);',
 }
 
@@ -1802,9 +1984,18 @@ A_PAYLOAD_CUT_SHORT = {
     'a parenthesized operand': APayloadCutShort(
         'console.log((1 + 2', ') * 3);', '9\n'),
     'a catch clause': APayloadCutShort(
-        'try {\n  console.log(1);\n} catch', ' (e) {}', '1\n'),
+        inspect.cleandoc("""
+            try {
+              console.log(1);
+            } catch
+        """), ' (e) {}', '1\n'),
     'a catch body': APayloadCutShort(
-        'try {\n  console.log(1);\n} catch (e) {\n  console.log(2);', '\n}', '1\n'),
+        inspect.cleandoc("""
+            try {
+              console.log(1);
+            } catch (e) {
+              console.log(2);
+        """), '\n}', '1\n'),
     'an object literal': APayloadCutShort(
         'console.log({ a: 1, b: 2', ' });', '{ a: 1, b: 2 }\n'),
     'an object property value': APayloadCutShort(
@@ -1812,19 +2003,35 @@ A_PAYLOAD_CUT_SHORT = {
     'an array literal': APayloadCutShort(
         'console.log([1, 2', ']);', '[ 1, 2 ]\n'),
     'a function body': APayloadCutShort(
-        '(function() {\n  console.log(1);', '\n})();', '1\n'),
+        inspect.cleandoc("""
+            (function() {
+              console.log(1);
+        """), '\n})();', '1\n'),
     'a parameter list': APayloadCutShort(
         '(function(a, b', ') {\n  console.log(a + b);\n})(1, 2);', '3\n'),
     'an arrow body': APayloadCutShort(
-        '(() => {\n  console.log(1);', '\n})();', '1\n'),
+        inspect.cleandoc("""
+            (() => {
+              console.log(1);
+        """), '\n})();', '1\n'),
     'a template literal': APayloadCutShort(
         'console.log(`a${1}b', '`);', 'a1b\n'),
     'a block statement': APayloadCutShort(
-        'if (1) {\n  console.log(1);', '\n}', '1\n'),
+        inspect.cleandoc("""
+            if (1) {
+              console.log(1);
+        """), '\n}', '1\n'),
     'a switch body': APayloadCutShort(
-        'switch (1) {\n  case 1:\n    console.log(1);', '\n}', '1\n'),
+        inspect.cleandoc("""
+            switch (1) {
+              case 1:
+                console.log(1);
+        """), '\n}', '1\n'),
     'a statement following a complete one': APayloadCutShort(
-        'console.log(1);\nconsole.log(2', ');', '1\n2\n'),
+        inspect.cleandoc("""
+            console.log(1);
+            console.log(2
+        """), ');', '1\n2\n'),
 }
 
 
@@ -2144,14 +2351,20 @@ class TestAStatementSpliceMovesTheTreeVersion(TestBase):
         script = JsParser("eval('var v = 1;'); SINK(v);").parse()
         before = tree_version(script)
         JsReflectionInlining().visit(script)
-        self.assertEqual('var v = 1;\nSINK(v);', JsSynthesizer().convert(script))
+        self.assertEqual(inspect.cleandoc("""
+            var v = 1;
+            SINK(v);
+        """), JsSynthesizer().convert(script))
         self.assertGreater(tree_version(script), before)
 
     def test_inlining_a_statement_position_execscript_advances_the_counter(self):
         script = JsParser("execScript('var v = 1;'); SINK(v);").parse()
         before = tree_version(script)
         JsReflectionInlining().visit(script)
-        self.assertEqual('var v = 1;\nSINK(v);', JsSynthesizer().convert(script))
+        self.assertEqual(inspect.cleandoc("""
+            var v = 1;
+            SINK(v);
+        """), JsSynthesizer().convert(script))
         self.assertGreater(tree_version(script), before)
 
 
@@ -2192,7 +2405,11 @@ class TestAPayloadIsWeighedAgainstTheContextOfItsSite(TestJsDeobfuscator):
 
     def test_an_instance_initializer_refuses_arguments(self):
         self.assertEqual(
-            'class C {\n  p = eval("arguments");\n}',
+            inspect.cleandoc("""
+                class C {
+                  p = eval("arguments");
+                }
+            """),
             self._reflect('class C { p = eval("arguments"); }'),
         )
 
@@ -2228,7 +2445,11 @@ class TestAPayloadIsWeighedAgainstTheContextOfItsSite(TestJsDeobfuscator):
 
     def test_a_generator_body_refuses_yield_as_a_name(self):
         self.assertEqual(
-            'function* g() {\n  (0, eval)("typeof yield");\n}',
+            inspect.cleandoc("""
+                function* g() {
+                  (0, eval)("typeof yield");
+                }
+            """),
             self._reflect('function* g() { (0, eval)("typeof yield"); }'),
         )
 
@@ -2266,19 +2487,55 @@ class TestAPayloadIsWeighedAgainstTheContextOfItsSite(TestJsDeobfuscator):
     def test_a_site_reading_the_words_as_a_script_does_takes_the_same_payloads(self):
         rows = {
             'class C { static { console.log(eval("1 + 1")); } }':
-                'class C {\n  static {\n    console.log(1 + 1);\n  }\n}',
+                inspect.cleandoc("""
+                    class C {
+                      static {
+                        console.log(1 + 1);
+                      }
+                    }
+                """),
             'class C { p = eval("1 + 1"); }':
-                'class C {\n  p = 1 + 1;\n}',
+                inspect.cleandoc("""
+                    class C {
+                      p = 1 + 1;
+                    }
+                """),
             'function g() { class C { m() { return eval("arguments"); } } }':
-                'function g() {\n  class C {\n    m() {\n      return arguments;\n    }\n  }\n}',
+                inspect.cleandoc("""
+                    function g() {
+                      class C {
+                        m() {
+                          return arguments;
+                        }
+                      }
+                    }
+                """),
             'function* g() { (0, eval)("typeof x"); }':
-                'function* g() {\n  typeof x;\n}',
+                inspect.cleandoc("""
+                    function* g() {
+                      typeof x;
+                    }
+                """),
             'function g() { var h = Function("return typeof yield"); console.log(h()); }':
-                'function g() {\n  console.log(typeof yield);\n}',
+                inspect.cleandoc("""
+                    function g() {
+                      console.log(typeof yield);
+                    }
+                """),
             'function f() { var g = Function("return typeof await"); console.log(g()); } f();':
-                'function f() {\n  console.log(typeof await);\n}\nf();',
+                inspect.cleandoc("""
+                    function f() {
+                      console.log(typeof await);
+                    }
+                    f();
+                """),
             'async function f() { var g = Function("return typeof x"); console.log(g()); } f();':
-                'async function f() {\n  console.log(typeof x);\n}\nf();',
+                inspect.cleandoc("""
+                    async function f() {
+                      console.log(typeof x);
+                    }
+                    f();
+                """),
         }
         self.assertEqual({source: self._reflect(source) for source in rows}, rows)
 
@@ -2289,23 +2546,28 @@ class TestAFileSpellingModuleSyntaxIsAModuleDestination(TestJsDeobfuscator):
         return self._run_transformer(source, JsReflectionInlining)
 
     def test_an_indirect_eval_binding_await_is_left_standing_beside_an_export(self):
-        source = (
-            'export const tag = 1;\n'
-            '(0, eval)("console.log(function (await) { return await + 2; }(1));");'
-        )
+        source = inspect.cleandoc("""
+            export const tag = 1;
+            (0, eval)("console.log(function (await) { return await + 2; }(1));");
+        """)
         self.assertEqual(source, self._reflect(source))
 
     def test_a_function_body_binding_await_is_left_standing_beside_an_export(self):
-        source = (
-            'export const tag = 1;\n'
-            "var _m = Function('return function (await) { return await; }')();\n"
-            'sink(_m);'
-        )
+        source = inspect.cleandoc("""
+            export const tag = 1;
+            var _m = Function('return function (await) { return await; }')();
+            sink(_m);
+        """)
         self.assertEqual(source, self._reflect(source))
 
     def test_the_same_function_body_is_inlined_where_no_module_syntax_is_spelled(self):
         self.assertEqual(
-            'var _m = function(await) {\n  return await;\n};\nsink(_m);',
+            inspect.cleandoc("""
+                var _m = function(await) {
+                  return await;
+                };
+                sink(_m);
+            """),
             self._reflect(
                 "var _m = Function('return function (await) { return await; }')(); sink(_m);"
             ),
@@ -2313,14 +2575,28 @@ class TestAFileSpellingModuleSyntaxIsAModuleDestination(TestJsDeobfuscator):
 
     def test_a_function_body_the_module_reads_is_still_inlined_beside_an_export(self):
         self.assertEqual(
-            'export const tag = 1;\nvar _m = 1;\nsink(_m);',
-            self._reflect('export const tag = 1;\nvar _m = Function("return 1")(); sink(_m);'),
+            inspect.cleandoc("""
+                export const tag = 1;
+                var _m = 1;
+                sink(_m);
+            """),
+            self._reflect(inspect.cleandoc("""
+                export const tag = 1;
+                var _m = Function("return 1")(); sink(_m);
+            """)),
         )
 
     def test_a_payload_referring_to_await_is_left_standing_beside_an_export(self):
         rows = [
-            'export const tag = 1;\n(0, eval)("console.log(typeof await);");',
-            'export const tag = 1;\nvar g = Function("return typeof await");\nconsole.log(g());',
+            inspect.cleandoc("""
+                export const tag = 1;
+                (0, eval)("console.log(typeof await);");
+            """),
+            inspect.cleandoc("""
+                export const tag = 1;
+                var g = Function("return typeof await");
+                console.log(g());
+            """),
         ]
         self.assertEqual(
             {source: self._reflect(source) for source in rows},
@@ -2328,7 +2604,11 @@ class TestAFileSpellingModuleSyntaxIsAModuleDestination(TestJsDeobfuscator):
         )
 
     def test_a_global_declaration_an_indirect_eval_makes_is_left_standing_beside_an_export(self):
-        source = 'export const t = 1;\n(0, eval)("var x = 1;");\nconsole.log(globalThis.x);'
+        source = inspect.cleandoc("""
+            export const t = 1;
+            (0, eval)("var x = 1;");
+            console.log(globalThis.x);
+        """)
         self.assertEqual(source, self._reflect(source))
 
 
@@ -2348,15 +2628,25 @@ class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator
 
     def test_an_opener_payload_is_inlined_into_a_script(self):
         rows = {
-            'eval("<!-- x\\nconsole.log(1);");': '<!-- x\nconsole.log(1);',
-            '(0, eval)("<!-- x\\nconsole.log(1);");': '<!-- x\nconsole.log(1);',
+            'eval("<!-- x\\nconsole.log(1);");': inspect.cleandoc("""
+                <!-- x
+                console.log(1);
+            """),
+            '(0, eval)("<!-- x\\nconsole.log(1);");': inspect.cleandoc("""
+                <!-- x
+                console.log(1);
+            """),
             'var f = Function("<!-- x\\nreturn 1"); console.log(f());': 'console.log(1);',
         }
         self.assertEqual({source: self._reflect(source) for source in rows}, rows)
 
     def test_a_closer_payload_is_inlined_into_a_script(self):
         self.assertEqual(
-            '1;\n--> x\nconsole.log(2);',
+            inspect.cleandoc("""
+                1;
+                --> x
+                console.log(2);
+            """),
             self._reflect('eval("1;\\n--> x\\nconsole.log(2);");'),
         )
 
@@ -2369,7 +2659,10 @@ class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator
             'eval("<!-- x\\nconsole.log(1);");': 'eval("<!-- x\\nconsole.log(1);");',
             '(0, eval)("<!-- x\\nconsole.log(1);");': '(0, eval)("<!-- x\\nconsole.log(1);");',
             'eval("1;\\n--> x\\nconsole.log(2);");': 'eval("1;\\n--> x\\nconsole.log(2);");',
-            'var f = Function("<!-- x\\nreturn 1");\nconsole.log(f());': 'console.log(1);',
+            inspect.cleandoc("""
+                var f = Function("<!-- x\\nreturn 1");
+                console.log(f());
+            """): 'console.log(1);',
         }
         self.assertEqual(
             {source: self._reflect_module(source) for source in rows},
@@ -2378,14 +2671,39 @@ class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator
 
     def test_a_payload_holding_either_is_left_standing_beside_an_export(self):
         rows = {
-            'export const tag = 1;\neval("<!-- x\\nconsole.log(1);");':
-                'export const tag = 1;\neval("<!-- x\\nconsole.log(1);");',
-            'export const tag = 1;\n(0, eval)("<!-- x\\nconsole.log(1);");':
-                'export const tag = 1;\n(0, eval)("<!-- x\\nconsole.log(1);");',
-            'export const tag = 1;\neval("1;\\n--> x\\nconsole.log(2);");':
-                'export const tag = 1;\neval("1;\\n--> x\\nconsole.log(2);");',
-            'export const tag = 1;\nvar f = Function("<!-- x\\nreturn 1");\nconsole.log(f());':
-                'export const tag = 1;\nconsole.log(1);',
+            inspect.cleandoc("""
+                export const tag = 1;
+                eval("<!-- x\\nconsole.log(1);");
+            """):
+                inspect.cleandoc("""
+                    export const tag = 1;
+                    eval("<!-- x\\nconsole.log(1);");
+                """),
+            inspect.cleandoc("""
+                export const tag = 1;
+                (0, eval)("<!-- x\\nconsole.log(1);");
+            """):
+                inspect.cleandoc("""
+                    export const tag = 1;
+                    (0, eval)("<!-- x\\nconsole.log(1);");
+                """),
+            inspect.cleandoc("""
+                export const tag = 1;
+                eval("1;\\n--> x\\nconsole.log(2);");
+            """):
+                inspect.cleandoc("""
+                    export const tag = 1;
+                    eval("1;\\n--> x\\nconsole.log(2);");
+                """),
+            inspect.cleandoc("""
+                export const tag = 1;
+                var f = Function("<!-- x\\nreturn 1");
+                console.log(f());
+            """):
+                inspect.cleandoc("""
+                    export const tag = 1;
+                    console.log(1);
+                """),
         }
         self.assertEqual(
             {source: self._reflect(source) for source in rows},
@@ -2394,8 +2712,14 @@ class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator
 
     def test_a_payload_holding_one_where_no_statement_carries_it_is_left_standing(self):
         rows = [
-            'export const tag = 1;\neval("f(<!-- x\\n1);");',
-            'export const tag = 1;\n(0, eval)("console.log(1); <!-- x");',
+            inspect.cleandoc("""
+                export const tag = 1;
+                eval("f(<!-- x\\n1);");
+            """),
+            inspect.cleandoc("""
+                export const tag = 1;
+                (0, eval)("console.log(1); <!-- x");
+            """),
         ]
         self.assertEqual(
             {source: self._reflect_module(source) for source in rows},
@@ -2436,10 +2760,27 @@ class TestAPayloadIsScriptCodeWhereverItIsEvaluated(TestJsDeobfuscator):
 
     def test_a_for_await_payload_is_left_standing_at_every_site(self):
         rows = [
-            'function f() {\n  eval("for await (const x of []) {}");\n}',
-            'async function f() {\n  eval("for await (const x of []) {}");\n}',
-            'async function f() {\n  (0, eval)("for await (const x of []) {}");\n}',
-            'async function f() {\n  var g = Function("for await (const x of []) {}");\n  g();\n}',
+            inspect.cleandoc("""
+                function f() {
+                  eval("for await (const x of []) {}");
+                }
+            """),
+            inspect.cleandoc("""
+                async function f() {
+                  eval("for await (const x of []) {}");
+                }
+            """),
+            inspect.cleandoc("""
+                async function f() {
+                  (0, eval)("for await (const x of []) {}");
+                }
+            """),
+            inspect.cleandoc("""
+                async function f() {
+                  var g = Function("for await (const x of []) {}");
+                  g();
+                }
+            """),
             '(0, eval)("for await (const x of []) {}");',
         ]
         self.assertEqual(
@@ -2533,11 +2874,23 @@ _EVERY_WRITE_FORM_A_CONSTRUCTED_BODY_CAN_STORE = [
 
 _A_ROOT_BINDING_A_CONSTRUCTED_BODY_READS = {
     "var g = 5; var f = Function('a', 'return g + arguments[0]'); var r = f(1);":
-        "var g = 5;\nvar f = Function('a', 'return g + arguments[0]');\nvar r = f(1);",
+        inspect.cleandoc("""
+            var g = 5;
+            var f = Function('a', 'return g + arguments[0]');
+            var r = f(1);
+        """),
     "let g = 5; var f = Function('a', 'return g + arguments[0]'); var r = f(1);":
-        "let g = 5;\nvar f = Function('a', 'return g + arguments[0]');\nvar r = f(1);",
+        inspect.cleandoc("""
+            let g = 5;
+            var f = Function('a', 'return g + arguments[0]');
+            var r = f(1);
+        """),
     "var undefined = 4; var f = Function('a', 'return undefined + arguments[0]'); var r = f(1);":
-        "var undefined = 4;\nvar f = Function('a', 'return undefined + arguments[0]');\nvar r = f(1);",
+        inspect.cleandoc("""
+            var undefined = 4;
+            var f = Function('a', 'return undefined + arguments[0]');
+            var r = f(1);
+        """),
 }
 
 _A_GLOBAL_STORE_NO_STATIC_GATE_NAMES = [
@@ -2602,15 +2955,21 @@ class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
             "eval('String = function (x) { return 99; };');"
             " var f = Function('a', 'return String(arguments[0]);'); console.log(f(97));"
         )
-        expected = (
-            'String = function(x) {\n  return 99;\n};\n'
-            "var f = Function('a', 'return String(arguments[0]);');\nconsole.log(f(97));"
-        )
+        expected = inspect.cleandoc("""
+            String = function(x) {
+              return 99;
+            };
+            var f = Function('a', 'return String(arguments[0]);');
+            console.log(f(97));
+        """)
         self.assertEqual(expected, self._reflect(source))
 
     def test_a_rebound_intrinsic_inside_an_eval_argument_stays_standing(self):
         source = 'String = 5; var r = eval(String(97));'
-        self.assertEqual('String = 5;\nvar r = eval(String(97));', self._reflect(source))
+        self.assertEqual(inspect.cleandoc("""
+            String = 5;
+            var r = eval(String(97));
+        """), self._reflect(source))
 
     def test_a_constant_argument_folds_to_the_value_the_body_answers(self):
         self.assertEqual(
@@ -2641,7 +3000,10 @@ class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
             ' var f = Function(\'a\', \'return arguments[0].split(",")\');'
             " console.log(f('x,y,z')[1]);"
         )
-        self.assertEqual("global.q = 5;\nconsole.log('y');", self._deobfuscate(source))
+        self.assertEqual(inspect.cleandoc("""
+            global.q = 5;
+            console.log('y');
+        """), self._deobfuscate(source))
 
 
 class TestAnInvocationPassingArgumentsToAConstruction(TestJsDeobfuscator):
@@ -2656,7 +3018,11 @@ class TestAnInvocationPassingArgumentsToAConstruction(TestJsDeobfuscator):
 
     def test_a_literal_argument_at_statement_position_splices_the_body(self):
         self.assertEqual(
-            'var a = 1;\nvar b = 2;\ncombine(a, b);',
+            inspect.cleandoc("""
+                var a = 1;
+                var b = 2;
+                combine(a, b);
+            """),
             self._reflect(
                 "var f = Function('', 'var a = 1; var b = 2; combine(a, b);'); f(3400);"))
 
@@ -2695,19 +3061,28 @@ class TestAnInvocationPassingArgumentsToAConstruction(TestJsDeobfuscator):
     def test_a_side_effectful_argument_stays_standing(self):
         source = "var f = Function('', 'return 42'); console.log(f(sink()));"
         self.assertEqual(
-            'var f = Function(\'\', \'return 42\');\nconsole.log(f(sink()));',
+            inspect.cleandoc("""
+                var f = Function('', 'return 42');
+                console.log(f(sink()));
+            """),
             self._reflect(source))
 
     def test_an_argument_whose_read_may_throw_stays_standing(self):
         source = "var f = Function('', 'return 42'); console.log(f(oo.x));"
         self.assertEqual(
-            'var f = Function(\'\', \'return 42\');\nconsole.log(f(oo.x));',
+            inspect.cleandoc("""
+                var f = Function('', 'return 42');
+                console.log(f(oo.x));
+            """),
             self._reflect(source))
 
     def test_a_body_reading_arguments_through_a_nested_arrow_stays_standing(self):
         source = "var f = Function('', 'return (() => arguments.length)()'); console.log(f(42));"
         self.assertEqual(
-            'var f = Function(\'\', \'return (() => arguments.length)()\');\nconsole.log(f(42));',
+            inspect.cleandoc("""
+                var f = Function('', 'return (() => arguments.length)()');
+                console.log(f(42));
+            """),
             self._reflect(source))
 
     def test_a_body_reading_arguments_with_a_literal_argument_folds_by_evaluation(self):
@@ -2717,45 +3092,45 @@ class TestAnInvocationPassingArgumentsToAConstruction(TestJsDeobfuscator):
 
 
 _A_DECODER_UNDER_A_LATER_EVAL: list[str] = [
-    (
-        'var out;\n'
-        'var q = (function () {\n'
-        '  function jCb(l) { return l; }\n'
-        '  var xTe = jCb.constructor;\n'
-        "  var Urn = xTe('', 'return 9;');\n"
-        "  var _a = function (e, r) { return e.split('*').join(''); }('o*ut*5', 0);\n"
-        "  (async function () { await eval(_a[4]); console.log('late'); })();\n"
-        '  return _a;\n'
-        '})();\n'
-        'console.log(q);'
-    ),
-    (
-        'var out;\n'
-        'var q = (function () {\n'
-        '  function jCb(l) { return l; }\n'
-        "  var xTe = jCb['constructor'];\n"
-        "  var Urn = xTe('', 'return 9;');\n"
-        "  var _a = function (e, r) { return e.split('*').join(''); }('o*ut*5', 0);\n"
-        "  (async function () { await eval(_a[4]); console.log('late'); })();\n"
-        '  return _a;\n'
-        '})();\n'
-        'console.log(q);'
-    ),
+    inspect.cleandoc("""
+        var out;
+        var q = (function () {
+          function jCb(l) { return l; }
+          var xTe = jCb.constructor;
+          var Urn = xTe('', 'return 9;');
+          var _a = function (e, r) { return e.split('*').join(''); }('o*ut*5', 0);
+          (async function () { await eval(_a[4]); console.log('late'); })();
+          return _a;
+        })();
+        console.log(q);
+    """),
+    inspect.cleandoc("""
+        var out;
+        var q = (function () {
+          function jCb(l) { return l; }
+          var xTe = jCb['constructor'];
+          var Urn = xTe('', 'return 9;');
+          var _a = function (e, r) { return e.split('*').join(''); }('o*ut*5', 0);
+          (async function () { await eval(_a[4]); console.log('late'); })();
+          return _a;
+        })();
+        console.log(q);
+    """),
 ]
 
 _A_VOLATILE_READ_ON_A_CYCLE: list[str] = [
-    (
-        'var out = [];\n'
-        'var q = (function () {\n'
-        '  var x = 1;\n'
-        '  for (var i = 0; i < 2; i++) {\n'
-        '    out.push(x);\n'
-        "    eval('x = 2;');\n"
-        '  }\n'
-        '  return x;\n'
-        '})();\n'
-        "console.log(q, out.join(','));"
-    ),
+    inspect.cleandoc("""
+        var out = [];
+        var q = (function () {
+          var x = 1;
+          for (var i = 0; i < 2; i++) {
+            out.push(x);
+            eval('x = 2;');
+          }
+          return x;
+        })();
+        console.log(q, out.join(','));
+    """),
 ]
 
 
@@ -2787,7 +3162,11 @@ class TestACommonJsFileRunsAPayloadAsSloppyCode(TestJsDeobfuscator):
     def test_a_payload_only_sloppy_code_runs_as_written_is_inlined_into_a_commonjs_file(self):
         rows = {
             'Function("leak = 5;")();': 'leak = 5;',
-            'Function("with ({a: 1}) console.log(a);")();': 'with ({ a: 1 }) {\n  console.log(a);\n}',
+            'Function("with ({a: 1}) console.log(a);")();': inspect.cleandoc("""
+                with ({ a: 1 }) {
+                  console.log(a);
+                }
+            """),
             'console.log(Function("return 010")());': 'console.log(010);',
         }
         self.assertEqual(
@@ -2804,8 +3183,14 @@ class TestACommonJsFileRunsAPayloadAsSloppyCode(TestJsDeobfuscator):
 
     def test_a_payload_holding_an_html_comment_is_inlined_into_a_commonjs_file(self):
         rows = {
-            'eval("<!-- x\\nconsole.log(1);");': '<!-- x\nconsole.log(1);',
-            '(0, eval)("<!-- x\\nconsole.log(1);");': '<!-- x\nconsole.log(1);',
+            'eval("<!-- x\\nconsole.log(1);");': inspect.cleandoc("""
+                <!-- x
+                console.log(1);
+            """),
+            '(0, eval)("<!-- x\\nconsole.log(1);");': inspect.cleandoc("""
+                <!-- x
+                console.log(1);
+            """),
         }
         self.assertEqual(
             {source: self._reflect(source, ExecutionModel.commonjs) for source in rows},
@@ -2896,7 +3281,11 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
         'console.log((0, eval)("typeof __dirname"));': 'console.log(typeof __dirname);',
         'console.log((0, eval)("typeof __filename"));': 'console.log(typeof __filename);',
         'setTimeout("console.log(typeof module)", 0);':
-            'setTimeout(function() {\n  console.log(typeof module);\n}, 0);',
+            inspect.cleandoc("""
+                setTimeout(function() {
+                  console.log(typeof module);
+                }, 0);
+            """),
     }
 
     def _reflect(
@@ -2935,9 +3324,15 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
 
     def test_the_same_payload_is_inlined_into_a_file_spelling_export(self):
         self.assertEqual(
-            'export const t = 1;\nconsole.log(typeof require);',
+            inspect.cleandoc("""
+                export const t = 1;
+                console.log(typeof require);
+            """),
             self._reflect(
-                'export const t = 1;\nconsole.log(Function("return typeof require")());',
+                inspect.cleandoc("""
+                    export const t = 1;
+                    console.log(Function("return typeof require")());
+                """),
                 ExecutionModel.commonjs,
             ),
         )
@@ -2950,7 +3345,10 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
         for execution in (ExecutionModel.commonjs, ExecutionModel.module):
             with self.subTest(execution.name):
                 self.assertEqual(
-                    'var r = require;\nconsole.log(typeof r);',
+                    inspect.cleandoc("""
+                        var r = require;
+                        console.log(typeof r);
+                    """),
                     self._reflect(source, execution),
                 )
 
@@ -2965,7 +3363,10 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
             with self.subTest(execution.name):
                 self.assertEqual(
                     self._reflect(source, execution),
-                    "exports = module.exports = {};\nconsole.log((0, eval)('typeof exports'));",
+                    inspect.cleandoc("""
+                        exports = module.exports = {};
+                        console.log((0, eval)('typeof exports'));
+                    """),
                 )
 
     def test_a_payload_declaring_a_wrapper_name_is_left_standing_at_the_top_of_the_file(self):
@@ -3020,8 +3421,16 @@ class TestAPackedTypeofThroughAGetterReturningAName(TestJsDeobfuscator):
 
     def test_typeof_of_a_key_whose_getter_returns_a_name_is_left_packed(self):
         rows = [
-            'Function("p", "console.log(typeof p.g)")({ get g() {\n  return someGlobal;\n} });',
-            'Function("p", "console.log(typeof (p.g))")({ get g() {\n  return someGlobal;\n} });',
+            inspect.cleandoc("""
+                Function("p", "console.log(typeof p.g)")({ get g() {
+                  return someGlobal;
+                } });
+            """),
+            inspect.cleandoc("""
+                Function("p", "console.log(typeof (p.g))")({ get g() {
+                  return someGlobal;
+                } });
+            """),
         ]
         self.assertEqual(
             {source: self._reflect(source) for source in rows},
@@ -3069,18 +3478,31 @@ class TestAPackedCompoundWriteBecomesTheSameOperatorOnTheName(TestJsDeobfuscator
         )
 
     def test_a_compound_write_through_a_getter_and_a_setter_naming_different_variables_stays_packed(self):
-        source = 'Function("p", "p.k += 1;")({ get k() {\n  return a;\n}, set k(v) {\n  return b = v;\n} });'
+        source = inspect.cleandoc("""
+            Function("p", "p.k += 1;")({ get k() {
+              return a;
+            }, set k(v) {
+              return b = v;
+            } });
+        """)
         self.assertEqual(self._reflect(source), source)
 
     def test_a_compound_write_through_a_key_with_no_setter_stays_packed(self):
-        source = 'Function("p", "p.k += 1;")({ get k() {\n  return a;\n} });'
+        source = inspect.cleandoc("""
+            Function("p", "p.k += 1;")({ get k() {
+              return a;
+            } });
+        """)
         self.assertEqual(self._reflect(source), source)
 
     def test_a_delete_through_the_accessor_object_stays_packed(self):
-        source = (
-            'Function("p", "console.log(delete p.k);")'
-            '({ get k() {\n  return counter;\n}, set k(v) {\n  return counter = v;\n} });'
-        )
+        source = inspect.cleandoc("""
+            Function("p", "console.log(delete p.k);")({ get k() {
+              return counter;
+            }, set k(v) {
+              return counter = v;
+            } });
+        """)
         self.assertEqual(self._reflect(source), source)
 
     def test_a_for_in_and_a_for_of_head_through_the_accessor_object_become_heads_on_the_name(self):

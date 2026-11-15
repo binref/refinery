@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.analysis.values import make_string_literal
@@ -76,11 +78,26 @@ class TestPs1ASubstitutionKeepsTheBindingErrorsItReplaces(TestPs1):
 
     def test_every_pass_keeps_the_binding_error_a_fold_would_drop(self):
         for source in (
-            "Set-Item -P 'Variable:x' 5\nWrite-Output $x",
-            '$x = 1\nWrite-Output (Get-Variable x -Bogus).Value',
-            '$x = 1\nWrite-Output (Get-Variable x zzq -ValueOnly)',
-            "Set-Item Variable:x 'a' 'b'\nWrite-Output $x",
-            "Set-Variable x 'a' 'b'\nWrite-Output $x",
+            inspect.cleandoc("""
+                Set-Item -P 'Variable:x' 5
+                Write-Output $x
+            """),
+            inspect.cleandoc("""
+                $x = 1
+                Write-Output (Get-Variable x -Bogus).Value
+            """),
+            inspect.cleandoc("""
+                $x = 1
+                Write-Output (Get-Variable x zzq -ValueOnly)
+            """),
+            inspect.cleandoc("""
+                Set-Item Variable:x 'a' 'b'
+                Write-Output $x
+            """),
+            inspect.cleandoc("""
+                Set-Variable x 'a' 'b'
+                Write-Output $x
+            """),
             "(Get-Command -N 'wr?te').Name",
         ):
             with self.subTest(source):

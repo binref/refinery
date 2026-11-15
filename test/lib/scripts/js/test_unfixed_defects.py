@@ -224,11 +224,10 @@ class TestALiteralNoElementOfWhichRunsIsCounted(TestBase):
 
 
 A_STRICT_BODY_ASSIGNING_TO_AN_UNDECLARED_NAME = {
-    (
-        "function f() { 'use strict'; try { und = 1; return 'ok'; }"
-        " catch (e) { return 'threw'; } }\n"
-        'console.log(f());\n'
-    ): ('threw\n', None),
+    a_program("""
+        function f() { 'use strict'; try { und = 1; return 'ok'; } catch (e) { return 'threw'; } }
+        console.log(f());
+    """): ('threw\n', None),
     "(function () { 'use strict'; und = 1; console.log(1); })();\n": ('', 'ReferenceError'),
 }
 
@@ -342,16 +341,34 @@ class TestTheDeclarationThatMakesAFileAnEsModuleStays(TestBase):
 
 
 A_READ_OF_AN_ALIAS_THE_RUNNING_HOST_LACKS = {
-    'function f() { return window; }\nf();\nconsole.log(1);\n': ('', 'ReferenceError'),
-    'function f() { return self; }\nf();\nconsole.log(1);\n': ('', 'ReferenceError'),
-    'function f() { return top; }\nf();\nconsole.log(1);\n': ('', 'ReferenceError'),
-    'function f() { return frames; }\nf();\nconsole.log(1);\n': ('', 'ReferenceError'),
+    a_program("""
+        function f() { return window; }
+        f();
+        console.log(1);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function f() { return self; }
+        f();
+        console.log(1);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function f() { return top; }
+        f();
+        console.log(1);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function f() { return frames; }
+        f();
+        console.log(1);
+    """): ('', 'ReferenceError'),
 }
 
 
-A_READ_OF_THE_ALIAS_ONLY_ANOTHER_HOST_LACKS = (
-    'function f() { return global; }\nf();\nconsole.log(1);\n'
-)
+A_READ_OF_THE_ALIAS_ONLY_ANOTHER_HOST_LACKS = a_program("""
+    function f() { return global; }
+    f();
+    console.log(1);
+""")
 
 
 class TestABareGlobalObjectAliasIsNotCertainToResolve(TestBase):
@@ -376,13 +393,19 @@ class TestABareGlobalObjectAliasIsNotCertainToResolve(TestBase):
         )
 
 
-A_GLOBAL_PROPERTY_READ_THROUGH_A_SECOND_ALIAS = (
-    'globalThis._V = 1;\nfunction f() { return global._V; }\nf();\nconsole.log(1);\n'
-)
+A_GLOBAL_PROPERTY_READ_THROUGH_A_SECOND_ALIAS = a_program("""
+    globalThis._V = 1;
+    function f() { return global._V; }
+    f();
+    console.log(1);
+""")
 
-A_GLOBAL_PROPERTY_ESTABLISHED_BY_A_BARE_ASSIGNMENT = (
-    'foo = 1;\nfunction f() { return global.foo; }\nf();\nconsole.log(1);\n'
-)
+A_GLOBAL_PROPERTY_ESTABLISHED_BY_A_BARE_ASSIGNMENT = a_program("""
+    foo = 1;
+    function f() { return global.foo; }
+    f();
+    console.log(1);
+""")
 
 
 class TestACrossAliasGlobalPropertyCollapseKeepsItsBaseThrow(TestBase):
@@ -413,12 +436,16 @@ class TestACrossAliasGlobalPropertyCollapseKeepsItsBaseThrow(TestBase):
 
 
 A_GLOBAL_PROPERTY_READ_THROUGH_A_RETURNED_THIS = {
-    'globalThis.x = 1;\n'
-    'var g = (function () { return this; })();\n'
-    'console.log(g.x);\n': '1\n',
-    'globalThis.x = 1;\n'
-    'function f() { return this; }\n'
-    'console.log(f().x);\n': '1\n',
+    a_program("""
+        globalThis.x = 1;
+        var g = (function () { return this; })();
+        console.log(g.x);
+    """): '1\n',
+    a_program("""
+        globalThis.x = 1;
+        function f() { return this; }
+        console.log(f().x);
+    """): '1\n',
 }
 
 
@@ -477,13 +504,46 @@ class TestAGlobalObjectReturnedAsAFunctionsThisKeepsTheWritesReadThroughIt(TestB
 
 
 A_DEGENERATE_FINDER_THAT_THROWS_A_TYPEERROR = {
-    'function g() { var o = null; return o.x || globalThis; }\nvar x = g();\nconsole.log(x);\n':
-        'function g() {\n  return null.x || globalThis;\n}\nvar x = g();\nconsole.log(x);',
-    'function g() { const k = globalThis; k = globalThis; return k; }\nvar x = g();\nconsole.log(x);\n':
-        'function g() {\n  const k = globalThis;\n  k = globalThis;\n  return k;\n}'
-        '\nvar x = g();\nconsole.log(x);',
-    'function g() { const k = globalThis; k++; return k; }\nvar x = g();\nconsole.log(x);\n':
-        'function g() {\n  const k = globalThis;\n  k++;\n  return k;\n}\nvar x = g();\nconsole.log(x);',
+    a_program("""
+        function g() { var o = null; return o.x || globalThis; }
+        var x = g();
+        console.log(x);
+    """):
+        inspect.cleandoc("""
+            function g() {
+              return null.x || globalThis;
+            }
+            var x = g();
+            console.log(x);
+        """),
+    a_program("""
+        function g() { const k = globalThis; k = globalThis; return k; }
+        var x = g();
+        console.log(x);
+    """):
+        inspect.cleandoc("""
+            function g() {
+              const k = globalThis;
+              k = globalThis;
+              return k;
+            }
+            var x = g();
+            console.log(x);
+        """),
+    a_program("""
+        function g() { const k = globalThis; k++; return k; }
+        var x = g();
+        console.log(x);
+    """):
+        inspect.cleandoc("""
+            function g() {
+              const k = globalThis;
+              k++;
+              return k;
+            }
+            var x = g();
+            console.log(x);
+        """),
 }
 
 
@@ -663,16 +723,28 @@ class TestAnIndirectEvalThroughAHostConditionalAliasKeepsItsBaseThrow(TestBase):
 #: `typeof` throws for a binding in its dead zone, although it answers `'undefined'` for a name
 #: nothing binds.
 A_READ_IN_THE_DEAD_ZONE_OF_A_LEXICAL_BINDING = {
-    'function f() { let v = q; let q = 1; }\n'
-    'f();\nconsole.log(1);\n': ('', 'ReferenceError'),
+    a_program("""
+        function f() { let v = q; let q = 1; }
+        f();
+        console.log(1);
+    """): ('', 'ReferenceError'),
 
-    'function f() { let v = 0; v = q; const q = 1; }\n'
-    'f();\nconsole.log(1);\n': ('', 'ReferenceError'),
+    a_program("""
+        function f() { let v = 0; v = q; const q = 1; }
+        f();
+        console.log(1);
+    """): ('', 'ReferenceError'),
 
-    'function f() { { let v = typeof q; let q = 1; } }\n'
-    'f();\nconsole.log(1);\n': ('', 'ReferenceError'),
+    a_program("""
+        function f() { { let v = typeof q; let q = 1; } }
+        f();
+        console.log(1);
+    """): ('', 'ReferenceError'),
 
-    '{ let v = q; let q = 1; }\nconsole.log(1);\n': ('', 'ReferenceError'),
+    a_program("""
+        { let v = q; let q = 1; }
+        console.log(1);
+    """): ('', 'ReferenceError'),
 }
 
 
@@ -688,21 +760,76 @@ class TestAReadOfALexicalBindingBeforeItsDeclarationThrows(TestBase):
 
 
 A_DEAD_ZONE_READ_REACHED_THROUGH_A_CALL = {
-    'function f() { return q; }\nvar dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function f() { return q; }\nvar dead = f();\nconst q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'var g = () => q;\nvar dead = g();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function g() { return q; }\nfunction f() { return g(); }\n'
-    'var dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'var g = () => q;\nvar f = () => g();\n'
-    'var dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function f() { return C; }\nvar dead = f();\nclass C {}\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function f() { return this && q; }\nvar dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function f() { return this && q; }\nvar dead = f();\nconst q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'var g = () => this && q;\nvar dead = g();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function g() { return this && q; }\nfunction f() { return g(); }\n'
-    'var dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'var g = () => this && q;\nvar f = () => g();\n'
-    'var dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    a_program("""
+        function f() { return q; }
+        var dead = f();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function f() { return q; }
+        var dead = f();
+        const q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        var g = () => q;
+        var dead = g();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function g() { return q; }
+        function f() { return g(); }
+        var dead = f();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        var g = () => q;
+        var f = () => g();
+        var dead = f();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function f() { return C; }
+        var dead = f();
+        class C {}
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function f() { return this && q; }
+        var dead = f();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function f() { return this && q; }
+        var dead = f();
+        const q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        var g = () => this && q;
+        var dead = g();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function g() { return this && q; }
+        function f() { return g(); }
+        var dead = f();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        var g = () => this && q;
+        var f = () => g();
+        var dead = f();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
 }
 
 
@@ -718,10 +845,28 @@ class TestADeadZoneReadReachedThroughACallStillThrows(TestBase):
 
 
 A_DEAD_ASSIGNMENT_TO_A_DEAD_ZONE_READER = {
-    'function f() { return this && q; }\nvar x;\nx = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function f() { return this && q; }\nvar x;\nx = [f()];\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function g() { return this && q; }\nfunction f() { return g(); }\n'
-    'var x;\nx = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    a_program("""
+        function f() { return this && q; }
+        var x;
+        x = f();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function f() { return this && q; }
+        var x;
+        x = [f()];
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function g() { return this && q; }
+        function f() { return g(); }
+        var x;
+        x = f();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
 }
 
 
@@ -738,8 +883,17 @@ class TestADeadAssignmentToADeadZoneReaderStillThrows(TestBase):
 
 
 A_FOLDED_MEMBER_BASE_IN_A_DEAD_ZONE = {
-    'function f() { return o.x; }\nf();\nlet o = { x: 1 };\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'var y = (function () { return o.x; })();\nlet o = { x: 1 };\nconsole.log(2);\n': ('', 'ReferenceError'),
+    a_program("""
+        function f() { return o.x; }
+        f();
+        let o = { x: 1 };
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        var y = (function () { return o.x; })();
+        let o = { x: 1 };
+        console.log(2);
+    """): ('', 'ReferenceError'),
 }
 
 
@@ -756,12 +910,34 @@ class TestAFoldedMemberBaseReadInADeadZoneStillThrows(TestBase):
 
 
 A_WRITE_IN_THE_DEAD_ZONE_OF_A_LEXICAL_BINDING = {
-    '{ x = 5; let x; }\nconsole.log(1);\n': ('', 'ReferenceError'),
-    'function f() { q = 5; let q = 1; }\nf();\nconsole.log(1);\n': ('', 'ReferenceError'),
-    'function f() { q = 5; }\nvar dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function f() { q = 5; }\nvar dead = f();\nconst q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function g() { q = 5; }\nfunction f() { g(); }\n'
-    'var dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    a_program("""
+        { x = 5; let x; }
+        console.log(1);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function f() { q = 5; let q = 1; }
+        f();
+        console.log(1);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function f() { q = 5; }
+        var dead = f();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function f() { q = 5; }
+        var dead = f();
+        const q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        function g() { q = 5; }
+        function f() { g(); }
+        var dead = f();
+        let q = 1;
+        console.log(2);
+    """): ('', 'ReferenceError'),
 }
 
 
@@ -823,9 +999,15 @@ class TestAWalkAWrittenChainStillDecidesIsStillWalked(TestBase):
 
 A_READ_A_WRITTEN_CHAIN_DOES_NOT_REACH = {
     'Object.prototype.z = 9; var o = {}; o.z = 1; console.log(o.z);':
-        'Object.prototype.z = 9;\nconsole.log(1);',
+        inspect.cleandoc("""
+            Object.prototype.z = 9;
+            console.log(1);
+        """),
     "Object.prototype.q = 1; var o = {}; console.log('toString' in o);":
-        'Object.prototype.q = 1;\nconsole.log(true);',
+        inspect.cleandoc("""
+            Object.prototype.q = 1;
+            console.log(true);
+        """),
 }
 
 
@@ -1346,14 +1528,17 @@ class TestAFunctionHandedOnBesideAnInstallerUsedAsATagConvertsToItsWrittenText(T
 class TestABuiltinTheProgramReplacedIsNotFoldedAsTheIntrinsic(TestBase):
 
     def test_a_bare_global_written_on_the_global_object_is_not_folded_as_the_builtin(self):
-        source = (
-            "globalThis['parseInt'] = function () { return 42; };\n"
-            "console.log(parseInt('7'));"
-        )
+        source = inspect.cleandoc("""
+            globalThis['parseInt'] = function () { return 42; };
+            console.log(parseInt('7'));
+        """)
         self.assertEqual(Reading.SCRIPT.read(source), (prints('42'), prints('42')))
 
     def test_a_literal_receivers_method_survives_a_rebind_of_the_intrinsic_name(self):
-        source = "Array = {};\nconsole.log([1, 2, 3].join('-'));"
+        source = inspect.cleandoc("""
+            Array = {};
+            console.log([1, 2, 3].join('-'));
+        """)
         self.assertEqual(Reading.SCRIPT.read(source), (prints('1-2-3'), prints('1-2-3')))
 
 
@@ -1728,7 +1913,10 @@ class TestTheScriptValueOfAnUntakenBranchIsHeld(TestBase):
 
     @backlog
     def test_the_script_ends_on_the_value_of_the_untaken_branch(self):
-        source = '1;\nif (false) { 2; }\n'
+        source = a_program("""
+            1;
+            if (false) { 2; }
+        """)
         deobfuscated = deobfuscate_source(source, preserve_script_return=True)
         for evaluation in JsEvaluation:
             with self.subTest(evaluation=evaluation.value):
@@ -1882,11 +2070,18 @@ class TestANameAFlattenedWriterPutsOnEveryObjectStaysInheritedInTheReader(TestBa
 
 
 A_MECHANISM_WRITTEN_THROUGH_A_SPELLING_OF_ITS_OWN = {
-    'function C() {}\nC.prototype.q = 5;\n({}).__proto__.constructor = C;'
-    '\nconsole.log(({}).constructor.prototype.q);':
+    inspect.cleandoc("""
+        function C() {}
+        C.prototype.q = 5;
+        ({}).__proto__.constructor = C;
+        console.log(({}).constructor.prototype.q);
+    """):
         '5\n',
-    'Object.defineProperty(({}).constructor.prototype, "__proto__", {value: 1});'
-    '\n({}).__proto__.z = 9;\nconsole.log(({}).z);':
+    inspect.cleandoc("""
+        Object.defineProperty(({}).constructor.prototype, "__proto__", {value: 1});
+        ({}).__proto__.z = 9;
+        console.log(({}).z);
+    """):
         'undefined\n',
 }
 
@@ -1910,12 +2105,20 @@ class TestAMechanismWrittenThroughASpellingIsStillWritten(TestBase):
 #: the call, and awaiting a promise differs from awaiting the value it resolves to only in how many
 #: turns pass; the second discards the promise the call returns.
 A_WRAPPING_THE_CALL_SITE_TAKES_BACK_OFF = {
-    "async function w(a) { return 'b'; }\n"
-    '(async function () { console.log(await w(2)); })();\n':
-        "(async function() {\n  console.log(await 'b');\n})();",
-    'function send(u) { return u; }\n'
-    'async function get(u) { return send(u); }\n'
-    "get('http://example.test/payload');\n":
+    a_program("""
+        async function w(a) { return 'b'; }
+        (async function () { console.log(await w(2)); })();
+    """):
+        inspect.cleandoc("""
+            (async function() {
+              console.log(await 'b');
+            })();
+        """),
+    a_program("""
+        function send(u) { return u; }
+        async function get(u) { return send(u); }
+        get('http://example.test/payload');
+    """):
         "'http://example.test/payload';",
 }
 
@@ -2011,9 +2214,11 @@ class TestAFileRefusedWithNothingFabricatedIsNotAnsweredWithAProgram(TestBase):
 
 
 A_WITH_OBJECT_CARRYING_A_WRAPPER_NAME = {
-    "var o = { W: function (a) { console.log('real', a); } };\n"
-    'function W() { W = function () {}; }\n'
-    'with (o) { W(1); }\n': 'real 1\n',
+    a_program("""
+        var o = { W: function (a) { console.log('real', a); } };
+        function W() { W = function () {}; }
+        with (o) { W(1); }
+    """): 'real 1\n',
 }
 
 
@@ -2034,23 +2239,29 @@ class TestAWithObjectMayCarryTheNameAWrapperAnswersTo(TestBase):
     def test_a_call_the_scope_object_does_not_answer_is_still_expanded(self):
         self.assertEqual(
             folded(
-                'var o = { p: 1 };\n'
-                'function W() { W = function () {}; }\n'
-                'with (o) { W(console.log(1)); }\n'
-                'console.log(2);\n'
+                a_program("""
+                    var o = { p: 1 };
+                    function W() { W = function () {}; }
+                    with (o) { W(console.log(1)); }
+                    console.log(2);
+                """)
             ),
-            'var o = { p: 1 };\n'
-            'with (o) {\n'
-            '  console.log(1);\n'
-            '}\n'
-            'console.log(2);',
+            inspect.cleandoc("""
+                var o = { p: 1 };
+                with (o) {
+                  console.log(1);
+                }
+                console.log(2);
+            """),
         )
 
 
 A_WRAPPER_REBOUND_BY_AN_UNREADABLE_EVAL = {
-    'function W() { W = function () {}; }\n'
-    'eval(process.argv[9] || "W = function (a) { console.log(7, a); }");\n'
-    'W(1);\n': '7 1\n',
+    a_program("""
+        function W() { W = function () {}; }
+        eval(process.argv[9] || "W = function (a) { console.log(7, a); }");
+        W(1);
+    """): '7 1\n',
 }
 
 
@@ -2074,10 +2285,12 @@ class TestAnUnreadableEvalMayRebindAWrapper(TestBase):
 
 
 A_WITH_OBJECT_WATCHING_FOR_A_WRAPPER_NAME = {
-    "var o = new Proxy({}, { has: function (t, k) { console.log('asked', k); return false; } });\n"
-    'function W() { W = function () {}; }\n'
-    'with (o) { W(console.log(1)); }\n'
-    'console.log(2);\n': 'asked W\nasked console\n1\n2\n',
+    a_program("""
+        var o = new Proxy({}, { has: function (t, k) { console.log('asked', k); return false; } });
+        function W() { W = function () {}; }
+        with (o) { W(console.log(1)); }
+        console.log(2);
+    """): 'asked W\nasked console\n1\n2\n',
 }
 
 
@@ -2097,9 +2310,11 @@ class TestAWithObjectMayWatchForTheNameAWrapperAnswersTo(TestBase):
 
 
 A_WRAPPER_REBOUND_UNDER_AN_UNREADABLE_KEY = {
-    'function W() { W = function () {}; }\n'
-    "globalThis[process.argv[9] || 'W'] = function (a) { console.log('real', a); };\n"
-    'W(1);\n': 'real 1\n',
+    a_program("""
+        function W() { W = function () {}; }
+        globalThis[process.argv[9] || 'W'] = function (a) { console.log('real', a); };
+        W(1);
+    """): 'real 1\n',
 }
 
 
@@ -2462,55 +2677,84 @@ class TestAnObjectPropertyFlagVariantIsStillRemoved(TestBase):
 
 
 A_CONVERSION_WITH_AN_EFFECT_THE_SCAN_CANNOT_SEE = {
-    'X = 5;\n'
-    "var o = { toString: function () { delete globalThis.X; return ''; } };\n"
-    "var s = '' + o;\nX;\nconsole.log('end');\n": ('', 'ReferenceError'),
+    a_program("""
+        X = 5;
+        var o = { toString: function () { delete globalThis.X; return ''; } };
+        var s = '' + o;
+        X;
+        console.log('end');
+    """): ('', 'ReferenceError'),
 
-    'X = 5;\n'
-    'var o = { valueOf: function () { delete globalThis.X; return 1; } };\n'
-    "var n = o + 1;\nX;\nconsole.log('end');\n": ('', 'ReferenceError'),
+    a_program("""
+        X = 5;
+        var o = { valueOf: function () { delete globalThis.X; return 1; } };
+        var n = o + 1;
+        X;
+        console.log('end');
+    """): ('', 'ReferenceError'),
 
-    "var o = { toString: function () { globalThis.Q = 1; return ''; } };\n"
-    "var s = '' + o;\nconsole.log(typeof globalThis.Q);\n": ('number\n', None),
+    a_program("""
+        var o = { toString: function () { globalThis.Q = 1; return ''; } };
+        var s = '' + o;
+        console.log(typeof globalThis.Q);
+    """): ('number\n', None),
 
-    'X = 5;\n'
-    "var o = { toString: function () { delete globalThis.X; return 'o'; } };\n"
-    "var s = '' + o;\nX;\nconsole.log(s);\n": ('', 'ReferenceError'),
+    a_program("""
+        X = 5;
+        var o = { toString: function () { delete globalThis.X; return 'o'; } };
+        var s = '' + o;
+        X;
+        console.log(s);
+    """): ('', 'ReferenceError'),
 
-    'X = 5;\n'
-    "var o = { toString: function () { delete globalThis.X; return 'o'; } };\n"
-    'var s = `${o}`;\nX;\nconsole.log(s);\n': ('', 'ReferenceError'),
+    a_program("""
+        X = 5;
+        var o = { toString: function () { delete globalThis.X; return 'o'; } };
+        var s = `${o}`;
+        X;
+        console.log(s);
+    """): ('', 'ReferenceError'),
 
-    'X = 5;\n'
-    'var o = { valueOf: function () { delete globalThis.X; return 7; } };\n'
-    'var s = o < 8;\nX;\nconsole.log(s);\n': ('', 'ReferenceError'),
+    a_program("""
+        X = 5;
+        var o = { valueOf: function () { delete globalThis.X; return 7; } };
+        var s = o < 8;
+        X;
+        console.log(s);
+    """): ('', 'ReferenceError'),
 
-    'function f(o) {\n'
-    '  var log = [];\n'
-    '  o.log = log;\n'
-    "  var a = o + 1, b = (log.push('b'), 0), c = a;\n"
-    "  return log.join('') + c;\n"
-    '}\n'
-    "console.log(f({ valueOf: function () { this.log.push('v'); return 1; } }));\n": ('vb2\n', None),
+    a_program("""
+        function f(o) {
+          var log = [];
+          o.log = log;
+          var a = o + 1, b = (log.push('b'), 0), c = a;
+          return log.join('') + c;
+        }
+        console.log(f({ valueOf: function () { this.log.push('v'); return 1; } }));
+    """): ('vb2\n', None),
 
-    'function f(o) {\n'
-    '  var log = [];\n'
-    '  o.log = log;\n'
-    '  var a = o + 1;\n'
-    "  var b = (log.push('b'), 0);\n"
-    '  var c = a;\n'
-    "  return log.join('') + c;\n"
-    '}\n'
-    "console.log(f({ valueOf: function () { this.log.push('v'); return 1; } }));\n": ('vb2\n', None),
+    a_program("""
+        function f(o) {
+          var log = [];
+          o.log = log;
+          var a = o + 1;
+          var b = (log.push('b'), 0);
+          var c = a;
+          return log.join('') + c;
+        }
+        console.log(f({ valueOf: function () { this.log.push('v'); return 1; } }));
+    """): ('vb2\n', None),
 
-    'function f() {\n'
-    '  var x;\n'
-    "  var o = { toString: function () { x = 5; return 'o'; } };\n"
-    "  var s = '' + o;\n"
-    '  x = undefined;\n'
-    '  return [s, x];\n'
-    '}\n'
-    'console.log(f());\n': ("[ 'o', undefined ]\n", None),
+    a_program("""
+        function f() {
+          var x;
+          var o = { toString: function () { x = 5; return 'o'; } };
+          var s = '' + o;
+          x = undefined;
+          return [s, x];
+        }
+        console.log(f());
+    """): ("[ 'o', undefined ]\n", None),
 }
 
 
@@ -2527,15 +2771,19 @@ class TestAConversionWithAnEffectIsNeitherDroppedNorMoved(TestBase):
 
 
 A_RELOCATED_MAY_THROW_READ_KEEPS_ITS_ORDER = {
-    'try {\n'
-    '  console.log(function (a, b) { return b() + a; }(zzz, function () {\n'
-    '    console.log(1);\n'
-    '    return 2;\n'
-    '  }));\n'
-    "} catch (e) { console.log('caught'); }\n": ('caught\n', None),
-    'var o = { q: zzz };\n'
-    'console.log(1);\n'
-    'console.log(o.q);\n': ('', 'ReferenceError'),
+    a_program("""
+        try {
+          console.log(function (a, b) { return b() + a; }(zzz, function () {
+            console.log(1);
+            return 2;
+          }));
+        } catch (e) { console.log('caught'); }
+    """): ('caught\n', None),
+    a_program("""
+        var o = { q: zzz };
+        console.log(1);
+        console.log(o.q);
+    """): ('', 'ReferenceError'),
 }
 
 
@@ -2654,17 +2902,21 @@ class TestPreserveScriptReturnDoesNotHoldASelfDefendingGuardCompletion(TestBase)
 
 A_PACKED_ACCESS_A_WITH_OBJECT_SUPPLIES = {
     'read': Program(
-        'var z = { x: 42 };\n'
-        'var x = 7;\n'
-        "Function('o', 'with(z){ console.log(o.a); }')({ get 'a'() { return x; } });\n",
+        a_program("""
+            var z = { x: 42 };
+            var x = 7;
+            Function('o', 'with(z){ console.log(o.a); }')({ get 'a'() { return x; } });
+        """),
         prints('7'),
         Reading.SCRIPT,
     ),
     'write': Program(
-        'var z = { x: 42 };\n'
-        'var x = 7;\n'
-        "Function('o', 'with(z){ o.a = 9; }')({ set 'a'(v) { x = v; } });\n"
-        'console.log(x, z.x);\n',
+        a_program("""
+            var z = { x: 42 };
+            var x = 7;
+            Function('o', 'with(z){ o.a = 9; }')({ set 'a'(v) { x = v; } });
+            console.log(x, z.x);
+        """),
         prints('9 42'),
         Reading.SCRIPT,
     ),
@@ -3268,9 +3520,20 @@ class TestAValueNameWrittenThroughAnAliasOfTheGlobalObjectStopsTheFold(TestBase)
     )
     def test_the_name_stays(self):
         for source in [
-            'var g = this;\ng.undefined = 7;\nWScript.Echo(undefined + 1);',
-            'function self() { return this; }\nself().undefined = 7;\nWScript.Echo(undefined + 1);',
-            'with (this) { undefined = 7; }\nWScript.Echo(undefined + 1);',
+            inspect.cleandoc("""
+                var g = this;
+                g.undefined = 7;
+                WScript.Echo(undefined + 1);
+            """),
+            inspect.cleandoc("""
+                function self() { return this; }
+                self().undefined = 7;
+                WScript.Echo(undefined + 1);
+            """),
+            inspect.cleandoc("""
+                with (this) { undefined = 7; }
+                WScript.Echo(undefined + 1);
+            """),
         ]:
             with self.subTest(source=source):
                 self.assertIn('undefined + 1', deobfuscate_source(source))
@@ -3782,11 +4045,11 @@ class TestAnAccessorCodeEvaluatedAtRuntimeNamesIsKept(TestBase):
 
 
 AN_INDEX_A_MASKED_ARRAY_INHERITS = {
-    (
-        'Array.prototype[1] = "proto";\n'
-        'function f(...m) { m.length = 2; return m[0] + "/" + m[1]; }\n'
-        'console.log(f("a"));\n'
-    ):
+    a_program("""
+        Array.prototype[1] = "proto";
+        function f(...m) { m.length = 2; return m[0] + "/" + m[1]; }
+        console.log(f("a"));
+    """):
         'a/proto\n',
 }
 
@@ -3808,7 +4071,10 @@ class TestAScriptKeptForItsValueEndsOnTheValueOfItsLastStore(TestBase):
 
     @backlog
     def test_the_script_ends_on_the_value_of_its_last_store(self):
-        source = 'var acc;\nacc = 5;\n'
+        source = a_program("""
+            var acc;
+            acc = 5;
+        """)
         deobfuscated = deobfuscate_source(source, preserve_script_return=True)
         for evaluation in JsEvaluation:
             with self.subTest(evaluation=evaluation.value):
@@ -4389,11 +4655,15 @@ class TestAnUnpackedRestParameterKeepsTheLengthOfTheFunction(TestBase):
 
 
 AN_ANONYMOUS_FUNCTION_STORED_ON_A_NAMESPACE = {
-    "function f() { var B = {}; B.x = function () {}; return '<' + B.x.name + '>'; }\n"
-    'console.log(f());':
+    inspect.cleandoc("""
+        function f() { var B = {}; B.x = function () {}; return '<' + B.x.name + '>'; }
+        console.log(f());
+    """):
         '<>\n',
-    "function f(r) { var B = {}; [B.x = function () {}] = r; return '<' + B.x.name + '>'; }\n"
-    'console.log(f([]));':
+    inspect.cleandoc("""
+        function f(r) { var B = {}; [B.x = function () {}] = r; return '<' + B.x.name + '>'; }
+        console.log(f([]));
+    """):
         '<>\n',
 }
 
@@ -5453,10 +5723,10 @@ class TestAnUnpackedBodyKeepsItsOwnDeclarationsFromTheLaterScriptsOfThePage(Test
         'body declares for itself is a shape made up for the defect'
     )
     def test_code_run_from_a_string_the_file_cannot_read_finds_no_name_the_body_declares(self):
-        source = (
-            "Function('let k = 1; console.log(k)')();\n"
-            "setTimeout(process.argv.length > 99 ? '' : 'console.log(typeof k)', 0);"
-        )
+        source = inspect.cleandoc("""
+            Function('let k = 1; console.log(k)')();
+            setTimeout(process.argv.length > 99 ? '' : 'console.log(typeof k)', 0);
+        """)
         output = source.encode('utf8') | djs(strict=True) | str
         self.assertEqual(
             host_behavior(output, prelude=STRING_TIMERS),
@@ -5466,13 +5736,18 @@ class TestAnUnpackedBodyKeepsItsOwnDeclarationsFromTheLaterScriptsOfThePage(Test
 
 A_WRAPPER_CODE_OUTSIDE_THE_TEXT_CALLS = {
     'code run from a string the file cannot read': (
-        "function f() { return 'x'; }\nconsole.log(f());\n"
-        "Function(process.argv.length > 99 ? '' : 'console.log(f())')();",
+        inspect.cleandoc("""
+            function f() { return 'x'; }
+            console.log(f());
+            Function(process.argv.length > 99 ? '' : 'console.log(f())')();
+        """),
         (),
     ),
     'code run from a string the file cannot read, calling a function declared in a block': (
-        "{ function f() { return 'x'; } console.log(f()); }\n"
-        "Function(process.argv.length > 99 ? '' : 'console.log(f())')();",
+        inspect.cleandoc("""
+            { function f() { return 'x'; } console.log(f()); }
+            Function(process.argv.length > 99 ? '' : 'console.log(f())')();
+        """),
         (),
     ),
 }
@@ -6152,7 +6427,10 @@ class TestAFunctionAJavaScriptAddressCallsIsKept(TestBase):
 
     @backlog
     def test_under_either_model(self):
-        source = "function run() { console.log(1); }\nlocation.href = 'javascript:run()';"
+        source = inspect.cleandoc("""
+            function run() { console.log(1); }
+            location.href = 'javascript:run()';
+        """)
         self.assertEqual(
             ['function run()' in (source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)],
             [True, True],

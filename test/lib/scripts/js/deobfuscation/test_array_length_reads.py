@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase
@@ -122,11 +123,20 @@ _WRITE_POSITIONS: dict[str, str] = {
     'postfix increment'   : 'console.log(TARGET++);',
     'prefix decrement'    : 'console.log(--TARGET);',
     'delete'              : 'console.log(delete TARGET);',
-    'strict delete'       : "'use strict';\nconsole.log(delete TARGET);",
+    'strict delete'       : inspect.cleandoc("""
+        'use strict';
+        console.log(delete TARGET);
+    """),
     'array pattern'       : 'console.log([TARGET] = [9]);',
     'object pattern'      : 'console.log({ p: TARGET } = { p: 9 });',
-    'for-of head'         : 'for (TARGET of [9]) {}\nconsole.log(1);',
-    'for-in head'         : 'for (TARGET in { a: 1 }) {}\nconsole.log(1);',
+    'for-of head'         : inspect.cleandoc("""
+        for (TARGET of [9]) {}
+        console.log(1);
+    """),
+    'for-in head'         : inspect.cleandoc("""
+        for (TARGET in { a: 1 }) {}
+        console.log(1);
+    """),
 }
 
 _WRITE_POSITIONS_EVALUATED: dict[str, str] = {
@@ -239,10 +249,10 @@ class TestWhatTheLiteralCannotDecideIsLeftToTheEngine(TestBase):
         )
 
     def test_a_spread_is_as_long_as_the_value_it_spreads_iterates(self):
-        source = (
-            'function n(x) { return [...x].length; }\n'
-            "console.log(n('abc'), n([1]), n(new Set([1, 1])));"
-        )
+        source = inspect.cleandoc("""
+            function n(x) { return [...x].length; }
+            console.log(n('abc'), n([1]), n(new Set([1, 1])));
+        """)
         self.assertEqual(
             (behavior(source), behavior(_deobfuscated(source))),
             (('3 1 1\n', None), ('3 1 1\n', None)),

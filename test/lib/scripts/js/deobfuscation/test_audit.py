@@ -12,6 +12,7 @@ from test.lib.scripts.js.analysis.differential import (
     deobfuscate_source,
     node_executable,
 )
+from test.lib.scripts.js.ledger import a_program
 from test.lib.scripts.js.test_directive_prologue import A_PROGRAM_REPORTING_ITS_MODE
 
 from refinery.lib.scripts import Node, Transformer, set_body
@@ -52,60 +53,98 @@ def _reports(label: str) -> str:
 
 
 A_PROGRAM_WHOSE_EVERY_BODY_REPORTS_ITS_MODE = {
-    F"{_reports('top')}\nfunction f() {{ {_reports('f')} }}\nf();\n": {
+    a_program(F"""
+        {_reports('top')}
+        function f() {{ {_reports('f')} }}
+        f();
+    """): {
         'top' : False,
         'f'   : False,
     },
-    F"'use strict';\n{_reports('top')}\nfunction f() {{ {_reports('f')} }}\nf();\n": {
+    a_program(F"""
+        'use strict';
+        {_reports('top')}
+        function f() {{ {_reports('f')} }}
+        f();
+    """): {
         'top' : True,
         'f'   : True,
     },
-    F"{_reports('top')}\nfunction f() {{ 'use strict'; {_reports('f')} }}\n"
-    F"function g() {{ {_reports('g')} }}\nf();\ng();\n": {
+    a_program(F"""
+        {_reports('top')}
+        function f() {{ 'use strict'; {_reports('f')} }}
+        function g() {{ {_reports('g')} }}
+        f();
+        g();
+    """): {
         'top' : False,
         'f'   : True,
         'g'   : False,
     },
-    F"{_reports('top')}\nfunction f() {{ 'use strict'; function g() {{ {_reports('g')} }}"
-    F" g(); {_reports('f')} }}\nf();\n": {
+    a_program(F"""
+        {_reports('top')}
+        function f() {{ 'use strict'; function g() {{ {_reports('g')} }} g(); {_reports('f')} }}
+        f();
+    """): {
         'top' : False,
         'f'   : True,
         'g'   : True,
     },
-    F"{_reports('top')}\nclass C {{ static {{ {_reports('block')} }}"
-    F" m() {{ {_reports('m')} }} }}\nnew C().m();\n": {
+    a_program(F"""
+        {_reports('top')}
+        class C {{ static {{ {_reports('block')} }} m() {{ {_reports('m')} }} }}
+        new C().m();
+    """): {
         'top'   : False,
         'block' : True,
         'm'     : True,
     },
-    F"{_reports('top')}\nvar o = {{ m() {{ {_reports('m')} }},"
-    F" get p() {{ {_reports('p')} }} }};\no.m();\no.p;\n": {
+    a_program(F"""
+        {_reports('top')}
+        var o = {{ m() {{ {_reports('m')} }}, get p() {{ {_reports('p')} }} }};
+        o.m();
+        o.p;
+    """): {
         'top' : False,
         'm'   : False,
         'p'   : False,
     },
-    F"{_reports('top')}\nfunction f() {{ 'use strict';"
-    F" var a = () => {{ {_reports('a')} }}; a(); {_reports('f')} }}\nf();\n": {
+    a_program(F"""
+        {_reports('top')}
+        function f() {{ 'use strict'; var a = () => {{ {_reports('a')} }}; a(); {_reports('f')} }}
+        f();
+    """): {
         'top' : False,
         'f'   : True,
         'a'   : True,
     },
-    F"{_reports('top')}\nvar f = function () {{ {_reports('f')} }};\nf();\n": {
+    a_program(F"""
+        {_reports('top')}
+        var f = function () {{ {_reports('f')} }};
+        f();
+    """): {
         'top' : False,
         'f'   : False,
     },
 }
 
 A_MODULE_WHOSE_EVERY_BODY_REPORTS_ITS_MODE = {
-    F"export {{}};\n{_reports('top')}\nfunction f() {{ {_reports('f')} }}\nf();\n": {
+    a_program(F"""
+        export {{}};
+        {_reports('top')}
+        function f() {{ {_reports('f')} }}
+        f();
+    """): {
         'top' : True,
         'f'   : True,
     },
 }
 
-A_STRICT_FUNCTION_IN_A_SLOPPY_SCRIPT = (
-    F"{_reports('top')}\nfunction f() {{ 'use strict'; {_reports('f')} }}\nf();\n"
-)
+A_STRICT_FUNCTION_IN_A_SLOPPY_SCRIPT = a_program(F"""
+    {_reports('top')}
+    function f() {{ 'use strict'; {_reports('f')} }}
+    f();
+""")
 
 
 class ADeclarationWrittenAboveTheDirective(Transformer):
@@ -203,18 +242,29 @@ AN_EDIT_AND_THE_BODIES_IT_LEAVES_IN_THE_OTHER_MODE: dict[
         {'f': False},
     ),
     ABodyLiftedOutOfTheFunctionAroundIt: (
-        F"{_reports('top')}\nfunction f() {{ 'use strict'; function g() {{ {_reports('g')} }}"
-        F" g(); {_reports('f')} }}\nf();\n",
+        a_program(F"""
+            {_reports('top')}
+            function f() {{ 'use strict'; function g() {{ {_reports('g')} }} g(); {_reports('f')} }}
+            f();
+        """),
         {'g': False},
     ),
     ABodyMovedIntoTheFunctionBesideIt: (
-        F"{_reports('top')}\nfunction f() {{ 'use strict'; g(); {_reports('f')} }}\n"
-        F"function g() {{ {_reports('g')} }}\nf();\n",
+        a_program(F"""
+            {_reports('top')}
+            function f() {{ 'use strict'; g(); {_reports('f')} }}
+            function g() {{ {_reports('g')} }}
+            f();
+        """),
         {'g': True},
     ),
     EveryStrictFunctionDropped: (
-        F"{_reports('top')}\nfunction d() {{ 'use strict'; {_reports('d')} }}\n"
-        F"function f() {{ {_reports('f')} }}\nf();\n",
+        a_program(F"""
+            {_reports('top')}
+            function d() {{ 'use strict'; {_reports('d')} }}
+            function f() {{ {_reports('f')} }}
+            f();
+        """),
         {},
     ),
 }
@@ -230,27 +280,42 @@ def _returns_the_mode_it_stands_in(value: str) -> str:
 
 
 A_PROGRAM_A_PASS_ADDS_OR_REMOVES_A_STRICT_BODY_IN = {
-    "function d() { 'use strict'; console.log('d'); }\n"
-    F'console.log({_THE_MODE_IT_STANDS_IN});\n':
+    a_program(F"""
+        function d() {{ 'use strict'; console.log('d'); }}
+        console.log({_THE_MODE_IT_STANDS_IN});
+    """):
         'false\n',
-    "function w(a) { 'use strict'; return a + 1; }\nconsole.log(w(1));\n":
+    a_program("""
+        function w(a) { 'use strict'; return a + 1; }
+        console.log(w(1));
+    """):
         '2\n',
-    'var acc = (function () {\n'
-    "  var t = ['a', 'b'];\n"
-    "  return function (i) { 'use strict'; return t[i] + i; };\n"
-    '})();\nconsole.log(acc(1));\n':
+    a_program("""
+        var acc = (function () {
+          var t = ['a', 'b'];
+          return function (i) { 'use strict'; return t[i] + i; };
+        })();
+        console.log(acc(1));
+    """):
         'b1\n',
-    'var acc = (function () {\n'
-    "  var t = ['a', 'b'];\n"
-    F"  return function (i) {{ 'use strict'; {_returns_the_mode_it_stands_in('t[i]')} }};\n"
-    F'}})();\nconsole.log(acc({_A_NUMBER_ONLY_THE_HOST_KNOWS} - 2));\n':
+    a_program(F"""
+        var acc = (function () {{
+          var t = ['a', 'b'];
+          return function (i) {{ 'use strict'; {_returns_the_mode_it_stands_in('t[i]')} }};
+        }})();
+        console.log(acc({_A_NUMBER_ONLY_THE_HOST_KNOWS} - 2));
+    """):
         'aS\n',
-    'var NS = {};\n'
-    F"NS.f = function (a) {{ 'use strict'; {_returns_the_mode_it_stands_in('a')} }};\n"
-    F'console.log(NS.f({_A_NUMBER_ONLY_THE_HOST_KNOWS}));\n':
+    a_program(F"""
+        var NS = {{}};
+        NS.f = function (a) {{ 'use strict'; {_returns_the_mode_it_stands_in('a')} }};
+        console.log(NS.f({_A_NUMBER_ONLY_THE_HOST_KNOWS}));
+    """):
         '2S\n',
-    F"function f(a) {{ 'use strict'; {_returns_the_mode_it_stands_in('a')} }}\n"
-    F'console.log(f({_A_NUMBER_ONLY_THE_HOST_KNOWS}));\n':
+    a_program(F"""
+        function f(a) {{ 'use strict'; {_returns_the_mode_it_stands_in('a')} }}
+        console.log(f({_A_NUMBER_ONLY_THE_HOST_KNOWS}));
+    """):
         '2S\n',
 }
 

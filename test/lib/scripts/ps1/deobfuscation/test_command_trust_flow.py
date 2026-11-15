@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 _ANCHOR = "Write-Host 'ANCHOR_SURVIVES'"
@@ -35,29 +37,48 @@ class TestPs1APureCommandBeforeTheOnlyLeakIsRemoved(_Ps1CommandTrustFlow):
     def test_a_pure_command_before_the_only_invoke_expression_is_removed(self):
         source, token = _RANDOM
         self._assertPureCommandRemoved(
-            F'{source}\nInvoke-Expression $enc\n{_ANCHOR}', token, 'Invoke-Expression')
+            inspect.cleandoc(F"""
+                {source}
+                Invoke-Expression $enc
+                {_ANCHOR}
+            """), token, 'Invoke-Expression')
 
     def test_a_pure_command_before_the_only_opaque_call_is_removed(self):
         source, token = _CHILDITEM
         self._assertPureCommandRemoved(
-            F'{source}\n& $dispatch\n{_ANCHOR}', token, '$dispatch')
+            inspect.cleandoc(F"""
+                {source}
+                & $dispatch
+                {_ANCHOR}
+            """), token, '$dispatch')
 
     def test_a_pure_command_before_the_only_import_module_is_removed(self):
         source, token = _SELECT
         self._assertPureCommandRemoved(
-            F'{source}\nImport-Module .\\mod.psm1\n{_ANCHOR}', token, 'Import-Module')
+            inspect.cleandoc(F"""
+                {source}
+                Import-Module .\\mod.psm1
+                {_ANCHOR}
+            """), token, 'Import-Module')
 
     def test_a_pure_command_before_its_own_function_redefinition_is_removed(self):
         self._assertPureCommandRemoved(
-            F'$Null = Get-Random -Maximum 88175\n'
-            F'function Get-Random {{ Start-Process calc }}\n'
-            F'Get-Random\n{_ANCHOR}',
+            inspect.cleandoc(F"""
+                $Null = Get-Random -Maximum 88175
+                function Get-Random {{ Start-Process calc }}
+                Get-Random
+                {_ANCHOR}
+            """),
             '88175', 'Start-Process calc')
 
     def test_a_pure_command_before_its_own_set_alias_is_removed(self):
         source, token = _DATE
         self._assertPureCommandRemoved(
-            F'{source}\nSet-Alias Get-Date i*x\n{_ANCHOR}', token, 'Set-Alias')
+            inspect.cleandoc(F"""
+                {source}
+                Set-Alias Get-Date i*x
+                {_ANCHOR}
+            """), token, 'Set-Alias')
 
 
 class TestPs1APureCommandALeakCanPrecedeIsKept(_Ps1CommandTrustFlow):
@@ -65,28 +86,47 @@ class TestPs1APureCommandALeakCanPrecedeIsKept(_Ps1CommandTrustFlow):
     def test_a_pure_command_after_an_invoke_expression_is_kept(self):
         source, token = _RANDOM
         self._assertPureCommandKept(
-            F'Invoke-Expression $enc\n{source}\n{_ANCHOR}', token, 'Invoke-Expression')
+            inspect.cleandoc(F"""
+                Invoke-Expression $enc
+                {source}
+                {_ANCHOR}
+            """), token, 'Invoke-Expression')
 
     def test_a_pure_command_after_an_opaque_call_is_kept(self):
         source, token = _MEASURE
         self._assertPureCommandKept(
-            F'& $dispatch\n{source}\n{_ANCHOR}', token, '$dispatch')
+            inspect.cleandoc(F"""
+                & $dispatch
+                {source}
+                {_ANCHOR}
+            """), token, '$dispatch')
 
     def test_a_pure_command_after_an_import_module_is_kept(self):
         source, token = _SELECT
         self._assertPureCommandKept(
-            F'Import-Module .\\mod.psm1\n{source}\n{_ANCHOR}', token, 'Import-Module')
+            inspect.cleandoc(F"""
+                Import-Module .\\mod.psm1
+                {source}
+                {_ANCHOR}
+            """), token, 'Import-Module')
 
     def test_a_pure_command_after_its_own_function_redefinition_is_kept(self):
         self._assertPureCommandKept(
-            F'function Get-Random {{ Start-Process calc }}\n'
-            F'$Null = Get-Random -Maximum 88175\n{_ANCHOR}',
+            inspect.cleandoc(F"""
+                function Get-Random {{ Start-Process calc }}
+                $Null = Get-Random -Maximum 88175
+                {_ANCHOR}
+            """),
             '88175', 'Start-Process calc')
 
     def test_a_pure_command_after_its_own_set_alias_is_kept(self):
         source, token = _DATE
         self._assertPureCommandKept(
-            F'Set-Alias Get-Date i*x\n{source}\n{_ANCHOR}', token, 'Set-Alias')
+            inspect.cleandoc(F"""
+                Set-Alias Get-Date i*x
+                {source}
+                {_ANCHOR}
+            """), token, 'Set-Alias')
 
     def test_a_pure_command_looping_with_an_invoke_expression_is_kept(self):
         source, token = _MEASURE
@@ -97,12 +137,18 @@ class TestPs1APureCommandALeakCanPrecedeIsKept(_Ps1CommandTrustFlow):
     def test_a_pure_command_looping_with_an_opaque_call_is_kept(self):
         source, token = _RANDOM
         self._assertPureCommandKept(
-            F'foreach ($i in 1..4) {{ {source}; & $dispatch }}\n{_ANCHOR}', token, '$dispatch')
+            inspect.cleandoc(F"""
+                foreach ($i in 1..4) {{ {source}; & $dispatch }}
+                {_ANCHOR}
+            """), token, '$dispatch')
 
     def test_a_pure_command_looping_with_an_import_module_is_kept(self):
         source, token = _CHILDITEM
         self._assertPureCommandKept(
-            F'while ($True) {{ {source}; Import-Module .\\mod.psm1 }}\n{_ANCHOR}',
+            inspect.cleandoc(F"""
+                while ($True) {{ {source}; Import-Module .\\mod.psm1 }}
+                {_ANCHOR}
+            """),
             token, 'Import-Module')
 
 
@@ -111,7 +157,10 @@ class TestPs1CommandTrustPolesWithAndWithoutALeak(_Ps1CommandTrustFlow):
     def test_a_pure_command_with_no_identity_leak_anywhere_is_removed(self):
         for source, token in _PURE_COMMANDS:
             with self.subTest(source):
-                self._assertPureCommandRemoved(F'{source}\n{_ANCHOR}', token, _ANCHOR_TOKEN)
+                self._assertPureCommandRemoved(inspect.cleandoc(F"""
+                    {source}
+                    {_ANCHOR}
+                """), token, _ANCHOR_TOKEN)
 
     def test_a_pure_command_with_an_identity_leak_reachable_before_it_is_kept(self):
         source, token = _RANDOM
@@ -123,16 +172,23 @@ class TestPs1CommandTrustPolesWithAndWithoutALeak(_Ps1CommandTrustFlow):
             ('Set-Alias Get-Random i*x', 'Set-Alias'),
         ):
             with self.subTest(leak):
-                self._assertPureCommandKept(F'{leak}\n{source}\n{_ANCHOR}', token, acting)
+                self._assertPureCommandKept(inspect.cleandoc(F"""
+                    {leak}
+                    {source}
+                    {_ANCHOR}
+                """), token, acting)
 
 
 class TestPs1AFunctionRedefinitionSplitsItsNameIntoTwoEras(_Ps1CommandTrustFlow):
 
     def test_the_discarded_call_before_the_definition_goes_and_the_bare_call_after_it_stays(self):
         result = self._deobfuscate(
-            F'$Null = Get-Random -Maximum 88175\n'
-            F'function Get-Random {{ Start-Process calc }}\n'
-            F'Get-Random -Maximum 70223\n{_ANCHOR}')
+            inspect.cleandoc(F"""
+                $Null = Get-Random -Maximum 88175
+                function Get-Random {{ Start-Process calc }}
+                Get-Random -Maximum 70223
+                {_ANCHOR}
+            """))
         self.assertNotIn('88175', result)
         self.assertIn('70223', result)
         self.assertIn('Start-Process calc', result)
@@ -149,13 +205,19 @@ class TestPs1APureCommandLoopingWithItsOwnRedefinitionIsKept(_Ps1CommandTrustFlo
     def test_a_pure_command_looping_with_its_own_function_redefinition_is_kept(self):
         source, token = _RANDOM
         self._assertPureCommandKept(
-            F'while ($True) {{ {source}; function Get-Random {{ Start-Process calc }} }}\n{_ANCHOR}',
+            inspect.cleandoc(F"""
+                while ($True) {{ {source}; function Get-Random {{ Start-Process calc }} }}
+                {_ANCHOR}
+            """),
             token, 'Start-Process calc')
 
     def test_a_pure_command_looping_with_its_own_set_alias_is_kept(self):
         source, token = _DATE
         self._assertPureCommandKept(
-            F'foreach ($i in 1..4) {{ {source}; Set-Alias Get-Date i*x }}\n{_ANCHOR}',
+            inspect.cleandoc(F"""
+                foreach ($i in 1..4) {{ {source}; Set-Alias Get-Date i*x }}
+                {_ANCHOR}
+            """),
             token, 'Set-Alias')
 
 
@@ -163,17 +225,23 @@ class TestPs1ARedefinitionSiteTheGraphCannotPlaceIsAlwaysAhead(_Ps1CommandTrustF
 
     def test_a_pure_command_after_a_param_default_redefinition_of_its_own_name_is_kept(self):
         self._assertPureCommandKept(
-            F'function f {{ param($p = $(function global:Get-Random {{ Start-Process calc }})) }}\n'
-            F'f\n'
-            F'$Null = Get-Random -Maximum 88175\n{_ANCHOR}',
+            inspect.cleandoc(F"""
+                function f {{ param($p = $(function global:Get-Random {{ Start-Process calc }})) }}
+                f
+                $Null = Get-Random -Maximum 88175
+                {_ANCHOR}
+            """),
             '88175', 'Start-Process calc')
 
     def test_an_unplaceable_site_keeps_a_call_an_ordinary_later_redefinition_alone_would_shed(self):
         self._assertPureCommandKept(
-            F'function f {{ param($p = $(function global:Get-Random {{ Start-Process calc }})) }}\n'
-            F'f\n'
-            F'$Null = Get-Random -Maximum 88175\n'
-            F'function Get-Random {{ Start-Process iexplore }}\n{_ANCHOR}',
+            inspect.cleandoc(F"""
+                function f {{ param($p = $(function global:Get-Random {{ Start-Process calc }})) }}
+                f
+                $Null = Get-Random -Maximum 88175
+                function Get-Random {{ Start-Process iexplore }}
+                {_ANCHOR}
+            """),
             '88175', 'iexplore')
 
 
@@ -185,7 +253,10 @@ class TestPs1BothPipedDiscardSinksFollowTheTrustVerdict(_Ps1CommandTrustFlow):
         for sink in self._SINKS:
             with self.subTest(sink):
                 self._assertPureCommandRemoved(
-                    F'Get-Random -Maximum 88175 {sink}\n{_ANCHOR}', '88175', _ANCHOR_TOKEN)
+                    inspect.cleandoc(F"""
+                        Get-Random -Maximum 88175 {sink}
+                        {_ANCHOR}
+                    """), '88175', _ANCHOR_TOKEN)
 
     def test_a_piped_discard_after_a_rebinder_of_its_own_name_is_kept(self):
         for sink in self._SINKS:
@@ -196,15 +267,21 @@ class TestPs1BothPipedDiscardSinksFollowTheTrustVerdict(_Ps1CommandTrustFlow):
             ):
                 with self.subTest(F'{rebinder} {sink}'):
                     self._assertPureCommandKept(
-                        F'{rebinder}\nGet-Random -Maximum 88175 {sink}\n{_ANCHOR}', '88175', acting)
+                        inspect.cleandoc(F"""
+                            {rebinder}
+                            Get-Random -Maximum 88175 {sink}
+                            {_ANCHOR}
+                        """), '88175', acting)
 
 
 class TestPs1AWholeRunRefusalOverridesThePositionalGrant(_Ps1CommandTrustFlow):
 
-    _REMOVABLE = (
-        F'$Null = Get-Random -Maximum 88175\n'
-        F'function Get-Random {{ Start-Process calc }}\n'
-        F'Get-Random -Maximum 70223\n{_ANCHOR}')
+    _REMOVABLE = inspect.cleandoc(F"""
+        $Null = Get-Random -Maximum 88175
+        function Get-Random {{ Start-Process calc }}
+        Get-Random -Maximum 70223
+        {_ANCHOR}
+    """)
 
     def test_running_the_own_script_path_keeps_a_call_its_position_alone_would_shed(self):
         self._assertPureCommandRemoved(self._REMOVABLE, '88175', 'Start-Process calc')
@@ -222,7 +299,10 @@ class TestPs1AnOpenerRefusesACallItsOwnDefinitionSitesWouldGrant(_Ps1CommandTrus
 
     def test_a_call_between_an_opener_and_its_own_later_redefinition_is_kept(self):
         self._assertPureCommandKept(
-            F'Invoke-Expression $enc\n'
-            F'$Null = Get-Random -Maximum 88175\n'
-            F'function Get-Random {{ Start-Process calc }}\n{_ANCHOR}',
+            inspect.cleandoc(F"""
+                Invoke-Expression $enc
+                $Null = Get-Random -Maximum 88175
+                function Get-Random {{ Start-Process calc }}
+                {_ANCHOR}
+            """),
             '88175', 'Invoke-Expression')

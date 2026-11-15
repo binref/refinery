@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase
 
 from refinery.lib.scripts import is_well_formed
@@ -703,6 +705,9 @@ class TestAYieldThatIsFollowedOnlyByTheEndOfWhatItStandsIn(TestBase):
         for source in A_DELEGATING_YIELD_WITH_NOTHING_TO_READ:
             with self.subTest(source=source):
                 self.assertEqual(len(self._generator_body(source)), 1)
-                statements = self._statements(F'{source}\nzzz;')
+                statements = self._statements(inspect.cleandoc(F"""
+                    {source}
+                    zzz;
+                """))
                 self.assertEqual(len(statements), 2)
                 self.assertEqual(statements[1], 'zzz;')

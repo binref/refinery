@@ -4,6 +4,7 @@ import inspect
 
 from test import backlog, opportunity
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import a_program
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
@@ -2271,7 +2272,11 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
 class TestAHofCallbackReadingADeadZoneBindingKeepsItsThrow(TestJsDeobfuscator):
 
     def test_a_callback_reading_a_dead_zone_binding_is_not_folded(self):
-        source = 'var out = [1, 2].map(function (x) { return q + x; });\nlet q = 10;\nconsole.log(out);\n'
+        source = a_program("""
+            var out = [1, 2].map(function (x) { return q + x; });
+            let q = 10;
+            console.log(out);
+        """)
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -2286,7 +2291,11 @@ class TestAHofCallbackReadingADeadZoneBindingKeepsItsThrow(TestJsDeobfuscator):
         )
 
     def test_a_callback_reading_an_established_binding_is_folded(self):
-        source = 'const q = 10;\nvar out = [1, 2].map(function (x) { return q + x; });\nconsole.log(out);\n'
+        source = a_program("""
+            const q = 10;
+            var out = [1, 2].map(function (x) { return q + x; });
+            console.log(out);
+        """)
         self.assertEqual(
             inspect.cleandoc(
                 """

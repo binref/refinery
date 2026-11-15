@@ -25,7 +25,7 @@ from test.lib.scripts.js.analysis.differential import (
     host_behavior,
     node_executable,
 )
-from test.lib.scripts.js.ledger import STRING_TIMERS
+from test.lib.scripts.js.ledger import STRING_TIMERS, a_program
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -2149,7 +2149,10 @@ class TestTheHostRunsAClassicScript(TestBase):
     def test_a_host_calls_a_top_level_const_by_name(self):
         self.assertEqual(
             host_behavior("const run = function () { return 'r'; };", calls=('run',)),
-            ('run="r"\nglobalThis.run=undefined\n', None),
+            (a_program("""
+                run="r"
+                globalThis.run=undefined
+            """), None),
         )
 
     def test_a_host_tells_a_declared_function_from_a_let_holding_one(self):
@@ -2171,11 +2174,17 @@ class TestTheHostRunsAClassicScript(TestBase):
         )
 
     def test_an_error_ends_the_run_with_its_type(self):
-        self.assertEqual(host_behavior('let k = 5;\nnull.x;'), ('', 'TypeError'))
+        self.assertEqual(host_behavior(inspect.cleandoc("""
+            let k = 5;
+            null.x;
+        """)), ('', 'TypeError'))
         self.assertEqual(host_behavior('let = ;'), ('', 'SyntaxError'))
 
     def test_a_string_timer_runs_its_string_as_a_classic_script(self):
-        source = "setTimeout('let k = 1;', 0);\nsetTimeout('console.log(k)', 10);"
+        source = inspect.cleandoc("""
+            setTimeout('let k = 1;', 0);
+            setTimeout('console.log(k)', 10);
+        """)
         self.assertEqual(host_behavior(source, prelude=STRING_TIMERS), ('1\n', None))
 
     def test_a_timer_hands_its_function_every_argument_the_call_passes(self):
@@ -2988,7 +2997,12 @@ class TestANamedEntrypointIsKeptInTheEmittedText(TestBase):
         self.assertEqual(deobfuscate_source(source), 'run();')
         self.assertEqual(
             deobfuscate_source(source, entrypoints=('handler',)),
-            'function handler() {\n  return 5;\n}\nrun();',
+            inspect.cleandoc("""
+                function handler() {
+                  return 5;
+                }
+                run();
+            """),
         )
 
     def test_a_file_of_only_functions_keeps_the_function_no_entrypoint_names(self):
@@ -3013,8 +3027,16 @@ class TestANamedEntrypointIsKeptInTheEmittedText(TestBase):
         self.assertEqual(deobfuscate_source(source), 'run();')
         self.assertEqual(
             deobfuscate_source(source, entrypoints=('handler',)),
-            'function help() {\n  console.log("hi!");\n  return 7;\n}\n'
-            'function handler() {\n  return help();\n}\nrun();',
+            inspect.cleandoc("""
+                function help() {
+                  console.log("hi!");
+                  return 7;
+                }
+                function handler() {
+                  return help();
+                }
+                run();
+            """),
         )
 
     def test_a_data_global_named_as_an_entrypoint_survives_unfolded(self):
@@ -3022,7 +3044,10 @@ class TestANamedEntrypointIsKeptInTheEmittedText(TestBase):
         self.assertEqual(deobfuscate_source(source), 'console.log(3);')
         self.assertEqual(
             deobfuscate_source(source, entrypoints=('VERSION',)),
-            'var VERSION = 3;\nconsole.log(VERSION);',
+            inspect.cleandoc("""
+                var VERSION = 3;
+                console.log(VERSION);
+            """),
         )
 
     def test_an_object_global_named_as_an_entrypoint_survives_unfolded(self):
@@ -3030,7 +3055,10 @@ class TestANamedEntrypointIsKeptInTheEmittedText(TestBase):
         self.assertEqual(deobfuscate_source(source), 'console.log(3);')
         self.assertEqual(
             deobfuscate_source(source, entrypoints=('CFG',)),
-            'var CFG = { v: 3 };\nconsole.log(CFG.v);',
+            inspect.cleandoc("""
+                var CFG = { v: 3 };
+                console.log(CFG.v);
+            """),
         )
 
     def test_a_namespace_object_named_as_an_entrypoint_survives_unflattened(self):
@@ -3038,7 +3066,13 @@ class TestANamedEntrypointIsKeptInTheEmittedText(TestBase):
         self.assertEqual(deobfuscate_source(source), 'console.log(7);')
         self.assertEqual(
             deobfuscate_source(source, entrypoints=('NS',)),
-            'var NS = {};\nNS.greet = function() {\n  return 7;\n};\nconsole.log(NS.greet());',
+            inspect.cleandoc("""
+                var NS = {};
+                NS.greet = function() {
+                  return 7;
+                };
+                console.log(NS.greet());
+            """),
         )
 
 
@@ -3954,7 +3988,10 @@ class TestTokensAreSeparatedByTheWhitespaceOfTheLanguage(TestBase):
         self.assertEqual(deobfuscate_source(woven), deobfuscate_source(spaced))
 
     def test_a_file_that_begins_with_a_byte_order_mark_is_the_file_without_it(self):
-        program = 'var greeting = 1 + 2;\nconsole.log(greeting);'
+        program = inspect.cleandoc("""
+            var greeting = 1 + 2;
+            console.log(greeting);
+        """)
         marked = chr(0xFEFF) + program
         self.assertEqual(behavior(marked), ('3\n', None))
         self.assertEqual(canonical(JsParser(marked).parse()), canonical(JsParser(program).parse()))
@@ -3983,17 +4020,32 @@ class TestAutomaticSemicolonInsertionIsWhereTheLineEnds(TestBase):
         self.assertEqual(behavior(deobfuscate_source(source)), (output, None))
 
     def test_a_line_feed_after_return_ends_the_return_statement(self):
-        self._prints('function f() {\n  return\n  42;\n}\nconsole.log(f());', 'undefined\n')
+        self._prints(inspect.cleandoc("""
+            function f() {
+              return
+              42;
+            }
+            console.log(f());
+        """), 'undefined\n')
 
     def test_carriage_return_line_feed_endings_end_a_line_where_a_line_feed_does(self):
         self._prints('function f() {\r\n  return\r\n  42;\r\n}\r\nconsole.log(f());', 'undefined\n')
         self._prints('var a = 1\r\nvar b = 2\r\nconsole.log(a + b)', '3\n')
 
     def test_statements_separated_only_by_newlines_are_separate_statements(self):
-        self._prints('var a = 1\nvar b = 2\nconsole.log(a + b)', '3\n')
+        self._prints(inspect.cleandoc("""
+            var a = 1
+            var b = 2
+            console.log(a + b)
+        """), '3\n')
 
     def test_a_newline_ahead_of_a_prefix_increment_ends_the_previous_statement(self):
-        self._prints('var x = 1\nvar y = x\n++x\nconsole.log(x, y)', '2 1\n')
+        self._prints(inspect.cleandoc("""
+            var x = 1
+            var y = x
+            ++x
+            console.log(x, y)
+        """), '2 1\n')
         self._prints('var x = 1\r\nvar y = x\r\n++x\r\nconsole.log(x, y)', '2 1\n')
 
     def test_whitespace_that_ends_no_line_does_not_end_a_return_statement(self):
@@ -4554,10 +4606,10 @@ class TestUnescapeReadsEveryArgumentNoDecodeReads(TestBase):
 
     def test_every_argument_a_decode_refuses_is_one_unescape_reads(self):
         source = ''.join(
-            F'try {{ decodeURIComponent({json.dumps(argument)}); console.log("decoded"); }}'
-            F' catch (error) {{ console.log(error.name); }}\n'
-            F'try {{ unescape({json.dumps(argument)}); console.log("unescaped"); }}'
-            F' catch (error) {{ console.log(error.name); }}\n'
+            a_program(F"""
+                try {{ decodeURIComponent({json.dumps(argument)}); console.log("decoded"); }} catch (error) {{ console.log(error.name); }}
+                try {{ unescape({json.dumps(argument)}); console.log("unescaped"); }} catch (error) {{ console.log(error.name); }}
+            """)
             for argument in _ARGUMENTS_NO_DECODE_READS
         )
         both = ('URIError\nunescaped\n' * len(_ARGUMENTS_NO_DECODE_READS), None)
@@ -4965,12 +5017,18 @@ class TestAFileThatOpensWithAHashBangLine(TestBase):
             with self.subTest(ending=' '.join(F'U+{ord(c):04X}' for c in ending)):
                 source = F'#!/usr/bin/env node{ending}console.log(1);'
                 self._prints(source, '1\n')
-                self.assertEqual(deobfuscate_source(source), '#!/usr/bin/env node\nconsole.log(1);')
+                self.assertEqual(deobfuscate_source(source), inspect.cleandoc("""
+                    #!/usr/bin/env node
+                    console.log(1);
+                """))
 
     def test_what_the_hash_bang_line_says_is_not_code(self):
         source = F"#!console.log('boom'){chr(0x000A)}console.log(1);"
         self._prints(source, '1\n')
-        self.assertEqual(deobfuscate_source(source), "#!console.log('boom')\nconsole.log(1);")
+        self.assertEqual(deobfuscate_source(source), inspect.cleandoc("""
+            #!console.log('boom')
+            console.log(1);
+        """))
 
     def test_a_file_whose_hash_bang_line_is_all_of_it_prints_nothing(self):
         source = '#!/usr/bin/env node'

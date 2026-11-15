@@ -19,7 +19,11 @@ class TestPS1BracketRemoval(TestPs1):
         self.assertIn(result.strip(), ('"Test"', "'Test'"))
 
     def test_string_literal_03(self):
-        result = self._deobfuscate('(((\n( "Tes""t")\n)) )')
+        result = self._deobfuscate(inspect.cleandoc("""
+            (((
+            ( "Tes""t")
+            )) )
+        """))
         self.assertIn(result.strip(), ('"Tes""t"', '\'Tes"t\''))
 
     def test_numeric_literal_01(self):
@@ -228,7 +232,12 @@ class TestPs1AParameterNameIsCompletedOnlyForACommandThatBindsByName(TestPs1):
     def test_a_parameter_a_function_does_not_declare_keeps_the_spelling_it_was_written_with(self):
         self.assertEqual(
             self._apply('function f { Write-Host $args } ; f -recurse', Ps1Simplifications),
-            'function f {\n  Write-Host $args\n}\nf -recurse',
+            inspect.cleandoc("""
+                function f {
+                  Write-Host $args
+                }
+                f -recurse
+            """),
         )
 
     def test_a_native_program_argument_keeps_the_spelling_it_was_written_with(self):

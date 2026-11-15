@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from test import TestBase
 
+import inspect
 import itertools
 import unittest
 
@@ -281,7 +282,12 @@ class TestPs1ParserExpressions(TestBase):
         self.assertEqual(len(expr.pairs), 2)
 
     def test_hash_literal_mixed_separators(self):
-        expr = self._parse_expr("@{ a = 1;\n; b = 2;\n\n c = 3 }")
+        expr = self._parse_expr(inspect.cleandoc("""
+            @{ a = 1;
+            ; b = 2;
+
+             c = 3 }
+        """))
         self.assertIsInstance(expr, Ps1HashLiteral)
         self.assertEqual(len(expr.pairs), 3)
 
@@ -320,8 +326,14 @@ class TestPs1ParserExpressions(TestBase):
             '-' : (' -\n    $y', '-'),
             '+' : (' +\n    $y', '+'),
             '!' : (' !\n    $y', '!'),
-            '++': ('++\n    $y', '++'),
-            '--': ('--\n    $y', '--'),
+            '++': (inspect.cleandoc("""
+                ++
+                    $y
+            """), '++'),
+            '--': (inspect.cleandoc("""
+                --
+                    $y
+            """), '--'),
         }
         for label, (src, op) in cases.items():
             with self.subTest(operator=label):
@@ -421,12 +433,18 @@ class TestPs1ParserExpressions(TestBase):
         # The whitespace must not become part of the string content.
         expr = self._parse_expr("@'   \nline one\nline two\n'@")
         self.assertIsInstance(expr, Ps1HereString)
-        self.assertEqual(expr.value, 'line one\nline two')
+        self.assertEqual(expr.value, inspect.cleandoc("""
+            line one
+            line two
+        """))
 
     def test_here_string_expandable_whitespace_after_header(self):
         expr = self._parse_expr('@"   \nline one\nline two\n"@')
         self.assertIsInstance(expr, Ps1HereString)
-        self.assertEqual(expr.value, 'line one\nline two')
+        self.assertEqual(expr.value, inspect.cleandoc("""
+            line one
+            line two
+        """))
 
     def test_here_string_verbatim_tab_after_header(self):
         expr = self._parse_expr("@'\t\ntext\n'@")
@@ -444,17 +462,26 @@ class TestPs1ParserExpressions(TestBase):
         self.assertEqual(expr.value, 'line one\rline two')
 
     def test_member_access_newline_after_dot(self):
-        expr = self._parse_expr('$obj.\n    Length')
+        expr = self._parse_expr(inspect.cleandoc("""
+            $obj.
+                Length
+        """))
         self.assertIsInstance(expr, Ps1MemberAccess)
         self.assertEqual(expr.member, 'Length')
 
     def test_method_call_newline_after_dot(self):
-        expr = self._parse_expr('$obj.\n    Method()')
+        expr = self._parse_expr(inspect.cleandoc("""
+            $obj.
+                Method()
+        """))
         self.assertIsInstance(expr, Ps1InvokeMember)
         self.assertEqual(expr.member, 'Method')
 
     def test_static_access_newline_after_double_colon(self):
-        expr = self._parse_expr('[int]::\n    MaxValue')
+        expr = self._parse_expr(inspect.cleandoc("""
+            [int]::
+                MaxValue
+        """))
         self.assertIsInstance(expr, Ps1MemberAccess)
         self.assertEqual(expr.member, 'MaxValue')
         self.assertEqual(expr.access, Ps1AccessKind.STATIC)
@@ -470,7 +497,11 @@ class TestPs1ParserExpressions(TestBase):
         self.assertEqual(expr.operand.operand.name, 'false')
 
     def test_chained_fluent_member_access(self):
-        expr = self._parse_expr('$s.\n    Trim().\n    ToLower()')
+        expr = self._parse_expr(inspect.cleandoc("""
+            $s.
+                Trim().
+                ToLower()
+        """))
         self.assertIsInstance(expr, Ps1InvokeMember)
         self.assertEqual(expr.member, 'ToLower')
         self.assertIsInstance(expr.object, Ps1InvokeMember)
@@ -559,7 +590,11 @@ class TestPs1ParserExpressions(TestBase):
 
     def test_verbatim_here_string_keeps_smart_quotes(self):
         content = 'say “hi” don’t'
-        expr = self._parse_expr(F"@'\n{content}\n'@")
+        expr = self._parse_expr(inspect.cleandoc(F"""
+            @'
+            {content}
+            '@
+        """))
         self.assertIsInstance(expr, Ps1HereString)
         self.assertEqual(expr.value, content)
 
@@ -722,7 +757,10 @@ class TestPs1ALineContinuationSeparatesTheOperatorFromWhatPrecedesIt(TestBase):
         return first.expression
 
     def test_a_continuation_before_a_static_member_leaves_the_type_expression_alone(self):
-        script = self._parse("[Convert]`\n::FromBase64String('AA==')")
+        script = self._parse(inspect.cleandoc("""
+            [Convert]`
+            ::FromBase64String('AA==')
+        """))
         self.assertEqual(self._bindings(script), [], 'the continuation bound the member to a type')
         expression = self._assertTheObjectIsAStatementOfItsOwn(script, Ps1TypeExpression)
         self.assertEqual(expression.name, 'Convert')
@@ -730,7 +768,10 @@ class TestPs1ALineContinuationSeparatesTheOperatorFromWhatPrecedesIt(TestBase):
         self.assertIn('AA==', words, 'the text behind the continuation was lost')
 
     def test_a_continuation_before_a_property_leaves_the_variable_alone(self):
-        script = self._parse('$a`\n.Length')
+        script = self._parse(inspect.cleandoc("""
+            $a`
+            .Length
+        """))
         self.assertEqual(self._bindings(script), [], 'the continuation bound the member to $a')
         expression = self._assertTheObjectIsAStatementOfItsOwn(script, Ps1Variable)
         self.assertEqual(expression.name, 'a')
@@ -739,7 +780,10 @@ class TestPs1ALineContinuationSeparatesTheOperatorFromWhatPrecedesIt(TestBase):
             any('Length' in word for word in words), 'the text behind the continuation was lost')
 
     def test_a_continuation_before_an_index_leaves_the_variable_alone(self):
-        script = self._parse('$a`\n[0]')
+        script = self._parse(inspect.cleandoc("""
+            $a`
+            [0]
+        """))
         self.assertEqual(self._bindings(script), [], 'the continuation indexed $a')
         expression = self._assertTheObjectIsAStatementOfItsOwn(script, Ps1Variable)
         self.assertEqual(expression.name, 'a')
@@ -793,7 +837,10 @@ class TestPs1ALineContinuationSeparatesTheOperatorFromWhatPrecedesIt(TestBase):
         The tree 5.1 recovers from the parse error holds two pipelines, the type expression and one
         command that keeps the parenthesis behind it.
         """
-        script = self._parse("[Convert]`\n::FromBase64String('AA==')")
+        script = self._parse(inspect.cleandoc("""
+            [Convert]`
+            ::FromBase64String('AA==')
+        """))
         self.assertEqual(len(script.body), 2)
         second = script.body[1]
         self.assertIsInstance(second, Ps1ExpressionStatement)
@@ -1144,15 +1191,24 @@ class TestPs1AnOperatorTouchingAValueNamesAMemberOfIt(TestBase):
     def test_a_gap_before_the_dot_leaves_a_number_and_a_statement_of_its_own(self):
         sources = ('$x .5', '1e3 .5')
         self.assertEqual({source: self._reads(source) for source in sources}, {
-            '$x .5'  : '$x\n.5',
-            '1e3 .5' : '1e3\n.5',
+            '$x .5'  : inspect.cleandoc("""
+                $x
+                .5
+            """),
+            '1e3 .5' : inspect.cleandoc("""
+                1e3
+                .5
+            """),
         })
 
     def test_a_block_comment_stands_between_the_value_and_the_dot_without_parting_them(self):
         sources = ('$x<# c #>.5', '$x <# c #>.5')
         self.assertEqual({source: self._reads(source) for source in sources}, {
             '$x<# c #>.5'  : '$x . 5',
-            '$x <# c #>.5' : '$x\n.5',
+            '$x <# c #>.5' : inspect.cleandoc("""
+                $x
+                .5
+            """),
         })
 
     def test_a_second_dot_counts_from_the_numeral_rather_than_naming_a_member_of_it(self):
@@ -1220,6 +1276,12 @@ class TestPs1AnOperatorTouchingAValueNamesAMemberOfIt(TestBase):
         it says: an access that names nothing must not take the newline for whitespace and read the
         next pipeline for a member name. Measured on 5.1, `f $x.` and `g 1` are two statements.
         """
-        script = Ps1Parser('f $x.\ng 1').parse()
+        script = Ps1Parser(inspect.cleandoc("""
+            f $x.
+            g 1
+        """)).parse()
         self.assertEqual(len(script.body), 2)
-        self.assertEqual(Ps1Synthesizer().convert(script), 'f $x .\ng 1')
+        self.assertEqual(Ps1Synthesizer().convert(script), inspect.cleandoc("""
+            f $x .
+            g 1
+        """))

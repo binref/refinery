@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase
 
 from refinery.lib.scripts.js.parser import JsParser
@@ -358,7 +360,10 @@ class TestJsParserStatements(TestBase):
         self.assertTrue(fields[0].is_static)
 
     def test_class_async_field_then_method_across_newline(self):
-        ast = JsParser('class C { async\n m() {} }').parse()
+        ast = JsParser(inspect.cleandoc("""
+            class C { async
+             m() {} }
+        """)).parse()
         fields = [n for n in ast.walk() if isinstance(n, JsPropertyDefinition)]
         methods = [n for n in ast.walk() if isinstance(n, JsMethodDefinition)]
         self.assertEqual(len(fields), 1)
@@ -371,7 +376,10 @@ class TestJsParserStatements(TestBase):
         self.assertFalse(value.is_async)
 
     def test_class_static_modifier_survives_newline(self):
-        ast = JsParser('class C { static\n m() {} }').parse()
+        ast = JsParser(inspect.cleandoc("""
+            class C { static
+             m() {} }
+        """)).parse()
         self.assertEqual([n for n in ast.walk() if isinstance(n, JsPropertyDefinition)], [])
         methods = [n for n in ast.walk() if isinstance(n, JsMethodDefinition)]
         self.assertEqual(len(methods), 1)
@@ -584,7 +592,10 @@ class TestJsParserStatements(TestBase):
         self.assertEqual(len(stmt.body), 2)
 
     def test_asi_return_newline(self):
-        script = self._parse_all('return\n42')
+        script = self._parse_all(inspect.cleandoc("""
+            return
+            42
+        """))
         self.assertEqual(len(script.body), 2)
         self.assertIsInstance(script.body[0], JsReturnStatement)
         self.assertIsNone(script.body[0].argument)
@@ -635,17 +646,29 @@ class TestJsParserStatements(TestBase):
         self.assertIsInstance(stmt, JsForInStatement)
 
     def test_newline_before_paren_continues_call(self):
-        source = 'global["VERSION"] = "9.4533"\n\n(async () => {\n  const c = global;\n})()'
+        source = inspect.cleandoc("""
+            global["VERSION"] = "9.4533"
+
+            (async () => {
+              const c = global;
+            })()
+        """)
         body = self._parse_all(source).body
         self.assertEqual(len(body), 1)
         self.assertIsInstance(body[0], JsExpressionStatement)
 
     def test_newline_before_bracket_continues_member(self):
-        body = self._parse_all('var a = [10, 20]\n[0]').body
+        body = self._parse_all(inspect.cleandoc("""
+            var a = [10, 20]
+            [0]
+        """)).body
         self.assertEqual(len(body), 1)
         self.assertIsInstance(body[0], JsVariableDeclaration)
 
     def test_newline_before_template_continues_tagged_template(self):
-        body = self._parse_all('var x = foo\n`template`').body
+        body = self._parse_all(inspect.cleandoc("""
+            var x = foo
+            `template`
+        """)).body
         self.assertEqual(len(body), 1)
         self.assertIsInstance(body[0], JsVariableDeclaration)

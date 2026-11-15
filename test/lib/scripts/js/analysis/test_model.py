@@ -110,10 +110,12 @@ class TestSemanticModel(TestBase):
 
     def test_singular_value_resolves_declaration_and_assignment_forms(self):
         ast, model = self._model(
-            'function f() {}\n'
-            'var g = function () {};\n'
-            'var h;\n'
-            'h = function () {};'
+            inspect.cleandoc("""
+                function f() {}
+                var g = function () {};
+                var h;
+                h = function () {};
+            """)
         )
         self.assertIsInstance(
             model.singular_value(model.binding_of(self._decl(ast, model, 'f'))),
@@ -129,7 +131,11 @@ class TestSemanticModel(TestBase):
         )
 
     def test_singular_value_is_none_for_reassigned_binding(self):
-        ast, model = self._model('var x;\nx = 1;\nx = 2;')
+        ast, model = self._model(inspect.cleandoc("""
+            var x;
+            x = 1;
+            x = 2;
+        """))
         self.assertIsNone(model.singular_value(model.binding_of(self._decl(ast, model, 'x'))))
 
     def test_singular_value_is_none_when_a_write_overwrites_the_declaration_value(self):
@@ -145,7 +151,12 @@ class TestSemanticModel(TestBase):
                 self.assertIsNone(model.binding_establishment_sites(binding))
 
     def test_binding_values_lists_every_spelled_value_of_a_multiply_written_name(self):
-        ast, model = self._model('var x = 1;\nx = 2;\nx = 3;\nconsole.log(x);')
+        ast, model = self._model(inspect.cleandoc("""
+            var x = 1;
+            x = 2;
+            x = 3;
+            console.log(x);
+        """))
         values, complete = model.binding_values(model.binding_of(self._decl(ast, model, 'x')))
         self.assertTrue(complete)
         self.assertEqual(sorted(JsSynthesizer().convert(value) for value in values), ['1', '2', '3'])
@@ -178,7 +189,10 @@ class TestSemanticModel(TestBase):
                 self.assertIsNone(model.singular_value(model.binding_of(self._decl(ast, model, 'x'))))
 
     def test_values_at_call_admits_the_mapped_argument_as_the_entry_channel(self):
-        ast, model = self._model('function f(p) { return p; }\nf(1);')
+        ast, model = self._model(inspect.cleandoc("""
+            function f(p) { return p; }
+            f(1);
+        """))
         binding = model.binding_of(self._decl(ast, model, 'p'))
         call = self._call(ast, 'f')
         values, complete = model.values_at_call(binding, {binding: call.arguments[0]})
@@ -186,7 +200,10 @@ class TestSemanticModel(TestBase):
         self.assertEqual([JsSynthesizer().convert(value) for value in values], ['1'])
 
     def test_values_at_call_lists_the_argument_and_every_later_write(self):
-        ast, model = self._model('function f(p) { p = 2; return p; }\nf(1);')
+        ast, model = self._model(inspect.cleandoc("""
+            function f(p) { p = 2; return p; }
+            f(1);
+        """))
         binding = model.binding_of(self._decl(ast, model, 'p'))
         call = self._call(ast, 'f')
         values, complete = model.values_at_call(binding, {binding: call.arguments[0]})
@@ -194,7 +211,10 @@ class TestSemanticModel(TestBase):
         self.assertEqual(sorted(JsSynthesizer().convert(value) for value in values), ['1', '2'])
 
     def test_values_at_call_with_a_missing_argument_is_incomplete(self):
-        ast, model = self._model('function f(p) { return p; }\nf();')
+        ast, model = self._model(inspect.cleandoc("""
+            function f(p) { return p; }
+            f();
+        """))
         binding = model.binding_of(self._decl(ast, model, 'p'))
         values, complete = model.values_at_call(binding, {binding: None})
         self.assertFalse(complete)
@@ -202,9 +222,18 @@ class TestSemanticModel(TestBase):
 
     def test_values_at_call_is_incomplete_where_a_dynamic_channel_can_rebind(self):
         for label, source in {
-            'direct eval': 'function f(p) { eval("p = 2"); return p; }\nf(1);',
-            'escaping arguments object': 'function f(p) { console.log(arguments); return p; }\nf(1);',
-            'arguments element write': 'function f(p) { arguments[0] = 2; return p; }\nf(1);',
+            'direct eval': inspect.cleandoc("""
+                function f(p) { eval("p = 2"); return p; }
+                f(1);
+            """),
+            'escaping arguments object': inspect.cleandoc("""
+                function f(p) { console.log(arguments); return p; }
+                f(1);
+            """),
+            'arguments element write': inspect.cleandoc("""
+                function f(p) { arguments[0] = 2; return p; }
+                f(1);
+            """),
         }.items():
             with self.subTest(label):
                 ast, model = self._model(source)
@@ -1261,7 +1290,10 @@ class TestWhereADynamicScopeCouldRebindABinding(TestBase):
         self.assertEqual(sites, [member])
 
     def test_a_span_of_source_the_model_never_read_is_located(self):
-        ast, binding, sites, volatile = self._located('function f(){ var x; h("abc\n; }')
+        ast, binding, sites, volatile = self._located(inspect.cleandoc("""
+            function f(){ var x; h("abc
+            ; }
+        """))
         self.assertTrue(volatile)
         self.assertEqual(len(sites), 1)
 
@@ -1751,7 +1783,10 @@ class TestANameSpelledInAKeyPositionReadsNoBinding(TestBase):
         ]:
             with self.subTest(member=member):
                 self.assertEqual(
-                    _how_each_occurrence_is_read(F'class C {{ {member} }}\ngk;', 'gk'),
+                    _how_each_occurrence_is_read(inspect.cleandoc(F"""
+                        class C {{ {member} }}
+                        gk;
+                    """), 'gk'),
                     [(False, False), (True, True)],
                 )
 
@@ -1766,25 +1801,37 @@ class TestANameSpelledInAKeyPositionReadsNoBinding(TestBase):
         ]:
             with self.subTest(member=member):
                 self.assertEqual(
-                    _how_each_occurrence_is_read(F'class C {{ {member} }}\ngk;', 'gk'),
+                    _how_each_occurrence_is_read(inspect.cleandoc(F"""
+                        class C {{ {member} }}
+                        gk;
+                    """), 'gk'),
                     [(True, True), (True, True)],
                 )
 
     def test_an_object_literal_key_reads_no_binding(self):
         self.assertEqual(
-            _how_each_occurrence_is_read('var o = { gk: 1 };\ngk;', 'gk'),
+            _how_each_occurrence_is_read(inspect.cleandoc("""
+                var o = { gk: 1 };
+                gk;
+            """), 'gk'),
             [(False, False), (True, True)],
         )
 
     def test_an_import_attribute_key_reads_no_binding(self):
         self.assertEqual(
-            _how_each_occurrence_is_read("import x from 'm' with { type: 'json' };\ntype;", 'type'),
+            _how_each_occurrence_is_read(inspect.cleandoc("""
+                import x from 'm' with { type: 'json' };
+                type;
+            """), 'type'),
             [(False, False), (True, True)],
         )
 
     def test_the_name_an_export_all_exports_a_module_under_reads_no_binding(self):
         self.assertEqual(
-            _how_each_occurrence_is_read("export * as ns from 'm';\nns;", 'ns'),
+            _how_each_occurrence_is_read(inspect.cleandoc("""
+                export * as ns from 'm';
+                ns;
+            """), 'ns'),
             [(False, False), (True, True)],
         )
 

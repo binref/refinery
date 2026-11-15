@@ -9,32 +9,35 @@ from test.lib.scripts.ps1.deobfuscation import TestPs1
 class TestPs1AliasInlining(TestPs1):
 
     def test_a_default_alias_beats_a_same_named_function_body(self):
-        data = (
-            "Function R ([String]$s){"
-            "$r = '';"
-            "ForEach($c in $s.ToCharArray()){$r = $c + $r};"
-            "$r;}"
-            "$x = R 'olleH'\nWrite-Output $x"
-        )
+        data = cleandoc("""
+            Function R ([String]$s){$r = '';ForEach($c in $s.ToCharArray()){$r = $c + $r};$r;}$x = R 'olleH'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('Invoke-History', result)
         self.assertNotIn('Hello', result)
 
     def test_a_default_alias_beats_a_same_named_function_case_insensitively(self):
-        result = self._deobfuscate("Function gc { 'test' }\ngc")
+        result = self._deobfuscate(cleandoc("""
+            Function gc { 'test' }
+            gc
+        """))
         self.assertEqual(result, 'Get-Content')
 
     def test_digit_starting_alias_inlined(self):
-        data = "Set-Alias 1abc Invoke-Expression\n1abc 'Write-Host hello'"
+        data = cleandoc("""
+            Set-Alias 1abc Invoke-Expression
+            1abc 'Write-Host hello'
+        """)
         result = self._deobfuscate(data)
         self.assertIn('Write-Host', result)
         self.assertNotIn('1abc', result.split('\n')[-1])
 
     def test_obfuscated_alias_target_resolved_after_folding(self):
-        data = (
-            "Set-Alias myalias $([char]73+[char]69+[char]88)\n"
-            "myalias 'Write-Host hi'"
-        )
+        data = cleandoc("""
+            Set-Alias myalias $([char]73+[char]69+[char]88)
+            myalias 'Write-Host hi'
+        """)
         result = self._deobfuscate(data)
         self.assertIn('Write-Host', result)
         self.assertNotIn('myalias', result.split('\n')[-1])
@@ -51,19 +54,40 @@ class TestPs1AliasInlining(TestPs1):
 
     def test_an_alias_cycle_terminates_and_is_left_intact(self):
         result = self._deobfuscate('Set-Alias aq bq; Set-Alias bq aq; aq')
-        self.assertEqual(result, 'Set-Alias aq bq\nSet-Alias bq aq\naq')
+        self.assertEqual(result, cleandoc("""
+            Set-Alias aq bq
+            Set-Alias bq aq
+            aq
+        """))
 
     def test_a_wildcard_target_alias_is_left_intact(self):
         result = self._deobfuscate('Set-Alias wq i*x; wq')
-        self.assertEqual(result, 'Set-Alias wq i*x\nwq')
+        self.assertEqual(result, cleandoc("""
+            Set-Alias wq i*x
+            wq
+        """))
 
     def test_a_use_before_its_alias_definition_is_left_intact(self):
-        result = self._deobfuscate('wq\nSet-Alias wq Write-Output')
-        self.assertEqual(result, 'wq\nSet-Alias wq Write-Output')
+        result = self._deobfuscate(cleandoc("""
+            wq
+            Set-Alias wq Write-Output
+        """))
+        self.assertEqual(result, cleandoc("""
+            wq
+            Set-Alias wq Write-Output
+        """))
 
     def test_an_alias_defined_in_a_function_body_does_not_resolve_a_use_outside_it(self):
-        result = self._deobfuscate("function f { Set-Alias zx Write-Output }\nzx 'hi'")
-        self.assertEqual(result, "function f {\n  Set-Alias zx Write-Output\n}\nzx 'hi'")
+        result = self._deobfuscate(cleandoc("""
+            function f { Set-Alias zx Write-Output }
+            zx 'hi'
+        """))
+        self.assertEqual(result, cleandoc("""
+            function f {
+              Set-Alias zx Write-Output
+            }
+            zx 'hi'
+        """))
 
     def test_a_use_before_a_rebinding_takes_the_binding_that_reaches_it(self):
         result = self._deobfuscate(cleandoc("""
@@ -274,7 +298,10 @@ class TestPs1AliasDefinitionRemoval(TestPs1):
         self._assertDeobfuscatesToOneOf(
             script,
             script,
-            "Set-Alias gci Write-Output\nGet-ChildItem 'hi'",
+            cleandoc("""
+                Set-Alias gci Write-Output
+                Get-ChildItem 'hi'
+            """),
         )
 
     @opportunity
@@ -426,7 +453,10 @@ class TestPs1AliasShadowing(TestPs1):
             Write-Host (gci)
             Write-Host done
         """))
-        self.assertEqual(closed, 'Write-Host (Get-ChildItem)\nWrite-Host done')
+        self.assertEqual(closed, cleandoc("""
+            Write-Host (Get-ChildItem)
+            Write-Host done
+        """))
         open_world = self._deobfuscate(cleandoc("""
             function global:gci { Start-Process calc }
             iex $x
@@ -616,7 +646,10 @@ class TestPs1AScopeQualifiedCallDoesNotRunAPlainAlias(TestPs1):
         'global:, which 5.1 does not resolve to that alias'
     )
     def test_a_bare_scope_qualified_call_of_a_plain_alias_is_not_rewritten(self):
-        result = self._deobfuscate("Set-Alias zzq Write-Output\nglobal:zzq 'qualified'")
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias zzq Write-Output
+            global:zzq 'qualified'
+        """))
         self.assertNotIn("Write-Output 'qualified'", result)
 
     @wontfix(
@@ -624,7 +657,10 @@ class TestPs1AScopeQualifiedCallDoesNotRunAPlainAlias(TestPs1):
         'which 5.1 does not resolve to that alias'
     )
     def test_a_call_operator_on_a_global_scoped_plain_alias_is_not_rewritten(self):
-        result = self._deobfuscate("Set-Alias zzq Write-Output\n& 'global:zzq' 'qualified'")
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias zzq Write-Output
+            & 'global:zzq' 'qualified'
+        """))
         self.assertNotIn("Write-Output 'qualified'", result)
 
     @wontfix(
@@ -632,7 +668,10 @@ class TestPs1AScopeQualifiedCallDoesNotRunAPlainAlias(TestPs1):
         'which 5.1 does not resolve to that alias'
     )
     def test_a_call_operator_on_a_script_scoped_plain_alias_is_not_rewritten(self):
-        result = self._deobfuscate("Set-Alias zzq Write-Output\n& 'script:zzq' 'qualified'")
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias zzq Write-Output
+            & 'script:zzq' 'qualified'
+        """))
         self.assertNotIn("Write-Output 'qualified'", result)
 
 
@@ -673,7 +712,10 @@ class TestPs1AScriptThatRedefinesForEachObjectDoesNotRunTheCmdlet(TestPs1):
 
     _REBOUND_ITERATOR_FORMS_5_1_RUNS = (
         "New-Item -Path function: -Name ForEach-Object -Value { 'HIJACK' }",
-        "function tmp { 'HIJACK' }\nRename-Item function:tmp ForEach-Object",
+        cleandoc("""
+            function tmp { 'HIJACK' }
+            Rename-Item function:tmp ForEach-Object
+        """),
         "Set-Item function:ForEach-Object,function:Where-Object { 'HIJACK' }",
         "Set-Item function:/ForEach-Object { 'HIJACK' }",
     )

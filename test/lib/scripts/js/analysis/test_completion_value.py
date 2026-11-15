@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase
@@ -259,7 +260,10 @@ class TestPreserveScriptReturnHoldsAWrapperEndValue(TestBase):
     def test_the_default_drops_the_inserted_undefined(self):
         self.assertEqual('', deobfuscate_source('function w(){ Math.max(7); } w();'))
         self.assertEqual(
-            'var n = 1;\nn++;',
+            inspect.cleandoc("""
+                var n = 1;
+                n++;
+            """),
             deobfuscate_source('var n = 1; function w(){ n++; } w();'),
         )
         for program in A_WRAPPER_WHOSE_END_VALUE_WOULD_LEAK:
@@ -270,7 +274,10 @@ class TestPreserveScriptReturnHoldsAWrapperEndValue(TestBase):
 A_COMPLETION_POSITION_THE_OPTION_HOLDS = (
     '5; eval("var x = 1");',
     '7; { new Function("42")(); }',
-    '1 + 1;\nglobalThis.h = 1;',
+    inspect.cleandoc("""
+        1 + 1;
+        globalThis.h = 1;
+    """),
     "var o=['a','b'],i=0; while(true){switch(o[i++]){case 'a': 10; continue; case 'b': 22; continue;} break;}",
     "var p=['a','b'],j=0; while(true){switch(p[j++]){case 'a': 3; continue; case 'b': 44;} break;}",
     '9; eval("if (globalThis) 5");',

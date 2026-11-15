@@ -900,7 +900,10 @@ class TestObjectFold(TestJsDeobfuscator):
 
     def test_chained_object_properties_fold_consistently(self):
         source = 'var a = {x: 7}; var b = {y: a.x}; SINK(a.x); SINK(b.y);'
-        self.assertEqual('SINK(7);\nSINK(7);', self._objectfold(source))
+        self.assertEqual(inspect.cleandoc("""
+            SINK(7);
+            SINK(7);
+        """), self._objectfold(source))
 
 
 class TestRegressions(TestJsDeobfuscator):
@@ -1661,18 +1664,24 @@ class TestAMethodCalledOnAnObjectLiteralStillPrintsWhatItPrints(TestBase):
 
 
 AN_ACCESSOR_INSTALLED_ON_A_NAMESPACE_OBJECT = {
-    'var o = {};\n'
-    'o.__defineGetter__("x", function () { return 9; });\n'
-    'console.log(o.x);\n': '9\n',
+    a_program("""
+        var o = {};
+        o.__defineGetter__("x", function () { return 9; });
+        console.log(o.x);
+    """): '9\n',
 
-    'var p = {};\n'
-    'p.__defineSetter__("y", function (v) { console.log("set", v); });\n'
-    'p.y = 5;\n': 'set 5\n',
+    a_program("""
+        var p = {};
+        p.__defineSetter__("y", function (v) { console.log("set", v); });
+        p.y = 5;
+    """): 'set 5\n',
 
-    'var q = {};\n'
-    'var k = "z";\n'
-    'q.__defineGetter__(k, function () { return 3; });\n'
-    'console.log(q[k]);\n': '3\n',
+    a_program("""
+        var q = {};
+        var k = "z";
+        q.__defineGetter__(k, function () { return 3; });
+        console.log(q[k]);
+    """): '3\n',
 }
 
 
@@ -1687,9 +1696,9 @@ class TestAnAccessorInstalledOnANamespaceObjectIsStillRead(TestBase):
         )
 
     def test_a_getter_installed_through_define_property_still_answers_the_read(self):
-        source = (
-            'var p = {};\n'
-            'Object.defineProperty(p, "y", { get: function () { return 7; } });\n'
-            'console.log(p.y);\n'
-        )
+        source = a_program("""
+            var p = {};
+            Object.defineProperty(p, "y", { get: function () { return 7; } });
+            console.log(p.y);
+        """)
         self.assertEqual(before_and_after(source), (prints('7'), prints('7')))

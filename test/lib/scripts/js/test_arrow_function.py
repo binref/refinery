@@ -242,7 +242,10 @@ class TestJsArrowFunction(TestBase):
         return arrow.is_async, self._parameters(arrow)
 
     def _on_both_sides_of_a_line_break(self, head: str, tail: str):
-        return self._statements(F'{head} {tail}'), self._statements(F'{head}\n{tail}')
+        return self._statements(F'{head} {tail}'), self._statements(inspect.cleandoc(F"""
+            {head}
+            {tail}
+        """))
 
     def test_a_bracketed_list_before_an_arrow_is_the_parameter_list_it_binds(self):
         for source, parameters in PARAMETER_LISTS:
@@ -294,7 +297,10 @@ class TestJsArrowFunction(TestBase):
         """
         for head, expected in A_LINE_BREAK_BEFORE_THE_ARROW:
             with self.subTest(head=head):
-                self.assertEqual(self._statements(F'{head}\n=> a'), expected)
+                self.assertEqual(self._statements(inspect.cleandoc(F"""
+                    {head}
+                    => a
+                """)), expected)
 
     def test_no_tail_attaches_to_an_arrow_whose_body_is_a_block(self):
         for tail, expected in A_TAIL_AFTER_AN_ARROW_WITH_A_BLOCK_BODY:
@@ -337,7 +343,10 @@ class TestJsArrowFunction(TestBase):
     def test_an_increment_below_the_line_it_would_update_begins_a_statement_of_its_own(self):
         for head, expected in AN_INCREMENT_ON_THE_NEXT_LINE:
             with self.subTest(head=head):
-                self.assertEqual(self._statements(F'{head}\n++c'), expected)
+                self.assertEqual(self._statements(inspect.cleandoc(F"""
+                    {head}
+                    ++c
+                """)), expected)
 
     def test_a_bracket_below_an_arrow_with_a_block_body_begins_the_second_of_two_statements(self):
         for source, expected in TWO_STATEMENTS_AFTER_A_BLOCK_BODY:

@@ -116,7 +116,10 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
 
     def test_concise_arrow_irreducible_tail_substitutes_whole_expression(self):
         self.assertIn(
-            self._evaluate("const f = v => !(v instanceof Array);\nSINK(f('mn'));"),
+            self._evaluate(inspect.cleandoc("""
+                const f = v => !(v instanceof Array);
+                SINK(f('mn'));
+            """)),
             ("SINK(!('mn' instanceof Array));", 'SINK(true);'),
         )
 
@@ -180,7 +183,12 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         """
         for expression in ['9 ** 17', "'9' ** '17'", 'Math.pow(9, 17)', '2 ** 0.5']:
             with self.subTest(expression=expression):
-                source = F'function f() {{\n  return {expression};\n}}\nvar x = f();'
+                source = inspect.cleandoc(F"""
+                    function f() {{
+                      return {expression};
+                    }}
+                    var x = f();
+                """)
                 self.assertIn(self._evaluate(source), (source, F'var x = {expression};'))
 
     def test_pow_of_integers_that_is_a_double_is_folded(self):
@@ -273,7 +281,10 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_json_parse_calls_its_reviver_function(self):
-        source = "function f() { return JSON.parse('[1]', function (k, v) { return 7; }); }\nconsole.log(f());"
+        source = inspect.cleandoc("""
+            function f() { return JSON.parse('[1]', function (k, v) { return 7; }); }
+            console.log(f());
+        """)
         self.assertEqual(before_and_after(source), (('7\n', None), ('7\n', None)))
 
     def test_json_parse_with_a_reviver_that_is_no_function_is_folded(self):
@@ -446,11 +457,21 @@ class TestInterpreterMethodValueSemantics(_InNode):
     ]
 
     def _declines(self, expression: str):
-        source = F'function f() {{\n  return {expression};\n}}\nvar x = f();'
+        source = inspect.cleandoc(F"""
+            function f() {{
+              return {expression};
+            }}
+            var x = f();
+        """)
         self.assertEqual(source, self._evaluate(source))
 
     def _declines_or_answers_function(self, expression: str):
-        source = F'function f() {{\n  return {expression};\n}}\nvar x = f();'
+        source = inspect.cleandoc(F"""
+            function f() {{
+              return {expression};
+            }}
+            var x = f();
+        """)
         self.assertIn(self._evaluate(source), (source, "var x = 'function';"))
 
     def test_string_method_read_is_not_invoked(self):
@@ -575,7 +596,12 @@ class TestInterpreterMethodValueSemantics(_InNode):
 class TestInterpreterInOperator(TestJsDeobfuscator):
 
     def _in(self, expression: str, expected: str):
-        source = F'function f() {{\n  return {expression};\n}}\nvar x = f();'
+        source = inspect.cleandoc(F"""
+            function f() {{
+              return {expression};
+            }}
+            var x = f();
+        """)
         self.assertEqual(F'var x = {expected};', self._evaluate(source))
 
     def test_data_property_is_present(self):
@@ -864,7 +890,10 @@ class TestInterpreterThrowSemantics(_InNode):
 class TestInterpreterCompoundAssignment(TestJsDeobfuscator):
 
     def _target(self, body: str) -> str:
-        return self._evaluate(F'function f() {{ {body} }}\nvar r = f();')
+        return self._evaluate(inspect.cleandoc(F"""
+            function f() {{ {body} }}
+            var r = f();
+        """))
 
     def test_modulo_assign_infinite_dividend_is_nan(self):
         self.assertEqual('var r = 0 / 0;', self._target('var t = Infinity; t %= 5; return t;'))

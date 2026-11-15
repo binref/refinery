@@ -62,7 +62,10 @@ def _a_scramble(tail: str) -> str:
 
 A_CALL_LEFT_NAMING_A_DECODER_THAT_WAS_REMOVED = {
     _a_string_array(
-        'var n = Number(process.argv.length) - 1;\nconsole.log(ACC(0), ACC(n));'
+        inspect.cleandoc("""
+            var n = Number(process.argv.length) - 1;
+            console.log(ACC(0), ACC(n));
+        """)
     ): 'hello world\n',
     _a_scramble('console.log(decode(process.argv[1]));'): 'X\n',
 }

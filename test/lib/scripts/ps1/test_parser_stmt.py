@@ -310,13 +310,20 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(len(script.body), 3)
 
     def test_multiline_script(self):
-        src = '$x = 1\n$y = 2\n$z = $x + $y'
+        src = inspect.cleandoc("""
+            $x = 1
+            $y = 2
+            $z = $x + $y
+        """)
         p = Ps1Parser(src)
         script = p.parse()
         self.assertEqual(len(script.body), 3)
 
     def test_param_block_at_script_level(self):
-        src = 'param($x, $y)\n$x + $y'
+        src = inspect.cleandoc("""
+            param($x, $y)
+            $x + $y
+        """)
         p = Ps1Parser(src)
         script = p.parse()
         self.assertIsNotNone(script.param_block)
@@ -337,7 +344,11 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(len(script.param_block.parameters), 1)
 
     def test_begin_process_end_blocks(self):
-        src = 'begin { $x = 0 }\nprocess { $x++ }\nend { $x }'
+        src = inspect.cleandoc("""
+            begin { $x = 0 }
+            process { $x++ }
+            end { $x }
+        """)
         p = Ps1Parser(src)
         script = p.parse()
         self.assertIsNotNone(script.begin_block)
@@ -401,7 +412,10 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(arg.value.value, 'System.IO.MemoryStream')
 
     def test_unary_comma_after_if_not_consumed(self):
-        p = Ps1Parser('if ($true) { 1 }\n,2')
+        p = Ps1Parser(inspect.cleandoc("""
+            if ($true) { 1 }
+            ,2
+        """))
         script = p.parse()
         self.assertEqual(len(script.body), 2)
         self.assertIsInstance(script.body[0], Ps1IfStatement)
@@ -826,8 +840,10 @@ class TestPs1TypeLiteralOwnsItsLexerMode(TestBase):
 
     def test_a_typed_catch_after_a_command_body_keeps_its_type_body_and_successor(self):
         script = self._parse(
-            "try { Write-Host x } catch [System.Exception] { Start-Process calc }\n"
-            "Write-Host 'keep'")
+            inspect.cleandoc("""
+                try { Write-Host x } catch [System.Exception] { Start-Process calc }
+                Write-Host 'keep'
+            """))
         self.assertEqual(len(script.body), 2)
         stmt = script.body[0]
         self.assertIsInstance(stmt, Ps1TryCatchFinally)
@@ -846,7 +862,12 @@ class TestPs1TypeLiteralOwnsItsLexerMode(TestBase):
         self.assertEqual([clause.types for clause in script.body[0].catch_clauses], [['A', 'B']])
 
     def test_a_type_on_its_own_line_after_a_command_body_is_still_the_clause_type(self):
-        script = self._parse("try { Write-Host x }\ncatch\n[A]\n{ Start-Process calc }")
+        script = self._parse(inspect.cleandoc("""
+            try { Write-Host x }
+            catch
+            [A]
+            { Start-Process calc }
+        """))
         self.assertEqual(len(script.body), 1)
         self.assertEqual([clause.types for clause in script.body[0].catch_clauses], [['A']])
 
@@ -863,14 +884,20 @@ class TestPs1TypeLiteralOwnsItsLexerMode(TestBase):
         argument mode exactly as the `catch` type reader was. The type name then swallowed the
         parameter, the body and every statement after the block.
         """
-        script = self._parse("& { param([int]$x) $x }\nWrite-Host 'keep'")
+        script = self._parse(inspect.cleandoc("""
+            & { param([int]$x) $x }
+            Write-Host 'keep'
+        """))
         self.assertEqual(len(script.body), 2)
         block = self._only_block(script)
         self.assertIsNotNone(block.param_block)
         self.assertEqual(len(block.body), 1)
 
     def test_a_typed_param_in_a_dot_sourced_block_keeps_the_body_around_it(self):
-        script = self._parse(". { param([string]$s) Write-Host $s }\nWrite-Host 'keep'")
+        script = self._parse(inspect.cleandoc("""
+            . { param([string]$s) Write-Host $s }
+            Write-Host 'keep'
+        """))
         self.assertEqual(len(script.body), 2)
         self.assertEqual(len(self._only_block(script).body), 1)
 
@@ -882,7 +909,11 @@ class TestPs1TypeLiteralOwnsItsLexerMode(TestBase):
         return blocks[0]
 
     def test_a_trap_after_a_command_keeps_its_type_body_and_successor(self):
-        script = self._parse("Write-Host a\ntrap [System.Exception] { Start-Process calc }\n$x")
+        script = self._parse(inspect.cleandoc("""
+            Write-Host a
+            trap [System.Exception] { Start-Process calc }
+            $x
+        """))
         self.assertEqual(len(script.body), 3)
         stmt = script.body[1]
         self.assertIsInstance(stmt, Ps1TrapStatement)

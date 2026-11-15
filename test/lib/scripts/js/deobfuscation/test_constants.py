@@ -959,7 +959,11 @@ class TestConstantInlining(TestJsDeobfuscator):
 
     def test_var_inlined_into_an_iife_reader_after_definition(self):
         self.assertEqual(
-            "(function() {\n  SINK('abc');\n})();",
+            inspect.cleandoc("""
+                (function() {
+                  SINK('abc');
+                })();
+            """),
             self._inline("var k = 'abc'; (function () { SINK(k); })();"),
         )
 
@@ -978,7 +982,11 @@ class TestConstantInlining(TestJsDeobfuscator):
 
     def test_var_array_inlined_into_an_iife_reader_after_definition(self):
         self.assertEqual(
-            "(function() {\n  SINK('a');\n})();",
+            inspect.cleandoc("""
+                (function() {
+                  SINK('a');
+                })();
+            """),
             self._inline("var p = ['a']; (function () { SINK(p[0]); })();"),
         )
 
@@ -1782,27 +1790,65 @@ class TestRegressionBugs(TestJsDeobfuscator):
 
 
 A_CONSTANT_REACHING_A_SHORTHAND_PROPERTY = {
-    'var q = 1;\nconsole.log(JSON.stringify({ q }));\n': (
+    a_program("""
+        var q = 1;
+        console.log(JSON.stringify({ q }));
+    """): (
         'console.log(JSON.stringify({ q: 1 }));',
     ),
-    'var q = "a";\nconsole.log(JSON.stringify({ q }));\n': (
+    a_program("""
+        var q = "a";
+        console.log(JSON.stringify({ q }));
+    """): (
         'console.log(JSON.stringify({ q: "a" }));',
     ),
-    'var q = 1;\nvar w = 2;\nconsole.log(JSON.stringify({ q, w }));\n': (
+    a_program("""
+        var q = 1;
+        var w = 2;
+        console.log(JSON.stringify({ q, w }));
+    """): (
         'console.log(JSON.stringify({ q: 1, w: 2 }));',
     ),
-    'var q = 1;\nvar o = { q, r: 2 };\nconsole.log(JSON.stringify(o));\n': (
-        'var o = { q: 1, r: 2 };\nconsole.log(JSON.stringify(o));',
+    a_program("""
+        var q = 1;
+        var o = { q, r: 2 };
+        console.log(JSON.stringify(o));
+    """): (
+        inspect.cleandoc("""
+            var o = { q: 1, r: 2 };
+            console.log(JSON.stringify(o));
+        """),
     ),
-    'var q = 1;\nconsole.log(JSON.stringify({ q: q }));\n': (
+    a_program("""
+        var q = 1;
+        console.log(JSON.stringify({ q: q }));
+    """): (
         'console.log(JSON.stringify({ q: 1 }));',
     ),
-    'var p = 5;\nvar o = { q: p };\nvar { q } = o;\nconsole.log(q);\n': (
-        'var o = { q: 5 };\nvar { q } = o;\nconsole.log(q);',
+    a_program("""
+        var p = 5;
+        var o = { q: p };
+        var { q } = o;
+        console.log(q);
+    """): (
+        inspect.cleandoc("""
+            var o = { q: 5 };
+            var { q } = o;
+            console.log(q);
+        """),
         'console.log(5);',
     ),
-    'var d = 5;\nvar o = {};\nvar { q = d } = o;\nconsole.log(q);\n': (
-        'var o = {};\nvar { q = 5 } = o;\nconsole.log(q);',
+    a_program("""
+        var d = 5;
+        var o = {};
+        var { q = d } = o;
+        console.log(q);
+    """): (
+        inspect.cleandoc("""
+            var o = {};
+            var { q = 5 } = o;
+            console.log(q);
+        """),
         'console.log(5);',
     ),
 }
@@ -1838,22 +1884,22 @@ AN_ALIAS_OF_ANOTHER_GLOBAL_CALLED = (
 
 
 A_CALL_THROUGH_A_NAME_BOUND_TO_EVAL = {
-    AN_ALIAS_CALL_READING_A_LOCAL_OF_ITS_CALLER: (
-        'function f() {\n'
-        '  try {\n'
-        '    return loc;\n'
-        '  } catch (e) {\n'
-        '    return e.constructor.name;\n'
-        '  }\n'
-        '}\n'
-        'console.log(f());'
-    ),
-    AN_ALIAS_CALL_UNDER_A_TYPEOF_GUARD: (
-        'function f() {\n'
-        '  return typeof typeof loc;\n'
-        '}\n'
-        'console.log(f());'
-    ),
+    AN_ALIAS_CALL_READING_A_LOCAL_OF_ITS_CALLER: inspect.cleandoc("""
+        function f() {
+          try {
+            return loc;
+          } catch (e) {
+            return e.constructor.name;
+          }
+        }
+        console.log(f());
+    """),
+    AN_ALIAS_CALL_UNDER_A_TYPEOF_GUARD: inspect.cleandoc("""
+        function f() {
+          return typeof typeof loc;
+        }
+        console.log(f());
+    """),
     AN_ALIAS_OF_EVAL_READ_WITHOUT_A_CALL: (
         "console.log('function');"
     ),
@@ -1883,27 +1929,39 @@ class TestACallThroughANameBoundToEvalStaysIndirect(TestJsDeobfuscator):
 
     def test_the_constant_inliner_alone_writes_the_indirect_spelling(self):
         self.assertEqual(
-            'function f() {\n'
-            '  var loc = 7;\n'
-            '  try {\n'
-            "    return (0, eval)('loc');\n"
-            '  } catch (e) {\n'
-            '    return e.constructor.name;\n'
-            '  }\n'
-            '}\n'
-            'console.log(f());',
+            inspect.cleandoc("""
+                function f() {
+                  var loc = 7;
+                  try {
+                    return (0, eval)('loc');
+                  } catch (e) {
+                    return e.constructor.name;
+                  }
+                }
+                console.log(f());
+            """),
             self._inline(AN_ALIAS_CALL_READING_A_LOCAL_OF_ITS_CALLER),
         )
 
     def test_the_constant_inliner_alone_takes_the_bare_name_where_nothing_calls_it(self):
         self.assertEqual(
-            'function f() {\n  return typeof eval;\n}\nconsole.log(f());',
+            inspect.cleandoc("""
+                function f() {
+                  return typeof eval;
+                }
+                console.log(f());
+            """),
             self._inline(AN_ALIAS_OF_EVAL_READ_WITHOUT_A_CALL),
         )
 
     def test_the_constant_inliner_alone_calls_another_global_bare(self):
         self.assertEqual(
-            "function f() {\n  return parseInt('7');\n}\nconsole.log(f());",
+            inspect.cleandoc("""
+                function f() {
+                  return parseInt('7');
+                }
+                console.log(f());
+            """),
             self._inline(AN_ALIAS_OF_ANOTHER_GLOBAL_CALLED),
         )
 

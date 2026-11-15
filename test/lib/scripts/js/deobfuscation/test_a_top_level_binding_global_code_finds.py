@@ -232,7 +232,11 @@ class TestAStoreIntoTheGlobalObjectUnderAKeyOnlyTheRuntimeKnows(TestBase):
     _KEY = 'process.argv.length > 99 ? "x" : "k"'
 
     def test_it_replaces_a_top_level_var(self):
-        source = F'var k = 1;\nglobalThis[{self._KEY}] = 2;\nconsole.log(k);'
+        source = inspect.cleandoc(F"""
+            var k = 1;
+            globalThis[{self._KEY}] = 2;
+            console.log(k);
+        """)
         self.assertEqual(host_behavior(source), ('2\n', None))
         for strict in BOTH_MODELS:
             with self.subTest(strict=strict):
@@ -240,7 +244,11 @@ class TestAStoreIntoTheGlobalObjectUnderAKeyOnlyTheRuntimeKnows(TestBase):
                 self.assertEqual(host_behavior(source), host_behavior(output), output)
 
     def test_it_leaves_a_top_level_let_alone(self):
-        source = F'let k = 1;\nglobalThis[{self._KEY}] = 2;\nconsole.log(k);'
+        source = inspect.cleandoc(F"""
+            let k = 1;
+            globalThis[{self._KEY}] = 2;
+            console.log(k);
+        """)
         self.assertEqual(host_behavior(source), ('1\n', None))
         for strict in BOTH_MODELS:
             with self.subTest(strict=strict):

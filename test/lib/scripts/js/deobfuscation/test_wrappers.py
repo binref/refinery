@@ -431,11 +431,17 @@ class TestAWrapperIsKeptWhereCodeOutsideTheTextCallsIt(TestBase):
     def test_the_deobfuscation_behaves_as_the_program_does_under_either_model(self):
         rows = {
             'an entrypoint the analyst names': (
-                "function run() { return 'x'; }\nconsole.log(run());",
+                inspect.cleandoc("""
+                    function run() { return 'x'; }
+                    console.log(run());
+                """),
                 ('run',),
             ),
             'the onload handler of a window': (
-                "function onload() { return 'x'; }\nconsole.log(onload());",
+                inspect.cleandoc("""
+                    function onload() { return 'x'; }
+                    console.log(onload());
+                """),
                 (),
             ),
         }

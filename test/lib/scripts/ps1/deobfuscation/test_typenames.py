@@ -52,10 +52,16 @@ class TestPs1TypeSystemSimplifications(TestPs1):
         )
 
     def test_get_member_filtered_to_properties_is_left_standing_or_indexes_the_properties(self):
-        source = '$q = New-Object Net.WebClient\n($q | Get-Member -MemberType Property)[0].Name'
+        source = cleandoc("""
+            $q = New-Object Net.WebClient
+            ($q | Get-Member -MemberType Property)[0].Name
+        """)
         self.assertIn(
             self._apply(source, Ps1TypeSystemSimplifications),
-            (self._apply(source), "$q = New-Object Net.WebClient\n'AllowReadStreamBuffering'"),
+            (self._apply(source), cleandoc("""
+                $q = New-Object Net.WebClient
+                'AllowReadStreamBuffering'
+            """)),
         )
 
     def test_a_redirected_get_member_index_name_is_left_standing(self):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase, opportunity
@@ -138,7 +139,11 @@ def _caught_message(call: str) -> str:
 
 
 def _a_script_whose_directive_stands_below(head: str) -> str:
-    return F"{head}\n'use strict';\n{_REPORTS_ITS_MODE}"
+    return inspect.cleandoc(F"""
+        {head}
+        'use strict';
+        {_REPORTS_ITS_MODE}
+    """)
 
 
 def _the_head_it_is_left_as(head: str) -> str:
@@ -392,14 +397,23 @@ class TestAReadThatWouldOpenADirectivePrologue(TestBase):
 
     def test_a_read_below_a_statement_that_is_no_directive_still_folds(self):
         self.assertEqual(
-            _simplified("console.log(1);\n'abc'[0];"),
-            "console.log(1);\n'a';",
+            _simplified(inspect.cleandoc("""
+                console.log(1);
+                'abc'[0];
+            """)),
+            inspect.cleandoc("""
+                console.log(1);
+                'a';
+            """),
         )
 
     @opportunity
     def test_a_read_below_a_statement_that_is_no_directive_is_removed_with_its_statement(self):
         self.assertEqual(
-            _deobfuscated("console.log(1);\n'abc'[0];"),
+            _deobfuscated(inspect.cleandoc("""
+                console.log(1);
+                'abc'[0];
+            """)),
             'console.log(1);',
         )
 

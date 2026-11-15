@@ -54,7 +54,10 @@ class TestPs1VariableDriveResolution(TestPs1):
         self.assertEqual(result.strip(), "$foo = 'bar'")
 
     def test_set_variable_with_integer_name(self):
-        result = self._deobfuscate("Set-Variable 0 'hello'\n$0")
+        result = self._deobfuscate(cleandoc("""
+            Set-Variable 0 'hello'
+            $0
+        """))
         self.assertIn('hello', result)
         self.assertNotIn('Set-Variable', result)
 
@@ -105,7 +108,10 @@ class TestPs1VariableDriveResolution(TestPs1):
             " (($x | Get-Member) | ? { $_.Name -ilike 'Do*e' }).Name"
         )
         result = self._deobfuscate(code, remove_junk=False)
-        self.assertEqual(result, "$x = New-Object Net.WebClient\n'DownloadFile'")
+        self.assertEqual(result, cleandoc("""
+            $x = New-Object Net.WebClient
+            'DownloadFile'
+        """))
 
     def test_where_object_wildcard_matches_the_members_of_its_own_bodys_write(self):
         result = self._apply(cleandoc("""
@@ -263,10 +269,15 @@ class TestPs1WildcardResolution(TestPs1):
 
     def test_wildcard_member_filter_no_space_before_operator(self):
         result = self._deobfuscate(
-            '$w = New-Object Net.WebClient\n'
-            "$w.(($w | Get-Member | ? { $_.Name-ilike'Downl*g' }).Name)"
+            cleandoc("""
+                $w = New-Object Net.WebClient
+                $w.(($w | Get-Member | ? { $_.Name-ilike'Downl*g' }).Name)
+            """)
         )
-        self.assertEqual(result, '$w = New-Object Net.WebClient\n$w.DownloadString')
+        self.assertEqual(result, cleandoc("""
+            $w = New-Object Net.WebClient
+            $w.DownloadString
+        """))
 
     def test_wildcard_where_get_command(self):
         self.assertEqual(
@@ -547,13 +558,22 @@ class TestPs1NumberedVariableNames(TestPs1):
 
     def test_the_name_property_is_the_text_the_number_was_written_as(self):
         self.assertEqual(
-            self._apply("Set-Variable 0x10 'v'\n(Get-Variable 0x10).Name", Ps1WildcardResolution),
-            "$0x10 = 'v'\n'0x10'",
+            self._apply(cleandoc("""
+                Set-Variable 0x10 'v'
+                (Get-Variable 0x10).Name
+            """), Ps1WildcardResolution),
+            cleandoc("""
+                $0x10 = 'v'
+                '0x10'
+            """),
         )
 
     def test_a_pattern_matching_two_variables_stays_a_command(self):
         self._assertUnchanged(
-            "$Et = 5\nWrite-Output (Get-Item 'Variable:E*t').Value", Ps1WildcardResolution)
+            cleandoc("""
+                $Et = 5
+                Write-Output (Get-Item 'Variable:E*t').Value
+            """), Ps1WildcardResolution)
 
 
 class TestPs1GetCommandNameResolution(TestPs1):
@@ -589,40 +609,80 @@ class TestPs1GetCommandNameResolution(TestPs1):
                 self._assertUnchanged(source, Ps1WildcardResolution)
 
     def test_a_takeover_matching_the_pattern_stays(self):
-        self._assertUnchanged('function wrnte {}\n(gcm ???t?).Name', Ps1WildcardResolution)
+        self._assertUnchanged(cleandoc("""
+            function wrnte {}
+            (gcm ???t?).Name
+        """), Ps1WildcardResolution)
 
     def test_a_takeover_of_the_lookup_command_stays(self):
         for source in (
-            "function Get-Command {}\n(gcm 'wr?te').Name",
-            "function Get-Command {}\n(Get-Command 'wr?te').Name",
-            "function Get-Command {\n  'x'\n}\n& (gcm 'write') 'a'",
+            cleandoc("""
+                function Get-Command {}
+                (gcm 'wr?te').Name
+            """),
+            cleandoc("""
+                function Get-Command {}
+                (Get-Command 'wr?te').Name
+            """),
+            cleandoc("""
+                function Get-Command {
+                  'x'
+                }
+                & (gcm 'write') 'a'
+            """),
         ):
             with self.subTest(source):
                 self._assertUnchanged(source, Ps1WildcardResolution)
 
     def test_a_bound_name_no_statement_calls_still_opens_the_table(self):
         self._assertUnchanged(
-            'Set-Alias wrnte Get-Date\n(gcm ???t?).Name', Ps1WildcardResolution)
+            cleandoc("""
+                Set-Alias wrnte Get-Date
+                (gcm ???t?).Name
+            """), Ps1WildcardResolution)
 
     def test_an_opener_before_the_read_stays(self):
-        self._assertUnchanged('iex $x\n(gcm ???t?).Name', Ps1WildcardResolution)
+        self._assertUnchanged(cleandoc("""
+            iex $x
+            (gcm ???t?).Name
+        """), Ps1WildcardResolution)
 
     def test_an_opener_after_the_read_folds(self):
         self.assertEqual(
-            self._apply('(gcm ???t?).Name\niex $x', Ps1WildcardResolution),
-            "'write'\niex $x",
+            self._apply(cleandoc("""
+                (gcm ???t?).Name
+                iex $x
+            """), Ps1WildcardResolution),
+            cleandoc("""
+                'write'
+                iex $x
+            """),
         )
 
     def test_a_pure_type_mutation_does_not_open_the_command_table(self):
         self.assertEqual(
-            self._apply('(gcm ???t?).Name\nAdd-Type -AssemblyName System.Xml', Ps1WildcardResolution),
-            "'write'\nAdd-Type -AssemblyName System.Xml",
+            self._apply(cleandoc("""
+                (gcm ???t?).Name
+                Add-Type -AssemblyName System.Xml
+            """), Ps1WildcardResolution),
+            cleandoc("""
+                'write'
+                Add-Type -AssemblyName System.Xml
+            """),
         )
 
     def test_a_class_refuses_only_the_type_axis(self):
         self.assertEqual(
-            self._apply("class C {}\n(gcm 'wr?te').Name\niex $x", Ps1WildcardResolution),
-            "class C {}\n'write'\niex $x",
+            self._apply(cleandoc("""
+                class C {}
+                (gcm 'wr?te').Name
+                iex $x
+            """), Ps1WildcardResolution),
+            cleandoc("""
+                class C {}
+                'write'
+                iex $x
+            """),
         )
 
 
@@ -630,11 +690,19 @@ class TestPs1WhereObjectOverAGetCommandSource(TestPs1):
 
     def test_the_pattern_argument_of_the_source_filters_the_candidates(self):
         self._assertUnchanged(
-            "Get-Command set-* | ? {\n  $_.Name -ilike 'g*t-item'\n}", Ps1WildcardResolution)
+            cleandoc("""
+                Get-Command set-* | ? {
+                  $_.Name -ilike 'g*t-item'
+                }
+            """), Ps1WildcardResolution)
 
     def test_a_value_piped_into_the_source_binds_the_name_parameter(self):
         self._assertUnchanged(
-            "'set-*' | Get-Command | ? {\n  $_.Name -ilike 'g*t-item'\n}", Ps1WildcardResolution)
+            cleandoc("""
+                'set-*' | Get-Command | ? {
+                  $_.Name -ilike 'g*t-item'
+                }
+            """), Ps1WildcardResolution)
 
     def test_a_shaping_parameter_on_the_source_stays(self):
         self._assertUnchanged(cleandoc("""
@@ -656,27 +724,50 @@ class TestPs1WhereObjectOverAGetCommandSource(TestPs1):
     def test_the_command_a_narrowing_names_is_kept_as_an_object(self):
         self.assertEqual(
             self._apply(
-                "$c = Get-Command | ? { $_.Name -ilike '*w-*ct' }\n$c.CommandType",
+                cleandoc("""
+                    $c = Get-Command | ? { $_.Name -ilike '*w-*ct' }
+                    $c.CommandType
+                """),
                 Ps1WildcardResolution,
             ),
-            "$c = Get-Command 'New-Object'\n$c.CommandType",
+            cleandoc("""
+                $c = Get-Command 'New-Object'
+                $c.CommandType
+            """),
         )
 
     def test_a_listing_without_a_name_leaves_the_aliases_no_module_defines_out(self):
         for source in (
-            "(Get-Command | ? {\n  $_.Name -ilike 'wr?te'\n}).Name",
-            "(Get-Command | ? {\n  $_.Name -clike 'new-o*'\n}).Name",
+            cleandoc("""
+                (Get-Command | ? {
+                  $_.Name -ilike 'wr?te'
+                }).Name
+            """),
+            cleandoc("""
+                (Get-Command | ? {
+                  $_.Name -clike 'new-o*'
+                }).Name
+            """),
         ):
             with self.subTest(source):
                 self._assertUnchanged(source, Ps1WildcardResolution)
 
     def test_a_source_that_lists_one_name_twice_stays(self):
         self._assertUnchanged(
-            "Get-Command wr* | ? {\n  $_.Name -ilike '*filesys*'\n}", Ps1WildcardResolution)
+            cleandoc("""
+                Get-Command wr* | ? {
+                  $_.Name -ilike '*filesys*'
+                }
+            """), Ps1WildcardResolution)
 
     def test_a_takeover_of_the_source_command_stays(self):
         self._assertUnchanged(
-            "function Get-Command {}\nGet-Command | ? {\n  $_.Name -ilike '*w-*ct'\n}",
+            cleandoc("""
+                function Get-Command {}
+                Get-Command | ? {
+                  $_.Name -ilike '*w-*ct'
+                }
+            """),
             Ps1WildcardResolution,
         )
 
@@ -741,22 +832,74 @@ class TestPs1AWriterOfTheCommandTableKeepsTheListingBelowIt(TestPs1):
     _READ = '(Get-Command ???t?).Name'
 
     _WRITERS = (
-        "$a = @('functi', 'on:wr', 'nte')\n$p = $a -join ''\nSet-Item $p {\n  1\n}",
-        "$a = @('functi', 'on:wr', 'nte')\n$p = $a -join ''\nSet-Content $p {\n  1\n}",
-        "$a = @('functi', 'on:wr', 'nte')\n$p = $a -join ''\nRemove-Item $p",
-        "$a = @('ali', 'as:wr', 'nte')\n$p = $a -join ''\nSet-Content $p 'Get-Date'",
-        "$a = @('functi', 'on:x')\n$p = $a -join ''\nGet-Item $p | Rename-Item -NewName wrnte",
+        cleandoc("""
+            $a = @('functi', 'on:wr', 'nte')
+            $p = $a -join ''
+            Set-Item $p {
+              1
+            }
+        """),
+        cleandoc("""
+            $a = @('functi', 'on:wr', 'nte')
+            $p = $a -join ''
+            Set-Content $p {
+              1
+            }
+        """),
+        cleandoc("""
+            $a = @('functi', 'on:wr', 'nte')
+            $p = $a -join ''
+            Remove-Item $p
+        """),
+        cleandoc("""
+            $a = @('ali', 'as:wr', 'nte')
+            $p = $a -join ''
+            Set-Content $p 'Get-Date'
+        """),
+        cleandoc("""
+            $a = @('functi', 'on:x')
+            $p = $a -join ''
+            Get-Item $p | Rename-Item -NewName wrnte
+        """),
         "New-PSDrive Q Function '' | Out-Null",
         "New-PSDrive -Name Q -PSProvider Alias -Root '' | Out-Null",
         "New-PSDrive -Name Q -PSProvider Microsoft.PowerShell.Core\\Function -Root '' | Out-Null",
-        "$a = @('func', 'tion:')\nSet-Location ($a -join '')",
-        "$a = @('func', 'tion:')\nPush-Location ($a -join '')",
+        cleandoc("""
+            $a = @('func', 'tion:')
+            Set-Location ($a -join '')
+        """),
+        cleandoc("""
+            $a = @('func', 'tion:')
+            Push-Location ($a -join '')
+        """),
         'Set-Location function:',
-        "$ExecutionContext.InvokeProvider.Item.New('function:', 'wrnte', 'Function', {\n  1\n}) | Out-Null",
-        "$ExecutionContext.SessionState.InvokeProvider.Item.Set('function:wrnte', {\n  1\n})",
-        "$ExecutionContext.SessionState.PSVariable.Set('function:wrnte', {\n  1\n})",
-        "$a = @('function:wr', 'nte')\n$ExecutionContext.SessionState.PSVariable.Set(($a -join ''), {\n  1\n})",
-        "$s = $ExecutionContext.SessionState\n$s.InvokeProvider.Item.Set('function:wrnte', {\n  1\n})",
+        cleandoc("""
+            $ExecutionContext.InvokeProvider.Item.New('function:', 'wrnte', 'Function', {
+              1
+            }) | Out-Null
+        """),
+        cleandoc("""
+            $ExecutionContext.SessionState.InvokeProvider.Item.Set('function:wrnte', {
+              1
+            })
+        """),
+        cleandoc("""
+            $ExecutionContext.SessionState.PSVariable.Set('function:wrnte', {
+              1
+            })
+        """),
+        cleandoc("""
+            $a = @('function:wr', 'nte')
+            $ExecutionContext.SessionState.PSVariable.Set(($a -join ''), {
+              1
+            })
+        """),
+        cleandoc("""
+            $s = $ExecutionContext.SessionState
+            $s.InvokeProvider.Item.Set('function:wrnte', {
+              1
+            })
+        """),
         "$env:PSModulePath = 'C:\\m;' + $env:PSModulePath",
         "[Environment]::SetEnvironmentVariable('PSModulePath', 'C:\\m;' + $env:PSModulePath)",
         "Set-Content -PSPath env:PSModulePath 'C:\\m'",
@@ -777,8 +920,12 @@ class TestPs1AWriterOfTheCommandTableKeepsTheListingBelowIt(TestPs1):
 
     def test_a_writer_that_takes_the_lookup_command_over_keeps_the_lookup(self):
         self._assertUnchanged(
-            "$ExecutionContext.InvokeProvider.Item.Set('function:Get-Command', {\n  'x'\n})\n"
-            "(Get-Command 'write').Name",
+            cleandoc("""
+                $ExecutionContext.InvokeProvider.Item.Set('function:Get-Command', {
+                  'x'
+                })
+                (Get-Command 'write').Name
+            """),
             Ps1WildcardResolution,
         )
 
@@ -806,8 +953,14 @@ class TestPs1AnIntrinsicLookupFoldsWhereItsResultActsAsItsName(TestPs1):
 
     def test_a_lookup_whose_result_is_kept_as_an_object_stays(self):
         for source in (
-            "$c = $ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')\n$c.CommandType",
-            "$c = $ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $True, $True)\n$c.GetType().Name",
+            cleandoc("""
+                $c = $ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')
+                $c.CommandType
+            """),
+            cleandoc("""
+                $c = $ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $True, $True)
+                $c.GetType().Name
+            """),
             "$ExecutionContext.InvokeCommand.GetCmdlets('*w-*ct')",
             "$ExecutionContext.InvokeCommand.GetCmdlet('New-Object')",
         ):
@@ -819,7 +972,10 @@ class TestPs1AnIntrinsicLookupFoldsWhereItsResultActsAsItsName(TestPs1):
             "& ($ExecutionContext.InvokeCommand.GetCmdlet('New-Obj*')) Net.WebClient",
             "& ($ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $False, $True)) Net.WebClient",
             "& ($ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', 0, $True)) Net.WebClient",
-            "function zzNew-Object {}\n$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $True, $True)",
+            cleandoc("""
+                function zzNew-Object {}
+                $ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $True, $True)
+            """),
         ):
             with self.subTest(source):
                 self._assertUnchanged(source, Ps1WildcardResolution)
@@ -863,17 +1019,42 @@ class TestPs1AMemberListingFoldsOnlyUnderANameRead(TestPs1):
 
     def test_a_listing_whose_objects_are_kept_stays(self):
         self._assertUnchanged(
-            "$m = [string] | Get-Member -Static | ? {\n  $_.Name -ilike 'Conc?t'\n}\n$m.MemberType",
+            cleandoc("""
+                $m = [string] | Get-Member -Static | ? {
+                  $_.Name -ilike 'Conc?t'
+                }
+                $m.MemberType
+            """),
             Ps1WildcardResolution,
         )
 
     def test_a_listing_the_view_does_not_hold_stays(self):
         for source in (
-            "('abc' | Get-Member | ? {\n  $_.Name -ilike 'Conc?t'\n}).Name",
-            "('abc'.psobject.Methods | ? {\n  $_.Name -ilike 'Conc?t'\n}).Name",
-            "('abc' | Get-Member -MemberType Property | ? {\n  $_.Name -ilike 'Clo?e'\n}).Name",
-            "('abc' | Get-Member -Static:$false | ? {\n  $_.Name -ilike 'Conc?t'\n}).Name",
-            "('abc' | Get-Member -MemberType 'Method, Property' | ? {\n  $_.Name -ilike 'Clo?e'\n}).Name",
+            cleandoc("""
+                ('abc' | Get-Member | ? {
+                  $_.Name -ilike 'Conc?t'
+                }).Name
+            """),
+            cleandoc("""
+                ('abc'.psobject.Methods | ? {
+                  $_.Name -ilike 'Conc?t'
+                }).Name
+            """),
+            cleandoc("""
+                ('abc' | Get-Member -MemberType Property | ? {
+                  $_.Name -ilike 'Clo?e'
+                }).Name
+            """),
+            cleandoc("""
+                ('abc' | Get-Member -Static:$false | ? {
+                  $_.Name -ilike 'Conc?t'
+                }).Name
+            """),
+            cleandoc("""
+                ('abc' | Get-Member -MemberType 'Method, Property' | ? {
+                  $_.Name -ilike 'Clo?e'
+                }).Name
+            """),
         ):
             with self.subTest(source):
                 self._assertUnchanged(source, Ps1WildcardResolution)
@@ -891,12 +1072,20 @@ class TestPs1AMemberListingFoldsOnlyUnderANameRead(TestPs1):
     @backlog
     def test_a_property_listing_leaves_the_indexer_out(self):
         self._assertUnchanged(
-            "('abc'.psobject.Properties | ? {\n  $_.Name -ilike 'Ch*'\n}).Name", Ps1WildcardResolution)
+            cleandoc("""
+                ('abc'.psobject.Properties | ? {
+                  $_.Name -ilike 'Ch*'
+                }).Name
+            """), Ps1WildcardResolution)
 
     @backlog
     def test_a_property_listing_by_member_type_leaves_the_indexer_out(self):
         self._assertUnchanged(
-            "('abc' | Get-Member -MemberType Property | ? {\n  $_.Name -ilike 'Ch*'\n}).Name",
+            cleandoc("""
+                ('abc' | Get-Member -MemberType Property | ? {
+                  $_.Name -ilike 'Ch*'
+                }).Name
+            """),
             Ps1WildcardResolution,
         )
 
@@ -905,10 +1094,22 @@ class TestPs1AVariableListingFoldsWhereNothingWroteAMatchingName(TestPs1):
 
     def test_a_name_the_script_writes_before_the_listing_keeps_it(self):
         for source in (
-            "$Et = 5\nWrite-Output (Get-Item 'Variable:E*t').Value",
-            "$Et = 5\nWrite-Output (Get-Variable 'E*t').Name",
-            "foreach ($Et in 1) {}\nWrite-Output (Get-Item 'Variable:E*t').Value",
-            "New-Variable Et 5\nWrite-Output (Get-Item 'Variable:E*t').Value",
+            cleandoc("""
+                $Et = 5
+                Write-Output (Get-Item 'Variable:E*t').Value
+            """),
+            cleandoc("""
+                $Et = 5
+                Write-Output (Get-Variable 'E*t').Name
+            """),
+            cleandoc("""
+                foreach ($Et in 1) {}
+                Write-Output (Get-Item 'Variable:E*t').Value
+            """),
+            cleandoc("""
+                New-Variable Et 5
+                Write-Output (Get-Item 'Variable:E*t').Value
+            """),
         ):
             with self.subTest(source):
                 self._assertUnchanged(source, Ps1WildcardResolution)
@@ -916,12 +1117,30 @@ class TestPs1AVariableListingFoldsWhereNothingWroteAMatchingName(TestPs1):
     def test_a_name_the_script_writes_after_the_listing_or_in_a_function_does_not_keep_it(self):
         for source, expected in (
             (
-                "Write-Output (Get-Item 'Variable:E*t').Value\n$Et = 5",
-                'Write-Output $ExecutionContext\n$Et = 5',
+                cleandoc("""
+                    Write-Output (Get-Item 'Variable:E*t').Value
+                    $Et = 5
+                """),
+                cleandoc("""
+                    Write-Output $ExecutionContext
+                    $Et = 5
+                """),
             ),
             (
-                "function f {\n  $Et = 5\n}\nf\nWrite-Output (Get-Item 'Variable:E*t').Value",
-                'function f {\n  $Et = 5\n}\nf\nWrite-Output $ExecutionContext',
+                cleandoc("""
+                    function f {
+                      $Et = 5
+                    }
+                    f
+                    Write-Output (Get-Item 'Variable:E*t').Value
+                """),
+                cleandoc("""
+                    function f {
+                      $Et = 5
+                    }
+                    f
+                    Write-Output $ExecutionContext
+                """),
             ),
         ):
             with self.subTest(source):
@@ -930,8 +1149,15 @@ class TestPs1AVariableListingFoldsWhereNothingWroteAMatchingName(TestPs1):
     def test_a_variable_the_engine_creates_while_running_keeps_the_listing(self):
         for source in (
             "(Get-Variable 'Matc*').Name",
-            "'a' -match 'a'\n(Get-Variable 'Matc*').Name",
-            "foreach ($i in 1) {\n  (Get-Variable 'fore*').Name\n}",
+            cleandoc("""
+                'a' -match 'a'
+                (Get-Variable 'Matc*').Name
+            """),
+            cleandoc("""
+                foreach ($i in 1) {
+                  (Get-Variable 'fore*').Name
+                }
+            """),
             "(Get-Variable 'Thi?').Name",
         ):
             with self.subTest(source):
@@ -947,7 +1173,11 @@ class TestPs1AVariableListingFoldsWhereNothingWroteAMatchingName(TestPs1):
 
     def test_an_event_action_keeps_a_listing_its_variables_match(self):
         self._assertUnchanged(
-            "Register-EngineEvent x -Action {\n  (Get-Item 'Variable:E*t').Value\n}",
+            cleandoc("""
+                Register-EngineEvent x -Action {
+                  (Get-Item 'Variable:E*t').Value
+                }
+            """),
             Ps1WildcardResolution,
         )
 
@@ -962,7 +1192,10 @@ class TestPs1AVariableListingFoldsWhereNothingWroteAMatchingName(TestPs1):
 
     def test_a_write_through_the_session_state_before_the_listing_keeps_it(self):
         self._assertUnchanged(
-            "$ExecutionContext.($m).PSVariable.Set($n, 5)\nWrite-Output (Get-Item 'Variable:E*t').Value",
+            cleandoc("""
+                $ExecutionContext.($m).PSVariable.Set($n, 5)
+                Write-Output (Get-Item 'Variable:E*t').Value
+            """),
             Ps1WildcardResolution,
         )
 
@@ -1026,17 +1259,28 @@ class TestPs1ALookupAFunctionTakesOverIsNotReadAsTheSession(TestPs1):
             ('Set-Variable', 'Set-Variable Cf 5'),
             ('Set-Item', 'Set-Item Variable:Cf 5'),
         ):
-            source = F"function {command} {{\n  'zzz'\n}}\n{use}"
+            source = cleandoc(F"""
+                function {command} {{
+                  'zzz'
+                }}
+                {use}
+            """)
             with self.subTest(source):
                 self._assertUnchanged(source, Ps1WildcardResolution)
 
     def test_a_type_mutation_before_a_variable_command_does_not_take_it_over(self):
         self.assertEqual(
             self._apply(
-                "Add-Type -AssemblyName System.Xml\n(Get-Item 'Variable:E*t').Value",
+                cleandoc("""
+                    Add-Type -AssemblyName System.Xml
+                    (Get-Item 'Variable:E*t').Value
+                """),
                 Ps1WildcardResolution,
             ),
-            'Add-Type -AssemblyName System.Xml\n$ExecutionContext',
+            cleandoc("""
+                Add-Type -AssemblyName System.Xml
+                $ExecutionContext
+            """),
         )
 
 
@@ -1051,8 +1295,16 @@ class TestPs1ANarrowingFiltersOnlyOnTheNameOfTheCurrentObject(TestPs1):
                   }).Name
                 }
             """),
-            "('abc' | Get-Member -MemberType Method | Where-Object {\n  $_::Name -ilike 'Clo?e'\n}).Name",
-            "(Get-Command | Where-Object {\n  $_::Name -ilike '*w-*ct'\n}).Name",
+            cleandoc("""
+                ('abc' | Get-Member -MemberType Method | Where-Object {
+                  $_::Name -ilike 'Clo?e'
+                }).Name
+            """),
+            cleandoc("""
+                (Get-Command | Where-Object {
+                  $_::Name -ilike '*w-*ct'
+                }).Name
+            """),
         ):
             with self.subTest(source):
                 self._assertUnchanged(source, Ps1WildcardResolution)
@@ -1073,8 +1325,16 @@ class TestPs1AVariableCommandFoldsWhereItsReplacementWritesWhatItWrites(TestPs1)
 
     def test_a_write_standing_as_a_statement_becomes_an_assignment(self):
         self.assertEqual(
-            self._apply('if ($true) {\n  Set-Variable x 5\n}', Ps1WildcardResolution),
-            'if ($true) {\n  $x = 5\n}',
+            self._apply(cleandoc("""
+                if ($true) {
+                  Set-Variable x 5
+                }
+            """), Ps1WildcardResolution),
+            cleandoc("""
+                if ($true) {
+                  $x = 5
+                }
+            """),
         )
 
     def test_a_command_input_is_piped_into_stays(self):
@@ -1098,7 +1358,11 @@ class TestPs1AVariableCommandFoldsWhereItsReplacementWritesWhatItWrites(TestPs1)
         for source in (
             'Get-Variable x -ValueOnly',
             'Write-Output @(Get-Variable x -ValueOnly).Count',
-            "Get-Variable x -ValueOnly | ForEach-Object {\n  'item'\n}",
+            cleandoc("""
+                Get-Variable x -ValueOnly | ForEach-Object {
+                  'item'
+                }
+            """),
             'Write-Output $(Get-Variable x -ValueOnly).GetType().Name',
         ):
             with self.subTest(source):
@@ -1107,10 +1371,18 @@ class TestPs1AVariableCommandFoldsWhereItsReplacementWritesWhatItWrites(TestPs1)
     def test_a_value_only_lookup_of_a_value_the_pipeline_does_not_unroll_folds_anywhere(self):
         self.assertEqual(
             self._apply(
-                'Get-Variable ExecutionContext -ValueOnly | ForEach-Object {\n  $_.GetType().Name\n}',
+                cleandoc("""
+                    Get-Variable ExecutionContext -ValueOnly | ForEach-Object {
+                      $_.GetType().Name
+                    }
+                """),
                 Ps1WildcardResolution,
             ),
-            '$ExecutionContext | ForEach-Object {\n  $_.GetType().Name\n}',
+            cleandoc("""
+                $ExecutionContext | ForEach-Object {
+                  $_.GetType().Name
+                }
+            """),
         )
 
     def test_an_item_write_of_a_name_holding_a_colon_stays(self):

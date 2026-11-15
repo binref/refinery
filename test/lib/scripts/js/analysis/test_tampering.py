@@ -7,6 +7,7 @@ fed to these tests.
 """
 from __future__ import annotations
 
+import inspect
 import time
 
 from refinery.lib.scripts import Node, _remove_from_parent
@@ -75,156 +76,206 @@ def _decoder_iife_call(ast: Node, property_name: str) -> JsCallExpression:
 
 
 _A_SITE_BEFORE_THE_ANCHOR = {
-    'an opaque write through a spelled global base': (
-        'var k, v;\nglobalThis[k] = v;\nString.fromCharCode(65);'
-    ),
-    'an opaque compound write': (
-        'var k, v;\nglobalThis[k] += 1;\nString.fromCharCode(65);'
-    ),
-    'an opaque update write': (
-        'var k;\nglobalThis[k]++;\nString.fromCharCode(65);'
-    ),
-    'an opaque delete': (
-        'var k;\ndelete globalThis[k];\nString.fromCharCode(65);'
-    ),
-    'a write in a function invoked both before and after': (
-        'function g() { return String.fromCharCode(65); }\n'
-        'g();\nvar k, v;\nglobalThis[k] = v;\ng();'
-    ),
-    'a construction-valued name passed as a callback': (
-        'var t = Function("this.String = 9;");\n[0].forEach(t);\nString.fromCharCode(65);'
-    ),
-    'an eval-alias call before the anchor': (
-        'var e = eval;\ne("String = 9");\nString.fromCharCode(65);'
-    ),
-    'a string timer before the anchor': (
-        'setTimeout("String = 9", 0);\nString.fromCharCode(65);'
-    ),
-    'a static import anywhere': (
-        'import x from "y";\nString.fromCharCode(65);'
-    ),
-    'a with statement anywhere': (
-        'var o, x;\nwith (o) { x = 1; }\nString.fromCharCode(65);'
-    ),
-    'a file required before the anchor': (
-        'require("./setup.js");\nString.fromCharCode(65);'
-    ),
-    'vm required before the anchor': (
-        'require("vm");\nString.fromCharCode(65);'
-    ),
-    'a span of source the model never read': (
-        'var k = "abc\n;String.fromCharCode(65);'
-    ),
-    'a loop the anchor re-executes in': (
-        'var c, k, v;\nwhile (c) { String.fromCharCode(65); globalThis[k] = v; }'
-    ),
-    'an alias invoked twice across the site': (
-        'var k, v;\n'
-        'function g() { String.fromCharCode(65); globalThis[k] = v; }\n'
-        'var q = g;\nq();\nq();'
-    ),
-    'an unbound immediate construction': (
-        'Function("this.String = 9")();\nString.fromCharCode(65);'
-    ),
-    'a construction held in a container': (
-        'var fns = [Function("String = 9")];\nfns[0]();\nString.fromCharCode(65);'
-    ),
-    'a construction held as an object member': (
-        'var o = { m: Function("String = 9") };\no.m();\nString.fromCharCode(65);'
-    ),
-    'a construction returned by a factory': (
-        'function mk() { return { f: Function("String = 9") }; }\n'
-        'mk().f();\nString.fromCharCode(65);'
-    ),
-    'a construction handed to sort': (
-        'var g = Function;\n["String = 9", "p"].sort(g);\nString.fromCharCode(65);'
-    ),
-    'a construction handed to forEach': (
-        '[0].forEach(Function("this.String = 9"));\nString.fromCharCode(65);'
-    ),
-    'a potential arguments.callee read': (
-        'var k, v;\n'
-        '(function () {\n'
-        '  String.fromCharCode(65);\n'
-        '  globalThis[k] = v;\n'
-        '  arguments.callee();\n'
-        '})();'
-    ),
-    'a computed arguments.callee read': (
-        'var k, v;\n'
-        '(function () {\n'
-        '  String.fromCharCode(65);\n'
-        '  globalThis[k] = v;\n'
-        "  arguments['callee']();\n"
-        '})();'
-    ),
-    'a runtime-keyed re-entry read off the arguments object': (
-        'var k, v, i;\n'
-        '(function () {\n'
-        '  String.fromCharCode(65);\n'
-        '  globalThis[k] = v;\n'
-        "  i = 'callee';\n"
-        '  arguments[i]();\n'
-        '})();'
-    ),
-    'a potential .caller read': (
-        'var k, v;\n'
-        '(function () {\n'
-        '  String.fromCharCode(65);\n'
-        '  globalThis[k] = v;\n'
-        '  arguments.callee.call(null);\n'
-        '})();'
-    ),
-    'a caller read under a key a table holds': (
-        'var k, v;\n'
-        'var table = ["caller"];\n'
-        'function h() { h[table[0]](); }\n'
-        'function g() {\n'
-        '  String.fromCharCode(65);\n'
-        '  globalThis[k] = v;\n'
-        '  h();\n'
-        '}\n'
-        'g();'
-    ),
-    'a construction of the activation through new.target': (
-        'var k, v;\n'
-        'var again = true;\n'
-        'function F() {\n'
-        '  String.fromCharCode(65);\n'
-        '  globalThis[k] = v;\n'
-        '  if (again) { again = false; new new.target(); }\n'
-        '}\n'
-        'new F();'
-    ),
-    'a parameter-base write through a handed-over global': (
-        'var k, v;\nfunction t(x) { x[k] = v; }\nt(globalThis);\nString.fromCharCode(65);'
-    ),
-    'the global object handed to Reflect.set': (
-        'Reflect.set(globalThis, "String", 9);\nString.fromCharCode(65);'
-    ),
-    'an eval re-invoking the enclosing activation': (
-        'function g() { String.fromCharCode(65); globalThis.eval("String = 9; g()"); }\ng();'
-    ),
-    'a stored-code eval re-invoking the activation': (
-        'var c = "String = 9; g()";\n'
-        'function g() { String.fromCharCode(65); (0, eval)(c); }\ng();'
-    ),
-    'a timer re-invoking the enclosing activation': (
-        'function g() { String.fromCharCode(65); setTimeout("String = 9; g()", 0); }\ng();'
-    ),
-    'a script-scope named activation under a surface': (
-        'var k, v;\nvar e = eval;\n'
-        'function g() { String.fromCharCode(65); globalThis[k] = v; }\ng();'
-    ),
-    'a constructed function invoked before the anchor': (
-        'var f = new Function("this.String = 9");\nf();\nString.fromCharCode(65);'
-    ),
-    'a destructured eval invoked': (
-        'const {eval} = globalThis;\neval("String = 9");\nString.fromCharCode(65);'
-    ),
-    'a destructured eval under a runtime key invoked': (
-        'var k;\nconst {[k]: e} = globalThis;\ne("String = 9");\nString.fromCharCode(65);'
-    ),
+    'an opaque write through a spelled global base': inspect.cleandoc("""
+        var k, v;
+        globalThis[k] = v;
+        String.fromCharCode(65);
+    """),
+    'an opaque compound write': inspect.cleandoc("""
+        var k, v;
+        globalThis[k] += 1;
+        String.fromCharCode(65);
+    """),
+    'an opaque update write': inspect.cleandoc("""
+        var k;
+        globalThis[k]++;
+        String.fromCharCode(65);
+    """),
+    'an opaque delete': inspect.cleandoc("""
+        var k;
+        delete globalThis[k];
+        String.fromCharCode(65);
+    """),
+    'a write in a function invoked both before and after': inspect.cleandoc("""
+        function g() { return String.fromCharCode(65); }
+        g();
+        var k, v;
+        globalThis[k] = v;
+        g();
+    """),
+    'a construction-valued name passed as a callback': inspect.cleandoc("""
+        var t = Function("this.String = 9;");
+        [0].forEach(t);
+        String.fromCharCode(65);
+    """),
+    'an eval-alias call before the anchor': inspect.cleandoc("""
+        var e = eval;
+        e("String = 9");
+        String.fromCharCode(65);
+    """),
+    'a string timer before the anchor': inspect.cleandoc("""
+        setTimeout("String = 9", 0);
+        String.fromCharCode(65);
+    """),
+    'a static import anywhere': inspect.cleandoc("""
+        import x from "y";
+        String.fromCharCode(65);
+    """),
+    'a with statement anywhere': inspect.cleandoc("""
+        var o, x;
+        with (o) { x = 1; }
+        String.fromCharCode(65);
+    """),
+    'a file required before the anchor': inspect.cleandoc("""
+        require("./setup.js");
+        String.fromCharCode(65);
+    """),
+    'vm required before the anchor': inspect.cleandoc("""
+        require("vm");
+        String.fromCharCode(65);
+    """),
+    'a span of source the model never read': inspect.cleandoc("""
+        var k = "abc
+        ;String.fromCharCode(65);
+    """),
+    'a loop the anchor re-executes in': inspect.cleandoc("""
+        var c, k, v;
+        while (c) { String.fromCharCode(65); globalThis[k] = v; }
+    """),
+    'an alias invoked twice across the site': inspect.cleandoc("""
+        var k, v;
+        function g() { String.fromCharCode(65); globalThis[k] = v; }
+        var q = g;
+        q();
+        q();
+    """),
+    'an unbound immediate construction': inspect.cleandoc("""
+        Function("this.String = 9")();
+        String.fromCharCode(65);
+    """),
+    'a construction held in a container': inspect.cleandoc("""
+        var fns = [Function("String = 9")];
+        fns[0]();
+        String.fromCharCode(65);
+    """),
+    'a construction held as an object member': inspect.cleandoc("""
+        var o = { m: Function("String = 9") };
+        o.m();
+        String.fromCharCode(65);
+    """),
+    'a construction returned by a factory': inspect.cleandoc("""
+        function mk() { return { f: Function("String = 9") }; }
+        mk().f();
+        String.fromCharCode(65);
+    """),
+    'a construction handed to sort': inspect.cleandoc("""
+        var g = Function;
+        ["String = 9", "p"].sort(g);
+        String.fromCharCode(65);
+    """),
+    'a construction handed to forEach': inspect.cleandoc("""
+        [0].forEach(Function("this.String = 9"));
+        String.fromCharCode(65);
+    """),
+    'a potential arguments.callee read': inspect.cleandoc("""
+        var k, v;
+        (function () {
+          String.fromCharCode(65);
+          globalThis[k] = v;
+          arguments.callee();
+        })();
+    """),
+    'a computed arguments.callee read': inspect.cleandoc("""
+        var k, v;
+        (function () {
+          String.fromCharCode(65);
+          globalThis[k] = v;
+          arguments['callee']();
+        })();
+    """),
+    'a runtime-keyed re-entry read off the arguments object': inspect.cleandoc("""
+        var k, v, i;
+        (function () {
+          String.fromCharCode(65);
+          globalThis[k] = v;
+          i = 'callee';
+          arguments[i]();
+        })();
+    """),
+    'a potential .caller read': inspect.cleandoc("""
+        var k, v;
+        (function () {
+          String.fromCharCode(65);
+          globalThis[k] = v;
+          arguments.callee.call(null);
+        })();
+    """),
+    'a caller read under a key a table holds': inspect.cleandoc("""
+        var k, v;
+        var table = ["caller"];
+        function h() { h[table[0]](); }
+        function g() {
+          String.fromCharCode(65);
+          globalThis[k] = v;
+          h();
+        }
+        g();
+    """),
+    'a construction of the activation through new.target': inspect.cleandoc("""
+        var k, v;
+        var again = true;
+        function F() {
+          String.fromCharCode(65);
+          globalThis[k] = v;
+          if (again) { again = false; new new.target(); }
+        }
+        new F();
+    """),
+    'a parameter-base write through a handed-over global': inspect.cleandoc("""
+        var k, v;
+        function t(x) { x[k] = v; }
+        t(globalThis);
+        String.fromCharCode(65);
+    """),
+    'the global object handed to Reflect.set': inspect.cleandoc("""
+        Reflect.set(globalThis, "String", 9);
+        String.fromCharCode(65);
+    """),
+    'an eval re-invoking the enclosing activation': inspect.cleandoc("""
+        function g() { String.fromCharCode(65); globalThis.eval("String = 9; g()"); }
+        g();
+    """),
+    'a stored-code eval re-invoking the activation': inspect.cleandoc("""
+        var c = "String = 9; g()";
+        function g() { String.fromCharCode(65); (0, eval)(c); }
+        g();
+    """),
+    'a timer re-invoking the enclosing activation': inspect.cleandoc("""
+        function g() { String.fromCharCode(65); setTimeout("String = 9; g()", 0); }
+        g();
+    """),
+    'a script-scope named activation under a surface': inspect.cleandoc("""
+        var k, v;
+        var e = eval;
+        function g() { String.fromCharCode(65); globalThis[k] = v; }
+        g();
+    """),
+    'a constructed function invoked before the anchor': inspect.cleandoc("""
+        var f = new Function("this.String = 9");
+        f();
+        String.fromCharCode(65);
+    """),
+    'a destructured eval invoked': inspect.cleandoc("""
+        const {eval} = globalThis;
+        eval("String = 9");
+        String.fromCharCode(65);
+    """),
+    'a destructured eval under a runtime key invoked': inspect.cleandoc("""
+        var k;
+        const {[k]: e} = globalThis;
+        e("String = 9");
+        String.fromCharCode(65);
+    """),
 }
 """
 The enumeration's every arm as a defeat: a computed-key store through a base that may be the
@@ -235,75 +286,93 @@ named activation reflective text could re-invoke.
 """
 
 _A_SITE_THE_ANCHOR_ESCAPED = {
-    'a write in a function invoked only later': (
-        'var k, v;\nString.fromCharCode(65);\nfunction h() { globalThis[k] = v; }\nh();'
-    ),
-    'a computed-literal alias write': (
-        'var g = globalThis;\ng["String"] = 9;\nString.fromCharCode(65);'
-    ),
-    'a construction invoked only after the anchor': (
-        'String.fromCharCode(65);\nvar g = Function;\nvar s = g("return 1");\ns();'
-    ),
-    'a destructured intrinsic never invoked': (
-        'String.fromCharCode(65);\nconst {eval} = globalThis;'
-    ),
-    'a fold inside a loop in a clean program': (
-        'var s = 0;\nfor (var i = 0; i < 3; i++) { s = String.fromCharCode(65); }'
-    ),
-    'a twice-called function in a clean program': (
-        'function g() { return String.fromCharCode(65); }\ng();\ng();'
-    ),
-    'a benign construction': (
-        'var d = new Date();\nd.getTime();\nString.fromCharCode(65);'
-    ),
-    'a file required only after the anchor': (
-        'String.fromCharCode(65);\nrequire("./setup.js");'
-    ),
-    'a builtin module that runs no code required before the anchor': (
-        'require("fs");\nString.fromCharCode(65);'
-    ),
-    'a script-scope named activation with the surface removed': (
-        'var k, v;\nfunction g() { String.fromCharCode(65); globalThis[k] = v; }\ng();'
-    ),
-    'a computed dispatch on a list base': (
-        'var k, v, i;\n'
-        'var names = ["callee", "caller"];\n'
-        'function g(name) { globalThis[name] = v; }\n'
-        'String.fromCharCode(65);\n'
-        'i = 0;\n'
-        'g(names[i]);'
-    ),
-    'a key a table holds that names no way back into the activation': (
-        'var k, v;\n'
-        'var table = ["other"];\n'
-        'function h() { h[table[0]](); }\n'
-        'function g() {\n'
-        '  String.fromCharCode(65);\n'
-        '  globalThis[k] = v;\n'
-        '  h();\n'
-        '}\n'
-        'g();'
-    ),
-    'the arguments.callee of another function': (
-        'var k, v;\n'
-        'function h() { return arguments.callee; }\n'
-        'function g() {\n'
-        '  String.fromCharCode(65);\n'
-        '  globalThis[k] = v;\n'
-        '  h();\n'
-        '}\n'
-        'g();'
-    ),
-    'a runtime-keyed read off a strict arguments object': (
-        'var k, v, i, out;\n'
-        '(function () {\n'
-        "  'use strict';\n"
-        '  String.fromCharCode(65);\n'
-        '  globalThis[k] = v;\n'
-        "  i = 'callee';\n"
-        '  out = arguments[i];\n'
-        '})();'
-    ),
+    'a write in a function invoked only later': inspect.cleandoc("""
+        var k, v;
+        String.fromCharCode(65);
+        function h() { globalThis[k] = v; }
+        h();
+    """),
+    'a computed-literal alias write': inspect.cleandoc("""
+        var g = globalThis;
+        g["String"] = 9;
+        String.fromCharCode(65);
+    """),
+    'a construction invoked only after the anchor': inspect.cleandoc("""
+        String.fromCharCode(65);
+        var g = Function;
+        var s = g("return 1");
+        s();
+    """),
+    'a destructured intrinsic never invoked': inspect.cleandoc("""
+        String.fromCharCode(65);
+        const {eval} = globalThis;
+    """),
+    'a fold inside a loop in a clean program': inspect.cleandoc("""
+        var s = 0;
+        for (var i = 0; i < 3; i++) { s = String.fromCharCode(65); }
+    """),
+    'a twice-called function in a clean program': inspect.cleandoc("""
+        function g() { return String.fromCharCode(65); }
+        g();
+        g();
+    """),
+    'a benign construction': inspect.cleandoc("""
+        var d = new Date();
+        d.getTime();
+        String.fromCharCode(65);
+    """),
+    'a file required only after the anchor': inspect.cleandoc("""
+        String.fromCharCode(65);
+        require("./setup.js");
+    """),
+    'a builtin module that runs no code required before the anchor': inspect.cleandoc("""
+        require("fs");
+        String.fromCharCode(65);
+    """),
+    'a script-scope named activation with the surface removed': inspect.cleandoc("""
+        var k, v;
+        function g() { String.fromCharCode(65); globalThis[k] = v; }
+        g();
+    """),
+    'a computed dispatch on a list base': inspect.cleandoc("""
+        var k, v, i;
+        var names = ["callee", "caller"];
+        function g(name) { globalThis[name] = v; }
+        String.fromCharCode(65);
+        i = 0;
+        g(names[i]);
+    """),
+    'a key a table holds that names no way back into the activation': inspect.cleandoc("""
+        var k, v;
+        var table = ["other"];
+        function h() { h[table[0]](); }
+        function g() {
+          String.fromCharCode(65);
+          globalThis[k] = v;
+          h();
+        }
+        g();
+    """),
+    'the arguments.callee of another function': inspect.cleandoc("""
+        var k, v;
+        function h() { return arguments.callee; }
+        function g() {
+          String.fromCharCode(65);
+          globalThis[k] = v;
+          h();
+        }
+        g();
+    """),
+    'a runtime-keyed read off a strict arguments object': inspect.cleandoc("""
+        var k, v, i, out;
+        (function () {
+          'use strict';
+          String.fromCharCode(65);
+          globalThis[k] = v;
+          i = 'callee';
+          out = arguments[i];
+        })();
+    """),
 }
 """
 Each refuse row's twin. The computed-literal alias write clears by design — a written *name* is
@@ -334,28 +403,28 @@ class TestBuiltinsIntactAt(TestBase):
             ('in an arm', 'c ? String.fromCharCode(65) : 0'),
             ('below and', 'c && String.fromCharCode(65)'),
         ):
-            source = (
-                'var k, v;\n'
-                'function f(c) {\n'
-                F'  var r = {expression};\n'
-                '  globalThis[k] = v;\n'
-                '  return r;\n'
-                '}\n'
-                'f();'
-            )
+            source = inspect.cleandoc(F"""
+                var k, v;
+                function f(c) {{
+                  var r = {expression};
+                  globalThis[k] = v;
+                  return r;
+                }}
+                f();
+            """)
             with self.subTest(label):
                 self.assertTrue(self._verdict(source))
 
     def test_an_anchor_its_statement_runs_on_some_runs_refuses_under_a_write_before_it(self):
-        source = (
-            'var k, v;\n'
-            'function f(c) {\n'
-            '  globalThis[k] = v;\n'
-            '  var r = c && String.fromCharCode(65);\n'
-            '  return r;\n'
-            '}\n'
-            'f();'
-        )
+        source = inspect.cleandoc("""
+            var k, v;
+            function f(c) {
+              globalThis[k] = v;
+              var r = c && String.fromCharCode(65);
+              return r;
+            }
+            f();
+        """)
         self.assertFalse(self._verdict(source))
 
     def test_an_entrypoint_matched_activation_refuses_under_the_option(self):
@@ -364,15 +433,15 @@ class TestBuiltinsIntactAt(TestBase):
         before the anchor. A top-level function of a CommonJS file is no property of the global
         object, and no host reaches it by its name.
         """
-        source = (
-            'var k, v;\n'
-            'function g() {\n'
-            '  var r = String.fromCharCode(65);\n'
-            '  globalThis[k] = v;\n'
-            '  return r;\n'
-            '}\n'
-            'g();'
-        )
+        source = inspect.cleandoc("""
+            var k, v;
+            function g() {
+              var r = String.fromCharCode(65);
+              globalThis[k] = v;
+              return r;
+            }
+            g();
+        """)
         ast = JsParser(source).parse()
         anchor = _call_with_property(ast, _FROM_CHAR_CODE)
         self.assertTrue(ModelCache(ast).builtins_intact_at(anchor))
@@ -384,19 +453,22 @@ class TestBuiltinsIntactAt(TestBase):
 
 class TestTheTrustQuestionsAtAnAnchor(TestBase):
 
-    _CLEAN = 'var s = String.fromCharCode(65);\nvar t = ["x"].concat("a|b".split("|"));'
-    _SURFACE_AFTER = (
-        'var s = String.fromCharCode(65);\n'
-        'var t = ["x"].concat("a|b".split("|"));\n'
-        'var k;\n'
-        'eval(k);'
-    )
-    _SURFACE_BEFORE = (
-        'var k;\n'
-        'eval(k);\n'
-        'var s = String.fromCharCode(65);\n'
-        'var t = ["x"].concat("a|b".split("|"));'
-    )
+    _CLEAN = inspect.cleandoc("""
+        var s = String.fromCharCode(65);
+        var t = ["x"].concat("a|b".split("|"));
+    """)
+    _SURFACE_AFTER = inspect.cleandoc("""
+        var s = String.fromCharCode(65);
+        var t = ["x"].concat("a|b".split("|"));
+        var k;
+        eval(k);
+    """)
+    _SURFACE_BEFORE = inspect.cleandoc("""
+        var k;
+        eval(k);
+        var s = String.fromCharCode(65);
+        var t = ["x"].concat("a|b".split("|"));
+    """)
 
     def test_a_question_the_whole_program_answers_asks_no_oracle(self):
         ast = JsParser(self._CLEAN).parse()
@@ -440,7 +512,11 @@ class TestTheTrustQuestionsAtAnAnchor(TestBase):
                 self.assertEqual(cache.effects.call_is_foldable(concat, trust=cache.trust_at(concat)), foldable)
 
     def test_a_typeof_of_a_name_the_host_lacks_folds_only_before_every_load(self):
-        source = 'var a = typeof window;\nrequire("./setup.js");\nvar b = typeof window;'
+        source = inspect.cleandoc("""
+            var a = typeof window;
+            require("./setup.js");
+            var b = typeof window;
+        """)
         ast = JsParser(source).parse()
         cache = ModelCache(ast, DeobfuscationOptions(environment=HostEnvironment.node))
         first, second = (
@@ -470,12 +546,14 @@ class TestSingularValueAt(TestBase):
 
     def test_an_eval_after_the_read_repairs_the_volatility(self):
         value = self._value_at(
-            'var out;\n'
-            'var q = (function () {\n'
-            '  var x = 1;\n'
-            '  out = x;\n'
-            '  eval(payload);\n'
-            '})();'
+            inspect.cleandoc("""
+                var out;
+                var q = (function () {
+                  var x = 1;
+                  out = x;
+                  eval(payload);
+                })();
+            """)
         )
         self.assertIsInstance(value, JsNumericLiteral)
         self.assertEqual(value.value, 1)
@@ -495,99 +573,115 @@ class TestSingularValueAt(TestBase):
 
     def test_an_eval_after_a_read_below_and_repairs_the_volatility(self):
         value = self._value_at_the_last_read(
-            'var out, c;\n'
-            'var q = (function () {\n'
-            '  var x = 1;\n'
-            '  out = c && x;\n'
-            '  eval(payload);\n'
-            '})();'
+            inspect.cleandoc("""
+                var out, c;
+                var q = (function () {
+                  var x = 1;
+                  out = c && x;
+                  eval(payload);
+                })();
+            """)
         )
         self.assertIsInstance(value, JsNumericLiteral)
         self.assertEqual(value.value, 1)
 
     def test_a_store_below_and_establishes_no_value(self):
         self.assertIsNone(self._value_at_the_last_read(
-            'var out, c;\n'
-            'var q = (function () {\n'
-            '  var x;\n'
-            '  c && (x = 1);\n'
-            '  out = x;\n'
-            '  eval(payload);\n'
-            '})();'
+            inspect.cleandoc("""
+                var out, c;
+                var q = (function () {
+                  var x;
+                  c && (x = 1);
+                  out = x;
+                  eval(payload);
+                })();
+            """)
         ))
 
     def test_an_eval_before_the_read_refuses(self):
         self.assertIsNone(self._value_at(
-            'var out;\n'
-            'var q = (function () {\n'
-            '  var x = 1;\n'
-            '  eval(payload);\n'
-            '  out = x;\n'
-            '})();'
+            inspect.cleandoc("""
+                var out;
+                var q = (function () {
+                  var x = 1;
+                  eval(payload);
+                  out = x;
+                })();
+            """)
         ))
 
     def test_a_never_invoked_sibling_eval_is_no_hazard(self):
         value = self._value_at(
-            'var out;\n'
-            'var q = (function () {\n'
-            '  var x = 1;\n'
-            '  out = x;\n'
-            '  var g = function () { eval(payload); };\n'
-            '})();'
+            inspect.cleandoc("""
+                var out;
+                var q = (function () {
+                  var x = 1;
+                  out = x;
+                  var g = function () { eval(payload); };
+                })();
+            """)
         )
         self.assertIsInstance(value, JsNumericLiteral)
         self.assertEqual(value.value, 1)
 
     def test_a_read_on_a_cycle_refuses_the_repair(self):
         self.assertIsNone(self._value_at(
-            'var out = [];\n'
-            'var q = (function () {\n'
-            '  var x = 1;\n'
-            '  for (var i = 0; i < 2; i++) {\n'
-            '    out.push(x);\n'
-            '    eval(payload);\n'
-            '  }\n'
-            '})();'
+            inspect.cleandoc("""
+                var out = [];
+                var q = (function () {
+                  var x = 1;
+                  for (var i = 0; i < 2; i++) {
+                    out.push(x);
+                    eval(payload);
+                  }
+                })();
+            """)
         ))
 
     def test_a_do_while_read_before_a_post_loop_eval_stays_refused(self):
         self.assertIsNone(self._value_at(
-            'var out = [];\n'
-            'var q = (function () {\n'
-            '  var x = 1;\n'
-            '  var i = 0;\n'
-            '  do { out.push(x); i++; } while (i < 2);\n'
-            '  eval(payload);\n'
-            '})();'
+            inspect.cleandoc("""
+                var out = [];
+                var q = (function () {
+                  var x = 1;
+                  var i = 0;
+                  do { out.push(x); i++; } while (i < 2);
+                  eval(payload);
+                })();
+            """)
         ))
 
     def test_a_two_channel_binding_gets_no_repair(self):
         self.assertIsNone(self._value_at(
-            'var out;\n'
-            'var q = (function () {\n'
-            '  var x = 1;\n'
-            '  x = 2;\n'
-            '  out = x;\n'
-            '  eval(payload);\n'
-            '})();'
+            inspect.cleandoc("""
+                var out;
+                var q = (function () {
+                  var x = 1;
+                  x = 2;
+                  out = x;
+                  eval(payload);
+                })();
+            """)
         ))
 
     def test_a_parameter_gets_no_repair(self):
         self.assertIsNone(self._value_at(
-            'var out;\n'
-            'var q = (function (x) {\n'
-            '  out = x;\n'
-            '  eval(payload);\n'
-            '})(7);'
+            inspect.cleandoc("""
+                var out;
+                var q = (function (x) {
+                  out = x;
+                  eval(payload);
+                })(7);
+            """)
         ))
 
     def test_a_script_scope_binding_fails_closed(self):
-        source = (
-            'var out;\n'
-            'var x = 1;\n'
-            'out = x;\n'
-            'eval(payload);'
-        )
+        source = inspect.cleandoc("""
+            var out;
+            var x = 1;
+            out = x;
+            eval(payload);
+        """)
         ast = JsParser(source).parse()
         cache = ModelCache(ast)
         read = next(
@@ -600,24 +694,26 @@ class TestSingularValueAt(TestBase):
 
     def test_a_read_before_its_declarator_refuses(self):
         self.assertIsNone(self._value_at(
-            'var out;\n'
-            'var q = (function () {\n'
-            '  out = x;\n'
-            '  var x = 1;\n'
-            '  eval(payload);\n'
-            '})();'
+            inspect.cleandoc("""
+                var out;
+                var q = (function () {
+                  out = x;
+                  var x = 1;
+                  eval(payload);
+                })();
+            """)
         ))
 
     @a_property_of_the_pin_itself
     def test_a_splice_during_a_pinned_window_does_not_leak_past_the_pass(self):
-        source = (
-            'var out;\n'
-            'var q = (function () {\n'
-            '  var x = 1;\n'
-            '  eval(payload);\n'
-            '  out = x;\n'
-            '})();'
-        )
+        source = inspect.cleandoc("""
+            var out;
+            var q = (function () {
+              var x = 1;
+              eval(payload);
+              out = x;
+            })();
+        """)
         ast = JsParser(source).parse()
         cache = ModelCache(ast)
         read = next(
@@ -648,14 +744,14 @@ class TestThePositionedAliasHop(TestBase):
         return denotes_function_intrinsic(
             node, cache.model, cache.effects, cache.dominance, **kwargs)
 
-    _EVAL_AFTER = (
-        'var q = (function () {\n'
-        '  function jCb(l) { return l; }\n'
-        '  var xTe = jCb.constructor;\n'
-        "  var Urn = xTe('', 'return 1;');\n"
-        '  (async function () { await eval(payload); })();\n'
-        '})();'
-    )
+    _EVAL_AFTER = inspect.cleandoc("""
+        var q = (function () {
+          function jCb(l) { return l; }
+          var xTe = jCb.constructor;
+          var Urn = xTe('', 'return 1;');
+          (async function () { await eval(payload); })();
+        })();
+    """)
 
     def test_a_volatile_alias_denotes_the_intrinsic_where_ordering_repairs_it(self):
         self.assertFalse(self._verdict(self._EVAL_AFTER))
@@ -668,14 +764,14 @@ class TestThePositionedAliasHop(TestBase):
         self.assertTrue(self._verdict(source, positioned=True))
 
     def test_an_eval_before_the_alias_read_still_declines(self):
-        source = (
-            'var q = (function () {\n'
-            '  function jCb(l) { return l; }\n'
-            '  (async function () { await eval(payload); })();\n'
-            '  var xTe = jCb.constructor;\n'
-            "  var Urn = xTe('', 'return 1;');\n"
-            '})();'
-        )
+        source = inspect.cleandoc("""
+            var q = (function () {
+              function jCb(l) { return l; }
+              (async function () { await eval(payload); })();
+              var xTe = jCb.constructor;
+              var Urn = xTe('', 'return 1;');
+            })();
+        """)
         self.assertFalse(self._verdict(source, positioned=True))
 
     def test_a_written_constructor_key_refuses_every_navigation(self):
@@ -683,14 +779,14 @@ class TestThePositionedAliasHop(TestBase):
         self.assertFalse(self._verdict(source, positioned=True))
 
     def test_an_alias_read_before_its_declarator_still_declines(self):
-        source = (
-            'var q = (function () {\n'
-            '  function jCb(l) { return l; }\n'
-            "  var Urn = xTe('', 'return 1;');\n"
-            '  var xTe = jCb.constructor;\n'
-            '  (async function () { await eval(payload); })();\n'
-            '})();'
-        )
+        source = inspect.cleandoc("""
+            var q = (function () {
+              function jCb(l) { return l; }
+              var Urn = xTe('', 'return 1;');
+              var xTe = jCb.constructor;
+              (async function () { await eval(payload); })();
+            })();
+        """)
         self.assertFalse(self._verdict(source, positioned=True))
 
     def test_a_named_function_call_is_not_an_intrinsic_spelling(self):
@@ -707,15 +803,15 @@ class TestThePositionedAliasHop(TestBase):
                 self._EVAL_AFTER, positioned=True, spliced_names=('jCb',)))
 
     def test_a_channel_read_on_a_cycle_refuses_at_the_inner_hop(self):
-        source = (
-            'var q = (function () {\n'
-            '  function jCb(l) { return l; }\n'
-            '  var xTe;\n'
-            '  for (var i = 0; i < 2; i++) { xTe = jCb.constructor; }\n'
-            "  var Urn = xTe('', 'return 1;');\n"
-            '  (async function () { await eval(payload); })();\n'
-            '})();'
-        )
+        source = inspect.cleandoc("""
+            var q = (function () {
+              function jCb(l) { return l; }
+              var xTe;
+              for (var i = 0; i < 2; i++) { xTe = jCb.constructor; }
+              var Urn = xTe('', 'return 1;');
+              (async function () { await eval(payload); })();
+            })();
+        """)
         self.assertFalse(self._verdict(source, positioned=True))
 
 
@@ -744,42 +840,42 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
         return False
 
     def test_a_method_call_folds_under_a_write_the_anchor_precedes(self):
-        source = (
-            'var k, v;\n'
-            'function f() {\n'
-            '  var r = String.fromCharCode(65);\n'
-            '  globalThis[k] = v;\n'
-            '  return r;\n'
-            '}\n'
-            'f();'
-        )
+        source = inspect.cleandoc("""
+            var k, v;
+            function f() {
+              var r = String.fromCharCode(65);
+              globalThis[k] = v;
+              return r;
+            }
+            f();
+        """)
         expression = lambda ast: _call_with_property(ast, _FROM_CHAR_CODE)
         self.assertTrue(self._unanchored_refuses(source, expression))
         self.assertEqual(self._execute(source, expression, expression), 'A')
 
     def test_a_method_call_still_refuses_under_a_write_that_precedes_the_anchor(self):
-        source = (
-            'var k, v;\n'
-            'function f() {\n'
-            '  globalThis[k] = v;\n'
-            '  return String.fromCharCode(65);\n'
-            '}\n'
-            'f();'
-        )
+        source = inspect.cleandoc("""
+            var k, v;
+            function f() {
+              globalThis[k] = v;
+              return String.fromCharCode(65);
+            }
+            f();
+        """)
         expression = lambda ast: _call_with_property(ast, _FROM_CHAR_CODE)
         with self.assertRaises(InterpreterError):
             self._execute(source, expression, expression)
 
     def test_a_for_in_walk_reads_a_clean_chain_at_the_anchor(self):
-        source = (
-            'var e = eval;\n'
-            'function f(o) {\n'
-            '  var s = "";\n'
-            '  for (var key in o) { s += key; }\n'
-            '  return s;\n'
-            '}\n'
-            'f({a: 1, b: 2});'
-        )
+        source = inspect.cleandoc("""
+            var e = eval;
+            function f(o) {
+              var s = "";
+              for (var key in o) { s += key; }
+              return s;
+            }
+            f({a: 1, b: 2});
+        """)
         self.assertTrue(self._unanchored_refuses(source, lambda ast: _call_of_name(ast, 'f')))
         self.assertEqual(
             self._execute(
@@ -790,15 +886,15 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
         )
 
     def test_a_for_of_walk_reads_a_clean_chain_at_the_anchor(self):
-        source = (
-            'var e = eval;\n'
-            'function f(a) {\n'
-            '  var s = "";\n'
-            '  for (var item of a) { s += item; }\n'
-            '  return s;\n'
-            '}\n'
-            'f(["a", "b"]);'
-        )
+        source = inspect.cleandoc("""
+            var e = eval;
+            function f(a) {
+              var s = "";
+              for (var item of a) { s += item; }
+              return s;
+            }
+            f(["a", "b"]);
+        """)
         self.assertTrue(self._unanchored_refuses(source, lambda ast: _call_of_name(ast, 'f')))
         self.assertEqual(
             self._execute(
@@ -809,13 +905,13 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
         )
 
     def test_an_absent_property_read_answers_undefined_at_the_anchor(self):
-        source = (
-            'var e = eval;\n'
-            'function f(o) {\n'
-            '  return o.zz;\n'
-            '}\n'
-            'f({a: 1});'
-        )
+        source = inspect.cleandoc("""
+            var e = eval;
+            function f(o) {
+              return o.zz;
+            }
+            f({a: 1});
+        """)
         self.assertTrue(self._unanchored_refuses(source, lambda ast: _call_of_name(ast, 'f')))
         self.assertIsNone(
             self._execute(
@@ -825,15 +921,15 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
         )
 
     def test_an_attributed_prototype_write_still_refuses_at_the_anchor(self):
-        source = (
-            'Object.prototype.z = 9;\n'
-            'function f(o) {\n'
-            '  var s = "";\n'
-            '  for (var key in o) { s += key; }\n'
-            '  return s;\n'
-            '}\n'
-            'f({a: 1});'
-        )
+        source = inspect.cleandoc("""
+            Object.prototype.z = 9;
+            function f(o) {
+              var s = "";
+              for (var key in o) { s += key; }
+              return s;
+            }
+            f({a: 1});
+        """)
         with self.assertRaises(InterpreterError):
             self._execute(
                 source,
@@ -841,13 +937,13 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
                 lambda ast: _call_of_name(ast, 'f'))
 
     def test_the_child_interpreter_forwards_the_anchor(self):
-        source = (
-            'var k, v;\n'
-            'function g() { return String.fromCharCode(65); }\n'
-            'function f() { return g(); }\n'
-            'var r = f();\n'
-            'globalThis[k] = v;'
-        )
+        source = inspect.cleandoc("""
+            var k, v;
+            function g() { return String.fromCharCode(65); }
+            function f() { return g(); }
+            var r = f();
+            globalThis[k] = v;
+        """)
         self.assertEqual(
             self._execute(
                 source,
@@ -856,21 +952,21 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
             'A',
         )
 
-    _DECODER_IIFE = (
-        'var q = (function () {\n'
-        '  function jCb(l) { return l; }\n'
-        '  var xTe = jCb.constructor;\n'
-        "  var Urn = xTe('', 'return 1;');\n"
-        '  var _a = function (e, r) {\n'
-        '    var y = [];\n'
-        '    for (var l = 0; l < e.length; l++) { y[l] = e.charAt(l); }\n'
-        '    var u = String.fromCharCode(127);\n'
-        "    return y.join('').split('%').join(u);\n"
-        "  }('0', 1);\n"
-        '  (async function () { await eval(_a[0]); })();\n'
-        '  return _a;\n'
-        '})();'
-    )
+    _DECODER_IIFE = inspect.cleandoc("""
+        var q = (function () {
+          function jCb(l) { return l; }
+          var xTe = jCb.constructor;
+          var Urn = xTe('', 'return 1;');
+          var _a = function (e, r) {
+            var y = [];
+            for (var l = 0; l < e.length; l++) { y[l] = e.charAt(l); }
+            var u = String.fromCharCode(127);
+            return y.join('').split('%').join(u);
+          }('0', 1);
+          (async function () { await eval(_a[0]); })();
+          return _a;
+        })();
+    """)
 
     def test_a_decoder_folds_with_a_later_eval_sibling(self):
         expression = lambda ast: _decoder_iife_call(ast, _DECODER_STEP)

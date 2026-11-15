@@ -7,6 +7,7 @@ from refinery.lib.scripts.ps1.options import Ps1DeobfuscationOptions
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 from test import opportunity
+from test.lib.scripts.ps1 import a_program
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 _JUNK = '$Null = [System.Guid]::NewGuid()'
@@ -63,16 +64,19 @@ class TestPs1TrustedEvalDoesNotExcuseAMutationTheScriptWritesDown(TestPs1):
     )
 
     def test_a_write_to_the_accelerator_table_found_by_name_is_not_excused_by_the_option(self):
-        script = (
-            "[psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('zzq', [int])\n"
-            F'{_JUNK}'
-        )
+        script = cleandoc(F"""
+            [psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')::Add('zzq', [int])
+            {_JUNK}
+        """)
         self.assertEqual(self._deobfuscate(script, trust_eval=True), self._deobfuscate(script))
 
     def test_the_junk_below_one_that_runs_code_is_kept_by_default(self):
         for mutation in self._RUNS_CODE_IN_PLAIN_SIGHT:
             with self.subTest(mutation):
-                self._assertKept(F'{mutation}\n{_JUNK}')
+                self._assertKept(cleandoc(F"""
+                    {mutation}
+                    {_JUNK}
+                """))
 
     def test_the_option_changes_nothing_below_one(self):
         for mutation in self._MUTATES_IN_PLAIN_SIGHT:
@@ -223,20 +227,27 @@ class TestPs1TrustedEvalReachesTheAnswersOnePayloadDispatcherUsedToWithhold(Test
 
     def test_a_discarded_construction_below_an_eval_is_removed(self):
         self._assertRemoved(
-            'Invoke-Expression $c\n$Null = New-Object System.Object\n',
+            a_program("""
+                Invoke-Expression $c
+                $Null = New-Object System.Object
+            """),
             '$Null = New-Object System.Object\n',
             trust_eval=True,
         )
 
     def test_a_command_inside_a_block_below_an_eval_stops_refusing(self):
         self._assertRemoved(
-            '$Null = [int[]](1, 2, 3 | ForEach-Object {\n'
-            '  Get-Random\n'
-            '}) -Join "-"\n'
-            'Invoke-Expression $h\n',
-            '$Null = [int[]](1, 2, 3 | ForEach-Object {\n'
-            '  Get-Random\n'
-            '}) -Join "-"\n',
+            a_program("""
+                $Null = [int[]](1, 2, 3 | ForEach-Object {
+                  Get-Random
+                }) -Join "-"
+                Invoke-Expression $h
+            """),
+            a_program("""
+                $Null = [int[]](1, 2, 3 | ForEach-Object {
+                  Get-Random
+                }) -Join "-"
+            """),
             trust_eval=True,
         )
 
@@ -338,9 +349,25 @@ class TestPs1TrustedEvalAlsoAssumesTheUnreadableCodeReadsNothing(TestPs1):
 
     def test_the_default_keeps_what_the_payload_could_reach(self):
         scripts = (
-            'Invoke-Expression $c\nfunction Zzq {\n  Stop-Process -Name x\n}',
-            "Invoke-Expression $c\nfunction Zzq {\n  Write-Host 'side'\n  'payload'\n}\nZzq",
-            '$r = $sb.Invoke()\nSet-Alias zzq Get-Date\nWrite-Host $r',
+            cleandoc("""
+                Invoke-Expression $c
+                function Zzq {
+                  Stop-Process -Name x
+                }
+            """),
+            cleandoc("""
+                Invoke-Expression $c
+                function Zzq {
+                  Write-Host 'side'
+                  'payload'
+                }
+                Zzq
+            """),
+            cleandoc("""
+                $r = $sb.Invoke()
+                Set-Alias zzq Get-Date
+                Write-Host $r
+            """),
         )
         for script in scripts:
             with self.subTest(script):

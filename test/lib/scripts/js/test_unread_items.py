@@ -4,6 +4,7 @@ this.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase
@@ -17,50 +18,162 @@ from refinery.lib.scripts.js.parser import JsParser
 #: Unread text may read anything visible to it, and so may the missing tail of a file that ends
 #: inside a construct, so no declaration or store visible to either is dead.
 AN_UNREAD_ITEM_IN_EVERY_LIST_POSITION = {
-    'x = {a: 1 2, b: 3}; console.log(x.b);': 'x = { a: 1 2, b: 3 };\nconsole.log(x.b);',
-    'x = {...a b, c: 1}; console.log(x.c);': 'x = { ...a b, c: 1 };\nconsole.log(x.c);',
-    'var {a b} = o; console.log(a);': 'var { a b } = o;\nconsole.log(a);',
-    'x = [1 2, 3]; console.log(x[1]);': 'x = [1 2, 3];\nconsole.log(x[1]);',
-    'var [a b] = o; console.log(a);': 'var [a b] = o;\nconsole.log(a);',
-    'function f(a b) { return a; } console.log(f(1));': 'function f(a b) {\n  return a;\n}\nconsole.log(f(1));',
-    'var f = (a b) => a; console.log(f(1));': 'var f = (a b) => a;\nconsole.log(f(1));',
+    'x = {a: 1 2, b: 3}; console.log(x.b);': inspect.cleandoc("""
+        x = { a: 1 2, b: 3 };
+        console.log(x.b);
+    """),
+    'x = {...a b, c: 1}; console.log(x.c);': inspect.cleandoc("""
+        x = { ...a b, c: 1 };
+        console.log(x.c);
+    """),
+    'var {a b} = o; console.log(a);': inspect.cleandoc("""
+        var { a b } = o;
+        console.log(a);
+    """),
+    'x = [1 2, 3]; console.log(x[1]);': inspect.cleandoc("""
+        x = [1 2, 3];
+        console.log(x[1]);
+    """),
+    'var [a b] = o; console.log(a);': inspect.cleandoc("""
+        var [a b] = o;
+        console.log(a);
+    """),
+    'function f(a b) { return a; } console.log(f(1));': inspect.cleandoc("""
+        function f(a b) {
+          return a;
+        }
+        console.log(f(1));
+    """),
+    'var f = (a b) => a; console.log(f(1));': inspect.cleandoc("""
+        var f = (a b) => a;
+        console.log(f(1));
+    """),
     'console.log(f(1 2, 3));': 'console.log(f(1 2, 3));',
-    'x = new C(1 2); console.log(x);': 'x = new C(1 2);\nconsole.log(x);',
-    'switch (x) { case 1 break; default: g(); }': 'switch (x) {\n  case 1 break;\n  default:\n    g();\n}',
-    'switch (x) { case 1: f(1 2); break; default: g(); }': (
-        'switch (x) {\n  case 1:\n    f(1 2);\n    break;\n  default:\n    g();\n}'
-    ),
-    'class C { m(a b) {} n() { return 1; } } console.log(new C().n());': (
-        'class C {\n  m(a b) {}\n  n() {\n    return 1;\n  }\n}\nconsole.log(new C().n());'
-    ),
-    'class C { x y; n() { return 1; } } console.log(new C().n());': (
-        'class C {\n  x y;\n  n() {\n    return 1;\n  }\n}\nconsole.log(new C().n());'
-    ),
-    "import { a, b c } from 'm'; console.log(a);": "import { a, b c } from 'm';\nconsole.log(a);",
-    'var a = 1; export { a, b c };': 'var a = 1;\nexport { a, b c };',
-    "import x from 'm' with { a b }; console.log(x);": "import x from 'm' with { a b };\nconsole.log(x);",
-    'x = `a${1 2}b${3}c`; console.log(x);': 'x = `a${1 2}b${3}c`;\nconsole.log(x);',
+    'x = new C(1 2); console.log(x);': inspect.cleandoc("""
+        x = new C(1 2);
+        console.log(x);
+    """),
+    'switch (x) { case 1 break; default: g(); }': inspect.cleandoc("""
+        switch (x) {
+          case 1 break;
+          default:
+            g();
+        }
+    """),
+    'switch (x) { case 1: f(1 2); break; default: g(); }': inspect.cleandoc("""
+        switch (x) {
+          case 1:
+            f(1 2);
+            break;
+          default:
+            g();
+        }
+    """),
+    'class C { m(a b) {} n() { return 1; } } console.log(new C().n());': inspect.cleandoc("""
+        class C {
+          m(a b) {}
+          n() {
+            return 1;
+          }
+        }
+        console.log(new C().n());
+    """),
+    'class C { x y; n() { return 1; } } console.log(new C().n());': inspect.cleandoc("""
+        class C {
+          x y;
+          n() {
+            return 1;
+          }
+        }
+        console.log(new C().n());
+    """),
+    "import { a, b c } from 'm'; console.log(a);": inspect.cleandoc("""
+        import { a, b c } from 'm';
+        console.log(a);
+    """),
+    'var a = 1; export { a, b c };': inspect.cleandoc("""
+        var a = 1;
+        export { a, b c };
+    """),
+    "import x from 'm' with { a b }; console.log(x);": inspect.cleandoc("""
+        import x from 'm' with { a b };
+        console.log(x);
+    """),
+    'x = `a${1 2}b${3}c`; console.log(x);': inspect.cleandoc("""
+        x = `a${1 2}b${3}c`;
+        console.log(x);
+    """),
     'x = `a${b': 'x = `a${b',
-    'function f() { var x = 1; x = y[a b]; return x; } console.log(f());': (
-        'function f() {\n  var x = 1;\n  x = y[a b];\n  return x;\n}\nconsole.log(f());'
-    ),
-    'x = y[a b]; console.log(1);': 'x = y[a b];\nconsole.log(1);',
-    'if (a) x = y[a b]; console.log(1);': 'if (a) x = y[a b];\nconsole.log(1);',
-    'for (var a b; i < 3; i++) { g(); } h();': 'for (var a b; i < 3; i++) { g(); }\nh();',
-    'l: x = y[a b]; console.log(1);': 'l: x = y[a b];\nconsole.log(1);',
-    'function f() { console.log(1);': 'function f() {\n  console.log(1);',
-    'class C { m() { return 1; }': 'class C {\n  m() {\n    return 1;\n  }',
-    'switch (x) { case 1: f();': 'switch (x) {\n  case 1:\n    f();',
-    'console.log(1); /* tail': 'console.log(1);\n/* tail',
+    'function f() { var x = 1; x = y[a b]; return x; } console.log(f());': inspect.cleandoc("""
+        function f() {
+          var x = 1;
+          x = y[a b];
+          return x;
+        }
+        console.log(f());
+    """),
+    'x = y[a b]; console.log(1);': inspect.cleandoc("""
+        x = y[a b];
+        console.log(1);
+    """),
+    'if (a) x = y[a b]; console.log(1);': inspect.cleandoc("""
+        if (a) x = y[a b];
+        console.log(1);
+    """),
+    'for (var a b; i < 3; i++) { g(); } h();': inspect.cleandoc("""
+        for (var a b; i < 3; i++) { g(); }
+        h();
+    """),
+    'l: x = y[a b]; console.log(1);': inspect.cleandoc("""
+        l: x = y[a b];
+        console.log(1);
+    """),
+    'function f() { console.log(1);': inspect.cleandoc("""
+        function f() {
+          console.log(1);
+    """),
+    'class C { m() { return 1; }': inspect.cleandoc("""
+        class C {
+          m() {
+            return 1;
+          }
+    """),
+    'switch (x) { case 1: f();': inspect.cleandoc("""
+        switch (x) {
+          case 1:
+            f();
+    """),
+    'console.log(1); /* tail': inspect.cleandoc("""
+        console.log(1);
+        /* tail
+    """),
     "console.log('abc": "console.log('abc",
     'console.log(`abc': 'console.log(`abc',
-    "x = 'abc\ndef'; console.log(x);": "x = 'abc\ndef'; console.log(x);",
+    inspect.cleandoc("""
+        x = 'abc
+        def'; console.log(x);
+    """): inspect.cleandoc("""
+        x = 'abc
+        def'; console.log(x);
+    """),
     '}\nconsole.log(1);': '}\nconsole.log(1);',
-    '@@@ var x = 1; console.log(x);': '@@@ var x = 1;\nconsole.log(x);',
-    'x = 1e; console.log(x);': 'x = 1e;\nconsole.log(x);',
-    'x = a / b => c; console.log(x);': 'x = a / b => c;\nconsole.log(x);',
+    '@@@ var x = 1; console.log(x);': inspect.cleandoc("""
+        @@@ var x = 1;
+        console.log(x);
+    """),
+    'x = 1e; console.log(x);': inspect.cleandoc("""
+        x = 1e;
+        console.log(x);
+    """),
+    'x = a / b => c; console.log(x);': inspect.cleandoc("""
+        x = a / b => c;
+        console.log(x);
+    """),
     '0;--> alert(1)': '0; --> alert(1)',
-    'var \\u0069f = 1; console.log(2);': 'var \\u0069f = 1;\nconsole.log(2);',
+    'var \\u0069f = 1; console.log(2);': inspect.cleandoc("""
+        var \\u0069f = 1;
+        console.log(2);
+    """),
 }
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from inspect import cleandoc
 
 from test import TestBase, opportunity
+from test.lib.scripts.ps1 import a_program
 
 from refinery.lib.scripts import Statement
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
@@ -512,8 +513,16 @@ class TestPs1StatementEffect(Ps1EffectsTest):
             'Get-ChildItem | ForEach-Object { $Null = $_ } -MemberName Delete',
             '1..3 | ForEach-Object -Process { [Void]$_ } -End $sb',
             '1..3 | ForEach-Object { [Void]$_ } $sb',
-            "Get-Process | ForEach-Object { [Void]$_ } -MemberName @'\nKill\n'@",
-            "Get-ChildItem | ForEach-Object { $Null = $_ } @'\nDelete\n'@",
+            cleandoc("""
+                Get-Process | ForEach-Object { [Void]$_ } -MemberName @'
+                Kill
+                '@
+            """),
+            cleandoc("""
+                Get-ChildItem | ForEach-Object { $Null = $_ } @'
+                Delete
+                '@
+            """),
         ):
             with self.subTest(source):
                 self.assertIs(self._effect(self._statement(source)), StatementEffect.EFFECT)
@@ -1100,7 +1109,11 @@ class TestPs1OutputSink(Ps1EffectsTest):
     def test_a_propagating_body_answers_with_whoever_reads_the_body_holding_it(self):
         for wrap, expected in (
             ('%s', OutputSink.HOST),
-            ('function outer {\n%s\n}', OutputSink.CALLER),
+            (cleandoc("""
+                function outer {
+                %s
+                }
+            """), OutputSink.CALLER),
         ):
             script = self._parse(wrap % _PROPAGATING_BODIES)
             walked = 0
@@ -1135,7 +1148,10 @@ class TestPs1WhatAScriptAddsToARun(Ps1EffectsTest):
         self._assert_contributions(
             ('Start-Process calc', Contribution.ACTS),
             ("Write-Verbose 'debug'", Contribution.ACTS),
-            ('function f { 1 }\nf', Contribution.ACTS),
+            (cleandoc("""
+                function f { 1 }
+                f
+            """), Contribution.ACTS),
             ("throw 'x'", Contribution.ACTS),
             ('throw', Contribution.ACTS),
             ('$Null = Start-Process calc', Contribution.ACTS),
@@ -1196,7 +1212,10 @@ class TestPs1WhatAScriptAddsToARun(Ps1EffectsTest):
         self._assert_contributions(
             ('$sb = { Start-Process calc }', Contribution.NOTHING),
             ('$Null = { Start-Process calc }', Contribution.NOTHING),
-            ('$sb = { Start-Process calc }\n& $sb', Contribution.ACTS),
+            (cleandoc("""
+                $sb = { Start-Process calc }
+                & $sb
+            """), Contribution.ACTS),
         )
 
     def test_a_compound_statement_adds_what_its_conditions_and_bodies_add(self):
@@ -1254,13 +1273,24 @@ class TestPs1WhatAScriptAddsToARun(Ps1EffectsTest):
     def test_a_parameter_default_that_does_something_acts(self):
         self._assert_contributions(
             ('param($p = (Start-Process calc))', Contribution.ACTS),
-            ("param($p = 1)\n'a'", Contribution.PRINTS),
+            (cleandoc("""
+                param($p = 1)
+                'a'
+            """), Contribution.PRINTS),
         )
 
     def test_a_script_adds_the_union_of_its_statements(self):
         self._assert_contributions(
-            ("function f { 1 }\n$x = 'a'\n'b'\nexit", Contribution.PRINTS | Contribution.ENDS),
-            ("Start-Process calc\n'b'", Contribution.ACTS | Contribution.PRINTS),
+            (cleandoc("""
+                function f { 1 }
+                $x = 'a'
+                'b'
+                exit
+            """), Contribution.PRINTS | Contribution.ENDS),
+            (cleandoc("""
+                Start-Process calc
+                'b'
+            """), Contribution.ACTS | Contribution.PRINTS),
             ('', Contribution.NOTHING),
         )
 
@@ -1275,8 +1305,14 @@ class TestPs1WhatAScriptIs(Ps1EffectsTest):
 
     def test_a_script_that_runs_something_is_not_a_library(self):
         for source in (
-            "Start-Process calc\nfunction f { 'a' }",
-            'function f { 1 }\nf',
+            cleandoc("""
+                Start-Process calc
+                function f { 'a' }
+            """),
+            cleandoc("""
+                function f { 1 }
+                f
+            """),
             "throw 'x'",
         ):
             with self.subTest(source):
@@ -1284,19 +1320,38 @@ class TestPs1WhatAScriptIs(Ps1EffectsTest):
 
     def test_a_file_that_only_defines_and_stores_is_a_library_whatever_it_stores(self):
         for source in (
-            "$Version = '1.0'\nfunction Invoke-Thing { Write-Host $Version }",
-            'function A { Write-Host 1 }\nfunction B { Write-Host 2 }',
+            cleandoc("""
+                $Version = '1.0'
+                function Invoke-Thing { Write-Host $Version }
+            """),
+            cleandoc("""
+                function A { Write-Host 1 }
+                function B { Write-Host 2 }
+            """),
             '',
         ):
             with self.subTest(source):
                 self.assertEqual(self._decide(source), (False, True))
-        self.assertEqual(self._decide('$p = Start-Process calc\nfunction f { $p }'), (True, True))
+        self.assertEqual(self._decide(cleandoc("""
+            $p = Start-Process calc
+            function f { $p }
+        """)), (True, True))
 
     def test_a_file_that_prints_or_ends_its_run_is_not_a_library(self):
         for source in (
-            "function f { Write-Host 1 }\n'a'",
-            '$p = 1\nfunction f { Write-Host 1 }\nreturn',
-            "class C {}\n'a'",
+            cleandoc("""
+                function f { Write-Host 1 }
+                'a'
+            """),
+            cleandoc("""
+                $p = 1
+                function f { Write-Host 1 }
+                return
+            """),
+            cleandoc("""
+                class C {}
+                'a'
+            """),
         ):
             with self.subTest(source):
                 self.assertEqual(self._decide(source), (False, False))
@@ -1308,7 +1363,10 @@ class TestPs1EmitSafety(Ps1EffectsTest):
         from refinery.lib.scripts.ps1.analysis import effects
         from refinery.lib.scripts.ps1.analysis.world import build_closed_world
 
-        source = 'function foreach { Start-Process calc }\n1..3 | foreach { $Null = $_ }'
+        source = cleandoc("""
+            function foreach { Start-Process calc }
+            1..3 | foreach { $Null = $_ }
+        """)
         tree = self._parse(source)
         world = Ps1WorldReach(build_closed_world(tree))
         statement = tree.body[-1]
@@ -1475,8 +1533,14 @@ class TestPs1WhetherAnExpressionCanFaultIsDecidedByTheScriptToo(Ps1EffectsTest):
 
     def test_a_member_read_can_fault_below_strict_mode_or_a_payload_the_analysis_cannot_read(self):
         for above in (
-            'Set-StrictMode -Version 2\n$x = 1\n',
-            '$x = 1\nInvoke-Expression $env:ZZQ\n',
+            a_program("""
+                Set-StrictMode -Version 2
+                $x = 1
+            """),
+            a_program("""
+                $x = 1
+                Invoke-Expression $env:ZZQ
+            """),
         ):
             with self.subTest(above=above):
                 self.assertFalse(self._cannot_fault('$x.Foo', above))

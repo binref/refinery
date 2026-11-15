@@ -194,7 +194,12 @@ class TestAStatementJoinedByCommasIsWrittenAsOneStatementPerPart(TestBase):
 
     def test_the_comments_stay_before_the_first_part_and_after_the_last(self):
         self.assertEqual(
-            split('f();\n/* before */\na = 1, b = 2; // after\ng();'),
+            split(inspect.cleandoc("""
+                f();
+                /* before */
+                a = 1, b = 2; // after
+                g();
+            """)),
             inspect.cleandoc(
                 """
                 f();

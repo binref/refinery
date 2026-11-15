@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import pathlib
 
 from typing import Generator, NamedTuple
@@ -99,13 +100,23 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens, [(Ps1TokenKind.STRING_EXPAND, '"hello $name"')])
 
     def test_here_string_verbatim(self):
-        src = "@'\nline one\nline two\n'@"
+        src = inspect.cleandoc("""
+            @'
+            line one
+            line two
+            '@
+        """)
         tokens = self._tokens(src)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0][0], Ps1TokenKind.HSTRING_VERBATIM)
 
     def test_here_string_expandable(self):
-        src = '@"\nline $one\nline two\n"@'
+        src = inspect.cleandoc("""
+            @"
+            line $one
+            line two
+            "@
+        """)
         tokens = self._tokens(src)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0][0], Ps1TokenKind.HSTRING_EXPAND)
@@ -200,7 +211,10 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(kinds.count(Ps1TokenKind.VARIABLE), 2)
 
     def test_newline(self):
-        tokens = self._tokens('$x\n$y')
+        tokens = self._tokens(inspect.cleandoc("""
+            $x
+            $y
+        """))
         kinds = [t[0] for t in tokens]
         self.assertIn(Ps1TokenKind.NEWLINE, kinds)
 
@@ -300,7 +314,11 @@ class TestPs1Lexer(TestBase):
             )
 
     def test_expandable_here_string_with_subexpression(self):
-        src = '@"\n$($x.ToString())\n"@'
+        src = inspect.cleandoc("""
+            @"
+            $($x.ToString())
+            "@
+        """)
         tokens = self._tokens(src)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0][0], Ps1TokenKind.HSTRING_EXPAND)
@@ -319,7 +337,13 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens, [(Ps1TokenKind.GENERIC_TOKEN, '?')])
 
     def test_expandable_here_string_with_nested_here_string(self):
-        src = '@"\n$(@"\ninner\n"@)\n"@'
+        src = inspect.cleandoc("""
+            @"
+            $(@"
+            inner
+            "@)
+            "@
+        """)
         tokens = self._tokens(src)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0][0], Ps1TokenKind.HSTRING_EXPAND)
@@ -508,7 +532,10 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens[0], (Ps1TokenKind.REAL, '7.5'))
 
     def test_backtick_line_continuation(self):
-        tokens = self._tokens('$x +`\n$y')
+        tokens = self._tokens(inspect.cleandoc("""
+            $x +`
+            $y
+        """))
         kinds = [t[0] for t in tokens]
         self.assertNotIn(Ps1TokenKind.NEWLINE, kinds)
 

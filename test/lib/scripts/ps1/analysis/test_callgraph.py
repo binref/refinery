@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase
 
 from refinery.lib.scripts.ps1.analysis.callgraph import build_call_graph
@@ -17,51 +19,95 @@ class TestPs1CallGraphReadability(TestBase):
         return build_call_graph(Ps1Parser(source).parse(), _CLOSED_WORLD)
 
     def test_a_script_whose_calls_and_definitions_meet_is_readable(self):
-        self.assertTrue(self._graph("function Qzmr { 'P' }\nQzmr").is_readable)
+        self.assertTrue(self._graph(inspect.cleandoc("""
+            function Qzmr { 'P' }
+            Qzmr
+        """)).is_readable)
 
     def test_a_module_qualified_call_onto_a_defined_name_is_not(self):
-        self.assertFalse(self._graph("function Qzmr { 'P' }\n& 'MyModule\\Qzmr'").is_readable)
+        self.assertFalse(self._graph(inspect.cleandoc("""
+            function Qzmr { 'P' }
+            & 'MyModule\\Qzmr'
+        """)).is_readable)
 
     def test_the_bare_spelling_of_that_call_is_not_either(self):
-        self.assertFalse(self._graph("function Qzmr { 'P' }\n& MyModule\\Qzmr").is_readable)
+        self.assertFalse(self._graph(inspect.cleandoc("""
+            function Qzmr { 'P' }
+            & MyModule\\Qzmr
+        """)).is_readable)
 
     def test_the_definition_may_be_written_below_the_call(self):
-        self.assertFalse(self._graph("& 'MyModule\\Qzmr'\nfunction Qzmr { 'P' }").is_readable)
+        self.assertFalse(self._graph(inspect.cleandoc("""
+            & 'MyModule\\Qzmr'
+            function Qzmr { 'P' }
+        """)).is_readable)
 
     def test_an_aliased_call_onto_a_defined_name_is_not_readable(self):
         self.assertFalse(
-            self._graph("function Invoke-Expression { 'P' }\niex 'x'").is_readable)
+            self._graph(inspect.cleandoc("""
+                function Invoke-Expression { 'P' }
+                iex 'x'
+            """)).is_readable)
 
     def test_a_scope_qualified_call_is_readable_because_the_key_already_matches(self):
-        self.assertTrue(self._graph("function Qzmr { 'P' }\n& 'global:Qzmr'").is_readable)
+        self.assertTrue(self._graph(inspect.cleandoc("""
+            function Qzmr { 'P' }
+            & 'global:Qzmr'
+        """)).is_readable)
 
     def test_an_executable_invoked_by_path_is_readable(self):
-        self.assertTrue(self._graph("function j { 1 }\nj\n& 'C:\\tools\\stage2.exe'").is_readable)
+        self.assertTrue(self._graph(inspect.cleandoc("""
+            function j { 1 }
+            j
+            & 'C:\\tools\\stage2.exe'
+        """)).is_readable)
 
     def test_an_executable_invoked_by_unc_path_is_readable(self):
-        self.assertTrue(self._graph("function j { 1 }\nj\n& '\\\\host\\share\\p.exe'").is_readable)
+        self.assertTrue(self._graph(inspect.cleandoc("""
+            function j { 1 }
+            j
+            & '\\\\host\\share\\p.exe'
+        """)).is_readable)
 
     def test_an_executable_whose_stem_names_a_definition_is_not(self):
         self.assertFalse(
-            self._graph("function stage2.exe { 'P' }\n& 'C:\\tools\\stage2.exe'").is_readable)
+            self._graph(inspect.cleandoc("""
+                function stage2.exe { 'P' }
+                & 'C:\\tools\\stage2.exe'
+            """)).is_readable)
 
     def test_a_qualified_call_onto_a_name_nothing_defines_is_readable(self):
-        self.assertTrue(self._graph("function Qzmr { 'P' }\n& 'MyModule\\Other'").is_readable)
+        self.assertTrue(self._graph(inspect.cleandoc("""
+            function Qzmr { 'P' }
+            & 'MyModule\\Other'
+        """)).is_readable)
 
     def test_a_bare_noun_whose_retry_lands_on_a_definition_keeps_that_definition(self):
-        graph = self._graph("function Get-Item { 'P' }\nitem env:zzq")
+        graph = self._graph(inspect.cleandoc("""
+            function Get-Item { 'P' }
+            item env:zzq
+        """))
         self.assertFalse(graph.is_readable)
         self.assertEqual(graph.reachable_names(), frozenset({'get-item', 'item'}))
 
     def test_a_bare_noun_the_script_defines_itself_is_readable(self):
-        graph = self._graph("function item { 'P' }\nitem env:zzq")
+        graph = self._graph(inspect.cleandoc("""
+            function item { 'P' }
+            item env:zzq
+        """))
         self.assertTrue(graph.is_readable)
         self.assertEqual(graph.reachable_names(), frozenset({'item'}))
 
     def test_a_dashed_call_does_not_reach_the_definition_of_its_prefixed_spelling(self):
         for source, called in (
-            ("function Get-Zq-Frob { 'P' }\nZq-Frob", 'zq-frob'),
-            ("function Get-Get-Zqfrob { 'P' }\nGet-Zqfrob", 'get-zqfrob'),
+            (inspect.cleandoc("""
+                function Get-Zq-Frob { 'P' }
+                Zq-Frob
+            """), 'zq-frob'),
+            (inspect.cleandoc("""
+                function Get-Get-Zqfrob { 'P' }
+                Get-Zqfrob
+            """), 'get-zqfrob'),
         ):
             with self.subTest(source):
                 graph = self._graph(source)
@@ -70,8 +116,16 @@ class TestPs1CallGraphReadability(TestBase):
 
     def test_a_bare_noun_the_script_defines_leaves_its_prefixed_definition_unreached(self):
         for source in (
-            "function Get-Zqfrob { 'P' }\nfunction Zqfrob { 'Q' }\nZqfrob",
-            "function Zqfrob { 'Q' }\nfunction Get-Zqfrob { 'P' }\nZqfrob",
+            inspect.cleandoc("""
+                function Get-Zqfrob { 'P' }
+                function Zqfrob { 'Q' }
+                Zqfrob
+            """),
+            inspect.cleandoc("""
+                function Zqfrob { 'Q' }
+                function Get-Zqfrob { 'P' }
+                Zqfrob
+            """),
         ):
             with self.subTest(source):
                 graph = self._graph(source)
@@ -81,7 +135,10 @@ class TestPs1CallGraphReadability(TestBase):
 
     def test_a_module_qualified_export_is_still_read_as_an_export(self):
         graph = self._graph(
-            "& 'Microsoft.PowerShell.Core\\Export-ModuleMember' -Function f\nfunction f { 'P' }")
+            inspect.cleandoc("""
+                & 'Microsoft.PowerShell.Core\\Export-ModuleMember' -Function f
+                function f { 'P' }
+            """))
         self.assertTrue(graph.exports_a_name)
         self.assertFalse(graph.is_readable)
 
@@ -111,7 +168,11 @@ class TestPs1CallGraphReadabilityAnswersOverAMeasuredWorld(TestBase):
         return build_call_graph(root, build_closed_world(root))
 
     def _readability_beside(self, opener: str) -> bool:
-        return self._graph(F'function Qzmr {{ }}\nQzmr\n{opener}').is_readable
+        return self._graph(inspect.cleandoc(F"""
+            function Qzmr {{ }}
+            Qzmr
+            {opener}
+        """)).is_readable
 
     def test_a_script_that_opens_no_world_is_readable(self):
         self.assertTrue(self._readability_beside("Write-Host 'A'"))
@@ -147,12 +208,18 @@ class TestPs1CallGraphReadabilityAnswersOverAMeasuredWorld(TestBase):
 
     def test_a_type_mutation_leaves_an_uncalled_helper_reached_by_nobody(self):
         graph = self._graph(
-            "function Zqhelper { 'P' }\nAdd-Type -TypeDefinition 'public class Z {}'")
+            inspect.cleandoc("""
+                function Zqhelper { 'P' }
+                Add-Type -TypeDefinition 'public class Z {}'
+            """))
         self.assertTrue(graph.is_readable)
         self.assertNotIn('zqhelper', graph.reachable_names())
 
     def test_a_command_table_opener_keeps_that_same_helper_reachable(self):
-        graph = self._graph("function Zqhelper { 'P' }\nImport-Module .\\m.psm1")
+        graph = self._graph(inspect.cleandoc("""
+            function Zqhelper { 'P' }
+            Import-Module .\\m.psm1
+        """))
         self.assertFalse(graph.is_readable)
         self.assertIn('zqhelper', graph.reachable_names())
 
@@ -162,7 +229,10 @@ class TestPs1ACallUnderAConstantNameInParenthesesCallsThatName(TestBase):
     def test_a_parenthesised_constant_name_is_a_call_site_of_the_function(self):
         for call in ("& ('f1')", "& $('f1')", ". ('f1')"):
             with self.subTest(call=call):
-                graph = build_call_graph(Ps1Parser(F"function f1 {{ 'a' }}\n{call}").parse(), _CLOSED_WORLD)
+                graph = build_call_graph(Ps1Parser(inspect.cleandoc(F"""
+                    function f1 {{ 'a' }}
+                    {call}
+                """)).parse(), _CLOSED_WORLD)
                 self.assertEqual(len(graph.call_sites('f1')), 1)
 
 
@@ -172,12 +242,18 @@ class TestPs1ACallTheGraphCannotAttributeIsListed(TestBase):
         for call in ('& $n', 'iex $c', '$ExecutionContext.InvokeCommand.InvokeScript($s)'):
             for trust_eval in (False, True):
                 with self.subTest(call=call, trust_eval=trust_eval):
-                    root = Ps1Parser(F"function f1 {{ 'a' }}\n{call}").parse()
+                    root = Ps1Parser(inspect.cleandoc(F"""
+                        function f1 {{ 'a' }}
+                        {call}
+                    """)).parse()
                     graph = build_call_graph(root, build_closed_world(root), Ps1DeobfuscationOptions(trust_eval=trust_eval))
                     self.assertEqual(len(graph.unattributed_sites), 1)
 
     def test_a_call_naming_a_function_is_not_listed(self):
-        root = Ps1Parser("function f1 { 'a' }\nf1").parse()
+        root = Ps1Parser(inspect.cleandoc("""
+            function f1 { 'a' }
+            f1
+        """)).parse()
         self.assertEqual(len(build_call_graph(root, build_closed_world(root)).unattributed_sites), 0)
 
 
@@ -195,14 +271,20 @@ class TestPs1AFunctionTheScriptHandsOutIsReachedWithoutACall(TestBase):
             "function f1 { $MyInvocation.MyCommand.ScriptBlock }",
         ):
             with self.subTest(use=use):
-                graph = self._graph(F"function f1 {{ 'a' }}\n{use}")
+                graph = self._graph(inspect.cleandoc(F"""
+                    function f1 {{ 'a' }}
+                    {use}
+                """))
                 self.assertTrue(graph.hands_out('f1'))
                 self.assertIn('f1', graph.reachable_names())
 
     def test_a_lookup_that_cannot_name_the_function_hands_out_every_function(self):
         for use in ('Get-Command', 'Get-Command f*', "Get-ChildItem 'function:'"):
             with self.subTest(use=use):
-                self.assertTrue(self._graph(F"function f1 {{ 'a' }}\n{use}").hands_out('f1'))
+                self.assertTrue(self._graph(inspect.cleandoc(F"""
+                    function f1 {{ 'a' }}
+                    {use}
+                """)).hands_out('f1'))
 
     def test_a_lookup_selecting_by_anything_but_a_name_hands_out_every_function(self):
         for use in (
@@ -212,25 +294,48 @@ class TestPs1AFunctionTheScriptHandsOutIsReachedWithoutACall(TestBase):
             "$p = @{ CommandType = 'Function' }; Get-Command @p",
         ):
             with self.subTest(use=use):
-                self.assertTrue(self._graph(F"function f1 {{ 'a' }}\n$c = {use}").hands_out('f1'))
+                self.assertTrue(self._graph(inspect.cleandoc(F"""
+                    function f1 {{ 'a' }}
+                    $c = {use}
+                """)).hands_out('f1'))
 
     def test_a_lookup_by_name_hands_out_that_function_alone(self):
-        graph = self._graph("function f1 { 'a' }\nfunction f2 { 'b' }\n$c = Get-Command -Name f1 -CommandType Function")
+        graph = self._graph(inspect.cleandoc("""
+            function f1 { 'a' }
+            function f2 { 'b' }
+            $c = Get-Command -Name f1 -CommandType Function
+        """))
         self.assertEqual([graph.hands_out('f1'), graph.hands_out('f2')], [True, False])
 
     def test_reading_the_name_of_a_lookup_hands_out_what_it_lists(self):
         for source, name in (
-            ("function f1 { 'a' }\n(Get-Command f1).Name", 'f1'),
-            ("function wrnte { 'a' }\n(Get-Command 'wrn`te').Name", 'wrnte'),
-            ("function wrnte { 'a' }\n(Get-Command ???t?).Name", 'wrnte'),
+            (inspect.cleandoc("""
+                function f1 { 'a' }
+                (Get-Command f1).Name
+            """), 'f1'),
+            (inspect.cleandoc("""
+                function wrnte { 'a' }
+                (Get-Command 'wrn`te').Name
+            """), 'wrnte'),
+            (inspect.cleandoc("""
+                function wrnte { 'a' }
+                (Get-Command ???t?).Name
+            """), 'wrnte'),
         ):
             with self.subTest(source):
                 self.assertTrue(self._graph(source).hands_out(name))
 
     def test_a_discarded_lookup_that_cannot_raise_hands_nothing_out(self):
-        self.assertFalse(self._graph("function f1 { 'a' }\n$Null = (Get-Command f*).Name").hands_out('f1'))
+        self.assertFalse(self._graph(inspect.cleandoc("""
+            function f1 { 'a' }
+            $Null = (Get-Command f*).Name
+        """)).hands_out('f1'))
 
     def test_a_narrowed_listing_hands_out_what_the_narrowing_passes(self):
         graph = self._graph(
-            "function f1 { 'a' }\nfunction g1 { 'b' }\n$c = Get-Command | Where-Object { $_.Name -like 'f*' }")
+            inspect.cleandoc("""
+                function f1 { 'a' }
+                function g1 { 'b' }
+                $c = Get-Command | Where-Object { $_.Name -like 'f*' }
+            """))
         self.assertEqual([graph.hands_out('f1'), graph.hands_out('g1')], [True, False])

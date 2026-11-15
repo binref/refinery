@@ -66,7 +66,10 @@ _CORPUS = [
     "switch ($x) { 1 { 'a' } 2 { 'b' } }",
     "switch ($x) { 1 { 'a' } default { 'b' } }",
     "switch ($x) { 1 { break } 2 { 'b' } }",
-    "switch ($x) { 1 { trap { 'h' }\n'a' } }",
+    cleandoc("""
+        switch ($x) { 1 { trap { 'h' }
+        'a' } }
+    """),
     "try { 'a' } catch { 'b' }",
     "try { 'a' } finally { 'c' }",
     "try { 'a' } catch { 'b' } finally { 'c' }",
@@ -74,38 +77,116 @@ _CORPUS = [
     "while ($x) { switch ($y) { 1 { continue } } }",
     "try { 'a' } catch [System.IO.IOException] { 'b' } catch { 'c' }",
     "try { try { 'a' } catch { 'i' } } catch { 'o' }",
-    "try { trap { 'h' }\n'a' } catch { 'c' }",
-    "try { 'a' } finally { trap { 'h' }\n'b' }",
-    "trap { continue }\n'a'",
-    "trap { continue }\n'a'\nthrow 'x'\n'b'",
-    "trap { continue }\n'a'\nthrow 'x'\ntry { 'b' } catch { 'c' }",
-    "if ($c) { trap { continue }\n'a'\nthrow 'x' }\n'b'",
-    "trap { break }\n'a'",
-    "trap { :t while ($true) { break t } }\n'a'",
-    "while ($c) { trap { break }\n'a' }",
-    "while ($c) { trap { continue }\n'a' }",
-    "trap { 'h' }\ntrap [System.IO.IOException] { 'i' }\n'a'",
-    "if ($c) { trap { 'h' }\n'a' }\n'b'",
-    "trap { 'h' }\nif ($c) { 'a' }\n'b'",
-    "trap { 'o' }\nif ($c) { trap { 'i' }\n'a' }",
-    "function f { 'a' }\nf",
+    cleandoc("""
+        try { trap { 'h' }
+        'a' } catch { 'c' }
+    """),
+    cleandoc("""
+        try { 'a' } finally { trap { 'h' }
+        'b' }
+    """),
+    cleandoc("""
+        trap { continue }
+        'a'
+    """),
+    cleandoc("""
+        trap { continue }
+        'a'
+        throw 'x'
+        'b'
+    """),
+    cleandoc("""
+        trap { continue }
+        'a'
+        throw 'x'
+        try { 'b' } catch { 'c' }
+    """),
+    cleandoc("""
+        if ($c) { trap { continue }
+        'a'
+        throw 'x' }
+        'b'
+    """),
+    cleandoc("""
+        trap { break }
+        'a'
+    """),
+    cleandoc("""
+        trap { :t while ($true) { break t } }
+        'a'
+    """),
+    cleandoc("""
+        while ($c) { trap { break }
+        'a' }
+    """),
+    cleandoc("""
+        while ($c) { trap { continue }
+        'a' }
+    """),
+    cleandoc("""
+        trap { 'h' }
+        trap [System.IO.IOException] { 'i' }
+        'a'
+    """),
+    cleandoc("""
+        if ($c) { trap { 'h' }
+        'a' }
+        'b'
+    """),
+    cleandoc("""
+        trap { 'h' }
+        if ($c) { 'a' }
+        'b'
+    """),
+    cleandoc("""
+        trap { 'o' }
+        if ($c) { trap { 'i' }
+        'a' }
+    """),
+    cleandoc("""
+        function f { 'a' }
+        f
+    """),
     "function f { return 1 }",
     "function f { dynamicparam { 'd' } begin { 'b' } process { 'p' } end { 'e' } }",
-    "'a'\nexit\n'b'",
-    "'a'\nthrow 'x'\n'b'",
+    cleandoc("""
+        'a'
+        exit
+        'b'
+    """),
+    cleandoc("""
+        'a'
+        throw 'x'
+        'b'
+    """),
     ":outer while ($x) { while ($y) { break outer } }",
     ":outer while ($x) { while ($y) { continue outer } }",
-    "while ($x) { while ($y) { break } }\n'after'",
+    cleandoc("""
+        while ($x) { while ($y) { break } }
+        'after'
+    """),
     "do { try { 'a' } catch { 'b' } } while ($x)",
-    "for (;;) { 'a'\ncontinue }",
+    cleandoc("""
+        for (;;) { 'a'
+        continue }
+    """),
     "'a'",
     "1..3 | ForEach-Object { 'a' }",
-    "1..3 | %{ 'a'\n'b' }",
+    cleandoc("""
+        1..3 | %{ 'a'
+        'b' }
+    """),
     "& { while ($x) { 'a' } }",
-    "$f = { 'a' }\n& $f",
+    cleandoc("""
+        $f = { 'a' }
+        & $f
+    """),
     "1..3 | ForEach-Object { 1..3 | ForEach-Object { 'a' } }",
     "function f { 1..3 | ForEach-Object { 'a' } }",
-    "1..3 | ForEach-Object { trap { 'h' }\n'a' }",
+    cleandoc("""
+        1..3 | ForEach-Object { trap { 'h' }
+        'a' }
+    """),
 ]
 
 
@@ -233,11 +314,17 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
                             self.assertIn(id(node), reached)
 
     def test_a_function_definition_owns_its_own_graph(self):
-        graphs = self._graphs("function f { 'a' }\nf")
+        graphs = self._graphs(cleandoc("""
+            function f { 'a' }
+            f
+        """))
         self.assertEqual(len(graphs), 2)
 
     def test_a_nested_function_body_is_not_descended_into(self):
-        tree = Ps1Parser("function f { 'a' }\nf").parse()
+        tree = Ps1Parser(cleandoc("""
+            function f { 'a' }
+            f
+        """)).parse()
         graphs = build_ps1_control_flow(tree)
         definition = next(n for n in tree.walk() if isinstance(n, Ps1FunctionDefinition))
         script = graphs[id(tree)]
@@ -253,14 +340,20 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         self.assertIn(id(head), self._forward(body))
 
     def test_break_leaves_the_loop_and_does_not_return_to_its_head(self):
-        tree, graph = self._tree_and_graph("while ($x) { break }\n'after'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            while ($x) { break }
+            'after'
+        """))
         jump = self._node_for(graph, Ps1BreakStatement)
         self.assertIn(graph.node_of(tree.body[1]), jump.successors)
         self.assertNotIn(graph.node_of(tree.body[0]), jump.successors)
         self.assertNotIn(graph.exit, jump.successors)
 
     def test_an_unlabelled_break_leaves_only_the_innermost_loop(self):
-        tree, graph = self._tree_and_graph("while ($x) { while ($y) { break } }\n'after'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            while ($x) { while ($y) { break } }
+            'after'
+        """))
         jump = self._node_for(graph, Ps1BreakStatement)
         inner = tree.body[0].body.body[0]
         self.assertNotIn(graph.node_of(tree.body[1]), jump.successors)
@@ -274,7 +367,10 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
 
     def test_a_labelled_break_leaves_the_named_loop(self):
         tree, graph = self._tree_and_graph(
-            ":outer while ($x) { while ($y) { break outer } }\n'after'")
+            cleandoc("""
+                :outer while ($x) { while ($y) { break outer } }
+                'after'
+            """))
         jump = self._node_for(graph, Ps1BreakStatement)
         self.assertIn(graph.node_of(tree.body[1]), jump.successors)
         self.assertNotIn(graph.exit, jump.successors)
@@ -285,7 +381,10 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         self.assertEqual(jump.successors, [graph.node_of(tree.body[0])])
 
     def test_a_labelled_break_leaves_the_named_switch(self):
-        tree, graph = self._tree_and_graph(":sw switch ($x) { 1 { break sw } }\n'after'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            :sw switch ($x) { 1 { break sw } }
+            'after'
+        """))
         jump = self._node_for(graph, Ps1BreakStatement)
         self.assertIn(graph.node_of(tree.body[1]), jump.successors)
         self.assertNotIn(graph.exit, jump.successors)
@@ -299,13 +398,20 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
             self.assertIsNotNone(graph.node_of(part))
 
     def test_a_counted_loop_without_test_or_update_still_has_a_back_edge_from_continue(self):
-        tree, graph = self._tree_and_graph("for (;;) { 'a'\ncontinue }")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            for (;;) { 'a'
+            continue }
+        """))
         jump = self._node_for(graph, Ps1ContinueStatement)
         body = tree.body[0].body.body[0]
         self.assertEqual(jump.successors, [graph.node_of(body)])
 
     def test_code_after_exit_is_unreachable(self):
-        tree = Ps1Parser("'a'\nexit\n'b'").parse()
+        tree = Ps1Parser(cleandoc("""
+            'a'
+            exit
+            'b'
+        """)).parse()
         graph = build_ps1_control_flow(tree)[id(tree)]
         reached = self._forward(graph.entry)
         unreachable = [
@@ -315,7 +421,11 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         self.assertEqual(len(unreachable), 1)
 
     def test_code_after_throw_is_unreachable(self):
-        tree = Ps1Parser("'a'\nthrow 'x'\n'b'").parse()
+        tree = Ps1Parser(cleandoc("""
+            'a'
+            throw 'x'
+            'b'
+        """)).parse()
         graph = build_ps1_control_flow(tree)[id(tree)]
         reached = self._forward(graph.entry)
         unreachable = [
@@ -336,42 +446,68 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         self.assertTrue(plain_successors(line))
 
     def test_a_trap_is_reachable_from_a_statement_written_above_it(self):
-        tree, graph = self._tree_and_graph("'a'\ntrap { continue }\n'b'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            'a'
+            trap { continue }
+            'b'
+        """))
         trap = self._node_for(graph, Ps1TrapStatement)
         self.assertIn(graph.node_of(tree.body[0]), trap.predecessors)
 
     def test_a_trap_declared_inside_a_nested_block_guards_that_block(self):
-        tree, graph = self._tree_and_graph("if ($c) { trap { 'h' }\n'a' }\n'b'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            if ($c) { trap { 'h' }
+            'a' }
+            'b'
+        """))
         trap = self._node_for(graph, Ps1TrapStatement)
         self.assertIn(graph.node_of(tree.body[0].clauses[0][1].body[1]), trap.predecessors)
         self.assertIsNotNone(graph.node_of(trap.element.body.body[0]))
 
     def test_a_trap_declared_inside_a_nested_block_does_not_guard_the_body_around_it(self):
-        tree, graph = self._tree_and_graph("if ($c) { trap { 'h' }\n'a' }\n'b'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            if ($c) { trap { 'h' }
+            'a' }
+            'b'
+        """))
         trap = self._node_for(graph, Ps1TrapStatement)
         self.assertNotIn(trap, graph.node_of(tree.body[1]).successors)
 
     def test_a_trap_that_continues_resumes_in_the_body_it_guards(self):
-        tree, graph = self._tree_and_graph("trap { 'h'; continue }\n'a'\n'b'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { 'h'; continue }
+            'a'
+            'b'
+        """))
         jump = self._node_for(graph, Ps1ContinueStatement)
         reached = self._forward(jump)
         self.assertIn(id(graph.node_of(tree.body[1])), reached)
         self.assertIn(id(graph.node_of(tree.body[2])), reached)
 
     def test_a_trap_does_not_guard_its_own_body(self):
-        tree, graph = self._tree_and_graph("trap { return }\n'a'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { return }
+            'a'
+        """))
         trap = self._node_for(graph, Ps1TrapStatement)
         inside = graph.node_of(tree.body[0].body.body[0])
         self.assertNotIn(trap, inside.successors)
         self.assertFalse(CycleModel(build_control_flow_model(tree)).repeats(tree.body[0].body.body[0]))
 
     def test_a_trap_still_guards_the_statements_it_is_declared_beside(self):
-        tree, graph = self._tree_and_graph("trap { return }\n'a'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { return }
+            'a'
+        """))
         trap = self._node_for(graph, Ps1TrapStatement)
         self.assertIn(trap, graph.node_of(tree.body[1]).successors)
 
     def test_a_trap_takes_the_errors_of_its_own_block_and_none_from_around_it(self):
-        tree, graph = self._tree_and_graph("if ($c) { trap { 'h' }\n'a' }\n'b'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            if ($c) { trap { 'h' }
+            'a' }
+            'b'
+        """))
         guarded = tree.body[0].clauses[0][1]
         self.assertEqual(
             self._reached_by_an_error_at(graph, guarded.body[1]),
@@ -380,14 +516,22 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         self.assertEqual(self._reached_by_an_error_at(graph, tree.body[1]), set())
 
     def test_a_trap_at_script_scope_takes_an_error_raised_in_a_block_nested_under_it(self):
-        tree, graph = self._tree_and_graph("trap { 'h' }\nif ($c) { 'a' }\n'b'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { 'h' }
+            if ($c) { 'a' }
+            'b'
+        """))
         self.assertEqual(
             self._reached_by_an_error_at(graph, tree.body[1].clauses[0][1].body[0]),
             self._handlers(graph, tree.body[0]),
         )
 
     def test_an_untyped_trap_shields_the_trap_of_the_block_around_it(self):
-        tree, graph = self._tree_and_graph("trap { 'o' }\nif ($c) { trap { 'i' }\n'a' }")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { 'o' }
+            if ($c) { trap { 'i' }
+            'a' }
+        """))
         inner = tree.body[1].clauses[0][1]
         self.assertEqual(
             self._reached_by_an_error_at(graph, inner.body[1]),
@@ -396,7 +540,11 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
 
     def test_a_typed_trap_leaves_the_error_to_the_trap_of_the_block_around_it(self):
         tree, graph = self._tree_and_graph(
-            "trap { 'o' }\nif ($c) { trap [System.IO.IOException] { 'i' }\n'a' }")
+            cleandoc("""
+                trap { 'o' }
+                if ($c) { trap [System.IO.IOException] { 'i' }
+                'a' }
+            """))
         inner = tree.body[1].clauses[0][1]
         self.assertEqual(
             self._reached_by_an_error_at(graph, inner.body[1]),
@@ -404,7 +552,11 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         )
 
     def test_a_trap_that_breaks_rethrows_to_the_trap_of_the_block_around_it(self):
-        tree, graph = self._tree_and_graph("trap { 'o' }\nif ($c) { trap { break }\n'a' }")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { 'o' }
+            if ($c) { trap { break }
+            'a' }
+        """))
         inner = tree.body[1].clauses[0][1]
         self.assertEqual(
             self._reached_by_an_error_at(graph, inner.body[1]),
@@ -413,7 +565,11 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
 
     def test_a_break_leaving_a_loop_written_in_the_trap_body_is_not_a_rethrow(self):
         tree, graph = self._tree_and_graph(
-            "trap { 'o' }\nif ($c) { trap { :t while ($true) { break t } }\n'a' }")
+            cleandoc("""
+                trap { 'o' }
+                if ($c) { trap { :t while ($true) { break t } }
+                'a' }
+            """))
         inner = tree.body[1].clauses[0][1]
         self.assertEqual(
             self._reached_by_an_error_at(graph, inner.body[1]),
@@ -422,12 +578,30 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
 
     def test_a_trap_that_breaks_rethrows_wherever_the_block_it_guards_is_written(self):
         for source in [
-            "trap { break }\n'a'",
-            "while ($c) { trap { break }\n'a' }",
-            "do { trap { break }\n'a' } while ($c)",
-            "for ($i = 0; $i -lt 3; $i++) { trap { break }\n'a' }",
-            "foreach ($i in $x) { trap { break }\n'a' }",
-            "switch ($x) { 1 { trap { break }\n'a' } }",
+            cleandoc("""
+                trap { break }
+                'a'
+            """),
+            cleandoc("""
+                while ($c) { trap { break }
+                'a' }
+            """),
+            cleandoc("""
+                do { trap { break }
+                'a' } while ($c)
+            """),
+            cleandoc("""
+                for ($i = 0; $i -lt 3; $i++) { trap { break }
+                'a' }
+            """),
+            cleandoc("""
+                foreach ($i in $x) { trap { break }
+                'a' }
+            """),
+            cleandoc("""
+                switch ($x) { 1 { trap { break }
+                'a' } }
+            """),
         ]:
             with self.subTest(source):
                 tree, graph = self._tree_and_graph(source)
@@ -439,9 +613,21 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
 
     def test_a_trap_that_continues_resumes_inside_the_iteration_that_raised(self):
         for source in [
-            "while ($c) { trap { 'h'; continue }\n'a'\n'b' }",
-            "foreach ($i in $x) { trap { 'h'; continue }\n'a'\n'b' }",
-            "switch ($x) { 1 { trap { 'h'; continue }\n'a'\n'b' } }",
+            cleandoc("""
+                while ($c) { trap { 'h'; continue }
+                'a'
+                'b' }
+            """),
+            cleandoc("""
+                foreach ($i in $x) { trap { 'h'; continue }
+                'a'
+                'b' }
+            """),
+            cleandoc("""
+                switch ($x) { 1 { trap { 'h'; continue }
+                'a'
+                'b' } }
+            """),
         ]:
             with self.subTest(source):
                 tree, graph = self._tree_and_graph(source)
@@ -454,8 +640,14 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
 
     def test_a_trap_set_that_may_decline_the_error_lets_it_leave_the_body(self):
         for source in [
-            "trap [System.IO.IOException] { 'h' }\n'a'",
-            "trap { break }\n'a'",
+            cleandoc("""
+                trap [System.IO.IOException] { 'h' }
+                'a'
+            """),
+            cleandoc("""
+                trap { break }
+                'a'
+            """),
         ]:
             with self.subTest(source):
                 tree, graph = self._tree_and_graph(source)
@@ -465,14 +657,20 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
                 )
 
     def test_an_untyped_trap_that_does_not_break_keeps_the_error_inside_the_body(self):
-        tree, graph = self._tree_and_graph("trap { 'h' }\n'a'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { 'h' }
+            'a'
+        """))
         self.assertEqual(
             self._reached_by_an_error_at(graph, tree.body[1]),
             self._handlers(graph, tree.body[0]),
         )
 
     def test_an_untyped_catch_clause_keeps_the_error_from_the_trap_around_the_try(self):
-        tree, graph = self._tree_and_graph("trap { 'o' }\ntry { 'a' } catch { 'c' }")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { 'o' }
+            try { 'a' } catch { 'c' }
+        """))
         guarded = tree.body[1]
         self.assertEqual(
             self._reached_by_an_error_at(graph, guarded.try_block.body[0]),
@@ -481,7 +679,10 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
 
     def test_a_typed_catch_clause_leaves_the_error_to_the_trap_around_the_try(self):
         tree, graph = self._tree_and_graph(
-            "trap { 'o' }\ntry { 'a' } catch [System.IO.IOException] { 'c' }")
+            cleandoc("""
+                trap { 'o' }
+                try { 'a' } catch [System.IO.IOException] { 'c' }
+            """))
         guarded = tree.body[1]
         self.assertEqual(
             self._reached_by_an_error_at(graph, guarded.try_block.body[0]),
@@ -507,7 +708,10 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         )
 
     def test_a_trap_in_a_try_block_takes_the_error_before_the_catch_clause_does(self):
-        tree, graph = self._tree_and_graph("try { trap { 'h' }\n'a' } catch { 'c' }")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            try { trap { 'h' }
+            'a' } catch { 'c' }
+        """))
         guarded = tree.body[0]
         self.assertEqual(
             self._reached_by_an_error_at(graph, guarded.try_block.body[1]),
@@ -515,7 +719,10 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         )
 
     def test_a_trap_in_a_switch_clause_body_guards_that_clause_body(self):
-        tree, graph = self._tree_and_graph("switch ($x) { 1 { trap { 'h' }\n'a' } }")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            switch ($x) { 1 { trap { 'h' }
+            'a' } }
+        """))
         clause = tree.body[0].clauses[0][1]
         self.assertEqual(
             self._reached_by_an_error_at(graph, clause.body[1]),
@@ -523,7 +730,10 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         )
 
     def test_a_trap_in_a_finally_body_guards_that_finally_body(self):
-        tree, graph = self._tree_and_graph("try { 'a' } finally { trap { 'h' }\n'b' }")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            try { 'a' } finally { trap { 'h' }
+            'b' }
+        """))
         cleanup = tree.body[0].finally_block
         self.assertEqual(
             self._reached_by_an_error_at(graph, cleanup.body[1]),
@@ -557,7 +767,10 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         """
         Over an empty input collection no clause of a PowerShell `switch` runs, `default` included.
         """
-        tree, graph = self._tree_and_graph("switch ($x) { 1 { 'a' } default { 'b' } }\n'c'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            switch ($x) { 1 { 'a' } default { 'b' } }
+            'c'
+        """))
         head = graph.node_of(tree.body[0])
         self.assertIn(graph.node_of(tree.body[1]), head.successors)
 
@@ -660,7 +873,11 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         self.assertIsNotNone(graphs[id(block)].node_of(block.body[0]))
 
     def test_a_statement_in_a_script_block_is_not_ordered_against_one_outside_it(self):
-        tree = Ps1Parser("$a = 1\n1..3 | ForEach-Object { $b = 2 }\n$c = 3").parse()
+        tree = Ps1Parser(cleandoc("""
+            $a = 1
+            1..3 | ForEach-Object { $b = 2 }
+            $c = 3
+        """)).parse()
         dominators = DominatorModel(build_control_flow_model(tree))
         block = next(n for n in tree.walk_in_order() if isinstance(n, Ps1ScriptBlock))
         inside = block.body[0]
@@ -668,7 +885,10 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         self.assertFalse(dominators.dominates(tree.body[0], inside))
 
     def test_two_statements_in_one_script_block_are_ordered_against_each_other(self):
-        tree = Ps1Parser("1..3 | ForEach-Object { $b = 2\n$c = 3 }").parse()
+        tree = Ps1Parser(cleandoc("""
+            1..3 | ForEach-Object { $b = 2
+            $c = 3 }
+        """)).parse()
         dominators = DominatorModel(build_control_flow_model(tree))
         block = next(n for n in tree.walk_in_order() if isinstance(n, Ps1ScriptBlock))
         self.assertTrue(dominators.dominates(block.body[0], block.body[1]))
@@ -707,7 +927,11 @@ class TestPs1ControlFlowGraph(_Ps1ControlFlowGraphs):
         self.assertFalse(cycles.repeats(block.body[0]))
 
     def test_a_parameter_default_is_not_placed_in_the_body_around_its_block(self):
-        tree = Ps1Parser("$a = 1\n$f = { param($p = 2) $p }\n$c = 3").parse()
+        tree = Ps1Parser(cleandoc("""
+            $a = 1
+            $f = { param($p = 2) $p }
+            $c = 3
+        """)).parse()
         flow = build_control_flow_model(tree)
         block = next(n for n in tree.walk_in_order() if isinstance(n, Ps1ScriptBlock))
         default = block.param_block.parameters[0].default_value
@@ -757,8 +981,16 @@ class TestPs1AGraphKnowsWhichNodesEachStatementOfASequenceBuilt(TestBase):
         wrong: list[tuple[str, str, str]] = []
         for source in [
             *_CORPUS,
-            "trap { continue }\n$x = $([int]'a'; 'b')\nif ($c) { trap { break }\n$y = @([int]$s) }",
-            "trap { continue }\nforeach ($i in $l) { try { if ($c) { break } } catch { continue } }",
+            cleandoc("""
+                trap { continue }
+                $x = $([int]'a'; 'b')
+                if ($c) { trap { break }
+                $y = @([int]$s) }
+            """),
+            cleandoc("""
+                trap { continue }
+                foreach ($i in $l) { try { if ($c) { break } } catch { continue } }
+            """),
         ]:
             tree = Ps1Parser(source).parse()
             for graph in build_control_flow_model(tree, descend=True).graphs.values():
@@ -777,7 +1009,10 @@ class TestPs1AGraphKnowsWhichNodesEachStatementOfASequenceBuilt(TestBase):
         self.assertGreater(recorded, len(_CORPUS))
 
     def test_a_trap_its_block_hoists_and_a_finally_block_record_nothing(self):
-        tree = Ps1Parser("trap { 'h' }\ntry { 'a' } finally { 'c' }").parse()
+        tree = Ps1Parser(cleandoc("""
+            trap { 'h' }
+            try { 'a' } finally { 'c' }
+        """)).parse()
         graph = build_ps1_control_flow(tree)[id(tree)]
         trap, guarded = tree.body
         assert isinstance(guarded, Ps1TryCatchFinally) and guarded.finally_block is not None
@@ -786,7 +1021,12 @@ class TestPs1AGraphKnowsWhichNodesEachStatementOfASequenceBuilt(TestBase):
         self.assertIsNotNone(graph.builder_of([guarded.finally_block.body[0]]))
 
     def test_nested_and_apart_statements_answer_as_the_union_of_their_own_answers(self):
-        tree = Ps1Parser("if ($a) { 'x'\nif ($b) { 'y' } }\n'z'\nif ($c) { 'w' }").parse()
+        tree = Ps1Parser(cleandoc("""
+            if ($a) { 'x'
+            if ($b) { 'y' } }
+            'z'
+            if ($c) { 'w' }
+        """)).parse()
         graph = build_ps1_control_flow(tree)[id(tree)]
         outer, _, apart = tree.body
         nested = next(node for node in outer.walk() if node is not outer and type(node) is type(outer))
@@ -809,14 +1049,23 @@ class TestPs1ATrapSetIsWiredInTheOrder51TriesItsMembers(_Ps1ControlFlowGraphs):
 
     def test_typed_members_are_tried_before_the_first_untyped_one_and_later_untyped_ones_never(self):
         _, model, (first, typed, second) = self._sets(
-            "trap { 'a' }\ntrap [System.IO.IOException] { 'b' }\ntrap { 'c' }\n'x'")
+            cleandoc("""
+                trap { 'a' }
+                trap [System.IO.IOException] { 'b' }
+                trap { 'c' }
+                'x'
+            """))
         trap_set = model.trap_set_of(first)
         assert trap_set is not None
         self.assertEqual(trap_set.selectable, (typed, first))
         self.assertEqual(trap_set.never_selected, (second,))
 
     def test_a_member_naming_every_error_leaves_every_untyped_member_unselected(self):
-        _, model, (universal, untyped) = self._sets("trap [System.Exception] { 'a' }\ntrap { 'b' }\n'x'")
+        _, model, (universal, untyped) = self._sets(cleandoc("""
+            trap [System.Exception] { 'a' }
+            trap { 'b' }
+            'x'
+        """))
         trap_set = model.trap_set_of(universal)
         assert trap_set is not None
         self.assertEqual(trap_set.selectable, (universal,))
@@ -824,13 +1073,23 @@ class TestPs1ATrapSetIsWiredInTheOrder51TriesItsMembers(_Ps1ControlFlowGraphs):
 
     def test_an_error_is_offered_only_to_the_members_51_may_select(self):
         tree, graph = self._tree_and_graph(
-            "trap { 'a' }\ntrap [System.IO.IOException] { 'b' }\ntrap { 'c' }\n'x'")
+            cleandoc("""
+                trap { 'a' }
+                trap [System.IO.IOException] { 'b' }
+                trap { 'c' }
+                'x'
+            """))
         first, typed, second, guarded = tree.body
         self.assertEqual(self._reached_by_an_error_at(graph, guarded), self._handlers(graph, typed, first))
         self.assertEqual(self._required_node(graph, second).predecessors, [])
 
     def test_a_member_never_selected_does_not_make_its_block_resume(self):
-        tree, graph = self._tree_and_graph("trap { break }\ntrap { 'x'; continue }\n'a'\n'b'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { break }
+            trap { 'x'; continue }
+            'a'
+            'b'
+        """))
         raiser = self._required_node(graph, tree.body[2])
         self.assertFalse(any(
             graph.edge_kind(raiser, target) & CfgEdge.RESUMPTION_FORWARD for target in raiser.successors))
@@ -838,17 +1097,38 @@ class TestPs1ATrapSetIsWiredInTheOrder51TriesItsMembers(_Ps1ControlFlowGraphs):
 
     def test_an_error_gets_past_the_set_exactly_where_the_member_51_picks_may_hand_it_on(self):
         for source, escapes in [
-            ("trap { break }\ntrap { continue }\n'a'", True),
-            ("trap { continue }\ntrap { break }\n'a'", False),
-            ("trap { continue }\ntrap [System.Management.Automation.RuntimeException] { break }\n'a'", True),
-            ("trap [System.Exception] { continue }\ntrap { break }\n'a'", False),
+            (cleandoc("""
+                trap { break }
+                trap { continue }
+                'a'
+            """), True),
+            (cleandoc("""
+                trap { continue }
+                trap { break }
+                'a'
+            """), False),
+            (cleandoc("""
+                trap { continue }
+                trap [System.Management.Automation.RuntimeException] { break }
+                'a'
+            """), True),
+            (cleandoc("""
+                trap [System.Exception] { continue }
+                trap { break }
+                'a'
+            """), False),
         ]:
             with self.subTest(source):
                 tree, graph = self._tree_and_graph(source)
                 self.assertEqual(graph.exit in self._reached_by_an_error_at(graph, tree.body[-1]), escapes)
 
     def test_a_set_nested_in_a_resuming_block_is_resumed_where_that_block_resumes_its_statement(self):
-        tree, model, (outer, inner) = self._sets("trap { continue }\nif ($c) { trap { break }\n'a' }\n'b'")
+        tree, model, (outer, inner) = self._sets(cleandoc("""
+            trap { continue }
+            if ($c) { trap { break }
+            'a' }
+            'b'
+        """))
         outer_set = model.trap_set_of(outer)
         inner_set = model.trap_set_of(inner)
         assert outer_set is not None and inner_set is not None
@@ -868,7 +1148,10 @@ class TestPs1ATrapSetIsWiredInTheOrder51TriesItsMembers(_Ps1ControlFlowGraphs):
             ('{ if ($c) { continue }; break }', Ps1TrapDisposition.RESUMES | Ps1TrapDisposition.RETHROWS),
         ]:
             with self.subTest(body):
-                _, model, (trap,) = self._sets(F"trap {body}\n'a'")
+                _, model, (trap,) = self._sets(cleandoc(F"""
+                    trap {body}
+                    'a'
+                """))
                 trap_set = model.trap_set_of(trap)
                 assert trap_set is not None
                 self.assertEqual(trap_set.disposition(trap), disposition)
@@ -899,7 +1182,12 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
         ]
 
     def test_a_guarded_statement_resumes_below_itself_and_not_above(self):
-        tree, graph = self._tree_and_graph("trap { 'h'; continue }\n'one'\n'two'\n'three'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { 'h'; continue }
+            'one'
+            'two'
+            'three'
+        """))
         one, two, three = (self._required_node(graph, tree.body[k]) for k in (1, 2, 3))
         forward = reachable_forward_from_any(graph, [two])
         self.assertIn(id(three), forward)
@@ -907,13 +1195,23 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
         self.assertIn(id(one), reachable_from_any([two]))
 
     def test_a_set_that_acts_nowhere_resumes_along_the_forward_edges_alone(self):
-        tree, graph = self._tree_and_graph("trap { continue }\n'one'\n'two'\n'three'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { continue }
+            'one'
+            'two'
+            'three'
+        """))
         one, two, three = (self._required_node(graph, tree.body[k]) for k in (1, 2, 3))
         self.assertIn(id(three), reachable_forward_from_any(graph, [two]))
         self.assertNotIn(id(one), reachable_from_any([two]))
 
     def test_a_terminator_reaches_the_statement_resumption_lands_on(self):
-        tree, graph = self._tree_and_graph("trap { continue }\n'one'\nthrow 'x'\n'three'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { continue }
+            'one'
+            throw 'x'
+            'three'
+        """))
         one, raiser, three = (self._required_node(graph, tree.body[k]) for k in (1, 2, 3))
         forward = reachable_forward_from_any(graph, [raiser])
         self.assertIn(id(three), forward)
@@ -921,7 +1219,12 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
 
     def test_resumption_lands_where_control_enters_the_next_statement(self):
         tree, graph = self._tree_and_graph(
-            "trap { continue }\n'one'\nthrow 'x'\ntry { 'body' } catch { 'clause' }")
+            cleandoc("""
+                trap { continue }
+                'one'
+                throw 'x'
+                try { 'body' } catch { 'clause' }
+            """))
         raiser = self._required_node(graph, tree.body[2])
         guarded = tree.body[3]
         self.assertIn(
@@ -931,7 +1234,12 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
 
     def test_a_raise_in_the_last_guarded_statement_resumes_past_the_block(self):
         tree, graph = self._tree_and_graph(
-            "if ($c) { trap { continue }\n'in'\nthrow 'x' }\n'after'")
+            cleandoc("""
+                if ($c) { trap { continue }
+                'in'
+                throw 'x' }
+                'after'
+            """))
         guarded = tree.body[0].clauses[0][1]
         raiser = self._required_node(graph, guarded.body[2])
         self.assertIn(
@@ -940,7 +1248,12 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
         )
 
     def test_a_statement_of_the_handler_is_flooded_through_the_hub_instead(self):
-        tree, graph = self._tree_and_graph("trap { 'handled'\ncontinue }\n'one'\n'two'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { 'handled'
+            continue }
+            'one'
+            'two'
+        """))
         handled = self._required_node(graph, tree.body[0].body.body[0])
         forward = reachable_forward_from_any(graph, [handled])
         self.assertTrue(handled.is_hub_bound)
@@ -949,7 +1262,12 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
         self.assertIn(id(self._required_node(graph, tree.body[2])), forward)
 
     def test_every_door_onto_the_forward_reading_falls_back_for_such_a_statement(self):
-        tree, graph = self._tree_and_graph("trap { 'handled'\ncontinue }\n'one'\n'two'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { 'handled'
+            continue }
+            'one'
+            'two'
+        """))
         handled = self._required_node(graph, tree.body[0].body.body[0])
         self.assertEqual(
             flood([handled], forward=True, projection=Projection.FORWARD),
@@ -957,7 +1275,11 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
         )
 
     def test_a_forward_walk_seeded_at_a_hub_leaves_it_by_no_edge(self):
-        tree, graph = self._tree_and_graph("trap { continue }\n'one'\n'two'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { continue }
+            'one'
+            'two'
+        """))
         one = self._required_node(graph, tree.body[1])
         hub, = (target for target in one.predecessors if target.is_resumption_hub)
         self.assertEqual(flood([hub], forward=True, projection=Projection.FORWARD), {id(hub)})
@@ -965,12 +1287,22 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
 
     def test_a_hub_of_a_set_nested_in_a_handler_body_is_not_also_hub_bound(self):
         _, graph = self._tree_and_graph(
-            "trap { if ($q) { trap { continue }\n'p' }\ncontinue }\n'x'\n'y'")
+            cleandoc("""
+                trap { if ($q) { trap { continue }
+                'p' }
+                continue }
+                'x'
+                'y'
+            """))
         self.assertEqual(
             [node for node in graph.nodes if node.is_hub_bound and node.is_resumption_hub], [])
 
     def test_a_forward_flood_refuses_a_source_belonging_to_another_body(self):
-        tree = Ps1Parser("trap { continue }\nfunction f { 'in' }\n'out'").parse()
+        tree = Ps1Parser(cleandoc("""
+            trap { continue }
+            function f { 'in' }
+            'out'
+        """)).parse()
         graphs = build_ps1_control_flow(tree)
         script = graphs[id(tree)]
         definition = next(
@@ -980,7 +1312,11 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
             reachable_forward_from_any(script, [inside])
 
     def test_a_resumption_edge_is_taken_on_a_throw_and_carries_no_error(self):
-        tree, graph = self._tree_and_graph("trap { continue }\n'one'\n'two'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { continue }
+            'one'
+            'two'
+        """))
         one = self._required_node(graph, tree.body[1])
         hub, = (target for target in one.predecessors if target.is_resumption_hub)
         forward, = (
@@ -993,7 +1329,11 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
                 self.assertTrue(graph.raise_taken(source, target))
 
     def test_the_edge_into_a_resumption_hub_is_the_handler_body_completing(self):
-        tree, graph = self._tree_and_graph("trap { $x = 'b'\ncontinue }\n'one'")
+        tree, graph = self._tree_and_graph(cleandoc("""
+            trap { $x = 'b'
+            continue }
+            'one'
+        """))
         jump = self._node_for(graph, Ps1ContinueStatement)
         hub, = (target for target in jump.successors if target.is_resumption_hub)
         self.assertFalse(graph.raise_taken(jump, hub))
@@ -1001,7 +1341,12 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
 
     def test_a_trap_written_below_a_statement_leaves_one_resumption_point(self):
         tree, graph = self._tree_and_graph(
-            "'one'\ntrap { continue }\ntrap [System.Exception] { continue }\n'two'")
+            cleandoc("""
+                'one'
+                trap { continue }
+                trap [System.Exception] { continue }
+                'two'
+            """))
         one, two = (self._required_node(graph, tree.body[k]) for k in (0, 3))
         slots = [
             target for target in one.successors
@@ -1046,16 +1391,69 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
 
     def test_a_guarded_statement_forward_reaches_every_statement_below_it(self):
         blocks = [
-            "trap { continue }\n'one'\nthrow 'x'\n'three'\n'four'",
-            "while ($c) { trap { continue }\n'one'\nthrow 'x'\n'three'\n'four' }",
-            "do { trap { continue }\n'one'\nthrow 'x'\n'three' } while ($c)",
-            "foreach ($i in $x) { trap { continue }\n'one'\nthrow 'x'\n'three' }",
-            "for ($i = 0; $i -lt 3; $i++) { trap { continue }\n'one'\nthrow 'x'\n'three' }",
-            "switch ($x) { 1 { trap { continue }\n'one'\nthrow 'x'\n'three' } }",
-            "try { trap { continue }\n'one'\nthrow 'x'\n'three' } catch { 'c' }",
-            "try { 'a' } catch { trap { continue }\n'one'\nthrow 'x'\n'three' }",
-            "try { 'a' } finally { trap { continue }\n'one'\nthrow 'x'\n'three' }",
-            "if ($c) { trap { continue }\n'one'\nthrow 'x'\n'three' }\n'after'",
+            cleandoc("""
+                trap { continue }
+                'one'
+                throw 'x'
+                'three'
+                'four'
+            """),
+            cleandoc("""
+                while ($c) { trap { continue }
+                'one'
+                throw 'x'
+                'three'
+                'four' }
+            """),
+            cleandoc("""
+                do { trap { continue }
+                'one'
+                throw 'x'
+                'three' } while ($c)
+            """),
+            cleandoc("""
+                foreach ($i in $x) { trap { continue }
+                'one'
+                throw 'x'
+                'three' }
+            """),
+            cleandoc("""
+                for ($i = 0; $i -lt 3; $i++) { trap { continue }
+                'one'
+                throw 'x'
+                'three' }
+            """),
+            cleandoc("""
+                switch ($x) { 1 { trap { continue }
+                'one'
+                throw 'x'
+                'three' } }
+            """),
+            cleandoc("""
+                try { trap { continue }
+                'one'
+                throw 'x'
+                'three' } catch { 'c' }
+            """),
+            cleandoc("""
+                try { 'a' } catch { trap { continue }
+                'one'
+                throw 'x'
+                'three' }
+            """),
+            cleandoc("""
+                try { 'a' } finally { trap { continue }
+                'one'
+                throw 'x'
+                'three' }
+            """),
+            cleandoc("""
+                if ($c) { trap { continue }
+                'one'
+                throw 'x'
+                'three' }
+                'after'
+            """),
         ]
         for source in blocks:
             with self.subTest(source):
@@ -1078,7 +1476,10 @@ class _BuildFailed(Exception):
 class TestPs1AResumableBlockTakesOnlyTheNodesBuiltInsideIt(TestBase):
 
     def test_a_node_built_after_an_error_left_a_resumable_block_carries_no_resumption(self):
-        tree = Ps1Parser("'a'\n'b'").parse()
+        tree = Ps1Parser(cleandoc("""
+            'a'
+            'b'
+        """)).parse()
         builder = CfgBuilder(tree)
         guarded, following = tree.body
         with self.assertRaises(_BuildFailed):
@@ -1342,8 +1743,14 @@ class TestPs1AnErrorNothingTakesIsReportedPastItsStatement(_Ps1ControlFlowGraphs
 
     def test_a_trap_set_taking_every_error_inside_a_body_nothing_guards_names_a_node_of_the_graph(self):
         for source, holder in (
-            ("try { throw 'x' } catch { trap { continue }; 'v' }\n'after'", 0),
-            ("if ($x) { trap { if ($True) { trap { continue }; 'v' } }; [int]$s }\n'after'", 0),
+            (cleandoc("""
+                try { throw 'x' } catch { trap { continue }; 'v' }
+                'after'
+            """), 0),
+            (cleandoc("""
+                if ($x) { trap { if ($True) { trap { continue }; 'v' } }; [int]$s }
+                'after'
+            """), 0),
         ):
             with self.subTest(source):
                 tree = Ps1Parser(source).parse()

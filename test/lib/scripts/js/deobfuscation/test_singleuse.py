@@ -17,12 +17,26 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
     def test_a_top_level_function_called_once_at_a_bare_statement_folds(self):
         self.assertEqual(
             'print(1);',
-            self._singleuse('function w() {\n  print(1);\n}\nw();'))
+            self._singleuse(inspect.cleandoc("""
+                function w() {
+                  print(1);
+                }
+                w();
+            """)))
 
     def test_a_free_name_of_the_body_keeps_resolving_to_the_same_binding(self):
         self.assertEqual(
-            'var g = 1;\nprint(g);',
-            self._singleuse('var g = 1;\nfunction w() {\n  print(g);\n}\nw();'))
+            inspect.cleandoc("""
+                var g = 1;
+                print(g);
+            """),
+            self._singleuse(inspect.cleandoc("""
+                var g = 1;
+                function w() {
+                  print(g);
+                }
+                w();
+            """)))
 
     def test_a_trailing_return_becomes_the_expression_its_value_fed(self):
         source = inspect.cleandoc(
@@ -47,33 +61,52 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
     def test_a_valueless_trailing_return_is_dropped(self):
         self.assertEqual(
             'print(1);',
-            self._singleuse('function w() {\n  print(1);\n  return;\n}\nw();'))
+            self._singleuse(inspect.cleandoc("""
+                function w() {
+                  print(1);
+                  return;
+                }
+                w();
+            """)))
 
     def test_an_empty_body_folds_to_nothing(self):
-        self.assertEqual('', self._singleuse('function w() {\n}\nw();'))
+        self.assertEqual('', self._singleuse(inspect.cleandoc("""
+            function w() {
+            }
+            w();
+        """)))
 
     def test_a_function_declaration_inside_the_body_folds_with_it(self):
         self.assertEqual(
-            'function inner() {\n  print(1);\n}\ninner();',
+            inspect.cleandoc("""
+                function inner() {
+                  print(1);
+                }
+                inner();
+            """),
             self._singleuse(
-                'function w() {\n'
-                '  function inner() {\n'
-                '    print(1);\n'
-                '  }\n'
-                '  inner();\n'
-                '}\n'
-                'w();'))
+                inspect.cleandoc("""
+                    function w() {
+                      function inner() {
+                        print(1);
+                      }
+                      inner();
+                    }
+                    w();
+                """)))
 
     def test_two_wrappers_fold_within_two_passes(self):
         once = self._singleuse(
-            'function a() {\n'
-            '  print(1);\n'
-            '}\n'
-            'a();\n'
-            'function b() {\n'
-            '  print(2);\n'
-            '}\n'
-            'b();')
+            inspect.cleandoc("""
+                function a() {
+                  print(1);
+                }
+                a();
+                function b() {
+                  print(2);
+                }
+                b();
+            """))
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -172,96 +205,164 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
     def test_a_wrapper_invoked_before_its_declaration_folds(self):
         self.assertEqual(
             'print(1);',
-            self._singleuse('w();\nfunction w() {\n  print(1);\n}'))
+            self._singleuse(inspect.cleandoc("""
+                w();
+                function w() {
+                  print(1);
+                }
+            """)))
 
     def test_a_second_read_of_the_name_refuses_the_fold(self):
-        source = 'function w() {\n  print(1);\n}\nw();\nw();'
+        source = inspect.cleandoc("""
+            function w() {
+              print(1);
+            }
+            w();
+            w();
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_read_handing_the_function_elsewhere_refuses_the_fold(self):
-        source = 'function w() {\n  print(1);\n}\nvar g = w;\nw();'
+        source = inspect.cleandoc("""
+            function w() {
+              print(1);
+            }
+            var g = w;
+            w();
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_write_of_the_name_refuses_the_fold(self):
-        source = 'function w() {\n  print(1);\n}\nw = 1;\nw();'
+        source = inspect.cleandoc("""
+            function w() {
+              print(1);
+            }
+            w = 1;
+            w();
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_conditional_invocation_refuses_the_fold(self):
-        source = (
-            'var c = 1;\n'
-            'function w() {\n'
-            '  print(1);\n'
-            '}\n'
-            'if (c) {\n'
-            '  w();\n'
-            '}')
+        source = inspect.cleandoc("""
+            var c = 1;
+            function w() {
+              print(1);
+            }
+            if (c) {
+              w();
+            }
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_an_invocation_inside_a_loop_refuses_the_fold(self):
-        source = (
-            'function w() {\n'
-            '  print(1);\n'
-            '}\n'
-            'for (var i = 0; i < 2; i++) {\n'
-            '  w();\n'
-            '}')
+        source = inspect.cleandoc("""
+            function w() {
+              print(1);
+            }
+            for (var i = 0; i < 2; i++) {
+              w();
+            }
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_function_bound_elsewhere_than_the_script_refuses_the_fold(self):
-        source = (
-            'function outer(c) {\n'
-            '  function w() {\n'
-            '    print(1);\n'
-            '  }\n'
-            '  if (c) {\n'
-            '    w();\n'
-            '  }\n'
-            '}\n'
-            'outer(1);')
+        source = inspect.cleandoc("""
+            function outer(c) {
+              function w() {
+                print(1);
+              }
+              if (c) {
+                w();
+              }
+            }
+            outer(1);
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_parameterized_wrapper_refuses_the_fold(self):
-        source = 'function w(a) {\n  print(a);\n}\nw(1);'
+        source = inspect.cleandoc("""
+            function w(a) {
+              print(a);
+            }
+            w(1);
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_an_async_wrapper_refuses_the_fold(self):
-        source = 'async function w() {\n  print(1);\n}\nw();'
+        source = inspect.cleandoc("""
+            async function w() {
+              print(1);
+            }
+            w();
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_generator_wrapper_refuses_the_fold(self):
-        source = 'function* w() {\n  yield 1;\n}\nw();'
+        source = inspect.cleandoc("""
+            function* w() {
+              yield 1;
+            }
+            w();
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_body_reading_arguments_refuses_the_fold(self):
-        source = 'function w() {\n  print(arguments);\n}\nw();'
+        source = inspect.cleandoc("""
+            function w() {
+              print(arguments);
+            }
+            w();
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_body_reading_this_refuses_the_fold_in_a_commonjs_file(self):
-        source = 'function w() {\n  print(this);\n}\nw();'
+        source = inspect.cleandoc("""
+            function w() {
+              print(this);
+            }
+            w();
+        """)
         options = DeobfuscationOptions(execution=ExecutionModel.commonjs)
         self.assertEqual(source, self._run_transformer(source, JsSingleUseFunctionInliner, options))
 
     @opportunity
     def test_a_body_reading_this_folds_into_a_classic_script(self):
-        self.assertEqual('print(this);', self._singleuse('function w() {\n  print(this);\n}\nw();'))
+        self.assertEqual('print(this);', self._singleuse(inspect.cleandoc("""
+            function w() {
+              print(this);
+            }
+            w();
+        """)))
 
     def test_a_body_reading_new_target_refuses_the_fold(self):
-        source = 'function w() {\n  print(new.target);\n}\nw();'
+        source = inspect.cleandoc("""
+            function w() {
+              print(new.target);
+            }
+            w();
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_body_declaring_use_strict_refuses_the_fold(self):
-        source = 'function w() {\n  \'use strict\';\n  print(1);\n}\nw();'
+        source = inspect.cleandoc("""
+            function w() {
+              'use strict';
+              print(1);
+            }
+            w();
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_nested_return_refuses_the_fold(self):
-        source = (
-            'function w() {\n'
-            '  if (1) {\n'
-            '    return;\n'
-            '  }\n'
-            '  print(1);\n'
-            '}\n'
-            'w();')
+        source = inspect.cleandoc("""
+            function w() {
+              if (1) {
+                return;
+              }
+              print(1);
+            }
+            w();
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_direct_eval_of_unread_code_in_the_body_refuses_the_fold(self):
@@ -276,32 +377,41 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_body_declaration_clashing_at_the_script_refuses_the_fold(self):
-        source = 'var h = 1;\nfunction w() {\n  var h = 2;\n  print(h);\n}\nw();'
+        source = inspect.cleandoc("""
+            var h = 1;
+            function w() {
+              var h = 2;
+              print(h);
+            }
+            w();
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_nested_function_clashing_at_the_script_refuses_the_fold(self):
-        source = (
-            'function h() {\n'
-            '  print(1);\n'
-            '}\n'
-            'function w() {\n'
-            '  function h() {\n'
-            '    print(2);\n'
-            '  }\n'
-            '  h();\n'
-            '}\n'
-            'w();')
+        source = inspect.cleandoc("""
+            function h() {
+              print(1);
+            }
+            function w() {
+              function h() {
+                print(2);
+              }
+              h();
+            }
+            w();
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_body_declaration_under_a_surface_running_unread_code_refuses_the_fold(self):
-        source = (
-            'var e = eval;\n'
-            'function w() {\n'
-            '  var q = 1;\n'
-            '  print(q);\n'
-            '}\n'
-            'w();\n'
-            'e(code);')
+        source = inspect.cleandoc("""
+            var e = eval;
+            function w() {
+              var q = 1;
+              print(q);
+            }
+            w();
+            e(code);
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     @opportunity
@@ -328,29 +438,60 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
         )
 
     def test_an_effectful_invocation_argument_refuses_the_fold(self):
-        source = 'function w() {\n  print(1);\n}\nw(print(2));'
+        source = inspect.cleandoc("""
+            function w() {
+              print(1);
+            }
+            w(print(2));
+        """)
         self.assertEqual(source, self._singleuse(source))
 
     def test_a_body_declaration_the_analyst_names_an_entrypoint_is_renamed_where_it_lands(self):
-        source = 'function w() {\n  var m = 1;\n  print(m);\n}\nw();'
+        source = inspect.cleandoc("""
+            function w() {
+              var m = 1;
+              print(m);
+            }
+            w();
+        """)
         self.assertEqual(
-            'var m_1 = 1;\nprint(m_1);',
+            inspect.cleandoc("""
+                var m_1 = 1;
+                print(m_1);
+            """),
             self._run_transformer(
                 source, JsSingleUseFunctionInliner, DeobfuscationOptions(entrypoints=('m',))))
 
     def test_a_body_declaration_a_pattern_names_under_every_suffix_refuses_the_fold(self):
-        source = 'function w() {\n  var m = 1;\n  print(m);\n}\nw();'
+        source = inspect.cleandoc("""
+            function w() {
+              var m = 1;
+              print(m);
+            }
+            w();
+        """)
         self.assertEqual(
             source,
             self._run_transformer(
                 source, JsSingleUseFunctionInliner, DeobfuscationOptions(entrypoints=('m*',))))
 
     def test_a_body_declaration_read_through_the_shorthand_proto_refuses_the_fold(self):
-        source = 'function w() {\n  var __proto__ = 1;\n  print({ __proto__ });\n}\nw();'
+        source = inspect.cleandoc("""
+            function w() {
+              var __proto__ = 1;
+              print({ __proto__ });
+            }
+            w();
+        """)
         self.assertEqual(
             source,
             self._run_transformer(
                 source, JsSingleUseFunctionInliner, DeobfuscationOptions(entrypoints=('__proto__',))))
 
     def test_a_wrapper_declared_under_a_name_a_browser_reads_folds(self):
-        self.assertEqual('print(1);', self._singleuse('function name() {\n  print(1);\n}\nname();'))
+        self.assertEqual('print(1);', self._singleuse(inspect.cleandoc("""
+            function name() {
+              print(1);
+            }
+            name();
+        """)))

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase
 
 from refinery.lib.scripts import canonical, spells_its_source
@@ -305,7 +307,12 @@ class TestJsSynthesizer(TestBase):
         self.assertIn('sendStorage(value)', out)
 
     def test_a_negative_number_after_a_newline_prints_as_a_negated_argument(self):
-        source = 'x = f(\n  alphaaaaaaaaa,\n  -680876936\n);'
+        source = inspect.cleandoc("""
+            x = f(
+              alphaaaaaaaaa,
+              -680876936
+            );
+        """)
         out = JsSynthesizer().convert(JsParser(source).parse())
         self.assertEqual(out, 'x = f(alphaaaaaaaaa, -680876936);')
 
@@ -630,7 +637,11 @@ class TestJsSynthesizer(TestBase):
         self._round_trip('100n;')
 
     def test_multiline_script(self):
-        self._round_trip('var a = 1;\nvar b = 2;\nvar c = a + b;')
+        self._round_trip(inspect.cleandoc("""
+            var a = 1;
+            var b = 2;
+            var c = a + b;
+        """))
 
     def test_nested_calls(self):
         self._round_trip('a(b(c(d)));')
@@ -727,11 +738,13 @@ class TestByteArrayGrid(TestBase):
             13, 224, 180, 158, 51, 156, 78, 186, 68, 66, 223, 80, 190, 158, 27,
         ])
         self.assertEqual(
-            'var a = [\n'
-            '  0x0F, 0xD8, 0x96, 0x55, 0xC8, 0x15, 0x96, 0x22, 0x75, 0xC0, 0xBC, 0x9F, 0x37, 0xA1, 0xD4,\n'
-            '  0x53, 0xC2, 0xD7, 0x04, 0x1F, 0x4E, 0x92, 0x69, 0xEA, 0xB9, 0x6A, 0x82, 0xDF, 0x2F, 0xBB,\n'
-            '  0x0D, 0xE0, 0xB4, 0x9E, 0x33, 0x9C, 0x4E, 0xBA, 0x44, 0x42, 0xDF, 0x50, 0xBE, 0x9E, 0x1B\n'
-            '];',
+            inspect.cleandoc("""
+                var a = [
+                  0x0F, 0xD8, 0x96, 0x55, 0xC8, 0x15, 0x96, 0x22, 0x75, 0xC0, 0xBC, 0x9F, 0x37, 0xA1, 0xD4,
+                  0x53, 0xC2, 0xD7, 0x04, 0x1F, 0x4E, 0x92, 0x69, 0xEA, 0xB9, 0x6A, 0x82, 0xDF, 0x2F, 0xBB,
+                  0x0D, 0xE0, 0xB4, 0x9E, 0x33, 0x9C, 0x4E, 0xBA, 0x44, 0x42, 0xDF, 0x50, 0xBE, 0x9E, 0x1B
+                ];
+            """),
             self._emit(source),
         )
 

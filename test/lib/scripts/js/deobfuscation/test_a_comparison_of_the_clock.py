@@ -83,10 +83,22 @@ class TestAComparisonOfTheClockFolds(TestBase):
 
     def test_a_check_against_the_end_or_the_start_of_the_window_goes(self):
         for source in (
-            "if (Date.now() > 4102444800000) { while (true) {} }\nconsole.log('ran');",
-            "if ((new Date()).getTime() > 4102444800000) { while (true) {} }\nconsole.log('ran');",
-            "if (Date.now() < 946684800000) { while (true) {} }\nconsole.log('ran');",
-            "if (Date.prototype.getTime.call(new Date()) > 4102444800000) { while (true) {} }\nconsole.log('ran');",
+            inspect.cleandoc("""
+                if (Date.now() > 4102444800000) { while (true) {} }
+                console.log('ran');
+            """),
+            inspect.cleandoc("""
+                if ((new Date()).getTime() > 4102444800000) { while (true) {} }
+                console.log('ran');
+            """),
+            inspect.cleandoc("""
+                if (Date.now() < 946684800000) { while (true) {} }
+                console.log('ran');
+            """),
+            inspect.cleandoc("""
+                if (Date.prototype.getTime.call(new Date()) > 4102444800000) { while (true) {} }
+                console.log('ran');
+            """),
         ):
             with self.subTest(source=source):
                 self.assertEqual(_deobfuscated(source), "console.log('ran');")
@@ -107,7 +119,10 @@ class TestAComparisonOfTheClockFolds(TestBase):
                 self.assertEqual(_deobfuscated(source), folded)
 
     def test_no_window_decides_nothing(self):
-        source = "if (Date.now() > 4102444800000) { while (true) {} }\nconsole.log('ran');"
+        source = inspect.cleandoc("""
+            if (Date.now() > 4102444800000) { while (true) {} }
+            console.log('ran');
+        """)
         self.assertIn('Date.now() > 4102444800000', _deobfuscated(source, clock=None))
 
     @opportunity
@@ -121,7 +136,10 @@ class TestAComparisonOfTheClockFolds(TestBase):
 
     @opportunity
     def test_a_comparison_of_a_clock_read_whose_argument_runs_folds_after_the_argument_runs(self):
-        source = 'var n = 0;\nconsole.log(Date.now(n++) > 4102444800000, n);'
+        source = inspect.cleandoc("""
+            var n = 0;
+            console.log(Date.now(n++) > 4102444800000, n);
+        """)
         self.assertEqual(_deobfuscated(source), 'console.log(false, 1);')
 
 
@@ -159,9 +177,18 @@ class TestAComparisonTheWindowDoesNotDecideStays(TestBase):
 
 
 A_COMPARISON_OF_THE_CLOCK = {
-    "if (Date.now() > 4102444800000) { while (true) {} }\nconsole.log('ran');": 'ran\n',
-    "if ((new Date()).getTime() > 4102444800000) { while (true) {} }\nconsole.log('ran');": 'ran\n',
-    "if (Date.now() < 946684800000) { while (true) {} }\nconsole.log('ran');": 'ran\n',
+    inspect.cleandoc("""
+        if (Date.now() > 4102444800000) { while (true) {} }
+        console.log('ran');
+    """): 'ran\n',
+    inspect.cleandoc("""
+        if ((new Date()).getTime() > 4102444800000) { while (true) {} }
+        console.log('ran');
+    """): 'ran\n',
+    inspect.cleandoc("""
+        if (Date.now() < 946684800000) { while (true) {} }
+        console.log('ran');
+    """): 'ran\n',
     "if (Date.now() > 4000000000000) { console.log('late'); } else { console.log('early'); }": 'early\n',
     inspect.cleandoc("""
         Date.now = function () { return 5000000000000; };
@@ -217,7 +244,10 @@ A_COMPARISON_OF_THE_CLOCK = {
         Date.now = function () { return 5000000000000; };
         console.log(late());
     """): 'false\ntrue\n',
-    'var n = 0;\nconsole.log(Date.now(n++) > 4102444800000, n);': 'false 1\n',
+    inspect.cleandoc("""
+        var n = 0;
+        console.log(Date.now(n++) > 4102444800000, n);
+    """): 'false 1\n',
     inspect.cleandoc("""
         function patch(d) { d.now = function () { return 5000000000000; }; }
         patch(Date);
@@ -227,7 +257,10 @@ A_COMPARISON_OF_THE_CLOCK = {
         eval('Date.now = function () { return 5000000000000; }');
         console.log(Date.now() > 4102444800000);
     """): 'true\n',
-    'var a = [0];\nconsole.log(new Date(...a).getTime() > 4102444800000);': 'false\n',
+    inspect.cleandoc("""
+        var a = [0];
+        console.log(new Date(...a).getTime() > 4102444800000);
+    """): 'false\n',
     inspect.cleandoc("""
         class Clock { static now() { return 5000000000000; } }
         var Date2 = Clock;

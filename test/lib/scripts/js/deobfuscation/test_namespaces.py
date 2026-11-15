@@ -458,7 +458,10 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
                 """
             ),
             self._flatten(
-                "function f(a) { 'use strict'; var NS = {}; NS.p = a; return NS.p; }\nf(1);"),
+                inspect.cleandoc("""
+                    function f(a) { 'use strict'; var NS = {}; NS.p = a; return NS.p; }
+                    f(1);
+                """)),
         )
 
     def test_the_same_declarations_stand_behind_a_scripts_directive(self):
@@ -471,7 +474,12 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
                 console.log(p);
                 """
             ),
-            self._flatten("'use strict';\nvar NS = {};\nNS.p = 1;\nconsole.log(NS.p);"),
+            self._flatten(inspect.cleandoc("""
+                'use strict';
+                var NS = {};
+                NS.p = 1;
+                console.log(NS.p);
+            """)),
         )
 
     def test_property_held_back_when_member_object_reads_the_name(self):
@@ -707,7 +715,11 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
                 self.assertEqual(*before_and_after(source))
 
     def test_a_key_a_pattern_names_under_every_suffix_stays_on_the_namespace(self):
-        source = 'var cfg = {};\ncfg.main = 1;\nprint(cfg.main);'
+        source = inspect.cleandoc("""
+            var cfg = {};
+            cfg.main = 1;
+            print(cfg.main);
+        """)
         self.assertEqual(
             source,
             self._run_transformer(

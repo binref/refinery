@@ -4,6 +4,7 @@ running none of them. Nothing from `samples` may ever be fed to this.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase
@@ -19,125 +20,372 @@ from refinery.lib.scripts.js.synth import JsSynthesizer
 
 A_COMMENT_LEADING_A_STATEMENT = {
     '/* a */ x = 1;': (
-        '/* a */\nx = 1;',
+        inspect.cleandoc("""
+            /* a */
+            x = 1;
+        """),
         'x = 1;',
     ),
-    '// a\nx = 1;': (
-        '// a\nx = 1;',
+    inspect.cleandoc("""
+        // a
+        x = 1;
+    """): (
+        inspect.cleandoc("""
+            // a
+            x = 1;
+        """),
         'x = 1;',
     ),
     'x = 1; /* a */ y = 2;': (
-        'x = 1;\n/* a */\ny = 2;',
-        'x = 1;\ny = 2;',
+        inspect.cleandoc("""
+            x = 1;
+            /* a */
+            y = 2;
+        """),
+        inspect.cleandoc("""
+            x = 1;
+            y = 2;
+        """),
     ),
-    'x = 1; // a\ny = 2;': (
-        'x = 1;\n// a\ny = 2;',
-        'x = 1;\ny = 2;',
+    inspect.cleandoc("""
+        x = 1; // a
+        y = 2;
+    """): (
+        inspect.cleandoc("""
+            x = 1;
+            // a
+            y = 2;
+        """),
+        inspect.cleandoc("""
+            x = 1;
+            y = 2;
+        """),
     ),
     'function f() { /* a */ return 1; }': (
-        'function f() {\n  /* a */\n  return 1;\n}',
-        'function f() {\n  return 1;\n}',
+        inspect.cleandoc("""
+            function f() {
+              /* a */
+              return 1;
+            }
+        """),
+        inspect.cleandoc("""
+            function f() {
+              return 1;
+            }
+        """),
     ),
     '{ /* a */ x = 1; }': (
-        '{\n  /* a */\n  x = 1;\n}',
-        '{\n  x = 1;\n}',
+        inspect.cleandoc("""
+            {
+              /* a */
+              x = 1;
+            }
+        """),
+        inspect.cleandoc("""
+            {
+              x = 1;
+            }
+        """),
     ),
     'class C { /* a */ m() {} }': (
-        'class C {\n  /* a */\n  m() {}\n}',
-        'class C {\n  m() {}\n}',
+        inspect.cleandoc("""
+            class C {
+              /* a */
+              m() {}
+            }
+        """),
+        inspect.cleandoc("""
+            class C {
+              m() {}
+            }
+        """),
     ),
     'class C { m() {} /* a */ n() {} }': (
-        'class C {\n  m() {}\n  /* a */\n  n() {}\n}',
-        'class C {\n  m() {}\n  n() {}\n}',
+        inspect.cleandoc("""
+            class C {
+              m() {}
+              /* a */
+              n() {}
+            }
+        """),
+        inspect.cleandoc("""
+            class C {
+              m() {}
+              n() {}
+            }
+        """),
     ),
     'switch (x) { /* a */ case 1: y; }': (
-        'switch (x) {\n  /* a */\n  case 1:\n    y;\n}',
-        'switch (x) {\n  case 1:\n    y;\n}',
+        inspect.cleandoc("""
+            switch (x) {
+              /* a */
+              case 1:
+                y;
+            }
+        """),
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                y;
+            }
+        """),
     ),
     'switch (x) { case 1: y; /* a */ case 2: z; }': (
-        'switch (x) {\n  case 1:\n    y;\n  /* a */\n  case 2:\n    z;\n}',
-        'switch (x) {\n  case 1:\n    y;\n  case 2:\n    z;\n}',
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                y;
+              /* a */
+              case 2:
+                z;
+            }
+        """),
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                y;
+              case 2:
+                z;
+            }
+        """),
     ),
     'switch (x) { case 1: /* a */ y; }': (
-        'switch (x) {\n  case 1:\n    /* a */\n    y;\n}',
-        'switch (x) {\n  case 1:\n    y;\n}',
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                /* a */
+                y;
+            }
+        """),
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                y;
+            }
+        """),
     ),
     'switch (x) { case 1: y; /* a */ default: z; }': (
-        'switch (x) {\n  case 1:\n    y;\n  /* a */\n  default:\n    z;\n}',
-        'switch (x) {\n  case 1:\n    y;\n  default:\n    z;\n}',
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                y;
+              /* a */
+              default:
+                z;
+            }
+        """),
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                y;
+              default:
+                z;
+            }
+        """),
     ),
     'l: /* a */ x = 1;': (
         'l: /* a */ x = 1;',
         'l: x = 1;',
     ),
-    'l: // a\nx = 1;': (
-        'l: // a\nx = 1;',
+    inspect.cleandoc("""
+        l: // a
+        x = 1;
+    """): (
+        inspect.cleandoc("""
+            l: // a
+            x = 1;
+        """),
         'l: x = 1;',
     ),
 }
 
 A_COMMENT_LEADING_A_CLAUSE_BODY = {
     'if (a) /* c */ x = 1;': (
-        'if (a) {\n  /* c */\n  x = 1;\n}',
-        'if (a) {\n  x = 1;\n}',
+        inspect.cleandoc("""
+            if (a) {
+              /* c */
+              x = 1;
+            }
+        """),
+        inspect.cleandoc("""
+            if (a) {
+              x = 1;
+            }
+        """),
     ),
     'if (a) { x; } else /* c */ y;': (
-        'if (a) {\n  x;\n} else {\n  /* c */\n  y;\n}',
-        'if (a) {\n  x;\n} else {\n  y;\n}',
+        inspect.cleandoc("""
+            if (a) {
+              x;
+            } else {
+              /* c */
+              y;
+            }
+        """),
+        inspect.cleandoc("""
+            if (a) {
+              x;
+            } else {
+              y;
+            }
+        """),
     ),
     'if (a) /* c */ { x; }': (
-        'if (a) /* c */ {\n  x;\n}',
-        'if (a) {\n  x;\n}',
+        inspect.cleandoc("""
+            if (a) /* c */ {
+              x;
+            }
+        """),
+        inspect.cleandoc("""
+            if (a) {
+              x;
+            }
+        """),
     ),
-    'if (a) // c\n{ x; }': (
-        'if (a) // c\n{\n  x;\n}',
-        'if (a) {\n  x;\n}',
+    inspect.cleandoc("""
+        if (a) // c
+        { x; }
+    """): (
+        inspect.cleandoc("""
+            if (a) // c
+            {
+              x;
+            }
+        """),
+        inspect.cleandoc("""
+            if (a) {
+              x;
+            }
+        """),
     ),
     'if (a) { x; } else /* c */ { y; }': (
-        'if (a) {\n  x;\n} else /* c */ {\n  y;\n}',
-        'if (a) {\n  x;\n} else {\n  y;\n}',
+        inspect.cleandoc("""
+            if (a) {
+              x;
+            } else /* c */ {
+              y;
+            }
+        """),
+        inspect.cleandoc("""
+            if (a) {
+              x;
+            } else {
+              y;
+            }
+        """),
     ),
     'for (;;) /* c */ x;': (
-        'for (; ; ) {\n  /* c */\n  x;\n}',
-        'for (; ; ) {\n  x;\n}',
+        inspect.cleandoc("""
+            for (; ; ) {
+              /* c */
+              x;
+            }
+        """),
+        inspect.cleandoc("""
+            for (; ; ) {
+              x;
+            }
+        """),
     ),
     'while (a) /* c */ x;': (
-        'while (a) {\n  /* c */\n  x;\n}',
-        'while (a) {\n  x;\n}',
+        inspect.cleandoc("""
+            while (a) {
+              /* c */
+              x;
+            }
+        """),
+        inspect.cleandoc("""
+            while (a) {
+              x;
+            }
+        """),
     ),
     'do /* c */ x; while (a);': (
-        'do {\n  /* c */\n  x;\n} while (a);',
-        'do {\n  x;\n} while (a);',
+        inspect.cleandoc("""
+            do {
+              /* c */
+              x;
+            } while (a);
+        """),
+        inspect.cleandoc("""
+            do {
+              x;
+            } while (a);
+        """),
     ),
     'with (o) /* c */ x;': (
-        'with (o) {\n  /* c */\n  x;\n}',
-        'with (o) {\n  x;\n}',
+        inspect.cleandoc("""
+            with (o) {
+              /* c */
+              x;
+            }
+        """),
+        inspect.cleandoc("""
+            with (o) {
+              x;
+            }
+        """),
     ),
     'for (;;) /* c */ ;': (
-        'for (; ; ) {\n  /* c */\n  ;\n}',
-        'for (; ; ) {\n  ;\n}',
+        inspect.cleandoc("""
+            for (; ; ) {
+              /* c */
+              ;
+            }
+        """),
+        inspect.cleandoc("""
+            for (; ; ) {
+              ;
+            }
+        """),
     ),
     'for (;;) /* c */ { x; }': (
-        'for (; ; ) /* c */ {\n  x;\n}',
-        'for (; ; ) {\n  x;\n}',
+        inspect.cleandoc("""
+            for (; ; ) /* c */ {
+              x;
+            }
+        """),
+        inspect.cleandoc("""
+            for (; ; ) {
+              x;
+            }
+        """),
     ),
 }
 
 A_COMMENT_BEHIND_THE_LAST_ITEM = {
     'x = 1; /* a */': (
-        'x = 1;\n/* a */',
+        inspect.cleandoc("""
+            x = 1;
+            /* a */
+        """),
         'x = 1;',
     ),
-    'x = 1;\n// a': (
-        'x = 1;\n// a',
+    inspect.cleandoc("""
+        x = 1;
+        // a
+    """): (
+        inspect.cleandoc("""
+            x = 1;
+            // a
+        """),
         'x = 1;',
     ),
     'x = 1; <!-- a': (
-        'x = 1;\n<!-- a',
+        inspect.cleandoc("""
+            x = 1;
+            <!-- a
+        """),
         'x = 1;',
     ),
-    'x = 1;\n--> a': (
-        'x = 1;\n--> a',
+    inspect.cleandoc("""
+        x = 1;
+        --> a
+    """): (
+        inspect.cleandoc("""
+            x = 1;
+            --> a
+        """),
         'x = 1;',
     ),
     '/* a */': (
@@ -149,64 +397,189 @@ A_COMMENT_BEHIND_THE_LAST_ITEM = {
         '',
     ),
     '/* a */ /* b */': (
-        '/* a */\n/* b */',
+        inspect.cleandoc("""
+            /* a */
+            /* b */
+        """),
         '',
     ),
     'function f() { x; /* a */ }': (
-        'function f() {\n  x;\n  /* a */\n}',
-        'function f() {\n  x;\n}',
+        inspect.cleandoc("""
+            function f() {
+              x;
+              /* a */
+            }
+        """),
+        inspect.cleandoc("""
+            function f() {
+              x;
+            }
+        """),
     ),
     'function f() { /* a */ }': (
-        'function f() {\n  /* a */\n}',
+        inspect.cleandoc("""
+            function f() {
+              /* a */
+            }
+        """),
         'function f() {}',
     ),
-    'function f() { x; // a\n}': (
-        'function f() {\n  x;\n  // a\n}',
-        'function f() {\n  x;\n}',
+    inspect.cleandoc("""
+        function f() { x; // a
+        }
+    """): (
+        inspect.cleandoc("""
+            function f() {
+              x;
+              // a
+            }
+        """),
+        inspect.cleandoc("""
+            function f() {
+              x;
+            }
+        """),
     ),
     'class C { m() {} /* a */ }': (
-        'class C {\n  m() {}\n  /* a */\n}',
-        'class C {\n  m() {}\n}',
+        inspect.cleandoc("""
+            class C {
+              m() {}
+              /* a */
+            }
+        """),
+        inspect.cleandoc("""
+            class C {
+              m() {}
+            }
+        """),
     ),
     'class C { /* a */ }': (
-        'class C {\n  /* a */\n}',
+        inspect.cleandoc("""
+            class C {
+              /* a */
+            }
+        """),
         'class C {}',
     ),
     'switch (x) { case 1: y; /* a */ }': (
-        'switch (x) {\n  case 1:\n    y;\n  /* a */\n}',
-        'switch (x) {\n  case 1:\n    y;\n}',
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                y;
+              /* a */
+            }
+        """),
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                y;
+            }
+        """),
     ),
     'switch (x) { /* a */ }': (
-        'switch (x) {\n  /* a */\n}',
+        inspect.cleandoc("""
+            switch (x) {
+              /* a */
+            }
+        """),
         'switch (x) {}',
     ),
     'class C { static { x; /* a */ } }': (
-        'class C {\n  static {\n    x;\n    /* a */\n  }\n}',
-        'class C {\n  static {\n    x;\n  }\n}',
+        inspect.cleandoc("""
+            class C {
+              static {
+                x;
+                /* a */
+              }
+            }
+        """),
+        inspect.cleandoc("""
+            class C {
+              static {
+                x;
+              }
+            }
+        """),
     ),
     'class C { static { /* a */ } }': (
-        'class C {\n  static {\n    /* a */\n  }\n}',
-        'class C {\n  static {}\n}',
+        inspect.cleandoc("""
+            class C {
+              static {
+                /* a */
+              }
+            }
+        """),
+        inspect.cleandoc("""
+            class C {
+              static {}
+            }
+        """),
     ),
     '{ x; /* a */ } y;': (
-        '{\n  x;\n  /* a */\n}\ny;',
-        '{\n  x;\n}\ny;',
+        inspect.cleandoc("""
+            {
+              x;
+              /* a */
+            }
+            y;
+        """),
+        inspect.cleandoc("""
+            {
+              x;
+            }
+            y;
+        """),
     ),
     '{ /* a */ } y;': (
-        '{\n  /* a */\n}\ny;',
-        '{}\ny;',
+        inspect.cleandoc("""
+            {
+              /* a */
+            }
+            y;
+        """),
+        inspect.cleandoc("""
+            {}
+            y;
+        """),
     ),
     'if (a) { x; /* a */ }': (
-        'if (a) {\n  x;\n  /* a */\n}',
-        'if (a) {\n  x;\n}',
+        inspect.cleandoc("""
+            if (a) {
+              x;
+              /* a */
+            }
+        """),
+        inspect.cleandoc("""
+            if (a) {
+              x;
+            }
+        """),
     ),
     'x = () => { y; /* a */ };': (
-        'x = () => {\n  y;\n  /* a */\n};',
-        'x = () => {\n  y;\n};',
+        inspect.cleandoc("""
+            x = () => {
+              y;
+              /* a */
+            };
+        """),
+        inspect.cleandoc("""
+            x = () => {
+              y;
+            };
+        """),
     ),
     'x = { m() { y; /* a */ } };': (
-        'x = { m() {\n  y;\n  /* a */\n} };',
-        'x = { m() {\n  y;\n} };',
+        inspect.cleandoc("""
+            x = { m() {
+              y;
+              /* a */
+            } };
+        """),
+        inspect.cleandoc("""
+            x = { m() {
+              y;
+            } };
+        """),
     ),
 }
 
@@ -214,66 +587,174 @@ A_COMMENT_BEHIND_THE_LAST_ITEM = {
 #: one of a block opening behind it, or by the end of the file, and comes back there.
 A_COMMENT_NO_CARRIER_STANDS_AT = {
     'try /* c */ { x; } catch (e) /* d */ { y; } finally /* e */ { z; }': (
-        'try {\n  /* c */\n  x;\n} catch (e) {\n  /* d */\n  y;\n} finally {\n  /* e */\n  z;\n}',
-        'try {\n  x;\n} catch (e) {\n  y;\n} finally {\n  z;\n}',
+        inspect.cleandoc("""
+            try {
+              /* c */
+              x;
+            } catch (e) {
+              /* d */
+              y;
+            } finally {
+              /* e */
+              z;
+            }
+        """),
+        inspect.cleandoc("""
+            try {
+              x;
+            } catch (e) {
+              y;
+            } finally {
+              z;
+            }
+        """),
     ),
     'function f() /* c */ { x; }': (
-        'function f() {\n  /* c */\n  x;\n}',
-        'function f() {\n  x;\n}',
+        inspect.cleandoc("""
+            function f() {
+              /* c */
+              x;
+            }
+        """),
+        inspect.cleandoc("""
+            function f() {
+              x;
+            }
+        """),
     ),
     'class C /* c */ { m() {} }': (
-        'class C {\n  /* c */\n  m() {}\n}',
-        'class C {\n  m() {}\n}',
+        inspect.cleandoc("""
+            class C {
+              /* c */
+              m() {}
+            }
+        """),
+        inspect.cleandoc("""
+            class C {
+              m() {}
+            }
+        """),
     ),
     'switch (x) /* c */ { case 1: y; }': (
-        'switch (x) {\n  /* c */\n  case 1:\n    y;\n}',
-        'switch (x) {\n  case 1:\n    y;\n}',
+        inspect.cleandoc("""
+            switch (x) {
+              /* c */
+              case 1:
+                y;
+            }
+        """),
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                y;
+            }
+        """),
     ),
     'x = () => /* c */ { y; };': (
-        'x = () => {\n  /* c */\n  y;\n};',
-        'x = () => {\n  y;\n};',
+        inspect.cleandoc("""
+            x = () => {
+              /* c */
+              y;
+            };
+        """),
+        inspect.cleandoc("""
+            x = () => {
+              y;
+            };
+        """),
     ),
     'x = () => /* c */ y;': (
-        'x = () => y;\n/* c */',
+        inspect.cleandoc("""
+            x = () => y;
+            /* c */
+        """),
         'x = () => y;',
     ),
     'export /* c */ default x;': (
-        'export default x;\n/* c */',
+        inspect.cleandoc("""
+            export default x;
+            /* c */
+        """),
         'export default x;',
     ),
     'export /* c */ var x = 1;': (
-        'export var x = 1;\n/* c */',
+        inspect.cleandoc("""
+            export var x = 1;
+            /* c */
+        """),
         'export var x = 1;',
     ),
     'export default /* c */ function f() {}': (
-        'export default function f() {}\n/* c */',
+        inspect.cleandoc("""
+            export default function f() {}
+            /* c */
+        """),
         'export default function f() {}',
     ),
     'x = f(/* c */ 1); y = 2;': (
-        'x = f(1);\n/* c */\ny = 2;',
-        'x = f(1);\ny = 2;',
+        inspect.cleandoc("""
+            x = f(1);
+            /* c */
+            y = 2;
+        """),
+        inspect.cleandoc("""
+            x = f(1);
+            y = 2;
+        """),
     ),
     'x = f(/* c */ 1);': (
-        'x = f(1);\n/* c */',
+        inspect.cleandoc("""
+            x = f(1);
+            /* c */
+        """),
         'x = f(1);',
     ),
     'for (/* c */ let i = 0; i < 1; i++) x;': (
-        'for (let i = 0; i < 1; i++) {\n  /* c */\n  x;\n}',
-        'for (let i = 0; i < 1; i++) {\n  x;\n}',
+        inspect.cleandoc("""
+            for (let i = 0; i < 1; i++) {
+              /* c */
+              x;
+            }
+        """),
+        inspect.cleandoc("""
+            for (let i = 0; i < 1; i++) {
+              x;
+            }
+        """),
     ),
     'x = { a: 1 /* c */ }; y;': (
-        'x = { a: 1 };\n/* c */\ny;',
-        'x = { a: 1 };\ny;',
+        inspect.cleandoc("""
+            x = { a: 1 };
+            /* c */
+            y;
+        """),
+        inspect.cleandoc("""
+            x = { a: 1 };
+            y;
+        """),
     ),
     'x = [1, /* c */ 2]; y;': (
-        'x = [1, 2];\n/* c */\ny;',
-        'x = [1, 2];\ny;',
+        inspect.cleandoc("""
+            x = [1, 2];
+            /* c */
+            y;
+        """),
+        inspect.cleandoc("""
+            x = [1, 2];
+            y;
+        """),
     ),
 }
 
 A_HASH_BANG_LINE = {
-    '#!/usr/bin/env node\nx = 1;': (
-        '#!/usr/bin/env node\nx = 1;',
+    inspect.cleandoc("""
+        #!/usr/bin/env node
+        x = 1;
+    """): (
+        inspect.cleandoc("""
+            #!/usr/bin/env node
+            x = 1;
+        """),
         'x = 1;',
     ),
     '#!/usr/bin/env node': (
@@ -284,12 +765,26 @@ A_HASH_BANG_LINE = {
         '#!/usr/bin/env node',
         '',
     ),
-    '#!/usr/bin/env node\n/* a */ x = 1; /* b */': (
-        '#!/usr/bin/env node\n/* a */\nx = 1;\n/* b */',
+    inspect.cleandoc("""
+        #!/usr/bin/env node
+        /* a */ x = 1; /* b */
+    """): (
+        inspect.cleandoc("""
+            #!/usr/bin/env node
+            /* a */
+            x = 1;
+            /* b */
+        """),
         'x = 1;',
     ),
-    '#!/usr/bin/env node\n// a': (
-        '#!/usr/bin/env node\n// a',
+    inspect.cleandoc("""
+        #!/usr/bin/env node
+        // a
+    """): (
+        inspect.cleandoc("""
+            #!/usr/bin/env node
+            // a
+        """),
         '',
     ),
 }
@@ -324,23 +819,50 @@ A_COMMENT_LEADING_UNREAD_TEXT = {
         '@@@ /* c */ x = 1;',
     ),
     'x = 1; @@@ /* c */': (
-        'x = 1;\n@@@\n/* c */',
-        'x = 1;\n@@@',
+        inspect.cleandoc("""
+            x = 1;
+            @@@
+            /* c */
+        """),
+        inspect.cleandoc("""
+            x = 1;
+            @@@
+        """),
     ),
     'async /*c*/ function f a b {}': (
         'async /*c*/ function f a b {}',
         'async /*c*/ function f a b {}',
     ),
     'switch (a) { case 1: async /*c*/ function f a {} }': (
-        'switch (a) {\n  case 1:\n    async /*c*/ function f a {}\n}',
-        'switch (a) {\n  case 1:\n    async /*c*/ function f a {}\n}',
+        inspect.cleandoc("""
+            switch (a) {
+              case 1:
+                async /*c*/ function f a {}
+            }
+        """),
+        inspect.cleandoc("""
+            switch (a) {
+              case 1:
+                async /*c*/ function f a {}
+            }
+        """),
     ),
     'x = /* c */ { b() {} d };': (
-        'x = { b() {} d };\n/* c */',
+        inspect.cleandoc("""
+            x = { b() {} d };
+            /* c */
+        """),
         'x = { b() {} d };',
     ),
-    '/*c*/ #!x\nvar y = 1;': (
-        '/*c*/\n#!x\nvar y = 1;',
+    inspect.cleandoc("""
+        /*c*/ #!x
+        var y = 1;
+    """): (
+        inspect.cleandoc("""
+            /*c*/
+            #!x
+            var y = 1;
+        """),
         '\n#!x\nvar y = 1;',
     ),
 }
@@ -349,62 +871,143 @@ A_COMMENT_LEADING_UNREAD_TEXT = {
 #: program, and the file is not one.
 A_COMMENT_THE_FILE_ENDS_INSIDE = {
     'x = 1; /* a': (
-        'x = 1;\n/* a',
-        'x = 1;\n/* a',
+        inspect.cleandoc("""
+            x = 1;
+            /* a
+        """),
+        inspect.cleandoc("""
+            x = 1;
+            /* a
+        """),
     ),
     '/* a': (
         '/* a',
         '/* a',
     ),
     'function f() { x; /* a': (
-        'function f() {\n  x;\n/* a',
-        'function f() {\n  x;\n/* a',
+        inspect.cleandoc("""
+            function f() {
+              x;
+            /* a
+        """),
+        inspect.cleandoc("""
+            function f() {
+              x;
+            /* a
+        """),
     ),
     'x = y[a /* c': (
-        'x = y[a\n/* c',
-        'x = y[a\n/* c',
+        inspect.cleandoc("""
+            x = y[a
+            /* c
+        """),
+        inspect.cleandoc("""
+            x = y[a
+            /* c
+        """),
     ),
 }
 
 A_COMMENT_BEFORE_THE_END_OF_A_LIST_THE_FILE_ENDS_INSIDE = {
     'function f() { x; /* a */': (
-        'function f() {\n  x;\n/* a */',
-        'function f() {\n  x;',
+        inspect.cleandoc("""
+            function f() {
+              x;
+            /* a */
+        """),
+        inspect.cleandoc("""
+            function f() {
+              x;
+        """),
     ),
     'function f() { x; // a': (
-        'function f() {\n  x;\n// a',
-        'function f() {\n  x;',
+        inspect.cleandoc("""
+            function f() {
+              x;
+            // a
+        """),
+        inspect.cleandoc("""
+            function f() {
+              x;
+        """),
     ),
     'class C { m() {} /* a */': (
-        'class C {\n  m() {}\n/* a */',
-        'class C {\n  m() {}',
+        inspect.cleandoc("""
+            class C {
+              m() {}
+            /* a */
+        """),
+        inspect.cleandoc("""
+            class C {
+              m() {}
+        """),
     ),
     'switch (x) { case 1: y; /* a */': (
-        'switch (x) {\n  case 1:\n    y;\n/* a */',
-        'switch (x) {\n  case 1:\n    y;',
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                y;
+            /* a */
+        """),
+        inspect.cleandoc("""
+            switch (x) {
+              case 1:
+                y;
+        """),
     ),
     'class C { static { x; /* a */': (
-        'class C {\n  static {\n    x;\n/* a */',
-        'class C {\n  static {\n    x;',
+        inspect.cleandoc("""
+            class C {
+              static {
+                x;
+            /* a */
+        """),
+        inspect.cleandoc("""
+            class C {
+              static {
+                x;
+        """),
     ),
     '{ x; /* a */': (
-        '{\n  x;\n/* a */',
-        '{\n  x;',
+        inspect.cleandoc("""
+            {
+              x;
+            /* a */
+        """),
+        inspect.cleandoc("""
+            {
+              x;
+        """),
     ),
     'x = `abc${a /* c */': (
-        'x = `abc${a\n/* c */',
+        inspect.cleandoc("""
+            x = `abc${a
+            /* c */
+        """),
         'x = `abc${a',
     ),
     'x = `abc${ /* c */': (
-        'x = `abc${\n/* c */',
+        inspect.cleandoc("""
+            x = `abc${
+            /* c */
+        """),
         'x = `abc${',
     ),
 }
 
 A_FILE_ALREADY_IN_THE_PRINTERS_FORM = (
-    'x = 1;\n/* note */',
-    'x = 1;\n// note',
-    'x = 1;\n/* note',
+    inspect.cleandoc("""
+        x = 1;
+        /* note */
+    """),
+    inspect.cleandoc("""
+        x = 1;
+        // note
+    """),
+    inspect.cleandoc("""
+        x = 1;
+        /* note
+    """),
 )
 
 
@@ -503,9 +1106,24 @@ class TestTheDeobfuscatorKeepsTheCarriers(TestBase):
 
     def test_each_carried_comment_comes_back_where_it_stood(self):
         rows = {
-            'console.log(1); /* a */': 'console.log(1);\n/* a */',
-            'console.log(1); /* a': 'console.log(1);\n/* a',
-            '#!/usr/bin/env node\nconsole.log(1);': '#!/usr/bin/env node\nconsole.log(1);',
-            'function f() { console.log(1); /* a */ } f();': 'console.log(1);\n/* a */',
+            'console.log(1); /* a */': inspect.cleandoc("""
+                console.log(1);
+                /* a */
+            """),
+            'console.log(1); /* a': inspect.cleandoc("""
+                console.log(1);
+                /* a
+            """),
+            inspect.cleandoc("""
+                #!/usr/bin/env node
+                console.log(1);
+            """): inspect.cleandoc("""
+                #!/usr/bin/env node
+                console.log(1);
+            """),
+            'function f() { console.log(1); /* a */ } f();': inspect.cleandoc("""
+                console.log(1);
+                /* a */
+            """),
         }
         self.assertEqual({source: deobfuscate_source(source) for source in rows}, rows)

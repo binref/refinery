@@ -81,14 +81,20 @@ class TestTheModelAnswersForTheFileKind(TestBase):
     def test_global_code_reaches_a_top_level_var_only_in_a_script(self):
         reached = {}
         for kind in FileKind:
-            model = _model('var v = 1;\n(0, eval)(s);', kind)
+            model = _model(inspect.cleandoc("""
+                var v = 1;
+                (0, eval)(s);
+            """), kind)
             reached[kind] = model.reflection_can_reach(model.root_scope.bindings['v'])
         self.assertEqual(reached, {kind: kind is FileKind.script for kind in FileKind})
 
     def test_a_direct_eval_anywhere_in_the_file_reaches_a_top_level_var_in_every_kind(self):
         for kind in FileKind:
             with self.subTest(kind.name):
-                model = _model('var v = 1;\nfunction f(c) { eval(c); }', kind)
+                model = _model(inspect.cleandoc("""
+                    var v = 1;
+                    function f(c) { eval(c); }
+                """), kind)
                 self.assertTrue(model.reflection_can_reach(model.root_scope.bindings['v']))
 
     def test_a_direct_eval_may_rebind_a_top_level_name_where_the_file_may_be_commonjs(self):
@@ -110,7 +116,10 @@ class TestTheModelAnswersForTheFileKind(TestBase):
     def test_global_code_reaches_an_implicit_global_in_every_kind(self):
         for kind in FileKind:
             with self.subTest(kind.name):
-                model = _model('g = 1;\n(0, eval)(s);', kind)
+                model = _model(inspect.cleandoc("""
+                    g = 1;
+                    (0, eval)(s);
+                """), kind)
                 g = model.root_scope.bindings['g']
                 self.assertTrue(model.reflection_can_reach(g))
                 self.assertTrue(model.reflection_can_reach_from_its_scope(g))
@@ -150,7 +159,10 @@ class TestTheModelAnswersForTheFileKind(TestBase):
     def test_code_the_text_makes_strict_may_run_as_strict_in_every_kind(self):
         for kind in FileKind:
             with self.subTest(kind.name):
-                model = _model("'use strict';\nf();", kind)
+                model = _model(inspect.cleandoc("""
+                    'use strict';
+                    f();
+                """), kind)
                 self.assertTrue(model.may_run_as_strict(model.root.body[1]))
 
 
@@ -277,7 +289,10 @@ class TestTheTopOfACommonJsFileBindsTheWrapper(TestBase):
         )
 
     def test_the_wrapper_arguments_aliases_the_parameters_in_their_order(self):
-        model = _model('exports = 1;\nf(arguments[0], arguments[2]);', FileKind.commonjs)
+        model = _model(inspect.cleandoc("""
+            exports = 1;
+            f(arguments[0], arguments[2]);
+        """), FileKind.commonjs)
         bindings = model.root_scope.bindings
         read = {
             name: any(isinstance(node, JsMemberExpression) for node in bindings[name].reads)
@@ -286,7 +301,11 @@ class TestTheTopOfACommonJsFileBindsTheWrapper(TestBase):
         self.assertEqual(read, {'exports': True, 'require': False, 'module': True})
 
     def test_a_block_function_named_arguments_replaces_the_object_where_its_declaration_runs(self):
-        model = _model('exports = 1;\n{ function arguments() {} }\nf(arguments[0]);', FileKind.commonjs)
+        model = _model(inspect.cleandoc("""
+            exports = 1;
+            { function arguments() {} }
+            f(arguments[0]);
+        """), FileKind.commonjs)
         exports = model.root_scope.bindings['exports']
         self.assertFalse(any(isinstance(node, JsMemberExpression) for node in exports.reads))
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase, lines_executed
 
 from refinery.lib.scripts.ps1.analysis import listing, model
@@ -338,10 +340,16 @@ class TestPs1VariableListingHoldsAt(TestBase):
             "Set-Variable 'env:et' 5",
         ):
             with self.subTest(writer):
-                self.assertFalse(self._holds(F"{writer}\nWrite-Output 'x'", 'E*t'))
+                self.assertFalse(self._holds(inspect.cleandoc(F"""
+                    {writer}
+                    Write-Output 'x'
+                """), 'E*t'))
 
     def test_an_environment_variable_is_not_listed(self):
-        self.assertTrue(self._holds("$env:Et = 5\nWrite-Output 'x'", 'E*t'))
+        self.assertTrue(self._holds(inspect.cleandoc("""
+            $env:Et = 5
+            Write-Output 'x'
+        """), 'E*t'))
 
     def test_a_second_guard_on_one_tree_reads_nothing_of_the_tree_again(self):
         counts = []

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from test import TestBase, opportunity
+from test.lib.scripts.ps1 import a_program
 
 from inspect import cleandoc
 
@@ -123,7 +124,10 @@ class TestPs1WorldOpeners(Ps1TypeWorldTest):
                 self.assertFalse(self._closed(source))
 
     def test_a_mutation_hidden_in_a_function_body_opens_the_world(self):
-        source = 'function Reset { Update-TypeData -TypeName System.String -MemberName M }\nGet-Date'
+        source = cleandoc("""
+            function Reset { Update-TypeData -TypeName System.String -MemberName M }
+            Get-Date
+        """)
         self.assertFalse(self._closed(source))
 
 
@@ -131,7 +135,10 @@ class TestPs1WorldClosed(Ps1TypeWorldTest):
 
     def test_an_ordinary_script_is_closed(self):
         for source in (
-            "$x = 1\nWrite-Output $x",
+            cleandoc("""
+                $x = 1
+                Write-Output $x
+            """),
             "$Null = [Environment]::UserName",
             "'abcdef'.Length",
             '[Math]::Max(1, 2)',
@@ -147,10 +154,12 @@ class TestPs1ShadowedCommands(Ps1TypeWorldTest):
 
     def test_a_redefinition_shadows_its_name(self):
         world = build_closed_world(Ps1Parser(
-            "function Get-Date { 1 }\n"
-            "filter Out-Null { $_ }\n"
-            "${function:New-Object} = { 2 }\n"
-            "$alias:gc = 'Get-Content'\n"
+            a_program("""
+                function Get-Date { 1 }
+                filter Out-Null { $_ }
+                ${function:New-Object} = { 2 }
+                $alias:gc = 'Get-Content'
+            """)
         ).parse())
         for name in ('get-date', 'out-null', 'new-object', 'gc'):
             with self.subTest(name):
@@ -181,7 +190,10 @@ class TestPs1ShadowedCommands(Ps1TypeWorldTest):
                     build_closed_world(Ps1Parser(source).parse()).command_shadowed('get-date'))
 
     def test_a_defined_function_does_not_open_the_world(self):
-        self.assertTrue(self._closed('function Get-Date { 1 }\n$x = 2'))
+        self.assertTrue(self._closed(cleandoc("""
+            function Get-Date { 1 }
+            $x = 2
+        """)))
 
     def test_a_redefinition_binding_a_visible_block_does_not_open_the_world(self):
         for source in (
@@ -344,15 +356,36 @@ class TestPs1ClosedButForAliasBindings(Ps1TypeWorldTest):
         ('&{ 42 }', True, True),
         ('Set-Alias zzq Write-Output', False, True),
         ('sal zzq Write-Output', False, True),
-        ('Set-Alias a X\nSet-Alias b Y', False, True),
+        (cleandoc("""
+            Set-Alias a X
+            Set-Alias b Y
+        """), False, True),
         ('function f { Set-Alias zzq Write-Output }', False, True),
         ("& 'global:Set-Alias' zzq Write-Output", False, True),
-        ('Set-Alias zzq Write-Output\niex $x', False, False),
-        ('Set-Alias zzq Write-Output\n& $f', False, False),
-        ('Set-Alias zzq Write-Output\nAdd-Type -TypeDefinition $s', False, False),
-        ('Set-Alias zzq Write-Output\nclass C { }', False, False),
-        ('Set-Alias zzq Write-Output\n${function:Get-Date} = $b', False, False),
-        ("Set-Alias zzq Write-Output\n. '.\\stage2.ps1'", False, False),
+        (cleandoc("""
+            Set-Alias zzq Write-Output
+            iex $x
+        """), False, False),
+        (cleandoc("""
+            Set-Alias zzq Write-Output
+            & $f
+        """), False, False),
+        (cleandoc("""
+            Set-Alias zzq Write-Output
+            Add-Type -TypeDefinition $s
+        """), False, False),
+        (cleandoc("""
+            Set-Alias zzq Write-Output
+            class C { }
+        """), False, False),
+        (cleandoc("""
+            Set-Alias zzq Write-Output
+            ${function:Get-Date} = $b
+        """), False, False),
+        (cleandoc("""
+            Set-Alias zzq Write-Output
+            . '.\\stage2.ps1'
+        """), False, False),
         ('iex $x', False, False),
     )
 
@@ -752,12 +785,19 @@ class TestPs1TheMeasurementRecordsEveryNameTheScriptInvokes(TestBase):
 
     def test_a_bare_noun_records_its_implicit_get_retry_name(self):
         self.assertEqual(
-            self._invoked('item\nchilditem\nGet-Random'),
+            self._invoked(cleandoc("""
+                item
+                childitem
+                Get-Random
+            """)),
             {'item', 'get-item', 'childitem', 'get-childitem', 'get-random'},
         )
 
     def test_a_script_that_invokes_nothing_records_nothing(self):
-        self.assertEqual(self._invoked("$x = 1\n$y = $x + 'a'"), frozenset())
+        self.assertEqual(self._invoked(cleandoc("""
+            $x = 1
+            $y = $x + 'a'
+        """)), frozenset())
 
 
 class TestPs1ABindingOfOneNameIsTheOpenerTheFloodMayLeaveOut(TestBase):
@@ -933,7 +973,10 @@ class TestPs1WhatMayChangeTheCommandListing(TestBase):
                 self.assertEqual(self._recorded(source), (False, False))
 
     def test_a_table_writer_leaves_command_names_trusted_after_it(self):
-        script = Ps1Parser('Copy-Item $a $b\nGet-Date').parse()
+        script = Ps1Parser(cleandoc("""
+            Copy-Item $a $b
+            Get-Date
+        """)).parse()
         call = next(
             node for node in script.walk()
             if isinstance(node, Ps1CommandInvocation) and get_command_name(node) == 'Get-Date'

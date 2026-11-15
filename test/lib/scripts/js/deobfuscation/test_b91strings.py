@@ -93,11 +93,17 @@ GLOBAL_BUFFER = (
     ' return String.fromCharCode.apply(null, buffer); }'
 )
 
-SLICED = F'var strs = "{TEXT}";\n{GLOBAL_BUFFER}\n'
+SLICED = a_program(F"""
+    var strs = "{TEXT}";
+    {GLOBAL_BUFFER}
+""")
 
 SWAPPED = ALPHABET.translate(str.maketrans({'f': 'r', 'r': 'f'}))
 
-DEFAULTED_HEAD = F'var cache = [], table = {TABLE};\n{GLOBAL_BUFFER}\n'
+DEFAULTED_HEAD = a_program(F"""
+    var cache = [], table = {TABLE};
+    {GLOBAL_BUFFER}
+""")
 
 
 def defaulted(
@@ -1755,7 +1761,10 @@ class TestNodePrintsTheSameAboutConcealedStrings(TestJsDeobfuscator):
             + 'export ' + accessor('acc', 'cache', 'decode') + '\n'
             + 'console.log(acc(10));\n'
         )
-        importer = 'import { acc } from "./m.mjs";\nconsole.log(acc(11));\n'
+        importer = a_program("""
+            import { acc } from "./m.mjs";
+            console.log(acc(11));
+        """)
         rewritten = deobfuscate_source(source, execution=ExecutionModel.module)
         self.assertEqual(
             module_graph_behavior({'m.mjs': source, 'main.mjs': importer}, 'main.mjs'),

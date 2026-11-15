@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast as pyast
+import inspect
 
 from test import TestBase
 
@@ -44,12 +45,18 @@ class TestPs1ModelCache(TestBase):
         self.assertNotIn('x', unseen)
 
     def test_model_is_memoized_while_the_tree_is_unchanged(self):
-        cache = Ps1ModelCache(self._script("$a = 1\n$b = 2"))
+        cache = Ps1ModelCache(self._script(inspect.cleandoc("""
+            $a = 1
+            $b = 2
+        """)))
         first = cache.model
         self.assertIs(cache.model, first)
 
     def test_mutating_the_cached_tree_rebuilds_the_model(self):
-        script = self._script("$a = 1\n$b = 2")
+        script = self._script(inspect.cleandoc("""
+            $a = 1
+            $b = 2
+        """))
         cache = Ps1ModelCache(script)
         first = cache.model
         _remove_from_parent(script.body[0])
@@ -61,19 +68,28 @@ class TestPs1ModelCache(TestBase):
         self.assertIs(cache.cycles, first)
 
     def test_mutating_the_cached_tree_rebuilds_the_cycles(self):
-        script = self._script("while ($x) { $a = 1 }\n$b = 2")
+        script = self._script(inspect.cleandoc("""
+            while ($x) { $a = 1 }
+            $b = 2
+        """))
         cache = Ps1ModelCache(script)
         first = cache.cycles
         _remove_from_parent(script.body[1])
         self.assertIsNot(cache.cycles, first)
 
     def test_dominance_is_memoized_while_the_tree_is_unchanged(self):
-        cache = Ps1ModelCache(self._script("$a = 1\n$b = 2"))
+        cache = Ps1ModelCache(self._script(inspect.cleandoc("""
+            $a = 1
+            $b = 2
+        """)))
         first = cache.dominance
         self.assertIs(cache.dominance, first)
 
     def test_mutating_the_cached_tree_rebuilds_the_dominance(self):
-        script = self._script("$a = 1\n$b = 2")
+        script = self._script(inspect.cleandoc("""
+            $a = 1
+            $b = 2
+        """))
         cache = Ps1ModelCache(script)
         first = cache.dominance
         _remove_from_parent(script.body[1])
@@ -91,9 +107,15 @@ class TestPs1ModelCache(TestBase):
         self.assertIs(cache.variable_flow.reaching_definition(read), write)
 
     def test_mutating_an_unrelated_tree_keeps_the_cached_model(self):
-        cache = Ps1ModelCache(self._script("$a = 1\n$b = 2"))
+        cache = Ps1ModelCache(self._script(inspect.cleandoc("""
+            $a = 1
+            $b = 2
+        """)))
         first = cache.model
-        unrelated = self._script("$c = 3\n$d = 4")
+        unrelated = self._script(inspect.cleandoc("""
+            $c = 3
+            $d = 4
+        """))
         _remove_from_parent(unrelated.body[0])
         self.assertIs(cache.model, first)
 
@@ -108,14 +130,20 @@ class TestPs1ModelCache(TestBase):
                     getattr(cache, name)
 
     def test_body_splice_advances_the_version_and_rebuilds(self):
-        script = self._script("$a = 1\n$b = 2")
+        script = self._script(inspect.cleandoc("""
+            $a = 1
+            $b = 2
+        """))
         cache = Ps1ModelCache(script)
         first = cache.model
         set_body(script, list(script.body[:1]))
         self.assertIsNot(cache.model, first)
 
     def test_body_splice_keeps_the_list_object(self):
-        script = self._script("$a = 1\n$b = 2")
+        script = self._script(inspect.cleandoc("""
+            $a = 1
+            $b = 2
+        """))
         body = script.body
         set_body(script, list(script.body[:1]))
         self.assertIs(script.body, body)

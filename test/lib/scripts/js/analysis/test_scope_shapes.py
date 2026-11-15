@@ -745,8 +745,14 @@ class TestTheDeclarationsADeadBlockHeldAreKept(TestBase):
                 for label in ['a function no branch declares', 'a var no branch declares']
             },
             {
-                'a function no branch declares': 'var W;\nconsole.log(W);',
-                'a var no branch declares': 'var v;\nconsole.log(v);',
+                'a function no branch declares': inspect.cleandoc("""
+                    var W;
+                    console.log(W);
+                """),
+                'a var no branch declares': inspect.cleandoc("""
+                    var v;
+                    console.log(v);
+                """),
             },
         )
 
@@ -1292,21 +1298,30 @@ A_GLOBAL_PROPERTY_NAMED_THROUGH_A_REALM = {
             top.foo = 1;
             console.log(globalThis.foo);
             """),
-        "top.foo = 1;\nconsole.log(globalThis.foo);",
+        inspect.cleandoc("""
+            top.foo = 1;
+            console.log(globalThis.foo);
+        """),
     ),
     'a write in this realm and a read in another': (
         a_program("""
             globalThis.qux = 1;
             console.log(top.qux);
             """),
-        "globalThis.qux = 1;\nconsole.log(top.qux);",
+        inspect.cleandoc("""
+            globalThis.qux = 1;
+            console.log(top.qux);
+        """),
     ),
     'a write and a read in this realm': (
         a_program("""
             globalThis.bar = 1;
             console.log(globalThis.bar);
             """),
-        "globalThis.bar = 1;\nconsole.log(bar);",
+        inspect.cleandoc("""
+            globalThis.bar = 1;
+            console.log(bar);
+        """),
     ),
 }
 

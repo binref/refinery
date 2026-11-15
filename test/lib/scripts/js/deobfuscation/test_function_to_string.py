@@ -8,6 +8,7 @@ from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import (
     Program,
     Reading,
+    a_program,
     before_and_after,
     each_program_still_prints,
     folded,
@@ -21,75 +22,99 @@ from refinery.lib.scripts.js.parser import JsParser
 
 A_FUNCTION_STRINGIFIES_TO_ITS_WRITTEN_SOURCE = {
     'a declaration handed to String': (
-        'function W(a) { return a + 1; }\n'
-        'function f() { return String(W); }\n'
-        'console.log(f());\n',
+        a_program("""
+            function W(a) { return a + 1; }
+            function f() { return String(W); }
+            console.log(f());
+        """),
         "console.log('function W(a) { return a + 1; }');",
     ),
     'the length of the text of a declaration': (
-        'function W(a) { return a + 1; }\n'
-        'function f() { return String(W).length; }\n'
-        'console.log(f());\n',
+        a_program("""
+            function W(a) { return a + 1; }
+            function f() { return String(W).length; }
+            console.log(f());
+        """),
         'console.log(31);',
     ),
     'a local function expression concatenated onto a string': (
-        "function f() { var W = function (a) { return a + 1; }; return '' + W; }\n"
-        'console.log(f());\n',
+        a_program("""
+            function f() { var W = function (a) { return a + 1; }; return '' + W; }
+            console.log(f());
+        """),
         "console.log('function (a) { return a + 1; }');",
     ),
     'a local function expression joined by an array': (
-        "function f() { var W = function (a) { return a + 1; }; return [W].join(''); }\n"
-        'console.log(f());\n',
+        a_program("""
+            function f() { var W = function (a) { return a + 1; }; return [W].join(''); }
+            console.log(f());
+        """),
         "console.log('function (a) { return a + 1; }');",
     ),
     'an arrow function handed to String': (
-        'function f() { var g = (a) => a + 1; return String(g); }\n'
-        'console.log(f());\n',
+        a_program("""
+            function f() { var g = (a) => a + 1; return String(g); }
+            console.log(f());
+        """),
         "console.log('(a) => a + 1');",
     ),
     'a shorthand method handed to String': (
-        'function f() { var o = { m(a) { return a + 1; } }; return String(o.m); }\n'
-        'console.log(f());\n',
+        a_program("""
+            function f() { var o = { m(a) { return a + 1; } }; return String(o.m); }
+            console.log(f());
+        """),
         "console.log('m(a) { return a + 1; }');",
     ),
     'a declaration interpolated into a template': (
-        'function W(a) { return a + 1; }\n'
-        'function f() { return `<${W}>`; }\n'
-        'console.log(f());\n',
+        a_program("""
+            function W(a) { return a + 1; }
+            function f() { return `<${W}>`; }
+            console.log(f());
+        """),
         "console.log('<function W(a) { return a + 1; }>');",
     ),
     'a declaration added to a number': (
-        'function W(a) { return a + 1; }\n'
-        'function f() { return W + 1; }\n'
-        'console.log(f());\n',
+        a_program("""
+            function W(a) { return a + 1; }
+            function f() { return W + 1; }
+            console.log(f());
+        """),
         "console.log('function W(a) { return a + 1; }1');",
     ),
     'a declaration loosely equal to its own source text': (
-        'function W(a) { return a + 1; }\n'
-        'function f() { return W == "function W(a) { return a + 1; }" ? "yes" : "no"; }\n'
-        'console.log(f());\n',
+        a_program("""
+            function W(a) { return a + 1; }
+            function f() { return W == "function W(a) { return a + 1; }" ? "yes" : "no"; }
+            console.log(f());
+        """),
         "console.log('yes');",
     ),
     'a declaration copied into a local': (
-        'function W(a) { return a + 1; }\n'
-        'function f() { var g = W; return String(g); }\n'
-        'console.log(f());\n',
+        a_program("""
+            function W(a) { return a + 1; }
+            function f() { var g = W; return String(g); }
+            console.log(f());
+        """),
         "console.log('function W(a) { return a + 1; }');",
     ),
     'a declaration handed to a function that reads its length': (
-        'function W(a) { return a + 1; }\n'
-        'function size(g) { return g.length; }\n'
-        'console.log(size(W));\n'
-        'function f() { return String(W); }\n'
-        'console.log(f());\n',
-        'function W(a) {\n'
-        '  return a + 1;\n'
-        '}\n'
-        'function size(g) {\n'
-        '  return g.length;\n'
-        '}\n'
-        'console.log(size(W));\n'
-        "console.log('function W(a) { return a + 1; }');",
+        a_program("""
+            function W(a) { return a + 1; }
+            function size(g) { return g.length; }
+            console.log(size(W));
+            function f() { return String(W); }
+            console.log(f());
+        """),
+        inspect.cleandoc("""
+            function W(a) {
+              return a + 1;
+            }
+            function size(g) {
+              return g.length;
+            }
+            console.log(size(W));
+            console.log('function W(a) { return a + 1; }');
+        """),
     ),
     'a function expression written into String': (
         inspect.cleandoc('''
@@ -197,56 +222,74 @@ class TestNodeStringifiesAClassMemberAsEachRowPins(TestBase):
 
 
 A_FUNCTION_GIVEN_A_TOSTRING_OF_ITS_OWN = {
-    'function W(a) { return a + 1; }\n'
-    'W.toString = function () { return "x"; };\n'
-    'function f() { return String(W); }\n'
-    'console.log(f(), typeof W);\n':
+    a_program("""
+        function W(a) { return a + 1; }
+        W.toString = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f(), typeof W);
+    """):
         'x function\n',
-    'function W(a) { return a + 1; }\n'
-    'class X { static [Symbol.hasInstance](v) { v.toString = function () { return "x"; }; return false; } }\n'
-    'console.log(W instanceof X);\n'
-    'function f() { return String(W); }\n'
-    'console.log(f());\n':
+    a_program("""
+        function W(a) { return a + 1; }
+        class X { static [Symbol.hasInstance](v) { v.toString = function () { return "x"; }; return false; } }
+        console.log(W instanceof X);
+        function f() { return String(W); }
+        console.log(f());
+    """):
         'false\nx\n',
-    'function W(a) { return a + 1; }\n'
-    'function tag(s, v) { v.toString = function () { return "x"; }; return ""; }\n'
-    'tag`${W}`;\n'
-    'function f() { return String(W); }\n'
-    'console.log(f());\n':
+    a_program("""
+        function W(a) { return a + 1; }
+        function tag(s, v) { v.toString = function () { return "x"; }; return ""; }
+        tag`${W}`;
+        function f() { return String(W); }
+        console.log(f());
+    """):
         'x\n',
-    '{ function W(a) { return a + 1; } }\n'
-    'W.toString = function () { return "x"; };\n'
-    'function f() { return String(W); }\n'
-    'console.log(f());\n':
+    a_program("""
+        { function W(a) { return a + 1; } }
+        W.toString = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    """):
         'x\n',
-    'function W(a) { return a + 1; }\n'
-    'var g = W;\n'
-    'g.toString = function () { return "x"; };\n'
-    'function f() { return String(W); }\n'
-    'console.log(f());\n':
+    a_program("""
+        function W(a) { return a + 1; }
+        var g = W;
+        g.toString = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    """):
         'x\n',
-    'function W(a) { return a + 1; }\n'
-    'function mark(g) { g.toString = function () { return "x"; }; }\n'
-    'mark(W);\n'
-    'function f() { return String(W); }\n'
-    'console.log(f());\n':
+    a_program("""
+        function W(a) { return a + 1; }
+        function mark(g) { g.toString = function () { return "x"; }; }
+        mark(W);
+        function f() { return String(W); }
+        console.log(f());
+    """):
         'x\n',
-    'function W(a) { return a + 1; }\n'
-    'function mark() { arguments[0].toString = function () { return "x"; }; }\n'
-    'mark(W);\n'
-    'function f() { return String(W); }\n'
-    'console.log(f());\n':
+    a_program("""
+        function W(a) { return a + 1; }
+        function mark() { arguments[0].toString = function () { return "x"; }; }
+        mark(W);
+        function f() { return String(W); }
+        console.log(f());
+    """):
         'x\n',
-    'function W(a) { return a + 1; }\n'
-    'function same(g) { return g; }\n'
-    'same(W).toString = function () { return "x"; };\n'
-    'function f() { return String(W); }\n'
-    'console.log(f());\n':
+    a_program("""
+        function W(a) { return a + 1; }
+        function same(g) { return g; }
+        same(W).toString = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    """):
         'x\n',
-    'function W(a) { return a + 1; }\n'
-    'globalThis.String = function () { return "x"; };\n'
-    'function f() { return String(W); }\n'
-    'console.log(f());\n':
+    a_program("""
+        function W(a) { return a + 1; }
+        globalThis.String = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    """):
         'x\n',
     inspect.cleandoc('''
         var W;

@@ -696,11 +696,10 @@ class TestABodyThatOpensWithADirective(TestJsDeobfuscator):
     def _demask(self, source: str) -> str:
         return self._run_transformer(source, JsRestArrayUnpacking)
 
-    A_BODY_DECLARING_STRICT_MODE = (
-        "var f = function (...s) { 'use strict'; s.length = 1; s.a = 1; leaked = s.a;"
-        ' return s[0] + s.a; };\n'
-        'try { console.log(f(1)); } catch (e) { console.log(e.name); }'
-    )
+    A_BODY_DECLARING_STRICT_MODE = inspect.cleandoc("""
+        var f = function (...s) { 'use strict'; s.length = 1; s.a = 1; leaked = s.a; return s[0] + s.a; };
+        try { console.log(f(1)); } catch (e) { console.log(e.name); }
+    """)
 
     def test_the_directive_still_opens_the_unpacked_body(self):
         self.assertEqual(
@@ -749,79 +748,79 @@ class TestABodyThatOpensWithADirective(TestJsDeobfuscator):
 
 
 _A_REST_ARRAY_NAMED_BEYOND_ITS_OWN_BODY = {
-    (
-        'function f(...m) { m.length = 0; m[3] = function () { return m[4]; }; m[4] = "v"; return m[3](); }\n'
-        'console.log(f());\n'
-    ): 'v\n',
-    (
-        'function f(...m) { m.length = 1; var set = function (x) { m[0] = x; }; set(m[0] + 1); return m[0]; }\n'
-        'console.log(f(4));\n'
-    ): '5\n',
-    (
-        'function f(...m) { m.length = 0; m[0] = 1; delete m[0]; return m[0]; }\n'
-        'console.log(f());\n'
-    ): 'undefined\n',
-    (
-        'function f(...a) { a.length = 0; a[0] = 1; var g = function (a) { return a[0]; }; return g([5]) + a[0]; }\n'
-        'console.log(f());\n'
-    ): '6\n',
-    (
-        'function f(...a) { a.length = 0; a[0] = 1; return function () { return eval("a[0]"); }(); }\n'
-        'console.log(f());\n'
-    ): '1\n',
-    (
-        'function f(...a) { a.length = 0; a[0] = 1; var o = { a: [7] }; with (o) { return a[0]; } }\n'
-        'console.log(f());\n'
-    ): '7\n',
-    (
-        'function f(...m) { m.length = 1; return function () { return m[0]; }; }\n'
-        'var x = f(1), y = f(2);\n'
-        'console.log(x(), y());\n'
-    ): '1 2\n',
-    (
-        'function f(...m) { m.length = 0; m[1] = 2; var g = function () { var v0 = 9; return v0 + m[1]; }; return g(); }\n'
-        'console.log(f());\n'
-    ): '11\n',
-    (
-        'function f(...m) { m.length = 0; m[0] = 7; var g = function () { return m["length"]; }; return g(); }\n'
-        'console.log(f());\n'
-    ): '1\n',
-    (
-        'function f(...m) { m.length = 0; m[0] = 7; m.push(8); return m[1]; }\n'
-        'console.log(f());\n'
-    ): '8\n',
-    (
-        'function f(...m) { m.length = 0; m[0] = 7; var g = function () { m.push(8); }; g(); return m[1]; }\n'
-        'console.log(f());\n'
-    ): '8\n',
-    (
-        'function f(...m) { m.length = 0; m[0] = 7; m[1] = 8; var g = function () { return m.join("-"); }; return g(); }\n'
-        'console.log(f());\n'
-    ): '7-8\n',
-    (
-        'function run(...m) { m.length = 1; var call = function () { return m[0](); }; return call(); }\n'
-        'console.log(run(function () { return Array.isArray(this); }));\n'
-    ): 'true\n',
-    (
-        'function run(...m) { m.length = 1; return m[0](); }\n'
-        'console.log(run(function () { return Array.isArray(this); }));\n'
-    ): 'true\n',
-    (
-        'function f(...m) { var g = function () { return m[1]; }; var early = g(); m.length = 1; return early + m[0]; }\n'
-        'console.log(f("a", "b"));\n'
-    ): 'ba\n',
-    (
-        'function f(...m) { var early = g(); m.length = 1; return early + m[0]; function g() { return m[1]; } }\n'
-        'console.log(f("a", "b"));\n'
-    ): 'ba\n',
-    (
-        'function f(...m) { var early = m[1]; m.length = 1; return early + m[0]; }\n'
-        'console.log(f("a", "b"));\n'
-    ): 'ba\n',
-    (
-        'function f(...m) { m.length = 1; var a = m[0]; var m = [9]; return a + m[0]; }\n'
-        'console.log(f(1));\n'
-    ): '10\n',
+    a_program("""
+        function f(...m) { m.length = 0; m[3] = function () { return m[4]; }; m[4] = "v"; return m[3](); }
+        console.log(f());
+    """): 'v\n',
+    a_program("""
+        function f(...m) { m.length = 1; var set = function (x) { m[0] = x; }; set(m[0] + 1); return m[0]; }
+        console.log(f(4));
+    """): '5\n',
+    a_program("""
+        function f(...m) { m.length = 0; m[0] = 1; delete m[0]; return m[0]; }
+        console.log(f());
+    """): 'undefined\n',
+    a_program("""
+        function f(...a) { a.length = 0; a[0] = 1; var g = function (a) { return a[0]; }; return g([5]) + a[0]; }
+        console.log(f());
+    """): '6\n',
+    a_program("""
+        function f(...a) { a.length = 0; a[0] = 1; return function () { return eval("a[0]"); }(); }
+        console.log(f());
+    """): '1\n',
+    a_program("""
+        function f(...a) { a.length = 0; a[0] = 1; var o = { a: [7] }; with (o) { return a[0]; } }
+        console.log(f());
+    """): '7\n',
+    a_program("""
+        function f(...m) { m.length = 1; return function () { return m[0]; }; }
+        var x = f(1), y = f(2);
+        console.log(x(), y());
+    """): '1 2\n',
+    a_program("""
+        function f(...m) { m.length = 0; m[1] = 2; var g = function () { var v0 = 9; return v0 + m[1]; }; return g(); }
+        console.log(f());
+    """): '11\n',
+    a_program("""
+        function f(...m) { m.length = 0; m[0] = 7; var g = function () { return m["length"]; }; return g(); }
+        console.log(f());
+    """): '1\n',
+    a_program("""
+        function f(...m) { m.length = 0; m[0] = 7; m.push(8); return m[1]; }
+        console.log(f());
+    """): '8\n',
+    a_program("""
+        function f(...m) { m.length = 0; m[0] = 7; var g = function () { m.push(8); }; g(); return m[1]; }
+        console.log(f());
+    """): '8\n',
+    a_program("""
+        function f(...m) { m.length = 0; m[0] = 7; m[1] = 8; var g = function () { return m.join("-"); }; return g(); }
+        console.log(f());
+    """): '7-8\n',
+    a_program("""
+        function run(...m) { m.length = 1; var call = function () { return m[0](); }; return call(); }
+        console.log(run(function () { return Array.isArray(this); }));
+    """): 'true\n',
+    a_program("""
+        function run(...m) { m.length = 1; return m[0](); }
+        console.log(run(function () { return Array.isArray(this); }));
+    """): 'true\n',
+    a_program("""
+        function f(...m) { var g = function () { return m[1]; }; var early = g(); m.length = 1; return early + m[0]; }
+        console.log(f("a", "b"));
+    """): 'ba\n',
+    a_program("""
+        function f(...m) { var early = g(); m.length = 1; return early + m[0]; function g() { return m[1]; } }
+        console.log(f("a", "b"));
+    """): 'ba\n',
+    a_program("""
+        function f(...m) { var early = m[1]; m.length = 1; return early + m[0]; }
+        console.log(f("a", "b"));
+    """): 'ba\n',
+    a_program("""
+        function f(...m) { m.length = 1; var a = m[0]; var m = [9]; return a + m[0]; }
+        console.log(f(1));
+    """): '10\n',
 }
 
 
@@ -840,22 +839,22 @@ class TestARestArrayNamedBeyondItsOwnBody(TestJsDeobfuscator):
 
 
 _A_REST_ARRAY_AN_OBJECT_HOLDS = {
-    (
-        'function h(o) { o.k[0] = 10; }\n'
-        'function f(...r) { var j = {}; j["k"] = r; j.k.length = 2; h(j); return j.k[0] + j.k[1]; }\n'
-        'console.log(f(1, 2));\n'
-    ): '12\n',
-    (
-        'function f(...r) {\n'
-        '  var j = {}; j["k"] = r; j.k.length = 2; console.log(j.k.join()); return j.k[0] + j.k[1];\n'
-        '}\n'
-        'console.log(f(1, 2, 3));\n'
-    ): '1,2\n3\n',
-    (
-        'function h(o, i) { return o.k[i]; }\n'
-        'function f(...r) { var j = {}; j["k"] = r; j.k.length = 2; return h(j, 1) + j.k[0]; }\n'
-        'console.log(f(1, 2));\n'
-    ): '3\n',
+    a_program("""
+        function h(o) { o.k[0] = 10; }
+        function f(...r) { var j = {}; j["k"] = r; j.k.length = 2; h(j); return j.k[0] + j.k[1]; }
+        console.log(f(1, 2));
+    """): '12\n',
+    a_program("""
+        function f(...r) {
+          var j = {}; j["k"] = r; j.k.length = 2; console.log(j.k.join()); return j.k[0] + j.k[1];
+        }
+        console.log(f(1, 2, 3));
+    """): '1,2\n3\n',
+    a_program("""
+        function h(o, i) { return o.k[i]; }
+        function f(...r) { var j = {}; j["k"] = r; j.k.length = 2; return h(j, 1) + j.k[0]; }
+        console.log(f(1, 2));
+    """): '3\n',
 }
 
 
@@ -890,82 +889,111 @@ class TestARestArrayAnObjectHoldsIsNotTheRestParameter(TestJsDeobfuscator):
 
 
 A_STACK_REACHED_THROUGH_A_QUALIFIED_NAME = {
-    'var NS = { F: {} };\n'
-    'function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }\n'
-    'NS.F.stk = [5];\n'
-    'console.log(f());\n': '10\n',
+    a_program("""
+        var NS = { F: {} };
+        function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }
+        NS.F.stk = [5];
+        console.log(f());
+    """): '10\n',
 
-    'var NS = { F: { stk: [5] } };\n'
-    'function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }\n'
-    'console.log(f(3));\n': '10\n',
+    a_program("""
+        var NS = { F: { stk: [5] } };
+        function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }
+        console.log(f(3));
+    """): '10\n',
 
-    'var NS = { stk: [5] };\n'
-    'function f(...r) { NS.stk.length = 1; return NS.stk[0] * 2; }\n'
-    'console.log(f(3));\n': '10\n',
+    a_program("""
+        var NS = { stk: [5] };
+        function f(...r) { NS.stk.length = 1; return NS.stk[0] * 2; }
+        console.log(f(3));
+    """): '10\n',
 
-    'var NS = { F: { stk: [5, 7] } };\n'
-    'function f(...r) { NS.F.stk.length = 2; return NS.F.stk[0] + NS.F.stk[1]; }\n'
-    'console.log(f());\n': '12\n',
+    a_program("""
+        var NS = { F: { stk: [5, 7] } };
+        function f(...r) { NS.F.stk.length = 2; return NS.F.stk[0] + NS.F.stk[1]; }
+        console.log(f());
+    """): '12\n',
 
-    'var NS = { F: { stk: [5] } };\n'
-    'function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }\n'
-    'console.log(f() + f());\n': '20\n',
+    a_program("""
+        var NS = { F: { stk: [5] } };
+        function f(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }
+        console.log(f() + f());
+    """): '20\n',
 
-    'var NS = { F: { stk: [5] } };\n'
-    'function f(...r) { NS.F.stk.length = 1; NS.F.stk[0] = NS.F.stk[0] + 1; }\n'
-    'f();\n'
-    'console.log(NS.F.stk[0]);\n': '6\n',
+    a_program("""
+        var NS = { F: { stk: [5] } };
+        function f(...r) { NS.F.stk.length = 1; NS.F.stk[0] = NS.F.stk[0] + 1; }
+        f();
+        console.log(NS.F.stk[0]);
+    """): '6\n',
 }
 
 
 A_QUALIFIED_STACK_KEY_THAT_NAMES_NO_PARAMETER = {
-    "'use strict';\n"
-    'var NS = { F: { stk: [] } };\n'
-    'function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; return NS.F.stk.a; }\n'
-    'console.log(f());\n': '3\n',
+    a_program("""
+        'use strict';
+        var NS = { F: { stk: [] } };
+        function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; return NS.F.stk.a; }
+        console.log(f());
+    """): '3\n',
 
-    "'use strict';\n"
-    'var NS = { F: { stk: [] } };\n'
-    "function f(...r) { NS.F.stk.length = 0; NS.F.stk['zz'] = 3; return NS.F.stk['zz']; }\n"
-    'console.log(f());\n': '3\n',
+    a_program("""
+        'use strict';
+        var NS = { F: { stk: [] } };
+        function f(...r) { NS.F.stk.length = 0; NS.F.stk['zz'] = 3; return NS.F.stk['zz']; }
+        console.log(f());
+    """): '3\n',
 
-    "'use strict';\n"
-    'var NS = { F: { stk: [] } };\n'
-    'function f(...r) { NS.F.stk.length = 0; NS.F.stk[-1] = 3; return NS.F.stk[-1]; }\n'
-    'console.log(f());\n': '3\n',
+    a_program("""
+        'use strict';
+        var NS = { F: { stk: [] } };
+        function f(...r) { NS.F.stk.length = 0; NS.F.stk[-1] = 3; return NS.F.stk[-1]; }
+        console.log(f());
+    """): '3\n',
 
-    "'use strict';\n"
-    'var NS = { F: { stk: [] } };\n'
-    "function f(...r) { NS.F.stk.length = 0; NS.F.stk['01'] = 3; return NS.F.stk['01']; }\n"
-    'console.log(f());\n': '3\n',
+    a_program("""
+        'use strict';
+        var NS = { F: { stk: [] } };
+        function f(...r) { NS.F.stk.length = 0; NS.F.stk['01'] = 3; return NS.F.stk['01']; }
+        console.log(f());
+    """): '3\n',
 
-    "'use strict';\n"
-    'var NS = { stk: [] };\n'
-    'function f(...r) { NS.stk.length = 0; NS.stk.a = 3; return NS.stk.a; }\n'
-    'console.log(f());\n': '3\n',
+    a_program("""
+        'use strict';
+        var NS = { stk: [] };
+        function f(...r) { NS.stk.length = 0; NS.stk.a = 3; return NS.stk.a; }
+        console.log(f());
+    """): '3\n',
 
-    "'use strict';\n"
-    'var NS = { F: { stk: [] } };\n'
-    'function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; NS.F.stk.b = 4;'
-    ' return NS.F.stk.a * NS.F.stk.b; }\n'
-    'console.log(f());\n': '12\n',
+    a_program("""
+        'use strict';
+        var NS = { F: { stk: [] } };
+        function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; NS.F.stk.b = 4; return NS.F.stk.a * NS.F.stk.b; }
+        console.log(f());
+    """): '12\n',
 
-    "'use strict';\n"
-    'var NS = { F: { stk: [4] } };\n'
-    'function f(...r) { NS.F.stk.length = 1; NS.F.stk.a = 3; return NS.F.stk[0] + NS.F.stk.a; }\n'
-    'console.log(f(4));\n': '7\n',
+    a_program("""
+        'use strict';
+        var NS = { F: { stk: [4] } };
+        function f(...r) { NS.F.stk.length = 1; NS.F.stk.a = 3; return NS.F.stk[0] + NS.F.stk.a; }
+        console.log(f(4));
+    """): '7\n',
 
-    'var NS = { F: { stk: [] } };\n'
-    'function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; return NS.F.stk.a; }\n'
-    'var before = Object.getOwnPropertyNames(globalThis).length;\n'
-    'f();\n'
-    'console.log(Object.getOwnPropertyNames(globalThis).length - before);\n': '0\n',
+    a_program("""
+        var NS = { F: { stk: [] } };
+        function f(...r) { NS.F.stk.length = 0; NS.F.stk.a = 3; return NS.F.stk.a; }
+        var before = Object.getOwnPropertyNames(globalThis).length;
+        f();
+        console.log(Object.getOwnPropertyNames(globalThis).length - before);
+    """): '0\n',
 
-    'var NS = { stk: [] };\n'
-    'function f(...r) { NS.stk.length = 0; NS.stk.a = 3; return NS.stk.a; }\n'
-    'var before = Object.getOwnPropertyNames(globalThis).length;\n'
-    'f();\n'
-    'console.log(Object.getOwnPropertyNames(globalThis).length - before);\n': '0\n',
+    a_program("""
+        var NS = { stk: [] };
+        function f(...r) { NS.stk.length = 0; NS.stk.a = 3; return NS.stk.a; }
+        var before = Object.getOwnPropertyNames(globalThis).length;
+        f();
+        console.log(Object.getOwnPropertyNames(globalThis).length - before);
+    """): '0\n',
 }
 
 

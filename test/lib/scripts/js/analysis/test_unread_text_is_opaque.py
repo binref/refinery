@@ -4,6 +4,7 @@ whether it reads one as a program.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase, opportunity
@@ -18,43 +19,111 @@ from refinery.lib.scripts.js.parser import JsParser
 
 
 A_FILE_HOLDING_SOURCE_THE_PARSER_NEVER_READ = {
-    'var a = 1; function f(a b) { return a; } console.log(f(1));': (
-        'var a = 1;\nfunction f(a b) {\n  return a;\n}\nconsole.log(f(1));'
-    ),
-    'var a = 1; function f({a b}) { return a; } console.log(f(1));': (
-        'var a = 1;\nfunction f({ a b }) {\n  return a;\n}\nconsole.log(f(1));'
-    ),
-    'var v = 7;\nconsole.log(v q);': 'var v = 7;\nconsole.log(v q);',
-    'function helper() { return 42; }\nconsole.log(helper() q);': (
-        'function helper() {\n  return 42;\n}\nconsole.log(helper() q);'
-    ),
-    'var x = 1; x = y[a b]; console.log(x);': 'var x = 1;\nx = y[a b];\nconsole.log(x);',
-    'function f() { var x = 1; x = y[a b]; return x; } console.log(f());': (
-        'function f() {\n  var x = 1;\n  x = y[a b];\n  return x;\n}\nconsole.log(f());'
-    ),
-    'var e = 1;\ntry { g(); } catch (e f) { console.log(e); }': (
-        'var e = 1;\ntry { g(); } catch (e f) { console.log(e); }'
-    ),
-    'var dead = 1;\nconsole.log(2);\nfunction beacon() { fetch("http://x.invalid");': (
-        'var dead = 1;\nconsole.log(2);\nfunction beacon() {\n  fetch("http://x.invalid");'
-    ),
+    'var a = 1; function f(a b) { return a; } console.log(f(1));': inspect.cleandoc("""
+        var a = 1;
+        function f(a b) {
+          return a;
+        }
+        console.log(f(1));
+    """),
+    'var a = 1; function f({a b}) { return a; } console.log(f(1));': inspect.cleandoc("""
+        var a = 1;
+        function f({ a b }) {
+          return a;
+        }
+        console.log(f(1));
+    """),
+    inspect.cleandoc("""
+        var v = 7;
+        console.log(v q);
+    """): inspect.cleandoc("""
+        var v = 7;
+        console.log(v q);
+    """),
+    inspect.cleandoc("""
+        function helper() { return 42; }
+        console.log(helper() q);
+    """): inspect.cleandoc("""
+        function helper() {
+          return 42;
+        }
+        console.log(helper() q);
+    """),
+    'var x = 1; x = y[a b]; console.log(x);': inspect.cleandoc("""
+        var x = 1;
+        x = y[a b];
+        console.log(x);
+    """),
+    'function f() { var x = 1; x = y[a b]; return x; } console.log(f());': inspect.cleandoc("""
+        function f() {
+          var x = 1;
+          x = y[a b];
+          return x;
+        }
+        console.log(f());
+    """),
+    inspect.cleandoc("""
+        var e = 1;
+        try { g(); } catch (e f) { console.log(e); }
+    """): inspect.cleandoc("""
+        var e = 1;
+        try { g(); } catch (e f) { console.log(e); }
+    """),
+    inspect.cleandoc("""
+        var dead = 1;
+        console.log(2);
+        function beacon() { fetch("http://x.invalid");
+    """): inspect.cleandoc("""
+        var dead = 1;
+        console.log(2);
+        function beacon() {
+          fetch("http://x.invalid");
+    """),
 }
 
 THE_SAME_FILE_WITH_NOTHING_UNREAD_IN_IT = {
     'var a = 1; function f(b) { return a; } console.log(f(1));': 'console.log(1);',
-    'var a = 1; function f({b}) { return a; } console.log(f(1));': (
-        'function f({ b }) {\n  return 1;\n}\nconsole.log(f(1));'
-    ),
-    'var v = 7;\nconsole.log(v);': 'console.log(7);',
-    'function helper() { return 42; }\nconsole.log(helper());': 'console.log(42);',
-    'var x = 1; y[a]; console.log(x);': 'y[a];\nconsole.log(1);',
-    'function f() { var x = 1; x = y[a]; return x; } console.log(f());': (
-        'function f() {\n  var x;\n  x = y[a];\n  return x;\n}\nconsole.log(f());'
-    ),
-    'var e = 1;\ntry { g(); } catch (e) { console.log(e); }': (
-        'try {\n  g();\n} catch (e) {\n  console.log(e);\n}'
-    ),
-    'var dead = 1;\nconsole.log(2);\nfunction beacon() { fetch("http://x.invalid"); }': (
+    'var a = 1; function f({b}) { return a; } console.log(f(1));': inspect.cleandoc("""
+        function f({ b }) {
+          return 1;
+        }
+        console.log(f(1));
+    """),
+    inspect.cleandoc("""
+        var v = 7;
+        console.log(v);
+    """): 'console.log(7);',
+    inspect.cleandoc("""
+        function helper() { return 42; }
+        console.log(helper());
+    """): 'console.log(42);',
+    'var x = 1; y[a]; console.log(x);': inspect.cleandoc("""
+        y[a];
+        console.log(1);
+    """),
+    'function f() { var x = 1; x = y[a]; return x; } console.log(f());': inspect.cleandoc("""
+        function f() {
+          var x;
+          x = y[a];
+          return x;
+        }
+        console.log(f());
+    """),
+    inspect.cleandoc("""
+        var e = 1;
+        try { g(); } catch (e) { console.log(e); }
+    """): inspect.cleandoc("""
+        try {
+          g();
+        } catch (e) {
+          console.log(e);
+        }
+    """),
+    inspect.cleandoc("""
+        var dead = 1;
+        console.log(2);
+        function beacon() { fetch("http://x.invalid"); }
+    """): (
         'console.log(2);'
     ),
 }

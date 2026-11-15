@@ -394,7 +394,12 @@ class TestPs1ASoftFaultBeforeALiveTailInAnEmptyCatchIsKept(_Ps1FaultEscalation):
                   {_FOLLOWER}
                 }} catch {{ }}
             """)),
-            "try {\n  $Null = ($PSCommandPath -BXor 3)\n  Write-Host 'FOLLOWER_RAN'\n} catch {}",
+            inspect.cleandoc("""
+                try {
+                  $Null = ($PSCommandPath -BXor 3)
+                  Write-Host 'FOLLOWER_RAN'
+                } catch {}
+            """),
         )
 
     def test_a_command_discard_before_a_live_tail_under_a_stop_preference_is_kept(self):

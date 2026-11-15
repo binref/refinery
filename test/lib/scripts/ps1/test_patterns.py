@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase, fastest_processor_time, lines_executed, processor_time_ratio
 
 from refinery.lib.scripts.ps1 import patterns
@@ -44,7 +46,10 @@ class TestPs1WildcardRegex(TestBase):
         self.assertFalse(self._matches('abc', 'abc\n'))
         self.assertFalse(self._matches('*c', 'abc\n'))
         self.assertTrue(self._matches('abc?', 'abc\n'))
-        self.assertTrue(self._matches('a*c', 'a\nc'))
+        self.assertTrue(self._matches('a*c', inspect.cleandoc("""
+            a
+            c
+        """)))
 
     def test_every_star_matches_as_little_or_as_much_as_the_name_needs(self):
         for pattern, name, expected in (

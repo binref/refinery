@@ -61,79 +61,146 @@ _AN_OWN_CONVERSION_ANSWERS: dict[str, _Row] = {
     'function f() { var o = {valueOf: function () { return 5; }}; return o + 3; }'
     ' var x = f(); console.log(x);': _Row(
         '8\n',
-        _standing('var o = { valueOf: function() {\n    return 5;\n  } };\n  return o + 3;'),
+        _standing(inspect.cleandoc("""
+            var o = { valueOf: function() {
+                return 5;
+              } };
+              return o + 3;
+        """)),
         'console.log(8);',
     ),
     "function f() { var o = {toString: function () { return 'A'; }}; return 'x' + o; }"
     " var x = f(); console.log(x);": _Row(
         'xA\n',
-        _standing("var o = { toString: function() {\n    return 'A';\n  } };\n  return 'x' + o;"),
+        _standing(inspect.cleandoc("""
+            var o = { toString: function() {
+                return 'A';
+              } };
+              return 'x' + o;
+        """)),
         "console.log('xA');",
     ),
     "function f() { var o = {toString: function () { return 'A'; }}; return `x${o}`; }"
     ' var x = f(); console.log(x);': _Row(
         'xA\n',
-        _standing("var o = { toString: function() {\n    return 'A';\n  } };\n  return `x${o}`;"),
+        _standing(inspect.cleandoc("""
+            var o = { toString: function() {
+                return 'A';
+              } };
+              return `x${o}`;
+        """)),
         "console.log('xA');",
     ),
     "function f() { var o = {toString: function () { return 'A'; }}; return String(o); }"
     ' var x = f(); console.log(x);': _Row(
         'A\n',
-        _standing("var o = { toString: function() {\n    return 'A';\n  } };\n  return String(o);"),
+        _standing(inspect.cleandoc("""
+            var o = { toString: function() {
+                return 'A';
+              } };
+              return String(o);
+        """)),
         "console.log('A');",
     ),
     'function f() { var o = {valueOf: function () { return 5; }}; return Number(o); }'
     ' var x = f(); console.log(x);': _Row(
         '5\n',
-        _standing('var o = { valueOf: function() {\n    return 5;\n  } };\n  return Number(o);'),
+        _standing(inspect.cleandoc("""
+            var o = { valueOf: function() {
+                return 5;
+              } };
+              return Number(o);
+        """)),
         'console.log(5);',
     ),
     "function f() { var o = {toString: function () { return 'k'; }}; var q = {k: 7};"
     ' return q[o]; } var x = f(); console.log(x);': _Row(
         '7\n',
-        _standing("var o = { toString: function() {\n    return 'k';\n  } };\n  var q = { k: 7 };\n  return q[o];"),
+        _standing(inspect.cleandoc("""
+            var o = { toString: function() {
+                return 'k';
+              } };
+              var q = { k: 7 };
+              return q[o];
+        """)),
         'console.log(7);',
     ),
     "function f() { var o = {toString: function () { return 'k'; }}; var q = {k: 7};"
     ' return o in q; } var x = f(); console.log(x);': _Row(
         'true\n',
-        _standing("var o = { toString: function() {\n    return 'k';\n  } };\n  var q = { k: 7 };\n  return o in q;"),
+        _standing(inspect.cleandoc("""
+            var o = { toString: function() {
+                return 'k';
+              } };
+              var q = { k: 7 };
+              return o in q;
+        """)),
         'console.log(true);',
     ),
     'function f() { var o = {valueOf: function () { return 5; }}; return o * 3; }'
     ' var x = f(); console.log(x);': _Row(
         '15\n',
-        _standing('var o = { valueOf: function() {\n    return 5;\n  } };\n  return o * 3;'),
+        _standing(inspect.cleandoc("""
+            var o = { valueOf: function() {
+                return 5;
+              } };
+              return o * 3;
+        """)),
         'console.log(15);',
     ),
     'function f() { var o = {valueOf: function () { return 5; }}; return +o; }'
     ' var x = f(); console.log(x);': _Row(
         '5\n',
-        _standing('var o = { valueOf: function() {\n    return 5;\n  } };\n  return +o;'),
+        _standing(inspect.cleandoc("""
+            var o = { valueOf: function() {
+                return 5;
+              } };
+              return +o;
+        """)),
         'console.log(5);',
     ),
     'function f() { var o = {valueOf: function () { return 5; }}; return o++; }'
     ' var x = f(); console.log(x);': _Row(
         '5\n',
-        _standing('var o = { valueOf: function() {\n    return 5;\n  } };\n  return o++;'),
+        _standing(inspect.cleandoc("""
+            var o = { valueOf: function() {
+                return 5;
+              } };
+              return o++;
+        """)),
         'console.log(5);',
     ),
     "function f() { var o = {toString: function () { return 'a'; }}; return o < 'b'; }"
     " var x = f(); console.log(x);": _Row(
         'true\n',
-        _standing("var o = { toString: function() {\n    return 'a';\n  } };\n  return o < 'b';"),
+        _standing(inspect.cleandoc("""
+            var o = { toString: function() {
+                return 'a';
+              } };
+              return o < 'b';
+        """)),
         'console.log(true);',
     ),
     'function f() { var o = {valueOf: function () { return 5; }}; return o == 5; }'
     ' var x = f(); console.log(x);': _Row(
         'true\n',
-        _standing('var o = { valueOf: function() {\n    return 5;\n  } };\n  return o == 5;'),
+        _standing(inspect.cleandoc("""
+            var o = { valueOf: function() {
+                return 5;
+              } };
+              return o == 5;
+        """)),
         'console.log(true);',
     ),
     "function f() { var o = {toString: function () { return 'A'; }}; return [o] + ''; }"
     " var x = f(); console.log(x);": _Row(
         'A\n',
-        _standing("var o = { toString: function() {\n    return 'A';\n  } };\n  return [o] + '';"),
+        _standing(inspect.cleandoc("""
+            var o = { toString: function() {
+                return 'A';
+              } };
+              return [o] + '';
+        """)),
         "console.log('A');",
     ),
 }
@@ -143,11 +210,23 @@ _A_WRITTEN_CHAIN_ANSWERS: dict[str, _Row] = {
     'function f() { Object.prototype.valueOf = function () { return 5; }; var o = {p: 1};'
     ' return o + 3; } var x = f(); console.log(x);': _Row(
         '8\n',
-        _standing('Object.prototype.valueOf = function() {\n    return 5;\n  };\n  var o = { p: 1 };\n  return o + 3;')),
+        _standing(inspect.cleandoc("""
+            Object.prototype.valueOf = function() {
+                return 5;
+              };
+              var o = { p: 1 };
+              return o + 3;
+        """))),
     'function f() { Array.prototype.valueOf = function () { return 5; }; var u = [1];'
     ' return u + 3; } var x = f(); console.log(x);': _Row(
         '8\n',
-        _standing('Array.prototype.valueOf = function() {\n    return 5;\n  };\n  var u = [1];\n  return u + 3;')),
+        _standing(inspect.cleandoc("""
+            Array.prototype.valueOf = function() {
+                return 5;
+              };
+              var u = [1];
+              return u + 3;
+        """))),
 }
 
 
@@ -156,9 +235,21 @@ _A_PRIMITIVE_FIRST_OBJECT_SECOND: dict[str, _Row] = {
     ' { out += v * 2; v = { valueOf: function () { return 7; } }; } return out; }'
     ' var x = f(); console.log(x);': _Row(
         '24\n',
-        'function f() {\n  var v = 5;\n  var out = 0;\n  for (var i = 0; i < 2; i++) {\n'
-        '    out += v * 2;\n    v = { valueOf: function() {\n      return 7;\n    } };\n  }\n'
-        '  return out;\n}\nvar x = f();\nconsole.log(x);',
+        inspect.cleandoc("""
+            function f() {
+              var v = 5;
+              var out = 0;
+              for (var i = 0; i < 2; i++) {
+                out += v * 2;
+                v = { valueOf: function() {
+                  return 7;
+                } };
+              }
+              return out;
+            }
+            var x = f();
+            console.log(x);
+        """),
         'console.log(24);',
     ),
 }
@@ -384,5 +475,10 @@ class TestADiscardedCallOverPrimitivesIsRemoved(unittest.TestCase):
     def test_the_calls_are_removed(self):
         self.assertEqual(
             'console.log(1);',
-            folded('parseInt("5");\nMath.max(1, 2);\nisNaN(3);\nconsole.log(1);'),
+            folded(inspect.cleandoc("""
+                parseInt("5");
+                Math.max(1, 2);
+                isNaN(3);
+                console.log(1);
+            """)),
         )

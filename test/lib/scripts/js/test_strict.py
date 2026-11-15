@@ -367,18 +367,36 @@ class TestJsStrict(TestBase):
 
 
 A_STRICT_ERROR_UNDER_MODULE_SYNTAX = [
-    'export const a = 1;\nwith ({}) {}',
-    "import 'fs';\nvar q = 010;",
-    'export default 1;\nvar eval = 1;',
-    'var q = import.meta;\ndelete q;',
-    "export * from 'fs';\nfunction f(q, q) {}",
+    inspect.cleandoc("""
+        export const a = 1;
+        with ({}) {}
+    """),
+    inspect.cleandoc("""
+        import 'fs';
+        var q = 010;
+    """),
+    inspect.cleandoc("""
+        export default 1;
+        var eval = 1;
+    """),
+    inspect.cleandoc("""
+        var q = import.meta;
+        delete q;
+    """),
+    inspect.cleandoc("""
+        export * from 'fs';
+        function f(q, q) {}
+    """),
 ]
 
 THE_SAME_FILES_WITHOUT_THE_MODULE_SYNTAX = [
     'with ({}) {}',
     'var q = 010;',
     'var eval = 1;',
-    'var q = 1;\ndelete q;',
+    inspect.cleandoc("""
+        var q = 1;
+        delete q;
+    """),
     'function f(q, q) {}',
 ]
 

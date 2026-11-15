@@ -3,6 +3,7 @@ from __future__ import annotations
 from inspect import cleandoc
 
 from test import backlog, opportunity, todo, wontfix
+from test.lib.scripts.ps1 import a_program
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1 import data
@@ -49,36 +50,37 @@ class TestPs1FunctionEvaluator(TestPs1):
         self._assertKept(source)
 
     def test_a_switch_binds_the_pipeline_variable_its_clauses_read(self):
-        data = "function F { foreach ($_ in 'a') { }; switch ('zz') { default { $_ } } }\nF"
+        data = cleandoc("""
+            function F { foreach ($_ in 'a') { }; switch ('zz') { default { $_ } } }
+            F
+        """)
         result = self._deobfuscate(data)
         self.assertEqual(result, "'zz'")
 
     def test_a_switch_restores_the_pipeline_variable_once_its_scan_ends(self):
-        data = "function F { foreach ($_ in 'a') { }; switch ('zz') { 'qq' { $_ } }; $_ }\nF"
+        data = cleandoc("""
+            function F { foreach ($_ in 'a') { }; switch ('zz') { 'qq' { $_ } }; $_ }
+            F
+        """)
         result = self._deobfuscate(data)
         self.assertEqual(result, "'a'")
 
     def test_stride_extraction(self):
-        data = (
-            "Function F ([String]$s){"
-            "For($i=1; $i -lt $s.Length-1; $i+=2)"
-            "{$r=$r+$s.Substring($i, 1)};$r;}"
-            "$x = F 'HaEbLcLdOeX'"
-            "\nWrite-Output $x"
-        )
+        data = cleandoc("""
+            Function F ([String]$s){For($i=1; $i -lt $s.Length-1; $i+=2){$r=$r+$s.Substring($i, 1)};$r;}$x = F 'HaEbLcLdOeX'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('abcde', result)
         self.assertNotIn('function', result.lower())
 
     def test_multiple_call_sites(self):
-        data = (
-            "Function D ([String]$s){"
-            "For($i=1; $i -lt $s.Length-1; $i+=2)"
-            "{$r=$r+$s.Substring($i, 1)};$r;}"
-            "$a = D 'XaYbZcX'\n"
-            "$b = D 'P1Q2R3X'\n"
-            "Write-Output $a\nWrite-Output $b"
-        )
+        data = cleandoc("""
+            Function D ([String]$s){For($i=1; $i -lt $s.Length-1; $i+=2){$r=$r+$s.Substring($i, 1)};$r;}$a = D 'XaYbZcX'
+            $b = D 'P1Q2R3X'
+            Write-Output $a
+            Write-Output $b
+        """)
         result = self._deobfuscate(data)
         self.assertIn('abc', result)
         self.assertIn('123', result)
@@ -96,24 +98,18 @@ class TestPs1FunctionEvaluator(TestPs1):
         self.assertIn('function', result.lower())
 
     def test_while_loop_variant(self):
-        data = (
-            "Function W ([String]$s){"
-            "$i=0; $r=''; "
-            "While($i -lt $s.Length){$r=$r+$s.Substring($i, 1); $i+=2};"
-            "$r;}"
-            "$x = W 'HEeLlLlOo'\nWrite-Output $x"
-        )
+        data = cleandoc("""
+            Function W ([String]$s){$i=0; $r=''; While($i -lt $s.Length){$r=$r+$s.Substring($i, 1); $i+=2};$r;}$x = W 'HEeLlLlOo'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('Hello', result)
 
     def test_foreach_tochararray(self):
-        data = (
-            "Function Rev ([String]$s){"
-            "$a = $s.ToCharArray(); $r = '';"
-            "ForEach($c in $a){$r = $c + $r};"
-            "$r;}"
-            "$x = Rev 'olleH'\nWrite-Output $x"
-        )
+        data = cleandoc("""
+            Function Rev ([String]$s){$a = $s.ToCharArray(); $r = '';ForEach($c in $a){$r = $c + $r};$r;}$x = Rev 'olleH'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('Hello', result)
 
@@ -149,13 +145,10 @@ class TestPs1FunctionEvaluator(TestPs1):
         self._assertDeobfuscatesToOneOf(source, definition_kept, "Write-Host 'a'")
 
     def test_function_definition_kept_when_not_all_resolved(self):
-        data = (
-            "Function D ([String]$s){"
-            "For($i=1; $i -lt $s.Length-1; $i+=2)"
-            "{$r=$r+$s.Substring($i, 1)};$r;}"
-            "$a = D 'XaYbX'\n"
-            "$b = D $var"
-        )
+        data = cleandoc("""
+            Function D ([String]$s){For($i=1; $i -lt $s.Length-1; $i+=2){$r=$r+$s.Substring($i, 1)};$r;}$a = D 'XaYbX'
+            $b = D $var
+        """)
         result = self._deobfuscate(data)
         self.assertIn('ab', result)
         self.assertIn('function', result.lower())
@@ -185,98 +178,66 @@ class TestPs1FunctionEvaluator(TestPs1):
         self.assertIn('HELLO', result)
 
     def test_new_object_byte_array(self):
-        data = (
-            "Function F ([Int]$n){"
-            "$a = New-Object byte[] $n;"
-            "$r = '';"
-            "For($i=0; $i -lt $n; $i+=1){$r = $r + $a[$i]};"
-            "$r;}"
-            "$x = F 3\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            Function F ([Int]$n){$a = New-Object byte[] $n;$r = '';For($i=0; $i -lt $n; $i+=1){$r = $r + $a[$i]};$r;}$x = F 3
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('000', result)
 
     def test_convert_tobyte_static(self):
-        data = (
-            "Function F ([String]$s){"
-            "$r = [convert]::ToByte($s, 16);"
-            "$r;}"
-            "$x = F 'FF'\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            Function F ([String]$s){$r = [convert]::ToByte($s, 16);$r;}$x = F 'FF'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('255', result)
 
     def test_a_based_convert_wider_than_its_width_refuses_the_call(self):
-        data = (
-            "Function F ([String]$s){"
-            "$r = [Convert]::ToByte($s, 16);"
-            "$r;}"
-            "$x = F '1FF'\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            Function F ([String]$s){$r = [Convert]::ToByte($s, 16);$r;}$x = F '1FF'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('function', result.lower())
 
     def test_a_based_convert_of_a_signed_base_ten_numeral_out_of_range_refuses_the_call(self):
-        data = (
-            "Function F ([String]$s){"
-            "$r = [Convert]::ToInt16($s, 10);"
-            "$r;}"
-            "$x = F '-40000'\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            Function F ([String]$s){$r = [Convert]::ToInt16($s, 10);$r;}$x = F '-40000'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('function', result.lower())
 
     def test_a_based_convert_of_a_numeral_only_python_reads_refuses_the_call(self):
-        data = (
-            "Function F ([String]$s){"
-            "$r = [Convert]::ToInt32($s, 10);"
-            "$r;}"
-            "$x = F '1_0'\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            Function F ([String]$s){$r = [Convert]::ToInt32($s, 10);$r;}$x = F '1_0'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('function', result.lower())
 
     def test_a_based_convert_folds_the_pattern_of_the_widest_width(self):
-        data = (
-            "Function F ([String]$s){"
-            "$r = [Convert]::ToInt64($s, 16);"
-            "$r;}"
-            "$x = F 'FFFFFFFFFFFFFFFF'\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            Function F ([String]$s){$r = [Convert]::ToInt64($s, 16);$r;}$x = F 'FFFFFFFFFFFFFFFF'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('-1', result)
 
     def test_a_continue_in_a_switch_clause_runs_the_tail_of_its_loop(self):
-        data = (
-            "Function F {"
-            "$o = '';"
-            "Foreach($i in 1, 2){"
-            "Switch(1){default{continue}};"
-            "$o = $o + 'x'};"
-            "$o;}"
-            "$x = F\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            Function F {$o = '';Foreach($i in 1, 2){Switch(1){default{continue}};$o = $o + 'x'};$o;}$x = F
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertEqual(result, "Write-Output 'xx'")
 
     def test_a_label_spelled_with_its_colon_ends_the_switch_it_is_written_in(self):
-        data = (
-            "Function F {"
-            "$o = '';"
-            ":outer Foreach($i in 1, 2){"
-            "Switch(1){default{break :outer}};"
-            "$o = $o + 'x'};"
-            "$o;}"
-            "$x = F\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            Function F {$o = '';:outer Foreach($i in 1, 2){Switch(1){default{break :outer}};$o = $o + 'x'};$o;}$x = F
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertEqual(result, "Write-Output 'xx'")
 
@@ -295,114 +256,98 @@ class TestPs1FunctionEvaluator(TestPs1):
         self.assertEqual(result, "Write-Output 'yxyx'")
 
     def test_a_labelled_break_out_of_a_switch_leaves_the_whole_loop(self):
-        data = (
-            "Function F {"
-            "$o = '';"
-            ":outer Foreach($i in 1, 2){"
-            "Switch(1){default{break outer}};"
-            "$o = $o + 'x'};"
-            "$o;}"
-            "$x = F\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            Function F {$o = '';:outer Foreach($i in 1, 2){Switch(1){default{break outer}};$o = $o + 'x'};$o;}$x = F
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertEqual(result, "Write-Output ''")
 
     def test_a_switch_over_a_collection_refuses_the_call(self):
-        data = (
-            "Function F {"
-            "$t = '';"
-            "Switch(1, 2){"
-            "1{$t = $t + 'a'}"
-            "2{$t = $t + 'b'}};"
-            "$t;}"
-            "$x = F\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            Function F {$t = '';Switch(1, 2){1{$t = $t + 'a'}2{$t = $t + 'b'}};$t;}$x = F
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('function', result.lower())
 
     def test_encoding_getstring(self):
-        data = (
-            "Function F {"
-            "$a = New-Object byte[] 3;"
-            "$a[0] = 72; $a[1] = 105; $a[2] = 33;"
-            "[System.Text.Encoding]::ASCII.GetString($a);}"
-            "$x = F\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            Function F {$a = New-Object byte[] 3;$a[0] = 72; $a[1] = 105; $a[2] = 33;[System.Text.Encoding]::ASCII.GetString($a);}$x = F
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('Hi!', result)
 
     def test_hex_xor_decode_function(self):
-        data = (
-            "Function F ([String]$s){\n"
-            "$a = New-Object byte[] ($s.Length / 2)\n"
-            "For($i=0; $i -lt $s.Length; $i+=2){\n"
-            "$a[$i/2] = [convert]::ToByte($s.Substring($i, 2), 16)\n"
-            "$a[$i/2] = ($a[$i/2] -bxor 128)\n"
-            "}\n"
-            "[String][System.Text.Encoding]::ASCII.GetString($a)\n"
-            "}\n"
-            "$x = F 'C8E5ECECEF'\n"
-            "Write-Output $x\n"
-        )
+        data = a_program("""
+            Function F ([String]$s){
+            $a = New-Object byte[] ($s.Length / 2)
+            For($i=0; $i -lt $s.Length; $i+=2){
+            $a[$i/2] = [convert]::ToByte($s.Substring($i, 2), 16)
+            $a[$i/2] = ($a[$i/2] -bxor 128)
+            }
+            [String][System.Text.Encoding]::ASCII.GetString($a)
+            }
+            $x = F 'C8E5ECECEF'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('Hello', result)
         self.assertNotIn('function', result.lower())
 
     def test_base64_xor_decode_function(self):
-        data = (
-            "Function F ([String]$s, [Byte]$k) {\n"
-            "$a = [System.Convert]::FromBase64String($s)\n"
-            "For ($i = 0; $i -lt $a.Length; $i++) {\n"
-            "$a[$i] = $a[$i] -bxor $k\n"
-            "}\n"
-            "return [System.Text.Encoding]::ASCII.GetString($a)\n"
-            "}\n"
-            "$x = F 'aEVMTE8=' 0x20\n"
-            "Write-Output $x\n"
-        )
+        data = a_program("""
+            Function F ([String]$s, [Byte]$k) {
+            $a = [System.Convert]::FromBase64String($s)
+            For ($i = 0; $i -lt $a.Length; $i++) {
+            $a[$i] = $a[$i] -bxor $k
+            }
+            return [System.Text.Encoding]::ASCII.GetString($a)
+            }
+            $x = F 'aEVMTE8=' 0x20
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('Hello', result)
         self.assertNotIn('function', result.lower())
 
     def test_named_parameters(self):
-        data = (
-            "function F { Param([string]$a, [string]$b); $a + $b }\n"
-            "$x = F -a 'Hel' -b 'lo'\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            function F { Param([string]$a, [string]$b); $a + $b }
+            $x = F -a 'Hel' -b 'lo'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('Hello', result)
         self.assertNotIn('function', result.lower())
 
     def test_named_parameters_unordered(self):
-        data = (
-            "function G { Param([string]$first, [string]$second); $second + $first }\n"
-            "$x = G -second 'World' -first 'Hello'\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            function G { Param([string]$first, [string]$second); $second + $first }
+            $x = G -second 'World' -first 'Hello'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn('WorldHello', result)
         self.assertNotIn('function', result.lower())
 
     def test_constant_inlining_respects_function_scope(self):
-        data = (
-            "$a = 'INLINED'\n"
-            "function F { Param([string]$a); $a }\n"
-            "$x = F -a 'Hello'\n"
-            "Write-Output $x"
-        )
+        data = cleandoc("""
+            $a = 'INLINED'
+            function F { Param([string]$a); $a }
+            $x = F -a 'Hello'
+            Write-Output $x
+        """)
         result = self._deobfuscate(data)
         self.assertIn("Write-Output 'Hello'", result)
 
     def test_iex_trampoline_function(self):
-        data = (
-            'function Wrapper { Param([string]$code); Invoke-Expression $code > $Null 2> $Null }\n'
-            'function Builder { Param([string]$a, [string]$b); $r = $a + $b; Wrapper "$r" }\n'
-            'Builder -a "Write-Host " -b "Hello"'
-        )
+        data = cleandoc("""
+            function Wrapper { Param([string]$code); Invoke-Expression $code > $Null 2> $Null }
+            function Builder { Param([string]$a, [string]$b); $r = $a + $b; Wrapper "$r" }
+            Builder -a "Write-Host " -b "Hello"
+        """)
         self.assertEqual(self._deobfuscate(data), 'Write-Host Hello')
 
     def test_iex_of_a_variable_the_caller_holds_yields_its_text_and_runs_nothing(self):
@@ -534,13 +479,13 @@ class TestPs1FunctionEvaluator(TestPs1):
         self._assertDeobfuscatesToOneOf(source, source)
 
     def test_decoy_function_producing_garbage_is_pruned(self):
-        data = (
-            "function IexWrap { Param([string]$c); Invoke-Expression $c }\n"
-            "function Decoy { Param([string]$a); IexWrap ($a + '!!!###@@@') }\n"
-            "function Real { Param([string]$a, [string]$b); IexWrap ($a + $b) }\n"
-            "Decoy -a '!!!###@@@'\n"
-            "Real -a 'Write-Host ' -b 'OK'"
-        )
+        data = cleandoc("""
+            function IexWrap { Param([string]$c); Invoke-Expression $c }
+            function Decoy { Param([string]$a); IexWrap ($a + '!!!###@@@') }
+            function Real { Param([string]$a, [string]$b); IexWrap ($a + $b) }
+            Decoy -a '!!!###@@@'
+            Real -a 'Write-Host ' -b 'OK'
+        """)
         result = self._deobfuscate(data)
         self.assertNotIn('function Decoy', result)
         self.assertNotIn('Decoy', result.split('Write-Host')[0])
@@ -548,11 +493,11 @@ class TestPs1FunctionEvaluator(TestPs1):
         self.assertIn('OK', result)
 
     def test_helper_only_called_from_function_bodies_is_pruned(self):
-        data = (
-            "function Helper { Param([string]$x); Invoke-Expression $x }\n"
-            "function Caller { Param([string]$s); Helper $s }\n"
-            "Caller -s 'Write-Host Done'"
-        )
+        data = cleandoc("""
+            function Helper { Param([string]$x); Invoke-Expression $x }
+            function Caller { Param([string]$s); Helper $s }
+            Caller -s 'Write-Host Done'
+        """)
         result = self._deobfuscate(data)
         self.assertNotIn('function Helper', result)
         self.assertNotIn('function Caller', result)
@@ -588,11 +533,11 @@ class TestPs1ForEachPipeline(TestPs1):
         self.assertIn('item: A', result)
 
     def test_foreach_pipeline_split_join_chain(self):
-        data = (
-            "$s = '48 65 6C 6C 6F'\n"
-            "$r = $s -split ' ' | ForEach-Object {[char][byte]\"0x$_\"}\n"
-            "$r -join ''"
-        )
+        data = cleandoc("""
+            $s = '48 65 6C 6C 6F'
+            $r = $s -split ' ' | ForEach-Object {[char][byte]"0x$_"}
+            $r -join ''
+        """)
         result = self._deobfuscate_iterative(data)
         self.assertIn('Hello', result)
 
@@ -660,7 +605,10 @@ class TestPs1EmulatorExtra(TestPs1):
 
     def test_emulated_shift_uses_int32_semantics(self):
         result = self._apply(
-            'function f ($n) { $n -shl 32 }\n$x = f 1', Ps1FunctionEvaluator)
+            cleandoc("""
+                function f ($n) { $n -shl 32 }
+                $x = f 1
+            """), Ps1FunctionEvaluator)
         self.assertIn('$x = 1', result)
         self.assertNotIn('4294967296', result)
 
@@ -746,7 +694,10 @@ class TestPs1EmulatorExtra(TestPs1):
     def test_a_redirected_call_is_not_folded_into_its_value(self):
         for redirection in (r'> C:\log.txt', r'>> C:\log.txt', '1>&2', '2>&1', r'*> C:\log.txt'):
             with self.subTest(redirection):
-                source = F"function f {{ 'FOLDED' }}\n$x = f {redirection}"
+                source = cleandoc(F"""
+                    function f {{ 'FOLDED' }}
+                    $x = f {redirection}
+                """)
                 self.assertEqual(self._apply(source, Ps1FunctionEvaluator), cleandoc(F"""
                     function f {{
                       'FOLDED'
@@ -791,13 +742,20 @@ class TestPs1EmulatorExtra(TestPs1):
         ):
             with self.subTest(export):
                 result = self._apply(
-                    F"{export}\nfunction f {{ 'FOLDED' }}\n$x = f", Ps1FunctionEvaluator)
+                    cleandoc(F"""
+                        {export}
+                        function f {{ 'FOLDED' }}
+                        $x = f
+                    """), Ps1FunctionEvaluator)
                 self.assertIn('function f', result)
                 self.assertIn('FOLDED', result)
 
     def test_a_definition_no_export_names_is_still_removed_after_folding(self):
         self.assertEqual(
-            self._apply("function f { 'FOLDED' }\n$x = f", Ps1FunctionEvaluator),
+            self._apply(cleandoc("""
+                function f { 'FOLDED' }
+                $x = f
+            """), Ps1FunctionEvaluator),
             "$x = 'FOLDED'",
         )
 
@@ -1010,8 +968,14 @@ class TestPs1AReturnWritesTheStreamTheExpressionAloneWrites(TestPs1):
 
     def _both_values(self, body: str) -> tuple[str, str]:
         return (
-            self._apply(F'function f {{ {body} }}\n$x = f', Ps1FunctionEvaluator),
-            self._apply(F'function f {{ return {body} }}\n$x = f', Ps1FunctionEvaluator),
+            self._apply(cleandoc(F"""
+                function f {{ {body} }}
+                $x = f
+            """), Ps1FunctionEvaluator),
+            self._apply(cleandoc(F"""
+                function f {{ return {body} }}
+                $x = f
+            """), Ps1FunctionEvaluator),
         )
 
     def test_an_array_handed_out_is_one_object_whichever_spelling_writes_it(self):
@@ -1087,11 +1051,19 @@ class TestPs1EmulatorRedirections(TestPs1):
 
     def test_a_redirected_foreach_pipeline_is_not_folded_into_its_value(self):
         self._assertUnchanged(
-            "@('a', 'b') | ForEach-Object {\n  $_\n} > C:\\o.txt", Ps1ForEachPipeline)
+            cleandoc("""
+                @('a', 'b') | ForEach-Object {
+                  $_
+                } > C:\\o.txt
+            """), Ps1ForEachPipeline)
 
     def test_a_merge_on_a_foreach_pipeline_is_refused_too(self):
         self._assertUnchanged(
-            "@('a', 'b') | ForEach-Object {\n  $_\n} 2>&1", Ps1ForEachPipeline)
+            cleandoc("""
+                @('a', 'b') | ForEach-Object {
+                  $_
+                } 2>&1
+            """), Ps1ForEachPipeline)
 
     def test_an_unredirected_foreach_pipeline_is_still_folded(self):
         self.assertEqual(
@@ -1099,7 +1071,11 @@ class TestPs1EmulatorRedirections(TestPs1):
 
     def test_a_definition_a_redirected_call_still_names_is_kept(self):
         result = self._apply(
-            "function F { 'V' }\n$x = F\nF > C:\\o.txt", Ps1FunctionEvaluator)
+            cleandoc("""
+                function F { 'V' }
+                $x = F
+                F > C:\\o.txt
+            """), Ps1FunctionEvaluator)
         self.assertIn('function F', result)
         self.assertIn("$x = 'V'", result)
 

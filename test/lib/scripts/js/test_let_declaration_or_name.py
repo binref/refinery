@@ -147,29 +147,61 @@ THE_WORD_LET_OWNED_BY_ANOTHER_BINDER = [
 
 LET_IN_A_STATEMENT_LIST = [
     ('{ let a = 42; log.push(a); }', ['let declares a']),
-    ('{ let\na = 42; log.push(a); }', ['let declares a']),
+    (inspect.cleandoc("""
+        { let
+        a = 42; log.push(a); }
+    """), ['let declares a']),
     ('switch (1) { case 1: let a = 42; }', ['let declares a']),
     ('{ let.x = 42; log.push(let.x); }', [LET_IS_A_NAME] * 2),
 ]
 
 LET_IN_A_SINGLE_STATEMENT_BODY = [
     ('if (true) let.x = 42;', [LET_IS_A_NAME]),
-    ('if (0) let\na = 42;', [LET_IS_A_NAME]),
-    ('if (1) {} else let\na = 42;', [LET_IS_A_NAME]),
-    ('while (0) let\na = 42;', [LET_IS_A_NAME]),
-    ('var let = 9;\ndo let\nwhile (0);\na = 42;', ['var declares let', LET_IS_A_NAME]),
+    (inspect.cleandoc("""
+        if (0) let
+        a = 42;
+    """), [LET_IS_A_NAME]),
+    (inspect.cleandoc("""
+        if (1) {} else let
+        a = 42;
+    """), [LET_IS_A_NAME]),
+    (inspect.cleandoc("""
+        while (0) let
+        a = 42;
+    """), [LET_IS_A_NAME]),
+    (inspect.cleandoc("""
+        var let = 9;
+        do let
+        while (0);
+        a = 42;
+    """), ['var declares let', LET_IS_A_NAME]),
     (
-        'var let = 9;\nfor (var i = 0; i < 1; i++) let\na = 42;',
+        inspect.cleandoc("""
+            var let = 9;
+            for (var i = 0; i < 1; i++) let
+            a = 42;
+        """),
         ['var declares let', 'var declares i', LET_IS_A_NAME],
     ),
-    ('var let = 9;\nl: let\na = 42;', ['var declares let', LET_IS_A_NAME]),
-    ('var let = 9;\nwith (Math) let\na = 42;', ['var declares let', LET_IS_A_NAME]),
+    (inspect.cleandoc("""
+        var let = 9;
+        l: let
+        a = 42;
+    """), ['var declares let', LET_IS_A_NAME]),
+    (inspect.cleandoc("""
+        var let = 9;
+        with (Math) let
+        a = 42;
+    """), ['var declares let', LET_IS_A_NAME]),
 ]
 
 A_LET_BINDING_NO_SINGLE_STATEMENT_BODY_TAKES = [
     'if (0) let a = 42;',
     'if (0) let [a] = [42];',
-    'if (0) let\n[a] = [42];',
+    inspect.cleandoc("""
+        if (0) let
+        [a] = [42];
+    """),
     'if (0) let {a} = {};',
 ]
 
@@ -294,7 +326,10 @@ class TestJsLetDeclarationOrName(TestBase):
                 self.assertEqual(self._let_readings(source), expected)
 
     def test_the_assignment_a_split_body_leaves_is_the_next_statement(self):
-        script = JsParser('if (0) let\nx = 1;').parse()
+        script = JsParser(inspect.cleandoc("""
+            if (0) let
+            x = 1;
+        """)).parse()
         self.assertEqual(is_well_formed(script), True)
         self.assertEqual(len(script.body), 2)
         self.assertEqual(JsSynthesizer().convert(script.body[1]), 'x = 1;')

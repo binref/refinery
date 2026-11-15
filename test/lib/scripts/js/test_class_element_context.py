@@ -13,6 +13,7 @@ may ever be fed to this.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase
@@ -200,7 +201,13 @@ class TestTheVerdictAnswersAsNodeDoes(TestBase):
     def test_await_in_an_instance_initializer_is_the_name_it_was_written_as(self):
         source = 'async function f() { class C { p = await; } }'
         self.assertEqual(
-            printed(source), 'async function f() {\n  class C {\n    p = await;\n  }\n}'
+            printed(source), inspect.cleandoc("""
+                async function f() {
+                  class C {
+                    p = await;
+                  }
+                }
+            """)
         )
 
 

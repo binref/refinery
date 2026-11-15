@@ -134,12 +134,18 @@ class TestPs1CommandDenotation(TestBase):
 
     def test_a_builtin_alias_wins_over_a_function_of_the_same_name(self):
         self.assertEqual(
-            _denotation("function echo { 'x' }\necho", 'echo'),
+            _denotation(inspect.cleandoc("""
+                function echo { 'x' }
+                echo
+            """), 'echo'),
             Denotation(CommandKind.ALIAS, 'Write-Output'))
 
     def test_a_function_wins_over_a_cmdlet_of_the_same_name(self):
         self.assertEqual(
-            _denotation("function Get-Content { 'x' }\nGet-Content", 'Get-Content'),
+            _denotation(inspect.cleandoc("""
+                function Get-Content { 'x' }
+                Get-Content
+            """), 'Get-Content'),
             Denotation(CommandKind.FUNCTION, 'Get-Content'))
 
     def test_a_function_namespace_assignment_takes_the_name_from_its_cmdlet(self):
@@ -147,12 +153,18 @@ class TestPs1CommandDenotation(TestBase):
             _denotation('Get-ChildItem', 'Get-ChildItem'),
             Denotation(CommandKind.CMDLET, 'Get-ChildItem'))
         self.assertNotEqual(
-            _denotation("${function:Get-ChildItem} = { 'x' }\nGet-ChildItem", 'Get-ChildItem'),
+            _denotation(inspect.cleandoc("""
+                ${function:Get-ChildItem} = { 'x' }
+                Get-ChildItem
+            """), 'Get-ChildItem'),
             Denotation(CommandKind.CMDLET, 'Get-ChildItem'))
 
     def test_a_builtin_alias_wins_over_a_function_namespace_assignment(self):
         self.assertEqual(
-            _denotation("${function:gci} = { 'x' }\ngci", 'gci'),
+            _denotation(inspect.cleandoc("""
+                ${function:gci} = { 'x' }
+                gci
+            """), 'gci'),
             Denotation(CommandKind.ALIAS, 'Get-ChildItem'))
 
     def test_a_cmdlet_named_directly_denotes_its_canonical_spelling(self):
@@ -168,49 +180,80 @@ class TestPs1CommandDenotation(TestBase):
     def test_a_script_alias_resolves_to_its_target_positional_named_and_mixed(self):
         expected = Denotation(CommandKind.ALIAS, 'Get-Process')
         for source in (
-            'Set-Alias foo Get-Process\nfoo',
-            'Set-Alias -Name foo -Value Get-Process\nfoo',
-            'Set-Alias foo -Value Get-Process\nfoo',
+            inspect.cleandoc("""
+                Set-Alias foo Get-Process
+                foo
+            """),
+            inspect.cleandoc("""
+                Set-Alias -Name foo -Value Get-Process
+                foo
+            """),
+            inspect.cleandoc("""
+                Set-Alias foo -Value Get-Process
+                foo
+            """),
         ):
             with self.subTest(source=source):
                 self.assertEqual(_denotation(source, 'foo'), expected)
 
     def test_a_use_before_its_alias_definition_denotes_no_command(self):
         self.assertEqual(
-            _denotation('foo\nSet-Alias foo Get-Process', 'foo'),
+            _denotation(inspect.cleandoc("""
+                foo
+                Set-Alias foo Get-Process
+            """), 'foo'),
             Denotation(CommandKind.NOTHING, None))
 
     def test_an_alias_defined_in_a_function_body_does_not_reach_an_outer_use(self):
         self.assertEqual(
-            _denotation('function f { Set-Alias foo Get-Process }\nfoo', 'foo'),
+            _denotation(inspect.cleandoc("""
+                function f { Set-Alias foo Get-Process }
+                foo
+            """), 'foo'),
             Denotation(CommandKind.NOTHING, None))
 
     def test_a_cycle_of_aliases_denotes_no_command_and_terminates(self):
         self.assertEqual(
-            _denotation('Set-Alias a b\nSet-Alias b a\na', 'a'),
+            _denotation(inspect.cleandoc("""
+                Set-Alias a b
+                Set-Alias b a
+                a
+            """), 'a'),
             Denotation(CommandKind.NOTHING, None))
 
     def test_an_alias_whose_target_is_a_wildcard_denotes_no_command(self):
         self.assertEqual(
-            _denotation('Set-Alias foo Get-*\nfoo', 'foo'),
+            _denotation(inspect.cleandoc("""
+                Set-Alias foo Get-*
+                foo
+            """), 'foo'),
             Denotation(CommandKind.NOTHING, None))
 
     def test_a_set_alias_onto_an_existing_builtin_alias_is_unknown(self):
         self.assertEqual(
-            _denotation('Set-Alias gci Get-Process\ngci', 'gci'),
+            _denotation(inspect.cleandoc("""
+                Set-Alias gci Get-Process
+                gci
+            """), 'gci'),
             Denotation(CommandKind.UNKNOWN, None))
 
     @opportunity
     def test_a_forced_set_alias_of_a_fresh_name_binds_it_to_its_target(self):
         self.assertEqual(
-            _denotation('Set-Alias foo Get-Process -Force\nfoo', 'foo'),
+            _denotation(inspect.cleandoc("""
+                Set-Alias foo Get-Process -Force
+                foo
+            """), 'foo'),
             Denotation(CommandKind.ALIAS, 'Get-Process'),
         )
 
     @opportunity
     def test_a_set_alias_carrying_an_option_binds_a_fresh_name_to_its_target(self):
         self.assertEqual(
-            _denotation('Set-Alias foo Get-Process -Option ReadOnly\nfoo', 'foo'),
+            _denotation(inspect.cleandoc("""
+                Set-Alias foo Get-Process -Option ReadOnly
+                foo
+            """), 'foo'),
             Denotation(CommandKind.ALIAS, 'Get-Process'),
         )
 
@@ -236,40 +279,68 @@ class TestPs1CommandWorldRole(TestBase):
 
     def test_a_script_alias_to_a_leak_is_a_leak(self):
         for source, name in (
-            ('Set-Alias e iex\ne $payload', 'e'),
-            ('Set-Alias run Invoke-Expression\nrun $payload', 'run'),
-            ('Set-Alias a b\nSet-Alias b iex\na $payload', 'a'),
+            (inspect.cleandoc("""
+                Set-Alias e iex
+                e $payload
+            """), 'e'),
+            (inspect.cleandoc("""
+                Set-Alias run Invoke-Expression
+                run $payload
+            """), 'run'),
+            (inspect.cleandoc("""
+                Set-Alias a b
+                Set-Alias b iex
+                a $payload
+            """), 'a'),
         ):
             with self.subTest(source):
                 self.assertEqual(_world_role(source, name), WorldRole.LEAK)
 
     def test_a_forced_script_alias_to_a_leak_is_a_leak_or_unknown(self):
         self.assertIn(
-            _world_role('Set-Alias e Invoke-Expression -Force\ne $payload', 'e'),
+            _world_role(inspect.cleandoc("""
+                Set-Alias e Invoke-Expression -Force
+                e $payload
+            """), 'e'),
             (WorldRole.LEAK, WorldRole.UNKNOWN),
         )
 
     @opportunity
     def test_a_forced_script_alias_to_a_leak_is_a_leak(self):
         self.assertEqual(
-            _world_role('Set-Alias e Invoke-Expression -Force\ne $payload', 'e'), WorldRole.LEAK
+            _world_role(inspect.cleandoc("""
+                Set-Alias e Invoke-Expression -Force
+                e $payload
+            """), 'e'), WorldRole.LEAK
         )
 
     @opportunity
     def test_a_script_alias_carrying_an_option_to_a_harmless_command_leaves_the_world_alone(self):
-        source = 'Set-Alias e Get-Date -Option ReadOnly\ne $payload'
+        source = inspect.cleandoc("""
+            Set-Alias e Get-Date -Option ReadOnly
+            e $payload
+        """)
         self.assertEqual(_world_role(source, 'e'), WorldRole.NONE)
 
     def test_a_script_alias_to_a_type_system_mutator_is_a_mutation(self):
-        source = 'Set-Alias utd Update-TypeData\nutd -TypeName System.String -MemberName M'
+        source = inspect.cleandoc("""
+            Set-Alias utd Update-TypeData
+            utd -TypeName System.String -MemberName M
+        """)
         self.assertEqual(_world_role(source, 'utd'), WorldRole.MUTATION)
 
     def test_a_script_alias_to_an_aliasing_cmdlet_is_an_identity_change(self):
-        source = 'Set-Alias mkalias New-Alias\nmkalias gd Get-Date'
+        source = inspect.cleandoc("""
+            Set-Alias mkalias New-Alias
+            mkalias gd Get-Date
+        """)
         self.assertEqual(_world_role(source, 'mkalias'), WorldRole.IDENTITY)
 
     def test_an_alias_defined_outside_a_block_reaches_a_use_inside_it(self):
-        source = 'Set-Alias e iex\n@(1) | ForEach-Object { e $payload }'
+        source = inspect.cleandoc("""
+            Set-Alias e iex
+            @(1) | ForEach-Object { e $payload }
+        """)
         self.assertEqual(_world_role(source, 'e'), WorldRole.LEAK)
 
     def test_a_leak_inside_a_function_body_is_a_leak(self):
@@ -281,7 +352,10 @@ class TestPs1CommandWorldRole(TestBase):
 
     @opportunity
     def test_a_script_alias_of_a_mutators_name_to_a_harmless_command_leaves_the_world_alone(self):
-        source = 'Set-Alias Update-TypeData Get-Date\nUpdate-TypeData -TypeName System.String'
+        source = inspect.cleandoc("""
+            Set-Alias Update-TypeData Get-Date
+            Update-TypeData -TypeName System.String
+        """)
         self.assertEqual(_world_role(source, 'Update-TypeData'), WorldRole.NONE)
 
     def test_opaque_dispatch_is_unknown(self):
@@ -307,18 +381,37 @@ class TestPs1CommandWorldRole(TestBase):
 
     def test_a_binding_the_model_could_not_read_through_is_unknown(self):
         for source, name in (
-            ('Set-Alias gci Invoke-Expression\ngci $payload', 'gci'),
-            ('${function:Get-Date} = $blk\nGet-Date', 'Get-Date'),
-            ('e $payload\nSet-Alias e iex', 'e'),
-            ('function f { Set-Alias e iex }\ne $payload', 'e'),
+            (inspect.cleandoc("""
+                Set-Alias gci Invoke-Expression
+                gci $payload
+            """), 'gci'),
+            (inspect.cleandoc("""
+                ${function:Get-Date} = $blk
+                Get-Date
+            """), 'Get-Date'),
+            (inspect.cleandoc("""
+                e $payload
+                Set-Alias e iex
+            """), 'e'),
+            (inspect.cleandoc("""
+                function f { Set-Alias e iex }
+                e $payload
+            """), 'e'),
         ):
             with self.subTest(source):
                 self.assertEqual(_world_role(source, name), WorldRole.UNKNOWN)
 
     def test_a_binding_that_names_no_command_at_all_leaves_the_world_alone(self):
         for source, name in (
-            ('Set-Alias e Invoke-*\ne $payload', 'e'),
-            ('Set-Alias a b\nSet-Alias b a\na $payload', 'a'),
+            (inspect.cleandoc("""
+                Set-Alias e Invoke-*
+                e $payload
+            """), 'e'),
+            (inspect.cleandoc("""
+                Set-Alias a b
+                Set-Alias b a
+                a $payload
+            """), 'a'),
         ):
             with self.subTest(source):
                 self.assertEqual(_world_role(source, name), WorldRole.NONE)
@@ -460,7 +553,10 @@ class TestExtractAliasDefinition(TestBase):
                 self.assertEqual(
                     _binding(source), ('zzq', 'Write-Output', True, False, throws_if_bound))
         self.assertEqual(
-            _denotation('Set-Alias -Force gci Write-Output\ngci', 'gci'),
+            _denotation(inspect.cleandoc("""
+                Set-Alias -Force gci Write-Output
+                gci
+            """), 'gci'),
             Denotation(CommandKind.UNKNOWN, None))
 
     def test_an_unrecognized_switch_ends_the_reading_of_positional_arguments(self):
@@ -542,8 +638,14 @@ class TestPs1ImplicitGetPrefix(TestBase):
 
     def test_a_script_function_of_the_bare_name_wins_over_the_retry(self):
         for source, name in (
-            ("function alias { 'from-function' }\nalias zzq", 'alias'),
-            ("function date { 'from-function' }\ndate -Format o", 'date'),
+            (inspect.cleandoc("""
+                function alias { 'from-function' }
+                alias zzq
+            """), 'alias'),
+            (inspect.cleandoc("""
+                function date { 'from-function' }
+                date -Format o
+            """), 'date'),
         ):
             with self.subTest(source):
                 self.assertEqual(
@@ -561,7 +663,10 @@ class TestPs1ImplicitGetPrefix(TestBase):
                     _denotation(F'{name} env:zzq', name),
                     Denotation(CommandKind.ALIAS, prefixed))
                 self.assertEqual(
-                    _denotation(F"function {name} {{ 'from-function' }}\n{name} env:zzq", name),
+                    _denotation(inspect.cleandoc(F"""
+                        function {name} {{ 'from-function' }}
+                        {name} env:zzq
+                    """), name),
                     Denotation(CommandKind.FUNCTION, name))
 
     def test_a_name_the_host_has_no_command_for_is_the_scripts_own_function(self):
@@ -569,7 +674,10 @@ class TestPs1ImplicitGetPrefix(TestBase):
             with self.subTest(name):
                 self.assertEqual(_denotation(name, name), Denotation(CommandKind.UNKNOWN, None))
                 self.assertEqual(
-                    _denotation(F"function {name} {{ 'from-function' }}\n{name}", name),
+                    _denotation(inspect.cleandoc(F"""
+                        function {name} {{ 'from-function' }}
+                        {name}
+                    """), name),
                     Denotation(CommandKind.FUNCTION, name))
 
     def test_a_name_that_carries_a_dash_does_not_reach_a_prefixed_function(self):
@@ -577,12 +685,18 @@ class TestPs1ImplicitGetPrefix(TestBase):
             with self.subTest(name):
                 self.assertEqual(_denotation(name, name), Denotation(CommandKind.UNKNOWN, None))
                 self.assertEqual(
-                    _denotation(F"function {prefixed} {{ 'from-function' }}\n{name}", name),
+                    _denotation(inspect.cleandoc(F"""
+                        function {prefixed} {{ 'from-function' }}
+                        {name}
+                    """), name),
                     Denotation(CommandKind.UNKNOWN, None))
 
     def test_a_script_alias_of_the_bare_name_wins_over_the_retry(self):
         self.assertEqual(
-            _denotation('Set-Alias alias Get-Date\nalias zzq', 'alias'),
+            _denotation(inspect.cleandoc("""
+                Set-Alias alias Get-Date
+                alias zzq
+            """), 'alias'),
             Denotation(CommandKind.ALIAS, 'Get-Date'))
 
     def test_a_cmdlet_of_the_bare_name_wins_over_the_retry(self):
@@ -590,7 +704,10 @@ class TestPs1ImplicitGetPrefix(TestBase):
 
     def test_a_bare_name_the_script_took_over_is_refused_before_the_retry(self):
         self.assertEqual(
-            _denotation('${function:alias} = $b\nalias zzq', 'alias'),
+            _denotation(inspect.cleandoc("""
+                ${function:alias} = $b
+                alias zzq
+            """), 'alias'),
             Denotation(CommandKind.UNKNOWN, None))
 
     @wontfix(
@@ -599,28 +716,49 @@ class TestPs1ImplicitGetPrefix(TestBase):
     )
     def test_a_definition_of_the_bare_noun_below_its_use_leaves_the_retry_answering(self):
         self.assertEqual(
-            _denotation('alias zzq\nSet-Alias alias Get-Date', 'alias'),
+            _denotation(inspect.cleandoc("""
+                alias zzq
+                Set-Alias alias Get-Date
+            """), 'alias'),
             Denotation(CommandKind.ALIAS, 'Get-Alias'),
         )
 
     @opportunity
     def test_a_definition_of_the_prefixed_name_below_the_bare_noun_leaves_the_retry_answering(self):
         self.assertEqual(
-            _denotation('alias zzq\nSet-Alias Get-Alias Get-Date', 'alias'),
+            _denotation(inspect.cleandoc("""
+                alias zzq
+                Set-Alias Get-Alias Get-Date
+            """), 'alias'),
             Denotation(CommandKind.ALIAS, 'Get-Alias'),
         )
 
     def test_the_prefixed_name_is_answered_even_where_a_function_claims_it(self):
         self.assertEqual(
-            _denotation("function Get-Alias { 'from-function' }\nalias zzq", 'alias'),
+            _denotation(inspect.cleandoc("""
+                function Get-Alias { 'from-function' }
+                alias zzq
+            """), 'alias'),
             Denotation(CommandKind.ALIAS, 'Get-Alias'))
 
     def test_a_noun_whose_prefixed_name_is_aliased_is_refused_and_implicates_the_alias(self):
         for source, name, target in (
-            ('Set-Alias Get-Alias Get-Date\nalias zzq', 'alias', 'Get-Date'),
-            ('Set-Alias Get-Alias Get-*\nalias zzq', 'alias', 'Get-*'),
-            ('Set-Alias Get-Process Get-Date\nprocess -Name x', 'process', 'Get-Date'),
-            ('Set-Alias Get-Location Get-Date\nlocation', 'location', 'Get-Date'),
+            (inspect.cleandoc("""
+                Set-Alias Get-Alias Get-Date
+                alias zzq
+            """), 'alias', 'Get-Date'),
+            (inspect.cleandoc("""
+                Set-Alias Get-Alias Get-*
+                alias zzq
+            """), 'alias', 'Get-*'),
+            (inspect.cleandoc("""
+                Set-Alias Get-Process Get-Date
+                process -Name x
+            """), 'process', 'Get-Date'),
+            (inspect.cleandoc("""
+                Set-Alias Get-Location Get-Date
+                location
+            """), 'location', 'Get-Date'),
         ):
             with self.subTest(source):
                 self.assertEqual(
@@ -630,7 +768,10 @@ class TestPs1ImplicitGetPrefix(TestBase):
                 self.assertEqual(_world_role(source, name), WorldRole.UNKNOWN)
 
     def test_a_prefixed_name_the_script_took_over_is_refused_with_nothing_to_implicate(self):
-        source = '${function:Get-Alias} = $b\nalias zzq'
+        source = inspect.cleandoc("""
+            ${function:Get-Alias} = $b
+            alias zzq
+        """)
         self.assertEqual(_denotation(source, 'alias'), Denotation(CommandKind.UNKNOWN, None))
         self.assertEqual(_implicated(source, 'alias'), frozenset())
         self.assertEqual(_world_role(source, 'alias'), WorldRole.UNKNOWN)
@@ -650,16 +791,34 @@ class TestPs1ImplicitGetPrefix(TestBase):
 class TestPs1NewAliasThrowsIfBound(TestBase):
 
     def test_a_single_new_alias_definition_still_resolves(self):
-        for source in ('New-Alias zzq Write-Output\nzzq', 'nal zzq Write-Output\nzzq'):
+        for source in (inspect.cleandoc("""
+            New-Alias zzq Write-Output
+            zzq
+        """), inspect.cleandoc("""
+            nal zzq Write-Output
+            zzq
+        """)):
             with self.subTest(source):
                 self.assertEqual(
                     _denotation(source, 'zzq'), Denotation(CommandKind.ALIAS, 'Write-Output'))
 
     def test_a_new_alias_among_several_definitions_of_the_name_is_refused(self):
         for source in (
-            'New-Alias zzq Write-Output\nNew-Alias zzq Write-Host\nzzq',
-            'New-Alias zzq Write-Output\nnal zzq Write-Host\nzzq',
-            'Set-Alias zzq Write-Output\nNew-Alias zzq Write-Host\nzzq',
+            inspect.cleandoc("""
+                New-Alias zzq Write-Output
+                New-Alias zzq Write-Host
+                zzq
+            """),
+            inspect.cleandoc("""
+                New-Alias zzq Write-Output
+                nal zzq Write-Host
+                zzq
+            """),
+            inspect.cleandoc("""
+                Set-Alias zzq Write-Output
+                New-Alias zzq Write-Host
+                zzq
+            """),
         ):
             with self.subTest(source):
                 self.assertEqual(
@@ -669,17 +828,29 @@ class TestPs1NewAliasThrowsIfBound(TestBase):
                     frozenset({('zzq', 'Write-Output'), ('zzq', 'Write-Host')}))
 
     def test_a_definition_out_of_the_uses_reach_still_counts_as_another_definition(self):
-        source = 'function f { New-Alias zzq Write-Host }\nNew-Alias zzq Write-Output\nzzq'
+        source = inspect.cleandoc("""
+            function f { New-Alias zzq Write-Host }
+            New-Alias zzq Write-Output
+            zzq
+        """)
         self.assertEqual(_denotation(source, 'zzq'), Denotation(CommandKind.UNKNOWN, None))
 
     def test_a_set_alias_reaching_the_use_rebinds_over_an_earlier_new_alias(self):
-        source = 'New-Alias zzq Write-Output\nSet-Alias zzq Write-Host\nzzq'
+        source = inspect.cleandoc("""
+            New-Alias zzq Write-Output
+            Set-Alias zzq Write-Host
+            zzq
+        """)
         self.assertEqual(_denotation(source, 'zzq'), Denotation(CommandKind.ALIAS, 'Write-Host'))
         self.assertEqual(_implicated(source, 'zzq'), frozenset({('zzq', 'Write-Host')}))
 
     def test_a_new_alias_of_another_name_leaves_the_first_one_resolving(self):
         self.assertEqual(
-            _denotation('New-Alias a Write-Output\nNew-Alias b Write-Host\na', 'a'),
+            _denotation(inspect.cleandoc("""
+                New-Alias a Write-Output
+                New-Alias b Write-Host
+                a
+            """), 'a'),
             Denotation(CommandKind.ALIAS, 'Write-Output'))
 
 
@@ -690,26 +861,42 @@ class TestPs1ImplicatedDefinitions(TestBase):
             ('gci', 'gci'),
             ('echo', 'echo'),
             ('Get-Process', 'Get-Process'),
-            ('Set-Alias zzq Write-Output\nzzq', 'Set-Alias'),
+            (inspect.cleandoc("""
+                Set-Alias zzq Write-Output
+                zzq
+            """), 'Set-Alias'),
         ):
             with self.subTest(source):
                 self.assertEqual(_implicated(source, name), frozenset())
 
     def test_the_definition_a_use_resolves_through_is_the_statement_that_defines_it(self):
-        tree = _script('Set-Alias zzq Write-Output\nzzq')
+        tree = _script(inspect.cleandoc("""
+            Set-Alias zzq Write-Output
+            zzq
+        """))
         model = Ps1ModelCache(tree).commands
         implicated, = model.implicated_definitions(_use(tree, 'zzq'))
         self.assertIs(implicated.node, _use(tree, 'Set-Alias'))
 
     def test_every_hop_of_an_alias_chain_is_implicated(self):
         self.assertEqual(
-            _implicated('Set-Alias a b\nSet-Alias b Write-Output\na', 'a'),
+            _implicated(inspect.cleandoc("""
+                Set-Alias a b
+                Set-Alias b Write-Output
+                a
+            """), 'a'),
             frozenset({('a', 'b'), ('b', 'Write-Output')}))
 
     def test_a_definition_the_resolution_refused_because_of_is_implicated(self):
         for source, name, expected in (
-            ('Set-Alias gci Write-Output\ngci', 'gci', ('gci', 'Write-Output')),
-            ('Set-Alias zzq $x\nzzq', 'zzq', ('zzq', None)),
+            (inspect.cleandoc("""
+                Set-Alias gci Write-Output
+                gci
+            """), 'gci', ('gci', 'Write-Output')),
+            (inspect.cleandoc("""
+                Set-Alias zzq $x
+                zzq
+            """), 'zzq', ('zzq', None)),
         ):
             with self.subTest(source):
                 self.assertEqual(_denotation(source, name), Denotation(CommandKind.UNKNOWN, None))
@@ -717,16 +904,29 @@ class TestPs1ImplicatedDefinitions(TestBase):
 
     def test_a_definition_carrying_force_or_an_option_is_implicated_by_the_use_below_it(self):
         for source in (
-            'Set-Alias zzq Write-Output -Force\nzzq',
-            'Set-Alias zzq Write-Output -Option ReadOnly\nzzq',
+            inspect.cleandoc("""
+                Set-Alias zzq Write-Output -Force
+                zzq
+            """),
+            inspect.cleandoc("""
+                Set-Alias zzq Write-Output -Option ReadOnly
+                zzq
+            """),
         ):
             with self.subTest(source):
                 self.assertEqual(_implicated(source, 'zzq'), frozenset({('zzq', 'Write-Output')}))
 
     def test_a_definition_that_leaves_the_name_denoting_nothing_is_implicated(self):
         for source, name, expected in (
-            ('Set-Alias zzq Get-*\nzzq', 'zzq', frozenset({('zzq', 'Get-*')})),
-            ('Set-Alias a b\nSet-Alias b a\na', 'a', frozenset({('a', 'b'), ('b', 'a')})),
+            (inspect.cleandoc("""
+                Set-Alias zzq Get-*
+                zzq
+            """), 'zzq', frozenset({('zzq', 'Get-*')})),
+            (inspect.cleandoc("""
+                Set-Alias a b
+                Set-Alias b a
+                a
+            """), 'a', frozenset({('a', 'b'), ('b', 'a')})),
         ):
             with self.subTest(source):
                 self.assertEqual(_denotation(source, name), Denotation(CommandKind.NOTHING, None))
@@ -734,8 +934,14 @@ class TestPs1ImplicatedDefinitions(TestBase):
 
     def test_a_definition_that_does_not_reach_the_use_is_implicated_by_it(self):
         for source in (
-            'zzq\nSet-Alias zzq Write-Output',
-            'function f { Set-Alias zzq Write-Output }\nzzq',
+            inspect.cleandoc("""
+                zzq
+                Set-Alias zzq Write-Output
+            """),
+            inspect.cleandoc("""
+                function f { Set-Alias zzq Write-Output }
+                zzq
+            """),
         ):
             with self.subTest(source):
                 self.assertEqual(_denotation(source, 'zzq'), Denotation(CommandKind.NOTHING, None))
@@ -743,32 +949,49 @@ class TestPs1ImplicatedDefinitions(TestBase):
 
     def test_a_use_no_definition_reaches_implicates_every_definition_of_its_name(self):
         self.assertEqual(
-            _implicated('zzq\nSet-Alias zzq Write-Output\nSet-Alias zzq Get-Date', 'zzq'),
+            _implicated(inspect.cleandoc("""
+                zzq
+                Set-Alias zzq Write-Output
+                Set-Alias zzq Get-Date
+            """), 'zzq'),
             frozenset({('zzq', 'Write-Output'), ('zzq', 'Get-Date')}))
 
     def test_a_definition_overwritten_before_the_only_use_is_implicated_by_nobody(self):
         self.assertEqual(
-            _implicated('Set-Alias zzq Get-Date\nSet-Alias zzq Write-Output\nzzq', 'zzq'),
+            _implicated(inspect.cleandoc("""
+                Set-Alias zzq Get-Date
+                Set-Alias zzq Write-Output
+                zzq
+            """), 'zzq'),
             frozenset({('zzq', 'Write-Output')}))
 
 
 class TestPs1EveryAliasDefinition(TestBase):
 
-    _REBOUND = 'Set-Alias a X\nSet-Alias b Y\nSet-Alias a Z'
+    _REBOUND = inspect.cleandoc("""
+        Set-Alias a X
+        Set-Alias b Y
+        Set-Alias a Z
+    """)
 
     def test_it_reports_every_definition_the_script_writes_wherever_it_sits(self):
-        source = (
-            'Set-Alias a X\n'
-            'function f { Set-Alias b Y }\n'
-            '@(1) | ForEach-Object { Set-Alias c Z }'
-        )
+        source = inspect.cleandoc("""
+            Set-Alias a X
+            function f { Set-Alias b Y }
+            @(1) | ForEach-Object { Set-Alias c Z }
+        """)
         self.assertEqual(
             _every_definition(source),
             (('a', 'X'), ('b', 'Y'), ('c', 'Z')))
 
     def test_it_reports_a_definition_under_every_spelling_that_writes_one(self):
         self.assertEqual(
-            _every_definition('Set-Alias a X\nsal b Y\nNew-Alias c Z\nnal d W'),
+            _every_definition(inspect.cleandoc("""
+                Set-Alias a X
+                sal b Y
+                New-Alias c Z
+                nal d W
+            """)),
             (('a', 'X'), ('b', 'Y'), ('c', 'Z'), ('d', 'W')))
 
     def test_the_definitions_of_one_name_come_in_source_order(self):
@@ -796,7 +1019,10 @@ class TestPs1EveryAliasDefinition(TestBase):
 
     def test_a_defining_command_reached_under_the_scripts_own_alias_is_absent(self):
         self.assertEqual(
-            _every_definition('Set-Alias sa Set-Alias\nsa zzq Write-Output'),
+            _every_definition(inspect.cleandoc("""
+                Set-Alias sa Set-Alias
+                sa zzq Write-Output
+            """)),
             (('sa', 'Set-Alias'),))
 
     def test_a_name_no_definition_writes_has_no_definitions(self):
@@ -821,10 +1047,22 @@ class TestPs1BindingOnlyDefinition(TestBase):
 
     def test_a_definition_that_runs_a_script_function_of_the_name_is_not_a_binding(self):
         for source in (
-            'function Set-Alias { Write-Host 1 }\nSet-Alias zzq Write-Output',
-            'function set-alias { 1 }\nSet-Alias zzq Write-Output',
-            'function global:Set-Alias { 1 }\nSet-Alias zzq Write-Output',
-            'filter Set-Alias { 1 }\nSet-Alias zzq Write-Output',
+            inspect.cleandoc("""
+                function Set-Alias { Write-Host 1 }
+                Set-Alias zzq Write-Output
+            """),
+            inspect.cleandoc("""
+                function set-alias { 1 }
+                Set-Alias zzq Write-Output
+            """),
+            inspect.cleandoc("""
+                function global:Set-Alias { 1 }
+                Set-Alias zzq Write-Output
+            """),
+            inspect.cleandoc("""
+                filter Set-Alias { 1 }
+                Set-Alias zzq Write-Output
+            """),
         ):
             with self.subTest(source):
                 self.assertEqual(
@@ -833,7 +1071,10 @@ class TestPs1BindingOnlyDefinition(TestBase):
                 self.assertFalse(_binding_only(source))
 
     def test_a_function_a_default_alias_shadows_leaves_the_binding_alone(self):
-        source = 'function sal { 1 }\nsal zzq Write-Output'
+        source = inspect.cleandoc("""
+            function sal { 1 }
+            sal zzq Write-Output
+        """)
         self.assertEqual(_denotation(source, 'sal'), Denotation(CommandKind.ALIAS, 'Set-Alias'))
         self.assertTrue(_binding_only(source))
 
@@ -894,7 +1135,10 @@ class TestPs1BindingOnlyDefinition(TestBase):
         self.assertFalse(_binding_only('Set-Alias zzq $x'))
 
     def test_a_definition_whose_own_command_the_script_took_over_is_more_than_a_binding(self):
-        self.assertFalse(_binding_only('${function:Set-Alias} = $b\nSet-Alias zzq Write-Output'))
+        self.assertFalse(_binding_only(inspect.cleandoc("""
+            ${function:Set-Alias} = $b
+            Set-Alias zzq Write-Output
+        """)))
 
 
 class TestPs1IntrospectedNames(TestBase):
@@ -912,20 +1156,32 @@ class TestPs1IntrospectedNames(TestBase):
                 self.assertEqual(_introspected(source), frozenset({'zzq'}))
 
     def test_the_bare_noun_that_reaches_the_alias_reader_is_a_reader(self):
-        for source in ('alias zzq', "function Get-Alias { 'x' }\nalias zzq"):
+        for source in ('alias zzq', inspect.cleandoc("""
+            function Get-Alias { 'x' }
+            alias zzq
+        """)):
             with self.subTest(source):
                 self.assertEqual(_introspected(source), frozenset({'zzq'}))
 
     def test_a_bare_noun_the_script_claimed_itself_is_not_a_reader(self):
         for source in (
-            "function alias { 'x' }\nalias zzq",
-            'Set-Alias alias Get-Date\nalias zzq',
+            inspect.cleandoc("""
+                function alias { 'x' }
+                alias zzq
+            """),
+            inspect.cleandoc("""
+                Set-Alias alias Get-Date
+                alias zzq
+            """),
         ):
             with self.subTest(source):
                 self.assertEqual(_introspected(source), frozenset())
 
     def test_a_reader_reached_through_the_scripts_own_alias_is_recognized(self):
-        self.assertEqual(_introspected('Set-Alias g Get-Alias\ng zzq'), frozenset({'zzq'}))
+        self.assertEqual(_introspected(inspect.cleandoc("""
+            Set-Alias g Get-Alias
+            g zzq
+        """)), frozenset({'zzq'}))
 
     def test_the_alias_variable_namespace_is_a_read_of_the_name(self):
         for source in ('${alias:zzq}', '$alias:zzq', '$alias:ZZQ'):
@@ -934,7 +1190,11 @@ class TestPs1IntrospectedNames(TestBase):
 
     def test_every_name_the_script_reads_is_reported(self):
         self.assertEqual(
-            _introspected('Get-Alias a\nGet-Command b\n${alias:c}'),
+            _introspected(inspect.cleandoc("""
+                Get-Alias a
+                Get-Command b
+                ${alias:c}
+            """)),
             frozenset({'a', 'b', 'c'}))
 
     def test_a_reader_given_more_than_one_name_reports_every_one_of_them(self):
@@ -962,7 +1222,10 @@ class TestPs1IntrospectedNames(TestBase):
         self.assertIsNone(_introspected('& $f'))
 
     def test_a_script_that_names_no_alias_reports_the_empty_set(self):
-        for source in ('$x = 1', 'Get-Process', 'Set-Alias zzq Write-Output\nzzq 1'):
+        for source in ('$x = 1', 'Get-Process', inspect.cleandoc("""
+            Set-Alias zzq Write-Output
+            zzq 1
+        """)):
             with self.subTest(source):
                 self.assertEqual(_introspected(source), frozenset())
 
@@ -973,7 +1236,10 @@ class TestPs1IntrospectedNames(TestBase):
 class TestPs1UnreadAliasBindings(TestBase):
 
     _REBINDINGS = (
-        'Set-Alias sx Set-Alias\nsx zzq Get-Date',
+        inspect.cleandoc("""
+            Set-Alias sx Set-Alias
+            sx zzq Get-Date
+        """),
         'Set-Alias -Description d zzq Get-Date',
         'Set-Alias $n Get-Date',
         '& $c zzq Get-Date',
@@ -1006,16 +1272,38 @@ class TestPs1UnreadAliasBindings(TestBase):
 
     def test_a_definition_this_read_below_such_a_binding_answers_a_use_below_both(self):
         self.assertEqual(
-            _denotation("$alias:zzq = 'Get-Date'\nSet-Alias zzq Write-Output\nzzq", 'zzq'),
+            _denotation(inspect.cleandoc("""
+                $alias:zzq = 'Get-Date'
+                Set-Alias zzq Write-Output
+                zzq
+            """), 'zzq'),
             Denotation(CommandKind.ALIAS, 'Write-Output'))
 
     def test_a_script_whose_every_binding_this_read_reports_none_unread(self):
         for source in (
-            'Set-Alias zzq Write-Output\nzzq',
-            'Set-Alias a X\nSet-Alias b Y\na\nb',
-            'Set-Alias zzq Get-*\nzzq',
-            'Set-Alias a b\nSet-Alias b a\na',
-            'New-Alias zzq Write-Output\nzzq',
+            inspect.cleandoc("""
+                Set-Alias zzq Write-Output
+                zzq
+            """),
+            inspect.cleandoc("""
+                Set-Alias a X
+                Set-Alias b Y
+                a
+                b
+            """),
+            inspect.cleandoc("""
+                Set-Alias zzq Get-*
+                zzq
+            """),
+            inspect.cleandoc("""
+                Set-Alias a b
+                Set-Alias b a
+                a
+            """),
+            inspect.cleandoc("""
+                New-Alias zzq Write-Output
+                zzq
+            """),
             'Get-Alias zzq',
             'Export-Alias out.csv',
             'Get-ChildItem -Recurse',
@@ -1029,12 +1317,20 @@ class TestPs1UnreadAliasBindings(TestBase):
                 self.assertEqual(len(_unread_bindings(self._rebound_then_used(rebinding))), 1)
 
     def test_a_command_this_could_not_read_is_reported_as_the_invocation_it_is(self):
-        tree = _script('Set-Alias zzq Write-Output\nSet-Item alias:zzq Get-Date\nzzq')
+        tree = _script(inspect.cleandoc("""
+            Set-Alias zzq Write-Output
+            Set-Item alias:zzq Get-Date
+            zzq
+        """))
         node, = Ps1ModelCache(tree).commands.unread_alias_bindings()
         self.assertIs(node, _use(tree, 'Set-Item'))
 
     def test_a_namespace_write_this_could_not_read_is_reported_as_the_assignment_it_is(self):
-        tree = _script("Set-Alias zzq Write-Output\n$alias:zzq = 'Get-Date'\nzzq")
+        tree = _script(inspect.cleandoc("""
+            Set-Alias zzq Write-Output
+            $alias:zzq = 'Get-Date'
+            zzq
+        """))
         node, = Ps1ModelCache(tree).commands.unread_alias_bindings()
         assignment, = (
             child for child in tree.walk() if isinstance(child, Ps1AssignmentExpression))
@@ -1055,9 +1351,18 @@ class TestPs1UnreadAliasBindings(TestBase):
 
     def test_a_use_in_a_script_this_read_whole_is_reached_by_no_such_binding(self):
         for source, name in (
-            ('Set-Alias zzq Write-Output\nzzq', 'zzq'),
-            ('Set-Alias zzq Get-*\nzzq', 'zzq'),
-            ('New-Alias zzq Write-Output\nzzq', 'zzq'),
+            (inspect.cleandoc("""
+                Set-Alias zzq Write-Output
+                zzq
+            """), 'zzq'),
+            (inspect.cleandoc("""
+                Set-Alias zzq Get-*
+                zzq
+            """), 'zzq'),
+            (inspect.cleandoc("""
+                New-Alias zzq Write-Output
+                zzq
+            """), 'zzq'),
             ('Get-ChildItem -Recurse', 'Get-ChildItem'),
         ):
             with self.subTest(source):
@@ -1070,8 +1375,16 @@ class TestPs1UnreadAliasBindings(TestBase):
                 self.assertEqual(len(_unread_bindings(source)), 1)
 
     def test_a_name_the_script_never_binds_is_computed_while_the_report_says_it_may_not_be(self):
-        below = 'Set-Alias zzq Write-Output\nSet-Alias $n Get-Date\nGet-ChildItem'
-        above = 'Set-Alias zzq Write-Output\nGet-ChildItem\nSet-Alias $n Get-Date'
+        below = inspect.cleandoc("""
+            Set-Alias zzq Write-Output
+            Set-Alias $n Get-Date
+            Get-ChildItem
+        """)
+        above = inspect.cleandoc("""
+            Set-Alias zzq Write-Output
+            Get-ChildItem
+            Set-Alias $n Get-Date
+        """)
         for source in (below, above):
             with self.subTest(source):
                 self.assertEqual(
@@ -1081,14 +1394,22 @@ class TestPs1UnreadAliasBindings(TestBase):
         self.assertEqual(_unread_bindings_reaching(above, 'Get-ChildItem'), ())
 
     def test_a_binding_this_could_not_read_is_reported_wherever_the_use_it_reaches_stands(self):
-        source = "Set-Alias zzq Write-Output\n$alias:zzq = 'Get-Date'\n@(1) | ForEach-Object { zzq }"
+        source = inspect.cleandoc("""
+            Set-Alias zzq Write-Output
+            $alias:zzq = 'Get-Date'
+            @(1) | ForEach-Object { zzq }
+        """)
         self.assertEqual(len(_unread_bindings_reaching(source, 'zzq')), 1)
         self.assertEqual(_denotation(source, 'zzq'), Denotation(CommandKind.UNKNOWN, None))
 
 
 class TestPs1ADefiningStatementThatRunsAScriptFunction(TestBase):
 
-    _SOURCE = "function Set-Alias { 'ran' }\nSet-Alias zzq Write-Output\nzzq"
+    _SOURCE = inspect.cleandoc("""
+        function Set-Alias { 'ran' }
+        Set-Alias zzq Write-Output
+        zzq
+    """)
 
     def test_the_statement_denotes_the_script_function_it_runs(self):
         self.assertEqual(
@@ -1120,7 +1441,10 @@ class TestPs1ReadsCommandSuccess(TestBase):
                 self.assertTrue(_reads_success(source))
 
     def test_a_script_that_never_reads_it_says_so(self):
-        for source in ('$x = 1', 'Get-Process', 'Set-Alias zzq Write-Output\nzzq 1', "'$?'"):
+        for source in ('$x = 1', 'Get-Process', inspect.cleandoc("""
+            Set-Alias zzq Write-Output
+            zzq 1
+        """), "'$?'"):
             with self.subTest(source):
                 self.assertFalse(_reads_success(source))
 
@@ -1128,12 +1452,18 @@ class TestPs1ReadsCommandSuccess(TestBase):
 class TestPs1CommandModelCache(TestBase):
 
     def test_the_command_model_is_memoized_while_the_tree_is_unchanged(self):
-        cache = Ps1ModelCache(_script('Set-Alias foo Get-Process\nfoo'))
+        cache = Ps1ModelCache(_script(inspect.cleandoc("""
+            Set-Alias foo Get-Process
+            foo
+        """)))
         first = cache.commands
         self.assertIs(cache.commands, first)
 
     def test_mutating_the_cached_tree_rebuilds_the_command_model(self):
-        tree = _script('Set-Alias foo Get-Process\nfoo')
+        tree = _script(inspect.cleandoc("""
+            Set-Alias foo Get-Process
+            foo
+        """))
         cache = Ps1ModelCache(tree)
         first = cache.commands
         _remove_from_parent(tree.body[0])
@@ -1146,7 +1476,10 @@ class TestPs1CommandModelCache(TestBase):
         self.assertIs(model.denotation(invocation), model.denotation(invocation))
 
     def test_a_world_role_is_answered_from_the_tree_as_it_now_stands(self):
-        tree = _script('Set-Alias e iex\ne $payload')
+        tree = _script(inspect.cleandoc("""
+            Set-Alias e iex
+            e $payload
+        """))
         cache = Ps1ModelCache(tree)
         use = _use(tree, 'e')
         self.assertEqual(cache.commands.world_role(use), WorldRole.LEAK)
@@ -1157,7 +1490,10 @@ class TestPs1CommandModelCache(TestBase):
 class TestPs1CommandModelDirectBuild(TestBase):
 
     def test_the_direct_build_resolves_a_function_from_the_functions_set(self):
-        tree = _script("function Get-Content { 'x' }\nGet-Content")
+        tree = _script(inspect.cleandoc("""
+            function Get-Content { 'x' }
+            Get-Content
+        """))
         control_flow = build_control_flow_model(tree)
         dominance = build_dominance(control_flow)
         blocks = build_block_model(tree)

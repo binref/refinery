@@ -11,6 +11,7 @@ the oracle. Nothing from `samples` may ever be fed to this.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase
@@ -26,44 +27,143 @@ from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.strict import StrictViolation, collect_strict_violations
 
 A_FILE_HOLDING_A_COMMENT_A_STATEMENT_CARRIES = {
-    '<!-- note\nconsole.log(1);'                                : prints('1'),
-    'var x = 1;\nvar y = x <!-- note\nconsole.log(y);'          : prints('1'),
-    'x = 1 <!-- a\n+ 2\nconsole.log(x);'                        : prints('3'),
-    'class C {\n<!-- c\np = 1 }\nconsole.log(new C().p);'       : prints('1'),
-    'console.log(1) <!-- c\n--> d\nconsole.log(2);'             : prints('1', '2'),
-    '--> note\nconsole.log(1);'                                 : prints('1'),
-    'console.log(1);\n--> note\nconsole.log(2);'                : prints('1', '2'),
-    'console.log(1);\n   --> note\nconsole.log(2);'             : prints('1', '2'),
-    'console.log(1);\n/* c */ --> note\nconsole.log(2);'        : prints('1', '2'),
-    'console.log(1); /* c\n */ --> note\nconsole.log(2);'       : prints('1', '2'),
-    '// c\n--> d\nconsole.log(3);'                              : prints('3'),
-    'function f() {\n--> note\nreturn 1;\n}\nconsole.log(f());' : prints('1'),
-    'if (1) {\n--> note\nconsole.log(1);\n}'                    : prints('1'),
-    'var v = 3\n-->\nconsole.log(v)'                            : prints('3'),
+    inspect.cleandoc("""
+        <!-- note
+        console.log(1);
+    """): prints('1'),
+    inspect.cleandoc("""
+        var x = 1;
+        var y = x <!-- note
+        console.log(y);
+    """): prints('1'),
+    inspect.cleandoc("""
+        x = 1 <!-- a
+        + 2
+        console.log(x);
+    """): prints('3'),
+    inspect.cleandoc("""
+        class C {
+        <!-- c
+        p = 1 }
+        console.log(new C().p);
+    """): prints('1'),
+    inspect.cleandoc("""
+        console.log(1) <!-- c
+        --> d
+        console.log(2);
+    """): prints('1', '2'),
+    inspect.cleandoc("""
+        --> note
+        console.log(1);
+    """): prints('1'),
+    inspect.cleandoc("""
+        console.log(1);
+        --> note
+        console.log(2);
+    """): prints('1', '2'),
+    inspect.cleandoc("""
+        console.log(1);
+           --> note
+        console.log(2);
+    """): prints('1', '2'),
+    inspect.cleandoc("""
+        console.log(1);
+        /* c */ --> note
+        console.log(2);
+    """): prints('1', '2'),
+    inspect.cleandoc("""
+        console.log(1); /* c
+         */ --> note
+        console.log(2);
+    """): prints('1', '2'),
+    inspect.cleandoc("""
+        // c
+        --> d
+        console.log(3);
+    """): prints('3'),
+    inspect.cleandoc("""
+        function f() {
+        --> note
+        return 1;
+        }
+        console.log(f());
+    """): prints('1'),
+    inspect.cleandoc("""
+        if (1) {
+        --> note
+        console.log(1);
+        }
+    """): prints('1'),
+    inspect.cleandoc("""
+        var v = 3
+        -->
+        console.log(v)
+    """): prints('3'),
     'console.log(1);\r\n--> note\r\nconsole.log(2);'            : prints('1', '2'),
     'console.log(1);\u2028--> note\u2028console.log(2);'        : prints('1', '2'),
 }
 
 A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES = {
     'console.log(1); <!-- note'                                 : prints('1'),
-    'console.log(1);\n<!--'                                     : prints('1'),
-    'if (1) <!-- c\nconsole.log(5);'                            : prints('5'),
-    'console.log(1);\n--> note'                                   : prints('1'),
+    inspect.cleandoc("""
+        console.log(1);
+        <!--
+    """): prints('1'),
+    inspect.cleandoc("""
+        if (1) <!-- c
+        console.log(5);
+    """): prints('5'),
+    inspect.cleandoc("""
+        console.log(1);
+        --> note
+    """): prints('1'),
 }
 
 A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES_PRINTED = {
-    'console.log(1); <!-- note'                                 : 'console.log(1);\n<!-- note',
-    'console.log(1);\n<!--'                                     : 'console.log(1);\n<!--',
-    'if (1) <!-- c\nconsole.log(5);'                            : 'if (1) {\n  <!-- c\n  console.log(5);\n}',
-    'console.log(1);\n--> note'                                   : 'console.log(1);\n--> note',
+    'console.log(1); <!-- note'                                 : inspect.cleandoc("""
+        console.log(1);
+        <!-- note
+    """),
+    inspect.cleandoc("""
+        console.log(1);
+        <!--
+    """): inspect.cleandoc("""
+        console.log(1);
+        <!--
+    """),
+    inspect.cleandoc("""
+        if (1) <!-- c
+        console.log(5);
+    """): inspect.cleandoc("""
+        if (1) {
+          <!-- c
+          console.log(5);
+        }
+    """),
+    inspect.cleandoc("""
+        console.log(1);
+        --> note
+    """): inspect.cleandoc("""
+        console.log(1);
+        --> note
+    """),
 }
 
 #: In `a <<!--b` the longest match reads `<<` first, so what follows is `!--b` and no comment.
 A_FILE_SPELLING_THE_CHARACTERS_WHERE_THEY_OPEN_NO_COMMENT = {
-    'var a = 2, b = 0;\nconsole.log(a-->b);'                    : prints('true'),
+    inspect.cleandoc("""
+        var a = 2, b = 0;
+        console.log(a-->b);
+    """): prints('true'),
     'var a = 4, b = 1; console.log(a <<!--b);'                  : prints('8'),
     "console.log('-->');"                                       : prints('-->'),
-    'console.log(`x\n--> y`);'                                  : prints('x\n--> y'),
+    inspect.cleandoc("""
+        console.log(`x
+        --> y`);
+    """): prints(inspect.cleandoc("""
+        x
+        --> y
+    """)),
     'console.log("<!--");'                                      : prints('<!--'),
     'var s = /<!--/.test("<!--"); console.log(s);'              : prints('true'),
     '\n/-->/.test("-->");\nconsole.log(/-->/.test("-->"));'     : prints('true'),
@@ -177,8 +277,16 @@ class TestTheCollectorReportsTheDelimitersUnderTheModuleGoal(TestBase):
 
     def test_the_first_delimiter_is_reported_where_it_stands(self):
         rows = {
-            'console.log(1);\n--> note\nconsole.log(2);' : 16,
-            '<!-- a\n--> b\nconsole.log(1);'             : 0,
+            inspect.cleandoc("""
+                console.log(1);
+                --> note
+                console.log(2);
+            """): 16,
+            inspect.cleandoc("""
+                <!-- a
+                --> b
+                console.log(1);
+            """): 0,
             'console.log(1); <!-- note'                  : 16,
         }
         self.assertEqual(
@@ -212,24 +320,78 @@ _VALUE = 'z' * 60
 
 A_WRAPPED_LIST_HOLDING_A_CLOSER = {
     F'f({_ALPHA}, --> 1, {_BETA}, {_GAMMA}, {_DELTA});':
-        F'f(\n  {_ALPHA}, --> 1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n);',
+        inspect.cleandoc(F"""
+            f(
+              {_ALPHA}, --> 1,
+              {_BETA},
+              {_GAMMA},
+              {_DELTA}
+            );
+        """),
     F'x = [{_ALPHA}, --> 1, {_BETA}, {_GAMMA}, {_DELTA}];':
-        F'x = [\n  {_ALPHA}, --> 1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n];',
+        inspect.cleandoc(F"""
+            x = [
+              {_ALPHA}, --> 1,
+              {_BETA},
+              {_GAMMA},
+              {_DELTA}
+            ];
+        """),
     F'function g({_ALPHA}, --> 1, {_BETA}, {_GAMMA}, {_DELTA}) {{}}':
-        F'function g(\n  {_ALPHA}, --> 1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n) {{}}',
+        inspect.cleandoc(F"""
+            function g(
+              {_ALPHA}, --> 1,
+              {_BETA},
+              {_GAMMA},
+              {_DELTA}
+            ) {{}}
+        """),
     F'x = {{p1: {_VALUE}, p2: {_VALUE}, p3: {_VALUE}, --> 1, p4: {_VALUE}}};':
-        F'x = {{ p1: {_VALUE}, p2: {_VALUE}, p3: {_VALUE}, --> 1,\n  p4: {_VALUE}\n}};',
+        inspect.cleandoc(F"""
+            x = {{ p1: {_VALUE}, p2: {_VALUE}, p3: {_VALUE}, --> 1,
+              p4: {_VALUE}
+            }};
+        """),
 }
 
 A_WRAPPED_LIST_HOLDING_A_READABLE_ITEM = {
     F'f({_ALPHA}, 1, {_BETA}, {_GAMMA}, {_DELTA});':
-        F'f(\n  {_ALPHA},\n  1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n);',
+        inspect.cleandoc(F"""
+            f(
+              {_ALPHA},
+              1,
+              {_BETA},
+              {_GAMMA},
+              {_DELTA}
+            );
+        """),
     F'x = [{_ALPHA}, 1, {_BETA}, {_GAMMA}, {_DELTA}];':
-        F'x = [\n  {_ALPHA},\n  1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n];',
+        inspect.cleandoc(F"""
+            x = [
+              {_ALPHA},
+              1,
+              {_BETA},
+              {_GAMMA},
+              {_DELTA}
+            ];
+        """),
     F'function g({_ALPHA}, e1, {_BETA}, {_GAMMA}, {_DELTA}) {{}}':
-        F'function g(\n  {_ALPHA},\n  e1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n) {{}}',
+        inspect.cleandoc(F"""
+            function g(
+              {_ALPHA},
+              e1,
+              {_BETA},
+              {_GAMMA},
+              {_DELTA}
+            ) {{}}
+        """),
     F'x = {{p1: {_VALUE}, p2: {_VALUE}, p3: {_VALUE}, p9: 1, p4: {_VALUE}}};':
-        F'x = {{ p1: {_VALUE}, p2: {_VALUE}, p3: {_VALUE},\n  p9: 1,\n  p4: {_VALUE}\n}};',
+        inspect.cleandoc(F"""
+            x = {{ p1: {_VALUE}, p2: {_VALUE}, p3: {_VALUE},
+              p9: 1,
+              p4: {_VALUE}
+            }};
+        """),
 }
 
 

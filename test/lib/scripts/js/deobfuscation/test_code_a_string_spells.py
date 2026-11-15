@@ -5,6 +5,7 @@ sample.
 from __future__ import annotations
 
 import functools
+import inspect
 import unittest
 
 from test import (
@@ -459,9 +460,10 @@ class TestEitherModelReadsTheCodeAStringSpells(_NodeDecides):
 
     def test_a_property_read_through_a_global_object_a_stored_body_answers_becomes_a_read_of_the_global(self):
         self.assertEachModelPrints({
-            "globalThis.x = 1; var f = new Function('return this'); console.log(f().x);": (
-                'globalThis.x = 1;\nconsole.log(x);'
-            ),
+            "globalThis.x = 1; var f = new Function('return this'); console.log(f().x);": inspect.cleandoc("""
+                globalThis.x = 1;
+                console.log(x);
+            """),
         })
 
     @backlog
@@ -730,14 +732,18 @@ class TestEitherModelReadsTheCodeAStringSpells(_NodeDecides):
                 "setTimeout('var t; console.log(_0x1169(0x1f3))', 0);"
                 "console.log(x);"
             ),
-            'a wrapper a body calls': (
-                "function w() { return 'x'; }\nconsole.log(w());\n"
-                "var g = new Function('a', 'return a + w()');\nconsole.log(g(1));"
-            ),
-            'a function the file evaluates, called by a body': (
-                "function f() { return 'x' + 1; }\nconsole.log(f());\n"
-                "var g = new Function('a', 'return a + f()');\nconsole.log(g(1));"
-            ),
+            'a wrapper a body calls': inspect.cleandoc("""
+                function w() { return 'x'; }
+                console.log(w());
+                var g = new Function('a', 'return a + w()');
+                console.log(g(1));
+            """),
+            'a function the file evaluates, called by a body': inspect.cleandoc("""
+                function f() { return 'x' + 1; }
+                console.log(f());
+                var g = new Function('a', 'return a + f()');
+                console.log(g(1));
+            """),
         })
 
     @backlog
@@ -1120,14 +1126,15 @@ class TestEitherModelReadsAChoiceBetweenTextsAsEachText(_NodeDecides):
     @backlog
     def test_a_function_a_chosen_text_calls_is_kept(self):
         self.assertEachModelBehavesAsTheProgramDoes({
-            'a function the file declares': (
-                "function f() { return 'x'; }\nconsole.log(f());\n"
-                "Function(process.argv.length > 99 ? '' : 'console.log(f())')();"
-            ),
-            'a function a block declares': (
-                "{ function f() { return 'x'; } console.log(f()); }\n"
-                "Function(process.argv.length > 99 ? '' : 'console.log(f())')();"
-            ),
+            'a function the file declares': inspect.cleandoc("""
+                function f() { return 'x'; }
+                console.log(f());
+                Function(process.argv.length > 99 ? '' : 'console.log(f())')();
+            """),
+            'a function a block declares': inspect.cleandoc("""
+                { function f() { return 'x'; } console.log(f()); }
+                Function(process.argv.length > 99 ? '' : 'console.log(f())')();
+            """),
         })
 
     def test_a_text_held_by_a_name_its_own_default_names_is_read(self):
@@ -1237,15 +1244,25 @@ class TestTheSuspectingModelReadsNoTextANameHoldsThatOtherCodeMayReplace(_NodeDe
     @backlog
     def test_a_text_nothing_else_writes_is_still_read(self):
         self.assertEachModelPrints({
-            "(function () { var p = 'console.log(1)'; eval(p); })(); console.log(String.fromCharCode(72, 105));": (
-                "(function() {\n  var p = 'console.log(1)';\n  eval(p);\n})();\nconsole.log('Hi');"
-            ),
+            "(function () { var p = 'console.log(1)'; eval(p); })(); console.log(String.fromCharCode(72, 105));": inspect.cleandoc("""
+                (function() {
+                  var p = 'console.log(1)';
+                  eval(p);
+                })();
+                console.log('Hi');
+            """),
             (
                 "function f() { var k = 5; var code = 'k = 7'; eval(code); return k; }"
                 ' console.log(f(), String.fromCharCode(72, 105));'
-            ): (
-                "function f() {\n  var k = 5;\n  var code = 'k = 7';\n  eval(code);\n  return k;\n}\nconsole.log(f(), 'Hi');"
-            ),
+            ): inspect.cleandoc("""
+                function f() {
+                  var k = 5;
+                  var code = 'k = 7';
+                  eval(code);
+                  return k;
+                }
+                console.log(f(), 'Hi');
+            """),
             "var p = 'console.log(p.length)'; eval(p);": 'console.log(21);',
             "const k = 5; const code = 'console.log(k)'; function never(x) { return eval(x); } eval(code);": (
                 'console.log(5);'
@@ -1253,7 +1270,11 @@ class TestTheSuspectingModelReadsNoTextANameHoldsThatOtherCodeMayReplace(_NodeDe
             (
                 "let x = 5; var code = 'console.log(x)'; var other = 1;"
                 " eval(process.argv.length > 99 ? '' : 'other = 2'); eval(code);"
-            ): "var other = 1;\neval(process.argv.length > 99 ? '' : 'other = 2');\nconsole.log(5);",
+            ): inspect.cleandoc("""
+                var other = 1;
+                eval(process.argv.length > 99 ? '' : 'other = 2');
+                console.log(5);
+            """),
             "let x = 5; eval(\"var p = 'console.log(x)'; eval(p);\");": 'console.log(5);',
         }, models=_THE_SUSPECTING_MODEL)
 
@@ -1310,9 +1331,13 @@ class TestEitherModelReadsTheTextAFoldWouldWrite(_NodeDecides):
 
     def test_a_text_the_fold_gate_refuses_leaves_the_folds_of_the_run_that_assumes_writes_followed(self):
         self.assertEachModelPrints({
-            "atob = function () { return 'q = 2'; }; eval(atob('cSA9IDE=')); console.log([][(false + [])[0] + 'oo']);": (
-                "atob = function() {\n  return 'q = 2';\n};\neval(atob('cSA9IDE='));\nconsole.log(void 0);"
-            ),
+            "atob = function () { return 'q = 2'; }; eval(atob('cSA9IDE=')); console.log([][(false + [])[0] + 'oo']);": inspect.cleandoc("""
+                atob = function() {
+                  return 'q = 2';
+                };
+                eval(atob('cSA9IDE='));
+                console.log(void 0);
+            """),
         }, models=(False,))
 
     def test_a_text_holding_a_number_the_engine_approximates_runs_as_the_program_runs_it(self):
@@ -1542,9 +1567,11 @@ class TestCodeInAStringInsideAFunctionNothingCallsKeepsNothing(_NodeDecides):
             "{ function mk(src) { return Function(src); } } var k = 5; console.log(mk('return k')());": (
                 'console.log(5);'
             ),
-            "var k = 1; function later(s) { return setTimeout(s, 0); } later('console.log(k)');": (
-                'setTimeout(function() {\n  console.log(1);\n}, 0);'
-            ),
+            "var k = 1; function later(s) { return setTimeout(s, 0); } later('console.log(k)');": inspect.cleandoc("""
+                setTimeout(function() {
+                  console.log(1);
+                }, 0);
+            """),
         }, models=_THE_SUSPECTING_MODEL)
 
     @backlog
@@ -1556,9 +1583,13 @@ class TestCodeInAStringInsideAFunctionNothingCallsKeepsNothing(_NodeDecides):
             (
                 "function H() { return 1; } function K() { return H(); } var f = new Function('return K()');"
                 ' console.log(f.call(null));'
-            ): (
-                "function K() {\n  return 1;\n}\nvar f = new Function('return K()');\nconsole.log(f.call(null));"
-            ),
+            ): inspect.cleandoc("""
+                function K() {
+                  return 1;
+                }
+                var f = new Function('return K()');
+                console.log(f.call(null));
+            """),
         }, models=_THE_SUSPECTING_MODEL)
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 
 from test import backlog, opportunity
+from test.lib.scripts.ps1 import a_program
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1ConstantFolding, Ps1ConstantInlining
@@ -150,11 +151,11 @@ class TestPS1StringReplace(TestPs1):
         self.assertNotIn('-Replace', result)
 
     def test_chained_replace_on_herestring(self):
-        data = (
-            "(@'\n"
-            "aXb cYd\n"
-            "'@ -Replace 'X', '1' -Replace 'Y', '2')"
-        )
+        data = inspect.cleandoc("""
+            (@'
+            aXb cYd
+            '@ -Replace 'X', '1' -Replace 'Y', '2')
+        """)
         result = self._deobfuscate_iterative(data)
         self.assertIn('a1b', result)
         self.assertIn('c2d', result)
@@ -198,7 +199,10 @@ class TestPs1ComparisonFolding(TestPs1):
         self.assertIn('$True', result)
 
     def test_non_constant_unchanged(self):
-        result = self._deobfuscate('$x = $env:V\n($x -eq 3)', remove_junk=False)
+        result = self._deobfuscate(inspect.cleandoc("""
+            $x = $env:V
+            ($x -eq 3)
+        """), remove_junk=False)
         self.assertIn('-Eq', result)
 
 
@@ -869,7 +873,11 @@ class TestPs1HashtableLookup(TestPs1):
         self.assertEqual(self._deobfuscate("@{'x'=42}['x']"), '42')
 
     def test_a_missing_key_looks_up_null(self):
-        source = "@{\n  a = 'hello'\n}['b']"
+        source = inspect.cleandoc("""
+            @{
+              a = 'hello'
+            }['b']
+        """)
         self._assertDeobfuscatesToOneOf(source, source, '$Null')
 
     @opportunity
@@ -922,9 +930,11 @@ class TestPs1FoldingExtra(TestPs1):
 
     def test_arithmetic_constant_folding(self):
         result = self._deobfuscate(
-            '$foo=36665-36663\n'
-            '$bar=345-BXor21\n'
-            '$baz=744-BAND(3254-1221)*99-BXor743\n'
+            a_program("""
+                $foo=36665-36663
+                $bar=345-BXor21
+                $baz=744-BAND(3254-1221)*99-BXor743
+            """)
         ).lower()
         self.assertNotIn('36665', result)
         self.assertIn('$foo = 2', result)
@@ -1016,18 +1026,34 @@ class TestPs1SelectionKeepsWhatBuildingTheContainerDid(TestPs1):
             self._apply(
                 "try { $r = @(1, [Int]'abc')[0] } catch { Start-Process calc }",
                 Ps1ConstantFolding),
-            "try {\n  $r = @(1, [Int]'abc')[0]\n} catch {\n  Start-Process calc\n}")
+            inspect.cleandoc("""
+                try {
+                  $r = @(1, [Int]'abc')[0]
+                } catch {
+                  Start-Process calc
+                }
+            """))
 
     def test_a_hashtable_value_that_runs_a_command_is_not_dropped(self):
         self.assertEqual(
             self._apply("$r = @{ a = 1; b = (Start-Process calc) }['a']", Ps1ConstantFolding),
-            "$r = @{\n  a = 1\n  b = (Start-Process calc)\n}['a']")
+            inspect.cleandoc("""
+                $r = @{
+                  a = 1
+                  b = (Start-Process calc)
+                }['a']
+            """))
 
     def test_a_hashtable_key_that_runs_a_command_is_not_dropped(self):
         self.assertEqual(
             self._apply(
                 '$r = @{ "$(Start-Process calc)" = 1; a = 2 }[\'a\']', Ps1ConstantFolding),
-            '$r = @{\n  "$(Start-Process calc)" = 1\n  a = 2\n}[\'a\']')
+            inspect.cleandoc("""
+                $r = @{
+                  "$(Start-Process calc)" = 1
+                  a = 2
+                }['a']
+            """))
 
     def test_an_array_of_literals_is_still_selected_from(self):
         self.assertEqual(self._apply('$r = @(1, 2)[0]', Ps1ConstantFolding), '$r = 1')
@@ -1047,21 +1073,36 @@ class TestPs1ConstantInliningSelectsOnlyFromConstants(TestPs1):
 
     def test_an_array_holding_a_command_is_not_a_constant_to_inline_from(self):
         self._assertUnchanged(
-            '$a = @(1, (Start-Process calc))\n$r = $a[0]', Ps1ConstantInlining)
+            inspect.cleandoc("""
+                $a = @(1, (Start-Process calc))
+                $r = $a[0]
+            """), Ps1ConstantInlining)
 
     def test_an_array_holding_an_increment_is_not_a_constant_to_inline_from(self):
-        self._assertUnchanged('$a = @(1, $x++)\n$r = $a[0]', Ps1ConstantInlining)
+        self._assertUnchanged(inspect.cleandoc("""
+            $a = @(1, $x++)
+            $r = $a[0]
+        """), Ps1ConstantInlining)
 
     def test_an_array_holding_a_raising_cast_is_not_a_constant_to_inline_from(self):
-        self._assertUnchanged("$a = @(1, [Int]'abc')\n$r = $a[0]", Ps1ConstantInlining)
+        self._assertUnchanged(inspect.cleandoc("""
+            $a = @(1, [Int]'abc')
+            $r = $a[0]
+        """), Ps1ConstantInlining)
 
     def test_an_array_of_literals_is_still_inlined_from(self):
         self.assertEqual(
-            self._apply('$a = @(1, 2)\n$r = $a[0]', Ps1ConstantInlining), '$r = 1')
+            self._apply(inspect.cleandoc("""
+                $a = @(1, 2)
+                $r = $a[0]
+            """), Ps1ConstantInlining), '$r = 1')
 
     def test_a_string_is_still_indexed_when_inlined(self):
         self.assertEqual(
-            self._apply("$a = 'abc'\n$r = $a[0]", Ps1ConstantInlining), '$r = [char]97'
+            self._apply(inspect.cleandoc("""
+                $a = 'abc'
+                $r = $a[0]
+            """), Ps1ConstantInlining), '$r = [char]97'
         )
 
 
@@ -1069,7 +1110,11 @@ class TestPs1FoldingRedirections(TestPs1):
 
     def test_a_redirected_regex_pipeline_is_not_folded_into_its_value(self):
         self._assertUnchanged(
-            "$m = [regex]::Matches('abc', 'b') | ForEach-Object {\n  $_.Value\n} > C:\\o.txt",
+            inspect.cleandoc("""
+                $m = [regex]::Matches('abc', 'b') | ForEach-Object {
+                  $_.Value
+                } > C:\\o.txt
+            """),
             Ps1ConstantFolding)
 
     def test_an_unredirected_regex_pipeline_is_still_folded(self):
@@ -1140,72 +1185,161 @@ class TestPs1ACallWritingThroughAnArgumentIsAWriteOfThatVariable(TestPs1):
     def test_the_written_argument_still_names_the_variable_below_a_folded_read(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, 2, 3\n[Array]::Reverse($x)\nWrite-Output $x[0]', Ps1ConstantInlining),
-            '$x = 1, 2, 3\n[Array]::Reverse($x)\nWrite-Output 3')
+                inspect.cleandoc("""
+                    $x = 1, 2, 3
+                    [Array]::Reverse($x)
+                    Write-Output $x[0]
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                [Array]::Reverse($x)
+                Write-Output 3
+            """))
 
     def test_a_read_above_the_reversal_sees_the_order_the_assignment_built(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, 2, 3\nWrite-Output $x[0]\n[Array]::Reverse($x)\nWrite-Output $x[0]',
+                inspect.cleandoc("""
+                    $x = 1, 2, 3
+                    Write-Output $x[0]
+                    [Array]::Reverse($x)
+                    Write-Output $x[0]
+                """),
                 Ps1ConstantInlining),
-            '$x = 1, 2, 3\nWrite-Output 1\n[Array]::Reverse($x)\nWrite-Output 3')
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                Write-Output 1
+                [Array]::Reverse($x)
+                Write-Output 3
+            """))
 
     def test_a_second_reversal_returns_the_array_to_the_order_it_started_in(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, 2, 3\n[Array]::Reverse($x)\nWrite-Output $x\n'
-                '[Array]::Reverse($x)\nWrite-Output $x',
+                inspect.cleandoc("""
+                    $x = 1, 2, 3
+                    [Array]::Reverse($x)
+                    Write-Output $x
+                    [Array]::Reverse($x)
+                    Write-Output $x
+                """),
                 Ps1ConstantInlining),
-            '$x = 1, 2, 3\n[Array]::Reverse($x)\nWrite-Output (3, 2, 1)\n'
-            '[Array]::Reverse($x)\nWrite-Output (1, 2, 3)')
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                [Array]::Reverse($x)
+                Write-Output (3, 2, 1)
+                [Array]::Reverse($x)
+                Write-Output (1, 2, 3)
+            """))
 
     def test_binding_the_void_result_of_the_reversal_changes_nothing(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, 2, 3\n$r = [Array]::Reverse($x)\nWrite-Output $x', Ps1ConstantInlining),
-            '$x = 1, 2, 3\n$r = [Array]::Reverse($x)\nWrite-Output (3, 2, 1)')
+                inspect.cleandoc("""
+                    $x = 1, 2, 3
+                    $r = [Array]::Reverse($x)
+                    Write-Output $x
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                $r = [Array]::Reverse($x)
+                Write-Output (3, 2, 1)
+            """))
 
     def test_the_deobfuscator_answers_the_read_below_the_reversal_with_the_reversed_order(self):
         self.assertIn(
             'Write-Output (3, 2, 1)',
-            self._deobfuscate('$x = 1, 2, 3\n[Array]::Reverse($x)\nWrite-Output $x'),
+            self._deobfuscate(inspect.cleandoc("""
+                $x = 1, 2, 3
+                [Array]::Reverse($x)
+                Write-Output $x
+            """)),
         )
 
     def test_a_reversal_of_a_variable_nothing_assigned_is_not_answered(self):
-        self._assertUnchanged('[Array]::Reverse($x)\nWrite-Output $x', Ps1ConstantInlining)
+        self._assertUnchanged(inspect.cleandoc("""
+            [Array]::Reverse($x)
+            Write-Output $x
+        """), Ps1ConstantInlining)
 
     def test_an_element_written_before_the_reversal_moves_to_the_far_end(self):
-        source = '$x = 1, 2, 3\n$x[0] = 9\n[Array]::Reverse($x)\nWrite-Output $x'
+        source = inspect.cleandoc("""
+            $x = 1, 2, 3
+            $x[0] = 9
+            [Array]::Reverse($x)
+            Write-Output $x
+        """)
         self.assertIn(
             self._apply(source, Ps1ConstantInlining),
-            (source, '$x = 1, 2, 3\n$x[0] = 9\n[Array]::Reverse($x)\nWrite-Output (3, 2, 9)'),
+            (source, inspect.cleandoc("""
+                $x = 1, 2, 3
+                $x[0] = 9
+                [Array]::Reverse($x)
+                Write-Output (3, 2, 9)
+            """)),
         )
 
     def test_a_reversal_through_an_array_element_turns_that_element_around(self):
-        source = '$p = @(@(1, 2), @(3, 4))\n[Array]::Reverse($p[0])\nWrite-Output $p[0]'
+        source = inspect.cleandoc("""
+            $p = @(@(1, 2), @(3, 4))
+            [Array]::Reverse($p[0])
+            Write-Output $p[0]
+        """)
         self.assertIn(
             self._apply(source, Ps1ConstantInlining),
-            (source, '$p = @(@(1, 2), @(3, 4))\n[Array]::Reverse($p[0])\nWrite-Output (2, 1)'),
+            (source, inspect.cleandoc("""
+                $p = @(@(1, 2), @(3, 4))
+                [Array]::Reverse($p[0])
+                Write-Output (2, 1)
+            """)),
         )
 
     def test_a_read_below_a_sort_sees_the_order_the_call_left(self):
         self.assertEqual(
             self._apply(
-                '$x = 3, 1, 2\n[Array]::Sort($x)\nWrite-Output $x[0]', Ps1ConstantInlining),
-            '$x = 3, 1, 2\n[Array]::Sort($x)\nWrite-Output 1')
+                inspect.cleandoc("""
+                    $x = 3, 1, 2
+                    [Array]::Sort($x)
+                    Write-Output $x[0]
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $x = 3, 1, 2
+                [Array]::Sort($x)
+                Write-Output 1
+            """))
 
     def test_a_reversal_under_a_condition_that_is_not_known_is_not_answered(self):
         self._assertUnchanged(
-            '$x = 1, 2, 3\nif ($env:C) {\n  [Array]::Reverse($x)\n}\nWrite-Output $x',
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                if ($env:C) {
+                  [Array]::Reverse($x)
+                }
+                Write-Output $x
+            """),
             Ps1ConstantInlining)
 
     def test_a_reversal_inside_a_called_function_turns_the_callers_array_around(self):
-        source = 'function f {\n  [Array]::Reverse($x)\n}\n$x = 1, 2, 3\nf\nWrite-Output $x'
+        source = inspect.cleandoc("""
+            function f {
+              [Array]::Reverse($x)
+            }
+            $x = 1, 2, 3
+            f
+            Write-Output $x
+        """)
         self.assertIn(
             self._apply(source, Ps1ConstantInlining),
             (
                 source,
-                'function f {\n  [Array]::Reverse($x)\n}\n$x = 1, 2, 3\nf\nWrite-Output (3, 2, 1)',
+                inspect.cleandoc("""
+                    function f {
+                      [Array]::Reverse($x)
+                    }
+                    $x = 1, 2, 3
+                    f
+                    Write-Output (3, 2, 1)
+                """),
             ),
         )
 
@@ -1215,49 +1349,109 @@ class TestPs1AReverseIsComputedWhereItsEffectIsKnownAndTotal(TestPs1):
     def test_a_whole_array_is_reversed(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, 2, 3\n[Array]::Reverse($x)\nWrite-Output $x', Ps1ConstantInlining),
-            '$x = 1, 2, 3\n[Array]::Reverse($x)\nWrite-Output (3, 2, 1)')
+                inspect.cleandoc("""
+                    $x = 1, 2, 3
+                    [Array]::Reverse($x)
+                    Write-Output $x
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                [Array]::Reverse($x)
+                Write-Output (3, 2, 1)
+            """))
 
     def test_a_range_inside_the_array_reverses_only_that_range(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, 2, 3\n[Array]::Reverse($x, 0, 2)\nWrite-Output $x', Ps1ConstantInlining),
-            '$x = 1, 2, 3\n[Array]::Reverse($x, 0, 2)\nWrite-Output (2, 1, 3)')
+                inspect.cleandoc("""
+                    $x = 1, 2, 3
+                    [Array]::Reverse($x, 0, 2)
+                    Write-Output $x
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                [Array]::Reverse($x, 0, 2)
+                Write-Output (2, 1, 3)
+            """))
 
     def test_a_range_spanning_the_whole_array_reverses_all_of_it(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, 2, 3\n[Array]::Reverse($x, 0, 3)\nWrite-Output $x', Ps1ConstantInlining),
-            '$x = 1, 2, 3\n[Array]::Reverse($x, 0, 3)\nWrite-Output (3, 2, 1)')
+                inspect.cleandoc("""
+                    $x = 1, 2, 3
+                    [Array]::Reverse($x, 0, 3)
+                    Write-Output $x
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                [Array]::Reverse($x, 0, 3)
+                Write-Output (3, 2, 1)
+            """))
 
     def test_a_range_of_one_element_leaves_the_order_alone(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, 2, 3\n[Array]::Reverse($x, 1, 1)\nWrite-Output $x', Ps1ConstantInlining),
-            '$x = 1, 2, 3\n[Array]::Reverse($x, 1, 1)\nWrite-Output (1, 2, 3)')
+                inspect.cleandoc("""
+                    $x = 1, 2, 3
+                    [Array]::Reverse($x, 1, 1)
+                    Write-Output $x
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                [Array]::Reverse($x, 1, 1)
+                Write-Output (1, 2, 3)
+            """))
 
     def test_an_empty_range_at_the_far_end_of_the_array_still_fits_inside_it(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, 2, 3\n[Array]::Reverse($x, 3, 0)\nWrite-Output $x', Ps1ConstantInlining),
-            '$x = 1, 2, 3\n[Array]::Reverse($x, 3, 0)\nWrite-Output (1, 2, 3)')
+                inspect.cleandoc("""
+                    $x = 1, 2, 3
+                    [Array]::Reverse($x, 3, 0)
+                    Write-Output $x
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                [Array]::Reverse($x, 3, 0)
+                Write-Output (1, 2, 3)
+            """))
 
     def test_a_range_that_does_not_fit_inside_the_array_leaves_the_order_alone(self):
-        source = '$x = 1, 2, 3\n[Array]::Reverse($x, 0, 99)\nWrite-Output $x'
+        source = inspect.cleandoc("""
+            $x = 1, 2, 3
+            [Array]::Reverse($x, 0, 99)
+            Write-Output $x
+        """)
         self.assertIn(
             self._apply(source, Ps1ConstantInlining),
-            (source, '$x = 1, 2, 3\n[Array]::Reverse($x, 0, 99)\nWrite-Output (1, 2, 3)'),
+            (source, inspect.cleandoc("""
+                $x = 1, 2, 3
+                [Array]::Reverse($x, 0, 99)
+                Write-Output (1, 2, 3)
+            """)),
         )
 
     def test_a_range_whose_length_is_not_a_known_number_is_not_answered(self):
         self._assertUnchanged(
-            '$x = 1, 2, 3\n[Array]::Reverse($x, 0, $n)\nWrite-Output $x', Ps1ConstantInlining)
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                [Array]::Reverse($x, 0, $n)
+                Write-Output $x
+            """), Ps1ConstantInlining)
 
     def test_reversing_a_string_does_not_reverse_the_string(self):
-        source = "$s = 'abc'\n[Array]::Reverse($s)\nWrite-Output $s"
+        source = inspect.cleandoc("""
+            $s = 'abc'
+            [Array]::Reverse($s)
+            Write-Output $s
+        """)
         self.assertIn(
             self._apply(source, Ps1ConstantInlining),
-            (source, "$s = 'abc'\n[Array]::Reverse($s)\nWrite-Output 'abc'"),
+            (source, inspect.cleandoc("""
+                $s = 'abc'
+                [Array]::Reverse($s)
+                Write-Output 'abc'
+            """)),
         )
 
 
@@ -1266,34 +1460,77 @@ class TestPs1AnArrayReachedByTwoNamesIsWrittenThroughEither(TestPs1):
     def test_a_reversal_through_one_name_is_seen_by_a_read_of_the_other(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, 2, 3\n$y = $x\n[Array]::Reverse($x)\nWrite-Output $y',
+                inspect.cleandoc("""
+                    $x = 1, 2, 3
+                    $y = $x
+                    [Array]::Reverse($x)
+                    Write-Output $y
+                """),
                 Ps1ConstantInlining),
-            '$x = 1, 2, 3\n$y = $x\n[Array]::Reverse($x)\nWrite-Output (3, 2, 1)')
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                $y = $x
+                [Array]::Reverse($x)
+                Write-Output (3, 2, 1)
+            """))
 
     def test_the_share_survives_a_read_of_it_that_cannot_be_answered(self):
         self._assertUnchanged(
-            '$x = 1, 2, 3\n$y = $x\n[Array]::Reverse($x)\nWrite-Output $y[$env:I]',
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                $y = $x
+                [Array]::Reverse($x)
+                Write-Output $y[$env:I]
+            """),
             Ps1ConstantInlining)
 
     def test_a_reversal_through_the_second_name_is_seen_by_a_read_of_the_first(self):
-        source = '$x = 1, 2, 3\n$y = $x\n[Array]::Reverse($y)\nWrite-Output $x'
+        source = inspect.cleandoc("""
+            $x = 1, 2, 3
+            $y = $x
+            [Array]::Reverse($y)
+            Write-Output $x
+        """)
         self.assertIn(
             self._apply(source, Ps1ConstantInlining),
-            (source, '$x = 1, 2, 3\n$y = $x\n[Array]::Reverse($y)\nWrite-Output (3, 2, 1)'),
+            (source, inspect.cleandoc("""
+                $x = 1, 2, 3
+                $y = $x
+                [Array]::Reverse($y)
+                Write-Output (3, 2, 1)
+            """)),
         )
 
     def test_an_element_written_through_the_second_name_is_seen_by_a_read_of_the_first(self):
-        source = '$x = 1, 2, 3\n$y = $x\n$y[0] = 9\nWrite-Output $x'
+        source = inspect.cleandoc("""
+            $x = 1, 2, 3
+            $y = $x
+            $y[0] = 9
+            Write-Output $x
+        """)
         self.assertIn(
             self._apply(source, Ps1ConstantInlining),
-            (source, '$x = 1, 2, 3\n$y = $x\n$y[0] = 9\nWrite-Output (9, 2, 3)'),
+            (source, inspect.cleandoc("""
+                $x = 1, 2, 3
+                $y = $x
+                $y[0] = 9
+                Write-Output (9, 2, 3)
+            """)),
         )
 
     def test_rebinding_one_name_does_not_change_the_array_the_other_holds(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, 2, 3\n$y = $x\n$x = 9, 9, 9\nWrite-Output $y', Ps1ConstantInlining),
-            '$y = (1, 2, 3)\nWrite-Output $y')
+                inspect.cleandoc("""
+                    $x = 1, 2, 3
+                    $y = $x
+                    $x = 9, 9, 9
+                    Write-Output $y
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $y = (1, 2, 3)
+                Write-Output $y
+            """))
 
 
 class TestPs1AMethodFoldsOnlyWhereItsReceiverCarriesTheOverload(TestPs1):
@@ -1663,50 +1900,105 @@ class TestPs1ASortOrdersAnArrayOfOneComparableType(TestPs1):
     def test_numbers_order_by_magnitude_and_not_by_spelling(self):
         self.assertEqual(
             self._apply(
-                '$x = 10, 2, 1\n[Array]::Sort($x)\nWrite-Output $x', Ps1ConstantInlining),
-            '$x = 10, 2, 1\n[Array]::Sort($x)\nWrite-Output (1, 2, 10)')
+                inspect.cleandoc("""
+                    $x = 10, 2, 1
+                    [Array]::Sort($x)
+                    Write-Output $x
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $x = 10, 2, 1
+                [Array]::Sort($x)
+                Write-Output (1, 2, 10)
+            """))
 
     def test_negative_integers_order_by_magnitude(self):
         self.assertEqual(
             self._apply(
-                '$x = 1, -2, -1\n[Array]::Sort($x)\nWrite-Output $x', Ps1ConstantInlining),
-            '$x = 1, -2, -1\n[Array]::Sort($x)\nWrite-Output (-2, -1, 1)')
+                inspect.cleandoc("""
+                    $x = 1, -2, -1
+                    [Array]::Sort($x)
+                    Write-Output $x
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $x = 1, -2, -1
+                [Array]::Sort($x)
+                Write-Output (-2, -1, 1)
+            """))
 
     def test_chars_order_by_code_point(self):
         self.assertEqual(
             self._apply(
-                '$x = @([char]66, [char]65, [char]67)\n[Array]::Sort($x)\nWrite-Output $x',
+                inspect.cleandoc("""
+                    $x = @([char]66, [char]65, [char]67)
+                    [Array]::Sort($x)
+                    Write-Output $x
+                """),
                 Ps1ConstantInlining),
-            '$x = @([char]66, [char]65, [char]67)\n[Array]::Sort($x)\n'
-            'Write-Output ([char]65, [char]66, [char]67)')
+            inspect.cleandoc("""
+                $x = @([char]66, [char]65, [char]67)
+                [Array]::Sort($x)
+                Write-Output ([char]65, [char]66, [char]67)
+            """))
 
     def test_booleans_order_false_before_true(self):
         self.assertEqual(
             self._apply(
-                '$x = @($true, $false)\n[Array]::Sort($x)\nWrite-Output $x', Ps1ConstantInlining),
-            '$x = @($true, $false)\n[Array]::Sort($x)\nWrite-Output ($false, $true)')
+                inspect.cleandoc("""
+                    $x = @($true, $false)
+                    [Array]::Sort($x)
+                    Write-Output $x
+                """), Ps1ConstantInlining),
+            inspect.cleandoc("""
+                $x = @($true, $false)
+                [Array]::Sort($x)
+                Write-Output ($false, $true)
+            """))
 
     def test_a_string_array_is_not_ordered_because_its_order_is_cultural(self):
         self._assertUnchanged(
-            "$x = @('b', 'a')\n[Array]::Sort($x)\nWrite-Output $x", Ps1ConstantInlining)
+            inspect.cleandoc("""
+                $x = @('b', 'a')
+                [Array]::Sort($x)
+                Write-Output $x
+            """), Ps1ConstantInlining)
 
     def test_a_cross_type_array_is_not_ordered(self):
         self._assertUnchanged(
-            "$x = @('b', 5)\n[Array]::Sort($x)\nWrite-Output $x", Ps1ConstantInlining)
+            inspect.cleandoc("""
+                $x = @('b', 5)
+                [Array]::Sort($x)
+                Write-Output $x
+            """), Ps1ConstantInlining)
 
     def test_an_unreadable_element_leaves_the_order_unknown(self):
         self._assertUnchanged(
-            "$x = @($a, 'b')\n[Array]::Sort($x)\nWrite-Output $x", Ps1ConstantInlining)
+            inspect.cleandoc("""
+                $x = @($a, 'b')
+                [Array]::Sort($x)
+                Write-Output $x
+            """), Ps1ConstantInlining)
 
     def test_a_comparer_form_has_no_rule(self):
         self._assertUnchanged(
-            '$x = 1, 2, 3\n[Array]::Sort($x, $c)\nWrite-Output $x', Ps1ConstantInlining)
+            inspect.cleandoc("""
+                $x = 1, 2, 3
+                [Array]::Sort($x, $c)
+                Write-Output $x
+            """), Ps1ConstantInlining)
 
     def test_an_empty_array_sorts_to_the_empty_array(self):
-        source = '$x = @()\n[Array]::Sort($x)\nWrite-Output $x'
+        source = inspect.cleandoc("""
+            $x = @()
+            [Array]::Sort($x)
+            Write-Output $x
+        """)
         self.assertIn(
             self._apply(source, Ps1ConstantInlining),
-            (source, '$x = @()\n[Array]::Sort($x)\nWrite-Output @()'),
+            (source, inspect.cleandoc("""
+                $x = @()
+                [Array]::Sort($x)
+                Write-Output @()
+            """)),
         )
 
     @opportunity
@@ -1726,13 +2018,25 @@ class TestPs1ASortOrdersAnArrayOfOneComparableType(TestPs1):
 
     def test_decimals_of_one_value_and_different_scale_are_not_ordered(self):
         self._assertUnchanged(
-            '$x = @(1.0d, 1.00d)\n[Array]::Sort($x)\nWrite-Output $x', Ps1ConstantInlining)
+            inspect.cleandoc("""
+                $x = @(1.0d, 1.00d)
+                [Array]::Sort($x)
+                Write-Output $x
+            """), Ps1ConstantInlining)
 
     def test_a_repeated_value_sorts_to_itself(self):
-        source = '$x = @(1, 1)\n[Array]::Sort($x)\nWrite-Output $x'
+        source = inspect.cleandoc("""
+            $x = @(1, 1)
+            [Array]::Sort($x)
+            Write-Output $x
+        """)
         self.assertIn(
             self._apply(source, Ps1ConstantInlining),
-            (source, '$x = @(1, 1)\n[Array]::Sort($x)\nWrite-Output (1, 1)'),
+            (source, inspect.cleandoc("""
+                $x = @(1, 1)
+                [Array]::Sort($x)
+                Write-Output (1, 1)
+            """)),
         )
 
     @opportunity
@@ -1767,11 +2071,17 @@ class TestPs1AConstraintOnAVariableConvertsWhatIsWrittenToIt(TestPs1):
 
     def test_a_declaring_write_stores_the_converted_scalar(self):
         self.assertEqual(
-            self._deobfuscate('[string]$q = 5\nWrite-Output $q'), "Write-Output '5'")
+            self._deobfuscate(inspect.cleandoc("""
+                [string]$q = 5
+                Write-Output $q
+            """)), "Write-Output '5'")
 
     def test_a_declaring_write_parses_a_string_to_its_constrained_number(self):
         self.assertEqual(
-            self._deobfuscate("[int]$n = '5'\nWrite-Output ($n + 1)"), 'Write-Output 6')
+            self._deobfuscate(inspect.cleandoc("""
+                [int]$n = '5'
+                Write-Output ($n + 1)
+            """)), 'Write-Output 6')
 
     def test_a_compound_write_to_a_constrained_variable_arrives_as_the_constrained_type(self):
         source = inspect.cleandoc("""
@@ -1835,7 +2145,10 @@ class TestPs1AnOperatorOverANameWrittenUnderAQualifierFoldsAsIfItWereNull(TestPs
 
     def test_a_qualified_write_that_never_runs_leaves_the_bare_read_null(self):
         self.assertEqual(
-            self._deobfuscate('function f { $script:q = 5 }\nWrite-Output ($q + 1)'),
+            self._deobfuscate(inspect.cleandoc("""
+                function f { $script:q = 5 }
+                Write-Output ($q + 1)
+            """)),
             'Write-Output 1')
 
 
@@ -1889,7 +2202,11 @@ class TestPs1AnIncrementNeedsANumberAndIsNotTheBinarySum(TestPs1):
         self.assertEqual(self._deobfuscate('$x = $null; $x++; Write-Output $x'), 'Write-Output 1')
 
     def test_incrementing_a_string_fails_and_leaves_the_string(self):
-        source = '$x = "5"\n$x++\nWrite-Output $x'
+        source = inspect.cleandoc("""
+            $x = "5"
+            $x++
+            Write-Output $x
+        """)
         self._assertDeobfuscatesToOneOf(source, source, "Write-Output '5'")
 
     @opportunity
@@ -1897,7 +2214,11 @@ class TestPs1AnIncrementNeedsANumberAndIsNotTheBinarySum(TestPs1):
         self.assertEqual(self._deobfuscate('$x = "5"; $x++; Write-Output $x'), "Write-Output '5'")
 
     def test_incrementing_a_char_fails_and_leaves_the_char(self):
-        source = '$x = [char]65\n$x++\nWrite-Output $x'
+        source = inspect.cleandoc("""
+            $x = [char]65
+            $x++
+            Write-Output $x
+        """)
         self._assertDeobfuscatesToOneOf(source, source, 'Write-Output ([char]65)')
 
     @opportunity
@@ -1907,7 +2228,11 @@ class TestPs1AnIncrementNeedsANumberAndIsNotTheBinarySum(TestPs1):
         )
 
     def test_incrementing_a_boolean_fails_and_leaves_the_boolean(self):
-        source = '$x = $True\n$x++\nWrite-Output $x'
+        source = inspect.cleandoc("""
+            $x = $True
+            $x++
+            Write-Output $x
+        """)
         self._assertDeobfuscatesToOneOf(source, source, 'Write-Output $True')
 
     @opportunity
@@ -2065,22 +2390,34 @@ class TestPs1AConversionBetweenTwoNamesSharesInBothDirections(TestPs1):
 
     def test_a_store_through_the_second_name_reaches_the_first_only_where_the_two_share(self):
         self._assertEachConversionLeavesTheReadOrAnswersItsOwnCase(
-            '$y[0] = 9\nWrite-Output $x', '9, 2, 3'
+            inspect.cleandoc("""
+                $y[0] = 9
+                Write-Output $x
+            """), '9, 2, 3'
         )
 
     def test_a_reversal_through_the_second_name_reaches_the_first_only_where_the_two_share(self):
         self._assertEachConversionLeavesTheReadOrAnswersItsOwnCase(
-            '[Array]::Reverse($y)\nWrite-Output $x', '3, 2, 1'
+            inspect.cleandoc("""
+                [Array]::Reverse($y)
+                Write-Output $x
+            """), '3, 2, 1'
         )
 
     def test_a_store_through_the_first_name_reaches_the_second_only_where_the_two_share(self):
         self._assertEachConversionLeavesTheReadOrAnswersItsOwnCase(
-            '$x[0] = 9\nWrite-Output $y', '9, 2, 3'
+            inspect.cleandoc("""
+                $x[0] = 9
+                Write-Output $y
+            """), '9, 2, 3'
         )
 
     def test_a_reversal_through_the_first_name_reaches_the_second_only_where_the_two_share(self):
         self._assertEachConversionLeavesTheReadOrAnswersItsOwnCase(
-            '[Array]::Reverse($x)\nWrite-Output $y', '3, 2, 1'
+            inspect.cleandoc("""
+                [Array]::Reverse($x)
+                Write-Output $y
+            """), '3, 2, 1'
         )
 
 
@@ -2248,7 +2585,10 @@ class TestPs1ACallBindingNoOverloadRaisesRatherThanRunning(TestPs1):
         self._assertDeobfuscatesToOneOf(
             source,
             source,
-            '[Array]::Reverse((1, 2, 3), 0)\nWrite-Output (1, 2, 3)',
+            inspect.cleandoc("""
+                [Array]::Reverse((1, 2, 3), 0)
+                Write-Output (1, 2, 3)
+            """),
             'Write-Output (1, 2, 3)',
         )
 
@@ -2272,7 +2612,10 @@ class TestPs1ACallBindingNoOverloadRaisesRatherThanRunning(TestPs1):
         self._assertDeobfuscatesToOneOf(
             source,
             source,
-            '[Array]::Sort((3, 1, 2), 0, 1, 2, 3, 4)\nWrite-Output (3, 1, 2)',
+            inspect.cleandoc("""
+                [Array]::Sort((3, 1, 2), 0, 1, 2, 3, 4)
+                Write-Output (3, 1, 2)
+            """),
             'Write-Output (3, 1, 2)',
         )
 

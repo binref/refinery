@@ -398,7 +398,10 @@ class TestAReturnNothingReadsGivesUpItsValue(TestJsDeobfuscator):
 
 
 SCRIPTS_COMPLETING_WITH_A_DISCARDED_RETURN = (
-    'var S;\n(function () { var t = [1, 2]; return S = function (i) { return t[i]; }; })();\n',
+    a_program("""
+        var S;
+        (function () { var t = [1, 2]; return S = function (i) { return t[i]; }; })();
+    """),
     '(function () { return Math.random() < 2 ? 1 : 2; })();\n',
     '(function () { var r = Math.random(); globalThis.k = r; return 5; })();\n',
 )

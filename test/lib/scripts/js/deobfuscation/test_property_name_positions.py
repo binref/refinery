@@ -1149,11 +1149,23 @@ WHICH_LOCAL_BINDINGS_AN_EXPORT_TIES_TO_THE_OUTSIDE = {
     'export default class D {}': {'D'},
     'export default function () {}': set(),
     'export default class {}': set(),
-    'var foo = 1;\nexport default foo;': set(),
+    inspect.cleandoc("""
+        var foo = 1;
+        export default foo;
+    """): set(),
     'export default 1 + 2;': set(),
-    'var q = 1;\nexport { q };': {'q'},
-    'var q = 1;\nexport { q as w };': {'q'},
-    'var q = 1;\nexport { q as default };': {'q'},
+    inspect.cleandoc("""
+        var q = 1;
+        export { q };
+    """): {'q'},
+    inspect.cleandoc("""
+        var q = 1;
+        export { q as w };
+    """): {'q'},
+    inspect.cleandoc("""
+        var q = 1;
+        export { q as default };
+    """): {'q'},
     "export { a } from 'm';": set(),
     "export { a as b } from 'm';": set(),
     "export * from 'm';": set(),

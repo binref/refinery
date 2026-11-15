@@ -9,6 +9,7 @@ from `samples` may ever be handed to the engine.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase, opportunity
@@ -115,7 +116,11 @@ _A_METHOD_NOT_EVERY_HOST_ANSWERS_ALIKE: dict[str, tuple[str, str, str]] = {
 _A_READ_NAMED_LIKE_A_METHOD_OF_A_REGULAR_EXPRESSION: dict[str, tuple[str, str]] = {
     "var cp = require('child_process'); var run = require('util').promisify(cp.exec); console.log('abc'.nope, typeof run);": (
         'undefined function\n',
-        "var cp = require('child_process');\nvar run = require('util').promisify(cp.exec);\nconsole.log(void 0, typeof run);",
+        inspect.cleandoc("""
+            var cp = require('child_process');
+            var run = require('util').promisify(cp.exec);
+            console.log(void 0, typeof run);
+        """),
     ),
 }
 

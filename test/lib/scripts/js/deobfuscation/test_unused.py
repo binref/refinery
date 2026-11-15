@@ -13,7 +13,12 @@ from test.lib.scripts.js.analysis.differential import (
     node_executable,
 )
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints, printed
+from test.lib.scripts.js.ledger import (
+    a_program,
+    before_and_after,
+    each_program_still_prints,
+    printed,
+)
 
 from refinery.lib.scripts import tree_version
 from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
@@ -493,15 +498,29 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
 
     def test_dead_store_calling_an_established_reader_is_removed(self):
-        source = 'function f() { return q; }\nlet q = 1;\nvar dead = f();\nconsole.log(2);\n'
+        source = a_program("""
+            function f() { return q; }
+            let q = 1;
+            var dead = f();
+            console.log(2);
+        """)
         self.assertEqual('console.log(2);', self._remove_unused(source))
 
     def test_dead_store_calling_a_generator_dead_zone_reader_is_removed(self):
-        source = 'function* gen() { return q; }\nvar dead = gen();\nlet q = 1;\nconsole.log(2);\n'
+        source = a_program("""
+            function* gen() { return q; }
+            var dead = gen();
+            let q = 1;
+            console.log(2);
+        """)
         self.assertEqual('console.log(2);', self._remove_unused(source))
 
     def test_dead_store_calling_a_reader_of_its_own_dead_zone_local_is_removed(self):
-        source = 'function f() { let x = 1; return x; }\nvar dead = f();\nconsole.log(2);\n'
+        source = a_program("""
+            function f() { let x = 1; return x; }
+            var dead = f();
+            console.log(2);
+        """)
         self.assertEqual('console.log(2);', self._remove_unused(source))
 
     def test_dead_store_calling_a_reader_of_its_own_dead_zone_from_within_keeps_its_call(self):
@@ -2242,8 +2261,16 @@ class TestHostEntrypoints(TestJsDeobfuscator):
     @opportunity
     def test_a_dead_write_in_an_unbraced_branch_body_goes(self):
         programs = [
-            'var y;\nif (Math.random() > 2) y = 1;\nconsole.log(3);',
-            'var a, b;\nif (Math.random() > 2) [a, b] = [1, 2];\nconsole.log(3);',
+            inspect.cleandoc("""
+                var y;
+                if (Math.random() > 2) y = 1;
+                console.log(3);
+            """),
+            inspect.cleandoc("""
+                var a, b;
+                if (Math.random() > 2) [a, b] = [1, 2];
+                console.log(3);
+            """),
         ]
         self.assertEqual(
             {source: self._deobfuscate(source) for source in programs},
@@ -2251,7 +2278,10 @@ class TestHostEntrypoints(TestJsDeobfuscator):
         )
 
     def test_a_write_read_back_through_a_bracket_spelling_is_kept(self):
-        source = "globalThis.x = 1;\nconsole.log(globalThis['x']);"
+        source = inspect.cleandoc("""
+            globalThis.x = 1;
+            console.log(globalThis['x']);
+        """)
         self.assertEqual(source, self._remove_unused(source))
 
 
@@ -2263,7 +2293,10 @@ A_SLOPPY_REGION_ASSIGNING_TO_NO_BINDING: dict[str, str] = {
 
 A_STRICT_REGION_ASSIGNING_TO_A_NAME_IT_DECLARES: dict[str, str] = {
     "'use strict'; var declared_g; declared_g = 1; console.log(3);":
-        "'use strict';\nconsole.log(3);",
+        inspect.cleandoc("""
+            'use strict';
+            console.log(3);
+        """),
 }
 
 
@@ -2316,9 +2349,21 @@ A_PROPERTY_WRITTEN_ON_AN_OBJECT_A_LOCAL_NAME_HOLDS: dict[str, str] = {
 }
 
 A_GLOBAL_PROPERTY_WRITE_NOTHING_READS: dict[str, str] = {
-    'globalThis.q = 1;\nconsole.log(3);': 'console.log(3);',
-    "globalThis.x = 1;\nif (typeof window !== 'undefined') {\n  console.log(3);\n}":
-        "if (typeof window !== 'undefined') {\n  console.log(3);\n}",
+    inspect.cleandoc("""
+        globalThis.q = 1;
+        console.log(3);
+    """): 'console.log(3);',
+    inspect.cleandoc("""
+        globalThis.x = 1;
+        if (typeof window !== 'undefined') {
+          console.log(3);
+        }
+    """):
+        inspect.cleandoc("""
+            if (typeof window !== 'undefined') {
+              console.log(3);
+            }
+        """),
 }
 
 
@@ -2388,28 +2433,49 @@ A_GLOBAL_PROPERTY_WRITE_AN_UNSPELLED_READ_OBSERVES: dict[str, str] = {
             })(window);
             """
         ),
-        'globalThis.x = 1;\ndump(this);',
+        inspect.cleandoc("""
+            globalThis.x = 1;
+            dump(this);
+        """),
     ]
 }
 
 A_DEAD_GLOBAL_PROPERTY_WRITE_THROUGH_A_CERTAIN_BASE: dict[str, str] = {
-    'globalThis.q = 1;\nconsole.log(3);': 'console.log(3);',
+    inspect.cleandoc("""
+        globalThis.q = 1;
+        console.log(3);
+    """): 'console.log(3);',
 }
 
 A_DEAD_GLOBAL_PROPERTY_WRITE_THROUGH_A_HOST_CONDITIONAL_BASE: dict[str, str] = {
     source: source
     for source in [
-        'window.q = 1;\nconsole.log(3);',
-        'self.q = 1;\nconsole.log(3);',
-        'global.q = 1;\nconsole.log(3);',
+        inspect.cleandoc("""
+            window.q = 1;
+            console.log(3);
+        """),
+        inspect.cleandoc("""
+            self.q = 1;
+            console.log(3);
+        """),
+        inspect.cleandoc("""
+            global.q = 1;
+            console.log(3);
+        """),
     ]
 }
 
 A_DEAD_PROPERTY_WRITE_ON_ANOTHER_REALMS_GLOBAL: dict[str, str] = {
     source: source
     for source in [
-        'top.q = 1;\nconsole.log(3);',
-        'frames.q = 1;\nconsole.log(3);',
+        inspect.cleandoc("""
+            top.q = 1;
+            console.log(3);
+        """),
+        inspect.cleandoc("""
+            frames.q = 1;
+            console.log(3);
+        """),
     ]
 }
 
@@ -2578,72 +2644,266 @@ class TestNodePrintsTheSameWhereTheGlobalObjectEscapes(TestJsDeobfuscator):
 
 
 A_KEPT_READ_OF_A_NAME_NOTHING_BINDS: dict[str, str] = {
-    'function f() { let v = zzz; }\nf();\nconsole.log(1);\n':
-        'let v = zzz;\nconsole.log(1);',
-    'function f() { var v = zzz; }\nf();\nconsole.log(1);\n':
-        'var v = zzz;\nconsole.log(1);',
-    'y = a;\nconsole.log(1);\n': 'a;\nconsole.log(1);',
-    'var o = { p: g };\nconsole.log(1);\n': 'var o = { p: g };\nconsole.log(1);',
-    'y = N();\nN = function () {};\nconsole.log(1);\n':
-        'N();\nN = function() {};\nconsole.log(1);',
+    a_program("""
+        function f() { let v = zzz; }
+        f();
+        console.log(1);
+    """):
+        inspect.cleandoc("""
+            let v = zzz;
+            console.log(1);
+        """),
+    a_program("""
+        function f() { var v = zzz; }
+        f();
+        console.log(1);
+    """):
+        inspect.cleandoc("""
+            var v = zzz;
+            console.log(1);
+        """),
+    a_program("""
+        y = a;
+        console.log(1);
+    """): inspect.cleandoc("""
+        a;
+        console.log(1);
+    """),
+    a_program("""
+        var o = { p: g };
+        console.log(1);
+    """): inspect.cleandoc("""
+        var o = { p: g };
+        console.log(1);
+    """),
+    a_program("""
+        y = N();
+        N = function () {};
+        console.log(1);
+    """):
+        inspect.cleandoc("""
+            N();
+            N = function() {};
+            console.log(1);
+        """),
 }
 
 A_KEPT_READ_A_TRY_CATCHES: dict[str, str] = {
-    'try {\n  var x = missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
-        'try {\n  var x = missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);',
-    'try {\n  let v = missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
-        'try {\n  let v = missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);',
-    'try {\n  y = missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
-        'try {\n  missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);',
-    'try {\n  var o = { p: missing };\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
-        'try {\n  var o = { p: missing };\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);',
-    'try {\n  throw 1;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
-        'try {\n  throw 1;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);',
-    'try {\n  null.p;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
-        'try {\n  null.p;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);',
+    a_program("""
+        try {
+          var x = missing;
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """):
+        inspect.cleandoc("""
+            try {
+              var x = missing;
+            } catch (e) {
+              console.log(2);
+            }
+            console.log(3);
+        """),
+    a_program("""
+        try {
+          let v = missing;
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """):
+        inspect.cleandoc("""
+            try {
+              let v = missing;
+            } catch (e) {
+              console.log(2);
+            }
+            console.log(3);
+        """),
+    a_program("""
+        try {
+          y = missing;
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """):
+        inspect.cleandoc("""
+            try {
+              missing;
+            } catch (e) {
+              console.log(2);
+            }
+            console.log(3);
+        """),
+    a_program("""
+        try {
+          var o = { p: missing };
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """):
+        inspect.cleandoc("""
+            try {
+              var o = { p: missing };
+            } catch (e) {
+              console.log(2);
+            }
+            console.log(3);
+        """),
+    a_program("""
+        try {
+          throw 1;
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """):
+        inspect.cleandoc("""
+            try {
+              throw 1;
+            } catch (e) {
+              console.log(2);
+            }
+            console.log(3);
+        """),
+    a_program("""
+        try {
+          null.p;
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """):
+        inspect.cleandoc("""
+            try {
+              null.p;
+            } catch (e) {
+              console.log(2);
+            }
+            console.log(3);
+        """),
 }
 
 A_KEPT_CALL_WHOSE_BODY_CANNOT_RETURN: dict[str, str] = {
     source: source.rstrip('\n')
     for source in [
-        'function f() {\n  var x = missing;\n  return 7;\n}\nconsole.log(f());\n',
-        'function f() {\n  var x = { p: missing };\n  return 7;\n}\nconsole.log(f());\n',
-        'var f = () => {\n  var x = missing;\n  return 7;\n};\nconsole.log(f());\n',
-        'function f() {\n  missing;\n  return 7;\n}\nconsole.log(f());\n',
-        'function f() {\n  return missing;\n}\nconsole.log(f());\n',
+        a_program("""
+            function f() {
+              var x = missing;
+              return 7;
+            }
+            console.log(f());
+        """),
+        a_program("""
+            function f() {
+              var x = { p: missing };
+              return 7;
+            }
+            console.log(f());
+        """),
+        a_program("""
+            var f = () => {
+              var x = missing;
+              return 7;
+            };
+            console.log(f());
+        """),
+        a_program("""
+            function f() {
+              missing;
+              return 7;
+            }
+            console.log(f());
+        """),
+        a_program("""
+            function f() {
+              return missing;
+            }
+            console.log(f());
+        """),
     ]
 }
 
 AN_ESTABLISHED_STORE_STILL_REDUCES: dict[str, str] = {
-    'X = 5;\ny = X;\nconsole.log(1);\n': 'console.log(1);',
-    'function f() {\n  var x = 1;\n  return 7;\n}\nconsole.log(f());\n': 'console.log(7);',
-    'try {\n  var x = 1;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n': 'console.log(3);',
-    'N = function () {};\ny = N();\nconsole.log(1);\n': 'console.log(1);',
-    'function N() {}\ny = N();\nconsole.log(1);\n': 'console.log(1);',
+    a_program("""
+        X = 5;
+        y = X;
+        console.log(1);
+    """): 'console.log(1);',
+    a_program("""
+        function f() {
+          var x = 1;
+          return 7;
+        }
+        console.log(f());
+    """): 'console.log(7);',
+    a_program("""
+        try {
+          var x = 1;
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """): 'console.log(3);',
+    a_program("""
+        N = function () {};
+        y = N();
+        console.log(1);
+    """): 'console.log(1);',
+    a_program("""
+        function N() {}
+        y = N();
+        console.log(1);
+    """): 'console.log(1);',
 }
 
 THE_CLEAN_TEXT_AROUND_WHAT_MAY_THROW: dict[str, str] = {
-    'function f() { let v = zzz; }\nf();\nconsole.log(1);\n':
+    a_program("""
+        function f() { let v = zzz; }
+        f();
+        console.log(1);
+    """):
         inspect.cleandoc("""
             zzz;
             console.log(1);
         """),
-    'function f() { var v = zzz; }\nf();\nconsole.log(1);\n':
+    a_program("""
+        function f() { var v = zzz; }
+        f();
+        console.log(1);
+    """):
         inspect.cleandoc("""
             zzz;
             console.log(1);
         """),
-    'var o = { p: g };\nconsole.log(1);\n':
+    a_program("""
+        var o = { p: g };
+        console.log(1);
+    """):
         inspect.cleandoc("""
             g;
             console.log(1);
         """),
-    'y = N();\nN = function () {};\nconsole.log(1);\n':
+    a_program("""
+        y = N();
+        N = function () {};
+        console.log(1);
+    """):
         inspect.cleandoc("""
             N();
             console.log(1);
         """),
-    'try {\n  var x = missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
+    a_program("""
+        try {
+          var x = missing;
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """):
         inspect.cleandoc("""
             try {
               missing;
@@ -2652,7 +2912,14 @@ THE_CLEAN_TEXT_AROUND_WHAT_MAY_THROW: dict[str, str] = {
             }
             console.log(3);
         """),
-    'try {\n  let v = missing;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
+    a_program("""
+        try {
+          let v = missing;
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """):
         inspect.cleandoc("""
             try {
               missing;
@@ -2661,7 +2928,14 @@ THE_CLEAN_TEXT_AROUND_WHAT_MAY_THROW: dict[str, str] = {
             }
             console.log(3);
         """),
-    'try {\n  var o = { p: missing };\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
+    a_program("""
+        try {
+          var o = { p: missing };
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """):
         inspect.cleandoc("""
             try {
               missing;
@@ -2670,17 +2944,37 @@ THE_CLEAN_TEXT_AROUND_WHAT_MAY_THROW: dict[str, str] = {
             }
             console.log(3);
         """),
-    'try {\n  throw 1;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
+    a_program("""
+        try {
+          throw 1;
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """):
         inspect.cleandoc("""
             console.log(2);
             console.log(3);
         """),
-    'try {\n  null.p;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
+    a_program("""
+        try {
+          null.p;
+        } catch (e) {
+          console.log(2);
+        }
+        console.log(3);
+    """):
         inspect.cleandoc("""
             console.log(2);
             console.log(3);
         """),
-    'function f() {\n  var x = missing;\n  return 7;\n}\nconsole.log(f());\n':
+    a_program("""
+        function f() {
+          var x = missing;
+          return 7;
+        }
+        console.log(f());
+    """):
         inspect.cleandoc("""
             function f() {
               missing;
@@ -2688,7 +2982,13 @@ THE_CLEAN_TEXT_AROUND_WHAT_MAY_THROW: dict[str, str] = {
             }
             console.log(f());
         """),
-    'function f() {\n  var x = { p: missing };\n  return 7;\n}\nconsole.log(f());\n':
+    a_program("""
+        function f() {
+          var x = { p: missing };
+          return 7;
+        }
+        console.log(f());
+    """):
         inspect.cleandoc("""
             function f() {
               missing;
@@ -2696,7 +2996,13 @@ THE_CLEAN_TEXT_AROUND_WHAT_MAY_THROW: dict[str, str] = {
             }
             console.log(f());
         """),
-    'var f = () => {\n  var x = missing;\n  return 7;\n};\nconsole.log(f());\n':
+    a_program("""
+        var f = () => {
+          var x = missing;
+          return 7;
+        };
+        console.log(f());
+    """):
         inspect.cleandoc("""
             var f = () => {
               missing;
@@ -2709,12 +3015,18 @@ THE_CLEAN_TEXT_AROUND_WHAT_MAY_THROW: dict[str, str] = {
             zzz;
             console.log(1);
         """),
-    'var o = { p: zzz, q: 1 };\nconsole.log(o.q);\n':
+    a_program("""
+        var o = { p: zzz, q: 1 };
+        console.log(o.q);
+    """):
         inspect.cleandoc("""
             zzz;
             console.log(1);
         """),
-    'var r = [1, zzz][0];\nconsole.log(r);\n':
+    a_program("""
+        var r = [1, zzz][0];
+        console.log(r);
+    """):
         inspect.cleandoc("""
             zzz;
             console.log(1);
@@ -2778,43 +3090,80 @@ class TestNodePrintsTheSameAboutAReadOfANameNothingBinds(TestJsDeobfuscator):
 
 
 A_KEPT_READ_A_DISCARDING_CONTEXT_FOLDS_AROUND: dict[str, str] = {
-    'if ([zzz]) console.log(1);\n': '[zzz];\nconsole.log(1);',
-    'var o = { p: zzz, q: 1 };\nconsole.log(o.q);\n':
-        'var o = { p: zzz, q: 1 };\nconsole.log(1);',
+    'if ([zzz]) console.log(1);\n': inspect.cleandoc("""
+        [zzz];
+        console.log(1);
+    """),
+    a_program("""
+        var o = { p: zzz, q: 1 };
+        console.log(o.q);
+    """):
+        inspect.cleandoc("""
+            var o = { p: zzz, q: 1 };
+            console.log(1);
+        """),
     'console.log(function (a, b) { return a; }(7, zzz));\n':
-        'console.log(function(a, b) {\n  return a;\n}(7, zzz));',
-    'function w(a, b) {\n  return a;\n}\nconsole.log(w(7, zzz));\n':
-        'function w(a, b) {\n  return a;\n}\nconsole.log(w(7, zzz));',
-    'var r = [1, zzz][0];\nconsole.log(r);\n': 'var r = [1, zzz][0];\nconsole.log(r);',
+        inspect.cleandoc("""
+            console.log(function(a, b) {
+              return a;
+            }(7, zzz));
+        """),
+    a_program("""
+        function w(a, b) {
+          return a;
+        }
+        console.log(w(7, zzz));
+    """):
+        inspect.cleandoc("""
+            function w(a, b) {
+              return a;
+            }
+            console.log(w(7, zzz));
+        """),
+    a_program("""
+        var r = [1, zzz][0];
+        console.log(r);
+    """): inspect.cleandoc("""
+        var r = [1, zzz][0];
+        console.log(r);
+    """),
 }
 
 A_KEPT_READ_UNDER_TYPEOF_STILL_THROWS: dict[str, str] = {
-    'try {\n'
-    '  console.log(function (a) { return typeof a; }(u));\n'
-    '} catch (e) {\n'
-    "  console.log('caught');\n"
-    '}\n':
-        'try {\n'
-        '  console.log(function(a) {\n'
-        '    return typeof a;\n'
-        '  }(u));\n'
-        '} catch (e) {\n'
-        "  console.log('caught');\n"
-        '}',
+    a_program("""
+        try {
+          console.log(function (a) { return typeof a; }(u));
+        } catch (e) {
+          console.log('caught');
+        }
+    """):
+        inspect.cleandoc("""
+            try {
+              console.log(function(a) {
+                return typeof a;
+              }(u));
+            } catch (e) {
+              console.log('caught');
+            }
+        """),
 }
 
 A_TYPEOF_OF_AN_ESTABLISHED_ARGUMENT_FOLDS: dict[str, str] = {
-    'var u = 1;\n'
-    'try {\n'
-    '  console.log(function (a) { return typeof a; }(u));\n'
-    '} catch (e) {\n'
-    "  console.log('caught');\n"
-    '}\n':
-        'try {\n'
-        "  console.log('number');\n"
-        '} catch (e) {\n'
-        "  console.log('caught');\n"
-        '}',
+    a_program("""
+        var u = 1;
+        try {
+          console.log(function (a) { return typeof a; }(u));
+        } catch (e) {
+          console.log('caught');
+        }
+    """):
+        inspect.cleandoc("""
+            try {
+              console.log('number');
+            } catch (e) {
+              console.log('caught');
+            }
+        """),
 }
 
 
@@ -2869,7 +3218,11 @@ class TestATypedLocalMemberReadIsRemovableUnderTrust(TestJsDeobfuscator):
 
     def test_a_dead_constructor_read_off_a_function_is_removed_under_trust(self):
         self.assertEqual(
-            'function f() {\n  return 1;\n}',
+            inspect.cleandoc("""
+                function f() {
+                  return 1;
+                }
+            """),
             self._remove_unused(
                 'function f() { return 1; } var x = f.constructor;', trust_eval=True),
         )
@@ -2892,8 +3245,18 @@ class TestATypedLocalMemberReadIsRemovableUnderTrust(TestJsDeobfuscator):
             self._remove_unused(
                 'var x = f.constructor; var f = function () { return 1; };', trust_eval=True),
             (
-                'var x = f.constructor;\nvar f = function() {\n  return 1;\n};',
-                'f.constructor;\nvar f = function() {\n  return 1;\n};',
+                inspect.cleandoc("""
+                    var x = f.constructor;
+                    var f = function() {
+                      return 1;
+                    };
+                """),
+                inspect.cleandoc("""
+                    f.constructor;
+                    var f = function() {
+                      return 1;
+                    };
+                """),
             ),
         )
 
@@ -2960,8 +3323,18 @@ class TestATypedLocalMemberReadIsRemovableUnderTrust(TestJsDeobfuscator):
         self.assertIn(
             self._remove_unused('function f() { return 1; } var x = f.caller;', trust_eval=True),
             (
-                'function f() {\n  return 1;\n}\nvar x = f.caller;',
-                'function f() {\n  return 1;\n}\nf.caller;',
+                inspect.cleandoc("""
+                    function f() {
+                      return 1;
+                    }
+                    var x = f.caller;
+                """),
+                inspect.cleandoc("""
+                    function f() {
+                      return 1;
+                    }
+                    f.caller;
+                """),
             ),
         )
 
@@ -3003,7 +3376,10 @@ class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
 
     def test_the_interleaved_duplicate_stores_dedupe(self):
         self.assertEqual(
-            'global.r = require;\nglobal.m = module;',
+            inspect.cleandoc("""
+                global.r = require;
+                global.m = module;
+            """),
             self._remove_unused(
                 'global.r = require; global.m = module; global.r = require; global.m = module;'),
         )
@@ -3050,15 +3426,27 @@ class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
         )
 
     def test_a_statement_between_the_stores_keeps_them(self):
-        source = 'global.r = require;\nSINK();\nglobal.r = require;'
+        source = inspect.cleandoc("""
+            global.r = require;
+            SINK();
+            global.r = require;
+        """)
         self.assertEqual(source, self._remove_unused(source))
 
     def test_a_different_value_stored_between_keeps_the_last(self):
-        source = 'global.r = require;\nglobal.r = module;\nglobal.r = require;'
+        source = inspect.cleandoc("""
+            global.r = require;
+            global.r = module;
+            global.r = require;
+        """)
         self.assertEqual(source, self._remove_unused(source))
 
     def test_a_free_global_value_rewritten_between_the_stores_keeps_the_last(self):
-        source = 'global.r = x;\nglobal.x = spoof;\nglobal.r = x;'
+        source = inspect.cleandoc("""
+            global.r = x;
+            global.x = spoof;
+            global.r = x;
+        """)
         self.assertEqual(source, self._remove_unused(source))
 
     def test_an_inherited_prototype_setter_keeps_the_stores(self):
@@ -3086,11 +3474,18 @@ class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
         self.assertEqual(printed(source), self._remove_unused(source))
 
     def test_two_undecodable_string_literals_are_not_deduped(self):
-        source = 'global.r = "\\xZZ";\nglobal.r = "\\xYY";'
+        source = inspect.cleandoc("""
+            global.r = "\\xZZ";
+            global.r = "\\xYY";
+        """)
         self.assertEqual(source, self._remove_unused(source))
 
     def test_a_duplicate_read_through_a_base_the_host_may_lack_is_kept(self):
-        source = 'globalThis.r = require;\nwindow.r = require;\nSINK(r);'
+        source = inspect.cleandoc("""
+            globalThis.r = require;
+            window.r = require;
+            SINK(r);
+        """)
         self.assertEqual(source, self._remove_unused(source))
 
 
@@ -3135,12 +3530,22 @@ class TestADiscardedCompletionValueIsRemoved(TestJsDeobfuscator):
 
     def test_a_discarded_iife_completion_value_goes(self):
         self.assertEqual(
-            '(function() {\n  SINK();\n})();\nSINK();',
+            inspect.cleandoc("""
+                (function() {
+                  SINK();
+                })();
+                SINK();
+            """),
             self._remove_unused('(function() { SINK(); return 5042; })(); SINK();'),
         )
 
     def test_a_completion_value_someone_reads_stays(self):
-        source = 'var x = (function() {\n  return 5042;\n})();\nSINK(x);'
+        source = inspect.cleandoc("""
+            var x = (function() {
+              return 5042;
+            })();
+            SINK(x);
+        """)
         self.assertEqual(source, self._remove_unused(source))
 
     def test_an_entrypoint_keeps_its_completion_value(self):
@@ -3212,7 +3617,10 @@ class TestLivenessIsHeldFromTheStartOfASweep(TestJsDeobfuscator):
 
     def test_liveness_first_read_after_a_removed_store(self):
         self.assertEqual(
-            'globalThis.r = 1;\nSINK(r);',
+            inspect.cleandoc("""
+                globalThis.r = 1;
+                SINK(r);
+            """),
             self._run_transformer(
                 'globalThis.r = 1; globalThis.r = 1; SINK(r);', JsUnusedCodeRemoval
             ),
@@ -3232,28 +3640,69 @@ class TestAStandAloneEmptyStatementIsRemoved(TestJsDeobfuscator):
         return JsSynthesizer().convert(ast)
 
     def test_an_empty_statement_in_a_body_goes(self):
-        self.assertEqual('a();\nb();', self._remove_unused('a();\n;\nb();'))
+        self.assertEqual(inspect.cleandoc("""
+            a();
+            b();
+        """), self._remove_unused(inspect.cleandoc("""
+            a();
+            ;
+            b();
+        """)))
 
     def test_an_empty_statement_in_a_nested_block_goes(self):
         self.assertEqual(
-            'if (x) {\n  a();\n}',
-            self._remove_unused('if (x) {\n  a();\n  ;\n}'),
+            inspect.cleandoc("""
+                if (x) {
+                  a();
+                }
+            """),
+            self._remove_unused(inspect.cleandoc("""
+                if (x) {
+                  a();
+                  ;
+                }
+            """)),
         )
 
     def test_an_empty_statement_as_a_branch_body_leaves_the_branch(self):
         self.assertIn(
-            self._remove_unused('if (x);\na();'),
-            ('if (x) {\n  ;\n}\na();', 'if (x) {}\na();'),
+            self._remove_unused(inspect.cleandoc("""
+                if (x);
+                a();
+            """)),
+            (inspect.cleandoc("""
+                if (x) {
+                  ;
+                }
+                a();
+            """), inspect.cleandoc("""
+                if (x) {}
+                a();
+            """)),
         )
 
     @opportunity
     def test_an_empty_statement_as_a_branch_body_goes(self):
-        self.assertEqual(self._remove_unused('if (x);\na();'), 'if (x) {}\na();')
+        self.assertEqual(self._remove_unused(inspect.cleandoc("""
+            if (x);
+            a();
+        """)), inspect.cleandoc("""
+            if (x) {}
+            a();
+        """))
 
     def test_an_empty_statement_braced_into_a_block_goes(self):
         self.assertEqual(
-            'if (x) {}\na();',
-            self._remove_unused('if (x) {\n  ;\n}\na();'),
+            inspect.cleandoc("""
+                if (x) {}
+                a();
+            """),
+            self._remove_unused(inspect.cleandoc("""
+                if (x) {
+                  ;
+                }
+                a();
+            """)),
         )
 
 
@@ -3270,31 +3719,70 @@ class TestADebuggerStatementInAListIsRemoved(TestJsDeobfuscator):
         return JsSynthesizer().convert(ast)
 
     def test_a_debugger_statement_in_a_body_goes(self):
-        self.assertEqual(self._remove_unused('a();\ndebugger;\nb();'), 'a();\nb();')
+        self.assertEqual(self._remove_unused(inspect.cleandoc("""
+            a();
+            debugger;
+            b();
+        """)), inspect.cleandoc("""
+            a();
+            b();
+        """))
 
     def test_a_debugger_statement_in_a_nested_block_goes(self):
         self.assertEqual(
-            self._remove_unused('if (x) {\n  a();\n  debugger;\n}'),
-            'if (x) {\n  a();\n}',
+            self._remove_unused(inspect.cleandoc("""
+                if (x) {
+                  a();
+                  debugger;
+                }
+            """)),
+            inspect.cleandoc("""
+                if (x) {
+                  a();
+                }
+            """),
         )
 
     def test_a_debugger_statement_as_a_branch_body_leaves_the_branch(self):
         self.assertIn(
-            self._remove_unused('if (x) debugger;\na();'),
-            ('if (x) {\n  debugger;\n}\na();', 'if (x) {}\na();'),
+            self._remove_unused(inspect.cleandoc("""
+                if (x) debugger;
+                a();
+            """)),
+            (inspect.cleandoc("""
+                if (x) {
+                  debugger;
+                }
+                a();
+            """), inspect.cleandoc("""
+                if (x) {}
+                a();
+            """)),
         )
 
     @opportunity
     def test_a_debugger_statement_as_a_branch_body_goes(self):
-        self.assertEqual(self._remove_unused('if (x) debugger;\na();'), 'if (x) {}\na();')
+        self.assertEqual(self._remove_unused(inspect.cleandoc("""
+            if (x) debugger;
+            a();
+        """)), inspect.cleandoc("""
+            if (x) {}
+            a();
+        """))
 
     def test_a_labeled_debugger_statement_stays_or_goes_with_its_label(self):
-        source = 'L: debugger;\na();'
+        source = inspect.cleandoc("""
+            L: debugger;
+            a();
+        """)
         self.assertIn(self._remove_unused(source), (source, 'a();'))
 
     @opportunity
     def test_a_labeled_debugger_statement_goes_with_its_label(self):
-        self.assertEqual(self._remove_unused('L: debugger;\na();'), 'a();')
+        self.assertEqual(self._remove_unused(inspect.cleandoc("""
+            L: debugger;
+            a();
+        """)), 'a();')
 
 
 A_DEBUGGER_STATEMENT = {
@@ -3417,11 +3905,23 @@ class TestAFunctionNothingReachesGoesFromAListOfNothingButFunctions(TestJsDeobfu
         )
 
     def test_a_file_of_nothing_but_functions_keeps_them(self):
-        source = 'function a() {\n  return 1;\n}\nfunction b() {\n  return a();\n}'
+        source = inspect.cleandoc("""
+            function a() {
+              return 1;
+            }
+            function b() {
+              return a();
+            }
+        """)
         self.assertEqual(self._remove_unused(source), source)
 
     def test_a_block_function_a_script_may_take_for_its_value_is_kept_where_that_value_is(self):
-        source = '1;\n{\n  function g() {}\n}'
+        source = inspect.cleandoc("""
+            1;
+            {
+              function g() {}
+            }
+        """)
         options = DeobfuscationOptions(preserve_script_return=True)
         self.assertEqual(self._remove_unused(source, options), source)
 
@@ -3453,12 +3953,22 @@ class TestAFunctionNothingReachesGoesFromAListOfNothingButFunctions(TestJsDeobfu
 
     def test_a_block_function_followed_by_the_value_of_the_script_goes(self):
         options = DeobfuscationOptions(preserve_script_return=True)
-        self.assertEqual(self._remove_unused('{ function g() {} }\n1;', options), '1;')
+        self.assertEqual(self._remove_unused(inspect.cleandoc("""
+            { function g() {} }
+            1;
+        """), options), '1;')
 
     def test_a_strict_block_function_goes_where_the_script_ends_with_it(self):
-        source = "'use strict';\n1;\n{ function g() {} }"
+        source = inspect.cleandoc("""
+            'use strict';
+            1;
+            { function g() {} }
+        """)
         options = DeobfuscationOptions(preserve_script_return=True)
-        self.assertEqual(self._remove_unused(source, options), "'use strict';\n1;")
+        self.assertEqual(self._remove_unused(source, options), inspect.cleandoc("""
+            'use strict';
+            1;
+        """))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

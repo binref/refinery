@@ -44,6 +44,7 @@ from test.lib.scripts.js.analysis.test_differential import (
     a_script_opening_with,
     a_script_whose_directive_stands_below,
 )
+from test.lib.scripts.js.ledger import a_program
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.model import (
@@ -233,31 +234,65 @@ _THE_MODE_IT_STANDS_IN = '(function () { return this; })() === undefined'
 _REPORTS_THE_MODE_IT_STANDS_IN = F'console.log({_THE_MODE_IT_STANDS_IN});'
 
 A_PROGRAM_REPORTING_ITS_MODE = {
-    F"'use strict';\n{_REPORTS_THE_MODE_IT_STANDS_IN}":
+    inspect.cleandoc(F"""
+        'use strict';
+        {_REPORTS_THE_MODE_IT_STANDS_IN}
+    """):
         'true\n',
-    F"'use strict';\nfunction f() {{ {_REPORTS_THE_MODE_IT_STANDS_IN} }}\nf();":
+    inspect.cleandoc(F"""
+        'use strict';
+        function f() {{ {_REPORTS_THE_MODE_IT_STANDS_IN} }}
+        f();
+    """):
         'true\n',
-    F"function f() {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }}\nf();":
+    inspect.cleandoc(F"""
+        function f() {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }}
+        f();
+    """):
         'true\n',
-    F"var o = {{ m() {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }} }};\no.m();":
+    inspect.cleandoc(F"""
+        var o = {{ m() {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }} }};
+        o.m();
+    """):
         'true\n',
-    F"var f = () => {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }};\nf();":
+    inspect.cleandoc(F"""
+        var f = () => {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }};
+        f();
+    """):
         'true\n',
-    F"function* g() {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }}\ng().next();":
+    inspect.cleandoc(F"""
+        function* g() {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }}
+        g().next();
+    """):
         'true\n',
-    F"var o = {{ get p() {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }} }};\no.p;":
+    inspect.cleandoc(F"""
+        var o = {{ get p() {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }} }};
+        o.p;
+    """):
         'true\n',
-    F'class C {{ m() {{ {_REPORTS_THE_MODE_IT_STANDS_IN} }} }}\nnew C().m();':
+    inspect.cleandoc(F"""
+        class C {{ m() {{ {_REPORTS_THE_MODE_IT_STANDS_IN} }} }}
+        new C().m();
+    """):
         'true\n',
     F'class C {{ static {{ {_REPORTS_THE_MODE_IT_STANDS_IN} }} }}':
         'true\n',
-    F'class C {{ p = (function () {{ {_REPORTS_THE_MODE_IT_STANDS_IN} }})(); }}\nnew C();':
+    inspect.cleandoc(F"""
+        class C {{ p = (function () {{ {_REPORTS_THE_MODE_IT_STANDS_IN} }})(); }}
+        new C();
+    """):
         'true\n',
-    F"function f() {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }}\n"
-    F'function g() {{ {_REPORTS_THE_MODE_IT_STANDS_IN} }}\nf();\ng();':
+    inspect.cleandoc(F"""
+        function f() {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }}
+        function g() {{ {_REPORTS_THE_MODE_IT_STANDS_IN} }}
+        f();
+        g();
+    """):
         'true\nfalse\n',
-    F"{_REPORTS_THE_MODE_IT_STANDS_IN}\n"
-    F"(function () {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }})();":
+    inspect.cleandoc(F"""
+        {_REPORTS_THE_MODE_IT_STANDS_IN}
+        (function () {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }})();
+    """):
         'false\ntrue\n',
     F"switch (1) {{ case 1: 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }}":
         'false\n',
@@ -267,11 +302,22 @@ A_PROGRAM_REPORTING_ITS_MODE = {
         'false\n',
     F"L: {{ 'use strict'; {_REPORTS_THE_MODE_IT_STANDS_IN} }}":
         'false\n',
-    F"console.log('x');\n'use strict';\n{_REPORTS_THE_MODE_IT_STANDS_IN}":
+    inspect.cleandoc(F"""
+        console.log('x');
+        'use strict';
+        {_REPORTS_THE_MODE_IT_STANDS_IN}
+    """):
         'x\nfalse\n',
-    F"'note';\n'use strict';\n{_REPORTS_THE_MODE_IT_STANDS_IN}":
+    inspect.cleandoc(F"""
+        'note';
+        'use strict';
+        {_REPORTS_THE_MODE_IT_STANDS_IN}
+    """):
         'true\n',
-    "function f(a) { 'use strict'; a = 2; return arguments[0]; }\nconsole.log(f(1));":
+    inspect.cleandoc("""
+        function f(a) { 'use strict'; a = 2; return arguments[0]; }
+        console.log(f(1));
+    """):
         '1\n',
     "'use strict';\nvar s = ['con', 'sole'];\nconsole.log(s[0] + s[1]);\n"
     + _REPORTS_THE_MODE_IT_STANDS_IN:
@@ -280,15 +326,30 @@ A_PROGRAM_REPORTING_ITS_MODE = {
 
 A_READ_WHERE_NO_PROLOGUE_IS_READ = {
     "{ 'abc'[0]; }": (
-        "{\n  'a';\n}",
+        inspect.cleandoc("""
+            {
+              'a';
+            }
+        """),
         '',
     ),
     "switch (1) { case 1: 'abc'[0]; }": (
-        "switch (1) {\n  case 1:\n    'a';\n}",
+        inspect.cleandoc("""
+            switch (1) {
+              case 1:
+                'a';
+            }
+        """),
         '',
     ),
     "try { f(); } catch (e) { 'abc'[0]; }": (
-        "try {\n  f();\n} catch (e) {\n  'a';\n}",
+        inspect.cleandoc("""
+            try {
+              f();
+            } catch (e) {
+              'a';
+            }
+        """),
         inspect.cleandoc("""
             try {
               f();
@@ -296,11 +357,21 @@ A_READ_WHERE_NO_PROLOGUE_IS_READ = {
         """),
     ),
     "L: { 'abc'[0]; }": (
-        "L: {\n  'a';\n}",
+        inspect.cleandoc("""
+            L: {
+              'a';
+            }
+        """),
         '',
     ),
     "function f() { { 'abc'[0]; } }": (
-        "function f() {\n  {\n    'a';\n  }\n}",
+        inspect.cleandoc("""
+            function f() {
+              {
+                'a';
+              }
+            }
+        """),
         'function f() {}',
     ),
 }
@@ -311,17 +382,21 @@ A_READ_WHERE_A_PROLOGUE_IS_READ = {
         '',
     ),
     "function f() { 'abc'[0]; }": (
-        "function f() {\n  'abc'[0];\n}",
+        inspect.cleandoc("""
+            function f() {
+              'abc'[0];
+            }
+        """),
         'function f() {}',
     ),
 }
 
 
 def _a_function_whose_body_opens_with(head: str, parameters: str, call: str, read: str) -> str:
-    return (
-        F'function f({parameters}) {{ {head} return {read}; }}\n'
-        F'console.log({call});\n'
-    )
+    return a_program(F"""
+        function f({parameters}) {{ {head} return {read}; }}
+        console.log({call});
+    """)
 
 
 _A_PARAMETER_LIST_NO_DIRECTIVE_MAY_STAND_UNDER = {
@@ -355,11 +430,10 @@ A_FUNCTION_A_MOVE_WOULD_WRITE_A_DIRECTIVE_INTO = {
 
 
 def _a_strict_body_holding(statements: str, installs: str = '') -> str:
-    body = (
-        F'function f(a) {{ {THE_DIRECTIVE}{statements}'
-        F' return {_THE_MODE_IT_STANDS_IN}; }}\n'
-        'console.log(f(1));\n'
-    )
+    body = a_program(F"""
+        function f(a) {{ {THE_DIRECTIVE}{statements} return {_THE_MODE_IT_STANDS_IN}; }}
+        console.log(f(1));
+    """)
     return F'{installs}\n{body}' if installs else body
 
 
@@ -369,20 +443,27 @@ def _a_strict_script_holding(statements: str) -> str:
 
 A_BODY_WHOSE_DIRECTIVE_STANDS_BESIDE_A_BINDING_NOTHING_READS = {
     _a_strict_body_holding('q = a;', 'var q;'): 'true\n',
-    _a_strict_script_holding('var q;\nq = 1;'): 'true\n',
+    _a_strict_script_holding(inspect.cleandoc("""
+        var q;
+        q = 1;
+    """)): 'true\n',
     _a_strict_body_holding('var NS = {}; NS.p = 1; console.log(NS.p);'): '1\ntrue\n',
-    _a_strict_script_holding('var NS = {};\nNS.p = 1;\nconsole.log(NS.p);'): '1\ntrue\n',
+    _a_strict_script_holding(inspect.cleandoc("""
+        var NS = {};
+        NS.p = 1;
+        console.log(NS.p);
+    """)): '1\ntrue\n',
 }
 
 
 def _an_accessor_returning_a_strict_function(body: str, run: str) -> str:
-    return (
-        'var acc = (function () {\n'
-        "  var t = ['a', 'b'];\n"
-        F"  return function (i) {{ 'use strict'; {body} }};\n"
-        '})();\n'
-        F'{run}\n'
-    )
+    return a_program(F"""
+        var acc = (function () {{
+          var t = ['a', 'b'];
+          return function (i) {{ 'use strict'; {body} }};
+        }})();
+        {run}
+    """)
 
 
 AN_ACCESSOR_WHOSE_RETURNED_BODY_OPENS_WITH_A_DIRECTIVE = {

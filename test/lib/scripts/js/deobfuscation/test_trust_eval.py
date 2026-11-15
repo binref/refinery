@@ -38,7 +38,10 @@ class TestJsTrustedEvalExcusesTheSurfacesThatRunUnreadableCode(TestJsDeobfuscato
 
     _RUNS_UNREADABLE_CODE = (
         'eval(input);',
-        'var g = Function(payload);\nSINK(g);',
+        cleandoc("""
+            var g = Function(payload);
+            SINK(g);
+        """),
         'setTimeout(code, 10);',
     )
 
@@ -117,7 +120,10 @@ class TestJsTrustedEvalDoesNotExcuseAMutationTheScriptWritesDown(TestJsDeobfusca
 class TestJsTrustedEvalDoesNotExcuseAnIndirectEval(TestJsDeobfuscator):
 
     _INDIRECT_EVAL = (
-        'var e = eval;\ne(input);',
+        cleandoc("""
+            var e = eval;
+            e(input);
+        """),
         'window.eval(input);',
     )
 
@@ -130,25 +136,49 @@ class TestJsTrustedEvalDoesNotExcuseAnIndirectEval(TestJsDeobfuscator):
                 )
 
     def test_a_computed_eval_destructuring_key_is_not_trusted(self):
-        script = F"const {{Function, ['eval']: e}} = globalThis;\ne(input);\n{_JUNK}"
+        script = cleandoc(F"""
+            const {{Function, ['eval']: e}} = globalThis;
+            e(input);
+            {_JUNK}
+        """)
         self.assertEqual(
             _deobfuscated(script, trust_eval=True),
-            F'const {{ Function, eval: e }} = globalThis;\ne(input);\n{_JUNK}',
+            cleandoc(F"""
+                const {{ Function, eval: e }} = globalThis;
+                e(input);
+                {_JUNK}
+            """),
         )
 
     def test_a_computed_variable_destructuring_key_is_not_trusted(self):
-        script = F'const {{Function, [k]: e}} = globalThis;\ne(input);\n{_JUNK}'
+        script = cleandoc(F"""
+            const {{Function, [k]: e}} = globalThis;
+            e(input);
+            {_JUNK}
+        """)
         self.assertEqual(
             _deobfuscated(script, trust_eval=True),
-            F'const {{ Function, [k]: e }} = globalThis;\ne(input);\n{_JUNK}',
+            cleandoc(F"""
+                const {{ Function, [k]: e }} = globalThis;
+                e(input);
+                {_JUNK}
+            """),
         )
 
 
 class TestJsTrustedEvalChangesNothingAboutAScriptThatRunsNoUnreadableCode(TestJsDeobfuscator):
 
     _CLOSED_WORLD_SCRIPTS = (
-        "var a = 1 + 1;\nconsole.log(a);",
-        "function f() {\n  return 'x';\n}\nconsole.log(f());",
+        cleandoc("""
+            var a = 1 + 1;
+            console.log(a);
+        """),
+        cleandoc("""
+            function f() {
+              return 'x';
+            }
+            console.log(f());
+        """),
         "console.log('abc'.charAt(1));",
     )
 
@@ -163,7 +193,10 @@ class TestJsTrustedEvalChangesNothingAboutAScriptThatRunsNoUnreadableCode(TestJs
 
 class TestJsTrustedEvalReachesATransformThatBuildsItsOwnCache(TestBase):
 
-    _SCRIPT = F'eval(input);\n{_JUNK}'
+    _SCRIPT = cleandoc(F"""
+        eval(input);
+        {_JUNK}
+    """)
 
     def _run_alone(self, trust_eval: bool) -> str:
         ast = JsParser(self._SCRIPT).parse()
@@ -179,4 +212,7 @@ class TestJsTrustedEvalReachesATransformThatBuildsItsOwnCache(TestBase):
         self.assertEqual(self._run_alone(False), self._SCRIPT)
 
     def test_the_pass_folds_the_read_under_the_option(self):
-        self.assertEqual(self._run_alone(True), F'eval(input);\n{_JUNK_FOLDED}')
+        self.assertEqual(self._run_alone(True), cleandoc(F"""
+            eval(input);
+            {_JUNK_FOLDED}
+        """))

@@ -575,10 +575,10 @@ _FOLDED_CHECKSUM_SOURCE = (
     r"8)](msg);"
 )
 
-_A_HAND_WRITTEN_STRING_ARRAY = (
-    "function A() { var s = ['hello', 'world']; A = function () { return s; }; return A(); }\n"
-    'function ACC(i, k) { i = i - 0; var a = A(); var r = a[i]; return r; }\n'
-)
+_A_HAND_WRITTEN_STRING_ARRAY = a_program("""
+    function A() { var s = ['hello', 'world']; A = function () { return s; }; return A(); }
+    function ACC(i, k) { i = i - 0; var a = A(); var r = a[i]; return r; }
+""")
 
 
 class TestStringArrayShapesNoObfuscationEmits(TestBase):

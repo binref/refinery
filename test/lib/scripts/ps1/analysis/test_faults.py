@@ -309,12 +309,42 @@ class TestPs1FaultLeavesTheBody(TestBase):
 class TestPs1ATrapDisposesOfTheErrorWhateverConstructEnclosesItsBlock(TestBase):
 
     _SPELLINGS = [
-        "trap { %s }\n'a'",
-        "while ($c) {\n  trap { %s }\n  'a'\n}",
-        "do {\n  trap { %s }\n  'a'\n} while ($c)",
-        "for ($i = 0; $i -lt 3; $i++) {\n  trap { %s }\n  'a'\n}",
-        "foreach ($i in $x) {\n  trap { %s }\n  'a'\n}",
-        "switch ($x) {\n  1 {\n    trap { %s }\n    'a'\n  }\n}",
+        cleandoc("""
+            trap { %s }
+            'a'
+        """),
+        cleandoc("""
+            while ($c) {
+              trap { %s }
+              'a'
+            }
+        """),
+        cleandoc("""
+            do {
+              trap { %s }
+              'a'
+            } while ($c)
+        """),
+        cleandoc("""
+            for ($i = 0; $i -lt 3; $i++) {
+              trap { %s }
+              'a'
+            }
+        """),
+        cleandoc("""
+            foreach ($i in $x) {
+              trap { %s }
+              'a'
+            }
+        """),
+        cleandoc("""
+            switch ($x) {
+              1 {
+                trap { %s }
+                'a'
+              }
+            }
+        """),
     ]
 
     def _trap_and_the_raise_it_guards(

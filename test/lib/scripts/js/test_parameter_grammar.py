@@ -10,6 +10,7 @@ may ever be fed to this.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from typing import Iterable, NamedTuple, Sequence
@@ -321,7 +322,10 @@ def _every_list_in(positions: Iterable[str], lists: dict[str, bool]) -> dict[str
 
 
 def _under_a_strict_seed(source: str) -> str:
-    return F"'use strict';\n{source}"
+    return inspect.cleandoc(F"""
+        'use strict';
+        {source}
+    """)
 
 
 def refused(programs: Sequence[str]) -> dict[str, bool]:

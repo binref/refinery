@@ -737,49 +737,94 @@ class TestPs1TheAdapterCountAndLengthThrowUnderStrictModeVersionTwo(TestPs1):
 
     def test_the_count_of_null_is_not_folded_under_strict_mode_v2(self):
         self._assertDeobfuscatesToOneOf(
-            'Set-StrictMode -Version 2\nWrite-Output $null.Count',
-            'Set-StrictMode -Version 2\nWrite-Output $Null.Count',
+            inspect.cleandoc("""
+                Set-StrictMode -Version 2
+                Write-Output $null.Count
+            """),
+            inspect.cleandoc("""
+                Set-StrictMode -Version 2
+                Write-Output $Null.Count
+            """),
             'Set-StrictMode -Version 2',
         )
 
     def test_the_count_of_a_scalar_is_not_folded_under_strict_mode_v2(self):
-        source = "Set-StrictMode -Version 2\nWrite-Output 'AB'.Count"
+        source = inspect.cleandoc("""
+            Set-StrictMode -Version 2
+            Write-Output 'AB'.Count
+        """)
         self._assertDeobfuscatesToOneOf(source, source, 'Set-StrictMode -Version 2')
 
     def test_the_count_of_null_is_still_folded_under_strict_mode_v1(self):
         self._assertDeobfuscatesTo(
-            'Set-StrictMode -Version 1\nWrite-Output $null.Count',
-            'Set-StrictMode -Version 1\nWrite-Output 0',
+            inspect.cleandoc("""
+                Set-StrictMode -Version 1
+                Write-Output $null.Count
+            """),
+            inspect.cleandoc("""
+                Set-StrictMode -Version 1
+                Write-Output 0
+            """),
         )
 
     def test_the_count_of_a_scalar_is_still_folded_under_strict_mode_v1(self):
         self._assertDeobfuscatesTo(
-            "Set-StrictMode -Version 1\nWrite-Output 'AB'.Count",
-            'Set-StrictMode -Version 1\nWrite-Output 1',
+            inspect.cleandoc("""
+                Set-StrictMode -Version 1
+                Write-Output 'AB'.Count
+            """),
+            inspect.cleandoc("""
+                Set-StrictMode -Version 1
+                Write-Output 1
+            """),
         )
 
     def test_the_real_length_of_a_string_is_still_folded_under_strict_mode_v2(self):
         self._assertDeobfuscatesTo(
-            "Set-StrictMode -Version 2\nWrite-Output 'AB'.Length",
-            'Set-StrictMode -Version 2\nWrite-Output 2',
+            inspect.cleandoc("""
+                Set-StrictMode -Version 2
+                Write-Output 'AB'.Length
+            """),
+            inspect.cleandoc("""
+                Set-StrictMode -Version 2
+                Write-Output 2
+            """),
         )
 
     def test_the_real_count_of_an_array_is_still_folded_under_strict_mode_v2(self):
         self._assertDeobfuscatesTo(
-            'Set-StrictMode -Version 2\nWrite-Output (1, 2).Count',
-            'Set-StrictMode -Version 2\nWrite-Output 2',
+            inspect.cleandoc("""
+                Set-StrictMode -Version 2
+                Write-Output (1, 2).Count
+            """),
+            inspect.cleandoc("""
+                Set-StrictMode -Version 2
+                Write-Output 2
+            """),
         )
 
     def test_a_scalar_count_still_folds_under_set_psdebug_strict(self):
         self._assertDeobfuscatesTo(
-            "Set-PSDebug -Strict\nWrite-Output 'AB'.Count",
-            'Set-PSDebug -Strict\nWrite-Output 1',
+            inspect.cleandoc("""
+                Set-PSDebug -Strict
+                Write-Output 'AB'.Count
+            """),
+            inspect.cleandoc("""
+                Set-PSDebug -Strict
+                Write-Output 1
+            """),
         )
 
     def test_a_scalar_count_is_not_folded_when_version_two_is_armed_through_iex(self):
         self._assertDeobfuscatesToOneOf(
-            "Invoke-Expression 'Set-StrictMode -Version 2'\nWrite-Output 'AB'.Count",
-            "Set-StrictMode -Version 2\nWrite-Output 'AB'.Count",
+            inspect.cleandoc("""
+                Invoke-Expression 'Set-StrictMode -Version 2'
+                Write-Output 'AB'.Count
+            """),
+            inspect.cleandoc("""
+                Set-StrictMode -Version 2
+                Write-Output 'AB'.Count
+            """),
             'Set-StrictMode -Version 2',
         )
 

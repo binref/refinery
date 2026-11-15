@@ -76,7 +76,12 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         ))
         self.assertEqual(
             self._find_in('function g() { return window; } g();', HostEnvironment.node),
-            'function g() {\n  return window;\n}\ng();',
+            inspect.cleandoc("""
+                function g() {
+                  return window;
+                }
+                g();
+            """),
         )
 
     def test_a_pinned_browser_host_substitutes_a_same_realm_alias_finder(self):
@@ -84,7 +89,12 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             with self.subTest(alias=alias):
                 self.assertEqual(self._find_in(
                     F'function g() {{ return {alias}; }} g();', HostEnvironment.browser),
-                    F'function g() {{\n  return {alias};\n}}\nglobalThis;',
+                    inspect.cleandoc(F"""
+                        function g() {{
+                          return {alias};
+                        }}
+                        globalThis;
+                    """),
                 )
 
     def test_a_pinned_browser_host_keeps_a_cross_realm_alias_finder(self):

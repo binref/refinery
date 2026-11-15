@@ -898,7 +898,11 @@ class TestPs1AFailingTestOrCollectionSkipsTheRestOfTheBody(TestPs1):
     def test_a_failing_test_collection_or_subject_skips_the_rest_of_the_catch_body(self):
         for construct in (
             "foreach ($i in [int]'a') {}",
-            "switch ([int]'a') {\n    1 {}\n  }",
+            cleandoc("""
+                switch ([int]'a') {
+                    1 {}
+                  }
+            """),
             "while ([int]'a') {}",
             "for (; [int]'a'; ) {}",
             "do {} while ([int]'a')",
@@ -916,9 +920,21 @@ class TestPs1AFailingTestOrCollectionSkipsTheRestOfTheBody(TestPs1):
 
     def test_a_failing_clause_condition_or_pattern_skips_the_rest_of_the_catch_body(self):
         for construct in (
-            "switch (1) {\n    ([int]'a') {}\n  }",
-            "switch -Regex ('a') {\n    '[' {}\n  }",
-            "switch -Wildcard ('a') {\n    '[' {}\n  }",
+            cleandoc("""
+                switch (1) {
+                    ([int]'a') {}
+                  }
+            """),
+            cleandoc("""
+                switch -Regex ('a') {
+                    '[' {}
+                  }
+            """),
+            cleandoc("""
+                switch -Wildcard ('a') {
+                    '[' {}
+                  }
+            """),
         ):
             with self.subTest(construct):
                 self._assertKept(F"""
@@ -1283,22 +1299,38 @@ class TestPs1AnErrorNoticedOutsideTheBodyThatRaisesItKeepsTheRaise(TestPs1):
     @backlog
     def test_a_bare_raise_whose_error_the_call_redirects_to_a_file_is_kept(self):
         self.assertIn("[int]'a'", self._deobfuscate(
-            "function f { [int]'a'; Write-Host 'in' }\nf 2> err.txt\nWrite-Host 'after'"))
+            cleandoc("""
+                function f { [int]'a'; Write-Host 'in' }
+                f 2> err.txt
+                Write-Host 'after'
+            """)))
 
     @backlog
     def test_a_discarded_raise_whose_error_the_call_redirects_to_a_file_is_kept(self):
         self.assertIn("[int]'a'", self._deobfuscate(
-            "function f { $Null = [int]'a'; Write-Host 'in' }\nf 2> err.txt\nWrite-Host 'after'"))
+            cleandoc("""
+                function f { $Null = [int]'a'; Write-Host 'in' }
+                f 2> err.txt
+                Write-Host 'after'
+            """)))
 
     @backlog
     def test_a_bare_raise_in_a_called_body_is_kept_where_the_error_record_is_read_after_the_call(self):
         self.assertIn("[int]'a'", self._deobfuscate(
-            "function f { [int]'a'; Write-Host 'x' }\nf\nWrite-Host $Error.Count"))
+            cleandoc("""
+                function f { [int]'a'; Write-Host 'x' }
+                f
+                Write-Host $Error.Count
+            """)))
 
     @backlog
     def test_a_discarded_raise_in_a_called_body_is_kept_where_the_error_record_is_read_after_the_call(self):
         self.assertIn("[int]'a'", self._deobfuscate(
-            "function f { $Null = [int]'a'; Write-Host 'x' }\nf\nWrite-Host $Error.Count"))
+            cleandoc("""
+                function f { $Null = [int]'a'; Write-Host 'x' }
+                f
+                Write-Host $Error.Count
+            """)))
 
 
 class TestPs1EverySpellingOfAReadOfTheErrorRecordKeepsTheRaise(TestPs1):
@@ -1306,12 +1338,18 @@ class TestPs1EverySpellingOfAReadOfTheErrorRecordKeepsTheRaise(TestPs1):
     @backlog
     def test_a_read_through_the_session_api_keeps_the_raise(self):
         self.assertIn("[int]'a'", self._deobfuscate(
-            "[int]'a'\nWrite-Host $ExecutionContext.SessionState.PSVariable.GetValue('Error').Count"))
+            cleandoc("""
+                [int]'a'
+                Write-Host $ExecutionContext.SessionState.PSVariable.GetValue('Error').Count
+            """)))
 
     @backlog
     def test_a_read_through_the_variable_drive_keeps_the_raise(self):
         self.assertIn("[int]'a'", self._deobfuscate(
-            "[int]'a'\nWrite-Host (Get-Content variable:Error).Count"))
+            cleandoc("""
+                [int]'a'
+                Write-Host (Get-Content variable:Error).Count
+            """)))
 
 
 class TestPs1AnUnreadablePayloadMayEndTheScriptAtAnyRaiseBelowIt(TestPs1):
@@ -1319,12 +1357,20 @@ class TestPs1AnUnreadablePayloadMayEndTheScriptAtAnyRaiseBelowIt(TestPs1):
     @backlog
     def test_a_bare_division_by_zero_below_an_unreadable_payload_is_kept(self):
         self.assertIn('1 / 0', self._deobfuscate(
-            "Invoke-Expression $p\n1/0\nWrite-Host 'after'"))
+            cleandoc("""
+                Invoke-Expression $p
+                1/0
+                Write-Host 'after'
+            """)))
 
     @backlog
     def test_a_discarded_division_by_zero_below_an_unreadable_payload_is_kept(self):
         self.assertIn('1 / 0', self._deobfuscate(
-            "Invoke-Expression $p\n$Null = 1/0\nWrite-Host 'after'"))
+            cleandoc("""
+                Invoke-Expression $p
+                $Null = 1/0
+                Write-Host 'after'
+            """)))
 
 
 class TestPs1RemovingATrapReadsWhereItsErrorsLand(TestPs1):

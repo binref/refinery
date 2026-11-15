@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import inspect
 
 from test import TestBase, fastest_processor_time, processor_time_ratio
 
@@ -47,11 +48,18 @@ class TestPs1SemanticModel(TestBase):
         return model, model.script_scope.bindings.get(name)
 
     def test_script_root_is_a_script_scope(self):
-        model = self._model("$a = 1\nWrite-Host $a")
+        model = self._model(inspect.cleandoc("""
+            $a = 1
+            Write-Host $a
+        """))
         self.assertIs(model.script_scope.kind, ScopeKind.SCRIPT)
 
     def test_if_and_loop_bodies_introduce_no_scope(self):
-        model = self._model("$a = 1\nif ($a) { $b = 2 }\nwhile ($a) { $c = 3 }")
+        model = self._model(inspect.cleandoc("""
+            $a = 1
+            if ($a) { $b = 2 }
+            while ($a) { $c = 3 }
+        """))
         self.assertEqual(model.script_scope.children, [])
         self.assertIn('b', model.script_scope.bindings)
         self.assertIn('c', model.script_scope.bindings)
@@ -67,25 +75,39 @@ class TestPs1SemanticModel(TestBase):
         self.assertIs(model.script_scope.children[0].kind, ScopeKind.SCRIPTBLOCK)
 
     def test_unread_variable_is_dead(self):
-        _, binding = self._script_binding("$x = 'hi'\nWrite-Host done", 'x')
+        _, binding = self._script_binding(inspect.cleandoc("""
+            $x = 'hi'
+            Write-Host done
+        """), 'x')
         self.assertIsNotNone(binding)
         assert binding is not None
         self.assertTrue(binding.is_dead)
 
     def test_read_variable_is_live(self):
-        _, binding = self._script_binding("$x = 'hi'\nWrite-Host $x", 'x')
+        _, binding = self._script_binding(inspect.cleandoc("""
+            $x = 'hi'
+            Write-Host $x
+        """), 'x')
         assert binding is not None
         self.assertFalse(binding.is_dead)
 
     def test_read_inside_function_keeps_outer_binding_live(self):
         _, binding = self._script_binding(
-            "$x = 'payload'\nfunction Run { iex $x }\nRun", 'x')
+            inspect.cleandoc("""
+                $x = 'payload'
+                function Run { iex $x }
+                Run
+            """), 'x')
         assert binding is not None
         self.assertFalse(binding.is_dead)
 
     def test_qualified_read_keeps_binding_live(self):
         _, binding = self._script_binding(
-            "$x = 'keepme'\nfunction f { Write-Host $script:x }\nf", 'x')
+            inspect.cleandoc("""
+                $x = 'keepme'
+                function f { Write-Host $script:x }
+                f
+            """), 'x')
         assert binding is not None
         self.assertFalse(binding.is_dead)
 
@@ -95,24 +117,39 @@ class TestPs1SemanticModel(TestBase):
         self.assertFalse(binding.is_dead)
 
     def test_a_store_to_an_env_name_hands_no_object_to_a_second_name(self):
-        model = self._model('$x = 1, 2, 3\n$env:zq = $x\n[Array]::Reverse($x)')
+        model = self._model(inspect.cleandoc("""
+            $x = 1, 2, 3
+            $env:zq = $x
+            [Array]::Reverse($x)
+        """))
         x = model.script_scope.bindings['x']
         env = model.script_scope.bindings['env:zq']
         self.assertEqual(model.names_for_one_object(x), (x,))
         self.assertEqual(model.names_for_one_object(env), (env,))
 
     def test_a_store_to_a_plain_name_hands_its_object_to_a_second_name(self):
-        model = self._model('$x = 1, 2, 3\n$y = $x\n[Array]::Reverse($x)')
+        model = self._model(inspect.cleandoc("""
+            $x = 1, 2, 3
+            $y = $x
+            [Array]::Reverse($x)
+        """))
         x = model.script_scope.bindings['x']
         y = model.script_scope.bindings['y']
         self.assertEqual(sorted(model.names_for_one_object(x), key=lambda b: b.name), [x, y])
 
     def test_class_property_declaration_is_not_a_read(self):
-        model = self._model('$x = 1\nclass C { [int]$x }')
+        model = self._model(inspect.cleandoc("""
+            $x = 1
+            class C { [int]$x }
+        """))
         self.assertTrue(model.script_scope.bindings['x'].is_dead)
 
     def test_scriptblock_assignment_is_write_local(self):
-        model = self._model("$inner = 1\n$cb = { $inner = 99 }\nWrite-Host $inner")
+        model = self._model(inspect.cleandoc("""
+            $inner = 1
+            $cb = { $inner = 99 }
+            Write-Host $inner
+        """))
         outer = model.script_scope.bindings['inner']
         block_scope = model.script_scope.children[0]
         self.assertIn('inner', block_scope.bindings)
@@ -120,25 +157,38 @@ class TestPs1SemanticModel(TestBase):
         self.assertEqual(len(outer.writes), 1)
 
     def test_reads_in_scope_sees_read_nested_in_scriptblock(self):
-        ast = Ps1Parser("$x = 1\n$arr = @( { Write-Host $x } )").parse()
+        ast = Ps1Parser(inspect.cleandoc("""
+            $x = 1
+            $arr = @( { Write-Host $x } )
+        """)).parse()
         model = build_semantic_model(ast)
         value = self._assignment_value(ast, 'arr')
         self.assertIn('x', model.reads_in_scope(value, model.script_scope))
 
     def test_reads_in_scope_sees_compound_assignment_target(self):
-        ast = Ps1Parser("$x = 1\n$a = ($x += 1)").parse()
+        ast = Ps1Parser(inspect.cleandoc("""
+            $x = 1
+            $a = ($x += 1)
+        """)).parse()
         model = build_semantic_model(ast)
         value = self._assignment_value(ast, 'a')
         self.assertIn('x', model.reads_in_scope(value, model.script_scope))
 
     def test_reads_in_scope_ignores_write_only_scriptblock(self):
-        ast = Ps1Parser("$inner = 1\n$cb = { $inner = 99 }").parse()
+        ast = Ps1Parser(inspect.cleandoc("""
+            $inner = 1
+            $cb = { $inner = 99 }
+        """)).parse()
         model = build_semantic_model(ast)
         value = self._assignment_value(ast, 'cb')
         self.assertNotIn('inner', model.reads_in_scope(value, model.script_scope))
 
     def test_environment_variable_is_a_distinct_binding(self):
-        model = self._model("$env:X = 'v'\n$X = 1\nWrite-Host $X")
+        model = self._model(inspect.cleandoc("""
+            $env:X = 'v'
+            $X = 1
+            Write-Host $X
+        """))
         self.assertIn('env:x', model.script_scope.bindings)
         self.assertIn('x', model.script_scope.bindings)
         self.assertTrue(model.script_scope.bindings['env:x'].is_dead)
@@ -327,26 +377,38 @@ class TestPs1ReferenceAttribution(TestBase):
         return build_semantic_model(Ps1Parser(source).parse())
 
     def test_a_reference_is_a_write_of_the_binding_and_not_a_read(self):
-        model = self._model("$n = 0\n[void][int]::TryParse('7', [ref]$n)")
+        model = self._model(inspect.cleandoc("""
+            $n = 0
+            [void][int]::TryParse('7', [ref]$n)
+        """))
         binding = model.script_scope.bindings['n']
         self.assertEqual(len(binding.writes), 2)
         self.assertEqual(len(binding.reads), 0)
 
     def test_a_reference_keeps_the_binding_alive_although_nothing_reads_it(self):
-        model = self._model("$n = 0\n[void][int]::TryParse('7', [ref]$n)")
+        model = self._model(inspect.cleandoc("""
+            $n = 0
+            [void][int]::TryParse('7', [ref]$n)
+        """))
         binding = model.script_scope.bindings['n']
         self.assertEqual(len(binding.uses), 1)
         self.assertFalse(binding.is_dead)
 
     def test_a_reference_inside_a_body_declares_nothing_there(self):
-        model = self._model("$n = 0\nfunction f { [void][int]::TryParse('7', [ref]$n) }")
+        model = self._model(inspect.cleandoc("""
+            $n = 0
+            function f { [void][int]::TryParse('7', [ref]$n) }
+        """))
         function_scope = model.script_scope.children[0]
         self.assertIs(function_scope.kind, ScopeKind.FUNCTION)
         self.assertNotIn('n', function_scope.bindings)
         self.assertEqual(len(model.script_scope.bindings['n'].writes), 2)
 
     def test_a_binding_whose_only_use_is_a_compound_assignment_is_not_dead(self):
-        model = self._model("$x = 'a'\n$x += 'b'")
+        model = self._model(inspect.cleandoc("""
+            $x = 'a'
+            $x += 'b'
+        """))
         binding = model.script_scope.bindings['x']
         self.assertEqual(len(binding.reads), 0)
         self.assertEqual(len(binding.uses), 1)
@@ -360,18 +422,27 @@ class TestPs1StoreThroughAttribution(TestBase):
         return build_semantic_model(Ps1Parser(source).parse())
 
     def test_a_store_through_is_a_write_of_the_binding_and_not_a_read(self):
-        model = self._model("$x = @('a', 'b')\n$x[0] = 'z'")
+        model = self._model(inspect.cleandoc("""
+            $x = @('a', 'b')
+            $x[0] = 'z'
+        """))
         binding = model.script_scope.bindings['x']
         self.assertEqual(len(binding.writes), 2)
         self.assertEqual(len(binding.reads), 0)
 
     def test_a_store_through_observes_the_value_it_reaches_into(self):
-        binding = self._model("$x = @('a', 'b')\n$x[0] = 'z'").script_scope.bindings['x']
+        binding = self._model(inspect.cleandoc("""
+            $x = @('a', 'b')
+            $x[0] = 'z'
+        """)).script_scope.bindings['x']
         self.assertEqual(len(binding.uses), 1)
         self.assertFalse(binding.is_dead)
 
     def test_a_store_through_inside_a_body_is_a_write_of_the_enclosing_binding(self):
-        model = self._model("$x = @('a', 'b')\nfunction f { $x[0] = 'z' }")
+        model = self._model(inspect.cleandoc("""
+            $x = @('a', 'b')
+            function f { $x[0] = 'z' }
+        """))
         function_scope = model.script_scope.children[0]
         self.assertEqual(function_scope.bindings, {})
         self.assertEqual(len(model.script_scope.bindings['x'].writes), 2)
@@ -384,9 +455,15 @@ class TestPs1StoreThroughAttribution(TestBase):
         self.assertEqual(list(assigned.script_scope.children[0].bindings), ['x'])
 
     def test_a_scope_qualified_store_through_and_reference_are_writes(self):
-        stored = self._model("$x = @('a', 'b')\n$script:x[0] = 9")
+        stored = self._model(inspect.cleandoc("""
+            $x = @('a', 'b')
+            $script:x[0] = 9
+        """))
         self.assertEqual(len(stored.script_scope.bindings['x'].writes), 2)
-        referenced = self._model("$x = 0\n[void][int]::TryParse('7', [ref]$script:x)")
+        referenced = self._model(inspect.cleandoc("""
+            $x = 0
+            [void][int]::TryParse('7', [ref]$script:x)
+        """))
         self.assertEqual(len(referenced.script_scope.bindings['x'].writes), 2)
 
 
@@ -435,24 +512,36 @@ class TestPs1NamedReferenceAttribution(TestBase):
         self.assertFalse(binding.is_read)
 
     def test_a_named_write_lands_on_the_binding_the_assignments_use(self):
-        model = self._model("$x = 'calc'\nGet-Process -OutVariable x")
+        model = self._model(inspect.cleandoc("""
+            $x = 'calc'
+            Get-Process -OutVariable x
+        """))
         binding = model.script_scope.bindings['x']
         self.assertEqual(len(binding.writes), 2)
 
     def test_a_named_read_is_a_use_that_keeps_the_binding_alive(self):
-        model = self._model("$a = 'x'\nGet-Variable a")
+        model = self._model(inspect.cleandoc("""
+            $a = 'x'
+            Get-Variable a
+        """))
         binding = model.script_scope.bindings['a']
         self.assertEqual(len(binding.reads), 1)
         self.assertFalse(binding.is_dead)
 
     def test_an_appending_out_variable_observes_the_previous_value(self):
-        model = self._model("$a = 'x'\nGet-Process -OutVariable +a")
+        model = self._model(inspect.cleandoc("""
+            $a = 'x'
+            Get-Process -OutVariable +a
+        """))
         binding = model.script_scope.bindings['a']
         self.assertEqual(len(binding.uses), 1)
         self.assertFalse(binding.is_dead)
 
     def test_a_bare_named_write_in_a_body_binds_that_body_and_not_the_script(self):
-        model = self._model("$d = 'OUTER'\nfunction f { Set-Variable d 'INNER' }")
+        model = self._model(inspect.cleandoc("""
+            $d = 'OUTER'
+            function f { Set-Variable d 'INNER' }
+        """))
         function_scope = model.script_scope.children[0]
         self.assertIn('d', function_scope.bindings)
         self.assertEqual(len(function_scope.bindings['d'].writes), 1)
@@ -464,26 +553,41 @@ class TestPs1NamedReferenceAttribution(TestBase):
         self.assertNotIn('d', model.script_scope.children[0].bindings)
 
     def test_an_environment_item_write_binds_the_key_the_variable_reads_under(self):
-        model = self._model("Set-Item Env:ComSpec 'evil'\nWrite-Host $env:ComSpec")
+        model = self._model(inspect.cleandoc("""
+            Set-Item Env:ComSpec 'evil'
+            Write-Host $env:ComSpec
+        """))
         binding = model.script_scope.bindings['env:comspec']
         self.assertEqual(len(binding.writes), 1)
         self.assertEqual(len(binding.reads), 1)
 
     def test_an_unbinding_replaces_the_value_rather_than_observing_it(self):
-        model = self._model("$a = 'x'\nRemove-Variable a")
+        model = self._model(inspect.cleandoc("""
+            $a = 'x'
+            Remove-Variable a
+        """))
         roles = [write.role for write in model.script_scope.bindings['a'].writes]
         self.assertIn(Ps1OccurrenceRole.WRITE_REPLACING, roles)
         self.assertNotIn(Ps1OccurrenceRole.READ, roles)
         self.assertNotIn(Ps1OccurrenceRole.WRITE_OBSERVING, roles)
 
     def test_a_computed_name_this_cannot_place_puts_the_scope_it_writes_in_doubt(self):
-        model = self._model("$x = 'a'\nSet-Variable $n 'b' -Scope Global")
+        model = self._model(inspect.cleandoc("""
+            $x = 'a'
+            Set-Variable $n 'b' -Scope Global
+        """))
         self.assertTrue(model.script_scope.writes_unreadable_names)
-        model = self._model("$x = 'a'\nSet-Variable $n 'b'")
+        model = self._model(inspect.cleandoc("""
+            $x = 'a'
+            Set-Variable $n 'b'
+        """))
         self.assertFalse(model.script_scope.writes_unreadable_names)
 
     def test_a_literal_named_write_leaves_the_scope_out_of_doubt(self):
-        model = self._model("$x = 'a'\nSet-Variable y 'b'")
+        model = self._model(inspect.cleandoc("""
+            $x = 'a'
+            Set-Variable y 'b'
+        """))
         self.assertFalse(model.script_scope.writes_unreadable_names)
 
     def test_a_scope_the_lexical_chain_cannot_name_puts_the_script_in_doubt(self):
@@ -492,9 +596,11 @@ class TestPs1NamedReferenceAttribution(TestBase):
 
     def test_a_named_session_state_call_is_filed_on_the_binding_it_names(self):
         model = self._model(
-            "$x = 'a'\n"
-            "Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('x')\n"
-            "$ExecutionContext.SessionState.PSVariable.Set('x', 'b')")
+            inspect.cleandoc("""
+                $x = 'a'
+                Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('x')
+                $ExecutionContext.SessionState.PSVariable.Set('x', 'b')
+            """))
         binding = model.script_scope.bindings['x']
         self.assertEqual(len(binding.reads), 1)
         self.assertEqual(len(binding.writes), 2)
@@ -508,21 +614,32 @@ class TestPs1NamedReferenceAttribution(TestBase):
 
     def test_a_variable_handed_out_is_recorded_by_its_name(self):
         self.assertEqual(
-            self._model("$b = 'a'\n$v = Get-Variable b").variables_handed_out, {'b'})
+            self._model(inspect.cleandoc("""
+                $b = 'a'
+                $v = Get-Variable b
+            """)).variables_handed_out, {'b'})
         self.assertEqual(
-            self._model("$b = 'a'\n$v = (Get-Variable b).Value").variables_handed_out, set())
+            self._model(inspect.cleandoc("""
+                $b = 'a'
+                $v = (Get-Variable b).Value
+            """)).variables_handed_out, set())
 
     def test_a_variable_of_any_name_handed_out_puts_the_script_in_doubt(self):
         self.assertTrue(self._model('$v = Get-Variable').script_scope.writes_unreadable_names)
 
     def test_the_session_state_handed_out_puts_every_scope_in_doubt(self):
         model = self._model(
-            '$ss = $ExecutionContext.SessionState\n'
-            "$sb = { $y = 'abc'; $ss.PSVariable.Set('y', 'def'); Write-Output $y }")
+            inspect.cleandoc("""
+                $ss = $ExecutionContext.SessionState
+                $sb = { $y = 'abc'; $ss.PSVariable.Set('y', 'def'); Write-Output $y }
+            """))
         self.assertTrue(all(scope.writes_unreadable_names for scope in model.scopes()))
 
     def test_a_name_the_session_state_reads_is_in_the_read_set_of_the_statement(self):
-        source = "$b = 'a'\nWrite-Output $ExecutionContext.SessionState.PSVariable.GetValue('b')"
+        source = inspect.cleandoc("""
+            $b = 'a'
+            Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('b')
+        """)
         model = self._model(source)
         statement = model.root.body[1]
         self.assertIn('b', model.reads_in_scope(statement, model.script_scope))
@@ -543,7 +660,11 @@ class TestPs1AConversionBetweenTwoNamesIsAnAliasThisCannotBeSureOf(TestBase):
 
     @staticmethod
     def _shared(definition: str, store: str, name: str, value: str = '$args[0]'):
-        source = F'$x = {value}\n{definition}\n{store}'
+        source = inspect.cleandoc(F"""
+            $x = {value}
+            {definition}
+            {store}
+        """)
         model = build_semantic_model(Ps1Parser(source).parse())
         return [
             write for write in model.script_scope.bindings[name].writes if write.may_define

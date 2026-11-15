@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase
 
 from refinery.lib.scripts import is_well_formed
@@ -25,14 +27,22 @@ class TestAConditionalMissingItsColonStopsAtItsBoundary(TestBase):
 
     def test_the_statement_after_a_colonless_conditional_is_kept(self):
         _, printed, count = _read_and_printed('f(); a ? b; g();')
-        self.assertEqual(printed, 'f();\na ? b;\ng();')
+        self.assertEqual(printed, inspect.cleandoc("""
+            f();
+            a ? b;
+            g();
+        """))
         self.assertEqual(count, 3)
         self.assertEqual(_unread('f(); a ? b; g();'), [('a ? b;', 'expected :')])
 
     def test_a_colonless_conditional_stops_at_the_token_that_closes_it(self):
         expected = {
             'end_of_file': ('a ? b', 'a ? b'),
-            'closing_brace': ('{ a ? b }', '{\n  a ? b\n}'),
+            'closing_brace': ('{ a ? b }', inspect.cleandoc("""
+                {
+                  a ? b
+                }
+            """)),
             'closing_paren': ('h(a ? b)', 'h(a ? b);'),
         }
         for name, (source, printed) in expected.items():
@@ -47,6 +57,10 @@ class TestAConditionalMissingItsColonStopsAtItsBoundary(TestBase):
 
     def test_a_conditional_that_has_its_colon_is_left_alone(self):
         well_formed, printed, count = _read_and_printed('f(); a ? b : c; g();')
-        self.assertEqual(printed, 'f();\na ? b : c;\ng();')
+        self.assertEqual(printed, inspect.cleandoc("""
+            f();
+            a ? b : c;
+            g();
+        """))
         self.assertEqual(well_formed, True)
         self.assertEqual(count, 3)

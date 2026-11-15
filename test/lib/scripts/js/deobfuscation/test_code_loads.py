@@ -267,7 +267,10 @@ class TestAnImportRunsTheFileItNamesBeforeTheModule(TestBase):
 
     def test_a_typeof_after_an_import_of_a_file_that_creates_the_name_still_prints_what_it_prints(self):
         loader = 'globalThis.window = 1;\n'
-        source = 'import "./win.mjs";\nconsole.log(typeof window);\n'
+        source = a_program("""
+            import "./win.mjs";
+            console.log(typeof window);
+        """)
         rewritten = deobfuscate_source(source, execution=ExecutionModel.module, environment=HostEnvironment.node)
         self.assertEqual(
             (

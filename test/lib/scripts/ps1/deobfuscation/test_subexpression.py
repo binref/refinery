@@ -55,19 +55,28 @@ class TestPs1SubExpressionEvaluator(TestPs1):
 
     def test_a_char_result_folds_at_its_own_type(self):
         self.assertEqual(
-            self._apply('$x = $($r = [char]66\n$r)', Ps1SubExpressionEvaluator),
+            self._apply(cleandoc("""
+                $x = $($r = [char]66
+                $r)
+            """), Ps1SubExpressionEvaluator),
             '$x = $([char]66)',
         )
 
     def test_a_char_array_body_folds_to_the_collection_it_collapses_to(self):
         self.assertEqual(
-            self._apply('$x = $($r = [char[]]\'AB\'\n$r)', Ps1SubExpressionEvaluator),
+            self._apply(cleandoc("""
+                $x = $($r = [char[]]'AB'
+                $r)
+            """), Ps1SubExpressionEvaluator),
             '$x = $([char]65, [char]66)',
         )
 
     def test_a_byte_result_folds_at_its_own_width(self):
         self.assertEqual(
-            self._apply('$x = $($r = [byte]77\n$r)', Ps1SubExpressionEvaluator),
+            self._apply(cleandoc("""
+                $x = $($r = [byte]77
+                $r)
+            """), Ps1SubExpressionEvaluator),
             '$x = $([byte]77)',
         )
 
@@ -437,7 +446,10 @@ class TestPs1SubExpressionEvaluator(TestPs1):
         """)
         self.assertEqual(
             self._deobfuscate(source, trust_eval=True),
-            F"Write-Output {XOR_TEXT!r}\nInvoke-Expression $stager",
+            cleandoc(F"""
+                Write-Output {XOR_TEXT!r}
+                Invoke-Expression $stager
+            """),
         )
 
     def test_a_tochararray_write_read_outside_refuses_its_store(self):

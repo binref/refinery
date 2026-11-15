@@ -113,12 +113,18 @@ def folded(
 
 
 def evaluated_in_a_body(receiver: str, read: str, installs: str = '') -> str:
-    body = F'function f() {{ var v = {receiver}; return {read}; }}\nconsole.log(f());\n'
+    body = a_program(F"""
+        function f() {{ var v = {receiver}; return {read}; }}
+        console.log(f());
+    """)
     return F'{installs}\n{body}' if installs else body
 
 
 def returned_from_a_body(body: str) -> str:
-    return F'function f() {{ {body} }}\nconsole.log(f());\n'
+    return a_program(F"""
+        function f() {{ {body} }}
+        console.log(f());
+    """)
 
 
 def a_walk_of(receiver: str, installs: str = '') -> str:

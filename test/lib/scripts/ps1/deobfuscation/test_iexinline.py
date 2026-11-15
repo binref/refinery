@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 
 from test import backlog, opportunity, todo, wontfix
+from test.lib.scripts.ps1 import a_program
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1IexInlining
@@ -53,11 +54,18 @@ class TestPs1InvokeCommandInlining(TestPs1):
         self.assertIn('Invoke-Command', result)
 
     def test_an_assignment_in_the_block_does_not_reach_the_variable_of_the_caller(self):
-        source = "$x = 'a'\nInvoke-Command -ScriptBlock { $x = 'b' }\nWrite-Host $x"
+        source = inspect.cleandoc("""
+            $x = 'a'
+            Invoke-Command -ScriptBlock { $x = 'b' }
+            Write-Host $x
+        """)
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'a'")
 
     def test_a_return_in_the_block_ends_only_the_block(self):
-        source = "Invoke-Command -ScriptBlock { return }\nWrite-Host 'after'"
+        source = inspect.cleandoc("""
+            Invoke-Command -ScriptBlock { return }
+            Write-Host 'after'
+        """)
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'after'")
 
     def test_the_argument_list_binds_to_the_parameters_of_the_block(self):
@@ -174,7 +182,10 @@ class TestPs1ABlockWhoseCommandNamesResolveIsSpliced(TestPs1):
     def test_a_block_whose_computed_command_name_folds_is_spliced(self):
         self._assertDeobfuscatesTo(
             "& ([scriptblock]::Create(\"Write-Host one; & ('Write-' + 'Host') two\"))",
-            'Write-Host one\nWrite-Host two',
+            inspect.cleandoc("""
+                Write-Host one
+                Write-Host two
+            """),
         )
 
 
@@ -203,11 +214,11 @@ class TestPs1IexInlining(TestPs1):
         self.assertNotIn('$x', result)
 
     def test_iex_inside_function_body(self):
-        data = (
-            "function F {\n"
-            "IEX '$y = 42'\n"
-            "}\n"
-        )
+        data = a_program("""
+            function F {
+            IEX '$y = 42'
+            }
+        """)
         result = self._deobfuscate(data)
         self.assertIn('$y = 42', result)
         self.assertNotIn('IEX', result)
@@ -255,11 +266,17 @@ class TestPs1IexInlining(TestPs1):
         self.assertNotIn('Invoke-Expression', result)
 
     def test_iex_of_two_statements_in_a_value_slot_assigns_both_values(self):
-        source = "$x = Invoke-Expression \"'a'; 'b'\"\nWrite-Host $x"
+        source = inspect.cleandoc("""
+            $x = Invoke-Expression "'a'; 'b'"
+            Write-Host $x
+        """)
         self._assertDeobfuscatesToOneOf(
             source,
             source,
-            "$x = 'a', 'b'\nWrite-Host $x",
+            inspect.cleandoc("""
+                $x = 'a', 'b'
+                Write-Host $x
+            """),
             "Write-Host ('a', 'b')",
         )
 
@@ -388,11 +405,18 @@ class TestPs1IexInlining(TestPs1):
     def test_a_return_in_a_block_of_the_code_is_inlined_with_it(self):
         self.assertEqual(
             self._apply("Invoke-Expression '1 | ForEach-Object { return }'", Ps1IexInlining),
-            '1 | ForEach-Object {\n  return\n}',
+            inspect.cleandoc("""
+                1 | ForEach-Object {
+                  return
+                }
+            """),
         )
 
     def test_a_using_statement_is_not_moved_to_the_middle_of_the_script(self):
-        source = "Write-Host 1\nInvoke-Expression 'using namespace System.Text'"
+        source = inspect.cleandoc("""
+            Write-Host 1
+            Invoke-Expression 'using namespace System.Text'
+        """)
         self.assertEqual(self._apply(source, Ps1IexInlining), self._apply(source))
 
     def test_a_function_named_invoke_expression_takes_the_call(self):
@@ -445,7 +469,10 @@ class TestPs1AShadowedForeachStageIsNotDecoded(TestPs1):
 
     def test_a_redefined_foreach_object_leaves_the_decode_pipeline_alone(self):
         result = self._deobfuscate(inspect.cleandoc(
-            F"function ForEach-Object {{ 'HIJACK' }}\n{self._PIPELINE}"))
+            inspect.cleandoc(F"""
+                function ForEach-Object {{ 'HIJACK' }}
+                {self._PIPELINE}
+            """)))
         self.assertNotIn('Write-Host', result)
         self.assertIn('ReadToEnd', result)
 
@@ -462,13 +489,19 @@ class TestPs1IexInliningOfAnEmptyBlock(TestPs1):
         self._assertUnchanged('Invoke-Command -ScriptBlock {}', Ps1IexInlining)
 
     def test_an_empty_scriptblock_does_not_abort_the_pipeline(self):
-        source = "Invoke-Command -ScriptBlock {}\nWrite-Host 'go'"
+        source = inspect.cleandoc("""
+            Invoke-Command -ScriptBlock {}
+            Write-Host 'go'
+        """)
         self._assertDeobfuscatesToOneOf(source, source, "Write-Host 'go'")
 
     @opportunity
     def test_an_empty_scriptblock_run_through_invoke_command_is_removed(self):
         self.assertEqual(
-            self._deobfuscate("Invoke-Command -ScriptBlock {}\nWrite-Host 'go'"),
+            self._deobfuscate(inspect.cleandoc("""
+                Invoke-Command -ScriptBlock {}
+                Write-Host 'go'
+            """)),
             "Write-Host 'go'",
         )
 

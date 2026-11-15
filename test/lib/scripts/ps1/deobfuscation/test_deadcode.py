@@ -3,6 +3,7 @@ from __future__ import annotations
 from inspect import cleandoc
 
 from test import opportunity
+from test.lib.scripts.ps1 import a_program
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.pipeline import PipelineObserver, TransformerGroup
@@ -39,7 +40,10 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertEqual(result, "Write-Host 'else'")
 
     def test_non_static_stops_pruning(self):
-        result = self._deobfuscate("$x = $env:V\nif ($False) {} elseif ($x) { Write-Host 'kept' }")
+        result = self._deobfuscate(cleandoc("""
+            $x = $env:V
+            if ($False) {} elseif ($x) { Write-Host 'kept' }
+        """))
         self.assertNotIn('$False', result)
         self.assertIn('$x', result)
         self.assertIn('kept', result)
@@ -244,19 +248,23 @@ class TestPs1DeadCodeElimination(TestPs1):
 
     def test_while_dead_loop_no_incorrect_inline(self):
         result = self._deobfuscate_iterative(
-            '$a = 10\n'
-            'while((-9 + $a) -GE (44)) { $b = $a; break }\n'
-            '$c = $b - 200\n'
-            '$d = [Char][int]$c'
+            cleandoc("""
+                $a = 10
+                while((-9 + $a) -GE (44)) { $b = $a; break }
+                $c = $b - 200
+                $d = [Char][int]$c
+            """)
         )
         self.assertNotIn('190', result)
 
     def test_bare_integer_statements_are_not_this_passs_to_drop(self):
         result = self._apply(
-            '$x = Get-Process\n'
-            '42\n'
-            'Write-Host $x\n'
-            '(-7)\n',
+            a_program("""
+                $x = Get-Process
+                42
+                Write-Host $x
+                (-7)
+            """),
             Ps1DeadCodeElimination,
         )
         self.assertIn('42', result)
@@ -269,19 +277,23 @@ class TestPs1DeadCodeElimination(TestPs1):
 
     def test_string_statement_preserved(self):
         result = self._deobfuscate_iterative(
-            '$x = Get-Process\n'
-            "'hello'\n"
-            'Write-Host $x\n',
+            a_program("""
+                $x = Get-Process
+                'hello'
+                Write-Host $x
+            """),
             remove_junk=False,
         )
         self.assertIn('hello', result)
 
     def test_a_constant_in_a_switch_case_is_not_this_passs_to_drop(self):
         result = self._apply(
-            'switch ($action) {\n'
-            '  1 { 99 }\n'
-            '  2 { Write-Host "ok" }\n'
-            '}\n',
+            a_program("""
+                switch ($action) {
+                  1 { 99 }
+                  2 { Write-Host "ok" }
+                }
+            """),
             Ps1DeadCodeElimination,
         )
         self.assertIn('99', result)
@@ -340,7 +352,13 @@ class TestPs1DeadCodeExtra(TestPs1):
     def test_nonempty_try_kept(self):
         result = self._apply(
             "try { Get-Item x } catch { Write-Host 'err' }", Ps1DeadCodeElimination)
-        self.assertEqual(result, "try {\n  Get-Item x\n} catch {\n  Write-Host 'err'\n}")
+        self.assertEqual(result, cleandoc("""
+            try {
+              Get-Item x
+            } catch {
+              Write-Host 'err'
+            }
+        """))
 
     def test_trap_continue_removed(self):
         result = self._apply('trap { continue }', Ps1DeadCodeElimination)
@@ -384,8 +402,14 @@ class TestPs1DeadCodeExtra(TestPs1):
         self.assertEqual(result, '$i = 5')
 
     def test_a_hoisted_for_initializer_does_not_start_printing_its_value(self):
-        result = self._apply("for (5; $False; ) { }\nWrite-Host 'go'", Ps1DeadCodeElimination)
-        self.assertEqual(result, "$Null = 5\nWrite-Host 'go'")
+        result = self._apply(cleandoc("""
+            for (5; $False; ) { }
+            Write-Host 'go'
+        """), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc("""
+            $Null = 5
+            Write-Host 'go'
+        """))
 
     def test_empty_for_infinite_kept(self):
         result = self._apply('for (;;) {}', Ps1DeadCodeElimination)
@@ -402,18 +426,31 @@ class TestPs1DeadCodeExtra(TestPs1):
 
     def test_function_body_return_value_preserved(self):
         result = self._apply(
-            "function f { $Null = 915; 42 }\n$x = f\nWrite-Host $x",
+            cleandoc("""
+                function f { $Null = 915; 42 }
+                $x = f
+                Write-Host $x
+            """),
             Ps1DeadCodeElimination)
         self.assertIn('42', result)
 
     def test_try_bareword_assign_removed(self):
         result = self._apply(
-            "try { foo =5 } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+            cleandoc("""
+                try { foo =5 } catch {}
+                Write-Host 'keep'
+            """), Ps1DeadCodeElimination)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_try_multiple_bareword_assigns_removed(self):
         result = self._apply(
-            "try {\n  abc =1\n  def =2\n} catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+            cleandoc("""
+                try {
+                  abc =1
+                  def =2
+                } catch {}
+                Write-Host 'keep'
+            """), Ps1DeadCodeElimination)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_try_bareword_with_finally_hoists(self):
@@ -454,16 +491,26 @@ class TestPs1DeadCodeExtra(TestPs1):
             Write-Host 'keep'
             """
         ), Ps1DeadCodeElimination)
-        self.assertEqual(result, "iex $x\nWrite-Host 'keep'")
+        self.assertEqual(result, cleandoc("""
+            iex $x
+            Write-Host 'keep'
+        """))
 
     def test_try_function_return_value_preserved(self):
         result = self._apply(
             'function f { try { 42 } catch {} }', Ps1DeadCodeElimination)
-        self.assertEqual(result, 'function f {\n  42\n}')
+        self.assertEqual(result, cleandoc("""
+            function f {
+              42
+            }
+        """))
 
     def test_try_side_effect_command_kept(self):
         result = self._apply(
-            "try { Remove-Item foo } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+            cleandoc("""
+                try { Remove-Item foo } catch {}
+                Write-Host 'keep'
+            """), Ps1DeadCodeElimination)
         self.assertIn('Remove-Item', result)
 
     def test_try_wrapped_native_binary_kept(self):
@@ -476,24 +523,36 @@ class TestPs1DeadCodeExtra(TestPs1):
         ):
             with self.subTest(command):
                 result = self._apply(
-                    F"try {{ {command} }} catch {{}}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+                    cleandoc(F"""
+                        try {{ {command} }} catch {{}}
+                        Write-Host 'keep'
+                    """), Ps1DeadCodeElimination)
                 self.assertIn(command.split()[0], result)
 
     def test_try_nonempty_catch_kept(self):
         result = self._apply(
-            "try { foo =5 } catch { Write-Host 'err' }\nWrite-Host 'keep'",
+            cleandoc("""
+                try { foo =5 } catch { Write-Host 'err' }
+                Write-Host 'keep'
+            """),
             Ps1DeadCodeElimination)
         self.assertIn('foo', result)
         self.assertIn('err', result)
 
     def test_try_path_command_kept(self):
         result = self._apply(
-            "try { ./script.ps1 } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+            cleandoc("""
+                try { ./script.ps1 } catch {}
+                Write-Host 'keep'
+            """), Ps1DeadCodeElimination)
         self.assertIn('script', result)
 
     def test_try_exe_command_kept(self):
         result = self._apply(
-            "try { notepad.exe } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+            cleandoc("""
+                try { notepad.exe } catch {}
+                Write-Host 'keep'
+            """), Ps1DeadCodeElimination)
         self.assertIn('notepad', result)
 
     def test_function_return_value_not_dropped_when_dead_if_pruned(self):
@@ -559,18 +618,34 @@ class TestPs1DeadCodeExtra(TestPs1):
 
     def test_trap_with_inert_body_removed(self):
         result = self._apply(
-            "trap { continue }\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+            cleandoc("""
+                trap { continue }
+                Write-Host 'keep'
+            """), Ps1DeadCodeElimination)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_function_nested_block_return_value_preserved(self):
         result = self._apply(
             'function f { if ($cond) { 42 } }', Ps1DeadCodeElimination)
-        self.assertEqual(result, 'function f {\n  if ($cond) {\n    42\n  }\n}')
+        self.assertEqual(result, cleandoc("""
+            function f {
+              if ($cond) {
+                42
+              }
+            }
+        """))
 
     def test_function_return_value_preserved_with_effectful_if(self):
         result = self._apply(
             "function f { if ($cond) { Write-Host 'x' }; 42 }", Ps1DeadCodeElimination)
-        self.assertEqual(result, "function f {\n  if ($cond) {\n    Write-Host 'x'\n  }\n  42\n}")
+        self.assertEqual(result, cleandoc("""
+            function f {
+              if ($cond) {
+                Write-Host 'x'
+              }
+              42
+            }
+        """))
 
     def test_do_while_nested_break_not_hoisted(self):
         result = self._apply(
@@ -947,7 +1022,10 @@ class TestPs1ALoopWhoseBodyCannotRunTwiceRunsItOnce(TestPs1):
             Write-Host 'end'
             """
         ), Ps1DeadCodeElimination)
-        self.assertEqual(result, "Write-Host 'a'\nexit")
+        self.assertEqual(result, cleandoc("""
+            Write-Host 'a'
+            exit
+        """))
 
     def test_a_continue_that_may_start_another_run_keeps_the_loop(self):
         self._assertUnchanged(cleandoc(
@@ -1032,9 +1110,18 @@ class TestPs1ALoopWhoseBodyCannotRunTwiceRunsItOnce(TestPs1):
 class TestPs1ADeadCodeVisitLeavesNothingForTheNext(TestPs1):
 
     _SCRIPTS = (
-        "while ($True) { if ($False) { continue }; return; break }\nWrite-Host 'end'",
-        "if ($True) { throw 'e' }\ntry { if ($True) { try { return } catch { 'c' } } } catch {}",
-        'trap { continue }\nforeach ($i in 1..2) { trap { continue }; $null = 1/$z }',
+        cleandoc("""
+            while ($True) { if ($False) { continue }; return; break }
+            Write-Host 'end'
+        """),
+        cleandoc("""
+            if ($True) { throw 'e' }
+            try { if ($True) { try { return } catch { 'c' } } } catch {}
+        """),
+        cleandoc("""
+            trap { continue }
+            foreach ($i in 1..2) { trap { continue }; $null = 1/$z }
+        """),
     )
 
     def test_a_second_visit_changes_nothing(self):
@@ -1078,7 +1165,10 @@ class TestPs1ATryWhoseBodyCannotRaiseDissolvesWhateverItsHandlerTakes(TestPs1):
     def test_a_constant_body_with_no_catch_at_all_hoists_its_finally(self):
         self.assertEqual(
             self._apply("try { 5 } finally { Write-Host 'f' }", Ps1DeadCodeElimination),
-            "5\nWrite-Host 'f'")
+            cleandoc("""
+                5
+                Write-Host 'f'
+            """))
 
 
 class TestPs1InjectedNoiseBareword(TestPs1):
@@ -1087,7 +1177,10 @@ class TestPs1InjectedNoiseBareword(TestPs1):
         for source in ('0042DsKaho=8602057', 'Zbc =1', 'aQ=2'):
             with self.subTest(source):
                 result = self._apply(
-                    F"try {{ {source} }} catch {{ }}\nWrite-Host 'keep'",
+                    cleandoc(F"""
+                        try {{ {source} }} catch {{ }}
+                        Write-Host 'keep'
+                    """),
                     Ps1DeadCodeElimination)
                 self.assertEqual(result, "Write-Host 'keep'")
 
@@ -1100,7 +1193,10 @@ class TestPs1InjectedNoiseBareword(TestPs1):
         ):
             with self.subTest(source):
                 result = self._apply(
-                    F"try {{ {source} }} catch {{ }}\nWrite-Host 'keep'",
+                    cleandoc(F"""
+                        try {{ {source} }} catch {{ }}
+                        Write-Host 'keep'
+                    """),
                     Ps1DeadCodeElimination)
                 self.assertIn('try', result)
 
@@ -1114,13 +1210,19 @@ class TestPs1NoiseBarewordSpellings(TestPs1):
         ):
             with self.subTest(source):
                 result = self._apply(
-                    F"try {{ {source} }} catch {{ }}\nWrite-Host 'keep'",
+                    cleandoc(F"""
+                        try {{ {source} }} catch {{ }}
+                        Write-Host 'keep'
+                    """),
                     Ps1DeadCodeElimination)
                 self.assertIn('try', result)
 
     def test_a_call_operator_is_not_assignment_residue(self):
         result = self._apply(
-            "try { & msiexec =http://host/p.msi } catch { }\nWrite-Host 'keep'",
+            cleandoc("""
+                try { & msiexec =http://host/p.msi } catch { }
+                Write-Host 'keep'
+            """),
             Ps1DeadCodeElimination)
         self.assertIn('try', result)
 
@@ -1227,7 +1329,10 @@ class TestPs1TypeDefinitionsSurviveNeverRunCode(TestPs1):
         )
         self.assertEqual(self._deobfuscate_iterative(kept), kept)
         self.assertEqual(
-            self._deobfuscate_iterative("if ($False) { Write-Host 'dead' }\nWrite-Host 'live'"),
+            self._deobfuscate_iterative(cleandoc("""
+                if ($False) { Write-Host 'dead' }
+                Write-Host 'live'
+            """)),
             "Write-Host 'live'")
 
     def test_an_enum_in_a_never_entered_loop_body_survives_while_its_plain_twin_is_removed(self):
@@ -1243,7 +1348,10 @@ class TestPs1TypeDefinitionsSurviveNeverRunCode(TestPs1):
         )
         self.assertEqual(self._deobfuscate_iterative(kept), kept)
         self.assertEqual(
-            self._deobfuscate_iterative("while ($False) { Write-Host 'dead' }\nWrite-Host 'live'"),
+            self._deobfuscate_iterative(cleandoc("""
+                while ($False) { Write-Host 'dead' }
+                Write-Host 'live'
+            """)),
             "Write-Host 'live'")
 
     def test_a_class_after_a_top_level_exit_survives_while_a_plain_statement_is_removed(self):
@@ -1259,7 +1367,10 @@ class TestPs1TypeDefinitionsSurviveNeverRunCode(TestPs1):
             """
         )
         self.assertEqual(self._deobfuscate_iterative(kept), kept)
-        self.assertEqual(self._deobfuscate_iterative("exit\nWrite-Host 'dead'"), 'exit')
+        self.assertEqual(self._deobfuscate_iterative(cleandoc("""
+            exit
+            Write-Host 'dead'
+        """)), 'exit')
 
     def test_a_class_in_an_unselected_switch_clause_survives_while_its_plain_twin_collapses(self):
         kept = cleandoc(

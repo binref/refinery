@@ -90,7 +90,13 @@ class TestBasicSimplifications(TestJsDeobfuscator):
         self.assertEqual("'c';", self._simplify("'a', 'b', 'c';"))
 
     def test_tuple_side_effect_free(self):
-        self.assertEqual("var x = 0;\n'c';", self._simplify("var x = 0;\n'a', x, 'c';"))
+        self.assertEqual(inspect.cleandoc("""
+            var x = 0;
+            'c';
+        """), self._simplify(inspect.cleandoc("""
+            var x = 0;
+            'a', x, 'c';
+        """)))
 
     def test_tuple_with_side_effect(self):
         self.assertEqual("f(), 'c';", self._simplify("'a', f(), 'c';"))
@@ -459,7 +465,11 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
 
     def test_iife_returning_shadowing_function_keeps_inner_parameter(self):
         source = 'var r = (function(a) { return function(a) { return a; }; })(5);'
-        self.assertEqual('var r = function(a) {\n  return a;\n};', self._simplify(source))
+        self.assertEqual(inspect.cleandoc("""
+            var r = function(a) {
+              return a;
+            };
+        """), self._simplify(source))
 
     def test_iife_inlines_bare_parameter_return(self):
         source = 'var r = (function(a) { return a; })(7);'
@@ -489,16 +499,28 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
     def test_iife_object_shorthand_substitutes_value_with_nested_scope(self):
         source = 'var r = (function(a) { return [{a}, function() { return a; }]; })(7);'
         self.assertEqual(
-            'var r = [{ a: 7 }, function() {\n  return 7;\n}];', self._simplify(source))
+            inspect.cleandoc("""
+                var r = [{ a: 7 }, function() {
+                  return 7;
+                }];
+            """), self._simplify(source))
 
     def test_iife_not_inlined_when_parameter_is_assigned(self):
         self.assertEqual(
-            '(function(v) {\n  return v = 1;\n})(2);',
+            inspect.cleandoc("""
+                (function(v) {
+                  return v = 1;
+                })(2);
+            """),
             self._simplify('(function (v) { return (v = 1); })(2);'))
 
     def test_iife_not_inlined_when_parameter_is_compound_assigned(self):
         self.assertEqual(
-            '(function(v) {\n  return v += 1;\n})(2);',
+            inspect.cleandoc("""
+                (function(v) {
+                  return v += 1;
+                })(2);
+            """),
             self._simplify('(function (v) { return (v += 1); })(2);'))
 
     def test_iife_inlined_when_parameter_only_read(self):
@@ -762,7 +784,11 @@ class TestParenthesisPreservation(TestJsDeobfuscator):
         self.assertEqual('var x = (++a) ** 2;', self._simplify('var x = (++a) ** 2;'))
 
     def test_paren_preserved_for_await_as_exponent_left_operand(self):
-        source = 'async function f() {\n  var x = (await a) ** 2;\n}'
+        source = inspect.cleandoc("""
+            async function f() {
+              var x = (await a) ** 2;
+            }
+        """)
         self.assertEqual(source, self._simplify(source))
 
     def test_paren_preserved_for_destructuring_assignment_statement(self):
@@ -878,7 +904,11 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
 
     def test_implicit_global_alias_member_not_stripped_where_a_delete_addresses_the_name(self):
         for spelling in ['delete globalThis.X;', 'delete X;']:
-            source = F'X = 5;\n{spelling}\ny = globalThis.X;'
+            source = inspect.cleandoc(F"""
+                X = 5;
+                {spelling}
+                y = globalThis.X;
+            """)
             with self.subTest(spelling=spelling):
                 self.assertEqual(source, self._simplify(source))
 
@@ -1741,15 +1771,29 @@ class TestCalleeSequencePreserved(TestJsDeobfuscator):
         In a `with` body, a bare call `f()` that finds `f` on the object passes that object as
         `this`; `(0, f)()` passes none.
         """
-        self.assertEqual('with (o) {\n  (0, f)();\n}', self._simplify('with (o) { (0, f)(); }'))
+        self.assertEqual(inspect.cleandoc("""
+            with (o) {
+              (0, f)();
+            }
+        """), self._simplify('with (o) { (0, f)(); }'))
         self.assertEqual(
-            'with (o) {\n  g(function() {\n    (0, f)();\n  });\n}',
+            inspect.cleandoc("""
+                with (o) {
+                  g(function() {
+                    (0, f)();
+                  });
+                }
+            """),
             self._simplify('with (o) { g(function () { (0, f)(); }); }'),
         )
 
     def test_an_inlined_callee_in_a_with_body_is_reached_without_a_receiver(self):
         self.assertEqual(
-            'with (o) {\n  (0, f)();\n}',
+            inspect.cleandoc("""
+                with (o) {
+                  (0, f)();
+                }
+            """),
             self._simplify('with (o) { (function (g) { return g; })(f)(); }'),
         )
 
@@ -1789,8 +1833,14 @@ class TestASequenceOperandThatMayThrowIsKept(TestJsDeobfuscator):
 
     def test_a_resolved_operand_is_still_dropped(self):
         self.assertEqual(
-            'var x = 1;\nconsole.log(1);',
-            self._simplify('var x = 1;\nx, console.log(1);'),
+            inspect.cleandoc("""
+                var x = 1;
+                console.log(1);
+            """),
+            self._simplify(inspect.cleandoc("""
+                var x = 1;
+                x, console.log(1);
+            """)),
         )
 
 
@@ -1816,8 +1866,14 @@ class TestAnAllocationDiscardedForItsShapeKeepsWhatBuildingItThrows(TestJsDeobfu
         self.assertEqual(
             "console.log('object');", self._simplify('console.log(typeof [function () {}]);'))
         self.assertEqual(
-            "var a = 1, b = 2;\nconsole.log('object');",
-            self._simplify('var a = 1, b = 2;\nconsole.log(typeof [a, b]);'))
+            inspect.cleandoc("""
+                var a = 1, b = 2;
+                console.log('object');
+            """),
+            self._simplify(inspect.cleandoc("""
+                var a = 1, b = 2;
+                console.log(typeof [a, b]);
+            """)))
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_node_refuses_each_throwing_allocation_before_and_after(self):
@@ -2109,9 +2165,19 @@ class TestTypeofAGuaranteedGlobalIsFolded(TestJsDeobfuscator):
         self.assertEqual("'object';", self._run_transformer('typeof window;', JsSimplifications, browser))
 
     def test_a_reassigned_or_shadowed_global_is_left_standing(self):
-        self.assertEqual('Object = 5;\ntypeof Object;', self._simplify('Object = 5;\ntypeof Object;'))
+        self.assertEqual(inspect.cleandoc("""
+            Object = 5;
+            typeof Object;
+        """), self._simplify(inspect.cleandoc("""
+            Object = 5;
+            typeof Object;
+        """)))
         self.assertEqual(
-            'function f(Object) {\n  return typeof Object;\n}',
+            inspect.cleandoc("""
+                function f(Object) {
+                  return typeof Object;
+                }
+            """),
             self._simplify('function f(Object) { return typeof Object; }'),
         )
 

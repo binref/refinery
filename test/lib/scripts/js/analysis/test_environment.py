@@ -400,8 +400,10 @@ class TestNodeAgreesWithTheEnvironment(TestBase):
             *(F'node:{name}' for name in NODE_BUILTIN_MODULES if not name.startswith('node:')),
         })
         out, error = behavior(
-            F'const {{ isBuiltin }} = require("module");\n'
-            F'console.log(JSON.stringify({json.dumps(specifiers)}.filter(s => !isBuiltin(s))));'
+            inspect.cleandoc(F"""
+                const {{ isBuiltin }} = require("module");
+                console.log(JSON.stringify({json.dumps(specifiers)}.filter(s => !isBuiltin(s))));
+            """)
         )
         self.assertIsNone(error)
         self.assertEqual(json.loads(out), [])

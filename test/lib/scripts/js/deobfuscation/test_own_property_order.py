@@ -9,6 +9,7 @@ A key written as a number or computed is the text of its value, so `0x10` is the
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase
@@ -151,7 +152,10 @@ _DID_NOT_FINISH = ('', 'the deobfuscation did not finish')
 
 
 def _walk(body: str) -> str:
-    return F'function walk() {{ {body} }}\nconsole.log(walk());'
+    return inspect.cleandoc(F"""
+        function walk() {{ {body} }}
+        console.log(walk());
+    """)
 
 
 def _walked(body: str) -> str:

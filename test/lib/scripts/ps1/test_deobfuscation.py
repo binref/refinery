@@ -4,6 +4,7 @@ import re
 
 from inspect import cleandoc
 
+from test.lib.scripts.ps1 import a_program
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 from test.lib.scripts.ps1.test_oracle import TYPE_TRANSCRIPTS
 
@@ -82,8 +83,10 @@ class TestPs1ParserModeRescan(TestPs1):
 
     def test_a_payload_in_a_typed_catch_after_a_command_try_body_survives(self):
         result = self._deobfuscate_iterative(
-            "try { Get-Process } catch [System.Exception] { Start-Process calc }\n"
-            "Write-Host 'keep'")
+            cleandoc("""
+                try { Get-Process } catch [System.Exception] { Start-Process calc }
+                Write-Host 'keep'
+            """))
         self.assertEqual(result, cleandoc(
             '''
             try {
@@ -96,7 +99,10 @@ class TestPs1ParserModeRescan(TestPs1):
         ))
 
     def test_an_empty_typed_catch_after_a_command_try_body_keeps_the_script_below_it(self):
-        result = self._deobfuscate_iterative("try { foo =5 } catch [A] {}\nWrite-Host 'keep'")
+        result = self._deobfuscate_iterative(cleandoc("""
+            try { foo =5 } catch [A] {}
+            Write-Host 'keep'
+        """))
         self.assertEqual(result, cleandoc(
             """
             try {
@@ -231,11 +237,17 @@ class TestPs1Integration(TestPs1):
         self.assertIn('1, 2, 3', result)
 
     def test_shl_operator(self):
-        result = self._deobfuscate('$y = $env:V\n$x = $y -shl 2')
+        result = self._deobfuscate(cleandoc("""
+            $y = $env:V
+            $x = $y -shl 2
+        """))
         self.assertIn('-shl', result.lower())
 
     def test_shr_operator(self):
-        result = self._deobfuscate('$y = $env:V\n$x = $y -shr 3')
+        result = self._deobfuscate(cleandoc("""
+            $y = $env:V
+            $x = $y -shr 3
+        """))
         self.assertIn('-shr', result.lower())
 
     def test_exit_negative_literal(self):
@@ -316,17 +328,27 @@ class TestPs1Integration(TestPs1):
 
     def test_junk_function_cascade(self):
         result = self._deobfuscate(
-            "function j { $Null = 915 }\nj\nWrite-Host 'payload'")
+            cleandoc("""
+                function j { $Null = 915 }
+                j
+                Write-Host 'payload'
+            """))
         self.assertEqual(result, "Write-Host 'payload'")
 
     def test_empty_for_dead_variable_cascade(self):
         result = self._deobfuscate(
-            "for ($i = 0; $i -LT 41; $i++) {}\nWrite-Host 'payload'")
+            cleandoc("""
+                for ($i = 0; $i -LT 41; $i++) {}
+                Write-Host 'payload'
+            """))
         self.assertEqual(result, "Write-Host 'payload'")
 
     def test_empty_for_live_variable_terminal_kept(self):
         result = self._deobfuscate(
-            'for ($i = 0; $i -LT 41; $i++) {}\nWrite-Host $i')
+            cleandoc("""
+                for ($i = 0; $i -LT 41; $i++) {}
+                Write-Host $i
+            """))
         self.assertEqual(result, 'Write-Host 41')
 
     def test_tier2_full_cascade(self):
@@ -351,7 +373,11 @@ class TestPs1Integration(TestPs1):
         self.assertEqual(result, "Write-Host 'payload'")
 
     def test_tier3_dead_store_cascade(self):
-        src = "$i = 33\n$i = 44\nfor ($i = 0; $i -LT 3; $i++) { Write-Host $i }"
+        src = cleandoc("""
+            $i = 33
+            $i = 44
+            for ($i = 0; $i -LT 3; $i++) { Write-Host $i }
+        """)
         result = self._deobfuscate(src)
         self.assertNotIn('$i = 33', result)
         self.assertNotIn('$i = 44', result)
@@ -372,12 +398,18 @@ class TestPs1Integration(TestPs1):
 class TestPs1ClosedWorld(TestPs1):
 
     def test_a_pure_read_is_deleted_only_in_a_closed_world(self):
-        anchor = "$Null = [Environment]::UserName\nWrite-Output 'anchor'\n"
+        anchor = a_program("""
+            $Null = [Environment]::UserName
+            Write-Output 'anchor'
+        """)
         self.assertNotIn('UserName', self._deobfuscate_iterative(anchor))
         self.assertIn('UserName', self._deobfuscate_iterative(F'iex $x\n{anchor}'))
 
     def test_a_temporary_mutator_is_deleted_only_in_a_closed_world(self):
-        anchor = "$Null = [Array]::Reverse('ab'.ToCharArray())\nWrite-Output 'anchor'\n"
+        anchor = a_program("""
+            $Null = [Array]::Reverse('ab'.ToCharArray())
+            Write-Output 'anchor'
+        """)
         self.assertNotIn('Reverse', self._deobfuscate_iterative(anchor))
         self.assertIn('Reverse', self._deobfuscate_iterative(F'iex $x\n{anchor}'))
 
@@ -387,18 +419,45 @@ class TestPs1CommandRedefinition(TestPs1):
     def test_a_shadowed_commands_effect_survives_every_deletion_form(self):
         anchor = "\nWrite-Output 'keep'\n"
         forms = {
-            'member-read': "function Get-Date { Start-Process calc }\n$Null = (Get-Date).Ticks",
-            'bare-discard': "function Get-Date { Start-Process calc }\n$Null = Get-Date",
-            'out-null-sink': "function Out-Null { Start-Process calc }\n1 | Out-Null",
+            'member-read': cleandoc("""
+                function Get-Date { Start-Process calc }
+                $Null = (Get-Date).Ticks
+            """),
+            'bare-discard': cleandoc("""
+                function Get-Date { Start-Process calc }
+                $Null = Get-Date
+            """),
+            'out-null-sink': cleandoc("""
+                function Out-Null { Start-Process calc }
+                1 | Out-Null
+            """),
             'foreach-void-sink':
-                "function ForEach-Object { Start-Process calc }\n1 | ForEach-Object { [Void]$_ }",
-            'noise-bareword-try': "function Zzz { Start-Process calc }\ntry { Zzz =5 } catch {}",
+                cleandoc("""
+                    function ForEach-Object { Start-Process calc }
+                    1 | ForEach-Object { [Void]$_ }
+                """),
+            'noise-bareword-try': cleandoc("""
+                function Zzz { Start-Process calc }
+                try { Zzz =5 } catch {}
+            """),
             'function-scope-assign':
-                "${function:Get-Date} = { Start-Process calc }\n$Null = Get-Date",
-            'new-object': "function New-Object { Start-Process calc }\n$Null = New-Object Version",
+                cleandoc("""
+                    ${function:Get-Date} = { Start-Process calc }
+                    $Null = Get-Date
+                """),
+            'new-object': cleandoc("""
+                function New-Object { Start-Process calc }
+                $Null = New-Object Version
+            """),
             'global-function':
-                "function global:Get-Date { Start-Process calc }\n$Null = (Get-Date).Ticks",
-            'private-filter': "filter private:Out-Null { Start-Process calc }\n1 | Out-Null",
+                cleandoc("""
+                    function global:Get-Date { Start-Process calc }
+                    $Null = (Get-Date).Ticks
+                """),
+            'private-filter': cleandoc("""
+                filter private:Out-Null { Start-Process calc }
+                1 | Out-Null
+            """),
         }
         for name, body in forms.items():
             with self.subTest(name):
@@ -407,10 +466,12 @@ class TestPs1CommandRedefinition(TestPs1):
     def test_a_bareword_written_above_the_definition_that_shadows_it_is_still_removed(self):
         self.assertEqual(
             self._deobfuscate_iterative(
-                'try { Zzz =5 } catch {}\n'
-                'function Zzz { Start-Process calc }\n'
-                'Zzz\n'
-                "Write-Output 'keep'\n"),
+                a_program("""
+                    try { Zzz =5 } catch {}
+                    function Zzz { Start-Process calc }
+                    Zzz
+                    Write-Output 'keep'
+                """)),
             cleandoc("""
                 function Zzz {
                   Start-Process calc
@@ -421,15 +482,21 @@ class TestPs1CommandRedefinition(TestPs1):
 
     def test_a_multi_assignment_redefinition_keeps_the_call_it_shadows(self):
         out = self._deobfuscate_iterative(
-            "${function:Get-Date}, $y = { Start-Process calc }, 2\n"
-            "$Null = (Get-Date).Ticks\n"
-            "Write-Output 'keep'\n")
+            a_program("""
+                ${function:Get-Date}, $y = { Start-Process calc }, 2
+                $Null = (Get-Date).Ticks
+                Write-Output 'keep'
+            """))
         self.assertIn('Ticks', out)
         self.assertIn('Start-Process', out)
 
     def test_an_unshadowed_pure_read_is_still_deleted(self):
         out = self._deobfuscate_iterative(
-            "function Helper { 'x' }\n$Null = (Get-Date).Ticks\nWrite-Output 'keep'\n")
+            a_program("""
+                function Helper { 'x' }
+                $Null = (Get-Date).Ticks
+                Write-Output 'keep'
+            """))
         self.assertNotIn('Get-Date', out)
 
     def test_a_cast_to_a_script_defined_type_keeps_the_constructor_it_runs(self):
@@ -446,7 +513,12 @@ class TestPs1CommandRedefinition(TestPs1):
         for second in ('function f { }', 'function global:f { }'):
             with self.subTest(second):
                 out = self._deobfuscate_iterative(
-                    F"function f {{ Start-Process calc }}\n{second}\nf\nWrite-Host 'keep'")
+                    cleandoc(F"""
+                        function f {{ Start-Process calc }}
+                        {second}
+                        f
+                        Write-Host 'keep'
+                    """))
                 self.assertIn('Start-Process', out)
 
 
@@ -456,13 +528,22 @@ class TestPs1ErrorHandlerSurvival(TestPs1):
         for body in ("$Null = [Int]'abc'", "$x = [Int]'abc'", "[Int]'abc'", "[Guid]'nope'"):
             with self.subTest(body):
                 out = self._deobfuscate_iterative(
-                    F"try {{ {body} }} catch {{ Start-Process calc }}\nWrite-Host 'keep'")
+                    cleandoc(F"""
+                        try {{ {body} }} catch {{ Start-Process calc }}
+                        Write-Host 'keep'
+                    """))
                 self.assertIn('Start-Process', out)
 
     def test_a_payload_in_a_catch_survives_a_try_body_another_pass_emptied(self):
         scripts = (
-            "function f { $Null = [Int]'abc' }\ntry { f } catch { Start-Process calc }",
-            "try { function g { 'z' } } catch { Start-Process calc }\nWrite-Host (g)",
+            cleandoc("""
+                function f { $Null = [Int]'abc' }
+                try { f } catch { Start-Process calc }
+            """),
+            cleandoc("""
+                try { function g { 'z' } } catch { Start-Process calc }
+                Write-Host (g)
+            """),
             "try { if ($false) { 1 } } catch { Start-Process calc }",
             "try { 42 } catch { Start-Process calc }",
             "try { trap { continue } } catch { Start-Process calc }",
@@ -475,7 +556,11 @@ class TestPs1ErrorHandlerSurvival(TestPs1):
 
     def test_an_empty_catch_lets_a_noise_bareword_and_a_cast_it_swallows_go(self):
         out = self._deobfuscate_iterative(
-            "try { foo =5 } catch {}\ntry { [Int]$env:FOO } catch {}\nWrite-Host 'keep'")
+            cleandoc("""
+                try { foo =5 } catch {}
+                try { [Int]$env:FOO } catch {}
+                Write-Host 'keep'
+            """))
         self.assertEqual(out, "Write-Host 'keep'")
 
 
@@ -493,7 +578,10 @@ class TestPs1NameTrustSurvivesRewriting(TestPs1):
         self.assertIn('Get-Date', out)
 
     def test_a_dot_on_a_cmdlet_is_still_dropped(self):
-        out = self._deobfuscate_iterative("$c = . New-Object 'Net.WebClient'\nWrite-Host $c")
+        out = self._deobfuscate_iterative(cleandoc("""
+            $c = . New-Object 'Net.WebClient'
+            Write-Host $c
+        """))
         self.assertNotIn('. New-Object', out)
 
     def test_a_provider_redefinition_is_kept_while_the_bare_call_resolves_to_the_alias(self):

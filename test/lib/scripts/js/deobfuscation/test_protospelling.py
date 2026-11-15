@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 
 import refinery.lib.scripts as scripts
@@ -8,7 +9,7 @@ import refinery.lib.scripts.js.deobfuscation.protospelling as protospelling
 from test import TestBase, lines_executed
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
+from test.lib.scripts.js.ledger import a_program, before_and_after, each_program_still_prints
 
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.deobfuscation.protospelling import JsPrototypeSpellingNormalization
@@ -64,11 +65,17 @@ class TestAPrototypeSpellingIsWrittenAsTheNameItReaches(TestJsDeobfuscator):
         )
 
     def test_a_receiver_the_syntax_does_not_decide_is_left_alone(self):
-        source = 'var a = {};\na.__proto__.z = 9;'
+        source = inspect.cleandoc("""
+            var a = {};
+            a.__proto__.z = 9;
+        """)
         self.assertEqual(self._run_transformer(source, JsPrototypeSpellingNormalization), source)
 
     def test_a_name_the_file_binds_is_not_the_intrinsic(self):
-        source = 'var Object = { prototype: {} };\nObject.getPrototypeOf({}).z = 9;'
+        source = inspect.cleandoc("""
+            var Object = { prototype: {} };
+            Object.getPrototypeOf({}).z = 9;
+        """)
         self.assertEqual(self._run_transformer(source, JsPrototypeSpellingNormalization), source)
 
 
@@ -96,9 +103,15 @@ class TestASpellingThatReachesSomethingElseIsNotRewritten(TestJsDeobfuscator):
 #: `Array.prototype` are neither writable nor configurable, so writing either out here makes strict
 #: code throw a `TypeError` where the original went on.
 A_SPELLING_STANDING_WHERE_A_REFERENCE_GOES = {
-    '({}).__proto__ = {q: 1};\nconsole.log(1);':
+    inspect.cleandoc("""
+        ({}).__proto__ = {q: 1};
+        console.log(1);
+    """):
         '1\n',
-    '[].__proto__ = null;\nconsole.log("ok");':
+    inspect.cleandoc("""
+        [].__proto__ = null;
+        console.log("ok");
+    """):
         'ok\n',
     'console.log(delete ({}).__proto__);':
         'true\n',
@@ -106,7 +119,12 @@ A_SPELLING_STANDING_WHERE_A_REFERENCE_GOES = {
 
 
 A_RECEIVER_THE_REWRITE_MAY_NOT_DROP = {
-    'var n = 0;\nfunction f() { n++; return 1; }\nvar p = [f()].__proto__;\nconsole.log(n);':
+    inspect.cleandoc("""
+        var n = 0;
+        function f() { n++; return 1; }
+        var p = [f()].__proto__;
+        console.log(n);
+    """):
         '1\n',
     'try { var p = [...null].__proto__; console.log("none"); }'
     ' catch (e) { console.log(e.constructor.name); }':
@@ -115,37 +133,67 @@ A_RECEIVER_THE_REWRITE_MAY_NOT_DROP = {
 
 
 A_MECHANISM_WRITTEN_UNDER_ANOTHER_NAME = {
-    'Object.defineProperty(Array.prototype, "__proto__",'
-    ' {get: function () { return {q: 5}; }});\nconsole.log([].__proto__.q);':
+    inspect.cleandoc("""
+        Object.defineProperty(Array.prototype, "__proto__", {get: function () { return {q: 5}; }});
+        console.log([].__proto__.q);
+    """):
         '5\n',
-    'Object.setPrototypeOf(Array.prototype, null);\nconsole.log([].__proto__);':
+    inspect.cleandoc("""
+        Object.setPrototypeOf(Array.prototype, null);
+        console.log([].__proto__);
+    """):
         'undefined\n',
-    'function patch(A) { A.prototype.constructor = function C() {}; }\npatch(Array);'
-    '\n[].constructor.prototype.q = 5;\nconsole.log([].q);':
+    inspect.cleandoc("""
+        function patch(A) { A.prototype.constructor = function C() {}; }
+        patch(Array);
+        [].constructor.prototype.q = 5;
+        console.log([].q);
+    """):
         'undefined\n',
-    'var G = Object;\nfunction patch(o) { o.getPrototypeOf = function () { return {q: 7}; }; }'
-    '\npatch(G);\nconsole.log(Object.getPrototypeOf({}).q);':
+    inspect.cleandoc("""
+        var G = Object;
+        function patch(o) { o.getPrototypeOf = function () { return {q: 7}; }; }
+        patch(G);
+        console.log(Object.getPrototypeOf({}).q);
+    """):
         '7\n',
-    '(function (Object) { Object.prototype.constructor = function C() {}; })(Object);'
-    '\nconsole.log(({}).constructor.prototype === Object.prototype);':
+    inspect.cleandoc("""
+        (function (Object) { Object.prototype.constructor = function C() {}; })(Object);
+        console.log(({}).constructor.prototype === Object.prototype);
+    """):
         'false\n',
-    'function C() {}\nC.prototype.q = 5;\n[Object.prototype.constructor] = [C];'
-    '\nconsole.log(({}).constructor.prototype.q);':
+    inspect.cleandoc("""
+        function C() {}
+        C.prototype.q = 5;
+        [Object.prototype.constructor] = [C];
+        console.log(({}).constructor.prototype.q);
+    """):
         '5\n',
-    'function C() {}\nC.prototype.q = 5;\nglobalThis.Object.prototype.constructor = C;'
-    '\nconsole.log(({}).constructor.prototype.q);':
+    inspect.cleandoc("""
+        function C() {}
+        C.prototype.q = 5;
+        globalThis.Object.prototype.constructor = C;
+        console.log(({}).constructor.prototype.q);
+    """):
         '5\n',
-    'globalThis.Object.getPrototypeOf = function () { return {q: 5}; };'
-    '\nconsole.log(Object.getPrototypeOf({}).q);':
+    inspect.cleandoc("""
+        globalThis.Object.getPrototypeOf = function () { return {q: 5}; };
+        console.log(Object.getPrototypeOf({}).q);
+    """):
         '5\n',
 }
 
 
 A_NAME_A_SCOPE_CAN_ANSWER = {
-    'var o = {Object: {prototype: {q: 3}}};\nwith (o) { console.log(({}).__proto__.q); }':
+    inspect.cleandoc("""
+        var o = {Object: {prototype: {q: 3}}};
+        with (o) { console.log(({}).__proto__.q); }
+    """):
         'undefined\n',
-    'var o = {Object: {prototype: {q: 3}, getPrototypeOf: function () { return {q: 7}; }}};'
-    '\nwith (o) { console.log(Object.getPrototypeOf({}).q); }':
+    inspect.cleandoc("""
+        var o = {Object: {prototype: {q: 3}, getPrototypeOf: function () { return {q: 7}; }}};
+        with (o) { console.log(Object.getPrototypeOf({}).q); }
+    """):
         '7\n',
 }
 
@@ -173,9 +221,19 @@ class TestAReceiverTheRewriteDropsIsFirstAskedWhatItRuns(TestJsDeobfuscator):
 
 
 A_RECEIVER_WHOSE_ELEMENT_THROWS = {
-    '[zzz].__proto__;\nconsole.log(1);\n': ('', 'ReferenceError'),
-    '[q].__proto__;\nlet q = 1;\nconsole.log(1);\n': ('', 'ReferenceError'),
-    '[q].__proto__.foo = function () {};\nlet q = 1;\n': ('', 'ReferenceError'),
+    a_program("""
+        [zzz].__proto__;
+        console.log(1);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        [q].__proto__;
+        let q = 1;
+        console.log(1);
+    """): ('', 'ReferenceError'),
+    a_program("""
+        [q].__proto__.foo = function () {};
+        let q = 1;
+    """): ('', 'ReferenceError'),
 }
 
 
@@ -213,13 +271,21 @@ class TestANameAScopeCanAnswerIsNotTheIntrinsic(TestJsDeobfuscator):
 
 
 A_MECHANISM_THIS_PASS_ITSELF_MAKES_VISIBLE = {
-    'function C() {}\nC.prototype.q = 5;\n'
-    'function r() { return ({}).constructor.prototype.q; }\n'
-    '({}).__proto__.constructor = C;\nconsole.log(r());':
+    inspect.cleandoc("""
+        function C() {}
+        C.prototype.q = 5;
+        function r() { return ({}).constructor.prototype.q; }
+        ({}).__proto__.constructor = C;
+        console.log(r());
+    """):
         '5\n',
-    'function C() {}\nC.prototype.q = 5;\n'
-    'function r() { return [].constructor.prototype.q; }\n'
-    '[].__proto__.constructor = C;\nconsole.log(r());':
+    inspect.cleandoc("""
+        function C() {}
+        C.prototype.q = 5;
+        function r() { return [].constructor.prototype.q; }
+        [].__proto__.constructor = C;
+        console.log(r());
+    """):
         '5\n',
 }
 

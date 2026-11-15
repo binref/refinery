@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import opportunity
@@ -86,39 +87,48 @@ class TestPs1ReflectionMembers(TestPs1):
     def test_an_argument_from_a_vouched_member_call_folds(self):
         self.assertEqual(
             self._apply(
-                "$sb = New-Object Text.StringBuilder\n"
-                "$x = $sb.ToString()\n"
-                "$y = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
-                ".Invoke($Null, @($x))",
+                inspect.cleandoc("""
+                    $sb = New-Object Text.StringBuilder
+                    $x = $sb.ToString()
+                    $y = [Convert].GetMethod('FromBase64String', [type[]]@([string])).Invoke($Null, @($x))
+                """),
                 Ps1ReflectionMembers,
             ),
-            "$sb = New-Object Text.StringBuilder\n"
-            "$x = $sb.ToString()\n"
-            "$y = [Convert]::FromBase64String($x)",
+            inspect.cleandoc("""
+                $sb = New-Object Text.StringBuilder
+                $x = $sb.ToString()
+                $y = [Convert]::FromBase64String($x)
+            """),
         )
 
     def test_an_argument_from_a_constrained_write_folds(self):
         self.assertEqual(
             self._apply(
-                "[string]$q = 5\n"
-                "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
-                ".Invoke($Null, @($q))",
+                inspect.cleandoc("""
+                    [string]$q = 5
+                    $x = [Convert].GetMethod('FromBase64String', [type[]]@([string])).Invoke($Null, @($q))
+                """),
                 Ps1ReflectionMembers,
             ),
-            "[string]$q = 5\n"
-            "$x = [Convert]::FromBase64String($q)",
+            inspect.cleandoc("""
+                [string]$q = 5
+                $x = [Convert]::FromBase64String($q)
+            """),
         )
 
     def test_a_folded_call_with_a_variable_argument_is_not_junk(self):
         self.assertEqual(
             self._deobfuscate(
-                "$sb = New-Object Text.StringBuilder\n"
-                "$x = $sb.ToString()\n"
-                "$u = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
-                ".Invoke($Null, @($x))"),
-            "$sb = New-Object Text.StringBuilder\n"
-            "$x = $sb.ToString()\n"
-            "$u = [Convert]::FromBase64String($x)",
+                inspect.cleandoc("""
+                    $sb = New-Object Text.StringBuilder
+                    $x = $sb.ToString()
+                    $u = [Convert].GetMethod('FromBase64String', [type[]]@([string])).Invoke($Null, @($x))
+                """)),
+            inspect.cleandoc("""
+                $sb = New-Object Text.StringBuilder
+                $x = $sb.ToString()
+                $u = [Convert]::FromBase64String($x)
+            """),
         )
 
     def test_an_uncollected_type_is_left_standing(self):
@@ -187,16 +197,18 @@ class TestPs1ReflectionMembers(TestPs1):
 
     def test_a_discarded_write_to_null_does_not_vouch_the_null_argument(self):
         self._assertUnchanged(
-            "$null = 'aGk='\n"
-            "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
-            ".Invoke($Null, @($Null))", Ps1ReflectionMembers)
+            inspect.cleandoc("""
+                $null = 'aGk='
+                $x = [Convert].GetMethod('FromBase64String', [type[]]@([string])).Invoke($Null, @($Null))
+            """), Ps1ReflectionMembers)
 
     def test_a_constrained_multi_assignment_slot_is_left_standing(self):
         self._assertUnchanged(
-            "[string]$q = 'x'\n"
-            "$q, $r = 5, 6\n"
-            "$x = [BitConverter].GetMethod('GetBytes', [type[]]@([int32]))"
-            ".Invoke($Null, @($q))", Ps1ReflectionMembers)
+            inspect.cleandoc("""
+                [string]$q = 'x'
+                $q, $r = 5, 6
+                $x = [BitConverter].GetMethod('GetBytes', [type[]]@([int32])).Invoke($Null, @($q))
+            """), Ps1ReflectionMembers)
 
     def test_an_empty_decoding_folds_to_the_empty_array(self):
         self.assertEqual(
@@ -213,16 +225,18 @@ class TestPs1ReflectionMembers(TestPs1):
 
     def test_an_unvouched_member_call_argument_is_left_standing(self):
         self._assertUnchanged(
-            "$x = 'abc'.ToUpper()\n"
-            "$y = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
-            ".Invoke($Null, @($x))", Ps1ReflectionMembers)
+            inspect.cleandoc("""
+                $x = 'abc'.ToUpper()
+                $y = [Convert].GetMethod('FromBase64String', [type[]]@([string])).Invoke($Null, @($x))
+            """), Ps1ReflectionMembers)
 
     def test_a_chase_cycle_in_assigned_values_terminates_and_stands(self):
         self._assertUnchanged(
-            "$a = $b\n"
-            "$b = $a\n"
-            "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
-            ".Invoke($Null, @($a))", Ps1ReflectionMembers)
+            inspect.cleandoc("""
+                $a = $b
+                $b = $a
+                $x = [Convert].GetMethod('FromBase64String', [type[]]@([string])).Invoke($Null, @($a))
+            """), Ps1ReflectionMembers)
 
     def test_an_array_literal_argument_is_left_standing(self):
         self._assertUnchanged(

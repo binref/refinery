@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import random
 import unittest
 
@@ -15,6 +16,7 @@ from test.lib.scripts.js.deobfuscation.test_escaped_identifiers import (
     AN_ESCAPED_STATIC_TERMINAL,
 )
 from test.lib.scripts.js.ledger import (
+    a_program,
     before_and_after,
     dropped_source_characters,
     printed,
@@ -58,7 +60,10 @@ def a_span_the_parser_kept(node: object) -> tuple[type, str]:
     return type(node), node.text if isinstance(node, JsErrorNode) else ''
 
 
-_HEAD = 'const registry = {};\nconst names = Object.keys(registry);\n'
+_HEAD = a_program("""
+    const registry = {};
+    const names = Object.keys(registry);
+""")
 """
 The two statements every source below starts with. A recovery that swallowed what stood before the
 position it could not read would show up in the printed text rather than hide in a one-token file,
@@ -158,19 +163,29 @@ class TestParserRecoveryAlwaysPrints(TestBase):
             'member_access_with_no_name': 'registry.',
             'optional_member_access_with_no_name': 'registry?.',
             'chained_member_access_with_no_name': 'registry.alpha.',
-            'new_meta_property_with_no_name': 'function build() {\n  new.',
+            'new_meta_property_with_no_name': inspect.cleandoc("""
+                function build() {
+                  new.
+            """),
             'object_getter_with_no_name': 'const o = { get',
             'object_setter_with_no_name': 'const o = { set',
             'object_async_method_with_no_name': 'const o = { async',
             'catch_parameter_with_no_name': 'try { names.pop(); } catch (',
             'label_with_no_statement': 'outer:',
-            'super_member_with_no_name': 'class Foo extends Object {\n  m() {\n    super.',
+            'super_member_with_no_name': inspect.cleandoc("""
+                class Foo extends Object {
+                  m() {
+                    super.
+            """),
             'class_heritage_with_no_name': 'class Foo extends',
             'export_default_with_no_value': 'export default',
             'computed_member_with_no_key': 'registry[',
             'spread_with_no_argument': 'const o = { ...',
             'for_head_with_no_binding': 'for (const',
-            'switch_case_with_no_test': 'switch (names.length) {\n  case',
+            'switch_case_with_no_test': inspect.cleandoc("""
+                switch (names.length) {
+                  case
+            """),
             'arrow_with_no_body': 'const f = () =>',
             'member_access_in_a_template_with_no_name': 'String(`a${registry.',
         }
@@ -218,21 +233,58 @@ class TestParserRecoveryAlwaysPrints(TestBase):
             'member_access_with_no_name': 'registry.alpha;',
             'optional_member_access_with_no_name': 'registry?.alpha;',
             'chained_member_access_with_no_name': 'registry.alpha.beta;',
-            'new_meta_property_with_no_name': 'function build() {\n  new.target;\n}',
-            'object_getter_with_no_name': 'const o = { get alpha() {\n  return 1;\n} };',
-            'object_setter_with_no_name': 'const o = { set alpha(v) {\n  registry.v = v;\n} };',
+            'new_meta_property_with_no_name': inspect.cleandoc("""
+                function build() {
+                  new.target;
+                }
+            """),
+            'object_getter_with_no_name': inspect.cleandoc("""
+                const o = { get alpha() {
+                  return 1;
+                } };
+            """),
+            'object_setter_with_no_name': inspect.cleandoc("""
+                const o = { set alpha(v) {
+                  registry.v = v;
+                } };
+            """),
             'object_async_method_with_no_name': 'const o = { async alpha() {} };',
             'catch_parameter_with_no_name':
-                'try {\n  names.pop();\n} catch (err) {\n  registry.e = err;\n}',
-            'label_with_no_statement': 'outer: while (names.pop()) {\n  break outer;\n}',
+                inspect.cleandoc("""
+                    try {
+                      names.pop();
+                    } catch (err) {
+                      registry.e = err;
+                    }
+                """),
+            'label_with_no_statement': inspect.cleandoc("""
+                outer: while (names.pop()) {
+                  break outer;
+                }
+            """),
             'super_member_with_no_name':
-                'class Foo extends Object {\n  m() {\n    super.toString();\n  }\n}',
+                inspect.cleandoc("""
+                    class Foo extends Object {
+                      m() {
+                        super.toString();
+                      }
+                    }
+                """),
             'class_heritage_with_no_name': 'class Foo extends Object {}',
             'export_default_with_no_value': 'export default registry;',
             'computed_member_with_no_key': "registry['alpha'];",
             'spread_with_no_argument': 'const o = { ...registry };',
-            'for_head_with_no_binding': 'for (const x of names) {\n  registry[x] = 1;\n}',
-            'switch_case_with_no_test': 'switch (names.length) {\n  case 1:\n    break;\n}',
+            'for_head_with_no_binding': inspect.cleandoc("""
+                for (const x of names) {
+                  registry[x] = 1;
+                }
+            """),
+            'switch_case_with_no_test': inspect.cleandoc("""
+                switch (names.length) {
+                  case 1:
+                    break;
+                }
+            """),
             'arrow_with_no_body': 'const f = () => registry;',
             'member_access_in_a_template_with_no_name': 'String(`a${registry.alpha}b`);',
         }
@@ -253,19 +305,29 @@ class TestParserRecoveryAlwaysPrints(TestBase):
             'member_access_with_no_name': 'registry.',
             'optional_member_access_with_no_name': 'registry?.',
             'chained_member_access_with_no_name': 'registry.alpha.',
-            'new_meta_property_with_no_name': 'function build() {\n    new.',
+            'new_meta_property_with_no_name': inspect.cleandoc("""
+                function build() {
+                    new.
+            """),
             'object_getter_with_no_name': 'const o = { get',
             'object_setter_with_no_name': 'const o = { set',
             'object_async_method_with_no_name': 'const o = { async',
             'catch_parameter_with_no_name': 'try { names.pop(); } catch (',
             'label_with_no_statement': 'outer:',
-            'super_member_with_no_name': 'class Foo extends Object {\n    m() {\n        super.',
+            'super_member_with_no_name': inspect.cleandoc("""
+                class Foo extends Object {
+                    m() {
+                        super.
+            """),
             'class_heritage_with_no_name': 'class Foo extends',
             'export_default_with_no_value': 'export default',
             'computed_member_with_no_key': 'registry[',
             'spread_with_no_argument': 'const o = { ...',
             'for_head_with_no_binding': 'for (const',
-            'switch_case_with_no_test': 'switch (names.length) {\n    case',
+            'switch_case_with_no_test': inspect.cleandoc("""
+                switch (names.length) {
+                    case
+            """),
             'arrow_with_no_body': 'const f = () =>',
             'member_access_in_a_template_with_no_name': 'String(`a${registry.',
         }
@@ -286,8 +348,16 @@ class TestParserRecoveryOverAMalformedNamePosition(TestBase):
             'dot_before_a_semicolon': 'registry.;',
             'dot_before_a_bracket': 'registry.];',
             'dot_before_a_string': "registry.'alpha';",
-            'new_dot_before_a_string': "function f() {\n  new.'target';\n}",
-            'label_before_a_closing_brace': 'function f() {\n  outer:\n}',
+            'new_dot_before_a_string': inspect.cleandoc("""
+                function f() {
+                  new.'target';
+                }
+            """),
+            'label_before_a_closing_brace': inspect.cleandoc("""
+                function f() {
+                  outer:
+                }
+            """),
         }
         self.assertEqual(
             {name: self._print(F'{_HEAD}{_MALFORMED[name]}') for name in expected},
@@ -331,8 +401,16 @@ class TestParserRecoveryOverAMalformedNamePosition(TestBase):
             'dot_before_a_semicolon': 'registry.;',
             'dot_before_a_bracket': 'registry.];',
             'dot_before_a_string': "registry.'alpha';",
-            'new_dot_before_a_string': "function f() {\n    new.'target';\n}",
-            'label_before_a_closing_brace': 'function f() {\n    outer:\n}',
+            'new_dot_before_a_string': inspect.cleandoc("""
+                function f() {
+                    new.'target';
+                }
+            """),
+            'label_before_a_closing_brace': inspect.cleandoc("""
+                function f() {
+                    outer:
+                }
+            """),
         }
         self.assertEqual(
             {name: F'{_HEAD}{_MALFORMED[name]}'.encode('utf8') | ppjscript() | str for name in expected},
@@ -581,7 +659,10 @@ A_POSITION_NAMING_A_BINDING_THE_FILE_CREATES = {
     'a namespace import'   : 'import * as {name} from "m";',
     'a renamed import'     : 'import {{ remote as {name} }} from "m";',
     'a plain import'       : 'import {{ {name} }} from "m";',
-    'an export of a local' : 'var {name};\nexport {{ {name} }};',
+    'an export of a local' : inspect.cleandoc("""
+        var {name};
+        export {{ {name} }};
+    """),
 }
 
 #: In these positions the grammar takes an IdentifierName, which a reserved word is as well, rather
@@ -592,7 +673,10 @@ A_POSITION_NAMING_THE_FAR_SIDE_OF_THE_BOUNDARY = {
     'a renamed re-export'    : 'export {{ {name} as local }} from "m";',
     'the name it exports as' : 'export {{ local as {name} }} from "m";',
     'a namespace re-export'  : 'export * as {name} from "m";',
-    'an export of a local'   : 'var local;\nexport {{ local as {name} }};',
+    'an export of a local'   : inspect.cleandoc("""
+        var local;
+        export {{ local as {name} }};
+    """),
 }
 
 
@@ -672,9 +756,15 @@ A_FILE_THE_PARSER_REFUSES = {
     'while (a) foo(});': ('}', 'unexpected token'),
     'if (a) var x = f(});': ('}', 'unexpected token'),
     '{ throw }': ('throw', 'unexpected token'),
-    'throw\n1;': ('throw', 'no line terminator may follow throw'),
+    inspect.cleandoc("""
+        throw
+        1;
+    """): ('throw', 'no line terminator may follow throw'),
     'throw\n': ('throw', 'no line terminator may follow throw'),
-    'function f() { throw\n  new Error("x"); }':
+    inspect.cleandoc("""
+        function f() { throw
+          new Error("x"); }
+    """):
         ('throw', 'no line terminator may follow throw'),
     'new x => y;': ('new x => y;', 'an arrow function as an operand'),
     'new (x) => y;': ('new (x) => y;', 'an arrow function as an operand'),
@@ -683,9 +773,18 @@ A_FILE_THE_PARSER_REFUSES = {
     'x = "abc\n': ('x = "abc\n', 'a string literal the line ends inside'),
     'x = "abc\r\ny;': ('x = "abc\r\n', 'a string literal the line ends inside'),
     'x = "abc\rz;': ('x = "abc\r', 'a string literal the line ends inside'),
-    'x = "abc\nz;': ('x = "abc\n', 'a string literal the line ends inside'),
-    'while (a) "b;\nc();': ('"b;\n', 'a string literal the line ends inside'),
-    'f("abc\n, 1);': ('"abc\n', 'a string literal the line ends inside'),
+    inspect.cleandoc("""
+        x = "abc
+        z;
+    """): ('x = "abc\n', 'a string literal the line ends inside'),
+    inspect.cleandoc("""
+        while (a) "b;
+        c();
+    """): ('"b;\n', 'a string literal the line ends inside'),
+    inspect.cleandoc("""
+        f("abc
+        , 1);
+    """): ('"abc\n', 'a string literal the line ends inside'),
 }
 
 
@@ -739,7 +838,10 @@ class TestAFileTheParserRefusesComesBackAsItWasWritten(TestBase):
         )
 
     def test_a_line_ended_string_is_not_followed_by_a_second_line_terminator(self):
-        sources = ['x = "abc\rz;', 'x = "abc\nz;', 'x = "abc\r\nz;']
+        sources = ['x = "abc\rz;', inspect.cleandoc("""
+            x = "abc
+            z;
+        """), 'x = "abc\r\nz;']
         self.assertEqual(
             {source: printed(source) for source in sources},
             {source: source for source in sources},
@@ -749,7 +851,10 @@ class TestAFileTheParserRefusesComesBackAsItWasWritten(TestBase):
         self,
     ):
         source = 'x = [1, 2, ]; y = (a b);'
-        self.assertEqual(printed(source), 'x = [1, 2];\ny = (a b);')
+        self.assertEqual(printed(source), inspect.cleandoc("""
+            x = [1, 2];
+            y = (a b);
+        """))
         self.assertEqual(unread_spans(JsParser(source).parse()), ['a b'])
         self.assertEqual(well_formed(source), False)
 
@@ -803,7 +908,11 @@ class TestASpanTheParserCouldNotReadEndsWhereItsStatementDoes(TestBase):
         return JsParser(text).parse().body[0]
 
     def test_an_if_keeps_its_else_behind_a_consequent_it_could_not_read(self):
-        source = 'if (x) foo bar\nelse y();\nz();'
+        source = inspect.cleandoc("""
+            if (x) foo bar
+            else y();
+            z();
+        """)
 
         def shape(text: str) -> tuple[type, tuple[type, str], bool]:
             statement = self._head(text)
@@ -821,7 +930,11 @@ class TestASpanTheParserCouldNotReadEndsWhereItsStatementDoes(TestBase):
         )
 
     def test_a_do_while_keeps_its_test_behind_a_body_it_could_not_read(self):
-        source = 'do foo bar\nwhile (x);\nz();'
+        source = inspect.cleandoc("""
+            do foo bar
+            while (x);
+            z();
+        """)
 
         def shape(text: str) -> tuple[type, tuple[type, str]]:
             statement = self._head(text)
@@ -966,7 +1079,10 @@ A_FILE_THE_PARSER_REFUSES_THAT_AN_ENGINE_REFUSES_TOO = (
     "console.log('alpha' 'beta');",
     'l\\u0065t x = 1; console.log(x);',
     ' #!/usr/bin/env node\nvar x = 1;',
-    '\ufeff#!/usr/bin/env node\nvar x = 1;',
+    inspect.cleandoc("""
+        \ufeff#!/usr/bin/env node
+        var x = 1;
+    """),
     'new x => y;',
     'new (x) => y;',
 )

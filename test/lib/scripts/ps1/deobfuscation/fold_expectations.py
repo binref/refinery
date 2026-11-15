@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -1295,180 +1297,410 @@ SIMPLIFIED: dict[str, Expectation] = {
 
 NOT_YET_SIMPLIFIED: frozenset[str] = frozenset({
     "$Null = (Get-Command K).Name; function K { $Null = 1 }; K; Write-Host 'A'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
-    "[System.IO.IOException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
-    "[System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
-    "[System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
-    "[System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @($null, $true)
+        trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @($null, $true)
+        trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @($null, $true)
+        trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @($null, $true)
+        trap [System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
     "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
     "[System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap "
-    "[System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap { "
-    "Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @($null, $true)\ntrap { "
-    "Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = "
-    "@('a')\n$ErrorActionPreference = 'Stop'; $null = [int]$p[0]; Write-Host 'rest'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\n$null "
-    "= $($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = "
-    "@('a')\n$v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1",
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @($null, $true)
+        trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @($null, $true)
+        trap { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @($null, $true)
+        trap { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        $ErrorActionPreference = 'Stop'; $null = [int]$p[0]; Write-Host 'rest'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        $null = $($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        $v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1
+    """),
     "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nforeach ($i in 1, 2) { try { try { "
     "continue } finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'm' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nfunction f1 { $null = "
-    "[int]$p[0]; Write-Host 'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nfunction f1 { $null = [int]$p[0]; "
-    "Write-Host 'rest' }; try { f1; Write-Host 't' } catch { Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nfunction f1 { $null = "
-    "[int]$p[0]; Write-Host 'rest' }; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nfunction f1 "
-    "{ $v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1 }; f1; Write-Host $v1",
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        function f1 { $null = [int]$p[0]; Write-Host 'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        function f1 { $null = [int]$p[0]; Write-Host 'rest' }; try { f1; Write-Host 't' } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        function f1 { $null = [int]$p[0]; Write-Host 'rest' }; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        function f1 { $v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1 }; f1; Write-Host $v1
+    """),
     "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\nfunction f1 { try { try { return } "
     "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'tail' }; f1; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntrap { "
-    "continue }; $v1 = 'one'; $v1 = [int]$p[0]; throw 'x'; Write-Host $v1",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = [int]$p[0]; "
-    "Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = [int]$p[0]; "
-    "Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'",
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        trap { continue }; $v1 = 'one'; $v1 = [int]$p[0]; throw 'x'; Write-Host $v1
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'
+    """),
     "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host "
     "'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'",
     "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
     "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.Exception] { Write-Host 'e' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
-    "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.InvalidCastException] { Write-Host 'i' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = "
-    "[int]$p[0]; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { $null = "
-    "[int]$p[0]; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { foreach ($i in 1, 2) { "
-    "$null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { throw "
-    "'x' } catch { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { throw 'x' } catch "
-    "{ & { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { throw 'x' } catch { "
-    "try { throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { try { $null = "
-    "[int]$p[0] } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { try { exit } "
-    "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { try { return } "
-    "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a')\ntry { try { throw 'x' } finally "
-    "{ $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap [System.IO.IOException] "
-    "{ Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap [System.IO.IOException] { "
-    "Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap "
-    "[System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.InvalidCastException] { Write-Host 'i' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { foreach ($i in 1, 2) { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { throw 'x' } catch { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { throw 'x' } catch { & { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { throw 'x' } catch { try { throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { try { $null = [int]$p[0] } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { try { exit } finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { try { return } finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a')
+        try { try { throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a', $true)
+        trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a', $true)
+        trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a', $true)
+        trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
     "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap [System.InvalidCastException] { "
     "Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap "
-    "[System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap "
-    "[System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap { "
-    "Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'SilentlyContinue'\n$p = @('a', $true)\ntrap { Write-Host "
-    "'t'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap [System.IO.IOException] "
-    "{ Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap [System.IO.IOException] { "
-    "Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap "
-    "[System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap [System.InvalidCastException] { "
-    "Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a', $true)
+        trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a', $true)
+        trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a', $true)
+        trap { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'SilentlyContinue'
+        $p = @('a', $true)
+        trap { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @($null, $true)
+        trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @($null, $true)
+        trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @($null, $true)
+        trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @($null, $true)
+        trap [System.InvalidCastException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
     "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap "
     "[System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap "
-    "[System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap { "
-    "Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @($null, $true)\ntrap { Write-Host "
-    "'t'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = "
-    "@('a')\n$ErrorActionPreference = 'Stop'; $null = [int]$p[0]; Write-Host 'rest'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\n$null = "
-    "$($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\n$null = [int]$p[0]; Write-Host 'rest'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\n$v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nforeach ($i in 1, "
-    "2) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @($null, $true)
+        trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @($null, $true)
+        trap { Write-Host 't' }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @($null, $true)
+        trap { Write-Host 't'; continue }; if ($p[1]) { throw 'x'; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        $ErrorActionPreference = 'Stop'; $null = [int]$p[0]; Write-Host 'rest'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        $null = $($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        $null = [int]$p[0]; Write-Host 'rest'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        $v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        foreach ($i in 1, 2) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
     "$ErrorActionPreference = 'Stop'\n$p = @('a')\nforeach ($i in 1, 2) { try { try { continue } "
     "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'm' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { "
-    "$null = [int]$p[0]; Write-Host 'rest' }; f1; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { $null = [int]$p[0]; "
-    "Write-Host 'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { $null = [int]$p[0]; "
-    "Write-Host 'rest' }; try { f1; Write-Host 't' } catch { Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { $null = [int]$p[0]; "
-    "Write-Host 'rest' }; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { $v1 "
-    "= 'one'; $v1 = [int]$p[0]; Write-Host $v1 }; f1; Write-Host $v1",
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        function f1 { $null = [int]$p[0]; Write-Host 'rest' }; f1; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        function f1 { $null = [int]$p[0]; Write-Host 'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        function f1 { $null = [int]$p[0]; Write-Host 'rest' }; try { f1; Write-Host 't' } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        function f1 { $null = [int]$p[0]; Write-Host 'rest' }; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        function f1 { $v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1 }; f1; Write-Host $v1
+    """),
     "$ErrorActionPreference = 'Stop'\n$p = @('a')\nfunction f1 { try { try { return } finally { "
     "Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'tail' }; f1; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntrap { Write-Host 't'; $null = "
-    "[int]$p[0]; continue }; try { throw 'x' } catch [System.IO.IOException] { }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntrap { "
-    "continue }; $v1 = 'one'; $v1 = [int]$p[0]; throw 'x'; Write-Host $v1",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = [int]$p[0]; "
-    "Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host "
-    "'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'",
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        trap { Write-Host 't'; $null = [int]$p[0]; continue }; try { throw 'x' } catch [System.IO.IOException] { }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        trap { continue }; $v1 = 'one'; $v1 = [int]$p[0]; throw 'x'; Write-Host $v1
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'
+    """),
     "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } "
     "catch [System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'",
     "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
     "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.Exception] { Write-Host 'e' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
-    "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.InvalidCastException] { Write-Host 'i' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = "
-    "[int]$p[0]; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { $null = "
-    "[int]$p[0]; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { Write-Host 't' } "
-    "finally { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { foreach ($i in 1, 2) { $null "
-    "= [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { throw 'x' } "
-    "catch { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { throw 'x' } catch { & { "
-    "$null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { throw 'x' } catch { try { "
-    "throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { try { $null = "
-    "[int]$p[0] } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { try { exit } "
-    "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { try { return } "
-    "finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a')\ntry { try { throw 'x' } finally { "
-    "$null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a', $null, 'a')\ntrap { $null = "
-    "[int]$p[0]; Write-Host 'trest'; continue }; $null = [int]$p[2]; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap [System.IO.IOException] { "
-    "Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap [System.IO.IOException] { "
-    "Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.InvalidCastException] { Write-Host 'i' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { Write-Host 't' } finally { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { foreach ($i in 1, 2) { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { throw 'x' } catch { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { throw 'x' } catch { & { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { throw 'x' } catch { try { throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { try { $null = [int]$p[0] } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { try { exit } finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { try { return } finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a')
+        try { try { throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a', $null, 'a')
+        trap { $null = [int]$p[0]; Write-Host 'trest'; continue }; $null = [int]$p[2]; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a', $true)
+        trap [System.IO.IOException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a', $true)
+        trap [System.IO.IOException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a', $true)
+        trap [System.InvalidCastException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
     "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap [System.InvalidCastException] { "
-    "Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap [System.InvalidCastException] { "
     "Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap "
-    "[System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap "
-    "[System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap { Write-Host 't' "
-    "}; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$ErrorActionPreference = 'Stop'\n$p = @('a', $true)\ntrap { Write-Host 't'; "
-    "continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a', $true)
+        trap [System.Management.Automation.RuntimeException] { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a', $true)
+        trap [System.Management.Automation.RuntimeException] { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a', $true)
+        trap { Write-Host 't' }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $ErrorActionPreference = 'Stop'
+        $p = @('a', $true)
+        trap { Write-Host 't'; continue }; if ($p[1]) { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
     "$a = @(0); $t = if ($a) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
     "$a = @(0, 0); $t = if ($a) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
     "$b = 'a'; $v = Get-Variable; ($v | Where-Object Name -eq 'b').Value = 'b'; Write-Output $b",
@@ -1478,54 +1710,102 @@ NOT_YET_SIMPLIFIED: frozenset[str] = frozenset({
     '$l = [byte]1; $r = 4; $t = $l -shl $r; Write-Output (,$t); Write-Output $t',
     "$null = 'abc' -match '(b)'; $t = $Matches[1]; Write-Output (,$t); Write-Output $t",
     '$o = [pscustomobject]@{}; Add-Member -Type NoteProperty k v -InputObject $o; $o.k',
-    "$p = @('a')\n$ErrorActionPreference = 'Stop'; $null = [int]$p[0]; Write-Host 'rest'",
-    "$p = @('a')\n$null = $($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'",
-    "$p = @('a')\n$v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1",
+    inspect.cleandoc("""
+        $p = @('a')
+        $ErrorActionPreference = 'Stop'; $null = [int]$p[0]; Write-Host 'rest'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        $null = $($null = [int]$p[0]; Write-Host 'rest'); Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        $v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1
+    """),
     "$p = @('a')\nforeach ($i in 1, 2) { try { try { continue } finally { "
     "Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'm' }; Write-Host 'after'",
-    "$p = @('a')\nfunction f1 { $null = [int]$p[0]; Write-Host "
-    "'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'",
-    "$p = @('a')\nfunction f1 { $null = [int]$p[0]; Write-Host 'rest' }; "
-    "try { f1; Write-Host 't' } catch { Write-Host 'c' }; Write-Host 'after'",
-    "$p = @('a')\nfunction f1 { $null = [int]$p[0]; Write-Host 'rest' "
-    "}; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'",
-    "$p = @('a')\nfunction f1 { $v1 = 'one'; $v1 = "
-    '[int]$p[0]; Write-Host $v1 }; f1; Write-Host $v1',
+    inspect.cleandoc("""
+        $p = @('a')
+        function f1 { $null = [int]$p[0]; Write-Host 'rest' }; trap { Write-Host 't'; continue }; f1; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        function f1 { $null = [int]$p[0]; Write-Host 'rest' }; try { f1; Write-Host 't' } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        function f1 { $null = [int]$p[0]; Write-Host 'rest' }; try { throw 'x' } catch { f1; Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        function f1 { $v1 = 'one'; $v1 = [int]$p[0]; Write-Host $v1 }; f1; Write-Host $v1
+    """),
     "$p = @('a')\nfunction f1 { try { try { return } finally { Write-Host 'f'; "
     "$null = [int]$p[0] } } catch { }; Write-Host 'tail' }; f1; Write-Host 'after'",
-    "$p = @('a')\ntrap { Write-Host 't'; $null = [int]$p[0]; continue }; "
-    "try { throw 'x' } catch [System.IO.IOException] { }; Write-Host 'after'",
-    "$p = @('a')\ntrap { continue }; $v1 = 'one'; $v1 = [int]$p[0]; throw 'x'; Write-Host $v1",
-    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } "
-    "catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'",
-    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
-    "[System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'",
+    inspect.cleandoc("""
+        $p = @('a')
+        trap { Write-Host 't'; $null = [int]$p[0]; continue }; try { throw 'x' } catch [System.IO.IOException] { }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        trap { continue }; $v1 = 'one'; $v1 = [int]$p[0]; throw 'x'; Write-Host $v1
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.IO.IOException] { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.InvalidCastException] { Write-Host 'c' }; Write-Host 'after'
+    """),
     "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
     "[System.Management.Automation.RuntimeException] { Write-Host 'c' }; Write-Host 'after'",
     "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
     "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.Exception] { Write-Host 'e' }; Write-Host 'after'",
-    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host 'rest' } catch "
-    "[System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.InvalidCastException] { Write-Host 'i' }; Write-Host 'after'",
-    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host "
-    "'rest' } catch { Write-Host 'c' }; Write-Host 'after'",
-    "$p = @('a')\ntry { $null = [int]$p[0]; Write-Host "
-    "'rest' } finally { Write-Host 'fin' }; Write-Host 'after'",
-    "$p = @('a')\ntry { foreach ($i in 1, 2) { $null = [int]$p[0]; "
-    "Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
-    "$p = @('a')\ntry { throw 'x' } catch { $null = "
-    "[int]$p[0]; Write-Host 'rest' }; Write-Host 'after'",
-    "$p = @('a')\ntry { throw 'x' } catch { & { $null = "
-    "[int]$p[0]; Write-Host 'rest' }; Write-Host 'c' }; Write-Host 'after'",
-    "$p = @('a')\ntry { throw 'x' } catch { try { throw 'x' } "
-    "finally { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'",
-    "$p = @('a')\ntry { try { $null = [int]$p[0] } finally "
-    "{ }; Write-Host 'rest' } finally { }; Write-Host 'after'",
-    "$p = @('a')\ntry { try { exit } finally { Write-Host "
-    "'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
-    "$p = @('a')\ntry { try { return } finally { Write-Host "
-    "'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'",
-    "$p = @('a')\ntry { try { throw 'x' } finally { $null = [int]$p[0]; "
-    "Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'",
+    inspect.cleandoc("""
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch [System.Management.Automation.RuntimeException] { Write-Host 'r' } catch [System.InvalidCastException] { Write-Host 'i' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { $null = [int]$p[0]; Write-Host 'rest' } finally { Write-Host 'fin' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { foreach ($i in 1, 2) { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { throw 'x' } catch { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { throw 'x' } catch { & { $null = [int]$p[0]; Write-Host 'rest' }; Write-Host 'c' }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { throw 'x' } catch { try { throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { try { $null = [int]$p[0] } finally { }; Write-Host 'rest' } finally { }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { try { exit } finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { try { return } finally { Write-Host 'f'; $null = [int]$p[0] } } catch { }; Write-Host 'after'
+    """),
+    inspect.cleandoc("""
+        $p = @('a')
+        try { try { throw 'x' } finally { $null = [int]$p[0]; Write-Host 'rest' } } catch { Write-Host 'c' }; Write-Host 'after'
+    """),
     "$p = @('a'); function f1 { $null = [int]$p[0]; "
     "Write-Host 'm1' }; trap { continue }; f1; Write-Host 'm2'",
     "$q = 'abc'; [int]$q = 5; Write-Output $q.GetType().FullName",

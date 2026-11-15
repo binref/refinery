@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase, opportunity
@@ -420,9 +421,21 @@ A_NAME_THE_WRAPPER_BINDS = {
 #: Node runs each of these files as an ES module, since CommonJS refuses a top-level `let`, `const`
 #: or `class` of a name its wrapper binds. In an ES module the read of another such name throws.
 A_READ_IN_A_FILE_A_LEXICAL_WRAPPER_NAME_MAKES_AN_ES_MODULE = {
-    'const exports = 0;\nrequire;\nconsole.log(1);': 'require;',
-    'class module {}\n__dirname;\nconsole.log(1);': '__dirname;',
-    'let require = 0;\nexports;\nconsole.log(require);': 'exports;',
+    inspect.cleandoc("""
+        const exports = 0;
+        require;
+        console.log(1);
+    """): 'require;',
+    inspect.cleandoc("""
+        class module {}
+        __dirname;
+        console.log(1);
+    """): '__dirname;',
+    inspect.cleandoc("""
+        let require = 0;
+        exports;
+        console.log(require);
+    """): 'exports;',
 }
 
 THE_ARGUMENTS_OF_THE_WRAPPER = {

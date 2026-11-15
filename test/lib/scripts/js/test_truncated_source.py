@@ -426,7 +426,11 @@ class TestTruncatedSource(TestBase):
     def test_a_template_may_span_lines_without_being_cut(self):
         self.assertEqual(
             self._template_runs_of(_INTACT['template_across_lines']),
-            [('loading\nthe alpha\nmodule', True, True)],
+            [(inspect.cleandoc("""
+                loading
+                the alpha
+                module
+            """), True, True)],
         )
 
     def test_a_slash_inside_a_character_class_does_not_end_the_regexp(self):

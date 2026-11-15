@@ -1684,17 +1684,30 @@ class TestPs1LiteralFacts(unittest.TestCase):
 class TestPs1StringSpelling(unittest.TestCase):
 
     def test_multiline_string_emitted_as_here_string(self):
-        node = make_string_literal('line1\nline2')
+        node = make_string_literal(inspect.cleandoc("""
+            line1
+            line2
+        """))
         self.assertIsInstance(node, Ps1HereString)
-        self.assertEqual(node.value, 'line1\nline2')
+        self.assertEqual(node.value, inspect.cleandoc("""
+            line1
+            line2
+        """))
         self.assertIn("@'\n", node.raw)
         node2 = make_string_literal('no newlines')
         self.assertIsInstance(node2, Ps1StringLiteral)
 
     def test_make_string_literal_avoids_herestring_breakout(self):
-        unsafe = make_string_literal("a\n'@\nb")
+        unsafe = make_string_literal(inspect.cleandoc("""
+            a
+            '@
+            b
+        """))
         self.assertNotIsInstance(unsafe, Ps1HereString)
-        safe = make_string_literal('a\nb')
+        safe = make_string_literal(inspect.cleandoc("""
+            a
+            b
+        """))
         self.assertIsInstance(safe, Ps1HereString)
 
 
@@ -1811,7 +1824,14 @@ class TestPs1ValueSpelling(unittest.TestCase):
         self.assertEqual(_spelled(Ps1Constant(OBJECT_ARRAY, (Ps1Constant(INT32, 1),))), ',1')
 
     def test_a_string_value_is_written_as_a_literal_that_reads_back_as_it(self):
-        for value in ('abc', '', "it's", 'a"b', 'a`b', 'a$b', 'a\nb', 'a\tb', "a\n'@\nb"):
+        for value in ('abc', '', "it's", 'a"b', 'a`b', 'a$b', inspect.cleandoc("""
+            a
+            b
+        """), 'a\tb', inspect.cleandoc("""
+            a
+            '@
+            b
+        """)):
             with self.subTest(value):
                 self.assertEqual(
                     _read(_spelled(Ps1Constant(STRING, value))), Ps1Constant(STRING, value))
@@ -1893,7 +1913,10 @@ class TestPs1ADoubleQuotedStringIsPinnedOnlyWhereEveryPartIsText(unittest.TestCa
     def test_a_here_string_of_text_alone_is_pinned_the_same_way(self):
         self.assertEqual(
             read(Ps1ExpandableHereString(parts=self._spelled_by('a\n', 'b'))),
-            Ps1Constant(STRING, 'a\nb'),
+            Ps1Constant(STRING, inspect.cleandoc("""
+                a
+                b
+            """)),
         )
 
     def test_a_string_with_one_part_that_is_not_text_is_pinned_to_nothing(self):
@@ -1903,7 +1926,10 @@ class TestPs1ADoubleQuotedStringIsPinnedOnlyWhereEveryPartIsText(unittest.TestCa
 
     def test_a_string_the_parser_wrote_as_one_literal_is_pinned_to_that_literal(self):
         self.assertEqual(_read('"abc"'), Ps1Constant(STRING, 'abc'))
-        self.assertEqual(_read('"a`nb"'), Ps1Constant(STRING, 'a\nb'))
+        self.assertEqual(_read('"a`nb"'), Ps1Constant(STRING, inspect.cleandoc("""
+            a
+            b
+        """)))
 
 
 class TestPs1AComputedPayloadNamesTheValueItsPythonKindDecides(unittest.TestCase):

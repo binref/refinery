@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase, backlog, opportunity
 
 from refinery.lib.scripts.analysis.cycles import CycleModel
@@ -397,7 +399,14 @@ class TestPs1FlowUnknownRegressions(TestPs1FlowUnknowns):
 
     def test_a_stored_block_outside_the_binding_body_is_still_a_deferred_writer(self):
         _, semantic, flow = _models(
-            "$b = { $x = 'INNER' }\n. {\n  $x = 'OUTER'\n  . $b\n  Write-Host $x\n}")
+            inspect.cleandoc("""
+                $b = { $x = 'INNER' }
+                . {
+                  $x = 'OUTER'
+                  . $b
+                  Write-Host $x
+                }
+            """))
         inner = next(
             scope for scope in semantic.script_scope.children if 'x' in scope.bindings)
         self.assertIn(
@@ -442,13 +451,21 @@ class TestPs1UnattributableWrites(TestPs1VariableFlow):
 
     def test_the_kill_is_placed_at_the_statement_that_runs_the_write(self):
         tree, _, flow = _models(
-            "$x = 'a'\n. { Set-Variable $n 'v' }\nWrite-Host $x")
+            inspect.cleandoc("""
+                $x = 'a'
+                . { Set-Variable $n 'v' }
+                Write-Host $x
+            """))
         graph = flow.flow.graph_of(tree)
         placed = [node.element for node in flow.unattributable_writes(graph)]
         self.assertEqual(placed, [tree.body[1]])
 
     def test_a_literal_named_write_is_no_kill_at_all(self):
-        tree, _, flow = _models("$x = 'a'\nSet-Variable y 'v'\nWrite-Host $x")
+        tree, _, flow = _models(inspect.cleandoc("""
+            $x = 'a'
+            Set-Variable y 'v'
+            Write-Host $x
+        """))
         self.assertEqual(flow.unattributable_writes(flow.flow.graph_of(tree)), ())
         self.assertEqual(self._observed("$x = 'a'; Set-Variable y 'v'; Write-Host $x"), 0)
 
@@ -556,8 +573,16 @@ class TestPs1UnattributableWrites(TestPs1VariableFlow):
 
     def test_a_write_naming_another_scope_is_not_one_of_the_placed_ones(self):
         for source in (
-            "$x = 'a'\nSet-Variable $n 'v' -Scope Global\nWrite-Host $x",
-            "$x = 'a'\nSet-Variable $n 'v' -Scope 1\nWrite-Host $x",
+            inspect.cleandoc("""
+                $x = 'a'
+                Set-Variable $n 'v' -Scope Global
+                Write-Host $x
+            """),
+            inspect.cleandoc("""
+                $x = 'a'
+                Set-Variable $n 'v' -Scope 1
+                Write-Host $x
+            """),
         ):
             with self.subTest(source):
                 tree, _, flow = _models(source)
@@ -626,8 +651,10 @@ class TestPs1WhatStandsWhereNoSingleWriteIsObserved(TestBase):
 
     def test_the_session_value_of_a_variable_handed_out_is_not_what_stands(self):
         tree, _, flow = _models(
-            "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'\n"
-            'Write-Host $ErrorActionPreference')
+            inspect.cleandoc("""
+                $v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'
+                Write-Host $ErrorActionPreference
+            """))
         read = [
             node for node in _in_source_order(tree)
             if isinstance(node, Ps1Variable) and node.name.lower() == 'erroractionpreference'
@@ -781,7 +808,12 @@ class TestPs1AnAliasThroughAConversionKillsWithoutNamingAValue(TestBase):
         ):
             for store, name in (('$y[0] = 9', 'x'), ('$x[0] = 9', 'y')):
                 with self.subTest(F'{definition}; {store}'):
-                    source = F'$x = $args[0]\n{definition}\n{store}\nWrite-Output ${name}'
+                    source = inspect.cleandoc(F"""
+                        $x = $args[0]
+                        {definition}
+                        {store}
+                        Write-Output ${name}
+                    """)
                     tree, _, flow = _models(source)
                     read = self._occurrences(tree, name)[-1]
                     self.assertIsNone(flow.reaching_definition(read))
@@ -789,14 +821,24 @@ class TestPs1AnAliasThroughAConversionKillsWithoutNamingAValue(TestBase):
     def test_a_read_below_a_store_through_a_name_handed_the_object_observes_that_store(self):
         for definition in ('$y = $x', '$y = ($x)'):
             with self.subTest(definition):
-                source = F'$x = 1, 2, 3\n{definition}\n$y[0] = 9\nWrite-Output $x'
+                source = inspect.cleandoc(F"""
+                    $x = 1, 2, 3
+                    {definition}
+                    $y[0] = 9
+                    Write-Output $x
+                """)
                 tree, _, flow = _models(source)
                 store = self._occurrences(tree, 'y')[1]
                 read = self._occurrences(tree, 'x')[-1]
                 self.assertIs(flow.reaching_definition(read), store)
 
     def test_a_read_below_a_store_through_a_copy_still_observes_the_names_own_write(self):
-        source = '$x = 1, 2, 3\n$y = $($x)\n$y[0] = 9\nWrite-Output $x'
+        source = inspect.cleandoc("""
+            $x = 1, 2, 3
+            $y = $($x)
+            $y[0] = 9
+            Write-Output $x
+        """)
         tree, _, flow = _models(source)
         occurrences = self._occurrences(tree, 'x')
         self.assertIs(flow.reaching_definition(occurrences[-1]), occurrences[0])

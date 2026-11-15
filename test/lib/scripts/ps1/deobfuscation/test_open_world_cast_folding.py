@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import opportunity, wontfix
 from test.lib.scripts.ps1.corpus import (
     CAST_AFTER_A_REPOINTED_ACCELERATOR,
@@ -43,37 +45,69 @@ class TestPs1ACastToABuiltInTypeBelowCodeNobodyCanRead(TestPs1):
 
     @opportunity
     def test_a_cast_of_a_constant_after_a_leak_runs_no_code(self):
-        self.assertTrue(self._runs_no_code(F'{_LEAK}\n$Null = [Int]"45" + 5'))
+        self.assertTrue(self._runs_no_code(inspect.cleandoc(F"""
+            {_LEAK}
+            $Null = [Int]"45" + 5
+        """)))
 
     def test_a_cast_of_a_value_after_a_leak_may_run_code(self):
-        self.assertFalse(self._runs_no_code(F'{_LEAK}\n$Null = [Int]$env:X + 5'))
+        self.assertFalse(self._runs_no_code(inspect.cleandoc(F"""
+            {_LEAK}
+            $Null = [Int]$env:X + 5
+        """)))
 
     def test_a_cast_after_a_leak_may_be_folded(self):
         self.assertEqual(
-            self._deobfuscate(F'{_LEAK}\n$q = [Int]"45" + 5\nWrite-Host $q'),
-            F'{_LEAK}\n$q = 50\nWrite-Host 50',
+            self._deobfuscate(inspect.cleandoc(F"""
+                {_LEAK}
+                $q = [Int]"45" + 5
+                Write-Host $q
+            """)),
+            inspect.cleandoc(F"""
+                {_LEAK}
+                $q = 50
+                Write-Host 50
+            """),
         )
 
     def test_a_discarded_cast_after_a_leak_is_removed(self):
         self.assertEqual(
-            self._deobfuscate(F'{_LEAK}\n$Null = [Int]"45" + 5\n{_ANCHOR}'),
-            F'{_LEAK}\n{_ANCHOR}',
+            self._deobfuscate(inspect.cleandoc(F"""
+                {_LEAK}
+                $Null = [Int]"45" + 5
+                {_ANCHOR}
+            """)),
+            inspect.cleandoc(F"""
+                {_LEAK}
+                {_ANCHOR}
+            """),
         )
 
 
 class TestPs1TheWorldGateHoldsForEverythingButTheCast(TestPs1):
 
     def test_a_static_call_after_a_leak_is_kept(self):
-        source = F'{_LEAK}\n$Null = [Math]::Sqrt(36)\n{_ANCHOR}'
+        source = inspect.cleandoc(F"""
+            {_LEAK}
+            $Null = [Math]::Sqrt(36)
+            {_ANCHOR}
+        """)
         self.assertEqual(self._deobfuscate(source), source)
 
     def test_a_parsing_cast_after_a_leak_is_kept(self):
-        source = F'{_LEAK}\n$q = [Xml]"<r/>"\nWrite-Host $q'
+        source = inspect.cleandoc(F"""
+            {_LEAK}
+            $q = [Xml]"<r/>"
+            Write-Host $q
+        """)
         self.assertEqual(self._deobfuscate(source), source)
 
     def test_a_cast_with_no_leak_anywhere_is_folded(self):
         self.assertEqual(
-            self._deobfuscate(F'$q = [Int]"45" + 5\nWrite-Host $q'),
+            self._deobfuscate(inspect.cleandoc(F"""
+                $q = [Int]"45" + 5
+                Write-Host $q
+            """)),
             'Write-Host 50')
 
 _RETYPE = (
@@ -88,7 +122,11 @@ _REPOINT_LENGTH = (
 class TestPs1AMemberReadOnALiteralIsNotAskedAboutTheWorld(TestPs1):
 
     def test_a_discarded_read_of_a_re_pointed_member_is_kept(self):
-        source = F"{_RETYPE}\n$Null = 'abc'.Zq\n{_ANCHOR}"
+        source = inspect.cleandoc(F"""
+            {_RETYPE}
+            $Null = 'abc'.Zq
+            {_ANCHOR}
+        """)
         self._assertKept(source)
 
     @wontfix(
@@ -96,11 +134,17 @@ class TestPs1AMemberReadOnALiteralIsNotAskedAboutTheWorld(TestPs1):
         'Update-TypeData'
     )
     def test_a_read_of_a_re_pointed_member_is_not_folded(self):
-        source = F"{_REPOINT_LENGTH}\nWrite-Host 'abc'.Length"
+        source = inspect.cleandoc(F"""
+            {_REPOINT_LENGTH}
+            Write-Host 'abc'.Length
+        """)
         self._assertKept(source)
 
     def test_a_discarded_read_with_no_mutation_anywhere_is_removed(self):
-        self._assertDeobfuscatesTo(F"$Null = 'abc'.Length\n{_ANCHOR}", _ANCHOR)
+        self._assertDeobfuscatesTo(inspect.cleandoc(F"""
+            $Null = 'abc'.Length
+            {_ANCHOR}
+        """), _ANCHOR)
 
     def test_a_read_with_no_mutation_anywhere_is_folded(self):
         self._assertDeobfuscatesTo("Write-Host 'abc'.Length", 'Write-Host 3')

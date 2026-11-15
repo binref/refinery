@@ -8,6 +8,7 @@ SECURITY: every program below is written out by this module and Node runs only t
 """
 from __future__ import annotations
 
+import inspect
 import re
 import unittest
 
@@ -341,10 +342,20 @@ A_NAME_WRITTEN_WITH_AN_ESCAPE_AND_THE_TEXT_IT_COMES_BACK_AS = {
         'class ESCAPED[0043]ls {}': 'class Cls {}',
         "'use strict'; function f(evESCAPED[0061]l){ return 1; }":
             _spelled_with_escapes(
-                "'use strict';\nfunction f(evESCAPED[0061]l) {\n  return 1;\n}"),
+                inspect.cleandoc("""
+                    'use strict';
+                    function f(evESCAPED[0061]l) {
+                      return 1;
+                    }
+                """)),
         "'use strict'; function f(argumentESCAPED[0073]){ return 1; }":
             _spelled_with_escapes(
-                "'use strict';\nfunction f(argumentESCAPED[0073]) {\n  return 1;\n}"),
+                inspect.cleandoc("""
+                    'use strict';
+                    function f(argumentESCAPED[0073]) {
+                      return 1;
+                    }
+                """)),
     }.items()
 }
 

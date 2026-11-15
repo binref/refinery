@@ -251,14 +251,24 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
 
     def test_a_guard_on_an_established_array_folds(self):
         self.assertEqual(
-            "function f() {\n  var a = ['x'];\n  SINK('kept');\n}",
+            inspect.cleandoc("""
+                function f() {
+                  var a = ['x'];
+                  SINK('kept');
+                }
+            """),
             self._deadcode(
                 'function f() { var a = [\'x\']; if (!a) { return; } SINK(\'kept\'); }'),
         )
 
     def test_an_empty_array_is_truthy(self):
         self.assertEqual(
-            'function f() {\n  var a = [];\n  y();\n}',
+            inspect.cleandoc("""
+                function f() {
+                  var a = [];
+                  y();
+                }
+            """),
             self._deadcode('function f() { var a = []; if (!a) { x(); } else { y(); } }'),
         )
 

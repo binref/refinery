@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import concurrent.futures
 import functools
+import inspect
 import json
 import re
 import shutil
@@ -50,10 +51,10 @@ _JSON_SEPARATORS = (',', ':')
 #: the OEM code page by default, which mangles the quote characters the lexer corpus exists to test.
 #: Progress records matter because they are serialized to stderr as CLIXML and would otherwise be
 #: the bulk of what a behaviour comparison saw.
-_PREAMBLE = '\n'.join((
-    '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false',
-    "$ProgressPreference = 'SilentlyContinue'",
-))
+_PREAMBLE = inspect.cleandoc("""
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+    $ProgressPreference = 'SilentlyContinue'
+""")
 
 _PARSE_SCRIPT = R'''
 $ErrorActionPreference = 'Stop'

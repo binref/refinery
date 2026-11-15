@@ -110,7 +110,11 @@ class TestPs1PrefixEvaluator(TestPs1):
         self._assertUnchanged("$OFS = '-'", Ps1PrefixEvaluator)
 
     def test_an_engine_variable_write_refuses_the_fold_where_code_runs_from_data(self):
-        self._assertUnchanged("$OFS = '-' + 'x'\nsal e iex\ne 'x'", Ps1PrefixEvaluator)
+        self._assertUnchanged(cleandoc("""
+            $OFS = '-' + 'x'
+            sal e iex
+            e 'x'
+        """), Ps1PrefixEvaluator)
 
     def test_a_qualified_store_ends_the_prefix(self):
         source = cleandoc("""
@@ -133,7 +137,10 @@ class TestPs1PrefixEvaluator(TestPs1):
             $y = 'b'
             f $x
         """)
-        self.assertEqual(self._apply(source, Ps1PrefixEvaluator), "$x = 'a'\nf $x")
+        self.assertEqual(self._apply(source, Ps1PrefixEvaluator), cleandoc("""
+            $x = 'a'
+            f $x
+        """))
 
     def test_a_reader_inside_code_an_alias_of_the_script_runs_keeps_every_written_name(self):
         source = cleandoc("""
@@ -174,7 +181,10 @@ class TestPs1PrefixEvaluator(TestPs1):
         )
 
     def test_a_prefix_whose_stores_spell_it_is_left_alone(self):
-        self._assertUnchanged("$x = 'a'\nf $x", Ps1PrefixEvaluator)
+        self._assertUnchanged(cleandoc("""
+            $x = 'a'
+            f $x
+        """), Ps1PrefixEvaluator)
 
     def test_a_container_two_names_hold_is_not_spelled(self):
         self._assertUnchanged(
@@ -310,15 +320,24 @@ class TestPs1PrefixEvaluator(TestPs1):
 
     def test_a_contains_over_a_non_ascii_value_ends_the_prefix(self):
         self._assertUnchanged(
-            "$t = @('ss') -contains [char]0x00DF\nf $t",
+            cleandoc("""
+                $t = @('ss') -contains [char]0x00DF
+                f $t
+            """),
             Ps1PrefixEvaluator,
         )
 
     def test_an_increment_of_a_qualified_name_ends_the_prefix(self):
-        self._assertUnchanged("$o = $env:zq++\nf $o", Ps1PrefixEvaluator)
+        self._assertUnchanged(cleandoc("""
+            $o = $env:zq++
+            f $o
+        """), Ps1PrefixEvaluator)
 
     def test_an_increment_of_a_caller_bound_name_ends_the_prefix(self):
-        self._assertUnchanged("$o = $i++\nf $o", Ps1PrefixEvaluator)
+        self._assertUnchanged(cleandoc("""
+            $o = $i++
+            f $o
+        """), Ps1PrefixEvaluator)
 
     def test_an_increment_folds_the_values_the_host_computes(self):
         source = cleandoc("""
@@ -338,10 +357,18 @@ class TestPs1PrefixEvaluator(TestPs1):
         )
 
     def test_an_increment_of_a_string_ends_the_prefix(self):
-        self._assertUnchanged("$s = '5'\n$o = $s++\nf $o", Ps1PrefixEvaluator)
+        self._assertUnchanged(cleandoc("""
+            $s = '5'
+            $o = $s++
+            f $o
+        """), Ps1PrefixEvaluator)
 
     def test_an_increment_of_a_boolean_ends_the_prefix(self):
-        self._assertUnchanged("$b = $true\n$o = $b++\nf $o", Ps1PrefixEvaluator)
+        self._assertUnchanged(cleandoc("""
+            $b = $true
+            $o = $b++
+            f $o
+        """), Ps1PrefixEvaluator)
 
     def test_an_increment_of_a_null_folds_to_the_values_the_host_computes(self):
         source = cleandoc("""
@@ -362,7 +389,10 @@ class TestPs1PrefixEvaluator(TestPs1):
 
     def test_a_foreach_header_bound_to_a_qualified_name_ends_the_prefix(self):
         self._assertUnchanged(
-            "foreach ($env:zq in 'a', 'b') {}\nf $zq",
+            cleandoc("""
+                foreach ($env:zq in 'a', 'b') {}
+                f $zq
+            """),
             Ps1PrefixEvaluator,
         )
 
@@ -380,17 +410,33 @@ class TestPs1PrefixEvaluator(TestPs1):
         )
 
     def test_a_store_of_a_name_ending_in_a_newline_keeps_its_braces(self):
-        source = '${a\n} = \'x\' + \'y\'\nf ${a\n}'
+        source = cleandoc("""
+            ${a
+            } = 'x' + 'y'
+            f ${a
+            }
+        """)
         self.assertEqual(
             self._apply(source, Ps1PrefixEvaluator),
-            '${a\n} = \'xy\'\nf ${a\n}',
+            cleandoc("""
+                ${a
+                } = 'xy'
+                f ${a
+                }
+            """),
         )
 
     def test_a_store_of_a_name_the_lexer_reads_only_braced_keeps_its_braces(self):
-        source = '${aΩ} = \'x\' + \'y\'\nf ${aΩ}'
+        source = cleandoc("""
+            ${aΩ} = 'x' + 'y'
+            f ${aΩ}
+        """)
         self.assertEqual(
             self._apply(source, Ps1PrefixEvaluator),
-            '${aω} = \'xy\'\nf ${aΩ}',
+            cleandoc("""
+                ${aω} = 'xy'
+                f ${aΩ}
+            """),
         )
 
     def test_a_labelled_break_folds_to_the_value_the_host_computes(self):
@@ -460,7 +506,10 @@ class TestPs1PrefixEvaluator(TestPs1):
 
     def test_a_replace_whose_template_number_is_above_the_hosts_parse_ends_the_prefix(self):
         self._assertUnchanged(
-            "$o = 'a' -replace 'a', '$2147483648'\nf $o",
+            cleandoc("""
+                $o = 'a' -replace 'a', '$2147483648'
+                f $o
+            """),
             Ps1PrefixEvaluator,
         )
 

@@ -235,7 +235,10 @@ A_REGEXP_THE_FILE_ENDS_INSIDE = [
     'function f(){ return / zzz }',
 ]
 
-A_REGEXP_THAT_NEVER_CLOSES = [F'{source}\nqqq;' for source in A_REGEXP_THE_FILE_ENDS_INSIDE]
+A_REGEXP_THAT_NEVER_CLOSES = [inspect.cleandoc(F"""
+    {source}
+    qqq;
+""") for source in A_REGEXP_THE_FILE_ENDS_INSIDE]
 
 A_CLOSING_SLASH_ON_THE_NEXT_LINE = inspect.cleandoc("""
     var x = / zzz

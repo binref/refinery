@@ -4,8 +4,10 @@ printed.
 """
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase
-from test.lib.scripts.js.ledger import dropped_source_characters
+from test.lib.scripts.js.ledger import a_program, dropped_source_characters
 
 
 class TestTheDroppedCharacterOracleReadsCodeInOrder(TestBase):
@@ -18,7 +20,11 @@ class TestTheDroppedCharacterOracleReadsCodeInOrder(TestBase):
 
     def test_a_file_written_back_with_another_layout_accounts_for_itself(self):
         self.assertEqual(
-            dropped_source_characters('if(a){f(1);}', 'if (a) {\n  f(1);\n}\n'),
+            dropped_source_characters('if(a){f(1);}', a_program("""
+                if (a) {
+                  f(1);
+                }
+            """)),
             '',
         )
 
@@ -32,7 +38,11 @@ class TestTheDroppedCharacterOracleReadsCommentsAsCarriers(TestBase):
         self.assertEqual(
             dropped_source_characters(
                 'x = f(/* c */ 1); y = 2;',
-                'x = f(1);\n/* c */\ny = 2;',
+                inspect.cleandoc("""
+                    x = f(1);
+                    /* c */
+                    y = 2;
+                """),
             ),
             '',
         )

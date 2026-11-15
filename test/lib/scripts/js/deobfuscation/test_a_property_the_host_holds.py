@@ -151,16 +151,46 @@ class TestANameOfAPropertyTheHostKeepsItsOwnValueInIsNoVariable(TestBase):
 
 
 A_STRICT_REGION_ASSIGNING_TO_A_NON_WRITABLE_GLOBAL = {
-    "'use strict';\nNaN = 1;\nconsole.log(1);\n": ('', 'TypeError'),
-    "'use strict';\nundefined = 1;\nconsole.log(1);\n": ('', 'TypeError'),
-    "'use strict';\nInfinity = 1;\nconsole.log(1);\n": ('', 'TypeError'),
-    "'use strict';\n(NaN) = 1;\nconsole.log(1);\n": ('', 'TypeError'),
-    "'use strict';\n[NaN] = [1];\nconsole.log(1);\n": ('', 'TypeError'),
-    "'use strict';\n({p: undefined} = {p: 1});\nconsole.log(1);\n": ('', 'TypeError'),
+    a_program("""
+        'use strict';
+        NaN = 1;
+        console.log(1);
+    """): ('', 'TypeError'),
+    a_program("""
+        'use strict';
+        undefined = 1;
+        console.log(1);
+    """): ('', 'TypeError'),
+    a_program("""
+        'use strict';
+        Infinity = 1;
+        console.log(1);
+    """): ('', 'TypeError'),
+    a_program("""
+        'use strict';
+        (NaN) = 1;
+        console.log(1);
+    """): ('', 'TypeError'),
+    a_program("""
+        'use strict';
+        [NaN] = [1];
+        console.log(1);
+    """): ('', 'TypeError'),
+    a_program("""
+        'use strict';
+        ({p: undefined} = {p: 1});
+        console.log(1);
+    """): ('', 'TypeError'),
     "(function () { 'use strict'; NaN = 1; console.log(1); })();\n": ('', 'TypeError'),
-    "var out = 'L';\nclass C { static { NaN = 1; } }\nconsole.log(out);\n": ('', 'TypeError'),
-    "'use strict';\ntry { NaN = 1; console.log('L'); }"
-    " catch (e) { console.log(e.constructor.name); }\n": ('TypeError\n', None),
+    a_program("""
+        var out = 'L';
+        class C { static { NaN = 1; } }
+        console.log(out);
+    """): ('', 'TypeError'),
+    a_program("""
+        'use strict';
+        try { NaN = 1; console.log('L'); } catch (e) { console.log(e.constructor.name); }
+    """): ('TypeError\n', None),
 }
 
 

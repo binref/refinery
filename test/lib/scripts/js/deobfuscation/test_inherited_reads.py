@@ -451,11 +451,17 @@ A_MEMBERSHIP_TEST_THE_CHAIN_STILL_ANSWERS = {
         'false\n',
     ),
     "delete Array.prototype.join; var o = {}; console.log('toString' in o);": (
-        'delete Array.prototype.join;\nconsole.log(true);',
+        inspect.cleandoc("""
+            delete Array.prototype.join;
+            console.log(true);
+        """),
         'true\n',
     ),
     "delete Array.prototype.join; var o = {}; console.log('zz' in o);": (
-        'delete Array.prototype.join;\nconsole.log(false);',
+        inspect.cleandoc("""
+            delete Array.prototype.join;
+            console.log(false);
+        """),
         'false\n',
     ),
 }
@@ -507,11 +513,17 @@ A_FOR_IN_WALK_THE_CHAIN_STILL_ANSWERS = {
         '01\n',
     ),
     a_walk_of('{a: 1, b: 2}', 'Array.prototype.z = 9;'): (
-        "Array.prototype.z = 9;\nconsole.log('ab');",
+        inspect.cleandoc("""
+            Array.prototype.z = 9;
+            console.log('ab');
+        """),
         'ab\n',
     ),
     a_walk_of('{a: 1, b: 2}', 'delete Array.prototype.join;'): (
-        "delete Array.prototype.join;\nconsole.log('ab');",
+        inspect.cleandoc("""
+            delete Array.prototype.join;
+            console.log('ab');
+        """),
         'ab\n',
     ),
 }

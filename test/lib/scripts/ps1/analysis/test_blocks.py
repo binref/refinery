@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase, opportunity
 
 from refinery.lib.scripts.analysis.cycles import CycleModel
@@ -284,12 +286,18 @@ class TestPs1AShadowedIteratingCommandRunsItsOwnBodyNotTheBlock(TestBase):
 
     def test_a_function_redefinition_makes_the_body_unplaced(self):
         blocks, block, _ = self._pipeline_block(
-            "function ForEach-Object { 'HIJACK' }\n1, 2 | ForEach-Object { $_ * 2 }")
+            inspect.cleandoc("""
+                function ForEach-Object { 'HIJACK' }
+                1, 2 | ForEach-Object { $_ * 2 }
+            """))
         self.assertIs(blocks.facts(block).reach, Ps1BlockReach.UNKNOWN)
 
     def test_the_percent_alias_follows_the_redefinition_of_foreach_object(self):
         blocks, block, shadowed = self._pipeline_block(
-            "function ForEach-Object { 'HIJACK' }\n1, 2 | % { $_ * 2 }")
+            inspect.cleandoc("""
+                function ForEach-Object { 'HIJACK' }
+                1, 2 | % { $_ * 2 }
+            """))
         self.assertIs(blocks.facts(block).reach, Ps1BlockReach.UNKNOWN)
         self.assertIsNone(binds_the_pipeline_variable(block, shadowed))
 
@@ -300,6 +308,9 @@ class TestPs1AShadowedIteratingCommandRunsItsOwnBodyNotTheBlock(TestBase):
 
     def test_a_redefinition_of_the_foreach_keyword_does_not_take_over_foreach_object(self):
         blocks, block, shadowed = self._pipeline_block(
-            "function foreach { 'HIJACK' }\n1, 2 | ForEach-Object { $_ * 2 }")
+            inspect.cleandoc("""
+                function foreach { 'HIJACK' }
+                1, 2 | ForEach-Object { $_ * 2 }
+            """))
         self.assertIs(blocks.facts(block).reach, Ps1BlockReach.IMMEDIATE)
         self.assertIsNotNone(binds_the_pipeline_variable(block, shadowed))

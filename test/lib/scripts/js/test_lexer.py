@@ -237,7 +237,10 @@ class TestJsLexer(TestBase):
         self.assertEqual(tokens, [(JsTokenKind.IDENTIFIER, '_private')])
 
     def test_a_line_comment_runs_to_the_end_of_its_line_and_no_further(self):
-        self.assertEqual(self._tokens('x // comment\ny'), [
+        self.assertEqual(self._tokens(inspect.cleandoc("""
+            x // comment
+            y
+        """)), [
             (JsTokenKind.IDENTIFIER, 'x'),
             (JsTokenKind.COMMENT, '// comment'),
             (JsTokenKind.NEWLINE, '\n'),
@@ -252,12 +255,18 @@ class TestJsLexer(TestBase):
         self.assertEqual(id_count, 2)
 
     def test_block_comment_with_newline(self):
-        tokens = self._tokens('x /*\n*/ y')
+        tokens = self._tokens(inspect.cleandoc("""
+            x /*
+            */ y
+        """))
         kinds = [k for k, _ in tokens]
         self.assertIn(JsTokenKind.NEWLINE, kinds)
 
     def test_newlines(self):
-        tokens = self._tokens('x\ny')
+        tokens = self._tokens(inspect.cleandoc("""
+            x
+            y
+        """))
         kinds = [k for k, _ in tokens]
         self.assertEqual(kinds, [
             JsTokenKind.IDENTIFIER,
@@ -345,7 +354,10 @@ class TestJsLexer(TestBase):
         ])
 
     def test_a_hash_bang_line_is_one_token_at_the_start(self):
-        tokens = self._tokens('#!/usr/bin/env node\nvar x = 1;')
+        tokens = self._tokens(inspect.cleandoc("""
+            #!/usr/bin/env node
+            var x = 1;
+        """))
         self.assertEqual(tokens[:3], [
             (JsTokenKind.HASHBANG, '#!/usr/bin/env node'),
             (JsTokenKind.NEWLINE, '\n'),
@@ -353,7 +365,10 @@ class TestJsLexer(TestBase):
         ])
 
     def test_shebang_only_at_position_zero(self):
-        tokens = self._tokens('var x;\n#!/usr/bin/env node')
+        tokens = self._tokens(inspect.cleandoc("""
+            var x;
+            #!/usr/bin/env node
+        """))
         kinds = [k for k, _ in tokens]
         self.assertIn(JsTokenKind.ERROR, kinds)
 
@@ -780,12 +795,18 @@ class TestScriptCodeHasTwoMoreCommentOpeners(TestBase):
 
     def test_the_opener_opens_a_comment_wherever_it_stands(self):
         rows = {
-            '<!-- note\ny': [
+            inspect.cleandoc("""
+                <!-- note
+                y
+            """): [
                 (JsTokenKind.COMMENT, '<!-- note'),
                 (JsTokenKind.NEWLINE, '\n'),
                 (JsTokenKind.IDENTIFIER, 'y'),
             ],
-            'x <!-- note\ny': [
+            inspect.cleandoc("""
+                x <!-- note
+                y
+            """): [
                 (JsTokenKind.IDENTIFIER, 'x'),
                 (JsTokenKind.COMMENT, '<!-- note'),
                 (JsTokenKind.NEWLINE, '\n'),
@@ -799,7 +820,10 @@ class TestScriptCodeHasTwoMoreCommentOpeners(TestBase):
                 (JsTokenKind.IDENTIFIER, 'a'),
                 (JsTokenKind.COMMENT, '<!--b'),
             ],
-            'x /* c */ <!-- d\ny': [
+            inspect.cleandoc("""
+                x /* c */ <!-- d
+                y
+            """): [
                 (JsTokenKind.IDENTIFIER, 'x'),
                 (JsTokenKind.COMMENT, '/* c */'),
                 (JsTokenKind.COMMENT, '<!-- d'),
@@ -811,42 +835,67 @@ class TestScriptCodeHasTwoMoreCommentOpeners(TestBase):
 
     def test_the_closer_opens_a_comment_at_the_head_of_its_line(self):
         rows = {
-            '--> note\ny': [
+            inspect.cleandoc("""
+                --> note
+                y
+            """): [
                 (JsTokenKind.COMMENT, '--> note'),
                 (JsTokenKind.NEWLINE, '\n'),
                 (JsTokenKind.IDENTIFIER, 'y'),
             ],
-            'x\n--> note\ny': [
+            inspect.cleandoc("""
+                x
+                --> note
+                y
+            """): [
                 (JsTokenKind.IDENTIFIER, 'x'),
                 (JsTokenKind.NEWLINE, '\n'),
                 (JsTokenKind.COMMENT, '--> note'),
                 (JsTokenKind.NEWLINE, '\n'),
                 (JsTokenKind.IDENTIFIER, 'y'),
             ],
-            'x\n   --> note': [
+            inspect.cleandoc("""
+                x
+                   --> note
+            """): [
                 (JsTokenKind.IDENTIFIER, 'x'),
                 (JsTokenKind.NEWLINE, '\n'),
                 (JsTokenKind.COMMENT, '--> note'),
             ],
-            'x\n/* c */ --> note': [
+            inspect.cleandoc("""
+                x
+                /* c */ --> note
+            """): [
                 (JsTokenKind.IDENTIFIER, 'x'),
                 (JsTokenKind.NEWLINE, '\n'),
                 (JsTokenKind.COMMENT, '/* c */'),
                 (JsTokenKind.COMMENT, '--> note'),
             ],
-            'x /* c\n */ --> note': [
+            inspect.cleandoc("""
+                x /* c
+                 */ --> note
+            """): [
                 (JsTokenKind.IDENTIFIER, 'x'),
-                (JsTokenKind.COMMENT, '/* c\n */'),
+                (JsTokenKind.COMMENT, inspect.cleandoc("""
+                    /* c
+                     */
+                """)),
                 (JsTokenKind.NEWLINE, ''),
                 (JsTokenKind.COMMENT, '--> note'),
             ],
-            'x // c\n--> note': [
+            inspect.cleandoc("""
+                x // c
+                --> note
+            """): [
                 (JsTokenKind.IDENTIFIER, 'x'),
                 (JsTokenKind.COMMENT, '// c'),
                 (JsTokenKind.NEWLINE, '\n'),
                 (JsTokenKind.COMMENT, '--> note'),
             ],
-            '#!/usr/bin/env node\n--> note': [
+            inspect.cleandoc("""
+                #!/usr/bin/env node
+                --> note
+            """): [
                 (JsTokenKind.HASHBANG, '#!/usr/bin/env node'),
                 (JsTokenKind.NEWLINE, '\n'),
                 (JsTokenKind.COMMENT, '--> note'),
@@ -909,8 +958,14 @@ class TestScriptCodeHasTwoMoreCommentOpeners(TestBase):
 
     def test_the_scan_records_where_the_first_delimiter_stands(self):
         rows = {
-            'x <!-- a\n--> b'   : 2,
-            '--> a\nx <!-- b'   : 0,
+            inspect.cleandoc("""
+                x <!-- a
+                --> b
+            """): 2,
+            inspect.cleandoc("""
+                --> a
+                x <!-- b
+            """): 0,
             'x /* a */ --> b'   : None,
             "'<!--' + `-->`"    : None,
         }
@@ -1062,7 +1117,13 @@ class TestABlockCommentReportsWhetherItWasClosed(TestBase):
             'x /* c /': [(JsTokenKind.IDENTIFIER, 'x', True), (JsTokenKind.COMMENT, '/* c /', False)],
             'x /* c': [(JsTokenKind.IDENTIFIER, 'x', True), (JsTokenKind.COMMENT, '/* c', False)],
             'x /*': [(JsTokenKind.IDENTIFIER, 'x', True), (JsTokenKind.COMMENT, '/*', False)],
-            '/* a\n b': [(JsTokenKind.COMMENT, '/* a\n b', False), (JsTokenKind.NEWLINE, '', True)],
+            inspect.cleandoc("""
+                /* a
+                 b
+            """): [(JsTokenKind.COMMENT, inspect.cleandoc("""
+                /* a
+                 b
+            """), False), (JsTokenKind.NEWLINE, '', True)],
         }
         self.assertEqual({source: _tokens_with_termination(source) for source in rows}, rows)
 

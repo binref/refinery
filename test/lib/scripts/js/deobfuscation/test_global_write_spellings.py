@@ -47,16 +47,27 @@ _A_WRITE_THROUGH_AN_ALIAS_OF_THE_GLOBAL_OBJECT: dict[str, _Row] = {
     'var g = globalThis; g.String = fake; var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
         ('', 'ReferenceError'),
-        'globalThis.String = fake;\nvar r = String.fromCharCode(65);\nconsole.log(r);',
+        inspect.cleandoc("""
+            globalThis.String = fake;
+            var r = String.fromCharCode(65);
+            console.log(r);
+        """),
     ),
     'var g = globalThis; g["String"] = fake; var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
         ('', 'ReferenceError'),
-        'globalThis.String = fake;\nvar r = String.fromCharCode(65);\nconsole.log(r);',
+        inspect.cleandoc("""
+            globalThis.String = fake;
+            var r = String.fromCharCode(65);
+            console.log(r);
+        """),
     ),
     'var g = globalThis; g.zzz = fake; var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
-        ('', 'ReferenceError'), 'fake;\nconsole.log(\'A\');',
+        ('', 'ReferenceError'), inspect.cleandoc("""
+            fake;
+            console.log('A');
+        """),
     ),
 }
 
@@ -65,7 +76,14 @@ _A_WRITE_THE_RECEIVER_SUPPLIES: dict[str, _Row] = {
     'function t() { this[k] = v; } t(); var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
         ('', 'ReferenceError'),
-        'function t() {\n  this[k] = v;\n}\nt();\nvar r = String.fromCharCode(65);\nconsole.log(r);',
+        inspect.cleandoc("""
+            function t() {
+              this[k] = v;
+            }
+            t();
+            var r = String.fromCharCode(65);
+            console.log(r);
+        """),
     ),
 }
 
@@ -74,8 +92,14 @@ _A_WRITE_ANOTHER_RECEIVER_TAKES: dict[str, _Row] = {
     'var o = {}; function t() { this[k] = v; } t.call(o);'
     ' var r = String.fromCharCode(65); console.log(r);': _Row(
         ('', 'ReferenceError'),
-        'var o = {};\nfunction t() {\n  this[k] = v;\n}\nt.call(o);\n'
-        "console.log('A');",
+        inspect.cleandoc("""
+            var o = {};
+            function t() {
+              this[k] = v;
+            }
+            t.call(o);
+            console.log('A');
+        """),
     ),
 }
 
@@ -98,13 +122,23 @@ _THE_OBJECT_HANDED_TO_A_CALL: dict[str, _Row] = {
     'function t(x) { x[k] = v; } t(globalThis); var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
         ('', 'ReferenceError'),
-        'function t(x) {\n  x[k] = v;\n}\nt(globalThis);\n'
-        'var r = String.fromCharCode(65);\nconsole.log(r);',
+        inspect.cleandoc("""
+            function t(x) {
+              x[k] = v;
+            }
+            t(globalThis);
+            var r = String.fromCharCode(65);
+            console.log(r);
+        """),
     ),
     'Reflect.set(globalThis, "String", 9); var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
         ('', 'TypeError'),
-        'Reflect.set(globalThis, "String", 9);\nvar r = String.fromCharCode(65);\nconsole.log(r);',
+        inspect.cleandoc("""
+            Reflect.set(globalThis, "String", 9);
+            var r = String.fromCharCode(65);
+            console.log(r);
+        """),
     ),
     'function p(x) { return 1; } p(globalThis); var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
@@ -117,18 +151,31 @@ _A_DESTRUCTURED_INTRINSIC: dict[str, _Row] = {
     'const {eval} = globalThis; eval("String = 9"); var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
         ('', 'TypeError'),
-        'const { eval } = globalThis;\neval("String = 9");\n'
-        'var r = String.fromCharCode(65);\nconsole.log(r);',
+        inspect.cleandoc("""
+            const { eval } = globalThis;
+            eval("String = 9");
+            var r = String.fromCharCode(65);
+            console.log(r);
+        """),
     ),
     'var g = globalThis; const {eval} = g; eval("String = 9");'
     ' var r = String.fromCharCode(65); console.log(r);': _Row(
         ('', 'TypeError'),
-        'var g = globalThis;\nconst { eval } = g;\neval("String = 9");\n'
-        'var r = String.fromCharCode(65);\nconsole.log(r);',
+        inspect.cleandoc("""
+            var g = globalThis;
+            const { eval } = g;
+            eval("String = 9");
+            var r = String.fromCharCode(65);
+            console.log(r);
+        """),
     ),
     'var obj = { keys: 1 }; const {keys} = obj; var r = String.fromCharCode(65);'
     ' console.log(r, keys);': _Row(
-        ('A 1\n', None), "var obj = { keys: 1 };\nconst { keys } = obj;\nconsole.log('A', keys);",
+        ('A 1\n', None), inspect.cleandoc("""
+            var obj = { keys: 1 };
+            const { keys } = obj;
+            console.log('A', keys);
+        """),
     ),
 }
 
@@ -137,26 +184,44 @@ _AN_INSTALL_ON_THE_GLOBAL_OBJECT: dict[str, _Row] = {
     'globalThis.__defineGetter__("String", function () { return 9; });'
     ' var r = String.fromCharCode(65); console.log(r);': _Row(
         ('', 'TypeError'),
-        'globalThis.__defineGetter__("String", function() {\n  return 9;\n});\n'
-        'var r = String.fromCharCode(65);\nconsole.log(r);',
+        inspect.cleandoc("""
+            globalThis.__defineGetter__("String", function() {
+              return 9;
+            });
+            var r = String.fromCharCode(65);
+            console.log(r);
+        """),
     ),
     'window.__defineGetter__("String", function () { return 9; });'
     ' var r = String.fromCharCode(65); console.log(r);': _Row(
         ('', 'ReferenceError'),
-        'window.__defineGetter__("String", function() {\n  return 9;\n});\n'
-        'var r = String.fromCharCode(65);\nconsole.log(r);',
+        inspect.cleandoc("""
+            window.__defineGetter__("String", function() {
+              return 9;
+            });
+            var r = String.fromCharCode(65);
+            console.log(r);
+        """),
     ),
     'Object.defineProperty(globalThis, "String", { value: 9 });'
     ' var r = String.fromCharCode(65); console.log(r);': _Row(
         ('', 'TypeError'),
-        'Object.defineProperty(globalThis, "String", { value: 9 });\n'
-        'var r = String.fromCharCode(65);\nconsole.log(r);',
+        inspect.cleandoc("""
+            Object.defineProperty(globalThis, "String", { value: 9 });
+            var r = String.fromCharCode(65);
+            console.log(r);
+        """),
     ),
     'var o = {}; o.__defineGetter__("x", function () { return 9; });'
     ' var r = String.fromCharCode(65); console.log(r);': _Row(
         ('A\n', None),
-        'var o = {};\no.__defineGetter__("x", function() {\n  return 9;\n});\n'
-        "console.log('A');",
+        inspect.cleandoc("""
+            var o = {};
+            o.__defineGetter__("x", function() {
+              return 9;
+            });
+            console.log('A');
+        """),
     ),
 }
 

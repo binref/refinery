@@ -249,18 +249,29 @@ A_HELPER_THAT_IS_NO_SUM = graded(
     first='case 13:',
     second='case 15:',
     prelude=PRELUDE.replace(
-        'for (var total = 0, i = 0; i < array["length"]; i++) {\n    total += array[i];\n  }\n  return total;',
+        inspect.cleandoc("""
+            for (var total = 0, i = 0; i < array["length"]; i++) {
+                total += array[i];
+              }
+              return total;
+        """),
         'return array[0] * 2 + array[1];',
     ),
 )
 
 A_TABLE_ALSO_SEARCHED_BY_A_METHOD_THAT_ONLY_READS_IT = graded(
-    after='console.log(seq.indexOf(6), seq.join("-"));\nconsole.log(grade(3), grade(30));'
+    after=inspect.cleandoc("""
+        console.log(seq.indexOf(6), seq.join("-"));
+        console.log(grade(3), grade(30));
+    """)
 )
 
 A_TABLE_READ_BY_A_METHOD_UNDER_A_COMPUTED_KEY = graded(
     prelude=PRELUDE.replace('return seq["slice"](min, max);', 'return seq[method](min, max);').replace(
-        'var seq', 'var method = "slice";\nvar seq'
+        'var seq', inspect.cleandoc("""
+            var method = "slice";
+            var seq
+        """)
     ),
 )
 
@@ -339,7 +350,10 @@ THE_CODE_READS_THE_LENGTH_OF_THE_STATE = graded('console.log(states.length);')
 
 THE_CODE_HANDS_THE_STATE_TO_A_FUNCTION = graded(
     'show(states);',
-    after='function show(a) { console.log(a[0]); }\nconsole.log(grade(3), grade(30));',
+    after=inspect.cleandoc("""
+        function show(a) { console.log(a[0]); }
+        console.log(grade(3), grade(30));
+    """),
 )
 
 A_CLOSURE_READS_THE_STATE_WHEN_IT_IS_CALLED = graded(
@@ -392,7 +406,10 @@ A_WRAPPER_HANDING_THE_MACHINE_ANOTHER_RUNTIME = PRELUDE + '\n' + inspect.cleando
 
 A_HELPER_THAT_COUNTS_ITS_CALLS = graded(
     before='var calls = 0;',
-    prelude=PRELUDE.replace('function sum(array) {', 'function sum(array) {\n  calls++;'),
+    prelude=PRELUDE.replace('function sum(array) {', inspect.cleandoc("""
+        function sum(array) {
+          calls++;
+    """)),
     after='console.log(grade(3), grade(30), calls);',
 )
 
@@ -401,30 +418,44 @@ THE_CODE_REPLACES_THE_HELPER = graded(
 )
 
 THE_TABLE_IS_STORED_TO_AFTER_A_CALL = graded(
-    after='console.log(grade(3));\nseq[0] = 4;\nconsole.log(grade(30));'
+    after=inspect.cleandoc("""
+        console.log(grade(3));
+        seq[0] = 4;
+        console.log(grade(30));
+    """)
 )
 
 THE_TABLE_IS_CHANGED_THROUGH_ANOTHER_NAME = graded(
-    after='var other = seq;\nconsole.log(grade(3));\nother.push(9);\nconsole.log(grade(30), seq.length);'
+    after=inspect.cleandoc("""
+        var other = seq;
+        console.log(grade(3));
+        other.push(9);
+        console.log(grade(30), seq.length);
+    """)
 )
 
 THE_TABLE_IS_HANDED_TO_A_FUNCTION_THAT_SORTS_IT = graded(
-    after='function order(a) { a.sort(); }\nconsole.log(grade(3));\norder(seq);\nconsole.log(grade(30));'
+    after=inspect.cleandoc("""
+        function order(a) { a.sort(); }
+        console.log(grade(3));
+        order(seq);
+        console.log(grade(30));
+    """)
 )
 
 THE_ARRAY_METHOD_THE_TABLE_IS_READ_WITH_IS_REPLACED = graded(
-    before=(
-        'var original = Array.prototype.slice;\n'
-        'Array.prototype.slice = function (a, b) { console.log("slice"); return original.call(this, a, b); };'
-    ),
+    before=inspect.cleandoc("""
+        var original = Array.prototype.slice;
+        Array.prototype.slice = function (a, b) { console.log("slice"); return original.call(this, a, b); };
+    """),
 )
 
 THE_STRING_METHOD_THE_KEYS_ARE_DECODED_WITH_IS_REPLACED = graded(
     store='scope[dec(states[0] - 4, 1)][dec(states[0] - 3, 5)]',
-    before=(
-        'var cut = String.prototype.slice;\n'
-        'String.prototype.slice = function (a, b) { console.log("cut"); return cut.call(this, a, b); };'
-    ),
+    before=inspect.cleandoc("""
+        var cut = String.prototype.slice;
+        String.prototype.slice = function (a, b) { console.log("cut"); return cut.call(this, a, b); };
+    """),
     prelude=F'{PRELUDE}\n{DECODER}',
 )
 
@@ -639,7 +670,10 @@ A_CLASS_READING_ITS_INSTANCE_UNDER_A_KEY_FROM_A_TABLE_OF_THE_MACHINE = PRELUDE +
 )
 
 A_HELPER_THAT_CHANGES_THE_STATE_IT_IS_HANDED = graded(
-    prelude=PRELUDE.replace('function sum(array) {', 'function sum(array) {\n  array.push(1);'),
+    prelude=PRELUDE.replace('function sum(array) {', inspect.cleandoc("""
+        function sum(array) {
+          array.push(1);
+    """)),
 )
 
 A_HELPER_HANDED_THE_STATE_TWICE = graded(
@@ -1217,7 +1251,10 @@ A_FLAG_THE_FUNCTION_RETURNS_THROUGH: dict[str, Program] = {
         Reading.COMMONJS,
     ),
     'the flag a variable of an outer function': Program(
-        flagged(('function grade(n) {', 'var ret;\nfunction grade(n) {'), (_DECLARED, '  var res;\n'), _RESET),
+        flagged(('function grade(n) {', inspect.cleandoc("""
+            var ret;
+            function grade(n) {
+        """)), (_DECLARED, '  var res;\n'), _RESET),
         prints('small! big!'),
         Reading.COMMONJS,
     ),

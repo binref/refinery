@@ -277,12 +277,18 @@ class TestPs1RemovalPlan(TestPs1):
 class TestPs1IterativeRemoval(TestPs1):
     def test_a_junk_string_beside_an_anchor_is_kept_when_output_is_preserved(self):
         result = self._deobfuscate_iterative(
-            "'junk string'\nWrite-Host done", preserve_bare_output=True)
+            cleandoc("""
+                'junk string'
+                Write-Host done
+            """), preserve_bare_output=True)
         self.assertIn('junk string', result)
         self.assertIn('Write-Host done', result)
 
     def test_a_dead_branch_is_deleted(self):
-        result = self._deobfuscate_iterative("if ($false) { 'dead' }\nWrite-Host ok")
+        result = self._deobfuscate_iterative(cleandoc("""
+            if ($false) { 'dead' }
+            Write-Host ok
+        """))
         self.assertNotIn('dead', result)
 
     def test_an_inert_trap_is_deleted(self):
@@ -330,7 +336,10 @@ class TestPs1AScriptThatRunsNothingKeepsWhatItPrints(TestPs1):
             'trap [System.IO.IOException] { continue }',
         ]:
             with self.subTest(trap):
-                self.assertEqual(self._content_beside_the_traps(F"{trap}\n'a'"), "'a'")
+                self.assertEqual(self._content_beside_the_traps(cleandoc(F"""
+                    {trap}
+                    'a'
+                """)), "'a'")
 
     def test_the_only_value_a_script_emits_survives_dead_code_that_one_edit_unlocks_for_another(self):
         for source in [
@@ -799,7 +808,10 @@ class TestPs1RemovalDoesNotEmptyAProtectedTryBody(TestPs1):
 
     def test_a_direct_field_keeps_holding_an_expression(self):
         for source in [
-            "$x = ($y = Start-Process a)\nWrite-Host $x",
+            cleandoc("""
+                $x = ($y = Start-Process a)
+                Write-Host $x
+            """),
             'Write-Host ($y = Start-Process a)',
         ]:
             with self.subTest(source=source):
@@ -1299,26 +1311,38 @@ class TestPs1ACallThatWritesNothingGoesOnlyWhereNothingObservesIt(TestPs1):
         ):
             with self.subTest(call):
                 self.assertEqual(
-                    self._apply(F'{call}\n{self._ANCHOR}', Ps1JunkStatementRemoval),
+                    self._apply(cleandoc(F"""
+                        {call}
+                        {self._ANCHOR}
+                    """), Ps1JunkStatementRemoval),
                     self._ANCHOR,
                 )
 
     def test_a_static_call_that_produces_a_value_no_fact_covers_goes_where_nothing_notices(self):
         self.assertEqual(
             self._apply(
-                F"[Array]::IndexOf('abc'.ToCharArray(), [Char]98)\n{self._ANCHOR}",
+                cleandoc(F"""
+                    [Array]::IndexOf('abc'.ToCharArray(), [Char]98)
+                    {self._ANCHOR}
+                """),
                 Ps1JunkStatementRemoval,
             ),
             self._ANCHOR,
         )
 
     def test_a_static_call_that_cannot_fail_and_only_prints_goes(self):
-        self.assertEqual(self._apply(F'[Math]::Sqrt(36)\n{self._ANCHOR}', Ps1JunkStatementRemoval), self._ANCHOR)
+        self.assertEqual(self._apply(cleandoc(F"""
+            [Math]::Sqrt(36)
+            {self._ANCHOR}
+        """), Ps1JunkStatementRemoval), self._ANCHOR)
 
     def test_a_void_static_call_that_writes_to_the_host_is_kept(self):
         for call in ("[Console]::WriteLine('x')", "[Console]::Write('x')"):
             with self.subTest(call):
-                self._assertUnchanged(F'{call}\n{self._ANCHOR}', Ps1JunkStatementRemoval)
+                self._assertUnchanged(cleandoc(F"""
+                    {call}
+                    {self._ANCHOR}
+                """), Ps1JunkStatementRemoval)
 
     def test_a_void_static_call_over_a_live_variable_is_kept(self):
         for call in (
@@ -1328,11 +1352,18 @@ class TestPs1ACallThatWritesNothingGoesOnlyWhereNothingObservesIt(TestPs1):
         ):
             with self.subTest(call):
                 self._assertUnchanged(
-                    F'$x = 1, 2, 3\n{call}\nWrite-Output $x', Ps1JunkStatementRemoval)
+                    cleandoc(F"""
+                        $x = 1, 2, 3
+                        {call}
+                        Write-Output $x
+                    """), Ps1JunkStatementRemoval)
 
     def test_a_void_static_call_no_handler_can_observe_is_deleted(self):
         self.assertEqual(
-            self._apply(F'{self._MAY_RAISE}\n{self._ANCHOR}', Ps1JunkStatementRemoval),
+            self._apply(cleandoc(F"""
+                {self._MAY_RAISE}
+                {self._ANCHOR}
+            """), Ps1JunkStatementRemoval),
             self._ANCHOR,
         )
 

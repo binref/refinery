@@ -27,7 +27,10 @@ from refinery.lib.scripts.ps1.parser import Ps1Parser
 class TestPs1WorldReachIsBoundToTheTreeItMeasured(TestBase):
 
     def test_a_positional_grant_is_withdrawn_once_the_tree_changes(self):
-        script = Ps1Parser('$Null = [Math]::Sqrt(144)\nInvoke-Expression $c').parse()
+        script = Ps1Parser(cleandoc("""
+            $Null = [Math]::Sqrt(144)
+            Invoke-Expression $c
+        """)).parse()
         reach = Ps1ModelCache(script).world_reach
         read = script.body[0]
         self.assertFalse(reach.closed_for_the_whole_run)
@@ -36,7 +39,10 @@ class TestPs1WorldReachIsBoundToTheTreeItMeasured(TestBase):
         self.assertFalse(reach.closed_at(read))
 
     def test_every_grant_is_withdrawn_once_the_tree_gains_a_world_opener(self):
-        script = Ps1Parser('$x = 4\nWrite-Host $x').parse()
+        script = Ps1Parser(cleandoc("""
+            $x = 4
+            Write-Host $x
+        """)).parse()
         reach = Ps1ModelCache(script).world_reach
         read = script.body[0]
         self.assertTrue(reach.closed_for_the_whole_run)
@@ -53,9 +59,11 @@ class TestPs1CommandTrustIsPositionalWhereTheWorldStaysClosed(TestBase):
 
     def test_whole_run_and_positional_trust_disagree_across_a_function_redefinition(self):
         script = Ps1Parser(
-            '$Null = Get-Random -Maximum 88175\n'
-            'function Get-Random { Start-Process calc }\n'
-            'Get-Random').parse()
+            cleandoc("""
+                $Null = Get-Random -Maximum 88175
+                function Get-Random { Start-Process calc }
+                Get-Random
+            """)).parse()
         cache = Ps1ModelCache(script)
         reach = cache.world_reach
         call_before, _, call_after = script.body
@@ -67,9 +75,11 @@ class TestPs1CommandTrustIsPositionalWhereTheWorldStaysClosed(TestBase):
 
     def test_a_name_the_whole_run_trusts_is_trusted_at_every_position(self):
         script = Ps1Parser(
-            '$Null = Get-Random -Maximum 88175\n'
-            'function Get-Random { Start-Process calc }\n'
-            'Write-Host done').parse()
+            cleandoc("""
+                $Null = Get-Random -Maximum 88175
+                function Get-Random { Start-Process calc }
+                Write-Host done
+            """)).parse()
         cache = Ps1ModelCache(script)
         self.assertTrue(cache.closed_world.may_trust_command_name('Start-Process'))
         for index, statement in enumerate(script.body):
@@ -90,16 +100,28 @@ class TestPs1AnInvocationRunsTheCommandItNamesUntilTheCommandTableOpens(TestBase
         return Ps1ModelCache(script).world_reach.may_trust_invocation(lookup)
 
     def test_a_type_opener_before_the_invocation_leaves_it_trusted(self):
-        self.assertTrue(self._trusted("Add-Type -AssemblyName System.Xml\nGet-Item 'Variable:x'"))
+        self.assertTrue(self._trusted(cleandoc("""
+            Add-Type -AssemblyName System.Xml
+            Get-Item 'Variable:x'
+        """)))
 
     def test_a_command_opener_before_the_invocation_refuses_it(self):
-        self.assertFalse(self._trusted("iex $c\nGet-Item 'Variable:x'"))
+        self.assertFalse(self._trusted(cleandoc("""
+            iex $c
+            Get-Item 'Variable:x'
+        """)))
 
     def test_a_command_opener_after_the_invocation_leaves_it_trusted(self):
-        self.assertTrue(self._trusted("Get-Item 'Variable:x'\niex $c"))
+        self.assertTrue(self._trusted(cleandoc("""
+            Get-Item 'Variable:x'
+            iex $c
+        """)))
 
     def test_a_definition_of_the_name_an_alias_resolves_to_refuses_it(self):
-        self.assertFalse(self._trusted("function Get-Item { 1 }\ngi 'Variable:x'"))
+        self.assertFalse(self._trusted(cleandoc("""
+            function Get-Item { 1 }
+            gi 'Variable:x'
+        """)))
 
 
 class TestPs1FloodsGoForwardThroughAResumingTrap(TestBase):
@@ -110,63 +132,79 @@ class TestPs1FloodsGoForwardThroughAResumingTrap(TestBase):
 
     def test_an_opener_late_in_a_guarded_block_leaves_the_reads_above_it_closed(self):
         script, reach = self._reach(
-            'trap { continue }\n'
-            '$Null = [Math]::Sqrt(144)\n'
-            'Invoke-Expression $env:PAYLOAD\n'
-            '$Null = [Math]::Sqrt(169)')
+            cleandoc("""
+                trap { continue }
+                $Null = [Math]::Sqrt(144)
+                Invoke-Expression $env:PAYLOAD
+                $Null = [Math]::Sqrt(169)
+            """))
         self.assertFalse(reach.closed_for_the_whole_run)
         self.assertTrue(reach.closed_at(script.body[1]))
         self.assertFalse(reach.closed_at(script.body[3]))
 
     def test_an_opener_poisons_the_reads_resumption_reaches_across_a_terminator(self):
         script, reach = self._reach(
-            'trap { continue }\n'
-            'Invoke-Expression $env:PAYLOAD\n'
-            "throw 'x'\n"
-            '$Null = [Math]::Sqrt(144)')
+            cleandoc("""
+                trap { continue }
+                Invoke-Expression $env:PAYLOAD
+                throw 'x'
+                $Null = [Math]::Sqrt(144)
+            """))
         self.assertFalse(reach.closed_at(script.body[3]))
 
     def test_an_opener_poisons_the_body_of_a_try_resumption_reaches(self):
         script, reach = self._reach(
-            'trap { continue }\n'
-            'Invoke-Expression $env:PAYLOAD\n'
-            "throw 'x'\n"
-            'try { $Null = [Math]::Sqrt(144) } catch { }')
+            cleandoc("""
+                trap { continue }
+                Invoke-Expression $env:PAYLOAD
+                throw 'x'
+                try { $Null = [Math]::Sqrt(144) } catch { }
+            """))
         self.assertFalse(reach.closed_at(script.body[3].try_block.body[0]))
 
     def test_an_opener_last_in_a_nested_guarded_block_poisons_what_follows_the_block(self):
         script, reach = self._reach(
-            'if ($c) { trap { continue }\n'
-            'Invoke-Expression $env:PAYLOAD\n'
-            "throw 'x' }\n"
-            '$Null = [Math]::Sqrt(144)')
+            cleandoc("""
+                if ($c) { trap { continue }
+                Invoke-Expression $env:PAYLOAD
+                throw 'x' }
+                $Null = [Math]::Sqrt(144)
+            """))
         self.assertFalse(reach.closed_at(script.body[1]))
 
     def test_an_opener_inside_the_handler_poisons_the_block_it_resumes_into(self):
         script, reach = self._reach(
-            'trap { Invoke-Expression $env:PAYLOAD\ncontinue }\n'
-            "throw 'x'\n"
-            '$Null = [Math]::Sqrt(144)\n'
-            '$Null = [Math]::Sqrt(169)')
+            cleandoc("""
+                trap { Invoke-Expression $env:PAYLOAD
+                continue }
+                throw 'x'
+                $Null = [Math]::Sqrt(144)
+                $Null = [Math]::Sqrt(169)
+            """))
         self.assertFalse(reach.closed_at(script.body[2]))
         self.assertFalse(reach.closed_at(script.body[3]))
 
     def test_a_redefinition_late_in_a_guarded_block_leaves_the_calls_above_it_trusted(self):
         script, reach = self._reach(
-            'trap { continue }\n'
-            '$Null = Get-Random -Maximum 88175\n'
-            'function Get-Random { Start-Process calc }\n'
-            'Get-Random')
+            cleandoc("""
+                trap { continue }
+                $Null = Get-Random -Maximum 88175
+                function Get-Random { Start-Process calc }
+                Get-Random
+            """))
         self.assertFalse(build_closed_world(script).may_trust_command_name('Get-Random'))
         self.assertTrue(reach.may_trust_command_name_at('Get-Random', script.body[1]))
         self.assertFalse(reach.may_trust_command_name_at('Get-Random', script.body[3]))
 
     def test_a_redefinition_inside_the_handler_is_distrusted_across_the_block(self):
         script, reach = self._reach(
-            'trap { function script:Get-Random { Start-Process calc }\ncontinue }\n'
-            "throw 'x'\n"
-            '$Null = Get-Random -Maximum 88175\n'
-            '$Null = Get-Random -Maximum 88176'
+            cleandoc("""
+                trap { function script:Get-Random { Start-Process calc }
+                continue }
+                throw 'x'
+                $Null = Get-Random -Maximum 88175
+                $Null = Get-Random -Maximum 88176
+            """)
         )
         self.assertFalse(reach.may_trust_command_name_at('Get-Random', script.body[2]))
         self.assertFalse(reach.may_trust_command_name_at('Get-Random', script.body[3]))
@@ -180,12 +218,12 @@ class TestPs1TheStatementAResumptionLandsOnIsTheOneControlEnters(TestBase):
 
     @staticmethod
     def _guarded(clause: str) -> str:
-        return (
-            'trap { continue }\n'
-            'Invoke-Expression $env:PAYLOAD\n'
-            F'{clause}\n'
-            '$Null = [Math]::Sqrt(169)'
-        )
+        return cleandoc(F"""
+            trap {{ continue }}
+            Invoke-Expression $env:PAYLOAD
+            {clause}
+            $Null = [Math]::Sqrt(169)
+        """)
 
     def test_a_read_in_the_handler_of_a_guarded_construct_is_poisoned(self):
         script, reach = self._reach(self._guarded("try { 'a' } catch { $Null = [Math]::Sqrt(144) }"))
@@ -509,7 +547,10 @@ class TestPs1CommandShadowsAnswerAsOneFloodPerName(TestBase):
         self.assertFalse(any(shadows.spares('write-host', position) for position in graph.nodes))
 
     def test_a_site_placed_in_another_body_is_refused(self):
-        script = Ps1Parser("function f { 'in' }\n'out'").parse()
+        script = Ps1Parser(cleandoc("""
+            function f { 'in' }
+            'out'
+        """)).parse()
         graphs = build_ps1_control_flow(script)
         definition = script.body[0]
         assert isinstance(definition, Ps1FunctionDefinition) and definition.body is not None

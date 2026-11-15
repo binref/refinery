@@ -56,7 +56,10 @@ class TestPs1APlainStoreFailsOnlyWhereTheNameIsConstrained(TestBase):
             'Set-Variable $args[0] 1 -Option ReadOnly',
         ):
             with self.subTest(constraint=constraint):
-                self.assertFalse(self._store_cannot_fail(F"{constraint}\n$x = 'a'"))
+                self.assertFalse(self._store_cannot_fail(cleandoc(F"""
+                    {constraint}
+                    $x = 'a'
+                """)))
 
     def test_a_store_into_a_variable_the_engine_owns_may_fail(self):
         for name in ('VerbosePreference', 'MaximumHistoryCount', 'true'):
@@ -94,13 +97,19 @@ class TestPs1AReadUnderStrictModeIsClearedByAStoreThatCertainlyCompleted(TestBas
                 self.assertFalse(self._read_cannot_fail(store))
 
     def test_a_read_after_a_store_of_a_read_a_completed_store_clears_cannot_fail(self):
-        self.assertTrue(self._read_cannot_fail('$u = 1\n$v = $u'))
+        self.assertTrue(self._read_cannot_fail(cleandoc("""
+            $u = 1
+            $v = $u
+        """)))
 
     def test_a_read_after_a_store_in_a_loop_that_may_not_run_may_fail(self):
         self.assertFalse(self._read_cannot_fail('foreach ($i in $args) { $v = 1 }'))
 
     def test_a_read_after_a_removal_may_fail(self):
-        self.assertFalse(self._read_cannot_fail('$v = 1\nRemove-Variable v'))
+        self.assertFalse(self._read_cannot_fail(cleandoc("""
+            $v = 1
+            Remove-Variable v
+        """)))
 
     def test_a_read_in_end_after_a_store_in_process_may_fail(self):
         tree, model = _model("""
@@ -159,21 +168,36 @@ class TestPs1ACallRaisesWhatItsBodyHandsBack(TestBase):
         return model.kinds(tree.body[-1])
 
     def test_a_call_of_a_body_that_cannot_fail_raises_nothing(self):
-        self.assertEqual(self._call_kinds("function f { 'a' }\nf"), Ps1ErrorKind.NONE)
+        self.assertEqual(self._call_kinds(cleandoc("""
+            function f { 'a' }
+            f
+        """)), Ps1ErrorKind.NONE)
 
     def test_a_call_of_a_body_that_throws_hands_back_the_throw(self):
-        self.assertIn(Ps1ErrorKind.THROWN, self._call_kinds("function f { throw 'x' }\nf"))
+        self.assertIn(Ps1ErrorKind.THROWN, self._call_kinds(cleandoc("""
+            function f { throw 'x' }
+            f
+        """)))
 
     def test_a_call_standing_before_the_definition_may_fail_to_find_it(self):
-        tree, model = _model("f\nfunction f { 'a' }")
+        tree, model = _model(cleandoc("""
+            f
+            function f { 'a' }
+        """))
         self.assertIn(Ps1ErrorKind.STATEMENT, model.kinds(tree.body[0]))
 
     def test_a_call_of_a_body_that_runs_itself_hands_back_every_kind(self):
-        kinds = self._call_kinds("function f { f }\nf")
+        kinds = self._call_kinds(cleandoc("""
+            function f { f }
+            f
+        """))
         self.assertEqual(kinds & (Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED), Ps1ErrorKind.THROWN | Ps1ErrorKind.MARKED)
 
     def test_a_call_handed_an_argument_an_advanced_function_lacks_may_fail_to_bind_it(self):
-        tree, model = _model("function f { [CmdletBinding()] param() 'a' }\nf -Bogus 1")
+        tree, model = _model(cleandoc("""
+            function f { [CmdletBinding()] param() 'a' }
+            f -Bogus 1
+        """))
         call = next(node for node in tree.body[-1].walk() if isinstance(node, Ps1CommandInvocation))
         self.assertFalse(model.raises_only_what_its_bodies_hand_back(call))
 

@@ -11,6 +11,7 @@ the engine.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from collections.abc import Iterable, Mapping
@@ -86,11 +87,17 @@ A_SPECIFIER_NAMING_THE_BOUNDARY_WITH_A_STRING = {
 A_NAME_THE_TWO_SIDES_SPELL_DIFFERENTLY = {
     (
         "export { a as 'b c' } from './src.mjs';",
-        "import { 'b c' as v } from './mid.mjs';\nconsole.log(v);",
+        inspect.cleandoc("""
+            import { 'b c' as v } from './mid.mjs';
+            console.log(v);
+        """),
     ): ('1\n', None),
     (
         'export { a as ' + F"'{ESCAPED_B} c'" + " } from './src.mjs';",
-        "import { 'b c' as v } from './mid.mjs';\nconsole.log(v);",
+        inspect.cleandoc("""
+            import { 'b c' as v } from './mid.mjs';
+            console.log(v);
+        """),
     ): ('1\n', None),
     (
         "export { a as 'b c' } from './src.mjs';",
@@ -99,7 +106,10 @@ A_NAME_THE_TWO_SIDES_SPELL_DIFFERENTLY = {
     ): ('1\n', None),
     (
         'export * as ' + F"'{ESCAPED_B} c'" + " from './src.mjs';",
-        "import { 'b c' as ns } from './mid.mjs';\nconsole.log(ns.a);",
+        inspect.cleandoc("""
+            import { 'b c' as ns } from './mid.mjs';
+            console.log(ns.a);
+        """),
     ): ('1\n', None),
     (
         'export { a as ' + F"'x{ESCAPED_LINE_FEED}y'" + " } from './src.mjs';",
@@ -108,7 +118,10 @@ A_NAME_THE_TWO_SIDES_SPELL_DIFFERENTLY = {
     ): ('1\n', None),
     (
         'function a() { return 1; }\nexport { a as ' + F"'{ESCAPED_B} c'" + ' };',
-        "import { 'b c' as v } from './mid.mjs';\nconsole.log(v());",
+        inspect.cleandoc("""
+            import { 'b c' as v } from './mid.mjs';
+            console.log(v());
+        """),
     ): ('1\n', None),
     (
         "export { a as 'b c' } from './src.mjs';",
@@ -170,7 +183,10 @@ class TestAProgramNodeRefusesIsNotAnsweredWithOneThatRuns(TestBase):
 
     def test_a_declaration_no_engine_reads_is_answered_with_one_no_engine_reads(self):
         rows = {
-            source: _a_graph('export var b = 2;', F'{source}\nconsole.log(1);')
+            source: _a_graph('export var b = 2;', inspect.cleandoc(F"""
+                {source}
+                console.log(1);
+            """))
             for source in A_SPECIFIER_HALF_NO_NAME_IS_READ_FROM
         }
         self.assertEqual(

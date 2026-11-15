@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase
 
 from refinery.lib.scripts import Expression, Node
@@ -52,11 +54,32 @@ denotes the two letters with nothing between them in all three.
 """
 
 LINE_TERMINATORS = [
-    ('`a\nb\nc`', 'a\nb\nc'),
-    ('`a\r\nb\r\nc`', 'a\nb\nc'),
-    ('`a\rb\rc`', 'a\nb\nc'),
-    ('`a\r\nb\rc\nd`', 'a\nb\nc\nd'),
-    ('`a\r\r\nb`', 'a\n\nb'),
+    ('`a\nb\nc`', inspect.cleandoc("""
+        a
+        b
+        c
+    """)),
+    ('`a\r\nb\r\nc`', inspect.cleandoc("""
+        a
+        b
+        c
+    """)),
+    ('`a\rb\rc`', inspect.cleandoc("""
+        a
+        b
+        c
+    """)),
+    ('`a\r\nb\rc\nd`', inspect.cleandoc("""
+        a
+        b
+        c
+        d
+    """)),
+    ('`a\r\r\nb`', inspect.cleandoc("""
+        a
+
+        b
+    """)),
     ('`a\u2028b\u2029c`', 'a\u2028b\u2029c'),
 ]
 """
@@ -146,7 +169,10 @@ hands a tag in that position, and the expressions are given as they are written.
 
 TAGGED = [
     ('tag`a${1}b${2}c`', 'tag', ['a', 'b', 'c'], ['1', '2']),
-    (R'String.raw`a\nb`', 'String.raw', ['a\nb'], []),
+    (R'String.raw`a\nb`', 'String.raw', [inspect.cleandoc("""
+        a
+        b
+    """)], []),
 ]
 """
 A tag and the literal it reads. The runs are the strings Node hands the tag, which a tag does not
@@ -155,7 +181,10 @@ change: what a tag is offered besides them is the spelling, not another value.
 
 SPELLING_AND_VALUE = [
     (R'`a\tb`', 'a\tb', R'a\tb'),
-    ('`a\r\nb`', 'a\nb', 'a\r\nb'),
+    ('`a\r\nb`', inspect.cleandoc("""
+        a
+        b
+    """), 'a\r\nb'),
     (R'`\u0041\u0042`', 'AB', R'\u0041\u0042'),
 ]
 """
@@ -321,7 +350,10 @@ class TestJsTemplateRuns(TemplateLiteralTest):
         outer = self._template(NESTED_LINES)
         self.assertEqual(self._runs(outer), ['a\n', 'd'])
         inner = self._as_template(outer.expressions[0])
-        self.assertEqual(self._runs(inner), ['b\nc'])
+        self.assertEqual(self._runs(inner), [inspect.cleandoc("""
+            b
+            c
+        """)])
         self.assertEqual(self._holes(inner), [])
 
     def test_template_nested_in_a_nested_hole(self):

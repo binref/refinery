@@ -48,7 +48,10 @@ from refinery.lib.scripts.js.values import JS_NULL, JsBuffer
 class TestDeobfuscationHelpers(TestJsDeobfuscator):
 
     def test_make_string_literal_escapes_control_chars(self):
-        self.assertEqual(make_string_literal('a\nb').raw, "'a\\nb'")
+        self.assertEqual(make_string_literal(inspect.cleandoc("""
+            a
+            b
+        """)).raw, "'a\\nb'")
         self.assertEqual(make_string_literal('x\ry').raw, "'x\\ry'")
         self.assertEqual(make_string_literal('p\tq').raw, "'p\\tq'")
         self.assertEqual(make_string_literal('m\0n').raw, "'m\\0n'")
@@ -434,7 +437,10 @@ AN_EXPORT_LIST_READ_BUT_NEVER_TAKING_THE_VALUE = (
 
 A_NAME_A_VALUE_STANDS_IN_THE_PLACE_OF = {
     'console.log(zz);': 'console.log(5);',
-    'var q = {}; console.log(q[zz]);': 'var q = {};\nconsole.log(q[5]);',
+    'var q = {}; console.log(q[zz]);': inspect.cleandoc("""
+        var q = {};
+        console.log(q[5]);
+    """),
     'console.log({ zz });': 'console.log({ zz: 5 });',
     'console.log({ q: zz });': 'console.log({ q: 5 });',
     'zz.p = 1;': '(5).p = 1;',

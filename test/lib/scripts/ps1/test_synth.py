@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase, backlog, wontfix
 
 from refinery.lib.scripts import Node, UnspellableNode
@@ -167,7 +169,11 @@ class TestPs1Synthesizer(TestBase):
         self._round_trip('"hello {0}" -f "world"')
 
     def test_roundtrip_multiline(self):
-        src = '$x = 1\n$y = 2\n$z = $x + $y'
+        src = inspect.cleandoc("""
+            $x = 1
+            $y = 2
+            $z = $x + $y
+        """)
         self._round_trip(src)
 
     def test_roundtrip_nested_if(self):
@@ -309,7 +315,13 @@ class TestPs1Synthesizer(TestBase):
         # Multiple catch type filters must be comma-separated; a space between them is a parse error.
         out = Ps1Synthesizer().convert(Ps1Parser('try { $x } catch [A],[B] { $y }').parse())
         self.assertEqual(
-            out, 'try {\n  $x\n} catch [A], [B] {\n  $y\n}')
+            out, inspect.cleandoc("""
+                try {
+                  $x
+                } catch [A], [B] {
+                  $y
+                }
+            """))
 
     def test_one_element_array_keeps_the_comma_that_builds_it(self):
         # Without the leading comma the element is written on its own and is no longer an array:
@@ -324,10 +336,19 @@ class TestPs1Synthesizer(TestBase):
         # attribute, and is then dropped; the `[int]` below is lost to the same confusion.
         self.assertEqual(
             Ps1Synthesizer().convert(Ps1Parser('function f { [CmdletBinding()] param($x) }').parse()),
-            'function f {\n  [CmdletBinding()]\n  Param($x)\n}')
+            inspect.cleandoc("""
+                function f {
+                  [CmdletBinding()]
+                  Param($x)
+                }
+            """))
         self.assertEqual(
             Ps1Synthesizer().convert(Ps1Parser('class C { [ValidateNotNull()] [int] $P }').parse()),
-            'class C {\n  [ValidateNotNull()][int]$P\n}')
+            inspect.cleandoc("""
+                class C {
+                  [ValidateNotNull()][int]$P
+                }
+            """))
 
     def test_a_word_that_moves_into_a_bracket_is_re_spelled(self):
         # A comma-built argument needs a bracket to stay one argument, and what stands inside a
@@ -351,9 +372,23 @@ class TestPs1Synthesizer(TestBase):
             'Copy-Item . dest',
             'x > out.txt',
             'x < in.txt',
-            '@{\n  a = 1\n}',
-            ':o while ($x) {\n  break :o\n}',
-            'switch ($a) {\n  foo {\n    1\n  }\n}',
+            inspect.cleandoc("""
+                @{
+                  a = 1
+                }
+            """),
+            inspect.cleandoc("""
+                :o while ($x) {
+                  break :o
+                }
+            """),
+            inspect.cleandoc("""
+                switch ($a) {
+                  foo {
+                    1
+                  }
+                }
+            """),
         ):
             with self.subTest(source=source):
                 self.assertEqual(Ps1Synthesizer().convert(Ps1Parser(source).parse()), source)
@@ -598,9 +633,18 @@ class TestPs1AMemberOperatorPrintsBackAgainstTheValueItBoundTo(TestBase):
         sources = ('$x .5', '1e3 .5', '$x <# c #>.5', '$x<# c #>.5')
         printed = {source: _written(Ps1Parser(source).parse()) for source in sources}
         self.assertEqual(printed, {
-            '$x .5'        : '$x\n.5',
-            '1e3 .5'       : '1e3\n.5',
-            '$x <# c #>.5' : '$x\n.5',
+            '$x .5'        : inspect.cleandoc("""
+                $x
+                .5
+            """),
+            '1e3 .5'       : inspect.cleandoc("""
+                1e3
+                .5
+            """),
+            '$x <# c #>.5' : inspect.cleandoc("""
+                $x
+                .5
+            """),
             '$x<# c #>.5'  : '$x.5',
         })
 

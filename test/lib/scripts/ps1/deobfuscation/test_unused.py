@@ -3,6 +3,7 @@ from __future__ import annotations
 from inspect import cleandoc
 
 from test import backlog, opportunity, todo, wontfix
+from test.lib.scripts.ps1 import a_program
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import (
@@ -56,11 +57,17 @@ class TestPs1UnusedVariableRemoval(TestPs1):
 
     def test_an_unread_environment_store_is_stripped_as_declared_noise(self):
         self.assertEqual(
-            self._apply("$env:Q = 'v'\nWrite-Host done", Ps1UnusedVariableRemoval),
+            self._apply(cleandoc("""
+                $env:Q = 'v'
+                Write-Host done
+            """), Ps1UnusedVariableRemoval),
             'Write-Host done')
 
     def test_an_environment_store_is_kept_under_the_preserving_model(self):
-        source = "$env:Q = 'v'\nStart-Process notepad"
+        source = cleandoc("""
+            $env:Q = 'v'
+            Start-Process notepad
+        """)
         ast = Ps1Parser(source).parse()
         transform = Ps1UnusedVariableRemoval()
         transform.options = Ps1DeobfuscationOptions(preserve_environment=True)
@@ -91,7 +98,10 @@ class TestPs1UnusedVariableRemoval(TestPs1):
             'Write-Output ([Environment]::GetEnvironmentVariables())',
         ):
             with self.subTest(listing):
-                self._assertKept(F"$env:Q = 'v'\n{listing}")
+                self._assertKept(cleandoc(F"""
+                    $env:Q = 'v'
+                    {listing}
+                """))
 
     def test_parameter_preserved(self):
         result = self._deobfuscate(
@@ -101,7 +111,10 @@ class TestPs1UnusedVariableRemoval(TestPs1):
     def test_a_script_reduced_to_this_passs_own_discards_is_left_alone(self):
         for source in (
             '$x = Start-Process calc',
-            "$x = Start-Process calc\n$y = Remove-Item C:\\z",
+            cleandoc("""
+                $x = Start-Process calc
+                $y = Remove-Item C:\\z
+            """),
         ):
             with self.subTest(source):
                 self.assertEqual(self._apply(source, Ps1UnusedVariableRemoval), source)
@@ -117,13 +130,21 @@ class TestPs1UnusedVariableRemoval(TestPs1):
         self.assertIn('1', result)
 
     def test_a_store_a_callee_writes_through_a_reference_stays_while_the_call_does(self):
-        source = "$n = 0\n[void][int]::TryParse('7', [ref]$n)\nWrite-Host done"
+        source = cleandoc("""
+            $n = 0
+            [void][int]::TryParse('7', [ref]$n)
+            Write-Host done
+        """)
         self.assertIn(self._apply(source, Ps1UnusedVariableRemoval), (source, 'Write-Host done'))
 
     @opportunity
     def test_a_store_a_callee_writes_through_a_reference_goes_when_nothing_reads_it(self):
         self.assertEqual(
-            self._deobfuscate("$n = 0\n[void][int]::TryParse('7', [ref]$n)\nWrite-Host done"),
+            self._deobfuscate(cleandoc("""
+                $n = 0
+                [void][int]::TryParse('7', [ref]$n)
+                Write-Host done
+            """)),
             'Write-Host done',
         )
 
@@ -142,27 +163,46 @@ class TestPs1JunkStatementRemoval(TestPs1):
 
     def test_void_cast_around_a_call_preserved_inside_a_function(self):
         result = self._deobfuscate(
-            'function f { Write-Host hi; [Void](Remove-Item C:\\important) }\nf')
+            cleandoc("""
+                function f { Write-Host hi; [Void](Remove-Item C:\\important) }
+                f
+            """))
         self.assertIn('Remove-Item', result)
 
     def test_an_advanced_function_is_not_junk(self):
         result = self._deobfuscate(
-            'function f { process { Start-Process notepad } }\nf\nWrite-Host done')
+            cleandoc("""
+                function f { process { Start-Process notepad } }
+                f
+                Write-Host done
+            """))
         self.assertIn('Start-Process', result)
         self.assertIn('function f', result)
         self.assertIn('done', result)
 
     def test_a_member_invoking_foreach_is_not_a_discard(self):
         result = self._deobfuscate(
-            'Get-Process | ForEach-Object -MemberName Kill\nWrite-Host done')
+            cleandoc("""
+                Get-Process | ForEach-Object -MemberName Kill
+                Write-Host done
+            """))
         self.assertIn('Kill', result)
         self.assertIn('done', result)
 
     def test_a_member_invoking_foreach_is_not_excused_by_a_discarding_block(self):
         for source in (
-            'Get-Process | ForEach-Object { [Void]$_ } -MemberName Kill\nWrite-Host done',
-            'Get-Process | ForEach-Object { [Void]$_ } Kill\nWrite-Host done',
-            'Get-Process | ForEach-Object { $Null = $_ } -MemberName Kill\nWrite-Host done',
+            cleandoc("""
+                Get-Process | ForEach-Object { [Void]$_ } -MemberName Kill
+                Write-Host done
+            """),
+            cleandoc("""
+                Get-Process | ForEach-Object { [Void]$_ } Kill
+                Write-Host done
+            """),
+            cleandoc("""
+                Get-Process | ForEach-Object { $Null = $_ } -MemberName Kill
+                Write-Host done
+            """),
         ):
             with self.subTest(source):
                 result = self._deobfuscate(source)
@@ -171,8 +211,16 @@ class TestPs1JunkStatementRemoval(TestPs1):
 
     def test_a_member_named_by_a_here_string_is_still_a_member(self):
         for source in (
-            "Get-ChildItem C:\\ | ForEach-Object { $Null = $_ } -MemberName @'\nDelete\n'@",
-            "Get-Process | ForEach-Object { [Void]$_ } @'\nKill\n'@",
+            cleandoc("""
+                Get-ChildItem C:\\ | ForEach-Object { $Null = $_ } -MemberName @'
+                Delete
+                '@
+            """),
+            cleandoc("""
+                Get-Process | ForEach-Object { [Void]$_ } @'
+                Kill
+                '@
+            """),
         ):
             with self.subTest(source):
                 self.assertIn('ForEach-Object', self._deobfuscate(F'{source}\nWrite-Host done'))
@@ -184,80 +232,143 @@ class TestPs1JunkStatementRemoval(TestPs1):
             '1..3 | ForEach-Object -Process { param($p = (Start-Process notepad)) [Void]$_ }',
         ):
             with self.subTest(source):
-                self.assertIn('ForEach-Object', self._deobfuscate(F'{source}\nWrite-Host done'))
+                self.assertIn('ForEach-Object', self._deobfuscate(cleandoc(F"""
+                    {source}
+                    Write-Host done
+                """)))
 
     def test_a_computed_member_name_keeps_the_statement_that_computes_it(self):
-        result = self._deobfuscate('if ($true) { $x.$(Start-Process notepad) }\nWrite-Host done')
+        result = self._deobfuscate(cleandoc("""
+            if ($true) { $x.$(Start-Process notepad) }
+            Write-Host done
+        """))
         self.assertIn('Start-Process', result)
         self.assertIn('done', result)
 
     def test_a_hash_literal_key_that_runs_a_command_is_kept(self):
-        result = self._deobfuscate('if ($true) { @{ $(Start-Process notepad) = 1 } }\nWrite-Host x')
+        result = self._deobfuscate(cleandoc("""
+            if ($true) { @{ $(Start-Process notepad) = 1 } }
+            Write-Host x
+        """))
         self.assertIn('Start-Process', result)
 
     def test_a_junk_function_stays_removable_when_it_declares_parameters(self):
-        result = self._deobfuscate('function j($x) { $Null = 915 }\nj\nWrite-Host done')
+        result = self._deobfuscate(cleandoc("""
+            function j($x) { $Null = 915 }
+            j
+            Write-Host done
+        """))
         self.assertNotIn('function', result)
         self.assertIn('done', result)
 
     def test_a_foreach_block_held_in_a_variable_is_kept(self):
         for source in (
-            'Param($sb)\n1..3 | ForEach-Object -Process { [Void]$_ } -End $sb\nWrite-Host done',
-            '1..3 | ForEach-Object { [Void]$_ } $Global:sb\nWrite-Host done',
+            cleandoc("""
+                Param($sb)
+                1..3 | ForEach-Object -Process { [Void]$_ } -End $sb
+                Write-Host done
+            """),
+            cleandoc("""
+                1..3 | ForEach-Object { [Void]$_ } $Global:sb
+                Write-Host done
+            """),
         ):
             with self.subTest(source):
                 self.assertIn('ForEach-Object', self._deobfuscate(source))
 
     def test_a_parameter_default_that_runs_a_command_keeps_the_function(self):
         result = self._deobfuscate(
-            'function f { param($x = (Start-Process notepad)) }\nf\nWrite-Host done')
+            cleandoc("""
+                function f { param($x = (Start-Process notepad)) }
+                f
+                Write-Host done
+            """))
         self.assertIn('Start-Process', result)
         self.assertIn('done', result)
 
     def test_a_splatted_argument_keeps_the_command(self):
-        result = self._deobfuscate('Get-Date @options\nWrite-Host $d')
+        result = self._deobfuscate(cleandoc("""
+            Get-Date @options
+            Write-Host $d
+        """))
         self.assertIn('Get-Date', result)
 
     def test_a_discard_terminator_may_not_hide_a_call_in_its_arguments(self):
         result = self._deobfuscate(
-            '1 | Out-Null -InputObject (Start-Process notepad)\nWrite-Host done')
+            cleandoc("""
+                1 | Out-Null -InputObject (Start-Process notepad)
+                Write-Host done
+            """))
         self.assertIn('Start-Process', result)
         self.assertIn('done', result)
 
     def test_a_redirected_command_is_kept(self):
-        result = self._deobfuscate('Get-Date > C:\\out.txt\nWrite-Host done')
+        result = self._deobfuscate(cleandoc("""
+            Get-Date > C:\\out.txt
+            Write-Host done
+        """))
         self.assertIn('out.txt', result)
         self.assertIn('done', result)
 
     def test_an_out_parameter_call_is_kept(self):
-        result = self._deobfuscate('[Int]::TryParse($s, [ref]$n)\nWrite-Host $n')
+        result = self._deobfuscate(cleandoc("""
+            [Int]::TryParse($s, [ref]$n)
+            Write-Host $n
+        """))
         self.assertIn('TryParse', result)
 
     def test_a_temporary_file_creation_is_kept(self):
-        result = self._deobfuscate('[IO.Path]::GetTempFileName()\nWrite-Host done')
+        result = self._deobfuscate(cleandoc("""
+            [IO.Path]::GetTempFileName()
+            Write-Host done
+        """))
         self.assertIn('GetTempFileName', result)
         self.assertIn('done', result)
 
     def test_an_array_mutation_on_a_live_variable_is_kept(self):
-        result = self._deobfuscate('[Array]::Reverse($buffer)\nWrite-Host done')
+        result = self._deobfuscate(cleandoc("""
+            [Array]::Reverse($buffer)
+            Write-Host done
+        """))
         self.assertIn('Reverse', result)
         self.assertIn('done', result)
 
     def test_a_command_that_fills_a_variable_is_kept(self):
         for source, marker in (
-            ('Get-Date -OutVariable d\nWrite-Host $d', 'OutVariable'),
-            ('Get-Date -OutVar d\nWrite-Host $d', 'OutVariable'),
-            ('Get-Date -ov d\nWrite-Host $d', 'OutVariable'),
-            ('Get-ChildItem -ErrorVariable e\nWrite-Host $e', 'ErrorVariable'),
-            ('Get-Date | Out-Null -ErrorVariable e\nWrite-Host $e', 'ErrorVariable'),
-            ('Get-Random -SetSeed 5\nWrite-Host done', 'SetSeed'),
+            (cleandoc("""
+                Get-Date -OutVariable d
+                Write-Host $d
+            """), 'OutVariable'),
+            (cleandoc("""
+                Get-Date -OutVar d
+                Write-Host $d
+            """), 'OutVariable'),
+            (cleandoc("""
+                Get-Date -ov d
+                Write-Host $d
+            """), 'OutVariable'),
+            (cleandoc("""
+                Get-ChildItem -ErrorVariable e
+                Write-Host $e
+            """), 'ErrorVariable'),
+            (cleandoc("""
+                Get-Date | Out-Null -ErrorVariable e
+                Write-Host $e
+            """), 'ErrorVariable'),
+            (cleandoc("""
+                Get-Random -SetSeed 5
+                Write-Host done
+            """), 'SetSeed'),
         ):
             with self.subTest(source):
                 self.assertIn(marker, self._deobfuscate(source))
 
     def test_a_constructor_argument_that_runs_a_command_is_kept(self):
         result = self._deobfuscate(
-            "New-Object String 'x' (Start-Process notepad)\nWrite-Host done")
+            cleandoc("""
+                New-Object String 'x' (Start-Process notepad)
+                Write-Host done
+            """))
         self.assertIn('Start-Process', result)
         self.assertIn('done', result)
 
@@ -323,9 +434,11 @@ class TestPs1JunkStatementRemoval(TestPs1):
 
     def test_transitive_function_calls_preserved(self):
         result = self._deobfuscate(
-            'function Inner { Get-Date }\n'
-            'function Outer { Inner }\n'
-            'Outer\n'
+            a_program("""
+                function Inner { Get-Date }
+                function Outer { Inner }
+                Outer
+            """)
         )
         self.assertIn('Inner', result)
         self.assertIn('Get-Date', result)
@@ -335,12 +448,18 @@ class TestPs1UnusedExtra(TestPs1):
 
     def test_junk_removal_keeps_indirectly_called_function(self):
         result = self._apply(
-            "function Invoke-Payload { Write-Host 'x' }\n& $f", Ps1JunkStatementRemoval)
+            cleandoc("""
+                function Invoke-Payload { Write-Host 'x' }
+                & $f
+            """), Ps1JunkStatementRemoval)
         self.assertIn('Invoke-Payload', result)
 
     def test_junk_removal_keeps_collection_mutation(self):
         result = self._apply(
-            "$list = [System.Collections.ArrayList]@(1, 2, 3)\n$list.Remove(2)",
+            cleandoc("""
+                $list = [System.Collections.ArrayList]@(1, 2, 3)
+                $list.Remove(2)
+            """),
             Ps1JunkStatementRemoval)
         self.assertIn('.Remove(2)', result)
 
@@ -368,23 +487,41 @@ class TestPs1UnusedExtra(TestPs1):
 
     def test_dead_multiassign_all_targets_removed(self):
         result = self._apply(
-            "$a, $b, $c = 1, 2, 3\nWrite-Host 'keep'", Ps1UnusedVariableRemoval)
+            cleandoc("""
+                $a, $b, $c = 1, 2, 3
+                Write-Host 'keep'
+            """), Ps1UnusedVariableRemoval)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_live_multiassign_cotarget_keeps_statement(self):
         result = self._apply(
-            '$a, $b = 1, 2\nWrite-Output $b', Ps1UnusedVariableRemoval)
-        self.assertEqual(result, '$a, $b = 1, 2\nWrite-Output $b')
+            cleandoc("""
+                $a, $b = 1, 2
+                Write-Output $b
+            """), Ps1UnusedVariableRemoval)
+        self.assertEqual(result, cleandoc("""
+            $a, $b = 1, 2
+            Write-Output $b
+        """))
 
     def test_pure_new_object_dead_store_removed(self):
         result = self._apply(
-            "$x = New-Object System.Object\nWrite-Host 'keep'", Ps1UnusedVariableRemoval)
+            cleandoc("""
+                $x = New-Object System.Object
+                Write-Host 'keep'
+            """), Ps1UnusedVariableRemoval)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_impure_new_object_store_kept(self):
         result = self._apply(
-            "$x = New-Object System.Net.WebClient\nWrite-Host 'keep'", Ps1UnusedVariableRemoval)
-        self.assertEqual(result, "$Null = New-Object System.Net.WebClient\nWrite-Host 'keep'")
+            cleandoc("""
+                $x = New-Object System.Net.WebClient
+                Write-Host 'keep'
+            """), Ps1UnusedVariableRemoval)
+        self.assertEqual(result, cleandoc("""
+            $Null = New-Object System.Net.WebClient
+            Write-Host 'keep'
+        """))
 
     def test_dropping_a_dead_store_does_not_start_emitting_its_value(self):
         for source in (
@@ -393,97 +530,189 @@ class TestPs1UnusedExtra(TestPs1):
         ):
             with self.subTest(source):
                 result = self._apply(
-                    F"{source}\nWrite-Host 'keep'", Ps1UnusedVariableRemoval)
+                    cleandoc(F"""
+                        {source}
+                        Write-Host 'keep'
+                    """), Ps1UnusedVariableRemoval)
                 self.assertTrue(result.startswith('$Null = '), result)
 
     def test_null_discard_pure_removed(self):
         result = self._apply(
-            "$null = [Environment]::UserName\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+            cleandoc("""
+                $null = [Environment]::UserName
+                Write-Host 'keep'
+            """), Ps1JunkStatementRemoval)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_null_discard_side_effect_kept(self):
         result = self._apply(
-            "$null = Remove-Item C:\\x\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
-        self.assertEqual(result, "$null = Remove-Item C:\\x\nWrite-Host 'keep'")
+            cleandoc("""
+                $null = Remove-Item C:\\x
+                Write-Host 'keep'
+            """), Ps1JunkStatementRemoval)
+        self.assertEqual(result, cleandoc("""
+            $null = Remove-Item C:\\x
+            Write-Host 'keep'
+        """))
 
 
 class TestPs1InertFunctionRemoval(TestPs1):
 
     def test_inert_function_and_call_removed(self):
         result = self._apply(
-            "function j { $Null = 915 }\nj\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+            cleandoc("""
+                function j { $Null = 915 }
+                j
+                Write-Host 'keep'
+            """), Ps1JunkStatementRemoval)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_inert_function_multiple_calls_removed(self):
         result = self._apply(
-            "function j { $Null = 915 }\nj\nj\nj\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+            cleandoc("""
+                function j { $Null = 915 }
+                j
+                j
+                j
+                Write-Host 'keep'
+            """), Ps1JunkStatementRemoval)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_a_function_that_only_prints_a_value_that_cannot_fail_goes(self):
         result = self._apply(
-            "function f { Get-Random }\nf\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+            cleandoc("""
+                function f { Get-Random }
+                f
+                Write-Host 'keep'
+            """), Ps1JunkStatementRemoval)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_emitting_function_kept_with_stdout(self):
         result = self._deobfuscate(
-            "function f { Get-Random }\nf\nWrite-Host 'keep'", preserve_bare_output=True)
-        self.assertEqual(result, "function f {\n  Get-Random\n}\nf\nWrite-Host 'keep'")
+            cleandoc("""
+                function f { Get-Random }
+                f
+                Write-Host 'keep'
+            """), preserve_bare_output=True)
+        self.assertEqual(result, cleandoc("""
+            function f {
+              Get-Random
+            }
+            f
+            Write-Host 'keep'
+        """))
 
     def test_effectful_function_kept(self):
         result = self._apply(
-            "function f { Write-Host 'real' }\nf", Ps1JunkStatementRemoval)
-        self.assertEqual(result, "function f {\n  Write-Host 'real'\n}\nf")
+            cleandoc("""
+                function f { Write-Host 'real' }
+                f
+            """), Ps1JunkStatementRemoval)
+        self.assertEqual(result, cleandoc("""
+            function f {
+              Write-Host 'real'
+            }
+            f
+        """))
 
     @opportunity
     def test_dynamic_dispatch_keeps_an_inert_function_but_not_a_call_that_ran_before_it(self):
         result = self._apply(
-            "function j { $Null = 1 }\nj\n& $name\nWrite-Host 'keep'",
+            cleandoc("""
+                function j { $Null = 1 }
+                j
+                & $name
+                Write-Host 'keep'
+            """),
             Ps1JunkStatementRemoval)
-        self.assertEqual(result, "function j {}\n& $name\nWrite-Host 'keep'")
+        self.assertEqual(result, cleandoc("""
+            function j {}
+            & $name
+            Write-Host 'keep'
+        """))
 
     def test_a_call_to_an_inert_function_that_opens_a_file_is_kept(self):
         for redirection in (r'> C:\out.txt', r'>> C:\out.txt', r'2> C:\err.txt', r'3>> C:\v.txt'):
             with self.subTest(redirection):
-                source = F"function j {{ $Null = 1 }}\nj {redirection}\nWrite-Host 'keep'"
+                source = cleandoc(F"""
+                    function j {{ $Null = 1 }}
+                    j {redirection}
+                    Write-Host 'keep'
+                """)
                 self.assertEqual(
                     self._apply(source, Ps1JunkStatementRemoval),
-                    F"function j {{}}\nj {redirection}\nWrite-Host 'keep'")
+                    cleandoc(F"""
+                        function j {{}}
+                        j {redirection}
+                        Write-Host 'keep'
+                    """))
 
     def test_a_call_to_an_inert_function_that_only_merges_streams_is_removed(self):
         self.assertEqual(
             self._apply(
-                "function j { $Null = 1 }\nj 2>&1\nWrite-Host 'keep'", Ps1JunkStatementRemoval),
+                cleandoc("""
+                    function j { $Null = 1 }
+                    j 2>&1
+                    Write-Host 'keep'
+                """), Ps1JunkStatementRemoval),
             "Write-Host 'keep'")
 
     @opportunity
     def test_an_inert_function_called_with_a_constant_argument_goes_with_its_call(self):
         result = self._apply(
-            "function j { $Null = 1 }\nj 'arg'\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+            cleandoc("""
+                function j { $Null = 1 }
+                j 'arg'
+                Write-Host 'keep'
+            """), Ps1JunkStatementRemoval)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_function_captured_result_kept(self):
         result = self._apply(
-            "function j { $Null = 1 }\n$x = j\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
-        self.assertEqual(result, "function j {}\n$x = j\nWrite-Host 'keep'")
+            cleandoc("""
+                function j { $Null = 1 }
+                $x = j
+                Write-Host 'keep'
+            """), Ps1JunkStatementRemoval)
+        self.assertEqual(result, cleandoc("""
+            function j {}
+            $x = j
+            Write-Host 'keep'
+        """))
 
     def test_a_scope_qualified_definition_is_reached_by_an_unqualified_call(self):
         for definition in ('global:f', 'script:f', 'local:f', 'private:f'):
             with self.subTest(definition):
                 result = self._apply(
-                    F"function {definition} {{ Start-Process calc }}\nf\nWrite-Host 'keep'",
+                    cleandoc(F"""
+                        function {definition} {{ Start-Process calc }}
+                        f
+                        Write-Host 'keep'
+                    """),
                     Ps1JunkStatementRemoval)
                 self.assertIn('Start-Process', result)
 
     def test_a_script_of_nothing_but_definitions_is_not_emptied(self):
-        for script in ('function f { }', 'function f { }\nfunction g { }'):
+        for script in ('function f { }', cleandoc("""
+            function f { }
+            function g { }
+        """)):
             with self.subTest(script):
                 result = self._apply(script, Ps1JunkStatementRemoval)
                 self.assertIn('function f', result)
 
     def test_a_script_that_calls_its_own_inert_functions_is_still_emptied(self):
         for script in (
-            'function j { $Null = 1 }\nj',
-            'function f { $Null = 1 }\nfunction g { $Null = 2 }\nf\ng',
+            cleandoc("""
+                function j { $Null = 1 }
+                j
+            """),
+            cleandoc("""
+                function f { $Null = 1 }
+                function g { $Null = 2 }
+                f
+                g
+            """),
         ):
             with self.subTest(script):
                 result = self._apply(script, Ps1JunkStatementRemoval)
@@ -523,7 +752,10 @@ _STRIPPABLE = {
 class TestPs1BareOutputIsStrippedByDefault(TestPs1):
 
     def _assertStripped(self, junk: str, marker: str) -> None:
-        result = self._deobfuscate(F'{junk}\n{_ANCHOR}')
+        result = self._deobfuscate(cleandoc(F"""
+            {junk}
+            {_ANCHOR}
+        """))
         self.assertNotIn(marker, result)
         self.assertIn('ANCHOR', result)
 
@@ -536,7 +768,10 @@ class TestPs1BareOutputIsStrippedByDefault(TestPs1):
         for kind in ('string sum', 'comparison'):
             with self.subTest(kind):
                 junk, _ = _STRIPPABLE[kind]
-                self.assertEqual(self._deobfuscate(F'{junk}\n{_ANCHOR}'), _ANCHOR)
+                self.assertEqual(self._deobfuscate(cleandoc(F"""
+                    {junk}
+                    {_ANCHOR}
+                """)), _ANCHOR)
 
     def test_a_container_built_only_out_of_literals_is_stripped(self):
         for kind in ('array literal', 'hash literal', 'range'):
@@ -559,8 +794,14 @@ class TestPs1BareOutputIsStrippedByDefault(TestPs1):
     def test_a_range_the_operator_cannot_build_is_not_expanded_where_output_is_kept(self):
         for junk in ('4242424242..4242424245', '1..2147483648', '0..2147483647'):
             with self.subTest(junk):
-                result = self._deobfuscate(F'{junk}\n{_ANCHOR}', preserve_bare_output=True)
-                self.assertEqual(result, F'{junk}\n{_ANCHOR}')
+                result = self._deobfuscate(cleandoc(F"""
+                    {junk}
+                    {_ANCHOR}
+                """), preserve_bare_output=True)
+                self.assertEqual(result, cleandoc(F"""
+                    {junk}
+                    {_ANCHOR}
+                """))
 
     @wontfix('no obfuscator writes a dynamicparam block')
     def test_the_dictionary_a_dynamicparam_block_hands_back_is_kept(self):
@@ -582,7 +823,11 @@ class TestPs1BareOutputIsStrippedByDefault(TestPs1):
         self.assertRegex(result, r'(?m)^\s*\$d\s*$')
 
     def test_a_bare_value_in_a_function_every_call_site_only_prints_is_stripped(self):
-        result = self._deobfuscate(F"function Qzmr {{ 'Xtjbnwqm' }}\nQzmr\n{_ANCHOR}")
+        result = self._deobfuscate(cleandoc(F"""
+            function Qzmr {{ 'Xtjbnwqm' }}
+            Qzmr
+            {_ANCHOR}
+        """))
         self.assertNotIn('Xtjbnwqm', result)
         self.assertIn('ANCHOR', result)
 
@@ -596,7 +841,10 @@ class TestPs1TheLastBareOutputSurvivesADeadSiblingAnotherPassRemoves(TestPs1):
         self.assertEqual(self._deobfuscate("if (0) { 1 }; 'z'"), "'z'")
 
     def test_a_dead_if_with_a_live_else_keeps_the_branch_output_and_the_literal(self):
-        self.assertEqual(self._deobfuscate("if ($c) { 1 } else { 2 }; 'z'"), "2\n'z'")
+        self.assertEqual(self._deobfuscate("if ($c) { 1 } else { 2 }; 'z'"), cleandoc("""
+            2
+            'z'
+        """))
 
     def test_an_empty_loop_above_a_bare_literal_does_not_carry_the_literal_away(self):
         self.assertEqual(self._deobfuscate("while ($c) { }; 'z'"), "'z'")
@@ -739,7 +987,10 @@ class TestPs1ASystemReadIsJunkUnlessItsDataFlowsIntoACall(TestPs1):
 class TestPs1BareOutputIsKeptWhenAsked(TestPs1):
 
     def _assertTheBareValueIsKept(self, junk: str, marker: str) -> None:
-        result = self._deobfuscate(F'{junk}\n{_ANCHOR}', preserve_bare_output=True)
+        result = self._deobfuscate(cleandoc(F"""
+            {junk}
+            {_ANCHOR}
+        """), preserve_bare_output=True)
         self.assertIn(marker, result)
         self.assertIn('ANCHOR', result)
 
@@ -760,7 +1011,11 @@ class TestPs1BareOutputIsKeptWhenAsked(TestPs1):
 
     def test_a_bare_value_in_a_function_every_call_site_only_prints_is_kept(self):
         result = self._deobfuscate(
-            F"function Qzmr {{ 'Xtjbnwqm' }}\nQzmr\n{_ANCHOR}", preserve_bare_output=True)
+            cleandoc(F"""
+                function Qzmr {{ 'Xtjbnwqm' }}
+                Qzmr
+                {_ANCHOR}
+            """), preserve_bare_output=True)
         self.assertIn('Xtjbnwqm', result)
         self.assertIn('ANCHOR', result)
 
@@ -811,40 +1066,56 @@ class TestPs1OutputSomethingElseHoldsIsKeptEitherWay(TestPs1):
 
     def test_a_fault_inside_a_function_a_handler_catches_is_kept(self):
         self._assertKeptEitherWay(
-            "function Qzmr { [Int]'Xtjbnwqm' }\n"
-            "try { Qzmr } catch { Write-Host 'CAUGHT' }", 'CAUGHT')
+            cleandoc("""
+                function Qzmr { [Int]'Xtjbnwqm' }
+                try { Qzmr } catch { Write-Host 'CAUGHT' }
+            """), 'CAUGHT')
 
     @opportunity
     def test_a_function_another_defines_and_never_calls_goes_in_either_model(self):
-        source = F"function Outer {{ function Inner {{ 'Xtjbnwqm' }} }}\nOuter\n{_ANCHOR}"
+        source = cleandoc(F"""
+            function Outer {{ function Inner {{ 'Xtjbnwqm' }} }}
+            Outer
+            {_ANCHOR}
+        """)
         self.assertEqual(self._deobfuscate(source), _ANCHOR)
         self.assertEqual(self._deobfuscate(source, preserve_bare_output=True), _ANCHOR)
 
     def test_one_captured_call_site_keeps_the_value_of_the_definition_it_reaches(self):
-        source = (
-            "function Qzmr { 'Xtjbnwqm' }\n"
-            "function Qzmr { 'Ldkrpwsz' }\n"
-            F"Qzmr\n$r = Qzmr\nWrite-Host $r\n{_ANCHOR}"
-        )
+        source = cleandoc(F"""
+            function Qzmr {{ 'Xtjbnwqm' }}
+            function Qzmr {{ 'Ldkrpwsz' }}
+            Qzmr
+            $r = Qzmr
+            Write-Host $r
+            {_ANCHOR}
+        """)
         self.assertIn('Ldkrpwsz', self._deobfuscate(source))
         self.assertIn('Ldkrpwsz', self._deobfuscate(source, preserve_bare_output=True))
 
     @opportunity
     def test_a_recursion_another_function_defines_and_never_enters_goes_in_either_model(self):
-        source = (
-            'function Outer {\n'
-            "  function Qzmr { 'Xtjbnwqm'; Vbxl }\n"
-            '  function Vbxl { Qzmr }\n'
-            F'}}\nOuter\n{_ANCHOR}'
-        )
+        source = cleandoc(F"""
+            function Outer {{
+              function Qzmr {{ 'Xtjbnwqm'; Vbxl }}
+              function Vbxl {{ Qzmr }}
+            }}
+            Outer
+            {_ANCHOR}
+        """)
         self.assertEqual(self._deobfuscate(source), _ANCHOR)
         self.assertEqual(self._deobfuscate(source, preserve_bare_output=True), _ANCHOR)
 
     def test_a_grounded_recursion_one_caller_captures_is_kept(self):
         self._assertKeptEitherWay(
-            "function Qzmr { 'Xtjbnwqm'; Vbxl }\n"
-            'function Vbxl { Qzmr }\n'
-            F'Qzmr\n$r = Vbxl\nWrite-Host $r\n{_ANCHOR}', 'Xtjbnwqm')
+            cleandoc(F"""
+                function Qzmr {{ 'Xtjbnwqm'; Vbxl }}
+                function Vbxl {{ Qzmr }}
+                Qzmr
+                $r = Vbxl
+                Write-Host $r
+                {_ANCHOR}
+            """), 'Xtjbnwqm')
 
 
 _UNKNOWNS = (
@@ -864,12 +1135,12 @@ def _statements(result: str) -> set[str]:
 
 class TestPs1RemovalIsMonotoneInWhatItKnows(TestPs1):
 
-    _SCRIPT = (
-        "function Qzmr { 'Xtjbnwqm' }\n"
-        'Qzmr\n'
-        "'Ldkrpwsz'\n"
-        F'{_ANCHOR}'
-    )
+    _SCRIPT = cleandoc(F"""
+        function Qzmr {{ 'Xtjbnwqm' }}
+        Qzmr
+        'Ldkrpwsz'
+        {_ANCHOR}
+    """)
 
     def test_an_unknown_may_only_keep_more(self):
         known = _statements(self._deobfuscate(self._SCRIPT))
@@ -896,11 +1167,13 @@ class TestPs1RemovalIsMonotoneInWhatItKnows(TestPs1):
                 self.assertIn('Xtjbnwqm', result)
 
     def test_an_inert_function_goes_exactly_where_a_bare_value_in_a_function_goes(self):
-        script = (
-            'function Ldkr { $Null = 1 }\n'
-            "function Qzmr { Write-Host 'inner'; 'Xtjbnwqm' }\n"
-            F'Ldkr\nQzmr\n{_ANCHOR}'
-        )
+        script = cleandoc(F"""
+            function Ldkr {{ $Null = 1 }}
+            function Qzmr {{ Write-Host 'inner'; 'Xtjbnwqm' }}
+            Ldkr
+            Qzmr
+            {_ANCHOR}
+        """)
         for opener in (
             '',
             ". '.\\stage2.ps1'",
@@ -915,8 +1188,17 @@ class TestPs1RemovalIsMonotoneInWhatItKnows(TestPs1):
     def test_the_default_removes_whole_statements_and_never_rewrites_one(self):
         for source in (
             self._SCRIPT,
-            F"@(1, 2, 3)\n@{{ a = 1 }}\n'Xtjbnwqm'\n{_ANCHOR}",
-            F"function Qzmr {{ 42; Write-Host 'inner' }}\nQzmr\n{_ANCHOR}",
+            cleandoc(F"""
+                @(1, 2, 3)
+                @{{ a = 1 }}
+                'Xtjbnwqm'
+                {_ANCHOR}
+            """),
+            cleandoc(F"""
+                function Qzmr {{ 42; Write-Host 'inner' }}
+                Qzmr
+                {_ANCHOR}
+            """),
         ):
             with self.subTest(source):
                 self.assertLessEqual(
@@ -928,7 +1210,12 @@ class TestPs1DiscardedObjectRemoval(TestPs1):
 
     def test_a_bare_object_a_cast_or_a_call_produces_is_stripped(self):
         for source in (
-            "[pscustomobject]@{\n  Name = 'x'\n  Value = 42\n}",
+            cleandoc("""
+                [pscustomobject]@{
+                  Name = 'x'
+                  Value = 42
+                }
+            """),
             '[Collections.Hashtable]::Synchronized(@{})',
         ):
             with self.subTest(source):
@@ -939,53 +1226,94 @@ class TestPs1DiscardedObjectRemoval(TestPs1):
 
     def test_void_foreach_pipeline_removed(self):
         result = self._apply(
-            "(1, 2, 3) | ForEach-Object { [Void]$_ }\nWrite-Host 'keep'",
+            cleandoc("""
+                (1, 2, 3) | ForEach-Object { [Void]$_ }
+                Write-Host 'keep'
+            """),
             Ps1JunkStatementRemoval)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_null_assign_foreach_pipeline_removed(self):
         result = self._apply(
-            "(1, 2, 3) | ForEach-Object { $Null = $_ }\nWrite-Host 'keep'",
+            cleandoc("""
+                (1, 2, 3) | ForEach-Object { $Null = $_ }
+                Write-Host 'keep'
+            """),
             Ps1JunkStatementRemoval)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_hash_with_impure_value_kept(self):
         result = self._apply(
             "@{ x = (Start-Process notepad) }", Ps1JunkStatementRemoval)
-        self.assertEqual(result, '@{\n  x = (Start-Process notepad)\n}')
+        self.assertEqual(result, cleandoc("""
+            @{
+              x = (Start-Process notepad)
+            }
+        """))
 
     def test_emitting_foreach_kept(self):
         result = self._apply(
             "(1, 2, 3) | ForEach-Object { $_ }", Ps1JunkStatementRemoval)
-        self.assertEqual(result, '(1, 2, 3) | ForEach-Object {\n  $_\n}')
+        self.assertEqual(result, cleandoc("""
+            (1, 2, 3) | ForEach-Object {
+              $_
+            }
+        """))
 
     def test_null_assign_foreach_side_effect_kept(self):
         result = self._apply(
             "(1, 2, 3) | ForEach-Object { $Null = Remove-Item $_ }",
             Ps1JunkStatementRemoval)
-        self.assertEqual(result, '(1, 2, 3) | ForEach-Object {\n  $Null = Remove-Item $_\n}')
+        self.assertEqual(result, cleandoc("""
+            (1, 2, 3) | ForEach-Object {
+              $Null = Remove-Item $_
+            }
+        """))
 
 
 class TestPs1DeadStoreElimination(TestPs1):
 
     def test_overwritten_store_removed(self):
-        result = self._apply("$x = 1\n$x = 2\nWrite-Host $x", Ps1DeadStoreElimination)
-        self.assertEqual(result, '$x = 2\nWrite-Host $x')
+        result = self._apply(cleandoc("""
+            $x = 1
+            $x = 2
+            Write-Host $x
+        """), Ps1DeadStoreElimination)
+        self.assertEqual(result, cleandoc("""
+            $x = 2
+            Write-Host $x
+        """))
 
     def test_chain_all_but_last_removed(self):
-        result = self._apply("$x = 1\n$x = 2\n$x = 3\nWrite-Host $x", Ps1DeadStoreElimination)
-        self.assertEqual(result, '$x = 3\nWrite-Host $x')
+        result = self._apply(cleandoc("""
+            $x = 1
+            $x = 2
+            $x = 3
+            Write-Host $x
+        """), Ps1DeadStoreElimination)
+        self.assertEqual(result, cleandoc("""
+            $x = 3
+            Write-Host $x
+        """))
 
     def test_dead_store_before_for_removed(self):
         result = self._apply(
-            "$i = 33\nfor ($i = 0; $i -LT 5; $i++) { Write-Host $i }",
+            cleandoc("""
+                $i = 33
+                for ($i = 0; $i -LT 5; $i++) { Write-Host $i }
+            """),
             Ps1DeadStoreElimination)
         self.assertNotIn('$i = 33', result)
         self.assertIn('for', result)
 
     def test_multiple_dead_stores_before_for_removed(self):
         result = self._apply(
-            "$i = 33\n$i = 44\n$i = 55\nfor ($i = 0; $i -LT 5; $i++) { Write-Host $i }",
+            cleandoc("""
+                $i = 33
+                $i = 44
+                $i = 55
+                for ($i = 0; $i -LT 5; $i++) { Write-Host $i }
+            """),
             Ps1DeadStoreElimination)
         self.assertNotIn('$i = 33', result)
         self.assertNotIn('$i = 44', result)
@@ -994,20 +1322,34 @@ class TestPs1DeadStoreElimination(TestPs1):
 
     def test_intervening_read_keeps_store(self):
         result = self._apply(
-            "$x = 1\nWrite-Host $x\n$x = 2\nWrite-Host $x", Ps1DeadStoreElimination)
+            cleandoc("""
+                $x = 1
+                Write-Host $x
+                $x = 2
+                Write-Host $x
+            """), Ps1DeadStoreElimination)
         self.assertIn('$x = 1', result)
         self.assertIn('$x = 2', result)
 
     def test_impure_rhs_preserved_as_standalone(self):
         result = self._apply(
-            "$x = Remove-Item foo\n$x = 5\nWrite-Host $x", Ps1DeadStoreElimination)
+            cleandoc("""
+                $x = Remove-Item foo
+                $x = 5
+                Write-Host $x
+            """), Ps1DeadStoreElimination)
         self.assertIn('Remove-Item', result)
         self.assertNotIn('$x = Remove-Item', result)
         self.assertIn('$x = 5', result)
 
     def test_different_variables_independent(self):
         result = self._apply(
-            "$x = 1\n$y = 2\n$x = 3\nWrite-Host $x $y", Ps1DeadStoreElimination)
+            cleandoc("""
+                $x = 1
+                $y = 2
+                $x = 3
+                Write-Host $x $y
+            """), Ps1DeadStoreElimination)
         self.assertNotIn('$x = 1', result)
         self.assertIn('$y = 2', result)
         self.assertIn('$x = 3', result)
@@ -1015,20 +1357,48 @@ class TestPs1DeadStoreElimination(TestPs1):
     @opportunity
     def test_an_overwritten_store_to_the_script_scope_is_removed(self):
         result = self._apply(
-            "$script:x = 1\n$script:x = 2\nWrite-Host $script:x", Ps1DeadStoreElimination)
-        self.assertEqual(result, '$script:x = 2\nWrite-Host $script:x')
+            cleandoc("""
+                $script:x = 1
+                $script:x = 2
+                Write-Host $script:x
+            """), Ps1DeadStoreElimination)
+        self.assertEqual(result, cleandoc("""
+            $script:x = 2
+            Write-Host $script:x
+        """))
 
     def test_control_flow_flushes_pending(self):
         result = self._apply(
-            "$x = 1\nif ($c) { Write-Host $x }\n$x = 2\nWrite-Host $x",
+            cleandoc("""
+                $x = 1
+                if ($c) { Write-Host $x }
+                $x = 2
+                Write-Host $x
+            """),
             Ps1DeadStoreElimination)
-        self.assertEqual(result, '$x = 1\nif ($c) {\n  Write-Host $x\n}\n$x = 2\nWrite-Host $x')
+        self.assertEqual(result, cleandoc("""
+            $x = 1
+            if ($c) {
+              Write-Host $x
+            }
+            $x = 2
+            Write-Host $x
+        """))
 
     def test_dead_store_inside_nested_function_removed(self):
         result = self._apply(
-            'function f { $i = 5\n$i = 3\nWrite-Host $i }',
+            cleandoc("""
+                function f { $i = 5
+                $i = 3
+                Write-Host $i }
+            """),
             Ps1DeadStoreElimination)
-        self.assertEqual(result, 'function f {\n  $i = 3\n  Write-Host $i\n}')
+        self.assertEqual(result, cleandoc("""
+            function f {
+              $i = 3
+              Write-Host $i
+            }
+        """))
 
     def test_dead_store_scriptblock_local_does_not_flush_outer(self):
         result = self._apply(cleandoc(
@@ -1041,7 +1411,13 @@ class TestPs1DeadStoreElimination(TestPs1):
             Write-Host $inner
             """
         ), Ps1DeadStoreElimination)
-        self.assertEqual(result, '$cb = {\n  $inner = 99\n}\n$inner = 2\nWrite-Host $inner')
+        self.assertEqual(result, cleandoc("""
+            $cb = {
+              $inner = 99
+            }
+            $inner = 2
+            Write-Host $inner
+        """))
 
     @opportunity
     def test_a_store_overwritten_before_a_stored_scriptblock_can_run_is_removed(self):
@@ -1053,7 +1429,13 @@ class TestPs1DeadStoreElimination(TestPs1):
             Write-Host $x
             """
         ), Ps1DeadStoreElimination)
-        self.assertEqual(result, '$arr = @({\n  Write-Host $x\n})\n$x = 2\nWrite-Host $x')
+        self.assertEqual(result, cleandoc("""
+            $arr = @({
+              Write-Host $x
+            })
+            $x = 2
+            Write-Host $x
+        """))
 
     def test_a_store_a_stored_scriptblock_reads_before_the_overwrite_is_kept(self):
         self._assertUnchanged(cleandoc(
@@ -1079,7 +1461,13 @@ class TestPs1DeadStoreElimination(TestPs1):
             """
         ), Ps1DeadStoreElimination)
         self.assertEqual(
-            result, '$x = 5\n$a = ($x += 1)\n$x = 7\nWrite-Host $x\nWrite-Host $a')
+            result, cleandoc("""
+                $x = 5
+                $a = ($x += 1)
+                $x = 7
+                Write-Host $x
+                Write-Host $a
+            """))
 
     def test_a_dead_store_whose_cast_may_raise_into_an_acting_catch_is_kept(self):
         self._assertUnchanged(cleandoc("""
@@ -1125,10 +1513,17 @@ class TestPs1PayloadRetention(TestPs1):
         ):
             with self.subTest(value):
                 self.assertIn(
-                    'Start-Process calc', self._deobfuscate(F'$x = {value}\nWrite-Host done'))
+                    'Start-Process calc', self._deobfuscate(cleandoc(F"""
+                        $x = {value}
+                        Write-Host done
+                    """)))
                 self.assertIn(
                     'Start-Process calc',
-                    self._deobfuscate(F'$x = {value}\n$x = 1\nWrite-Host $x'))
+                    self._deobfuscate(cleandoc(F"""
+                        $x = {value}
+                        $x = 1
+                        Write-Host $x
+                    """)))
 
     def test_a_bare_value_in_a_function_follows_its_call_sites_and_not_its_neighbours(self):
         for junk in (
@@ -1156,13 +1551,19 @@ class TestPs1PayloadRetention(TestPs1):
         for sink in ('ForEach-Object', '%'):
             with self.subTest(sink):
                 result = self._deobfuscate(
-                    F"1..3 | {sink} {{ Write-Host $_ }}\nWrite-Output 'keep'")
+                    cleandoc(F"""
+                        1..3 | {sink} {{ Write-Host $_ }}
+                        Write-Output 'keep'
+                    """))
                 self.assertIn('Write-Host', result)
 
     def test_a_redefined_command_keeps_the_body_the_script_gave_it(self):
         result = self._deobfuscate(
-            "function Write-Host { Start-Process calc }\n"
-            "function f { Write-Host 'x'; Get-Item $args[0] }\nf")
+            cleandoc("""
+                function Write-Host { Start-Process calc }
+                function f { Write-Host 'x'; Get-Item $args[0] }
+                f
+            """))
         self.assertIn("Write-Host 'x'", result)
         self.assertIn('Start-Process calc', result)
 
@@ -1227,15 +1628,19 @@ class TestPs1NameRemovalNeedsTheWholeStory(TestPs1):
 class TestPs1RemovalLeavesNoDanglingReference(TestPs1):
     def test_a_call_inside_a_nested_definition_keeps_the_definition_it_names(self):
         result = self._deobfuscate(
-            'function Outer { function Inner { Payload } }\n'
-            'Outer\n'
-            'function Payload { Start-Process calc }')
+            cleandoc("""
+                function Outer { function Inner { Payload } }
+                Outer
+                function Payload { Start-Process calc }
+            """))
         self.assertIn('Start-Process calc', result)
 
     def test_a_call_inside_a_method_of_a_nested_class_keeps_the_definition_it_names(self):
         result = self._deobfuscate(
-            'function Setup { class Impl { [void] Run() { Payload } } }\n'
-            'function Payload { Start-Process calc }')
+            cleandoc("""
+                function Setup { class Impl { [void] Run() { Payload } } }
+                function Payload { Start-Process calc }
+            """))
         self.assertIn('Start-Process calc', result)
 
     def test_a_kept_call_site_keeps_the_definition_it_names(self):
@@ -1367,49 +1772,76 @@ class TestPs1AQualifiedCallKeepsTheNameItResolvesOnto(TestPs1):
 
     def test_a_quoted_module_qualified_call_keeps_the_definition_it_resolves_onto(self):
         result = self._deobfuscate(
-            "function Qzmr { Write-Host 'P' }\n& 'MyModule\\Qzmr'")
+            cleandoc("""
+                function Qzmr { Write-Host 'P' }
+                & 'MyModule\\Qzmr'
+            """))
         self.assertIn('function Qzmr', result)
 
     def test_a_bare_module_qualified_call_keeps_the_definition_it_resolves_onto(self):
         result = self._deobfuscate(
-            "function Qzmr { Write-Host 'P' }\n& MyModule\\Qzmr")
+            cleandoc("""
+                function Qzmr { Write-Host 'P' }
+                & MyModule\\Qzmr
+            """))
         self.assertIn('function Qzmr', result)
 
     def test_a_scope_qualified_call_still_reaches_the_definition_by_key(self):
         result = self._deobfuscate(
-            "function Qzmr { Write-Host 'P' }\n& 'global:Qzmr'")
+            cleandoc("""
+                function Qzmr { Write-Host 'P' }
+                & 'global:Qzmr'
+            """))
         self.assertIn('function Qzmr', result)
 
     def test_an_executable_invoked_by_path_does_not_switch_the_analysis_off(self):
         result = self._deobfuscate(
-            "function j { $Null = 1 }\nj\n& 'C:\\tools\\stage2.exe'")
+            cleandoc("""
+                function j { $Null = 1 }
+                j
+                & 'C:\\tools\\stage2.exe'
+            """))
         self.assertNotIn('function j', result)
         self.assertIn('stage2.exe', result)
 
     def test_an_executable_whose_stem_names_a_definition_keeps_it(self):
         result = self._deobfuscate(
-            "function stage2.exe { Write-Host 'P' }\n& 'C:\\tools\\stage2.exe'")
+            cleandoc("""
+                function stage2.exe { Write-Host 'P' }
+                & 'C:\\tools\\stage2.exe'
+            """))
         self.assertIn('function stage2.exe', result)
 
     def test_an_uncalled_definition_beside_no_qualified_call_is_still_removed(self):
         result = self._deobfuscate(
-            "function Qzmr { Write-Host 'P' }\nWrite-Host 'x'")
+            cleandoc("""
+                function Qzmr { Write-Host 'P' }
+                Write-Host 'x'
+            """))
         self.assertNotIn('function Qzmr', result)
 
     def test_a_module_qualified_export_still_reports_an_export(self):
         result = self._deobfuscate(
-            "& 'Microsoft.PowerShell.Core\\Export-ModuleMember' -Function f\n"
-            "function f { Write-Host 'P' }")
+            cleandoc("""
+                & 'Microsoft.PowerShell.Core\\Export-ModuleMember' -Function f
+                function f { Write-Host 'P' }
+            """))
         self.assertIn('function f', result)
 
 
 class TestPs1UnusedVariableRemovalAndNamedReads(TestPs1):
 
     def test_an_assignment_read_only_by_name_is_kept(self):
-        self._assertUnchanged("$a = 'x'\nGet-Variable a", Ps1UnusedVariableRemoval)
+        self._assertUnchanged(cleandoc("""
+            $a = 'x'
+            Get-Variable a
+        """), Ps1UnusedVariableRemoval)
 
     def test_an_assignment_nothing_reads_at_all_is_still_removed(self):
-        result = self._deobfuscate("$a = 'x'\nWrite-Host done")
+        result = self._deobfuscate(cleandoc("""
+            $a = 'x'
+            Write-Host done
+        """))
         self.assertNotIn('$a', result)
 
 
@@ -1689,7 +2121,10 @@ class TestPs1ABarewordTheGraphsCannotPlaceIsKeptWhereTheWorldIsOpen(TestPs1):
                 }
                 Write-Host keep
             """,
-            '& {}\nWrite-Host keep',
+            cleandoc("""
+                & {}
+                Write-Host keep
+            """),
             'Write-Host keep',
         )
 
@@ -1697,11 +2132,33 @@ class TestPs1ABarewordTheGraphsCannotPlaceIsKeptWhereTheWorldIsOpen(TestPs1):
 class TestPs1ALoopCarriesALeakBackOverTheBarewordAboveIt(TestPs1):
 
     _SHAPES = {
-        'foreach': 'foreach ($i in 1..2) {{\n{0}\n}}',
-        'while': 'while ($env:Z) {{\n{0}\n}}',
-        'do-while': 'do {{\n{0}\n}} while ($env:Z)',
-        'for': 'for ($i = 0; $i -lt 2; $i++) {{\n{0}\n}}',
-        'switch': 'switch (1..2) {{\n  default {{\n{0}\n}}\n}}',
+        'foreach': cleandoc("""
+            foreach ($i in 1..2) {{
+            {0}
+            }}
+        """),
+        'while': cleandoc("""
+            while ($env:Z) {{
+            {0}
+            }}
+        """),
+        'do-while': cleandoc("""
+            do {{
+            {0}
+            }} while ($env:Z)
+        """),
+        'for': cleandoc("""
+            for ($i = 0; $i -lt 2; $i++) {{
+            {0}
+            }}
+        """),
+        'switch': cleandoc("""
+            switch (1..2) {{
+              default {{
+            {0}
+            }}
+            }}
+        """),
     }
 
     def test_a_leak_inside_the_loop_body_keeps_the_bareword_above_it(self):
@@ -1872,8 +2329,15 @@ class TestPs1ANestedBodyReadTakesThePositionOfWhatRunsIt(TestPs1):
                 Invoke-Expression $c
                 Write-Host done
             """,
-            '& {}\nInvoke-Expression $c\nWrite-Host done',
-            'Invoke-Expression $c\nWrite-Host done',
+            cleandoc("""
+                & {}
+                Invoke-Expression $c
+                Write-Host done
+            """),
+            cleandoc("""
+                Invoke-Expression $c
+                Write-Host done
+            """),
         )
 
     def test_the_same_read_below_the_leak_is_kept(self):
@@ -1914,7 +2378,10 @@ class TestPs1ANestedBodyReadTakesThePositionOfWhatRunsIt(TestPs1):
                 & { $Null = [Math]::Sqrt(144) }
                 Write-Host done
             """,
-            '& {}\nWrite-Host done',
+            cleandoc("""
+                & {}
+                Write-Host done
+            """),
             'Write-Host done',
         )
 

@@ -4,6 +4,7 @@ obfuscator fixture may be fed to this.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase, backlog
@@ -159,10 +160,12 @@ _A_READ_THE_WRITE_HAS_NOT_REACHED = {
             globalThis[k] = 0;
             console.log(t);
             """),
-        "var k = process.env.KEY || 's';\n"
-        "var t = 'c';\n"
-        "globalThis[k] = 0;\n"
-        "console.log(t);",
+        inspect.cleandoc("""
+            var k = process.env.KEY || 's';
+            var t = 'c';
+            globalThis[k] = 0;
+            console.log(t);
+        """),
     ),
     'a read inside the write key': (
         a_program("""
@@ -243,9 +246,11 @@ _A_CONSTRUCTION_INVOKED_UNDER_A_RUNTIME_KEY_WRITE = {
             var r = f();
             globalThis[k] = v;
             """),
-        "var k, v;\n"
-        "var r = 42;\n"
-        "globalThis[k] = v;",
+        inspect.cleandoc("""
+            var k, v;
+            var r = 42;
+            globalThis[k] = v;
+        """),
     ),
     'the write precedes the invocation': (
         a_program("""
@@ -254,10 +259,12 @@ _A_CONSTRUCTION_INVOKED_UNDER_A_RUNTIME_KEY_WRITE = {
             var f = Function("return 42;");
             var r = f();
             """),
-        "var k, v;\n"
-        "globalThis[k] = v;\n"
-        "var f = Function(\"return 42;\");\n"
-        "var r = f();",
+        inspect.cleandoc("""
+            var k, v;
+            globalThis[k] = v;
+            var f = Function("return 42;");
+            var r = f();
+        """),
     ),
 }
 """

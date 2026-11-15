@@ -7,6 +7,7 @@ answer that depends on it goes stale without renewal. A key is compared with nam
 from __future__ import annotations
 
 import ast
+import inspect
 import pathlib
 
 from test import TestBase
@@ -153,22 +154,22 @@ class TestEveryKeyIsReadThroughTheKeyReader(TestBase):
         self.assertEqual(_reads_around_the_key_reader(pathlib.Path(js_model.__file__)), [])
 
     def test_the_guard_finds_each_way_of_reading_a_key_around_the_key_reader(self):
-        source = '\n'.join([
-            'def a(member):',
-            '    return static_property_key(member) == "eval"',
-            'def b(member):',
-            '    return member.property.value',
-            'def c(member):',
-            '    prop = member.property',
-            '    return isinstance(prop, JsStringLiteral) and prop.value in NAMES',
-            'def d(member):',
-            '    return key_text(member) in REFLECTIVE_INTRINSICS',
-            'def e(member):',
-            '    key = key_text(member)',
-            '    return key == "constructor"',
-            'def f(member):',
-            '    return key_text(member) is None or key_is(member, NAMES, assumptions)',
-        ])
+        source = inspect.cleandoc("""
+            def a(member):
+                return static_property_key(member) == "eval"
+            def b(member):
+                return member.property.value
+            def c(member):
+                prop = member.property
+                return isinstance(prop, JsStringLiteral) and prop.value in NAMES
+            def d(member):
+                return key_text(member) in REFLECTIVE_INTRINSICS
+            def e(member):
+                key = key_text(member)
+                return key == "constructor"
+            def f(member):
+                return key_text(member) is None or key_is(member, NAMES, assumptions)
+        """)
         reads = _Reads('example.py')
         for node in ast.parse(source).body:
             reads.visit(node)

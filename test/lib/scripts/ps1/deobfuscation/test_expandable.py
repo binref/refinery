@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1ExpandableStringHoist
@@ -55,7 +57,10 @@ class TestPs1ExpandableExtra(TestPs1):
     def test_a_hoisted_subexpression_takes_its_redirection_with_it(self):
         self.assertEqual(
             self._apply('$m = "a$($z = Get-Date > C:\\o.txt)b"', Ps1ExpandableStringHoist),
-            "$z = Get-Date > C:\\o.txt\n$m = 'ab'")
+            inspect.cleandoc("""
+                $z = Get-Date > C:\\o.txt
+                $m = 'ab'
+            """))
 
 
 class TestPs1ASubexpressionOfThePipelineInputRunsBeforeTheCommand(TestPs1):
@@ -65,7 +70,11 @@ class TestPs1ASubexpressionOfThePipelineInputRunsBeforeTheCommand(TestPs1):
             '''"$( Set-Variable 'OFS' '' )" + 'Write-Host "$(1,2)"' + '''
             '''"$( Set-Variable 'OFS' ' ' )" | Invoke-Expression'''
         )
-        self._assertDeobfuscatesToOneOf(source, source, "$OFS = ''\n$OFS = ' '\nWrite-Host '1 2'")
+        self._assertDeobfuscatesToOneOf(source, source, inspect.cleandoc("""
+            $OFS = ''
+            $OFS = ' '
+            Write-Host '1 2'
+        """))
 
     def test_a_payload_reads_what_a_subexpression_after_its_text_assigns(self):
         source = '''\'Write-Host $x\' + "$( $x = 'b' )" | Invoke-Expression'''
@@ -76,7 +85,11 @@ class TestPs1ASubexpressionOfThePipelineInputRunsBeforeTheCommand(TestPs1):
         self._assertDeobfuscatesToOneOf(
             source,
             source,
-            "'a' | ForEach-Object {\n  Write-Host 'b'\n}",
+            inspect.cleandoc("""
+                'a' | ForEach-Object {
+                  Write-Host 'b'
+                }
+            """),
             "Write-Host 'b'",
         )
 
