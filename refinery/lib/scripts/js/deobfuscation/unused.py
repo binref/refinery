@@ -164,11 +164,26 @@ _IDENTITY_OBSERVING_UNARY = frozenset({'typeof', 'void', '!'})
 
 _IDENTITY_COMPARISONS = frozenset({'===', '!=='})
 
+_KEYS_HANDING_ON_THE_GLOBAL_OBJECT = GLOBAL_OBJECT_ALIASES | frozenset({
+    'hasOwnProperty',
+    'parent',
+    'propertyIsEnumerable',
+    'valueOf',
+    '__lookupGetter__',
+    '__lookupSetter__',
+})
+"""
+The keys under which a global object holds or answers a global object, under one of its own
+spellings, as the window of a frame, or as the value it converts to, and the methods every object
+inherits that look up a property under the key a call hands them.
+"""
+
 
 def _observes_no_global_property(node: Node) -> bool:
     """
     Whether the position *node* stands in cannot read a property of the global object it denotes:
-    the base of a member access whose key `access_key` states, a plain overwrite of the name, a
+    the base of a member access whose key `access_key` states, unless the key hands the object on
+    or looks into it (`_KEYS_HANDING_ON_THE_GLOBAL_OBJECT`), a plain overwrite of the name, a
     `typeof`/`void`/`!` operand, an operand of a strict comparison, the test of a branch or a loop,
     or an expression statement whose value nothing takes. Every other position — a call or `new`
     argument, a `for-in` subject, an initializer, a return value, a computed access with no static
@@ -178,7 +193,8 @@ def _observes_no_global_property(node: Node) -> bool:
     while isinstance(parent, JsParenthesizedExpression):
         parent = parent.parent
     if isinstance(parent, JsMemberExpression) and strip_parens(parent.object) is node:
-        return access_key(parent) is not None
+        key = access_key(parent)
+        return key is not None and key not in _KEYS_HANDING_ON_THE_GLOBAL_OBJECT
     if isinstance(parent, JsUnaryExpression):
         return (
             parent.operator in _IDENTITY_OBSERVING_UNARY
