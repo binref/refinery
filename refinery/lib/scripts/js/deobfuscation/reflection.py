@@ -416,7 +416,10 @@ def _parse_construction_function(ctor_call: Node, code: str) -> tuple[JsScript, 
     not parse as a plain function's body, its parameters — the construction's leading string
     arguments, spliced into the wrapper's parameter list — are not a plain comma-separated
     identifier list, or it declares strict mode, which changes what `arguments`, `this` and a
-    global assignment mean in ways the execution below does not model.
+    global assignment mean in ways the execution below does not model. The language ends the
+    parameters and the body each with a line feed, so a line comment in either ends there, and it
+    parses the two on their own, so a text that closes the wrapper and parses as more than the one
+    function is a `SyntaxError` at the construction, not a function.
 
     The wrapper is a function expression rather than a bare statement list so the fragment model
     built over it sees the function's own scope: the `arguments` binding the body reads lives there,
@@ -428,12 +431,12 @@ def _parse_construction_function(ctor_call: Node, code: str) -> tuple[JsScript, 
         return None
     parameters = ','.join(text for text in leading if text is not None)
     parsed = _try_parse(
-        F'(function ({parameters}) {{ {code} }})',
+        F'(function ({parameters}\n) {{\n{code}\n}})',
         strict=False,
         module=False,
         context=function_context(False, False),
     )
-    if parsed is None or not parsed.body:
+    if parsed is None or len(parsed.body) != 1:
         return None
     statement = parsed.body[0]
     if not isinstance(statement, JsExpressionStatement) or statement.expression is None:

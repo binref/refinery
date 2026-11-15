@@ -12,6 +12,7 @@ from test.lib.scripts.js.analysis.differential import (
     behavior,
     completion_values,
     deobfuscate_source,
+    host_behavior,
     node_executable,
 )
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
@@ -24,6 +25,7 @@ from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
+from refinery.units.scripting.djs import djs
 
 
 #: A string array whose entry `0xac` decodes to `return this`, followed by a `Function` global
@@ -3142,3 +3144,17 @@ class TestAPackTheBareNamesDoNotReproduce(TestJsDeobfuscator):
     def test_a_call_through_a_getter_returning_eval_stays_packed(self):
         source = 'Function("p", "console.log(p.e(\'typeof y\'));")({ get e() { return eval; } });'
         self.assertEqual(self._reflect(source), printed(source))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAConstructionWhoseTextClosesTheFunctionStillThrows(TestBase):
+
+    def test_either_model_prints_what_the_program_prints(self):
+        source = (
+            "try { console.log(Function('a', 'return a }); (function () {')(1)); }"
+            " catch (e) { console.log(e.name); }"
+        )
+        self.assertEqual(
+            {strict: host_behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)},
+            {strict: host_behavior(source) for strict in (False, True)},
+        )
