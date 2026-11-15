@@ -5,7 +5,7 @@ import inspect
 import threading
 import unittest
 
-from test import TestBase, fastest_processor_time, opportunity, processor_time_ratio, todo
+from test import TestBase, fastest_processor_time, lines_executed, opportunity, processor_time_ratio, todo
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -15,7 +15,9 @@ from test.lib.scripts.js.analysis.differential import (
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints, printed
 
+from refinery.lib import scripts as scripts_module
 from refinery.lib.scripts import tree_version
+from refinery.lib.scripts.js.analysis import model as model_module
 from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.unused import (
@@ -4012,11 +4014,18 @@ class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
         self.assertLess(ratio, 2 * len(large) / len(small))
 
     @todo
-    def test_vars_nothing_reads_beside_lexical_declarations_are_removed_in_time_that_grows_with_them(self):
-        def source(count: int) -> str:
-            return '\n'.join(F'var t{i} = {i}; let k{i} = {i}; console.log(k{i});' for i in range(count))
+    def test_vars_nothing_reads_beside_lexical_declarations_are_removed_in_work_that_grows_with_them(self):
+        def parsed(count: int):
+            return JsParser('\n'.join(F'var t{i} = {i}; let k{i} = {i}; console.log(k{i});' for i in range(count))).parse()
 
-        small, large = source(100), source(400)
-        ratio, output = self._cost_ratio(small, large)
-        self.assertEqual(output, '\n'.join(F'let k{i} = {i};\nconsole.log(k{i});' for i in range(400)))
-        self.assertLess(ratio, 2 * len(large) / len(small))
+        def work(count: int) -> int:
+            ast = parsed(count)
+            return lines_executed(lambda: JsUnusedCodeRemoval().visit(ast), model_module, scripts_module)
+
+        ast = parsed(80)
+        JsUnusedCodeRemoval().visit(ast)
+        self.assertEqual(
+            JsSynthesizer().convert(ast),
+            '\n'.join(F'let k{i} = {i};\nconsole.log(k{i});' for i in range(80)),
+        )
+        self.assertWorkGrowsLinearly(work, 20)

@@ -14,6 +14,7 @@ from refinery.lib.scripts.js.analysis.model import (
     ContainerRole,
     Role,
     ScopeKind,
+    SpelledCodeReadings,
     build_semantic_model,
     container_reference_role,
     is_simple_assignment_target,
@@ -2399,6 +2400,15 @@ def _texts_the_last_statement_runs(source: str) -> list[str] | None:
     return [JsSynthesizer().convert(fragment.model.root) for fragment in site.code.fragments]
 
 
+def _texts_eval_of_p_runs(source: str, file_kind: FileKind = FileKind.script) -> list[str] | None:
+    model = build_semantic_model(JsParser(source).parse(), file_kind=file_kind)
+    synthesizer = JsSynthesizer()
+    site = next(site for site in model.spelled_code_sites() if synthesizer.convert(site.call) == 'eval(p)')
+    if site.code is None:
+        return None
+    return [synthesizer.convert(fragment.model.root) for fragment in site.code.fragments]
+
+
 class TestTheSuspectingModelReadsNoTextOtherCodeMayReplace(TestBase):
 
     def test_a_text_code_in_a_string_may_replace_is_read_only_without_that_code(self):
@@ -2423,3 +2433,39 @@ class TestTheSuspectingModelReadsNoTextOtherCodeMayReplace(TestBase):
             ),
             (None, ["var next = '';\neval(next);"]),
         )
+
+    def test_a_text_held_where_the_eval_reading_it_runs_is_read(self):
+        self.assertEqual(
+            (
+                _texts_eval_of_p_runs("(function () { var p = 'console.log(1)'; eval(p); })();"),
+                _texts_eval_of_p_runs("{ let p = 'console.log(1)'; eval(p); }"),
+                _texts_eval_of_p_runs("var p = 'console.log(1)'; eval(p);", FileKind.commonjs),
+            ),
+            (['console.log(1);'], ['console.log(1);'], ['console.log(1);']),
+        )
+
+    def test_a_text_held_where_another_eval_replaces_it_is_not_read(self):
+        self.assertIsNone(_texts_eval_of_p_runs(
+            "(function () { var p = 'console.log(1)';"
+            " eval(process.argv.length > 99 ? '' : \"p = 'console.log(2)'\"); eval(p); })();"
+        ))
+
+
+class TestTheSuspectingModelReadsCodeInStringsInLinearWork(TestBase):
+
+    def test_over_calls_of_a_name_written_as_often(self):
+        def work(count: int) -> int:
+            lines = ['var f = function () { return 0; };']
+            lines.extend(F'f = function () {{ return {i}; }}; f();' for i in range(count))
+            model = build_semantic_model(JsParser('\n'.join(lines)).parse())
+            return lines_executed(model.spelled_code_sites, model_module)
+        self.assertWorkGrowsLinearly(work, 20)
+
+    def test_over_stages_each_declaring_the_name_it_reads(self):
+        def work(count: int) -> int:
+            source = '\n'.join(F"eval(\"var n{i} = 'k{i} = 1'; eval(n{i});\");" for i in range(count))
+            readings = SpelledCodeReadings()
+            build_semantic_model(JsParser(source).parse(), spelled_code_readings=readings).spelled_code_sites()
+            model = build_semantic_model(JsParser(source).parse(), spelled_code_readings=readings)
+            return lines_executed(model.spelled_code_sites, model_module)
+        self.assertWorkGrowsLinearly(work, 20)

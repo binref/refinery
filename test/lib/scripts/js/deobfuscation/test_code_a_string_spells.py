@@ -7,12 +7,25 @@ from __future__ import annotations
 import functools
 import unittest
 
-from test import TestBase, fastest_processor_time, processor_time_ratio
+from test import (
+    TestBase,
+    a_property_of_the_pin_itself,
+    fastest_processor_time,
+    lines_executed,
+    opportunity,
+    processor_time_ratio,
+    todo,
+)
 from test.lib.scripts.js.analysis.differential import behavior, host_behavior, node_executable
 from test.lib.scripts.js.deobfuscation.test_dispatcher import a_dispatcher
 from test.lib.scripts.js.ledger import STRING_TIMERS
 
+from refinery.lib.scripts.js import model as js_model_module
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
+from refinery.lib.scripts.js.deobfuscation import closedtext as closedtext_module
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
+from refinery.lib.scripts.js.deobfuscation.closedtext import closed_text
+from refinery.lib.scripts.js.model import JsCallExpression, JsExpressionStatement
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.units.scripting.djs import djs
 
@@ -1159,17 +1172,83 @@ class TestTheSuspectingModelReadsNoTextANameHoldsThatOtherCodeMayReplace(_NodeDe
             'a for-in head assigning each key to the name it declares': (
                 "let x = 5; var o = {'console.log(x)': 1}; for (var code = 'console.log(1)' in o) {} eval(code);"
             ),
+            'a loader filling the name a timer declares that a constructed body sets': (
+                "var k = 5; function load() { next = 'console.log(k)'; }"
+                " [1].forEach(new Function(\"setTimeout(\\\"var next = ''; load(); eval(next);\\\", 0)\"));"
+            ),
+            'a loader filling the name a timer declares that a function of a timer sets': (
+                "var k = 5; function load() { next = 'console.log(k)'; }"
+                " setTimeout(\"function g() { setTimeout(\\\"var next = ''; load(); eval(next);\\\", 0); } g();\", 0);"
+            ),
+            'a loader filling the name a timer declares that strict code in a string sets': (
+                "var k = 5; function load() { next = 'console.log(k)'; }"
+                " eval(\"'use strict'; setTimeout(\\\"var next = ''; load(); eval(next);\\\", 0)\");"
+            ),
+            'a loader filling the name a timer declares that code in a string sets beside a local of that name': (
+                "var k = 5; function load() { next = 'console.log(k)'; }"
+                " function f(next) { return eval(\"setTimeout(\\\"var next = ''; load(); eval(next);\\\", 0); next\"); }"
+                ' console.log(f(1));'
+            ),
+        }, models=_THE_SUSPECTING_MODEL)
+
+    @opportunity
+    def test_a_text_is_read_beside_code_in_a_string_no_call_runs(self):
+        self.assertEachModelPrints({
+            "var k = 5; var code = 'console.log(k)'; function never(x) { return eval(x); } eval(code);": (
+                'console.log(5);'
+            ),
+        }, models=_THE_SUSPECTING_MODEL)
+
+    @opportunity
+    def test_a_text_is_read_beside_a_string_timer_that_runs_after_it(self):
+        self.assertEachModelPrints({
+            "var k = 5; var code = 'console.log(k)'; function never(x) { setTimeout(x, 0); } eval(code);": (
+                'console.log(5);'
+            ),
+        }, models=_THE_SUSPECTING_MODEL)
+
+    def test_a_text_held_where_its_eval_runs_writes_what_it_spells(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'a local of a function writing a global': (
+                "var k = 5; function f() { var p = 'k = 7'; eval(p); return k; } console.log(f());"
+            ),
         }, models=_THE_SUSPECTING_MODEL)
 
     def test_a_text_nothing_else_writes_is_still_read(self):
         self.assertEachModelPrints({
+            "(function () { var p = 'console.log(1)'; eval(p); })(); console.log(String.fromCharCode(72, 105));": (
+                "(function() {\n  var p = 'console.log(1)';\n  eval(p);\n})();\nconsole.log('Hi');"
+            ),
+            (
+                "function f() { var k = 5; var code = 'k = 7'; eval(code); return k; }"
+                ' console.log(f(), String.fromCharCode(72, 105));'
+            ): (
+                "function f() {\n  var k = 5;\n  var code = 'k = 7';\n  eval(code);\n  return k;\n}\nconsole.log(f(), 'Hi');"
+            ),
             "var p = 'console.log(p.length)'; eval(p);": 'console.log(21);',
+            "const k = 5; const code = 'console.log(k)'; function never(x) { return eval(x); } eval(code);": (
+                'console.log(5);'
+            ),
             (
                 "let x = 5; var code = 'console.log(x)'; var other = 1;"
                 " eval(process.argv.length > 99 ? '' : 'other = 2'); eval(code);"
             ): "var other = 1;\neval(process.argv.length > 99 ? '' : 'other = 2');\nconsole.log(5);",
             "let x = 5; eval(\"var p = 'console.log(x)'; eval(p);\");": 'console.log(5);',
         }, models=_THE_SUSPECTING_MODEL)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestEitherModelRunsATextANameTheHostKeepsHoldsAsTheProgramDoes(_NodeDecides):
+
+    def test_a_text_held_by_a_name_a_window_keeps_runs_as_the_program_runs_it(self):
+        self.assertEachModelBehavesAsTheProgramDoes({
+            'the name of a window run by eval': "var key = 'secret'; var name = 'console.log(key)'; eval(name);",
+            'the status of a window run by eval': "var k = 5; var status = 'k = 7'; eval(status); console.log(k);",
+            'the name of a window run by a constructed body': (
+                "var key = 'secret'; var name = 'console.log(key)'; new Function(name)();"
+            ),
+            'the name of a window run by a timer': "let x = 5; var name = 'console.log(x)'; setTimeout(name, 0);",
+        })
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -1205,6 +1284,13 @@ class TestEitherModelReadsTheTextAFoldWouldWrite(_NodeDecides):
                 'var k = 5; eval(`k = ${3 + 4}`); console.log(k);'
             ),
         })
+
+    def test_a_text_the_fold_gate_refuses_leaves_the_folds_of_the_run_that_assumes_writes_followed(self):
+        self.assertEachModelPrints({
+            "atob = function () { return 'q = 2'; }; eval(atob('cSA9IDE=')); console.log([][(false + [])[0] + 'oo']);": (
+                "atob = function() {\n  return 'q = 2';\n};\neval(atob('cSA9IDE='));\nconsole.log(void 0);"
+            ),
+        }, models=(False,))
 
     def test_a_text_holding_a_number_the_engine_approximates_runs_as_the_program_runs_it(self):
         self.assertEachModelBehavesAsTheProgramDoes({
@@ -1257,6 +1343,7 @@ class TestTheTextsOfAProgramAreReadInTimeThatGrowsWithTheProgram(TestBase):
             return F"var c = process.argv.length > 99; {chain} var a{depth} = 'x = 1'; eval(a0);"
         _assert_the_deobfuscation_takes_time_that_grows_with_the_program(self, program(320), program(1280))
 
+    @a_property_of_the_pin_itself
     def test_the_texts_a_helper_is_handed_once_a_fold_spells_them(self):
         def program(count: int) -> str:
             calls = ''.join(F"out.push(run(['retu', 'rn {i}'].join('')));" for i in range(count))
@@ -1269,6 +1356,31 @@ class TestTheTextsOfAProgramAreReadInTimeThatGrowsWithTheProgram(TestBase):
             with self.subTest(_model(strict)):
                 self.assertLess(_fastest_deobfuscation(source, strict), 1.0)
                 self.assertIn("'x'.repeat(40000000)", _deobfuscated(source, strict))
+
+    @todo
+    def test_a_string_longer_than_any_the_engine_folds_is_not_built_from_shorter_ones(self):
+        sources = (
+            "eval(['/*', 'a', 'a', '*/ console.log(1)'].join('x'.repeat(999999)));",
+            "eval('/*' + 'aa'.replaceAll('a', 'x'.repeat(999999)) + '*/ console.log(1)');",
+            "eval('/*' + 'x'.repeat(999).replace('x', \"$'\".repeat(9999)) + '*/ console.log(1)');",
+        )
+        for source in sources:
+            for strict in _EITHER_MODEL:
+                with self.subTest(source=source, model=_model(strict)):
+                    self.assertLess(len(_deobfuscated(source, strict)), 2_000_000)
+
+    def test_a_concatenation_a_fold_would_spell_is_read_in_linear_work(self):
+        def work(count: int) -> int:
+            terms = ' + '.join(F"'a{i}'" for i in range(count))
+            statement = JsParser(F'eval(x + {terms});').parse().body[0]
+            assert isinstance(statement, JsExpressionStatement)
+            call = statement.expression
+            assert isinstance(call, JsCallExpression)
+            argument = call.arguments[0]
+            return lines_executed(
+                lambda: closed_text(argument, HostEnvironment.universal), closedtext_module, js_model_module
+            )
+        self.assertWorkGrowsLinearly(work, 20)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

@@ -3081,6 +3081,27 @@ class EffectModel:
             return False
         return all(self._argument_is_admissible(arg, trust) for arg in node.arguments)
 
+    def call_of_a_folded_text_is_foldable(self, node: JsCallExpression, receiver_type: type | None) -> bool:
+        """
+        `call_is_foldable` for one call of a code text a fold would write
+        (`refinery.lib.scripts.js.analysis.model.FoldedText`), which lists each of its calls with the
+        type of the receiver it was made on. A method is judged by the prototype of that type, as a
+        fold judges it once the receiver is the literal its value folds to; a free or static call by
+        the name it is spelled with. A receiver or an argument that is a call of the text is asked as
+        a call of its own, with its own receiver, and not again here.
+        """
+        if receiver_type is None:
+            if not self._callee_is_trusted(node, None):
+                return False
+        elif not self.trusted_prototype(receiver_type):
+            return False
+        if not self._call_stores_nothing(node):
+            return False
+        return all(
+            isinstance(strip_parens(argument), JsCallExpression) or self._argument_is_admissible(argument)
+            for argument in node.arguments
+        )
+
     def call_names_an_unwritten_builtin(
         self,
         node: JsCallExpression,
@@ -3814,9 +3835,10 @@ def refused_folded_texts(effects: EffectModel) -> frozenset[Node]:
     """
     Every code argument the semantic model of *effects* read as the text a fold would write there
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.folded_texts`) that rests on a call the
-    fold gate refuses (`EffectModel.call_is_foldable`), asked of the program that model reads.
+    fold gate refuses (`EffectModel.call_of_a_folded_text_is_foldable`), asked of the program that
+    model reads.
     """
     return frozenset(
         node for node, folded in effects.model.folded_texts().items()
-        if not all(effects.call_is_foldable(call, receiver_type=receiver) for call, receiver in folded.calls)
+        if not all(effects.call_of_a_folded_text_is_foldable(call, receiver) for call, receiver in folded.calls)
     )

@@ -562,6 +562,32 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         never = self._builds("var k = 5; setTimeout('k = ' + g(), 0);", trusting, closed_text)[0]
         self.assertGreater(completed, never)
 
+    def test_the_models_a_folded_text_is_checked_with_are_built_once_whichever_is_asked_first(self):
+        builders = ('build_intrinsic_writes', 'build_control_flow_model', 'build_dominance', 'build_effects')
+        reals = {name: getattr(cache_module, name) for name in builders}
+        built: dict[str, dict[str, int]] = {}
+
+        def counting(counts: dict[str, int], name: str):
+            def build(*args, **kwargs):
+                counts[name] += 1
+                return reals[name](*args, **kwargs)
+            return build
+
+        for first in ('effects', 'dominance', 'intrinsic_writes', 'control_flow'):
+            counts: dict[str, int] = dict.fromkeys(builders, 0)
+            for name in builders:
+                setattr(cache_module, name, counting(counts, name))
+            try:
+                script = JsParser("var k = 5; eval(atob('ayA9IDc=')); console.log(k);").parse()
+                cache = ModelCache(script, DeobfuscationOptions(trust_eval=True), text_folding=closed_text)
+                for slot in (first, 'effects', 'dominance', 'intrinsic_writes', 'control_flow'):
+                    getattr(cache, slot)
+            finally:
+                for name in builders:
+                    setattr(cache_module, name, reals[name])
+            built[first] = counts
+        self.assertEqual(built, {first: dict.fromkeys(builders, 1) for first in built})
+
     def test_a_code_text_read_as_the_text_a_fold_would_write_is_revealed_only_by_another_text(self):
         script = JsParser("var k = 5; eval(atob('ayA9IDc='));").parse()
         model = ModelCache(script, DeobfuscationOptions(trust_eval=True), text_folding=closed_text).model
@@ -586,6 +612,8 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
             "atob('InVzZSBzdHJpY3QiOyAx')",
             "atob('InVzZSBzdHJpY3Qi') + atob('OyAx')",
             'String.fromCharCode(34, 117, 115, 101, 32, 115, 116, 114, 105, 99, 116, 34, 59, 32, 48 + 1)',
+            "atob(('InVzZSBzdHJp' + 'Y3QiOyAx').trim())",
+            "atob(('InVzZSBzdHJp' + 'Y3QiOyAx').split('').join(''))",
         ):
             with self.subTest(argument):
                 self.assertEqual(

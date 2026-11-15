@@ -303,9 +303,9 @@ def registered_method(receiver: Value, method: str, environment: HostEnvironment
 
 def call_registered_method(builtin: RegisteredBuiltin, receiver: Value, arguments: list[Value]) -> Value:
     """
-    What a call of the method *builtin* (`registered_method`) of *receiver* answers: a method of every
-    array that answers an array answers one of the type of a `refinery.lib.scripts.js.values.JsBuffer`
-    it is called on.
+    What a call of the method *builtin* (`registered_method`) of *receiver* answers: a method of
+    every array that answers an array answers one of the type of a
+    `refinery.lib.scripts.js.values.JsBuffer` it is called on.
     """
     result = builtin.function(receiver, arguments)
     if isinstance(receiver, JsBuffer) and isinstance(result, list) and not isinstance(result, JsBuffer):
@@ -579,19 +579,31 @@ def _str_trim_end(s: str, args: list[Value]) -> Value:
 
 @_register((str, 'repeat'))
 def _str_repeat(s: str, args: list[Value]) -> Value:
+    """
+    The text `repeat` writes: a count below zero or an infinite one throws, as the language says;
+    no copies, and any number of copies of the empty text, are empty; and a text longer than any the
+    interpreter makes is refused before it is built, where an engine builds it or throws at a limit
+    of its own.
+    """
     count = _to_index(args[0]) if args else 0
-    if count < 0 or count > 0x10000000:
+    if count < 0 or count == _to_index(math.inf):
         _js_throw('RangeError', 'Invalid count value')
+    if count == 0 or not s:
+        return ''
     if len(s) * count > MAX_STRING_LEN:
         raise InterpreterError
     return s * count
 
 
 def _str_pad(s: str, args: list[Value], prepend: bool) -> Value:
+    """
+    The text `padStart` or `padEnd` writes: the text itself where it is no shorter than the length
+    asked for or the fill is empty, and a fill not handed is a space. A text longer than any the
+    interpreter makes is refused before it is built, where an engine builds it or throws at a
+    limit of its own.
+    """
     target_len = _to_index(args[0]) if args else 0
-    if target_len > 0x10000000:
-        _js_throw('RangeError', 'Invalid string length')
-    fill = to_string(args[1]) if len(args) > 1 else ' '
+    fill = ' ' if len(args) < 2 or args[1] is None else to_string(args[1])
     needed = target_len - len(s)
     if needed <= 0 or not fill:
         return s

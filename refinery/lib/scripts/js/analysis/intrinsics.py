@@ -667,6 +667,18 @@ class WriteSpeculation:
             return writes
         return writes._replace(followable=True)
 
+    def presented(self, writes: IntrinsicWrites) -> IntrinsicWrites:
+        """
+        The build *writes* of the scan as `observe` presents it, for a build the run may yet
+        discard: it is neither compared with the build before it nor kept to compare the next one
+        with, and it discharges nothing. A refuted assumption raises as it does for `observe`.
+        """
+        if self.state is SpeculationState.DISCHARGED:
+            return writes
+        if self.state is SpeculationState.REFUTED:
+            raise SpeculationRefuted
+        return writes._replace(followable=True)
+
 
 class UnfollowedWriteRefusals:
     """

@@ -202,6 +202,16 @@ class ModelCache(ModelCacheBase):
         return self._lazy('_model', self._confirmed_semantic_model)
 
     def _confirmed_semantic_model(self) -> SemanticModel:
+        """
+        The semantic model, built with the run's folding of code texts (`text_folding`) where the
+        options trust code in strings. Where the model reads a text a fold would write, the write
+        scan, dominance and effect models are built over it to ask the fold gate of every call the
+        text rests on (`refused_folded_texts`). A model with a refused text is built again without
+        it; the models of an accepted one are the cache's own. The scan of a build that may yet be
+        discarded is shown to the run's speculation without being recorded
+        (`refinery.lib.scripts.js.analysis.intrinsics.WriteSpeculation.presented`), and only the
+        scan of the accepted model is observed.
+        """
         unfolded: frozenset[Node] = frozenset()
         while True:
             model = build_semantic_model(
@@ -217,17 +227,17 @@ class ModelCache(ModelCacheBase):
             )
             if not model.folded_texts():
                 return model
-            writes = build_intrinsic_writes(model)
+            scanned = build_intrinsic_writes(model)
             speculation = self._speculation
-            if speculation is not None:
-                writes = speculation.observe(writes)
-            control_flow = build_control_flow_model(self.root)
+            writes = scanned if speculation is None else speculation.presented(scanned)
+            control_flow = self.control_flow
             dominance = build_dominance(model, control_flow, intrinsic_writes=writes)
             effects = build_effects(model, dominance, writes, self.settlement, self.refusals)
             refused = refused_folded_texts(effects)
             if not refused:
+                if speculation is not None:
+                    speculation.observe(scanned)
                 self._intrinsic_writes = writes
-                self._control_flow = control_flow
                 self._dominance = dominance
                 self._effects = effects
                 return model
@@ -238,6 +248,7 @@ class ModelCache(ModelCacheBase):
         return self._held_intrinsic_writes()
 
     def _held_intrinsic_writes(self) -> IntrinsicWrites:
+        self._semantic_model()
         return self._lazy('_intrinsic_writes', self._observed_intrinsic_writes)
 
     def _observed_intrinsic_writes(self) -> IntrinsicWrites:
@@ -247,6 +258,7 @@ class ModelCache(ModelCacheBase):
 
     @property
     def effects(self) -> EffectModel:
+        self._semantic_model()
         return self._lazy('_effects', lambda: build_effects(
             self.model,
             self.dominance,
@@ -276,6 +288,7 @@ class ModelCache(ModelCacheBase):
         """
         The `refinery.lib.scripts.js.analysis.dominance.DominanceModel` for this root.
         """
+        self._semantic_model()
         return self._lazy('_dominance', lambda: build_dominance(
             self.model,
             self.control_flow,

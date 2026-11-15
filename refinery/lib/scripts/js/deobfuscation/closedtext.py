@@ -5,7 +5,7 @@ alone, which the trusting model reads before a fold writes it there
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
@@ -35,7 +35,6 @@ from refinery.lib.scripts.js.model import (
     JsSpreadElement,
     JsTemplateLiteral,
     JsUnaryExpression,
-    static_string,
     strip_parens,
 )
 from refinery.lib.scripts.js.values import converts_uninterceptably, to_string
@@ -51,10 +50,13 @@ class _Open(Exception):
 class _ClosedText:
     """
     Evaluates an expression the way the folds of `refinery.lib.scripts.js.deobfuscation.simplify`
-    compute each of its parts: an operator through `binary_value` and `unary_value`, a member read
-    through `read_data_property`, and a built-in call through `folded_call` and
-    `folded_method_call`, over operands that are primitives, so that no conversion runs code a
-    program installed.
+    compute each of its parts: an operator through
+    `refinery.lib.scripts.js.deobfuscation.helpers.binary_value` and
+    `refinery.lib.scripts.js.deobfuscation.helpers.unary_value`, a member read through
+    `refinery.lib.scripts.js.deobfuscation.helpers.read_data_property`, and a built-in call through
+    `refinery.lib.scripts.js.deobfuscation.interpreter.folded_call` and
+    `refinery.lib.scripts.js.deobfuscation.interpreter.folded_method_call`, over operands that are
+    primitives, so that no conversion runs code a program installed.
     """
 
     def __init__(self, environment: HostEnvironment):
@@ -65,16 +67,10 @@ class _ClosedText:
         node = strip_parens(node)
         if node is None:
             raise _Open
-        text = static_string(node)
-        if text is not None:
-            return text
         if isinstance(node, JsArrayExpression):
             return [self.primitive(element) for element in node.elements]
         if isinstance(node, JsTemplateLiteral):
-            return self.bounded(''.join(
-                part if isinstance(part, str) else to_string(self.primitive(part))
-                for part in self.template_parts(node)
-            ))
+            return self.joined(self.template_parts(node))
         if isinstance(node, JsUnaryExpression):
             return self.decided(unary_value(
                 node.operator,
@@ -121,6 +117,17 @@ class _ClosedText:
             yield cooked
             if k < len(expressions):
                 yield expressions[k]
+
+    def joined(self, parts: Iterable[str | Node]) -> str:
+        texts: list[str] = []
+        size = 0
+        for part in parts:
+            text = part if isinstance(part, str) else to_string(self.primitive(part))
+            size += len(text)
+            if size > MAX_STRING_LEN:
+                raise _Open
+            texts.append(text)
+        return ''.join(texts)
 
     @staticmethod
     def bounded(value: Value) -> Value:

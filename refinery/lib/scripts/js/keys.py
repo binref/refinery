@@ -182,6 +182,9 @@ class _Unrecorded(KeyAssumptions):
     def assume(self, key: Node, names: frozenset[str] | None) -> None:
         pass
 
+    def read_as(self, node: Node, text: str) -> None:
+        pass
+
 
 SETTLED_TREE: KeyAssumptions = _Unrecorded()
 """
@@ -232,17 +235,17 @@ def key_named(owner: Keyed, assumptions: KeyAssumptions) -> str | None:
 def spelled_text(
     node: Node | None,
     assumptions: KeyAssumptions,
-    folded: Callable[[Node], str | None] | None = None,
+    folded: Callable[[Node], str | None],
 ) -> str | None:
     """
-    The string *node* certainly evaluates to, for a reader of the code a call runs from a string,
-    which reads an expression without one as code it cannot read: *assumptions* records that it was
-    read so, for any text. A reader given *folded* reads such an expression as the text it answers,
-    the one a fold would write in its place, and *assumptions* records that text.
+    The string *node* certainly evaluates to, for a reader of the code a call runs from a string.
+    An expression without one is read as the text *folded* answers for it, the one a fold would
+    write in its place, and *assumptions* records that text; where *folded* answers none, it is read
+    as code the reader cannot read, and *assumptions* records that it was read so, for any text.
     """
     text = static_string(node)
     if text is None and node is not None:
-        if folded is not None and (text := folded(node)) is not None:
+        if (text := folded(node)) is not None:
             assumptions.read_as(node, text)
         else:
             assumptions.assume(node, None)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import tracemalloc
 import unittest
 
 from typing import NamedTuple
@@ -18,6 +19,7 @@ from test.lib.scripts.js.ledger import before_and_after, each_program_still_prin
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
+from refinery.lib.scripts.js.deobfuscation.interpreter import folded_method_call, registered_method
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.units.scripting.djs import djs
 
@@ -1728,6 +1730,28 @@ def _deobfuscated_by_either_model(source: str) -> dict[bool, str]:
     return {strict: source.encode('utf8') | djs(strict=strict) | str for strict in (False, True)}
 
 
+class TestABuiltInRefusesAStringLongerThanAnyTheEngineFoldsBeforeBuildingIt(TestJsDeobfuscator):
+
+    def test_repeat_and_either_pad(self):
+        rows = {
+            'repeat': ('x', 'repeat', [40000000.0]),
+            'padStart': ('x', 'padStart', [40000000.0]),
+            'padEnd': ('x', 'padEnd', [40000000.0, 'ab']),
+        }
+        answers = {}
+        for label, (receiver, method, arguments) in rows.items():
+            builtin = registered_method(receiver, method, HostEnvironment.universal)
+            assert builtin is not None
+            tracemalloc.start()
+            try:
+                known, _ = folded_method_call(builtin, receiver, arguments)
+                _, peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+            answers[label] = (known, peak < 10_000_000)
+        self.assertEqual(answers, {label: (False, True) for label in rows})
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestABuiltInIsFoldedToWhatTheEngineAnswers(TestJsDeobfuscator):
 
@@ -1735,6 +1759,34 @@ class TestABuiltInIsFoldedToWhatTheEngineAnswers(TestJsDeobfuscator):
         rows = (
             "console.log('abc'.replace('a'));",
             "console.log('abc'.replaceAll('a'));",
+        )
+        self.assertEqual(
+            {
+                source: {strict: behavior(output) for strict, output in _deobfuscated_by_either_model(source).items()}
+                for source in rows
+            },
+            {source: {strict: behavior(source) for strict in (False, True)} for source in rows},
+        )
+
+    def test_a_string_the_engine_answers_without_a_range_error_is_not_folded_to_one(self):
+        rows = (
+            "function f() { try { return ''.repeat(2 ** 40) + 'ok'; } catch (e) { return e.name; } } console.log(f());",
+            "function f() { try { return 'abc'.padStart(1e9, ''); } catch (e) { return e.name; } } console.log(f());",
+            "function f() { try { return 'abc'.padEnd(Infinity, ''); } catch (e) { return e.name; } } console.log(f());",
+            "function f() { try { return ''.repeat(Infinity) + 'ok'; } catch (e) { return e.name; } } console.log(f());",
+        )
+        self.assertEqual(
+            {
+                source: {strict: behavior(output) for strict, output in _deobfuscated_by_either_model(source).items()}
+                for source in rows
+            },
+            {source: {strict: behavior(source) for strict in (False, True)} for source in rows},
+        )
+
+    def test_a_fill_not_handed_is_a_space(self):
+        rows = (
+            "console.log('abc'.padStart(6, void 0));",
+            "console.log('abc'.padEnd(6, void 0));",
         )
         self.assertEqual(
             {

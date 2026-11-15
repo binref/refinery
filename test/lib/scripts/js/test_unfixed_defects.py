@@ -24,7 +24,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase, backlog, opportunity, todo
+from test import TestBase, backlog, blocker, opportunity, todo
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -83,6 +83,7 @@ from test.lib.scripts.js.ledger import (
     folded,
     on_separate_lines,
     one_expected_failure_per_program,
+    one_expected_failure_per_script,
     printed,
     prints,
     STRING_TIMERS,
@@ -1401,38 +1402,69 @@ class TestANameAGlobalWriteUnderARuntimeKeyReplacesIsNotReadAsItsDeclaration(Tes
     pass
 
 
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestTheDefaultModelReadsEachTextANameMayHold(TestBase):
+A_TEXT_WRITTEN_INTO_A_NAME_BESIDE_ITS_DECLARED_TEXT = {
+    'a stage storing the next stage in a name the file declares empty': (
+        "var k = 5; var next = ''; eval(atob('bmV4dCA9ICJjb25zb2xlLmxvZyhrKSI=')); eval(next);"
+    ),
+    'a loader the stage calls storing the next stage in a name the stage declares': (
+        "var k = 5; function load() { next = 'console.log(k)'; } eval(\"var next = ''; load(); eval(next);\");"
+    ),
+    'a store through the global object': (
+        "let x = 5; var code = 'console.log(1)'; globalThis.code = 'console.log(x)'; eval(code);"
+    ),
+    'code in a string storing into the name': (
+        "let x = 5; var code = 'console.log(1)';"
+        " eval(process.argv.length > 99 ? '' : \"code = 'console.log(x)'\"); eval(code);"
+    ),
+    'a store on the global object under a key only the run knows': (
+        "let x = 5; var code = 'console.log(1)'; var k = process.argv.length > 99 ? 'zzz' : 'code';"
+        " globalThis[k] = 'console.log(x)'; eval(code);"
+    ),
+    'a store on the this of the script under a key only the run knows': (
+        "let x = 5; var code = 'console.log(1)'; var k = process.argv.length > 99 ? 'zzz' : 'code';"
+        " this[k] = 'console.log(x)'; eval(code);"
+    ),
+}
 
-    @todo
-    def test_a_text_written_into_a_name_beside_its_declared_text_is_read(self):
-        rows = {
-            'a stage storing the next stage in a name the file declares empty': (
-                "var k = 5; var next = ''; eval(atob('bmV4dCA9ICJjb25zb2xlLmxvZyhrKSI=')); eval(next);"
-            ),
-            'a loader the stage calls storing the next stage in a name the stage declares': (
-                "var k = 5; function load() { next = 'console.log(k)'; } eval(\"var next = ''; load(); eval(next);\");"
-            ),
-            'a store through the global object': (
-                "let x = 5; var code = 'console.log(1)'; globalThis.code = 'console.log(x)'; eval(code);"
-            ),
-            'code in a string storing into the name': (
-                "let x = 5; var code = 'console.log(1)';"
-                " eval(process.argv.length > 99 ? '' : \"code = 'console.log(x)'\"); eval(code);"
-            ),
-            'a store on the global object under a key only the run knows': (
-                "let x = 5; var code = 'console.log(1)'; var k = process.argv.length > 99 ? 'zzz' : 'code';"
-                " globalThis[k] = 'console.log(x)'; eval(code);"
-            ),
-            'a store on the this of the script under a key only the run knows': (
-                "let x = 5; var code = 'console.log(1)'; var k = process.argv.length > 99 ? 'zzz' : 'code';"
-                " this[k] = 'console.log(x)'; eval(code);"
-            ),
-        }
-        self.assertEqual(
-            {label: host_behavior(source.encode('utf8') | djs() | str) for label, source in rows.items()},
-            {label: host_behavior(source) for label, source in rows.items()},
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_script(A_TEXT_WRITTEN_INTO_A_NAME_BESIDE_ITS_DECLARED_TEXT, todo, (False,))
+class TestTheDefaultModelReadsEachTextANameMayHold(TestBase):
+    pass
+
+
+A_TEXT_READ_AS_OPAQUE_WRITING_A_GLOBAL = {
+    'a held text beside an unreadable eval replacing a function': (
+        "eval(process.argv[5] || ''); var t = 'g = function () { return 9; }'; function g() { return 7; }"
+        ' eval(t); console.log(g());'
+    ),
+    'a held text code in a string replaces run in a function writing a global': (
+        "var k = 5; var code = 'k = 7'; eval(process.argv.length > 99 ? '' : \"code = 'k = 8'\");"
+        ' function f() { eval(code); return k; } console.log(f());'
+    ),
+    'a body an alias of Function builds replacing a function': (
+        'var F = Function; function g() { return 7; }'
+        " new F(process.argv.length > 99 ? '' : 'g = function () { return 9; }')(); console.log(g());"
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_script(A_TEXT_READ_AS_OPAQUE_WRITING_A_GLOBAL, blocker, (True,))
+class TestTheSuspectingModelKeepsWhatAGlobalHoldsWhereCodeItReadsAsOpaqueMayWriteIt(TestBase):
+    pass
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheSuspectingModelReadsANameOneCallDeclaresAsWrittenByAnotherTextOfThatCall(TestBase):
+
+    @backlog
+    def test_a_loop_running_a_loader_and_then_the_stage_it_fills(self):
+        source = (
+            "var k = 5; for (var i = 0; i < 2; i++)"
+            " eval(i ? \"var next = ''; load(); eval(next);\" : \"load = function () { next = 'console.log(k)'; };\");"
         )
+        self.assertEqual(host_behavior(source.encode('utf8') | djs(strict=True) | str), host_behavior(source))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -2795,73 +2827,109 @@ class TestCodeRunThroughEvalOrFunctionReplacedOnTheGlobalObjectIsNotUnpacked(Tes
         )
 
 
+CODE_DECODED_WITH_A_BUILT_IN_REPLACED_ON_THE_GLOBAL_OBJECT = {
+    'the this of a function called plainly': (
+        "function g() { this.atob = function () { return 'console.log(2)'; }; } g();"
+        " eval(atob('Y29uc29sZS5sb2coMSk='));"
+    ),
+    'the this of a function called plainly decoding in a function called twice': (
+        "function g() { this.atob = function () { return 'console.log(2)'; }; } g();"
+        " function f() { return eval(atob('Y29uc29sZS5sb2coMSk=')); } f(); f();"
+    ),
+    'an assign onto the global object': (
+        "Object.assign(globalThis, {atob: function () { return 'console.log(2)'; }});"
+        " eval(atob('Y29uc29sZS5sb2coMSk='));"
+    ),
+    'an assign onto the global object decoding in a function called twice': (
+        "Object.assign(globalThis, { atob: function () { return 'console.log(2)'; } });"
+        " function f() { return eval(atob('Y29uc29sZS5sb2coMSk=')); } f(); f();"
+    ),
+    'a parameter holding the global object': (
+        "function patch(o) { o.atob = function () { return 'console.log(2)'; }; } patch(globalThis);"
+        " eval(atob('Y29uc29sZS5sb2coMSk='));"
+    ),
+    'a parameter holding the global object decoding in a function called twice': (
+        "function patch(o) { o.atob = function () { return 'console.log(2)'; }; } patch(globalThis);"
+        " function f() { return eval(atob('Y29uc29sZS5sb2coMSk=')); } f(); f();"
+    ),
+    'an element of an array': (
+        "[globalThis][0].atob = function () { return 'console.log(2)'; }; eval(atob('Y29uc29sZS5sb2coMSk='));"
+    ),
+    'the this an immediately called function returns': (
+        "(function () { return this; })().atob = function () { return 'console.log(2)'; };"
+        " eval(atob('Y29uc29sZS5sb2coMSk='));"
+    ),
+}
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_script(CODE_DECODED_WITH_A_BUILT_IN_REPLACED_ON_THE_GLOBAL_OBJECT, backlog, (False, True))
 class TestCodeDecodedWithABuiltInReplacedOnTheGlobalObjectIsNotUnpacked(TestBase):
+    pass
+
+
+A_DECODED_TEXT_REPLACING_ITS_DECODER = {
+    'a text declaring the decoder in the function that decodes': (
+        "function f() { eval(atob('dmFyIGF0b2IgPSBmdW5jdGlvbiAoKSB7IHJldHVybiAiY29uc29sZS5sb2coMikiOyB9Ow=='));"
+        " eval(atob('Y29uc29sZS5sb2coMSk=')); } f();"
+    ),
+    'a text replacing the decoder that decoded it decoded twice': (
+        'function f() { return eval(atob('
+        "'YXRvYiA9IGZ1bmN0aW9uICgpIHsgcmV0dXJuICJjb25zb2xlLmxvZygyKSI7IH07IGNvbnNvbGUubG9nKDEpOw=='"
+        ')); } f(); f();'
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_script(A_DECODED_TEXT_REPLACING_ITS_DECODER, backlog, (False,))
+class TestTheDefaultModelReadsNoTextDecodedAfterTheTextThatReplacesItsDecoder(TestBase):
+    pass
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABufferMethodIsFoldedAsTheMethodOfABuffer(TestBase):
 
     @backlog
-    def test_under_either_model(self):
-        rows = {
-            'the this of a function called plainly': (
-                "function g() { this.atob = function () { return 'console.log(2)'; }; } g();"
-                " eval(atob('Y29uc29sZS5sb2coMSk='));"
-            ),
-            'the this of a function called plainly, decoding in a function called twice': (
-                "function g() { this.atob = function () { return 'console.log(2)'; }; } g();"
-                " function f() { return eval(atob('Y29uc29sZS5sb2coMSk=')); } f(); f();"
-            ),
-            'Object.assign': (
-                "Object.assign(globalThis, {atob: function () { return 'console.log(2)'; }});"
-                " eval(atob('Y29uc29sZS5sb2coMSk='));"
-            ),
-            'Object.assign, decoding in a function called twice': (
-                "Object.assign(globalThis, { atob: function () { return 'console.log(2)'; } });"
-                " function f() { return eval(atob('Y29uc29sZS5sb2coMSk=')); } f(); f();"
-            ),
-            'a parameter holding the global object': (
-                "function patch(o) { o.atob = function () { return 'console.log(2)'; }; } patch(globalThis);"
-                " eval(atob('Y29uc29sZS5sb2coMSk='));"
-            ),
-            'a parameter holding the global object, decoding in a function called twice': (
-                "function patch(o) { o.atob = function () { return 'console.log(2)'; }; } patch(globalThis);"
-                " function f() { return eval(atob('Y29uc29sZS5sb2coMSk=')); } f(); f();"
-            ),
-            'an element of an array': (
-                "[globalThis][0].atob = function () { return 'console.log(2)'; }; eval(atob('Y29uc29sZS5sb2coMSk='));"
-            ),
-            'the this an immediately called function returns': (
-                "(function () { return this; })().atob = function () { return 'console.log(2)'; };"
-                " eval(atob('Y29uc29sZS5sb2coMSk='));"
-            ),
-        }
+    def test_a_search_for_a_text(self):
+        source = "function f() { return Buffer.from('abc').indexOf('b'); } console.log(f());"
         self.assertEqual(
-            {
-                (label, strict): host_behavior(source.encode('utf8') | djs(strict=strict) | str)
-                for label, source in rows.items()
-                for strict in (False, True)
-            },
-            {(label, strict): host_behavior(source) for label, source in rows.items() for strict in (False, True)},
+            {strict: behavior(source.encode('utf8') | djs(strict=strict, environment='node') | str) for strict in (False, True)},
+            {strict: behavior(source) for strict in (False, True)},
+        )
+
+    @backlog
+    def test_a_method_only_an_array_has(self):
+        source = (
+            "var k = 5; try { eval(Buffer.from('k = 7').concat().toString()); } catch (e) { console.log(e.name); }"
+            ' console.log(k);'
+        )
+        self.assertEqual(
+            {strict: behavior(source.encode('utf8') | djs(strict=strict, environment='node') | str) for strict in (False, True)},
+            {strict: behavior(source) for strict in (False, True)},
         )
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestTheDefaultModelReadsNoTextDecodedAfterTheTextThatReplacesItsDecoder(TestBase):
+class TestANumberTheEngineApproximatesIsNotFoldedToOneItDoesNotCompute(TestBase):
 
     @backlog
-    def test_a_decoded_text_replacing_its_decoder_changes_what_the_decoder_writes_after_it(self):
-        rows = {
-            'a text declaring the decoder in the function that decodes': (
-                "function f() { eval(atob('dmFyIGF0b2IgPSBmdW5jdGlvbiAoKSB7IHJldHVybiAiY29uc29sZS5sb2coMikiOyB9Ow=='));"
-                " eval(atob('Y29uc29sZS5sb2coMSk=')); } f();"
-            ),
-            'a text replacing the decoder that decoded it, decoded twice': (
-                'function f() { return eval(atob('
-                "'YXRvYiA9IGZ1bmN0aW9uICgpIHsgcmV0dXJuICJjb25zb2xlLmxvZygyKSI7IH07IGNvbnNvbGUubG9nKDEpOw=='"
-                ')); } f(); f();'
-            ),
-        }
+    def test_a_logarithm(self):
+        source = 'var k = Math.log(3); var three = process.argv.length * 0 + 3; console.log(k === Math.log(three));'
         self.assertEqual(
-            {label: host_behavior(source.encode('utf8') | djs() | str) for label, source in rows.items()},
-            {label: host_behavior(source) for label, source in rows.items()},
+            {strict: behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)},
+            {strict: behavior(source) for strict in (False, True)},
+        )
+
+    @backlog
+    def test_an_integer_of_two_to_the_53_or_more_parsed_in_a_radix_no_power_of_two(self):
+        source = (
+            "var k = parseInt('gf4i0vtvqr1', 33); var radix = process.argv.length * 0 + 33;"
+            " console.log(k === parseInt('gf4i0vtvqr1', radix));"
+        )
+        self.assertEqual(
+            {strict: behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)},
+            {strict: behavior(source) for strict in (False, True)},
         )
 
 
