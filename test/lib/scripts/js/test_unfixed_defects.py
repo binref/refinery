@@ -43,11 +43,14 @@ from test.lib.scripts.js.deobfuscation.test_a_table_read_through_an_accessor imp
 )
 from test.lib.scripts.js.deobfuscation.test_b91strings import (
     DEFAULTED_HEAD,
+    GLOBAL_BUFFER,
     HEAD,
     OTHER_TABLE,
     SLICED,
     SWAPPED,
     TABLE,
+    TEXT,
+    TEXT_DECODER,
     accessor,
     decoder,
     decoder_body,
@@ -3913,87 +3916,90 @@ class TestAFunctionNothingCallsIsRemovedWhateverShadowsItsName(TestBase):
 
 
 A_CONCEALED_STRING_THE_PROGRAM_CHANGES = {
-    (
-        F'var cache = {{}};\nvar table = {TABLE};\n'
-        + decoder('decode') + '\n'
-        + accessor('acc', 'cache', 'decode') + '\n'
-        + 'var early;\n'
-        + 'try { early = acc(10); } catch (e) { early = e.constructor.name; }\n'
-        + 'var bufferToString = function (b) { return Buffer.from(b).toString("utf-8"); };\n'
-        + 'console.log(early, acc(11));\n'
-    ):
+    a_program(F"""
+        var cache = {{}};
+        var table = {TABLE};
+        {decoder('decode')}
+        {accessor('acc', 'cache', 'decode')}
+        var early;
+        try {{ early = acc(10); }} catch (e) {{ early = e.constructor.name; }}
+        var bufferToString = function (b) {{ return Buffer.from(b).toString("utf-8"); }};
+        console.log(early, acc(11));
+    """):
         'TypeError Fizz\n',
-    (
-        F'var cache = {{}};\nvar table = {TABLE};\nfunction bufferToString(b) {{ return b.join(","); }}\n'
-        + decoder('decode') + '\n'
-        + accessor('acc', 'cache', 'decode') + '\n'
-        + 'console.log(acc(10));\n'
-    ):
+    a_program(F"""
+        var cache = {{}};
+        var table = {TABLE};
+        function bufferToString(b) {{ return b.join(","); }}
+        {decoder('decode')}
+        {accessor('acc', 'cache', 'decode')}
+        console.log(acc(10));
+    """):
         '112,117,115,104\n',
-    (
-        HEAD
-        + F'var other = {OTHER_TABLE};\n'
-        + decoder('decode') + '\n'
-        + accessor('acc', 'cache', 'decode') + '\n'
-        + accessor('acc2', 'cache', 'decode', 'other') + '\n'
-        + 'console.log(acc2(10), acc(10));\n'
-    ):
+    HEAD + a_program(F"""
+        var other = {OTHER_TABLE};
+        {decoder('decode')}
+        {accessor('acc', 'cache', 'decode')}
+        {accessor('acc2', 'cache', 'decode', 'other')}
+        console.log(acc2(10), acc(10));
+    """):
         'Fizz Fizz\n',
-    (
-        'Object.prototype[10] = "polluted";\n'
-        + HEAD
-        + decoder('decode') + '\n'
-        + accessor('acc', 'cache', 'decode') + '\n'
-        + 'console.log(acc(10), acc(11));\n'
-    ):
+    a_program(F"""
+        Object.prototype[10] = "polluted";
+        var cache = {{}};
+        var table = {TABLE};
+        {TEXT_DECODER}
+        {decoder('decode')}
+        {accessor('acc', 'cache', 'decode')}
+        console.log(acc(10), acc(11));
+    """):
         'polluted Fizz\n',
-    (
-        SLICED
-        + 'var o = { bufferToString: function (b) { return "bytes:" + b.length; } };\n'
-        + F'with (o) {{ var S_decode = function (str) {{ {decoder_body()} }}; }}\n'
-        + slicing('S', 'S_decode') + '\n'
-        + 'console.log(S(2, 5), S(16, 4));\n'
-    ):
+    SLICED + a_program(F"""
+        var o = {{ bufferToString: function (b) {{ return "bytes:" + b.length; }} }};
+        with (o) {{ var S_decode = function (str) {{ {decoder_body()} }}; }}
+        {slicing('S', 'S_decode')}
+        console.log(S(2, 5), S(16, 4));
+    """):
         'bytes:4 bytes:3\n',
-    (
-        'String.prototype.slice = function (a, b) { return "#ZlH"; };\n'
-        + SLICED
-        + decoder('S_decode') + '\n'
-        + slicing('S', 'S_decode') + '\n'
-        + 'console.log(S(2, 5));\n'
-    ):
+    a_program(F"""
+        String.prototype.slice = function (a, b) {{ return "#ZlH"; }};
+        var strs = "{TEXT}";
+        {GLOBAL_BUFFER}
+        {decoder('S_decode')}
+        {slicing('S', 'S_decode')}
+        console.log(S(2, 5));
+    """):
         'log\n',
-    (
-        DEFAULTED_HEAD
-        + defaulted('acc', 'dec', order='w') + '\n'
-        + 'function inner() {\n'
-        + '  ' + defaulted('acc2', 'dec2', order='w') + '\n'
-        + '  return acc2(10);\n'
-        + '  ' + decoder('dec2', SWAPPED) + '\n'
-        + '}\n'
-        + 'console.log(acc(10), inner());\n'
-        + decoder('dec') + '\n'
-    ):
+    DEFAULTED_HEAD + a_program(F"""
+        {defaulted('acc', 'dec', order='w')}
+        function inner() {{
+          {defaulted('acc2', 'dec2', order='w')}
+          return acc2(10);
+          {decoder('dec2', SWAPPED)}
+        }}
+        console.log(acc(10), inner());
+        {decoder('dec')}
+    """):
         'push push\n',
-    (
-        'Array.prototype[10] = "planted";\n'
-        + DEFAULTED_HEAD
-        + defaulted('acc', 'dec', order='w') + '\n'
-        + 'console.log(acc(10), acc(11));\n'
-        + decoder('dec') + '\n'
-    ):
+    a_program(F"""
+        Array.prototype[10] = "planted";
+        var cache = [], table = {TABLE};
+        {GLOBAL_BUFFER}
+        {defaulted('acc', 'dec', order='w')}
+        console.log(acc(10), acc(11));
+        {decoder('dec')}
+    """):
         'planted Fizz\n',
     **{
-        (
-            DEFAULTED_HEAD
-            + defaulted('acc', 'dec', order='w0') + '\n'
-            + 'var original = Function.prototype.call;\n'
-            + F'{call} = function (receiver, index) {{ return "called" + index; }};\n'
-            + 'var r = acc.call(undefined, 10);\n'
-            + F'{call} = original;\n'
-            + 'console.log(r, acc(11));\n'
-            + decoder('dec') + '\n'
-        ):
+        DEFAULTED_HEAD + a_program(F"""
+            {defaulted('acc', 'dec', order='w0')}
+            var original = Function.prototype.call;
+            {call} = function (receiver, index) {{ return "called" + index; }};
+            var r = acc.call(undefined, 10);
+            {call} = original;
+            console.log(r, acc(11));
+            {decoder('dec')}
+        """):
             'called10 Fizz\n'
         for call in (
             '(function () {}).constructor.prototype.call',
@@ -4021,13 +4027,12 @@ class TestAConcealedStringIsDecodedAsTheProgramChangesIt(TestBase):
 
 
 AN_ACCESSOR_NAMED_BY_CODE_EVALUATED_AT_RUNTIME = {
-    (
-        HEAD
-        + decoder('decode') + '\n'
-        + accessor('acc', 'cache', 'decode') + '\n'
-        + 'console.log(acc(10));\n'
-        + 'console.log((0, eval)("typeof acc"));\n'
-    ):
+    HEAD + a_program(F"""
+        {decoder('decode')}
+        {accessor('acc', 'cache', 'decode')}
+        console.log(acc(10));
+        console.log((0, eval)("typeof acc"));
+    """):
         'push\nfunction\n',
 }
 
