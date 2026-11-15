@@ -11,7 +11,7 @@ from refinery.units import RefineryPartialResult, Unit
 
 class msgpack(Unit):
     """
-    Converts a message-pack (msgpack) buffer to JSON and vice-versa.
+    Converts a MessagePack buffer to JSON and vice-versa.
     """
     def reverse(self, data):
         try:

@@ -9,7 +9,7 @@ from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 class dnsfx(PathExtractorUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
-    Extracts files from .NET single file applications.
+    Extracts files from .NET (dotnet) single-file bundle applications.
     """
     _SIGNATURE = bytes([
         # 32 bytes represent the bundle signature: SHA-256 for '.net core bundle'
