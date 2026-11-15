@@ -432,6 +432,31 @@ def one_expected_failure_per_program(
     return install
 
 
+def one_expected_failure_per_script(
+    rows: Mapping[str, str],
+    marker: Callable[[Callable[..., Any]], Callable[..., Any]],
+    models: tuple[bool, ...],
+) -> Callable[[type], type]:
+    """
+    A class decorator installing one test for each classic script of *rows*, named after its label
+    and marked with *marker*, which asserts that its deobfuscation under each of *models*, the
+    suspecting model where `True`, behaves as the script does where a host runs it.
+    """
+    def install(entry: type) -> type:
+        for label, source in rows.items():
+            def test(self, source=source):
+                self.assertEqual(
+                    {strict: host_behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in models},
+                    {strict: host_behavior(source) for strict in models},
+                )
+            test.__name__ = F"test_{label.replace(' ', '_').replace('-', '_')}"
+            if hasattr(entry, test.__name__):
+                raise AssertionError(F'{entry.__name__} already holds {test.__name__}')
+            setattr(entry, test.__name__, marker(test))
+        return entry
+    return install
+
+
 _Entry = TypeVar('_Entry', bound=Callable[..., Any])
 
 
