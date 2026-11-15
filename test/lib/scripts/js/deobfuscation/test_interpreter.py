@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import tracemalloc
 import unittest
 
 from typing import NamedTuple
@@ -18,6 +19,7 @@ from test.lib.scripts.js.ledger import before_and_after, each_program_still_prin
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
+from refinery.lib.scripts.js.deobfuscation.interpreter import InterpreterError, registered_builtin
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.units.scripting.djs import djs
 
@@ -1721,4 +1723,93 @@ class TestAReplacementFunctionIsCalledRatherThanConverted(TestJsDeobfuscator):
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
+        )
+
+
+def _deobfuscated_by_either_model(source: str) -> dict[bool, str]:
+    return {strict: source.encode('utf8') | djs(strict=strict) | str for strict in (False, True)}
+
+
+class TestABuiltInRefusesAStringLongerThanAnyTheEngineFoldsBeforeBuildingIt(TestJsDeobfuscator):
+
+    def test_repeat_and_either_pad(self):
+        rows = {
+            'repeat': ('x', 'repeat', [40000000.0]),
+            'padStart': ('x', 'padStart', [40000000.0]),
+            'padEnd': ('x', 'padEnd', [40000000.0, 'ab']),
+        }
+        answers = {}
+        for label, (receiver, method, arguments) in rows.items():
+            builtin = registered_builtin((str, method), HostEnvironment.universal)
+            assert builtin is not None
+            tracemalloc.start()
+            try:
+                try:
+                    builtin.function(receiver, arguments)
+                except InterpreterError:
+                    refused = True
+                else:
+                    refused = False
+                _, peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+            answers[label] = (refused, peak < 10_000_000)
+        self.assertEqual(answers, {label: (True, True) for label in rows})
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABuiltInIsFoldedToWhatTheEngineAnswers(TestJsDeobfuscator):
+
+    def test_a_replacement_not_handed_is_the_word_undefined(self):
+        rows = (
+            "console.log('abc'.replace('a'));",
+            "console.log('abc'.replaceAll('a'));",
+        )
+        self.assertEqual(
+            {
+                source: {strict: behavior(output) for strict, output in _deobfuscated_by_either_model(source).items()}
+                for source in rows
+            },
+            {source: {strict: behavior(source) for strict in (False, True)} for source in rows},
+        )
+
+    def test_a_string_the_engine_answers_without_a_range_error_is_not_folded_to_one(self):
+        rows = (
+            "function f() { try { return ''.repeat(2 ** 40) + 'ok'; } catch (e) { return e.name; } } console.log(f());",
+            "function f() { try { return 'abc'.padStart(1e9, ''); } catch (e) { return e.name; } } console.log(f());",
+            "function f() { try { return 'abc'.padEnd(Infinity, ''); } catch (e) { return e.name; } } console.log(f());",
+            "function f() { try { return ''.repeat(Infinity) + 'ok'; } catch (e) { return e.name; } } console.log(f());",
+        )
+        self.assertEqual(
+            {
+                source: {strict: behavior(output) for strict, output in _deobfuscated_by_either_model(source).items()}
+                for source in rows
+            },
+            {source: {strict: behavior(source) for strict in (False, True)} for source in rows},
+        )
+
+    def test_a_fill_not_handed_is_a_space(self):
+        rows = (
+            "console.log('abc'.padStart(6, void 0));",
+            "console.log('abc'.padEnd(6, void 0));",
+        )
+        self.assertEqual(
+            {
+                source: {strict: behavior(output) for strict, output in _deobfuscated_by_either_model(source).items()}
+                for source in rows
+            },
+            {source: {strict: behavior(source) for strict in (False, True)} for source in rows},
+        )
+
+    def test_an_integer_of_two_to_the_53_or_more_in_a_radix_no_power_of_two_prints_what_the_engine_prints(self):
+        source = 'console.log((1e21).toString(36));'
+        self.assertEqual(
+            {strict: behavior(output) for strict, output in _deobfuscated_by_either_model(source).items()},
+            {strict: behavior(source) for strict in (False, True)},
+        )
+
+    def test_an_integer_of_two_to_the_53_or_more_in_a_radix_that_is_a_power_of_two_is_folded(self):
+        self.assertEqual(
+            _deobfuscated_by_either_model('console.log((2 ** 60).toString(16));'),
+            {strict: "console.log('1000000000000000');" for strict in (False, True)},
         )

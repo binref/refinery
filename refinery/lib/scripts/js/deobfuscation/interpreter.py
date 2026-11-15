@@ -463,14 +463,22 @@ def _expand_replacement(replacement: str, s: str, start: int, matched: str) -> s
     return ''.join(out)
 
 
+def _search_and_replacement(args: list[Value]) -> tuple[str, str]:
+    """
+    The texts `replace` and `replaceAll` search for and replace with when handed *args*: an argument
+    not handed is `undefined`, which converts to that word. A function handed as the replacement is
+    called with each match, which no fold here runs.
+    """
+    search = args[0] if args else None
+    replacement = args[1] if len(args) > 1 else None
+    if isinstance(replacement, FUNCTION_NODES):
+        raise InterpreterError
+    return to_string(search), to_string(replacement)
+
+
 @_register((str, 'replace'))
 def _str_replace(s: str, args: list[Value]) -> Value:
-    if len(args) < 2:
-        return s
-    if isinstance(args[1], FUNCTION_NODES):
-        raise InterpreterError
-    search = to_string(args[0])
-    replacement = to_string(args[1])
+    search, replacement = _search_and_replacement(args)
     index = s.find(search)
     if index < 0:
         return s
@@ -480,12 +488,7 @@ def _str_replace(s: str, args: list[Value]) -> Value:
 
 @_register((str, 'replaceAll'))
 def _str_replace_all(s: str, args: list[Value]) -> Value:
-    if len(args) < 2:
-        return s
-    if isinstance(args[1], FUNCTION_NODES):
-        raise InterpreterError
-    search = to_string(args[0])
-    replacement = to_string(args[1])
+    search, replacement = _search_and_replacement(args)
     if not search:
         raise InterpreterError
     out: list[str] = []
@@ -528,20 +531,36 @@ def _str_trim_end(s: str, args: list[Value]) -> Value:
 
 @_register((str, 'repeat'))
 def _str_repeat(s: str, args: list[Value]) -> Value:
+    """
+    The text `repeat` writes: a count below zero or an infinite one throws, as the language says;
+    no copies, and any number of copies of the empty text, are empty; and a text longer than any the
+    interpreter makes is refused before it is built, where an engine builds it or throws at a limit
+    of its own.
+    """
     count = _to_index(args[0]) if args else 0
-    if count < 0 or count > 0x10000000:
+    if count < 0 or count == _to_index(math.inf):
         _js_throw('RangeError', 'Invalid count value')
+    if count == 0 or not s:
+        return ''
+    if len(s) * count > MAX_STRING_LEN:
+        raise InterpreterError
     return s * count
 
 
 def _str_pad(s: str, args: list[Value], prepend: bool) -> Value:
+    """
+    The text `padStart` or `padEnd` writes: the text itself where it is no shorter than the length
+    asked for or the fill is empty, and a fill not handed is a space. A text longer than any the
+    interpreter makes is refused before it is built, where an engine builds it or throws at a
+    limit of its own.
+    """
     target_len = _to_index(args[0]) if args else 0
-    if target_len > 0x10000000:
-        _js_throw('RangeError', 'Invalid string length')
-    fill = to_string(args[1]) if len(args) > 1 else ' '
+    fill = ' ' if len(args) < 2 or args[1] is None else to_string(args[1])
     needed = target_len - len(s)
     if needed <= 0 or not fill:
         return s
+    if target_len > MAX_STRING_LEN:
+        raise InterpreterError
     pad = (fill * (needed // len(fill) + 1))[:needed]
     return pad + s if prepend else s + pad
 
@@ -719,6 +738,11 @@ def _arr_to_string(arr: list, args: list[Value]) -> Value:
 @_register((int, 'toString'))
 @_register((float, 'toString'))
 def _number_to_string(num: int | float, args: list[Value]) -> Value:
+    """
+    The text `toString` writes for *num* in the radix *args* name. In a radix other than ten, a
+    fraction is refused, and so is an integer of `2 ** 53` or more in a radix that is no power of
+    two, whose digits the engine computes only as far as a double holds them.
+    """
     radix = _to_int(args[0]) if args and args[0] is not None else 10
     if radix == 10:
         return to_string(num)
@@ -730,6 +754,8 @@ def _number_to_string(num: int | float, args: list[Value]) -> Value:
     if value != int(value):
         raise InterpreterError
     integer = abs(int(value))
+    if integer >= 1 << 53 and radix & (radix - 1):
+        raise InterpreterError
     if integer == 0:
         return '0'
     digits = '0123456789abcdefghijklmnopqrstuvwxyz'
