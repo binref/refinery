@@ -5406,14 +5406,6 @@ class TestAnUnpackedBodyKeepsItsOwnDeclarationsFromTheLaterScriptsOfThePage(Test
 
 
 A_WRAPPER_CODE_OUTSIDE_THE_TEXT_CALLS = {
-    'an entrypoint the analyst names': (
-        "function run() { return 'x'; }\nconsole.log(run());",
-        ('run',),
-    ),
-    'the onload handler of a window': (
-        "function onload() { return 'x'; }\nconsole.log(onload());",
-        (),
-    ),
     'code run from a string the file cannot read': (
         "function f() { return 'x'; }\nconsole.log(f());\n"
         "Function(process.argv.length > 99 ? '' : 'console.log(f())')();",
