@@ -7,7 +7,6 @@ fed to these tests.
 """
 from __future__ import annotations
 
-import functools
 import time
 
 from refinery.lib.scripts import Node, _remove_from_parent
@@ -27,7 +26,7 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
-from test import TestBase, a_property_of_the_pin_itself, backlog, fastest_processor_time, processor_time_ratio
+from test import TestBase, a_property_of_the_pin_itself
 
 _FROM_CHAR_CODE = 'fromCharCode'
 
@@ -99,7 +98,7 @@ _A_SITE_BEFORE_THE_ANCHOR = {
         'var e = eval;\ne("String = 9");\nString.fromCharCode(65);'
     ),
     'a string timer before the anchor': (
-        'var code;\nsetTimeout(code, 0);\nString.fromCharCode(65);'
+        'setTimeout("String = 9", 0);\nString.fromCharCode(65);'
     ),
     'a static import anywhere': (
         'import x from "y";\nString.fromCharCode(65);'
@@ -210,6 +209,9 @@ _A_SITE_BEFORE_THE_ANCHOR = {
         'var c = "String = 9; g()";\n'
         'function g() { String.fromCharCode(65); (0, eval)(c); }\ng();'
     ),
+    'a timer re-invoking the enclosing activation': (
+        'function g() { String.fromCharCode(65); setTimeout("String = 9; g()", 0); }\ng();'
+    ),
     'a script-scope named activation under a surface': (
         'var k, v;\nvar e = eval;\n'
         'function g() { String.fromCharCode(65); globalThis[k] = v; }\ng();'
@@ -244,9 +246,6 @@ _A_SITE_THE_ANCHOR_ESCAPED = {
     ),
     'a destructured intrinsic never invoked': (
         'String.fromCharCode(65);\nconst {eval} = globalThis;'
-    ),
-    'a string timer replacing a built-in once the anchor has run': (
-        'setTimeout("String = 9", 0);\nString.fromCharCode(65);'
     ),
     'a fold inside a loop in a clean program': (
         'var s = 0;\nfor (var i = 0; i < 3; i++) { s = String.fromCharCode(65); }'
@@ -381,15 +380,6 @@ class TestBuiltinsIntactAt(TestBase):
         self.assertFalse(ModelCache(ast, options).builtins_intact_at(anchor))
         options = DeobfuscationOptions(entrypoints=('g',), execution=ExecutionModel.commonjs)
         self.assertTrue(ModelCache(ast, options).builtins_intact_at(anchor))
-
-    @backlog
-    def test_a_timer_replacing_a_built_in_and_running_the_function_again_refuses(self):
-        for label, source in {
-            'a string timer': 'function g() { String.fromCharCode(65); setTimeout("String = 9; g()", 0); }\ng();',
-            'a function timer': 'function g() { String.fromCharCode(65); setTimeout(function () { String = 9; g(); }, 0); }\ng();',
-        }.items():
-            with self.subTest(label):
-                self.assertFalse(self._verdict(source))
 
 
 class TestTheTrustQuestionsAtAnAnchor(TestBase):
@@ -947,36 +937,6 @@ class TestManyAnchorsShareOneEnumeration(TestBase):
         elapsed = time.perf_counter() - started
         self.assertTrue(all(verdicts))
         self.assertLess(elapsed, 30.0)
-
-
-class TestAnchorsBesideCodeNoModelReadsAnswerInTimeThatGrowsWithTheProgram(TestBase):
-
-    @staticmethod
-    def _program(count: int) -> str:
-        functions = ''.join(F'function d{index}(s) {{ return Function(s); }}\n' for index in range(count))
-        anchors = ''.join(F'var r{index} = String.fromCharCode({index});\n' for index in range(count))
-        return functions + anchors
-
-    @staticmethod
-    def _answer_every_anchor(source: str):
-        ast = JsParser(source).parse()
-        cache = ModelCache(ast)
-        for node in ast.walk():
-            if (
-                isinstance(node, JsCallExpression)
-                and isinstance(node.callee, JsMemberExpression)
-                and isinstance(node.callee.property, JsIdentifier)
-                and node.callee.property.name == _FROM_CHAR_CODE
-            ):
-                cache.builtins_intact_at(node)
-
-    @backlog
-    def test_every_anchor_answers_in_time_that_grows_with_the_program(self):
-        small = self._program(40)
-        large = self._program(100)
-        small_time = fastest_processor_time(functools.partial(self._answer_every_anchor, small) for _ in range(2))
-        large_time = fastest_processor_time(functools.partial(self._answer_every_anchor, large) for _ in range(2))
-        self.assertLess(processor_time_ratio(large_time, small_time), 3 * len(large) / len(small))
 
 
 class TestAnAnchorRunsAtMostOnce(TestBase):

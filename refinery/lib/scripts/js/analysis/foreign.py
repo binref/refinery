@@ -85,24 +85,8 @@ def may_run_code_it_does_not_hold(model: SemanticModel) -> bool:
     """
     if model.has_reflection_surface() or model.imports_code() or model.code_load_sites():
         return True
-    if any(not model.environment.has_a_global(name) for name in model.global_names_spelled_code_reads()):
-        return True
-    if _runs_code_in_plain_sight(model, _uses_a_global_nothing_defines):
-        return True
-    return any(
-        fragment.model.code_load_sites() or _runs_code_in_plain_sight(fragment.model)
-        for fragment in model.spelled_programs()
-    )
-
-
-def _runs_code_in_plain_sight(model: SemanticModel, *more: Callable[[SemanticModel, Node], bool]) -> bool:
-    """
-    Whether the text of *model* holds a shape of `may_run_code_it_does_not_hold` that a node of it
-    spells, the checks *more* among them. A global code a string spells reads is asked of the model
-    of the file that runs it, which knows the names the file defines.
-    """
     checks: list[Callable[[SemanticModel, Node], bool]] = [
-        *more,
+        _uses_a_global_nothing_defines,
         _requires_another_way,
         _loads_a_script,
         _runs_listeners,

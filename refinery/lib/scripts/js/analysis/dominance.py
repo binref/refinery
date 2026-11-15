@@ -699,9 +699,7 @@ class DominanceModel(DominatorModel):
         writes the prototype chain of a plain object
         (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.chain_roots_unwritten`); when
         it holds code this analysis cannot read, which may install one anywhere
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.has_reflection_surface`), or code a
-        string spells names the object
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.named_by_spelled_code`), the term
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.has_reflection_surface`), the term
         `refinery.lib.scripts.js.analysis.effects.EffectModel.read_chain_intact` asks of a plain
         read as well; and when an access of the object may hand out its prototype
         (`_may_hand_out_the_prototype`). An accessor installed through what that access yields lands
@@ -742,7 +740,6 @@ class DominanceModel(DominatorModel):
             object_member_access_runs_accessor(literal)
             or not self.intrinsic_writes.chain_roots_unwritten(dict)
             or self.model.has_reflection_surface()
-            or self.model.named_by_spelled_code(binding)
             or any(_may_hand_out_the_prototype(access) for access in accesses)
         )
         points: list[Node] = []

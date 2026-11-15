@@ -23,12 +23,7 @@ from refinery.lib.scripts.js.analysis.assignment import (
 from refinery.lib.scripts.js.analysis.cfg import ControlFlowModel, build_control_flow_model
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
-from refinery.lib.scripts.js.analysis.effects import (
-    AnchoredTrust,
-    EffectModel,
-    build_effects,
-    refused_folded_texts,
-)
+from refinery.lib.scripts.js.analysis.effects import AnchoredTrust, EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.intrinsics import (
     IntrinsicWrites,
@@ -37,12 +32,7 @@ from refinery.lib.scripts.js.analysis.intrinsics import (
     build_intrinsic_writes,
 )
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
-from refinery.lib.scripts.js.analysis.model import (
-    SemanticModel,
-    SpelledCodeReadings,
-    TextFolding,
-    build_semantic_model,
-)
+from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel, build_reaching
 from refinery.lib.scripts.js.analysis.tampering import TamperingModel, build_tampering
 from refinery.lib.scripts.js.model import JsCallExpression, JsIdentifier, JsNewExpression, JsScript
@@ -93,10 +83,6 @@ class ModelCache(ModelCacheBase):
     (`refinery.lib.scripts.js.analysis.intrinsics.UnfollowedWriteRefusals`). A run that assumes
     that every write the scan does not follow writes nothing runs inside `speculating`, which hands
     every build of the scan to the record of that assumption.
-
-    The code strings spell that the semantic models of this cache read is read once for all of
-    them (`refinery.lib.scripts.js.analysis.model.SpelledCodeReadings`), and what was read goes
-    with the cache.
     """
 
     _SLOTS = (
@@ -159,12 +145,9 @@ class ModelCache(ModelCacheBase):
         options: object | None = None,
         settlement: ConversionSettlement | None = None,
         refusals: UnfollowedWriteRefusals | None = None,
-        text_folding: TextFolding | None = None,
     ):
         self.settlement = settlement
         self.refusals = refusals
-        self.text_folding = text_folding
-        self.spelled_code_readings = SpelledCodeReadings()
         self._speculation: WriteSpeculation | None = None
         super().__init__(root, options)
         self.file_kind = file_kind(self.options, self.root)
@@ -199,56 +182,20 @@ class ModelCache(ModelCacheBase):
         return model
 
     def _semantic_model(self) -> SemanticModel:
-        return self._lazy('_model', self._confirmed_semantic_model)
-
-    def _confirmed_semantic_model(self) -> SemanticModel:
-        """
-        The semantic model, built with the run's folding of code texts (`text_folding`) where the
-        options trust code in strings. Where the model reads a text a fold would write, the write
-        scan, dominance and effect models are built over it to ask the fold gate of every call the
-        text rests on (`refused_folded_texts`). A model with a refused text is built again without
-        it; the models of an accepted one are the cache's own. The scan of a build that may yet be
-        discarded is shown to the run's speculation without being recorded
-        (`refinery.lib.scripts.js.analysis.intrinsics.WriteSpeculation.presented`), and only the
-        scan of the accepted model is observed.
-        """
-        unfolded: frozenset[Node] = frozenset()
-        while True:
-            model = build_semantic_model(
-                self.root,
-                host_environment(self.options),
-                eval_is_trusted(self.options),
-                self.file_kind,
-                exports_are_read_outside(self.options),
-                partial(is_host_entrypoint, self.options),
-                self.spelled_code_readings,
-                self.text_folding,
-                unfolded,
-            )
-            if not model.folded_texts():
-                return model
-            scanned = build_intrinsic_writes(model)
-            speculation = self._speculation
-            writes = scanned if speculation is None else speculation.presented(scanned)
-            control_flow = self.control_flow
-            dominance = build_dominance(model, control_flow, intrinsic_writes=writes)
-            effects = build_effects(model, dominance, writes, self.settlement, self.refusals)
-            refused = refused_folded_texts(effects)
-            if not refused:
-                if speculation is not None:
-                    speculation.observe(scanned)
-                self._intrinsic_writes = writes
-                self._dominance = dominance
-                self._effects = effects
-                return model
-            unfolded |= refused
+        return self._lazy('_model', lambda: build_semantic_model(
+            self.root,
+            host_environment(self.options),
+            eval_is_trusted(self.options),
+            self.file_kind,
+            exports_are_read_outside(self.options),
+            partial(is_host_entrypoint, self.options),
+        ))
 
     @property
     def intrinsic_writes(self) -> IntrinsicWrites:
         return self._held_intrinsic_writes()
 
     def _held_intrinsic_writes(self) -> IntrinsicWrites:
-        self._semantic_model()
         return self._lazy('_intrinsic_writes', self._observed_intrinsic_writes)
 
     def _observed_intrinsic_writes(self) -> IntrinsicWrites:
@@ -258,7 +205,6 @@ class ModelCache(ModelCacheBase):
 
     @property
     def effects(self) -> EffectModel:
-        self._semantic_model()
         return self._lazy('_effects', lambda: build_effects(
             self.model,
             self.dominance,
@@ -288,7 +234,6 @@ class ModelCache(ModelCacheBase):
         """
         The `refinery.lib.scripts.js.analysis.dominance.DominanceModel` for this root.
         """
-        self._semantic_model()
         return self._lazy('_dominance', lambda: build_dominance(
             self.model,
             self.control_flow,

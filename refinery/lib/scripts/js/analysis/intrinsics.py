@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import enum
 
-from typing import Iterable, Iterator, NamedTuple, Sequence
+from typing import Iterator, NamedTuple, Sequence
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.components import strongly_connected_components
@@ -667,18 +667,6 @@ class WriteSpeculation:
             return writes
         return writes._replace(followable=True)
 
-    def presented(self, writes: IntrinsicWrites) -> IntrinsicWrites:
-        """
-        The build *writes* of the scan as `observe` presents it, for a build the run may yet
-        discard: it is neither compared with the build before it nor kept to compare the next one
-        with, and it discharges nothing. A refuted assumption raises as it does for `observe`.
-        """
-        if self.state is SpeculationState.DISCHARGED:
-            return writes
-        if self.state is SpeculationState.REFUTED:
-            raise SpeculationRefuted
-        return writes._replace(followable=True)
-
 
 class UnfollowedWriteRefusals:
     """
@@ -696,15 +684,6 @@ class UnfollowedWriteRefusals:
         Record that a question was answered no because the scan does not follow every write.
         """
         self.refused = True
-
-
-def _spelled_code_writes(fragment: SemanticModel) -> IntrinsicWrites:
-    """
-    The `build_intrinsic_writes` scan of code a string spells, made once for each model of it by
-    the readings that hold it
-    (`refinery.lib.scripts.js.analysis.model.SpelledCodeReadings.analysis`).
-    """
-    return fragment.spelled_code_readings.analysis(fragment, build_intrinsic_writes)
 
 
 def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
@@ -751,30 +730,18 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
     properties can change — a binding that shadows it, a value that escapes, a computed key, a
     descriptor read from a value this analysis cannot read — bounds no key at all and is recorded
     as unbounded.
-
-    Code a string spells that the model reads
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.spelled_code_fragments`) is part of the
-    program: the scan of each such text is merged into this one, so a body that replaces
-    `String.prototype.charAt` writes `String` for the program that runs it. That scan reads the
-    text apart from the file and follows no name of the file to the built-in it holds, so a name
-    such code uses
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.bindings_named_by_spelled_code`) hands
-    what it may hold to code whose writes this scan does not enumerate.
     """
     names: set[str] = set()
     keys: dict[str, set[str] | None] = {}
 
-    def join_keys(name: str, written: Iterable[str] | None) -> None:
-        if written is None:
-            keys[name] = None
-            return
-        known = keys.setdefault(name, set())
-        if known is not None:
-            known.update(written)
-
     def record_keys(found: frozenset[str], key: str | None) -> None:
         for name in found & KEYED_WRITE_ROOTS:
-            join_keys(name, None if key is None else (key,))
+            if key is None:
+                keys[name] = None
+                continue
+            known = keys.setdefault(name, set())
+            if known is not None:
+                known.add(key)
 
     def record(found: frozenset[str], key: str | None) -> None:
         names.update(found)
@@ -829,16 +796,6 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
             written_global = model.may_name_a_global(member)
             if written_global is not None:
                 record(frozenset({written_global}), None)
-    for binding in model.bindings_named_by_spelled_code():
-        watched = aliases.names_of(binding) & ESCAPE_WATCHED_ROOTS
-        if watched:
-            record_escape(watched)
-    for fragment in model.spelled_code_fragments():
-        spelled = _spelled_code_writes(fragment)
-        names.update(spelled.names)
-        followable = followable and spelled.followable
-        for name, written in spelled.keys.items():
-            join_keys(name, written)
     return IntrinsicWrites(
         frozenset(names),
         {name: None if written is None else frozenset(written) for name, written in keys.items()},

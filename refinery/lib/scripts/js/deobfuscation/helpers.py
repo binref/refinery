@@ -1137,12 +1137,17 @@ def _denoted_value(
             return False, None
         return True, GLOBAL_VALUE_NAMES[node.name]
     if isinstance(node, JsUnaryExpression):
-        if node.operator not in UNARY_OPS:
+        apply = UNARY_OPS.get(node.operator)
+        if apply is None:
             return False, None
         known, value = denoted_value(node.operand, model, uninterceptable, effects, undecided)
         if not known:
             return False, None
-        return unary_value(node.operator, value, uninterceptable, effects)
+        if node.operator in COERCING_UNARY_OPERATORS:
+            known, value = converted_operand(value, uninterceptable, effects, gated=False)
+            if not known:
+                return False, None
+        return True, apply(value)
     if effects is not None:
         if isinstance(node, JsMemberExpression) and not is_member_write_target(node):
             return denoted_member(node, model, uninterceptable, effects, undecided)
@@ -1241,48 +1246,7 @@ def _denoted_binary(
     known, right = denoted_value(node.right, model, uninterceptable, effects, undecided)
     if not known:
         return False, None
-    return binary_value(node.operator, left, right, uninterceptable, effects)
-
-
-def unary_value(
-    operator: str,
-    value: Value,
-    uninterceptable: Callable[[Value], bool],
-    effects: Callable[[], EffectModel] | None,
-) -> tuple[bool, Value]:
-    """
-    The value the unary *operator* of `refinery.lib.scripts.js.values.UNARY_OPS` computes from the
-    decided *value*, which an operator that converts its operand converts as `converted_operand`
-    converts it first; `(False, None)` where nothing decides it.
-    """
-    apply = UNARY_OPS.get(operator)
-    if apply is None:
-        return False, None
-    if operator in COERCING_UNARY_OPERATORS:
-        known, value = converted_operand(value, uninterceptable, effects, gated=False)
-        if not known:
-            return False, None
-    return True, apply(value)
-
-
-def binary_value(
-    operator: str,
-    left: Value,
-    right: Value,
-    uninterceptable: Callable[[Value], bool],
-    effects: Callable[[], EffectModel] | None,
-) -> tuple[bool, Value]:
-    """
-    The value the binary *operator* of `refinery.lib.scripts.js.values.BINARY_OPS` computes from
-    the decided *left* and *right*, each operand it converts
-    (`refinery.lib.scripts.js.values.converted_operands`) converted as `converted_operand` converts
-    it first; `(False, None)` where nothing decides it. A power whose value the language leaves to
-    the engine is not decided.
-    """
-    apply = BINARY_OPS.get(operator)
-    if apply is None:
-        return False, None
-    convert_left, convert_right = converted_operands(operator, left, right)
+    convert_left, convert_right = converted_operands(node.operator, left, right)
     if convert_left:
         known, left = converted_operand(left, uninterceptable, effects, gated=True)
         if not known:
@@ -1292,7 +1256,7 @@ def binary_value(
         if not known:
             return False, None
     try:
-        return True, apply(left, right)
+        return True, BINARY_OPS[node.operator](left, right)
     except HostApproximated:
         return False, None
 
@@ -2567,10 +2531,6 @@ def try_inline_trivial_function(
 
     Which functions have a return expression to inline at all is `expression_a_call_answers`, which
     is where the refusal to inline an async function or a generator lives.
-
-    An inlined call leaves no frame of *func* behind, which only reading the `caller` of a function
-    can tell, so nothing is inlined in a script that may read one
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`).
     """
     answered = expression_a_call_answers(func)
     if answered is None:
@@ -2584,9 +2544,6 @@ def try_inline_trivial_function(
     if not is_safe_iife_inline(
         expr, param_names, call_args, call_pure, read_effect, call_established, arg_may_throw,
     ):
-        return None
-    root = tree_root(func)
-    if isinstance(root, JsScript) and model_cache(transformer, root).model.spells_caller():
         return None
     return substitute_params(expr, func.params, call_args, transformer=transformer)
 
@@ -3006,9 +2963,7 @@ def nothing_still_names(model: SemanticModel, removed: Sequence[Node]) -> bool:
     the object supplies it or the binding does, and which one is a runtime question. It is counted as
     a reference here, since a removal made on the strength of it denoting the object is a removal that
     strands it whenever the object does not carry the property. An exported binding is named by the
-    export itself, which an importer reads and which a removal would leave declaring nothing. So is
-    a binding code a string spells names, wherever the call running that code stays
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.spelled_code_sites_naming`).
+    export itself, which an importer reads and which a removal would leave declaring nothing.
     """
     inside = {id(node) for root in removed for node in root.walk()}
     asked: set[Binding] = set()
@@ -3025,8 +2980,6 @@ def nothing_still_names(model: SemanticModel, removed: Sequence[Node]) -> bool:
             if binding.exported or binding_has_references(model, binding, exclude_ids=inside):
                 return False
             if any(id(ref) not in inside for ref in model.dynamic_references(binding)):
-                return False
-            if any(id(site) not in inside for site in model.spelled_code_sites_naming(binding)):
                 return False
     return True
 

@@ -76,9 +76,7 @@ class DeobfuscationOptions:
 
     - Suspecting model (default, `trust_eval=False`): such a surface may read or write anything the
       scope it runs in can reach, and every fold resting on the contrary is refused. This is the
-      only sound answer, because the code being run can do anything the runtime allows. Code a
-      string spells is read as both models read it, except a text through which the global object
-      escapes as a value, which this model takes for one it cannot read.
+      only sound answer, because the code being run can do anything the runtime allows.
 
     - Trusting model (`trust_eval=True`): such a surface is assumed inert, so the junk written around
       it is removed as if it were not there. **This is unsound, deliberately.** In the packed script
@@ -93,9 +91,8 @@ class DeobfuscationOptions:
     `with` body that writes a name, a span of source this model never read, a store on the global
     object under a key only the runtime resolves, an `import()`, and an indirect `eval` — a value
     read of the intrinsic that is not the callee of a direct call — still open the world under both
-    models, and so does every write the text spells, the text of a string the script runs as code
-    included. The assumption is about code that cannot be read, not about every way a script can
-    reach the world.
+    models, and so does every write the text spells. The assumption is about code that cannot be
+    read, not about every way a script can reach the world.
 
     *loaded_by_other_files* says that other files may load the input and read what it exports: a
     CommonJS file another one requires, or a package's main file. By default no code loads it, and

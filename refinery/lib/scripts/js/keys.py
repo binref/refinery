@@ -17,14 +17,10 @@ and `a[0]` reads `0` to every reader. A reader asks one of three questions of a 
 A reader asks its key question after its other conditions, so a reader whose answer is decided, or
 whose other conditions fail, records nothing. The readers of `STRINGS_READ_ANYWHERE` look at every
 string, not only at keys.
-
-The code a call runs from a string is read the same way (`spelled_text`): an argument without a
-text is code the reader cannot read, recorded as such, and a fold that spells it renews the models
-just as a fold that spells a key does.
 """
 from __future__ import annotations
 
-from typing import Callable, Iterator, NamedTuple
+from typing import Iterator, NamedTuple
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.model import (
@@ -136,20 +132,11 @@ class KeyAssumptions:
     """
     The keys the answers of one model assumed are none of the names their readers looked for: each
     key without a `key_text` that `key_is` answered no for, with those names, and each one
-    `key_named` read as naming nothing, with any name. The code texts a call runs that
-    `spelled_text` could not read are recorded as keys naming nothing, with any text.
+    `key_named` read as naming nothing, with any name.
     """
 
     def __init__(self):
         self._names: dict[Node, frozenset[str] | None] = {}
-        self._texts: dict[Node, str] = {}
-
-    def read_as(self, node: Node, text: str) -> None:
-        """
-        Record that an answer read the code text *node* as *text*, which a fold had not yet
-        written there (`spelled_text`).
-        """
-        self._texts[node] = text
 
     def assume(self, key: Node, names: frozenset[str] | None) -> None:
         """
@@ -164,14 +151,12 @@ class KeyAssumptions:
 
     def revealed_by(self, key: Node, text: str) -> bool:
         """
-        Whether *text*, written at the key *key*, is a name an answer assumed it is not, or a text
-        other than the one an answer read it as.
+        Whether *text*, written at the key *key*, is a name an answer assumed it is not.
         """
-        if key in self._names:
-            names = self._names[key]
-            return names is None or text in names
-        read = self._texts.get(key)
-        return read is not None and read != text
+        if key not in self._names:
+            return False
+        names = self._names[key]
+        return names is None or text in names
 
 
 class _Unrecorded(KeyAssumptions):
@@ -180,9 +165,6 @@ class _Unrecorded(KeyAssumptions):
     """
 
     def assume(self, key: Node, names: frozenset[str] | None) -> None:
-        pass
-
-    def read_as(self, node: Node, text: str) -> None:
         pass
 
 
@@ -229,26 +211,6 @@ def key_named(owner: Keyed, assumptions: KeyAssumptions) -> str | None:
     text = key_text(owner)
     if text is None and (key := _key_of(owner)) is not None:
         assumptions.assume(key, None)
-    return text
-
-
-def spelled_text(
-    node: Node | None,
-    assumptions: KeyAssumptions,
-    folded: Callable[[Node], str | None],
-) -> str | None:
-    """
-    The string *node* certainly evaluates to, for a reader of the code a call runs from a string.
-    An expression without one is read as the text *folded* answers for it, the one a fold would
-    write in its place, and *assumptions* records that text; where *folded* answers none, it is read
-    as code the reader cannot read, and *assumptions* records that it was read so, for any text.
-    """
-    text = static_string(node)
-    if text is None and node is not None:
-        if (text := folded(node)) is not None:
-            assumptions.read_as(node, text)
-        else:
-            assumptions.assume(node, None)
     return text
 
 

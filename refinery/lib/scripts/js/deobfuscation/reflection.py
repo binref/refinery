@@ -31,8 +31,6 @@ from refinery.lib.scripts.js.analysis.model import (
     Scope,
     SemanticModel,
     build_semantic_model,
-    built_function,
-    construction_text,
     crosses_dynamic_scope,
     enclosing_function,
     enclosing_operator,
@@ -418,9 +416,7 @@ def _parse_construction_function(ctor_call: Node, code: str) -> tuple[JsScript, 
     not parse as a plain function's body, its parameters — the construction's leading string
     arguments, spliced into the wrapper's parameter list — are not a plain comma-separated
     identifier list, or it declares strict mode, which changes what `arguments`, `this` and a
-    global assignment mean in ways the execution below does not model. The language parses the body
-    and the parameters each on their own, so a text that closes the wrapper and parses as more than
-    the one function is a `SyntaxError` at the construction, not a function.
+    global assignment mean in ways the execution below does not model.
 
     The wrapper is a function expression rather than a bare statement list so the fragment model
     built over it sees the function's own scope: the `arguments` binding the body reads lives there,
@@ -432,12 +428,18 @@ def _parse_construction_function(ctor_call: Node, code: str) -> tuple[JsScript, 
         return None
     parameters = ','.join(text for text in leading if text is not None)
     parsed = _try_parse(
-        construction_text(parameters, code),
+        F'(function ({parameters}) {{ {code} }})',
         strict=False,
         module=False,
         context=function_context(False, False),
     )
-    if parsed is None or (function := built_function(parsed)) is None:
+    if parsed is None or not parsed.body:
+        return None
+    statement = parsed.body[0]
+    if not isinstance(statement, JsExpressionStatement) or statement.expression is None:
+        return None
+    function = strip_parens(statement.expression)
+    if not isinstance(function, JsFunctionExpression):
         return None
     if not all(isinstance(param, JsIdentifier) for param in function.params):
         return None
@@ -552,7 +554,7 @@ def _try_unpack_function_constructor(
     if not param_name:
         return parsed, frozenset(), []
     body_model = build_semantic_model(parsed)
-    originally_free = {reference.name for reference in body_model.free_references()}
+    originally_free = _body_free_names(body_model, parsed)
     replaced = _substitute_proxy_accesses(parsed, body_model, param_name, proxy)
     if replaced is None:
         return None
@@ -603,6 +605,23 @@ def _has_top_level_return(stmts: list[Statement]) -> bool:
     top-level `return` is the function's own return.
     """
     return any(isinstance(n, JsReturnStatement) for s in stmts for n in walk_scope(s))
+
+
+def _body_free_names(body_model: SemanticModel, parsed: JsScript) -> set[str]:
+    """
+    The names *parsed* reads or writes without binding them locally — the names a
+    `Function`-constructed body resolves against the global scope. A name bound inside the body is
+    excluded (inlining carries its binding along), as is a property name or key; an implicit-global
+    write the body performs is included, since it targets a global rather than a local binding.
+    """
+    free: set[str] = set()
+    for ident in parsed.walk():
+        if not isinstance(ident, JsIdentifier) or not body_model.is_reference(ident):
+            continue
+        binding = body_model.resolve(ident)
+        if binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:
+            free.add(ident.name)
+    return free
 
 
 def _body_declared_bindings(body_model: SemanticModel) -> list[Binding]:
@@ -761,17 +780,23 @@ def _direct_eval_of_its_parameter(
     return evaluated
 
 
-def _written_free_names(body_model: SemanticModel) -> set[str]:
+def _body_written_free_names(body_model: SemanticModel, parsed: JsScript) -> set[str]:
     """
-    The names a reflected body writes without binding them itself
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.free_references`). A body that only
-    reads a free name changes nothing about what the name denotes elsewhere, while one that writes
-    it gives every later consultation of that name a value the pinned model has never seen.
+    The names *parsed* writes without binding them locally — the subset of `_body_free_names` whose
+    reference is an assignment target rather than a read. A body that only reads a free name changes
+    nothing about what the name denotes elsewhere, while one that writes it gives every later
+    consultation of that name a value the pinned model has never seen.
     """
-    return {
-        reference.name for reference in body_model.free_references()
-        if reference_role(reference) is not Role.READ
-    }
+    written: set[str] = set()
+    for ident in parsed.walk():
+        if not isinstance(ident, JsIdentifier) or not body_model.is_reference(ident):
+            continue
+        if reference_role(ident) is Role.READ:
+            continue
+        binding = body_model.resolve(ident)
+        if binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:
+            written.add(ident.name)
+    return written
 
 
 class JsReflectionInlining(ScriptLevelTransformer):
@@ -888,8 +913,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         lower — can name the temporary at runtime with no reference any model records, so any such
         site outside the candidates' own constructions refuses the retirement; the constructions
         themselves are the one surface whose code this pass parsed, which is what makes them
-        transparent rather than opaque, whether the surface stands at the callee read or, where the
-        model reads the code as opaque, at the construction.
+        transparent rather than opaque.
         """
         if not self._retire_candidates:
             return
@@ -907,7 +931,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             construction = strip_parens(declarator.init)
             if not isinstance(construction, (JsCallExpression, JsNewExpression)):
                 continue
-            transparent.update((id(construction), id(construction.callee)))
+            transparent.add(id(construction.callee))
             candidates.append((binding, declarator, construction))
         retired: list[JsVariableDeclarator] = []
         for binding, declarator, construction in candidates:
@@ -1195,10 +1219,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         that a plain function body cannot host declines the lowering, leaving the string timer intact.
         The body lands inside that wrapper and not as text at the site, so the words it is weighed
         against are those a plain function reads: `await` and `yield` are names there, and
-        `arguments` is the wrapper's own, whatever the site reads them as. The wrapper is also a
-        call the classic script never made: a function the code calls finds it as its `caller`,
-        where it found none, so nothing is lowered where the program may read one
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`).
+        `arguments` is the wrapper's own, whatever the site reads them as.
         """
         code = _extract_string_call_code(
             node,
@@ -1208,8 +1229,6 @@ class JsReflectionInlining(ScriptLevelTransformer):
             eval_string=self._eval_string,
         )
         if code is None:
-            return
-        if model_cache(self, root).model.spells_caller():
             return
         resolved = self._resolve_reflected_body(
             code,
@@ -1699,9 +1718,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         fragment_script, function = fragment
         cache = model_cache(self, root)
         fragment_model = build_semantic_model(fragment_script)
-        if _written_free_names(fragment_model):
+        if _body_written_free_names(fragment_model, fragment_script):
             return
-        free = {reference.name for reference in fragment_model.free_references()}
+        free = _body_free_names(fragment_model, fragment_script)
         if not free.isdisjoint(cache.model.root_scope.bindings):
             return
         if not free.isdisjoint(self._spliced_names):
@@ -1930,19 +1949,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         exists. The declined site is untouched and inlines on the next pass, whose model has seen
         the splice. A body that only reads names no splice bound contributes nothing to that veto,
         so a chain of sites sharing free reads still inlines in one pass.
-
-        A body that runs in a call of its own, that of a function a construction builds or of the
-        function whose `eval` runs it (*origin*), leaves that call behind when it is inlined, and so
-        changes what the `caller` of a function answers; while the program, the code it spells
-        included, may read one
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.spells_caller`), such a body
-        declines.
         """
-        if (
-            (scope is ReflectedScope.FUNCTION_CONSTRUCTOR or origin is not None)
-            and model_cache(self, root).model.spells_caller()
-        ):
-            return None
         resolves_globally = scope is not ReflectedScope.DIRECT_EVAL
         site_is_strict = strict_mode_at(site)
         if declares_use_strict(parsed) and (resolves_globally or not site_is_strict):
@@ -1972,7 +1979,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             parsed, body_model, site_resolved,
         ):
             return None
-        free = {reference.name for reference in body_model.free_references()}
+        free = _body_free_names(body_model, parsed)
         if resolves_globally and 'arguments' in free:
             return None
         declarations = _body_declared_bindings(body_model)
@@ -2040,7 +2047,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         for binding, name in renamed.items():
             rename_binding(binding, name)
         self._spliced_names |= {renamed.get(binding, binding.name) for binding in declarations}
-        self._spliced_names |= _written_free_names(body_model)
+        self._spliced_names |= _body_written_free_names(body_model, parsed)
         return parsed
 
     def _runs_alike_at_its_origin(

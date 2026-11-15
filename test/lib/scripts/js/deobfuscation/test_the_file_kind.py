@@ -10,7 +10,6 @@ from test.lib.scripts.js.ledger import (
     Program,
     Reading,
     a_program,
-    as_classic_scripts,
     deobfuscated_behavior,
     each_reading_still_prints,
     node_prints_what_each_row_pins,
@@ -212,7 +211,7 @@ A_DIRECT_EVAL_IN_A_DEFAULT_DECLARING_A_NAME = {
     ),
 }
 
-A_DIRECT_EVAL_OF_A_PARAMETER_IN_A_BODY_DECLARING_A_NAME = {
+A_DIRECT_EVAL_IN_A_BODY_DECLARING_A_NAME = {
     'a var the eval declares, read by the body': FileProgram(
         a_program("""
             var v = 1;
@@ -231,9 +230,6 @@ A_DIRECT_EVAL_OF_A_PARAMETER_IN_A_BODY_DECLARING_A_NAME = {
         prints('2'),
         prints('1'),
     ),
-}
-
-A_DIRECT_EVAL_OF_A_TEXT_IN_A_BODY_DECLARING_A_NAME = {
     'a var an eval below and declares, read by the body': FileProgram(
         a_program("""
             var x = 1;
@@ -254,12 +250,7 @@ A_DIRECT_EVAL_OF_A_TEXT_IN_A_BODY_DECLARING_A_NAME = {
     ),
 }
 
-A_DIRECT_EVAL_IN_A_BODY_DECLARING_A_NAME = {
-    **A_DIRECT_EVAL_OF_A_PARAMETER_IN_A_BODY_DECLARING_A_NAME,
-    **A_DIRECT_EVAL_OF_A_TEXT_IN_A_BODY_DECLARING_A_NAME,
-}
-
-A_VARIABLE_AN_EVAL_OF_A_CHOSEN_TEXT_ASSIGNS_READ_BY_A_FUNCTION = {
+A_VARIABLE_AN_UNREADABLE_EVAL_ASSIGNS_READ_BY_A_FUNCTION = {
     'the eval at the top of the file': FileProgram(
         a_program("""
             var s = "abc";
@@ -308,7 +299,7 @@ A_NAMESPACE_AN_UNREADABLE_EVAL_CHANGES = {
 A_TOP_LEVEL_VARIABLE_A_DIRECT_EVAL_REACHES = {
     **A_DIRECT_EVAL_IN_A_DEFAULT_DECLARING_A_NAME,
     **A_DIRECT_EVAL_IN_A_BODY_DECLARING_A_NAME,
-    **A_VARIABLE_AN_EVAL_OF_A_CHOSEN_TEXT_ASSIGNS_READ_BY_A_FUNCTION,
+    **A_VARIABLE_AN_UNREADABLE_EVAL_ASSIGNS_READ_BY_A_FUNCTION,
     **A_NAMESPACE_AN_UNREADABLE_EVAL_CHANGES,
 }
 
@@ -582,19 +573,6 @@ class TestADirectEvalReachesTheTopLevelVariablesOfAModule(TestBase):
             A_TOP_LEVEL_VARIABLE_A_DIRECT_EVAL_REACHES,
             EVERY_MODULE_READING,
         )
-
-    def test_each_program_whose_eval_runs_a_text_it_spells_still_prints_what_it_prints_as_a_classic_script(self):
-        rows = {
-            **A_DIRECT_EVAL_OF_A_TEXT_IN_A_BODY_DECLARING_A_NAME,
-            **{
-                label: row
-                for label, row in A_VARIABLE_AN_EVAL_OF_A_CHOSEN_TEXT_ASSIGNS_READ_BY_A_FUNCTION.items()
-                if label != 'the long string of a slicing accessor'
-            },
-        }
-        for label, program in as_classic_scripts(rows).items():
-            with self.subTest(label):
-                self.assertEqual(program.read(), program.required())
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

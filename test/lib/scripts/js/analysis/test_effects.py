@@ -355,7 +355,7 @@ class TestEffectModel(TestBase):
         self.assertTrue(effects.summary_of(self._func(ast, 'h')).calls_unknown)
 
     def test_write_to_never_read_global_under_reflection_is_impure(self):
-        source = 'function f(){ scratch = 1; } eval(input);'
+        source = "function f(){ scratch = 1; } eval('1');"
         ast, effects = self._effects(source)
         self.assertFalse(effects.global_pristine)
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
@@ -907,16 +907,10 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
     def test_reflection_surface_voids_pristine(self):
-        source = 'function f(){ return String.fromCharCode(65); } eval(input);'
+        source = "function f(){ return String.fromCharCode(65); } eval('1');"
         ast, effects = self._effects(source)
         self.assertFalse(effects.intrinsics_pristine)
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
-
-    def test_code_an_eval_spells_that_names_nothing_leaves_pristine(self):
-        source = "function f(){ return String.fromCharCode(65); } eval('1');"
-        ast, effects = self._effects(source)
-        self.assertTrue(effects.intrinsics_pristine)
-        self.assertTrue(effects.summary_of(self._func(ast, 'f')).is_pure)
 
     def test_indirect_eval_voids_pristine(self):
         source = "function f(){ return String.fromCharCode(65); } (0, eval)('1');"
@@ -1009,7 +1003,7 @@ class TestEffectModel(TestBase):
         self.assertTrue(effects.global_pristine)
 
     def test_global_read_voided_by_reflection_surface(self):
-        source = 'function f(){ return globalThis.Uint8Array; } eval(input);'
+        source = "function f(){ return globalThis.Uint8Array; } eval('1');"
         ast, effects = self._effects(source)
         self.assertFalse(effects.global_pristine)
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
@@ -1121,7 +1115,7 @@ class TestEffectModel(TestBase):
         self.assertIsNone(self._intrinsic_of('Array', prefix='var Array = 0; '))
 
     def test_intrinsic_of_reflective_program_is_none(self):
-        self.assertIsNone(self._intrinsic_of('Array', prefix='eval(input); '))
+        self.assertIsNone(self._intrinsic_of('Array', prefix="eval('1'); "))
 
     def test_intrinsic_of_does_not_follow_local_alias(self):
         self.assertIsNone(self._intrinsic_of('a', prefix='var a = Array; '))
@@ -1188,7 +1182,7 @@ class TestEffectModel(TestBase):
         self.assertFalse(self._member_effects.is_side_effect_free(member))
 
     def test_side_effect_free_rejects_intrinsic_read_under_reflection(self):
-        member = self._member('String.fromCodePoint; eval(input);')
+        member = self._member("String.fromCodePoint; eval('1');")
         self.assertFalse(self._member_effects.is_side_effect_free(member))
 
     def test_call_to_parameter_is_not_pure(self):
@@ -1804,7 +1798,7 @@ class TestTrustedPrototype(TestBase):
         self.assertFalse(self._trusted('var String = {};', str))
 
     def test_reflection_surface_refuses_every_prototype(self):
-        self.assertFalse(self._trusted('eval(input);', str))
+        self.assertFalse(self._trusted("eval('x');", str))
 
     def test_type_with_no_known_owner_is_refused(self):
         self.assertFalse(self._trusted('var r = 1;', object))
@@ -1854,7 +1848,7 @@ class TestReadChainIntact(TestBase):
         self.assertFalse(self._intact('Function.prototype.zz = 1;', JsArrowFunctionExpression))
 
     def test_reflection_surface_refuses_every_chain(self):
-        self.assertFalse(self._intact('eval(input);', list))
+        self.assertFalse(self._intact("eval('x');", list))
 
     def test_type_with_no_known_owner_is_refused(self):
         self.assertFalse(self._intact('var r = 1;', object))
@@ -1964,7 +1958,7 @@ class TestCallIsFoldable(TestBase):
             " var r = parseInt([1, 2].join(''));", None))
 
     def test_reflection_surface_is_refused(self):
-        self.assertFalse(self._foldable('eval(input); var r = Math.floor(1.7);'))
+        self.assertFalse(self._foldable("eval('x'); var r = Math.floor(1.7);"))
 
     def test_unrelated_prototype_patch_still_admits(self):
         self.assertTrue(self._foldable('Object.prototype.zz = 1; var r = Math.floor(1.7);'))

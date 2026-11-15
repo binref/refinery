@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import gc
 import inspect
-import weakref
 
 from contextlib import contextmanager
 
@@ -18,10 +17,8 @@ from refinery.lib.scripts.analysis.cfg import ElementLocator
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.liveness import build_liveness
-from refinery.lib.scripts.js.analysis.model import TextFolding
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.cff import JsStateMachineUnflattening
-from refinery.lib.scripts.js.deobfuscation.closedtext import closed_text
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
@@ -30,7 +27,6 @@ from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
 from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.model import (
-    JsCallExpression,
     JsFunctionDeclaration,
     JsIdentifier,
     JsVariableDeclaration,
@@ -127,16 +123,6 @@ class TestModelCache(TestBase):
             [id(n) for n in cache.liveness.dead_stores()],
             [id(n) for n in live_fresh.dead_stores()],
         )
-
-    def test_the_models_of_the_code_a_string_spells_go_with_the_cache(self):
-        script = self._script("var k = 5; var g = new Function('a', 'return a + k'); SINK(g);")
-        cache = ModelCache(script, DeobfuscationOptions(trust_eval=True))
-        fragments = [weakref.ref(fragment) for fragment in cache.model.spelled_code_fragments()]
-        self.assertTrue(cache.intrinsic_writes.names)
-        del cache
-        gc.collect()
-        self.assertEqual(len(fragments), 1)
-        self.assertIsNone(fragments[0]())
 
 
 @a_property_of_the_pin_itself
@@ -474,12 +460,7 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         body = '\n'.join(F"var c{i} = 'a' + 'b' + '{i}';" for i in range(count))
         return F'{body}\nSINK({", ".join(F"c{i}" for i in range(count))});'
 
-    def _builds(
-        self,
-        source: str,
-        options: DeobfuscationOptions | None = None,
-        text_folding: TextFolding | None = None,
-    ) -> tuple[int, int, str]:
+    def _builds(self, source: str) -> tuple[int, int, str]:
         counts = {'model': 0, 'effects': 0}
         real_model = cache_module.build_semantic_model
         real_effects = cache_module.build_effects
@@ -496,12 +477,7 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         cache_module.build_semantic_model = counting_model
         cache_module.build_effects = counting_effects
         try:
-            transform = JsSimplifications()
-            if options is not None:
-                transform.options = options
-            if text_folding is not None:
-                transform.models = ModelCache(script, transform.options, text_folding=text_folding)
-            transform.visit(script)
+            JsSimplifications().visit(script)
         finally:
             cache_module.build_semantic_model = real_model
             cache_module.build_effects = real_effects
@@ -547,79 +523,6 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         completed = self._builds("window['a' + (1 + 1)] = 5;")[0]
         never = self._builds("window['a' + g()] = 5;")[0]
         self.assertGreater(completed, never)
-
-    @a_property_of_the_pin_itself
-    def test_a_fold_spelling_the_code_a_call_runs_renews_the_models_of_the_trusting_model(self):
-        trusting = DeobfuscationOptions(trust_eval=True)
-        completed = self._builds("var k = 5; setTimeout(atob('ayA9IDc='), 0);", trusting)[0]
-        never = self._builds('var k = 5; setTimeout(atob(g()), 0);', trusting)[0]
-        self.assertGreater(completed, never)
-
-    @a_property_of_the_pin_itself
-    def test_a_fold_spelling_code_the_folding_models_cannot_read_beforehand_still_renews_them(self):
-        trusting = DeobfuscationOptions(trust_eval=True)
-        completed = self._builds("var k = 5; setTimeout('k = ' + undefined, 0);", trusting, closed_text)[0]
-        never = self._builds("var k = 5; setTimeout('k = ' + g(), 0);", trusting, closed_text)[0]
-        self.assertGreater(completed, never)
-
-    def test_the_models_a_folded_text_is_checked_with_are_built_once_whichever_is_asked_first(self):
-        builders = ('build_intrinsic_writes', 'build_control_flow_model', 'build_dominance', 'build_effects')
-        reals = {name: getattr(cache_module, name) for name in builders}
-        built: dict[str, dict[str, int]] = {}
-
-        def counting(counts: dict[str, int], name: str):
-            def build(*args, **kwargs):
-                counts[name] += 1
-                return reals[name](*args, **kwargs)
-            return build
-
-        for first in ('effects', 'dominance', 'intrinsic_writes', 'control_flow'):
-            counts: dict[str, int] = dict.fromkeys(builders, 0)
-            for name in builders:
-                setattr(cache_module, name, counting(counts, name))
-            try:
-                script = JsParser("var k = 5; eval(atob('ayA9IDc=')); console.log(k);").parse()
-                cache = ModelCache(script, DeobfuscationOptions(trust_eval=True), text_folding=closed_text)
-                for slot in (first, 'effects', 'dominance', 'intrinsic_writes', 'control_flow'):
-                    getattr(cache, slot)
-            finally:
-                for name in builders:
-                    setattr(cache_module, name, reals[name])
-            built[first] = counts
-        self.assertEqual(built, {first: dict.fromkeys(builders, 1) for first in built})
-
-    def test_a_code_text_read_as_the_text_a_fold_would_write_is_revealed_only_by_another_text(self):
-        script = JsParser("var k = 5; eval(atob('ayA9IDc='));").parse()
-        model = ModelCache(script, DeobfuscationOptions(trust_eval=True), text_folding=closed_text).model
-        decoder = next(
-            node for node in script.walk()
-            if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier) and node.callee.name == 'atob'
-        )
-        self.assertEqual(
-            (model.assumed_keys.revealed_by(decoder, 'k = 7'), model.assumed_keys.revealed_by(decoder, 'k = 8')),
-            (False, True),
-        )
-
-    @staticmethod
-    def _evals(argument: str, count: int) -> str:
-        body = '\n'.join(F'function f{i}() {{ return eval({argument}); }}' for i in range(count))
-        return F'{body}\nSINK({", ".join(F"f{i}" for i in range(count))});'
-
-    @a_property_of_the_pin_itself
-    def test_folds_spelling_the_code_calls_run_do_not_multiply_model_builds(self):
-        trusting = DeobfuscationOptions(trust_eval=True)
-        for argument in (
-            "atob('InVzZSBzdHJpY3QiOyAx')",
-            "atob('InVzZSBzdHJpY3Qi') + atob('OyAx')",
-            'String.fromCharCode(34, 117, 115, 101, 32, 115, 116, 114, 105, 99, 116, 34, 59, 32, 48 + 1)',
-            "atob(('InVzZSBzdHJp' + 'Y3QiOyAx').trim())",
-            "atob(('InVzZSBzdHJp' + 'Y3QiOyAx').split('').join(''))",
-        ):
-            with self.subTest(argument):
-                self.assertEqual(
-                    self._builds(self._evals(argument, 10), trusting, closed_text)[:2],
-                    self._builds(self._evals(argument, 40), trusting, closed_text)[:2],
-                )
 
     @a_property_of_the_pin_itself
     def test_folds_spelling_caller_in_an_array_do_not_multiply_model_builds(self):

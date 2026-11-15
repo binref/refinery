@@ -58,10 +58,6 @@ class TestJsTrustedEvalExcusesTheSurfacesThatRunUnreadableCode(TestJsDeobfuscato
                     on_separate_lines(_printed(opener), _JUNK_FOLDED),
                 )
 
-    def test_an_eval_handed_nothing_leaves_the_locals_beside_it_to_fold_under_the_option(self):
-        deobfuscated = _deobfuscated('function f() { var k = 1; eval(); return k; } SINK(f());', trust_eval=True)
-        self.assertIn('return 1;', deobfuscated)
-
 
 class TestJsTrustedEvalDoesNotExcuseAMutationTheScriptWritesDown(TestJsDeobfuscator):
 

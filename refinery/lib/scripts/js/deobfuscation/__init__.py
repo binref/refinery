@@ -20,7 +20,6 @@ from refinery.lib.scripts.js.deobfuscation.cff import (
     JsControlFlowUnflattening,
     JsStateMachineUnflattening,
 )
-from refinery.lib.scripts.js.deobfuscation.closedtext import closed_text
 from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.dispatcher import JsDispatcherUnwrapper
@@ -135,12 +134,12 @@ def deobfuscate(
     *execution* selects the execution model the input is assumed to run under, *entrypoints* names
     top-level functions a host calls by name, and *environment* pins the host whose global names are
     assumed present; see `refinery.lib.scripts.js.options.DeobfuscationOptions`. *trust_eval*
-    selects the trusting model, which assumes code supplied as data that it cannot read is inert
-    and is deliberately unsound; the default is the suspecting model, so a caller that reads this
-    function's output as equivalent to its input keeps that claim. *loaded_by_other_files* says
-    that code may load the input and read what it exports. *clock* is the window of times a run
-    reads from the host's clock. *observer* is called around every transformer, which is how a
-    property of the tree is attributed to the pass that moved it; see
+    selects the trusting model, which assumes code supplied as data is inert and is deliberately
+    unsound; the default is the suspecting model, so a caller that reads this function's output as
+    equivalent to its input keeps that claim. *loaded_by_other_files* says that code may load the
+    input and read what it exports. *clock* is the window of times a run reads from the host's
+    clock. *observer* is called around every transformer, which is how a property of the tree is
+    attributed to the pass that moved it; see
     `refinery.lib.scripts.js.deobfuscation.audit.StrictModeAudit`.
 
     A conversion of a function that is handed on, with no evidence that the program installs a
@@ -175,7 +174,7 @@ def deobfuscate(
     )
     settlement = ConversionSettlement()
     refusals = UnfollowedWriteRefusals()
-    models = ModelCache(ast, options, settlement, refusals, closed_text)
+    models = ModelCache(ast, options, settlement, refusals)
     JsLZStringDecoder.read_input(models)
     run = _Run(ast, max_steps, models, options, settlement)
     steps = run.to_settlement(0, observer)

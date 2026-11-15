@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import inspect
 
-from test import TestBase, backlog, lines_executed, opportunity
+from test import TestBase, backlog, opportunity
 from test.lib.scripts.js.analysis.write_positions import WRITE_POSITIONS
 
 from refinery.lib.scripts import Node
-from refinery.lib.scripts.js.analysis import model as model_module
 from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
@@ -14,7 +13,6 @@ from refinery.lib.scripts.js.analysis.model import (
     ContainerRole,
     Role,
     ScopeKind,
-    SpelledCodeReadings,
     build_semantic_model,
     container_reference_role,
     is_simple_assignment_target,
@@ -882,15 +880,11 @@ class TestSemanticModel(TestBase):
         self.assertTrue(model.has_reflection_surface())
 
     def test_function_constructor_is_a_reflection_surface(self):
-        _, model = self._model('var f = Function(payload); new Function(payload);')
+        _, model = self._model("var f = Function('return 1'); new Function('a');")
         self.assertTrue(model.has_reflection_surface())
 
-    def test_code_a_string_spells_that_names_nothing_is_no_reflection_surface(self):
-        _, model = self._model("var f = Function('return 1'); new Function('a'); setTimeout('1', 10);")
-        self.assertFalse(model.has_reflection_surface())
-
     def test_string_timer_is_a_reflection_surface(self):
-        _, model = self._model('setTimeout(code, 10);')
+        _, model = self._model("setTimeout('x()', 10);")
         self.assertTrue(model.has_reflection_surface())
 
     def test_function_timer_is_not_a_reflection_surface(self):
@@ -898,11 +892,11 @@ class TestSemanticModel(TestBase):
         self.assertFalse(model.has_reflection_surface())
 
     def test_member_form_string_timer_is_a_reflection_surface(self):
-        _, model = self._model('window.setTimeout(code, 10);')
+        _, model = self._model("window.setTimeout('x()', 10);")
         self.assertTrue(model.has_reflection_surface())
 
     def test_member_form_computed_string_timer_is_a_reflection_surface(self):
-        _, model = self._model("globalThis['setInterval'](code, 10);")
+        _, model = self._model("globalThis['setInterval']('x()', 10);")
         self.assertTrue(model.has_reflection_surface())
 
     def test_member_form_function_timer_is_not_a_reflection_surface(self):
@@ -1053,7 +1047,7 @@ class TestSemanticModel(TestBase):
         self.assertFalse(model.reflection_can_reach(self._binding(ast, model, 'x')))
 
     def test_opaque_reflection_reaches_global_through_function_and_timer(self):
-        ast, model = self._model('var x; var g = Function(payload); setTimeout(code, 1);')
+        ast, model = self._model("var x; var g = Function('return 1'); setTimeout('y()', 1);")
         self.assertTrue(model.reachable_by_opaque_reflection(self._binding(ast, model, 'x')))
 
     def test_opaque_reflection_absent_without_surface(self):
@@ -2371,101 +2365,3 @@ class TestWhatCodeOutsideTheFileReaches(TestBase):
                 binding = model.binding_of(function.id)
                 assert binding is not None
                 self.assertEqual(model.reached_without_a_read(binding), expected)
-
-
-class TestTheTrustingModelIsBuiltInLinearWork(TestBase):
-
-    @staticmethod
-    def _work(statement: str):
-        def work(count: int) -> int:
-            ast = JsParser('\n'.join(statement.format(i=i) for i in range(count))).parse()
-            return lines_executed(lambda: build_semantic_model(ast, trust_eval=True), model_module)
-        return work
-
-    def test_over_calls_handed_the_global_object(self):
-        self.assertWorkGrowsLinearly(self._work('(function (w) {{ w.v{i} = {i}; }})(this);'), 20)
-
-    def test_over_functions_declared_in_blocks(self):
-        self.assertWorkGrowsLinearly(self._work('var f{i}; {{ function f{i}() {{ return {i}; }} }}'), 20)
-
-
-def _texts_the_last_statement_runs(source: str) -> list[str] | None:
-    ast = JsParser(source).parse()
-    model = build_semantic_model(ast)
-    last = ast.body[-1]
-    assert isinstance(last, JsExpressionStatement)
-    site = next(site for site in model.spelled_code_sites() if site.call is last.expression)
-    if site.code is None:
-        return None
-    return [JsSynthesizer().convert(fragment.model.root) for fragment in site.code.fragments]
-
-
-def _texts_eval_of_p_runs(source: str, file_kind: FileKind = FileKind.script) -> list[str] | None:
-    model = build_semantic_model(JsParser(source).parse(), file_kind=file_kind)
-    synthesizer = JsSynthesizer()
-    site = next(site for site in model.spelled_code_sites() if synthesizer.convert(site.call) == 'eval(p)')
-    if site.code is None:
-        return None
-    return [synthesizer.convert(fragment.model.root) for fragment in site.code.fragments]
-
-
-class TestTheSuspectingModelReadsNoTextOtherCodeMayReplace(TestBase):
-
-    def test_a_text_code_in_a_string_may_replace_is_read_only_without_that_code(self):
-        self.assertEqual(
-            (
-                _texts_the_last_statement_runs(
-                    "let x = 5; var code = 'console.log(1)';"
-                    " eval(process.argv.length > 99 ? '' : \"code = 'console.log(x)'\"); eval(code);"
-                ),
-                _texts_the_last_statement_runs("let x = 5; var code = 'console.log(1)'; eval(code);"),
-            ),
-            (None, ['console.log(1);']),
-        )
-
-    def test_a_stage_whose_name_the_file_fills_is_read_only_without_the_filling_function(self):
-        self.assertEqual(
-            (
-                _texts_the_last_statement_runs(
-                    "var k = 5; function load() { next = 'console.log(k)'; } eval(\"var next = ''; load(); eval(next);\");"
-                ),
-                _texts_the_last_statement_runs("var k = 5; eval(\"var next = ''; eval(next);\");"),
-            ),
-            (None, ["var next = '';\neval(next);"]),
-        )
-
-    def test_a_text_held_where_the_eval_reading_it_runs_is_read(self):
-        self.assertEqual(
-            (
-                _texts_eval_of_p_runs("(function () { var p = 'console.log(1)'; eval(p); })();"),
-                _texts_eval_of_p_runs("{ let p = 'console.log(1)'; eval(p); }"),
-                _texts_eval_of_p_runs("var p = 'console.log(1)'; eval(p);", FileKind.commonjs),
-            ),
-            (['console.log(1);'], ['console.log(1);'], ['console.log(1);']),
-        )
-
-    def test_a_text_held_where_another_eval_replaces_it_is_not_read(self):
-        self.assertIsNone(_texts_eval_of_p_runs(
-            "(function () { var p = 'console.log(1)';"
-            " eval(process.argv.length > 99 ? '' : \"p = 'console.log(2)'\"); eval(p); })();"
-        ))
-
-
-class TestTheSuspectingModelReadsCodeInStringsInLinearWork(TestBase):
-
-    def test_over_calls_of_a_name_written_as_often(self):
-        def work(count: int) -> int:
-            lines = ['var f = function () { return 0; };']
-            lines.extend(F'f = function () {{ return {i}; }}; f();' for i in range(count))
-            model = build_semantic_model(JsParser('\n'.join(lines)).parse())
-            return lines_executed(model.spelled_code_sites, model_module)
-        self.assertWorkGrowsLinearly(work, 20)
-
-    def test_over_stages_each_declaring_the_name_it_reads(self):
-        def work(count: int) -> int:
-            source = '\n'.join(F"eval(\"var n{i} = 'k{i} = 1'; eval(n{i});\");" for i in range(count))
-            readings = SpelledCodeReadings()
-            build_semantic_model(JsParser(source).parse(), spelled_code_readings=readings).spelled_code_sites()
-            model = build_semantic_model(JsParser(source).parse(), spelled_code_readings=readings)
-            return lines_executed(model.spelled_code_sites, model_module)
-        self.assertWorkGrowsLinearly(work, 20)
