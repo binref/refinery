@@ -2547,6 +2547,20 @@ class TestNodePrintsTheSameWhereAMemberOfTheGlobalObjectReadsAGlobalProperty(Tes
             {(source, strict): behavior(source) for source in rows for strict in (False, True)},
         )
 
+    def test_a_method_every_object_inherits_reading_a_property_of_its_own_keeps_the_write_under_either_model(self):
+        rows = [
+            "globalThis.toString = function () { return 'mine'; }; console.log(globalThis.toLocaleString());",
+            "globalThis.toString = function () { return 'mine'; }; console.log(this.toLocaleString());",
+        ]
+        self.assertEqual(
+            {
+                (source, strict): behavior(source.encode('utf8') | djs(strict=strict) | str)
+                for source in rows
+                for strict in (False, True)
+            },
+            {(source, strict): behavior(source) for source in rows for strict in (False, True)},
+        )
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameWhereTheGlobalObjectEscapes(TestJsDeobfuscator):

@@ -419,7 +419,9 @@ def _parse_construction_function(ctor_call: Node, code: str) -> tuple[JsScript, 
     global assignment mean in ways the execution below does not model. The language ends the
     parameters and the body each with a line feed, so a line comment in either ends there, and it
     parses the two on their own, so a text that closes the wrapper and parses as more than the one
-    function is a `SyntaxError` at the construction, not a function.
+    function is a `SyntaxError` at the construction, not a function. The parameters are therefore
+    parsed once more beside an empty body: a parameter text that closes its list, as `a) { /*` does
+    before a body opening with `*/`, builds one function only together with that body.
 
     The wrapper is a function expression rather than a bare statement list so the fragment model
     built over it sees the function's own scope: the `arguments` binding the body reads lives there,
@@ -430,8 +432,28 @@ def _parse_construction_function(ctor_call: Node, code: str) -> tuple[JsScript, 
     if any(text is None for text in leading):
         return None
     parameters = ','.join(text for text in leading if text is not None)
+    if _parse_built_function(parameters, '') is None:
+        return None
+    built = _parse_built_function(parameters, code)
+    if built is None:
+        return None
+    parsed, function = built
+    if not all(isinstance(param, JsIdentifier) for param in function.params):
+        return None
+    if declares_use_strict(function.body):
+        return None
+    return parsed, function
+
+
+def _parse_built_function(parameters: str, body: str) -> tuple[JsScript, JsFunctionExpression] | None:
+    """
+    The script the language builds from the source of the *parameters* and the *body* of a
+    `Function` construction, together with the one function expression it consists of, or `None`
+    where it is no such script: a text that closes the function and goes on is a `SyntaxError` at
+    the construction.
+    """
     parsed = _try_parse(
-        F'(function ({parameters}\n) {{\n{code}\n}})',
+        F'(function ({parameters}\n) {{\n{body}\n}})',
         strict=False,
         module=False,
         context=function_context(False, False),
@@ -443,10 +465,6 @@ def _parse_construction_function(ctor_call: Node, code: str) -> tuple[JsScript, 
         return None
     function = strip_parens(statement.expression)
     if not isinstance(function, JsFunctionExpression):
-        return None
-    if not all(isinstance(param, JsIdentifier) for param in function.params):
-        return None
-    if declares_use_strict(function.body):
         return None
     return parsed, function
 

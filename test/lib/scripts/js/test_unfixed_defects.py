@@ -5628,6 +5628,22 @@ class TestAWriteThroughANameHoldingTheGlobalObjectInAFunctionIsKept(TestBase):
         )
 
 
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAGlobalObjectAHostObjectHandsBackKeepsTheWritesReadThroughIt(TestBase):
+
+    @backlog
+    def test_the_view_of_the_document_under_either_model(self):
+        prelude = 'globalThis.document = { defaultView: globalThis };'
+        source = 'globalThis.k = 1; console.log(globalThis.document.defaultView.k);'
+        self.assertEqual(
+            {
+                strict: host_behavior(source.encode('utf8') | djs(strict=strict) | str, prelude=prelude)
+                for strict in (False, True)
+            },
+            {strict: host_behavior(source, prelude=prelude) for strict in (False, True)},
+        )
+
+
 A_TEXT_WRITTEN_INTO_A_NAME_BESIDE_ITS_DECLARED_TEXT = {
     'a stage storing the next stage in a name the file declares empty': (
         "var k = 5; var next = ''; eval(atob('bmV4dCA9ICJjb25zb2xlLmxvZyhrKSI=')); eval(next);"

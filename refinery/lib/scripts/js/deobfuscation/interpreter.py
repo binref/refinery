@@ -537,8 +537,9 @@ def _str_repeat(s: str, args: list[Value]) -> Value:
     interpreter makes is refused before it is built, where an engine builds it or throws at a limit
     of its own.
     """
-    count = _to_index(args[0]) if args else 0
-    if count < 0 or count == _to_index(math.inf):
+    number = to_number(args[0]) if args else 0.0
+    count = _to_index(number)
+    if count < 0 or number == math.inf:
         _js_throw('RangeError', 'Invalid count value')
     if count == 0 or not s:
         return ''

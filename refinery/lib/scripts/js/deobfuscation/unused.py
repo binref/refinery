@@ -63,6 +63,7 @@ from refinery.lib.scripts.js.analysis.model import (
     may_be_global_object_base,
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
+from refinery.lib.scripts.js.builtins import PROTOTYPE_METHODS
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
     access_key,
@@ -164,18 +165,12 @@ _IDENTITY_OBSERVING_UNARY = frozenset({'typeof', 'void', '!'})
 
 _IDENTITY_COMPARISONS = frozenset({'===', '!=='})
 
-_KEYS_HANDING_ON_THE_GLOBAL_OBJECT = GLOBAL_OBJECT_ALIASES | frozenset({
-    'hasOwnProperty',
-    'parent',
-    'propertyIsEnumerable',
-    'valueOf',
-    '__lookupGetter__',
-    '__lookupSetter__',
-})
+_KEYS_HANDING_ON_THE_GLOBAL_OBJECT = GLOBAL_OBJECT_ALIASES | PROTOTYPE_METHODS['Object'] | frozenset({'parent'})
 """
 The keys under which a global object holds or answers a global object, under one of its own
-spellings, as the window of a frame, or as the value it converts to, and the methods every object
-inherits that look up a property under the key a call hands them.
+spellings or as the window of a frame, and the methods every object inherits: one answers the
+object itself, others look up a property under the key a call hands them, and `toLocaleString`
+calls the `toString` the object holds.
 """
 
 

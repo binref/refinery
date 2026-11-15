@@ -187,18 +187,22 @@ class TestAnArgumentBoundToEvalStaysAnIndirectCall(TestJsDeobfuscator):
 
     def test_an_argument_bound_to_eval_is_inlined_as_an_indirect_call(self):
         self.assertEqual(
-            'function w(cb, s) {\n'
-            '  return cb(s);\n'
-            '}\n'
-            'function f() {\n'
-            '  var loc = 7;\n'
-            '  try {\n'
-            "    return (0, eval)('loc');\n"
-            '  } catch (e) {\n'
-            '    return e.constructor.name;\n'
-            '  }\n'
-            '}\n'
-            'console.log(f());',
+            inspect.cleandoc(
+                """
+                function w(cb, s) {
+                  return cb(s);
+                }
+                function f() {
+                  var loc = 7;
+                  try {
+                    return (0, eval)('loc');
+                  } catch (e) {
+                    return e.constructor.name;
+                  }
+                }
+                console.log(f());
+                """
+            ),
             self._run_transformer(
                 'function w(cb, s) { return cb(s); }'
                 ' function f(){ var loc = 7;'
@@ -211,15 +215,19 @@ class TestAnArgumentBoundToEvalStaysAnIndirectCall(TestJsDeobfuscator):
     @todo
     def test_the_wrapper_is_removed_once_nothing_calls_it(self):
         self.assertEqual(
-            'function f() {\n'
-            '  var loc = 7;\n'
-            '  try {\n'
-            "    return (0, eval)('loc');\n"
-            '  } catch (e) {\n'
-            '    return e.constructor.name;\n'
-            '  }\n'
-            '}\n'
-            'console.log(f());',
+            inspect.cleandoc(
+                """
+                function f() {
+                  var loc = 7;
+                  try {
+                    return (0, eval)('loc');
+                  } catch (e) {
+                    return e.constructor.name;
+                  }
+                }
+                console.log(f());
+                """
+            ),
             self._run_transformers(
                 'function w(cb, s) { return cb(s); }'
                 ' function f(){ var loc = 7;'
@@ -233,7 +241,12 @@ class TestAnArgumentBoundToEvalStaysAnIndirectCall(TestJsDeobfuscator):
     @todo
     def test_a_function_nothing_calls_is_removed_beside_eval_called_under_another_name(self):
         self.assertEqual(
-            "var e = eval;\ne('console.log(1)');",
+            inspect.cleandoc(
+                """
+                var e = eval;
+                e('console.log(1)');
+                """
+            ),
             self._run_transformer(
                 "function unused() { return 2; } var e = eval; e('console.log(1)');",
                 JsUnusedCodeRemoval,

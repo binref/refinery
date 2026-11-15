@@ -3158,3 +3158,17 @@ class TestAConstructionWhoseTextClosesTheFunctionStillThrows(TestBase):
             {strict: host_behavior(source.encode('utf8') | djs(strict=strict) | str) for strict in (False, True)},
             {strict: host_behavior(source) for strict in (False, True)},
         )
+
+    def test_parameters_closing_their_own_list_print_what_the_program_prints_under_either_model(self):
+        rows = [
+            "try { console.log(Function('a) { /*', '*/ return a')(1)); } catch (e) { console.log(e.name); }",
+            "try { console.log(Function('a /*', '*/ ) { return a')(1)); } catch (e) { console.log(e.name); }",
+        ]
+        self.assertEqual(
+            {
+                (source, strict): host_behavior(source.encode('utf8') | djs(strict=strict) | str)
+                for source in rows
+                for strict in (False, True)
+            },
+            {(source, strict): host_behavior(source) for source in rows for strict in (False, True)},
+        )
