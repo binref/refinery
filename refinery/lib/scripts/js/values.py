@@ -264,12 +264,25 @@ def function_source(func: JsFunctionNode) -> str:
     """
     The text `Function.prototype.toString` answers for *func*. A function the parser read carries
     the source it was written with; one a transform built carries none, and is written back the way
-    the synthesizer would write it, which is what running that program would then read for it.
+    the synthesizer would write it, which is what running that program would then read for it. A
+    transform that writes a function where the program obtained it another way records the text
+    that way answers, as the language builds it for a function a `Function` construction makes.
     """
     if func.source_text is not None:
         return func.source_text
     from refinery.lib.scripts.js.synth import JsSynthesizer
     return JsSynthesizer().convert(func)
+
+
+def recorded_function_name(func: JsFunctionNode) -> str | None:
+    """
+    The `name` *func* owns where a transform recorded it, or `None`: a transform that writes a
+    function where the program obtained it another way records the name that way gives it, as
+    `anonymous` for a function a `Function` construction makes, which the place the transform
+    writes it to would otherwise name differently. Where nothing is recorded, the name is the one
+    the language derives from where the function is written, which this does not answer.
+    """
+    return func.source_name
 
 
 def to_string(value: Value) -> str:

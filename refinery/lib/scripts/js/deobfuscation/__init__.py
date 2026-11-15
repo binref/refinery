@@ -28,6 +28,7 @@ from refinery.lib.scripts.js.deobfuscation.flatfunctions import JsFunctionUnflat
 from refinery.lib.scripts.js.deobfuscation.globalfinder import JsGlobalFinderInlining
 from refinery.lib.scripts.js.deobfuscation.iifeaccessor import JsIIFEAccessorPromoter
 from refinery.lib.scripts.js.deobfuscation.lzstrings import JsLZStringDecoder
+from refinery.lib.scripts.js.deobfuscation.modulemap import JsModuleMapUnwrapper
 from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
 from refinery.lib.scripts.js.deobfuscation.paramcopy import JsParameterCopyCoalescing
@@ -73,6 +74,7 @@ _pipeline = DeobfuscationPipeline(
             JsNamespaceFlattening,
             JsCallWrapperInliner,
             JsDispatcherUnwrapper,
+            JsModuleMapUnwrapper,
             JsFunctionUnflattening,
             JsIIFEAccessorPromoter,
             JsFunctionEvaluator,

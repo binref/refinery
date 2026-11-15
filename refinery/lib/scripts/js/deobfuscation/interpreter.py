@@ -1061,26 +1061,36 @@ def _global_string(args: list[Value]) -> Value:
 
 @_register((None, 'atob'), reads_strings=True)
 def _global_atob(args: list[Value]) -> Value:
-    """
-    Apply the WHATWG forgiving-base64 decode, which is what `atob` answers with. Padding is read
-    rather than supplied: the decode takes off one or two `=` only from an argument whose length is
-    already a multiple of four, and every `=` that survives that is a character outside the alphabet
-    and refuses the whole argument. Completing the group instead is how `atob('QQ=')` answered `'A'`
-    where the engine throws, so a call the program never returns from folded to a value.
-    """
     if not args:
         raise InterpreterError
-    s = to_string(args[0])
     try:
-        cleaned = _RE_ASCII_WHITESPACE.sub('', s)
+        decoded = forgiving_base64_decode(to_string(args[0]))
+    except Exception:
+        raise InterpreterError
+    if decoded is None:
+        raise InterpreterError
+    return decoded
+
+
+def forgiving_base64_decode(text: str) -> str | None:
+    """
+    The string `atob` answers for *text*, by the WHATWG forgiving-base64 decode, or `None` where
+    `atob` throws on it. Padding is read rather than supplied: the decode takes off one or two `=`
+    only from an argument whose length is already a multiple of four, and every `=` that survives
+    that is a character outside the alphabet and refuses the whole argument. Completing the group
+    instead is how `atob('QQ=')` answered `'A'` where the engine throws, so a call the program
+    never returns from folded to a value.
+    """
+    try:
+        cleaned = _RE_ASCII_WHITESPACE.sub('', text)
         if len(cleaned) % 4 == 0:
             cleaned = cleaned[:-2] if cleaned.endswith('==') else cleaned.removesuffix('=')
         if len(cleaned) % 4 == 1 or '=' in cleaned:
-            raise InterpreterError
+            return None
         padded = cleaned + '=' * (-len(cleaned) % 4)
         return base64.b64decode(padded, validate=True).decode('latin-1')
     except Exception:
-        raise InterpreterError
+        return None
 
 
 @_register((None, 'btoa'), reads_strings=True)

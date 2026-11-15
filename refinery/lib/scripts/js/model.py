@@ -240,21 +240,23 @@ class JsSpreadElement(Expression):
 
 
 @dataclass(repr=False, eq=False)
-class JsFunctionExpression(Expression, spelling='source_text'):
+class JsFunctionExpression(Expression, spelling=('source_text', 'source_name')):
     id: JsIdentifier | None = None
     params: list[Expression] = field(default_factory=list)
     body: JsBlockStatement | None = None
     generator: bool = False
     is_async: bool = False
     source_text: str | None = None
+    source_name: str | None = None
 
 
 @dataclass(repr=False, eq=False)
-class JsArrowFunctionExpression(Expression, spelling='source_text'):
+class JsArrowFunctionExpression(Expression, spelling=('source_text', 'source_name')):
     params: list[Expression] = field(default_factory=list)
     body: Expression | JsBlockStatement | None = None
     is_async: bool = False
     source_text: str | None = None
+    source_name: str | None = None
 
 
 @dataclass(repr=False, eq=False)
@@ -570,13 +572,14 @@ class JsDebuggerStatement(Statement):
 
 
 @dataclass(repr=False, eq=False)
-class JsFunctionDeclaration(Statement, spelling='source_text'):
+class JsFunctionDeclaration(Statement, spelling=('source_text', 'source_name')):
     id: JsIdentifier | None = None
     params: list[Expression] = field(default_factory=list)
     body: JsBlockStatement | None = None
     generator: bool = False
     is_async: bool = False
     source_text: str | None = None
+    source_name: str | None = None
 
 
 @dataclass(repr=False, eq=False)
