@@ -24,7 +24,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase, backlog, blocker, opportunity, todo
+from test import TestBase, backlog, opportunity, todo
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -5692,7 +5692,7 @@ A_TEXT_READ_AS_OPAQUE_WRITING_A_GLOBAL = {
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_script(A_TEXT_READ_AS_OPAQUE_WRITING_A_GLOBAL, blocker, (True,))
+@one_expected_failure_per_script(A_TEXT_READ_AS_OPAQUE_WRITING_A_GLOBAL, todo, (True,))
 class TestTheSuspectingModelKeepsWhatAGlobalHoldsWhereCodeItReadsAsOpaqueMayWriteIt(TestBase):
     pass
 
