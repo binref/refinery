@@ -1012,14 +1012,14 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     def _reflection_reachable(self, binding: Binding | None) -> bool:
         """
         Whether code this pass cannot read could name *binding*, so its declaration and assignments
-        must be kept even when no static reference remains. A function-local is at risk only from a
-        `with` or direct `eval` inside its own function; a global, from any surface, from code
-        outside the file reading or calling it
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`), and from a
-        body the file hands the global object to; a name no declaration binds, also from an
-        accessor the program installs under it, which a store into the name runs
-        (`refinery.lib.scripts.js.analysis.effects.EffectModel.installed_under`); and an exported
-        binding, from an importer that reads its value once the module has run.
+        must be kept even when no static reference remains: code that sees it without its name
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.seen_without_its_name`), which is
+        a `with` or direct `eval` inside its own function for a function-local and also any
+        reflective surface, a read through the global object and a listing of its names for a
+        global; code outside the file reading or calling a global
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`); and for a
+        name no declaration binds, an accessor the program installs under it, which a store into the
+        name runs (`refinery.lib.scripts.js.analysis.effects.EffectModel.installed_under`).
 
         Those last cases have references the model does record where the text spells them, and they
         keep everything reached through such a name. The model decides them all; a `None` binding (a
@@ -1036,12 +1036,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     def _reached_without_a_reference(self, binding: Binding) -> bool:
         """
-        Whether code reaches *binding* where the file spells no reference to it: a body the file
-        hands the global object to, an importer reading an export, or reflection.
+        Whether code reaches *binding* where the file spells no reference to it
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.seen_without_its_name`).
         """
-        if binding.reachable_through_a_handed_object or binding.exported:
-            return True
-        return self.model.reflection_can_reach(binding)
+        return self.model.seen_without_its_name(binding)
 
     @staticmethod
     def _owns(scope: Scope, binding: Binding | None) -> bool:
@@ -1090,14 +1088,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return set()
         roots = self._host_entrypoints(functions)
         roots |= self._referenced_outside(body, functions)
+        roots |= self._seen_without_their_names(functions)
         reachable, write_only_stmts = _reachable_functions(body, functions, roots, self._is_removable)
-        kept_by_reflection = {
-            name for name, func in functions.items()
-            if isinstance(func.id, JsIdentifier)
-            and (binding := self.model.binding_of(func.id)) is not None
-            and self._reached_without_a_reference(binding)
-        }
-        unreachable = (set(functions.keys()) - reachable) - kept_by_reflection
+        unreachable = set(functions.keys()) - reachable
         if not unreachable:
             return set()
         if isinstance(parent, JsBlockStatement) and self._may_give_the_script_its_value(parent):
@@ -1180,6 +1173,22 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 continue
             binding = self.model.binding_of(func.id)
             if binding is not None and self.model.called_from_outside(binding):
+                names.add(name)
+        return frozenset(names)
+
+    def _seen_without_their_names(self, functions: dict[str, JsFunctionDeclaration]) -> frozenset[str]:
+        """
+        Which of *functions* code sees in a way no spelling of their name shows
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.seen_without_its_name`): reflection,
+        a read through the global object, a listing of its names, an importer. Such code may call
+        the function, so each is a reachability root and what it calls is kept with it.
+        """
+        names: set[str] = set()
+        for name, func in functions.items():
+            if not isinstance(func.id, JsIdentifier):
+                continue
+            binding = self.model.binding_of(func.id)
+            if binding is not None and self._reached_without_a_reference(binding):
                 names.add(name)
         return frozenset(names)
 

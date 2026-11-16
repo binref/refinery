@@ -2412,3 +2412,30 @@ class TestWhatCodeOutsideTheFileReaches(TestBase):
                 binding = model.binding_of(function.id)
                 assert binding is not None
                 self.assertEqual(model.reached_without_a_read(binding), expected)
+
+
+class TestWhatSeesABindingWithoutItsName(TestBase):
+
+    @staticmethod
+    def _answers(source: str, name: str) -> tuple[bool, bool]:
+        ast = JsParser(source).parse()
+        model = build_semantic_model(ast)
+        binding = next(
+            binding for binding in (model.binding_of(node) for node in ast.walk_in_order() if isinstance(node, JsIdentifier))
+            if binding is not None and binding.name == name
+        )
+        return model.seen_without_its_name(binding), model.reached_without_a_read(binding)
+
+    def test_each_use_that_sees_the_binding_without_spelling_it(self):
+        for label, (source, name, expected) in {
+            'a read by its name'               : ('var q = 1; console.log(q);', 'q', (False, False)),
+            'a read through globalThis'        : ('var q = 1; console.log(globalThis.q);', 'q', (True, False)),
+            'a read through arguments'         : ('function f(a) { return arguments[0]; } f(1);', 'a', (True, False)),
+            'a listing of the global object'   : ('var q = 1; Object.keys(globalThis); console.log(q);', 'q', (True, False)),
+            'an in test naming it'             : ("var q = 1; var r = 2; console.log('q' in globalThis, q + r);", 'q', (True, False)),
+            'an in test naming another'        : ("var q = 1; var r = 2; console.log('q' in globalThis, q + r);", 'r', (False, False)),
+            'a for-in over the global object'  : ('var q = 1; for (var k in globalThis) {} console.log(q);', 'q', (True, False)),
+            'a listing beside a lexical'       : ('let q = 1; Object.keys(globalThis); console.log(q);', 'q', (False, False)),
+        }.items():
+            with self.subTest(label):
+                self.assertEqual(self._answers(source, name), expected)

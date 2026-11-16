@@ -930,9 +930,12 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         declarator for the same reason: every read this file spells may have folded, and the surface
         — a direct `eval`, a span of source the model never read, a `with` body — reads the binding
         through no reference the inlining counted, so removing the declaration would turn its value
-        into a `ReferenceError`. An opaque global write is not such a surface: it stores a property
-        and runs nothing, and the reads it could replace were ordered against it before they folded,
-        so the property it may write is the same residual the fold already concedes.
+        into a `ReferenceError`. So does a binding the model records code seeing without its name
+        (`refinery.lib.scripts.js.analysis.model.Binding.seen_without_a_spelling`): a read through
+        the global object or a listing of its names counts as no spelled reference either. An opaque
+        global write is not such a surface: it stores a property and runs nothing, and the reads it
+        could replace were ordered against it before they folded, so the property it may write is
+        the same residual the fold already concedes.
         """
         model = cache.model
         removals: list[_DeclaratorRemoval] = []
@@ -945,7 +948,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                     continue
                 binding = self._candidate_binding(entry, model)
                 if binding is not None and (
-                    binding.exported
+                    binding.seen_without_a_spelling
                     or model.reachable_by_opaque_reflection(binding)
                     or bool(binding.dynamic_refs)
                 ):

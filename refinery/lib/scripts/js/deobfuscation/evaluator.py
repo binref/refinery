@@ -202,20 +202,16 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
     def _function_is_removable(self, model: SemanticModel, func: _FuncNode) -> bool:
         """
-        Whether *func*'s definition can be deleted: it has no surviving static reference and cannot be
-        reached by a runtime name lookup. A function named inside a `with` body or otherwise reflected
-        (`model.reflection_can_reach`) must be kept even once every direct call has folded away — the
-        `with`-body call still needs the binding. This mirrors the reflection gate the unused-code
-        remover applies, so both transforms keep the same functions.
+        Whether *func*'s definition can be deleted: it has no surviving static reference, and no code
+        sees a name holding it without spelling that name
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.seen_without_its_name`) — a `with`
+        body or other reflection, a read through the global object, a listing of its names, an
+        importer of an export. Such code still needs the binding once every direct call has folded
+        away, and the unused-code remover asks the same question, so both transforms keep the same
+        functions.
 
         A function code outside the file reaches by name is likewise never removable
-        (`_reached_from_outside`): no reference here can prove it dead. Both transforms consult the
-        same predicates, or they would disagree about which functions survive.
-
-        An exported binding is never removable for the same reason the other removal sweeps keep it:
-        an importer reads its value across the module boundary once the module has run, so no
-        reference here can prove it dead, and deleting the declarator would leave an `export` naming
-        a binding the module no longer declares.
+        (`_reached_from_outside`): no reference here can prove it dead.
         """
         names = model.function_names(func)
         if names is None:
@@ -224,11 +220,9 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         for binding in names.bindings:
             if self._reached_from_outside(model, func, binding):
                 return False
-            if binding.exported:
-                return False
             if binding_has_references(model, binding, exclude=exclude):
                 return False
-            if model.reflection_can_reach(binding):
+            if model.seen_without_its_name(binding):
                 return False
         return True
 

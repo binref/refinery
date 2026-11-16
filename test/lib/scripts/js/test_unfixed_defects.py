@@ -2400,15 +2400,6 @@ class TestAVariableAnUnreadableEvalMayAssignIsNotWrittenIntoAFunctionReadingIt(T
 
 
 A_NAME_THE_FILE_INSTALLS_ON_THE_GLOBAL_OBJECT = {
-    'read through the installed name': Program(
-        a_program("""
-            globalThis.window = globalThis;
-            var q = 1;
-            console.log(window.q);
-            """),
-        prints('1'),
-        Reading.SCRIPT,
-    ),
     'a guard reads the installed name': Program(
         a_program("""
             globalThis.window = globalThis;
@@ -2417,16 +2408,6 @@ A_NAME_THE_FILE_INSTALLS_ON_THE_GLOBAL_OBJECT = {
             w.q(1);
             """),
         prints('q 1'),
-        Reading.SCRIPT,
-    ),
-    'a write through the installed name': Program(
-        a_program("""
-            globalThis.window = globalThis;
-            var q = 1;
-            window.q = 2;
-            console.log(q);
-            """),
-        prints('2'),
         Reading.SCRIPT,
     ),
     'a name installed by assigning it undeclared': Program(
@@ -2480,25 +2461,6 @@ class TestAGlobalReachedInsideACallThroughANameHoldingTheGlobalObjectIsReachedTh
 
 
 A_DECLARATION_ALSO_READ_THROUGH_THE_GLOBAL_OBJECT = {
-    'a constant read through the object': Program(
-        a_program("""
-            var q = 1;
-            console.log(globalThis.q);
-            console.log(q);
-            """),
-        prints('1', '1'),
-        Reading.SCRIPT,
-    ),
-    'a constant read through a name holding the object': Program(
-        a_program("""
-            var q = 1;
-            var w = globalThis;
-            console.log(w.q);
-            console.log(q);
-            """),
-        prints('1', '1'),
-        Reading.SCRIPT,
-    ),
     'a namespace read through the object': Program(
         a_program("""
             var App = {};
