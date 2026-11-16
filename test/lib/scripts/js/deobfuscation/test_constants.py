@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase, a_property_of_the_batch_itself, opportunity
+from test import TestBase, a_property_of_the_batch_itself, opportunity, todo
 from test.lib.scripts.js.analysis.differential import (
     deobfuscate_source,
     node_executable,
@@ -2196,6 +2196,35 @@ class TestALocalALaterStoreDefines(TestJsDeobfuscator):
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
+        )
+
+
+class TestABranchItsBodyStoresIntoTheNameItsTestReads(TestJsDeobfuscator):
+
+    @todo
+    def test_the_branch_goes_when_its_test_reads_the_store_before_the_branch(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f(q) {
+                  console.log(1);
+                }
+                f(2);
+                """
+            ),
+            self._deobfuscate(inspect.cleandoc(
+                """
+                function f(q) {
+                  var b = '';
+                  if ("" !== b) {
+                    b = new XMLHttpRequest();
+                    g(b);
+                  }
+                  console.log(1);
+                }
+                f(2);
+                """
+            )),
         )
 
 
