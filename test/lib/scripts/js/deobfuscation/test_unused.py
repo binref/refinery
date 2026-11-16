@@ -414,6 +414,19 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._remove_unused(source))
 
+    def test_script_scope_var_seen_through_an_in_test_not_localized(self):
+        source = inspect.cleandoc(
+            """
+            var q;
+            function f() {
+              q = 2;
+              return 'q' in globalThis;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
     def test_dead_initializer_stripped_when_overwritten_before_read(self):
         source = 'function f() { var x = 1; x = 2; return x; }'
         self.assertEqual(
@@ -424,6 +437,21 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
                   x = 2;
                   return x;
                 }
+                """
+            ),
+            self._remove_unused(source),
+        )
+
+    def test_a_dead_store_to_a_var_repeating_a_parameter_with_a_default_goes(self):
+        source = 'function g(f = 1, x) { var f; f = 5; return x; } var t = [g]; console.log(t[0](1, 2));'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function g(f = 1, x) {
+                  return x;
+                }
+                var t = [g];
+                console.log(t[0](1, 2));
                 """
             ),
             self._remove_unused(source),

@@ -15,6 +15,7 @@ from test.lib.scripts.js.ledger import (
     folded,
     node_prints_what_each_program_pins,
     one_expected_failure_per_program,
+    on_separate_lines,
     printed,
     prints,
 )
@@ -371,6 +372,74 @@ A_DECLARATION_SEEN_THROUGH_THE_GLOBAL_OBJECT: dict[str, Program] = {
         prints('q 2'),
         Reading.SCRIPT,
     ),
+    'an in test over a sequence with an effect': Program(
+        a_program("""
+            var q = 1;
+            function t() { return 0; }
+            console.log('q' in (t(), globalThis), q);
+            """),
+        prints('true 1'),
+        Reading.SCRIPT,
+    ),
+    'a for-in over a sequence with an effect': Program(
+        a_program("""
+            var q = 1;
+            function t() { return 0; }
+            for (var k in (t(), globalThis)) { if (k === 'q') console.log('saw'); }
+            console.log(q);
+            """),
+        prints('saw', '1'),
+        Reading.SCRIPT,
+    ),
+    'a listing over a sequence with an effect': Program(
+        a_program("""
+            var q = 1;
+            function t() { return 0; }
+            console.log(Object.keys((t(), globalThis)).indexOf('q') >= 0, q);
+            """),
+        prints('true 1'),
+        Reading.SCRIPT,
+    ),
+    'an in test over a conditional': Program(
+        a_program("""
+            var q = 1;
+            var c = 1;
+            var o = {};
+            console.log('q' in (c ? globalThis : o), q);
+            """),
+        prints('true 1'),
+        Reading.SCRIPT,
+    ),
+    'a hand-over wrapped in a sequence with an effect': Program(
+        a_program("""
+            var q = 1;
+            function t() { return 0; }
+            function w(o) { o.q = 2; }
+            w((t(), globalThis));
+            console.log(q);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+    'a hand-over wrapped in a conditional': Program(
+        a_program("""
+            var q = 1;
+            var c = 1;
+            (function (root) { root.q = 2; })(c ? globalThis : this);
+            console.log(q);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+    'a var one function writes, an in test inside it sees': Program(
+        a_program("""
+            var q;
+            function f() { q = 2; return 'q' in globalThis; }
+            console.log(f());
+            """),
+        prints('true'),
+        Reading.SCRIPT,
+    ),
 }
 
 A_LISTING_OF_A_BUILTIN_THE_PROGRAM_REPLACES: dict[str, Program] = {
@@ -630,6 +699,24 @@ AN_ESCAPE_OF_THE_GLOBAL_OBJECT_SEEING_A_NAME: dict[str, Program] = {
         prints('true 2'),
         Reading.SCRIPT,
     ),
+    'an in test of the this of a function': Program(
+        a_program("""
+            var q = 1;
+            function seen() { return 'q' in this; }
+            console.log(seen(), q + 1);
+            """),
+        prints('true 2'),
+        Reading.SCRIPT,
+    ),
+    'a for-in over the this of a function': Program(
+        a_program("""
+            var q = 1;
+            function seen() { for (var k in this) if (k === 'q') return true; return false; }
+            console.log(seen(), q + 1);
+            """),
+        prints('true 2'),
+        Reading.SCRIPT,
+    ),
     'a hasOwnProperty on it': Program(
         a_program("""
             var q = 1;
@@ -703,28 +790,86 @@ class TestAUseSeeingWhichNamesExistKeepsTheDeclarationAndLetsItsReadsFold(TestBa
         }.items():
             with self.subTest(label):
                 self.assertEqual(
-                    folded(F'var q = 1;\n{use}\nconsole.log(q + 1);\n'),
-                    printed(F'var q = 1;\n{use}\nconsole.log(2);\n'),
+                    folded(on_separate_lines('var q = 1;', use, 'console.log(q + 1);')),
+                    printed(on_separate_lines('var q = 1;', use, 'console.log(2);')),
+                )
+
+    def test_a_use_wrapped_in_a_sequence_with_an_effect_keeps_the_declaration_and_folds_the_read(self):
+        for label, use in {
+            'an in test' : "'q' in (t(), globalThis);",
+            'a for-in'   : 'for (var k in (t(), globalThis)) {}',
+            'a listing'  : 'Object.keys((t(), globalThis));',
+        }.items():
+            with self.subTest(label):
+                self.assertEqual(
+                    folded(a_program(F"""
+                        var q = 1;
+                        function t() {{ console.log('x'); }}
+                        {use}
+                        console.log(q + 1);
+                        """)),
+                    printed(a_program(F"""
+                        var q = 1;
+                        function t() {{ console.log('x'); }}
+                        {use}
+                        console.log(2);
+                        """)),
                 )
 
     def test_a_listing_beside_a_write_of_another_key_of_the_builtin_folds_the_read(self):
         self.assertEqual(
-            folded('var q = 1;\nObject.foo = 1;\nObject.getOwnPropertyNames(globalThis);\nconsole.log(q + 1);\n'),
-            printed('var q = 1;\nObject.foo = 1;\nObject.getOwnPropertyNames(globalThis);\nconsole.log(2);\n'),
+            folded(a_program("""
+                var q = 1;
+                Object.foo = 1;
+                Object.getOwnPropertyNames(globalThis);
+                console.log(q + 1);
+                """)),
+            printed(a_program("""
+                var q = 1;
+                Object.foo = 1;
+                Object.getOwnPropertyNames(globalThis);
+                console.log(2);
+                """)),
         )
 
     def test_a_listing_keeps_a_declaration_after_it(self):
-        source = "console.log(Object.getOwnPropertyNames(globalThis).indexOf('q') >= 0);\nvar q = 1;\n"
+        source = a_program("""
+            console.log(Object.getOwnPropertyNames(globalThis).indexOf('q') >= 0);
+            var q = 1;
+            """)
         self.assertEqual(folded(source), printed(source))
 
     def test_a_listing_keeps_a_function_nothing_calls(self):
-        source = 'Object.getOwnPropertyNames(globalThis);\nfunction f() { return 1; }\n'
+        source = a_program("""
+            Object.getOwnPropertyNames(globalThis);
+            function f() { return 1; }
+            """)
         self.assertEqual(folded(source), printed(source))
 
     def test_a_listing_does_not_keep_a_lexical_declaration(self):
         self.assertEqual(
-            folded('let q = 1;\nObject.getOwnPropertyNames(globalThis);\nconsole.log(q + 1);\n'),
-            printed('Object.getOwnPropertyNames(globalThis);\nconsole.log(2);\n'),
+            folded(a_program("""
+                let q = 1;
+                Object.getOwnPropertyNames(globalThis);
+                console.log(q + 1);
+                """)),
+            printed(a_program("""
+                Object.getOwnPropertyNames(globalThis);
+                console.log(2);
+                """)),
+        )
+
+    def test_a_listing_of_the_symbolic_names_sees_no_declaration(self):
+        self.assertEqual(
+            folded(a_program("""
+                var q = 1;
+                Object.getOwnPropertySymbols(globalThis);
+                console.log(q + 1);
+                """)),
+            printed(a_program("""
+                Object.getOwnPropertySymbols(globalThis);
+                console.log(2);
+                """)),
         )
 
     def test_a_listing_of_a_replaced_builtin_folds_nothing(self):
@@ -735,6 +880,21 @@ class TestAUseSeeingWhichNamesExistKeepsTheDeclarationAndLetsItsReadsFold(TestBa
             console.log(q + 1);
             """)
         self.assertEqual(folded(source), printed(source))
+
+    @backlog
+    def test_a_use_seeing_names_still_lets_a_called_function_fold_into_its_call(self):
+        self.assertEqual(
+            folded(a_program("""
+                function w() { console.log(1); }
+                for (var k in globalThis) {}
+                w();
+                """)),
+            printed(a_program("""
+                function w() { console.log(1); }
+                for (var k in globalThis) {}
+                console.log(1);
+                """)),
+        )
 
 
 class TestAListingJudgedWhileTheModelIsBuiltLeavesNoAnswerOfThatJudgment(TestBase):

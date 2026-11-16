@@ -311,12 +311,6 @@ class Binding:
     #: and this says the one thing they cannot: that a walk which finds a name only where the text
     #: spells it is looking at less than the whole program. Only a global is ever carried this way.
     reachable_through_a_handed_object: bool = False
-    #: Whether code sees that the binding exists without spelling its name: a `for-in` over the
-    #: global object, an `in` test of it under a key only the run knows, or a listing of its keys.
-    #: Such code yields the name and never the value. It is recorded as a read, which keeps the
-    #: declaration, and this says what that read cannot: it stands for every name the object
-    #: carries, so a walk finding a name only where the text spells it misses it.
-    named_by_a_listing: bool = False
     #: Whether a reference recorded against the binding reaches it through an object that aliases
     #: it — the global object, a mapped `arguments`, or the copy Annex B makes of a block binding —
     #: rather than through an identifier spelling its name (`ReferenceNode`), so a pass counting the
@@ -382,18 +376,15 @@ class Binding:
     def seen_without_a_spelling(self) -> bool:
         """
         Whether code the identifier references do not show sees the binding, by what the model
-        recorded of the binding itself: an importer (`exported`), the call writing it on entry
-        (`written_at_entry`), a body handed the object carrying it
-        (`reachable_through_a_handed_object`), a use seeing which names that object carries
-        (`named_by_a_listing`), or a reference through an object aliasing it
-        (`referenced_through_an_alias`). Reflection, a question of the whole program, is asked
-        beside this (`SemanticModel.seen_without_its_name`).
+        recorded of the binding itself: an importer (`exported`), a body handed the object
+        carrying it (`reachable_through_a_handed_object`), or a reference through an object
+        aliasing it (`referenced_through_an_alias`), which a `for-in` over the global object, an
+        `in` test of it and a listing of its keys record as reads. Reflection, a question of the
+        whole program, is asked beside this (`SemanticModel.seen_without_its_name`).
         """
         return (
             self.exported
-            or self.written_at_entry
             or self.reachable_through_a_handed_object
-            or self.named_by_a_listing
             or self.referenced_through_an_alias
         )
 
@@ -2407,6 +2398,44 @@ def _enclosing_call(node: Node) -> JsCallExpression | JsNewExpression | None:
     return None
 
 
+def _call_whose_argument_may_be(node: Node) -> JsCallExpression | JsNewExpression | None:
+    """
+    The call or `new` an argument of which may evaluate to *node*, or `None`. The walk climbs from
+    *node* through the value-preserving forms a fold collapses — parentheses, the last expression
+    of a sequence, either branch of a conditional, either operand of a logical operator, and the
+    right side of an assignment — and answers the call whose argument the climb ends in. This is
+    `_is_call_argument` widened by those forms, asked where a callee the object reaches wrapped in
+    one still receives it: `f((t(), globalThis))` hands `f` the object as surely as
+    `f(globalThis)` does, which the direct reading refuses.
+    """
+    cursor: Node = node
+    parent = cursor.parent
+    while parent is not None:
+        if isinstance(parent, (JsCallExpression, JsNewExpression)):
+            if any(argument is cursor for argument in parent.arguments):
+                return parent
+            return None
+        if isinstance(parent, JsParenthesizedExpression):
+            pass
+        elif isinstance(parent, JsSequenceExpression):
+            if not parent.expressions or parent.expressions[-1] is not cursor:
+                return None
+        elif isinstance(parent, JsConditionalExpression):
+            if cursor is not parent.consequent and cursor is not parent.alternate:
+                return None
+        elif isinstance(parent, JsLogicalExpression):
+            if cursor is not parent.left and cursor is not parent.right:
+                return None
+        elif isinstance(parent, JsAssignmentExpression):
+            if parent.right is not cursor:
+                return None
+        else:
+            return None
+        cursor = parent
+        parent = cursor.parent
+    return None
+
+
 _KEY_LISTINGS = frozenset({
     'getOwnPropertyNames',
     'getOwnPropertySymbols',
@@ -2415,6 +2444,13 @@ _KEY_LISTINGS = frozenset({
 """
 The functions of `Object` that answer which keys an object owns and nothing else: no body of the
 program runs, no value of a property is read, and the object is not kept.
+"""
+
+_STRING_KEY_LISTINGS = _KEY_LISTINGS - frozenset({'getOwnPropertySymbols'})
+"""
+The listings of `_KEY_LISTINGS` whose result names the string-keyed properties of the object, which
+a `var`, a function declaration and an implicit global of the top scope are. A symbol-keyed
+listing names no binding of the model, so it records nothing.
 """
 
 
@@ -5614,13 +5650,7 @@ class SemanticModel:
         binding = self._global_alias_member_binding(member)
         if binding is None:
             return
-        role = reference_role(member)
-        if role is not Role.WRITE:
-            binding.reads.append(member)
-        if role is not Role.READ:
-            binding.writes.append(member)
-        binding.referenced_through_an_alias = True
-        binding.note_reference_from(self._node_scope.get(member))
+        self._record_alias_reference(binding, member, reference_role(member), definite_write=True)
 
     def _record_arguments_alias_references(self):
         """
@@ -5790,26 +5820,51 @@ class SemanticModel:
         .globalfinder` the very function whose removal makes the object nameable, leaving the two
         obfuscated samples that use a finder at their original size.
 
-        The same walk records the uses that see which names the object carries
+        The same walk collects the uses that see which names the object carries
         (`_record_names_seen`), because one of them is a hand-over: a listing of the object's keys
         is a call handed the object, and judging it a trusted builtin needs the answer about the
-        other hand-overs first.
+        other hand-overs first. A hand-over and a use that sees names are both recognized wherever
+        the object stands wrapped in a value-preserving form (`_call_whose_argument_may_be`,
+        `_global_object_subject`): `f((t(), globalThis))` hands `f` the object as surely as
+        `f(globalThis)` does, and a `for-in` over `(t(), globalThis)` enumerates its names as
+        surely as one over `globalThis` does. A hand-over wrapped that way is admitted without
+        the precise judgment `global_object_argument_is_observed` gives a direct one, which reads
+        the argument itself and not what it may evaluate to; the safe answer is the observed one.
         """
         bindings = list(self.root_scope.bindings.values())
         observed: list[ReferenceNode] = []
         listings: list[tuple[JsIdentifier | JsThisExpression, JsIdentifier, str]] = []
+        seen: list[JsIdentifier | JsThisExpression] = []
+        spelled: list[tuple[Binding, JsIdentifier | JsThisExpression]] = []
         for node in self.root.walk():
-            if not isinstance(node, (JsIdentifier, JsThisExpression)):
-                continue
-            if not _is_call_argument(node) or not self._holds_the_global_object(node):
-                continue
-            if (listing := self._listing_of_keys(node)) is not None:
-                listings.append((node, *listing))
-            elif self.global_object_argument_is_observed(node):
-                observed.append(node)
-        trusted = self._trusted_listings(listings) if not observed else []
-        held = {id(node) for node in trusted}
-        observed.extend(node for node, _, _ in listings if id(node) not in held)
+            if isinstance(node, (JsIdentifier, JsThisExpression)):
+                call = _call_whose_argument_may_be(node)
+                if call is None or not self._holds_the_global_object(node):
+                    continue
+                if (listing := self._listing_of_keys(node, call)) is not None:
+                    listings.append((node, *listing))
+                elif _is_call_argument(node):
+                    if self.global_object_argument_is_observed(node):
+                        observed.append(node)
+                else:
+                    observed.append(node)
+            elif isinstance(node, JsForInStatement):
+                subject = self._global_object_subject(node.right)
+                if subject is not None:
+                    seen.append(subject)
+            elif isinstance(node, JsBinaryExpression) and node.operator == 'in':
+                subject = self._global_object_subject(node.right)
+                if subject is None:
+                    continue
+                key = expression_key(strip_parens(node.left))
+                if key is None:
+                    seen.append(subject)
+                    continue
+                binding = self.root_scope.bindings.get(key)
+                if binding is not None and self.reaches_global_object(binding):
+                    spelled.append((binding, subject))
+        trusted, declined = self._trusted_listings(listings, observed)
+        observed.extend(declined)
         if observed:
             # A callee that could read a property of the object it was handed could write one under
             # a key no text spells, which is the opaque global write's own question, so an observed
@@ -5821,16 +5876,23 @@ class SemanticModel:
             for binding in bindings:
                 binding.reachable_through_a_handed_object = True
                 self._record_alias_reference(binding, node, Role.READWRITE)
-        self._record_names_seen(trusted)
+        self._record_names_seen(trusted, seen, spelled)
 
-    def _listing_of_keys(self, node: Node) -> tuple[JsIdentifier, str] | None:
+    def _listing_of_keys(
+        self,
+        node: Node,
+        call: JsCallExpression | JsNewExpression,
+    ) -> tuple[JsIdentifier, str] | None:
         """
-        The name `Object` and the key of the listing (`_KEY_LISTINGS`) whose first argument *node*
-        is, as in `Object.keys(node)`, or `None` where *node* is no such argument. Only the spelling
-        is read; whether the name denotes the builtin is `_trusted_listings`'s question.
+        The name `Object` and the key of the listing (`_KEY_LISTINGS`) whose first argument may
+        evaluate to *node*, as in `Object.keys(node)`, or `None` where it is no such argument.
+        Only the spelling is read; whether the name denotes the builtin is `_trusted_listings`'
+        question.
         """
-        call = _enclosing_call(node)
-        if not isinstance(call, JsCallExpression) or not call.arguments or strip_parens(call.arguments[0]) is not node:
+        from refinery.lib.scripts.js.analysis.intrinsics import denoting_leaves
+        if not isinstance(call, JsCallExpression) or not call.arguments:
+            return None
+        if not any(leaf is node for leaf in denoting_leaves(call.arguments[0])):
             return None
         callee = strip_parens(call.callee)
         if not isinstance(callee, JsMemberExpression):
@@ -5844,17 +5906,41 @@ class SemanticModel:
         assert key is not None
         return builtin, key
 
+    def _global_object_subject(self, node: Node | None) -> JsIdentifier | JsThisExpression | None:
+        """
+        The identifier or `this` holding the global object among the nodes *node* may evaluate to
+        through the value-preserving forms a fold collapses (`denoting_leaves`), or `None`. A
+        member access holds none of them: its value is a property read, which the model reads no
+        further than `may_name_a_global` does, so a use of what it holds is a question about
+        another object.
+        """
+        from refinery.lib.scripts.js.analysis.intrinsics import _is_member_object, denoting_leaves
+        for leaf in denoting_leaves(node):
+            if not isinstance(leaf, (JsIdentifier, JsThisExpression)) or _is_member_object(leaf):
+                continue
+            if self._holds_the_global_object(leaf):
+                return leaf
+        return None
+
     def _trusted_listings(
         self,
         listings: list[tuple[JsIdentifier | JsThisExpression, JsIdentifier, str]],
-    ) -> list[JsIdentifier | JsThisExpression]:
+        observed: list[ReferenceNode],
+    ) -> tuple[
+        list[tuple[JsIdentifier | JsThisExpression, JsIdentifier, str]],
+        list[JsIdentifier | JsThisExpression],
+    ]:
         """
-        The arguments of *listings* whose call runs the builtin listing it spells, so the call
-        yields the names of the global object and nothing else: nothing binds the builtin's name
-        where the call stands (`bare_name_reaches_the_host`), the program writes no property of
-        the builtin under the listing's key (`IntrinsicWrites.key_written`), and neither a
-        reflective surface nor a write to the global object under a runtime key may replace the
-        builtin unseen. A listing failing any of these is a hand-over like every other.
+        The arguments of *listings* split into those whose call runs the builtin listing it spells,
+        so the call yields the names of the global object and nothing else, and those it does not:
+        nothing binds the builtin's name where the call stands (`bare_name_reaches_the_host`), the
+        program writes no property of the builtin under the listing's key
+        (`IntrinsicWrites.key_written`), and neither a reflective surface, a write to the global
+        object under a runtime key, nor a hand-over the program observes elsewhere may replace the
+        builtin unseen. A listing failing any of these is a hand-over like every other, and an
+        observed hand-over anywhere in the program refuses them all: it is about to make
+        `has_opaque_global_write` hold, which the model does not answer yet while this recording
+        still runs.
 
         The write scan is built over the model as it stands, every other reference recorded, and
         not taken from `refinery.lib.scripts.js.analysis.cache.ModelCache`, which builds it over
@@ -5862,18 +5948,30 @@ class SemanticModel:
         step is about to record are dropped again (`_forget_answers_about_calls`).
         """
         if not listings:
-            return []
-        from refinery.lib.scripts.js.analysis.intrinsics import build_intrinsic_writes
-        writes = build_intrinsic_writes(self)
-        trusted = [
-            node for node, builtin, key in listings
-            if self.bare_name_reaches_the_host(builtin.name, builtin)
-            and not writes.key_written(builtin.name, key)
+            return [], []
+        reachable = (
+            not observed
             and not self.has_reflection_surface()
             and not self.has_opaque_global_write()
+        )
+        candidates = [
+            (node, builtin, key) for node, builtin, key in listings
+            if reachable and self.bare_name_reaches_the_host(builtin.name, builtin)
         ]
+        trusted: list[tuple[JsIdentifier | JsThisExpression, JsIdentifier, str]] = []
+        if candidates:
+            from refinery.lib.scripts.js.analysis.intrinsics import build_intrinsic_writes
+            writes = build_intrinsic_writes(self)
+            trusted = [
+                (node, builtin, key) for node, builtin, key in candidates
+                if not writes.key_written(builtin.name, key)
+            ]
         self._forget_answers_about_calls()
-        return trusted
+        held = {node for node, _, _ in trusted}
+        return (
+            trusted,
+            [node for node, _, _ in listings if node not in held],
+        )
 
     def _forget_answers_about_calls(self):
         """
@@ -5883,49 +5981,48 @@ class SemanticModel:
         references recorded so far rather than for the program.
         """
         self._shown_calls.clear()
-        self._values_through_calls.clear()
-        self._table_ways.clear()
-        self._reached_unnamed.clear()
 
-    def _record_names_seen(self, listings: list[JsIdentifier | JsThisExpression]):
+    def _record_names_seen(
+        self,
+        listings: list[tuple[JsIdentifier | JsThisExpression, JsIdentifier, str]],
+        seen: list[JsIdentifier | JsThisExpression],
+        spelled: list[tuple[Binding, JsIdentifier | JsThisExpression]],
+    ) -> None:
         """
         Record the uses that see which names the global object carries without reading what any
-        of them holds: each of the trusted *listings* (`Object.keys(globalThis)`), the subject of a
-        `for-in` and the right side of an `in` holding the object. Each records a read of every
-        binding the object carries (`reaches_global_object`) and sets `Binding.named_by_a_listing`
-        on it, except an `in` whose left side is a key the text spells (`expression_key`), which
-        reads the one binding it names and no other. The node holding the object stands in for the
-        reference.
+        of them holds: each of the trusted *listings* (`Object.keys(globalThis)`) naming the
+        string-keyed properties (`_STRING_KEY_LISTINGS`), each subject of a `for-in` and each
+        right side of an `in` holding the object or evaluating to it through a value-preserving
+        form (*seen*), and each spelled-key `in` naming one of the names it carries (*spelled*),
+        all collected by `_record_global_object_alias_references`. Each of the first two kinds
+        records a read of every binding the object carries (`reaches_global_object`), and the
+        last reads the one binding it names and no other. The node holding the object stands in
+        for the reference.
 
         A read and no write, because none of them can run a body or reach a value: a listing yields
         strings, `in` a boolean, `for-in` the keys, and the value under a key is reached through a
         member access that `has_reflection_surface` already answers for. A top-level `let`,
         `const` or `class` of a script is no property of the object, and none of them sees it.
         """
-        for node in listings:
-            self._record_every_name_seen(node)
-        for node in self.root.walk():
-            if isinstance(node, JsForInStatement):
-                subject = strip_parens(node.right)
-                if isinstance(subject, (JsIdentifier, JsThisExpression)) and self._holds_the_global_object(subject):
-                    self._record_every_name_seen(subject)
-            elif isinstance(node, JsBinaryExpression) and node.operator == 'in':
-                subject = strip_parens(node.right)
-                if not isinstance(subject, (JsIdentifier, JsThisExpression)) or not self._holds_the_global_object(subject):
-                    continue
-                key = expression_key(strip_parens(node.left))
-                if key is not None:
-                    binding = self.root_scope.bindings.get(key)
-                    if binding is not None and self.reaches_global_object(binding):
-                        self._record_alias_reference(binding, subject, Role.READ)
-                else:
-                    self._record_every_name_seen(subject)
+        carried = [
+            binding for binding in self.root_scope.bindings.values()
+            if self.reaches_global_object(binding)
+        ]
+        for node, _, key in listings:
+            if key in _STRING_KEY_LISTINGS:
+                self._record_every_name_seen(carried, node)
+        for node in seen:
+            self._record_every_name_seen(carried, node)
+        for binding, node in spelled:
+            self._record_alias_reference(binding, node, Role.READ)
 
-    def _record_every_name_seen(self, node: JsIdentifier | JsThisExpression):
-        for binding in self.root_scope.bindings.values():
-            if self.reaches_global_object(binding):
-                binding.named_by_a_listing = True
-                self._record_alias_reference(binding, node, Role.READ)
+    def _record_every_name_seen(
+        self,
+        carried: list[Binding],
+        node: JsIdentifier | JsThisExpression,
+    ) -> None:
+        for binding in carried:
+            self._record_alias_reference(binding, node, Role.READ)
 
     def global_object_argument_is_observed(self, node: Node) -> bool:
         """
@@ -6259,6 +6356,7 @@ class SemanticModel:
         binding: Binding | None,
         node: ReferenceNode,
         role: Role,
+        definite_write: bool = False,
     ) -> None:
         """
         Record against a binding one reference made through an object that aliases it — a mapped
@@ -6267,14 +6365,18 @@ class SemanticModel:
         definite read — the access observes whatever the binding holds — while the write half never
         is: what an object handed to a call writes through is decided by code the walk does not
         read, so it lands in `indefinite_writes` as a kill that names no value rather than in
-        `writes` as a definition.
+        `writes` as a definition. A member access on a global-object alias is the one writer whose
+        target the text spells, and its write half lands in `writes` (`definite_write`).
         """
         if binding is None:
             return
         if role is not Role.WRITE:
             binding.reads.append(node)
         if role is not Role.READ:
-            binding.indefinite_writes.append(node)
+            if definite_write:
+                binding.writes.append(node)
+            else:
+                binding.indefinite_writes.append(node)
         binding.referenced_through_an_alias = True
         binding.note_reference_from(self._node_scope.get(node))
 

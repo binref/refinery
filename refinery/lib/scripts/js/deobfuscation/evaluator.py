@@ -202,8 +202,8 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
     def _function_is_removable(self, model: SemanticModel, func: _FuncNode) -> bool:
         """
-        Whether *func*'s definition can be deleted: it has no surviving static reference, and no code
-        sees a name holding it without spelling that name
+        Whether *func*'s definition can be deleted: it has no surviving static reference, and no
+        code sees a name holding it without spelling that name
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.seen_without_its_name`) — a `with`
         body or other reflection, a read through the global object, a listing of its names, an
         importer of an export. Such code still needs the binding once every direct call has folded

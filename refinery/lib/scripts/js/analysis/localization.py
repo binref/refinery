@@ -60,9 +60,12 @@ def localization_target(
     that function reads only what the run stored (see the module documentation), every reference
     spells its name rather than reaching it through an object — a member of a name that may hold
     the global object, `globalThis.x` as much as `G.x` after `var G = this`, would no longer find it
-    once it leaves the global object — it is not exported (an importer reads its value where the
-    module leaves it, which a body local cannot answer), code outside the file does not reach it by
-    name (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`), the program
+    once it leaves the global object, and so would a use that sees which names the object carries
+    (`refinery.lib.scripts.js.analysis.model.Binding.seen_without_a_spelling`), a `for-in` over it,
+    an `in` test of it and a listing of its keys as much as a member read — it is not exported (an
+    importer reads its value where the module leaves it, which a body local cannot answer), code
+    outside the file does not reach it by name
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_from_outside`), the program
     keeps no reflection surface that could read it by name, and the program stores no property on
     the global object under a runtime key
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.has_opaque_global_write`): such a write
@@ -78,6 +81,8 @@ def localization_target(
     if model.has_reflection_surface() or model.has_opaque_global_write():
         return None
     if binding.exported:
+        return None
+    if binding.seen_without_a_spelling:
         return None
     if model.reached_from_outside(binding):
         return None

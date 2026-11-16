@@ -2529,15 +2529,6 @@ A_NAME_GIVEN_THE_GLOBAL_OBJECT_BY_A_HOST_TEST = {
         prints('2'),
         Reading.SCRIPT,
     ),
-    'a wrapper is handed the spelling a conditional chooses': Program(
-        a_program("""
-            var q = 1;
-            (function (root) { root.q = 2; })(typeof self !== 'undefined' ? self : this);
-            console.log(q);
-            """),
-        prints('2'),
-        Reading.SCRIPT,
-    ),
 }
 
 
