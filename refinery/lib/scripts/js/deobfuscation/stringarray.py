@@ -54,6 +54,7 @@ from refinery.lib.scripts.js.model import (
     JsWhileStatement,
     Statement,
     is_generator_function,
+    sole_statement,
     strip_parens,
     wraps_return,
 )
@@ -442,19 +443,20 @@ def _extract_checksum_expression(
                     break
         if checksum_node is None and target_param is not None:
             for ws in s.walk():
-                if (
+                if not (
                     isinstance(ws, JsIfStatement)
                     and isinstance(ws.test, JsBinaryExpression)
                     and ws.test.operator == '==='
-                    and isinstance(ws.consequent, JsBreakStatement)
+                    and isinstance(sole_statement(ws.consequent), JsBreakStatement)
                 ):
-                    left, right = ws.test.left, ws.test.right
-                    if isinstance(right, JsIdentifier) and right.name == target_param:
-                        checksum_node = left
-                    elif isinstance(left, JsIdentifier) and left.name == target_param:
-                        checksum_node = right
-                    if checksum_node is not None:
-                        break
+                    continue
+                left, right = ws.test.left, ws.test.right
+                if isinstance(right, JsIdentifier) and right.name == target_param:
+                    checksum_node = left
+                elif isinstance(left, JsIdentifier) and left.name == target_param:
+                    checksum_node = right
+                if checksum_node is not None:
+                    break
         break
     return checksum_node
 

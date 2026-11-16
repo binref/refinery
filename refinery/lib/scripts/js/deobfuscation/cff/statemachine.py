@@ -128,6 +128,7 @@ from refinery.lib.scripts.js.model import (
     is_async_function,
     is_generator_function,
     object_member_access_runs_accessor,
+    sole_statement,
     static_string,
     strip_parens,
 )
@@ -1431,14 +1432,10 @@ def _is_result_guard(
         return None
     reads: list[Expression] = []
     if (otherwise := stmt.alternate) is not None:
-        if isinstance(otherwise, JsBlockStatement) and len(otherwise.body) == 1:
-            otherwise = otherwise.body[0]
-        if not ends or (implicit := _is_implicit_return(otherwise)) is None:
+        if not ends or (implicit := _is_implicit_return(sole_statement(otherwise))) is None:
             return None
         reads = implicit
-    consequent = stmt.consequent
-    if isinstance(consequent, JsBlockStatement) and len(consequent.body) == 1:
-        consequent = consequent.body[0]
+    consequent = sole_statement(stmt.consequent)
     if not (
         isinstance(consequent, JsReturnStatement)
         and isinstance(consequent.argument, JsIdentifier)

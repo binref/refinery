@@ -59,7 +59,6 @@ from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
-    JsBlockStatement,
     JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
@@ -76,6 +75,7 @@ from refinery.lib.scripts.js.model import (
     JsSpreadElement,
     JsStringLiteral,
     JsVariableDeclarator,
+    sole_statement,
     static_property_key,
     strip_parens,
 )
@@ -468,11 +468,7 @@ def _default(model: SemanticModel, function: Node, statement: Node | None) -> Bi
     """
     if not isinstance(statement, JsIfStatement) or statement.alternate is not None:
         return None
-    consequent = statement.consequent
-    if isinstance(consequent, JsBlockStatement):
-        if len(consequent.body) != 1:
-            return None
-        consequent = consequent.body[0]
+    consequent = sole_statement(statement.consequent)
     if not isinstance(consequent, JsExpressionStatement):
         return None
     assignment = strip_parens(consequent.expression)

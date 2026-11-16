@@ -16,6 +16,7 @@ from refinery.lib.scripts.js.deobfuscation.b91strings import (
     JsBase91AccessorDecoys,
     JsBase91StringDecoder,
 )
+from refinery.lib.scripts.js.deobfuscation.bodies import JsBareBodyBlocking
 from refinery.lib.scripts.js.deobfuscation.cff import (
     JsControlFlowUnflattening,
     JsStateMachineUnflattening,
@@ -62,6 +63,7 @@ _pipeline = DeobfuscationPipeline(
         ),
         TransformerGroup(
             'normalize',
+            JsBareBodyBlocking,
             JsPrototypeSpellingNormalization,
             JsSequenceStatementSplitting,
             JsAssignmentsAsFunctionArgs,

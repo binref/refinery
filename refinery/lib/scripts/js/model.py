@@ -882,6 +882,17 @@ def strip_parens(node: Node | None) -> Node | None:
     return node
 
 
+def sole_statement(node: Node | None) -> Node | None:
+    """
+    The one statement a body *node* holds, a block around a single statement opened to that
+    statement and any other node kept as it is, so a reader of a body finds the shape it holds
+    however the file spelled it. A block of no statement or of many is a statement of its own.
+    """
+    if isinstance(node, JsBlockStatement) and len(node.body) == 1:
+        return node.body[0]
+    return node
+
+
 def _stands_in_a_with_body(node: Node) -> bool:
     """
     Whether *node* lies in the body of a `with` statement at any depth, function boundaries

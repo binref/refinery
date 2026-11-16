@@ -63,6 +63,7 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
+    sole_statement,
 )
 from refinery.lib.scripts.js.strict import directive_prologue, strict_mode_at
 
@@ -165,11 +166,7 @@ def _function_store(statement: Statement, binding: Binding, cache: ModelCache) -
         or model.resolve(read) is not binding
     ):
         return None
-    body = statement.consequent
-    if isinstance(body, JsBlockStatement):
-        if len(body.body) != 1:
-            return None
-        body = body.body[0]
+    body = sole_statement(statement.consequent)
     if (
         not isinstance(body, JsExpressionStatement)
         or not isinstance(store := body.expression, JsAssignmentExpression)
