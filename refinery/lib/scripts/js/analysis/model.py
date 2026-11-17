@@ -340,6 +340,10 @@ class Binding:
     #: also be an ES module, which binds none of them, unless a declaration of the file joins it,
     #: and a `var` only conditional copies declare (`AnnexBCopy.conditional`).
     may_be_absent: bool = False
+    #: The declarations of this `var` whose store lands in another binding of the name: where the
+    #: declarator stands, the name reaches a catch parameter or a `with` object instead
+    #: (`SemanticModel.declarator_store_binding`).
+    stored_elsewhere: set[JsIdentifier] = field(default_factory=set)
 
     def note_reference_from(self, scope: Scope | None) -> None:
         """
@@ -958,6 +962,8 @@ def container_reference_role(node: ReferenceNode) -> ContainerRole:
         return ContainerRole.MEMBER_WRITE if is_member_write_target(member) else ContainerRole.MEMBER_READ
     if isinstance(parent, JsAssignmentExpression) and strip_parens(parent.left) is node and parent.operator == '=':
         return ContainerRole.REBIND
+    if isinstance(parent, JsVariableDeclarator) and parent.id is node:
+        return ContainerRole.REBIND
     if _read_forwards_no_alias(node):
         return ContainerRole.VERDICT_READ
     return ContainerRole.ESCAPE
@@ -1544,7 +1550,8 @@ class _DeclarationStore(enum.Enum):
     """
     #: Where the declaration runs.
     WHERE_IT_RUNS = enum.auto()
-    #: Nowhere: a `var` declarator with no value outside the head of a loop.
+    #: Nowhere: a `var` declarator with no value outside the head of a loop, and one whose store
+    #: lands in another binding of the name.
     NOWHERE = enum.auto()
     #: Before any statement of the binding's scope runs: a parameter, a catch parameter, an import,
     #: the own name of a function expression, and a function declaration no copy is made of.
@@ -1558,6 +1565,8 @@ def _where_it_stores(binding: Binding, declaration: JsIdentifier) -> _Declaratio
     if binding.is_lexical:
         return _DeclarationStore.WHERE_IT_RUNS
     parent = declaration.parent
+    if declaration in binding.stored_elsewhere:
+        return _DeclarationStore.NOWHERE
     if isinstance(parent, JsFunctionDeclaration) and parent.id is declaration:
         if _copy_received_by(binding, parent) is None:
             return _DeclarationStore.ON_ENTRY
@@ -1568,6 +1577,34 @@ def _where_it_stores(binding: Binding, declaration: JsIdentifier) -> _Declaratio
             return _DeclarationStore.WHERE_IT_RUNS
         return _DeclarationStore.NOWHERE
     return _DeclarationStore.ON_ENTRY
+
+
+def stored_value(write: Node) -> Node | None:
+    """
+    The value the store *write* makes, or `None` where it spells none: the right side of the plain
+    `=` assignment it is the target of, or the value of the `var` declarator it is the whole target
+    of. The head of a `for-in` or `for-of` loop stores what the loop iterates over, whatever its
+    declarator spells, so it is no such value.
+    """
+    if not isinstance(write, JsIdentifier):
+        return None
+    parent = write.parent
+    if isinstance(parent, JsAssignmentExpression):
+        if (
+            parent.operator == '='
+            and parent.right is not None
+            and strip_parens(parent.left) is write
+        ):
+            return strip_parens(parent.right)
+        return None
+    if (
+        isinstance(parent, JsVariableDeclarator)
+        and parent.id is write
+        and parent.init is not None
+        and not _loop_head_assigns(parent)
+    ):
+        return parent.init
+    return None
 
 
 def _loop_head_assigns(declarator: JsVariableDeclarator) -> bool:
@@ -2752,6 +2789,7 @@ class SemanticModel:
         self._table_ways: dict[JsObjectExpression, _Way | None] = {}
         self._module_may_be_reentered = False
         self._annex_b_copies: list[AnnexBCopy] = []
+        self._misdirected: dict[JsIdentifier, Binding | None] = {}
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
         self._deleted_host_globals: frozenset[str] = self._scan_deleted_host_globals()
@@ -2813,6 +2851,43 @@ class SemanticModel:
         declarations as well (`AnnexBCopy`).
         """
         return self._binding_of.get(decl_id)
+
+    def declarator_store_binding(self, decl_id: JsIdentifier) -> Binding | None:
+        """
+        The binding the store of the `var` declarator binding *decl_id* lands in. A declarator
+        stores through its name as resolved where it stands (§14.3.2.1), which is the `var` it
+        declares unless a catch parameter of the name stands between (B.3.5), and that parameter is
+        the answer then; where a `with` object may take the store no binding is, and the answer is
+        `None`. For any other identifier, the binding it declares, as `binding_of` answers.
+        """
+        if decl_id in self._misdirected:
+            return self._misdirected[decl_id]
+        return self._binding_of.get(decl_id)
+
+    def stores_elsewhere(self, decl_id: JsIdentifier) -> bool:
+        """
+        Whether the store of the `var` declarator binding *decl_id* lands outside the `var` it
+        declares (`declarator_store_binding`).
+        """
+        return decl_id in self._misdirected
+
+    def declared_value(self, binding: Binding | None) -> Node | None:
+        """
+        The value of the one declaration *binding* has, where that declaration is a `var`
+        declarator with a value whose store lands in the binding. A `var` whose one declaration
+        stores elsewhere holds nothing of what it spells.
+        """
+        if binding is None or len(binding.declarations) != 1:
+            return None
+        declaration = binding.declarations[0]
+        parent = declaration.parent
+        if (
+            not isinstance(parent, JsVariableDeclarator)
+            or parent.id is not declaration
+            or declaration in binding.stored_elsewhere
+        ):
+            return None
+        return parent.init
 
     def lookup(
         self,
@@ -2877,6 +2952,14 @@ class SemanticModel:
         if exclude is None:
             return nodes
         return [n for n in nodes if n is not exclude and not n.is_descendant_of(exclude)]
+
+    def dynamic_reference_may_store(self, ref: JsIdentifier) -> bool:
+        """
+        Whether the reference *ref* a `with` body resolves at runtime may store into the binding it
+        is recorded against: its role is not a plain read, or it is the name of a `var` declarator
+        whose store lands where the name resolves (`declarator_store_binding`).
+        """
+        return ref in self._misdirected or reference_role(ref) is not Role.READ
 
     def dynamic_references(
         self, binding: Binding, *, exclude: Node | None = None,
@@ -3190,7 +3273,7 @@ class SemanticModel:
             and parent.init is function
             and isinstance(parent.id, JsIdentifier)
         ):
-            return self.binding_of(parent.id)
+            return self.declarator_store_binding(parent.id)
         return None
 
     def function_names(self, function: Node) -> FunctionNames | None:
@@ -3246,7 +3329,7 @@ class SemanticModel:
         if isinstance(store, JsVariableDeclarator):
             if strip_parens(store.init) is not read or not isinstance(store.id, JsIdentifier):
                 return None
-            return self.binding_of(store.id)
+            return self.declarator_store_binding(store.id)
         if not isinstance(store, JsAssignmentExpression):
             return None
         if store.operator != '=' or strip_parens(store.right) is not read:
@@ -3746,6 +3829,8 @@ class SemanticModel:
                 else:
                     complete = False
             elif isinstance(parent, JsVariableDeclarator) and parent.id is declaration:
+                if declaration in binding.stored_elsewhere:
+                    continue
                 if _loop_head_assigns(parent):
                     complete = False
                 if parent.init is not None:
@@ -3766,15 +3851,7 @@ class SemanticModel:
             else:
                 complete = False
         for write in binding.writes:
-            assignment = write.parent
-            stored = None
-            if (
-                isinstance(write, JsIdentifier)
-                and isinstance(assignment, JsAssignmentExpression)
-                and assignment.operator == '='
-                and strip_parens(assignment.left) is write
-            ):
-                stored = strip_parens(assignment.right)
+            stored = stored_value(write)
             if stored is None:
                 complete = False
             else:
@@ -4705,7 +4782,7 @@ class SemanticModel:
             sites.extend(self._unread_source_sites(owner.node))
         sites.extend(
             ref for ref in self.dynamic_references(binding)
-            if reference_role(ref) is not Role.READ
+            if self.dynamic_reference_may_store(ref)
         )
         return sites
 
@@ -5338,6 +5415,9 @@ class SemanticModel:
             if id(node) in seen:
                 continue
             seen.add(id(node))
+            if node in self._misdirected:
+                self._file_declarator_store(node)
+                continue
             if not self.is_reference(node):
                 continue
             ref_scope = self._node_scope.get(node)
@@ -5354,6 +5434,20 @@ class SemanticModel:
             if binding.may_be_absent:
                 self._lend_to_the_binding_outside(node, binding)
         return accesses
+
+    def _file_declarator_store(self, node: JsIdentifier):
+        """
+        Record the store a `var` declarator makes into another binding of its name as the plain
+        store `name = value` in the same place is recorded: a write of the catch parameter it
+        reaches, or a dynamic reference of the binding past a `with` object.
+        """
+        scope = self._node_scope.get(node)
+        reached = self._misdirected[node]
+        if reached is None:
+            self._attribute_dynamic_reference(node, scope)
+            return
+        reached.writes.append(node)
+        reached.note_reference_from(scope)
 
     def _lend_to_the_binding_outside(self, node: JsIdentifier, binding: Binding):
         """
@@ -6596,8 +6690,40 @@ class _ScopeBuilder:
             cursor = cursor.parent
         return None
 
+    def _file_misdirected_stores(self, declaration: JsVariableDeclaration, scope: Scope):
+        """
+        Find the identifiers of a `var` declaration under a `catch` or `with` whose store lands in
+        another binding than the `var` they declare, and note each one for the binding it declares
+        and for the def-use pass, which files it where it lands.
+        """
+        cursor: Scope | None = scope
+        between = False
+        while cursor is not None and not cursor.is_var_scope:
+            if cursor.kind in (ScopeKind.CATCH, ScopeKind.WITH):
+                between = True
+                break
+            cursor = cursor.parent
+        if not between:
+            return
+        for declarator in declaration.declarations:
+            if not isinstance(declarator, JsVariableDeclarator):
+                continue
+            if declarator.init is None and not _loop_head_assigns(declarator):
+                continue
+            for ident in pattern_identifiers(declarator.id):
+                declared = self.model._binding_of.get(ident)
+                if declared is None or declared.kind is not BindingKind.VAR:
+                    continue
+                reached = self.model.lookup(ident.name, scope)
+                if reached is declared:
+                    continue
+                declared.stored_elsewhere.add(ident)
+                self.model._misdirected[ident] = reached
+
     def _visit(self, node: Node, scope: Scope):
         self.model._node_scope[node] = scope
+        if isinstance(node, JsVariableDeclaration) and node.kind is JsVarKind.VAR:
+            self._file_misdirected_stores(node, scope)
         if isinstance(node, JsFunctionDeclaration) and isinstance(node.parent, JsIfStatement):
             self._visit_clause_function(node, scope)
         elif isinstance(node, (

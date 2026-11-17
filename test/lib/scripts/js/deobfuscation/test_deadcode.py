@@ -1232,8 +1232,8 @@ NEVER_RUNS_DEOBFUSCATED: dict[str, str] = {
             function f(n) {
               var out = [];
               outer: for (var i = 0; i < 2; i++) {
-                for (var j = 0; j < n; j++) {
-                  out.push(i + ':' + j);
+                for (var j; 0 < n; j++) {
+                  out.push(i + ':0');
                   continue outer;
                 }
                 out.push('inner ran no iteration ' + i);

@@ -236,7 +236,9 @@ def _consumed_only_by_dispatcher(
     exclude_ids = {id(n) for node in removed for n in node.walk()}
     for declarator in info.strip_declarators:
         binding = (
-            model.binding_of(declarator.id) if isinstance(declarator.id, JsIdentifier) else None
+            model.declarator_store_binding(declarator.id)
+            if isinstance(declarator.id, JsIdentifier)
+            else None
         )
         if binding_has_references(model, binding, exclude_ids=exclude_ids):
             return False

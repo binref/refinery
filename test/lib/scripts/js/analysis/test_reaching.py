@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import gc
+import time
+import tracemalloc
+
 from test import TestBase, opportunity
 
 from refinery.lib.scripts import Node
@@ -58,6 +62,62 @@ class TestReaching(TestBase):
                 if binding is not None:
                     return binding
         raise AssertionError(F'no bound reference named {name!r}')
+
+    def test_reaches_past_its_own_store_and_no_other(self):
+        self.assertTrue(self._query('var x = 1; x;'))
+        self.assertFalse(self._query('var x = 1; x = 2; x;'))
+
+    def test_does_not_reach_past_a_store_in_a_later_declarator_of_its_declaration(self):
+        self.assertFalse(self._query('var x = 1, y = (x = 2); x;'))
+
+    def test_does_not_reach_where_its_own_statement_stores_the_name_again(self):
+        self.assertFalse(self._query('var x = (x = 2, 1); x;'))
+
+    @staticmethod
+    def _each_store_asked_at_its_read(stores: int) -> tuple[float, int, int]:
+        """
+        The time, the memory kept, and the count of reads the value reaches, of asking for each of
+        *stores* stores of one name and the read after it whether the value of the store holds there.
+        """
+        lines = ['function f(q) {', "  var b = 'v0';", '  log(b);']
+        for index in range(1, stores):
+            lines.append(F"  b = 'v{index}';")
+            lines.append('  log(b);')
+        lines.append('}')
+        ast = JsParser('\n'.join(lines)).parse()
+        cache = ModelCache(ast)
+        values: list[Node] = []
+        reads: list[Node] = []
+        for node in ast.walk_in_order():
+            if isinstance(node, JsVariableDeclarator) and node.init is not None:
+                values.append(node.init)
+            elif isinstance(node, JsAssignmentExpression):
+                values.append(node.right)
+            elif isinstance(node, JsIdentifier) and node.name == 'b' and isinstance(node.parent, JsCallExpression):
+                reads.append(node)
+        binding = cache.model.resolve(reads[0])
+        assert binding is not None
+        reaching = cache.reaching
+        for read in reads:
+            reaching.dominance.locate(read)
+        gc.collect()
+        tracemalloc.start()
+        try:
+            before, _ = tracemalloc.get_traced_memory()
+            start = time.perf_counter()
+            reached = sum(reaching.value_preserved(binding, value, read) for value, read in zip(values, reads))
+            elapsed = time.perf_counter() - start
+            after, _ = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        return elapsed, after - before, reached
+
+    def test_each_of_many_stores_reaches_the_read_after_it_at_a_cost_linear_in_the_stores(self):
+        time_1600, kept_1600, reached_1600 = self._each_store_asked_at_its_read(1600)
+        time_3200, kept_3200, reached_3200 = self._each_store_asked_at_its_read(3200)
+        self.assertEqual((reached_1600, reached_3200), (1600, 3200))
+        self.assertLess(time_3200, 3 * time_1600)
+        self.assertLess(kept_3200, 3 * kept_1600)
 
     def test_reaches_with_no_barrier(self):
         self.assertTrue(self._query('var x = 1; x;'))

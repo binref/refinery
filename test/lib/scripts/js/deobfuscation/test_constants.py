@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase, a_property_of_the_batch_itself, opportunity, todo
+from test import TestBase, a_property_of_the_batch_itself, opportunity
 from test.lib.scripts.js.analysis.differential import (
     deobfuscate_source,
     node_executable,
@@ -57,13 +57,13 @@ class TestConstantInlining(TestJsDeobfuscator):
             'f((1 + 1) * 2);',
             self._inline('var q = 1; var t = (q + 1) * 2; f(t);'))
 
-    def test_reassigned_variable_not_inlined(self):
+    def test_a_read_of_a_reassigned_variable_takes_the_store_that_reaches_it(self):
         self.assertEqual(
             inspect.cleandoc(
                 """
                 var x = 'a';
                 x = 'b';
-                console.log(x);
+                console.log('b');
                 """
             ),
             self._inline("var x = 'a'; x = 'b'; console.log(x);"),
@@ -2381,7 +2381,6 @@ class TestAConstantIsInlinedBesideABlockConstantOfItsName(TestJsDeobfuscator):
 
 class TestABranchItsBodyStoresIntoTheNameItsTestReads(TestJsDeobfuscator):
 
-    @todo
     def test_the_branch_goes_when_its_test_reads_the_store_before_the_branch(self):
         self.assertEqual(
             inspect.cleandoc(
@@ -2403,6 +2402,307 @@ class TestABranchItsBodyStoresIntoTheNameItsTestReads(TestJsDeobfuscator):
                   console.log(1);
                 }
                 f(2);
+                """
+            )),
+        )
+
+
+A_READ_OF_A_BINDING_STORED_AGAIN = {
+    'a read between two constant stores': (
+        a_program("""
+            function f() { var b = 'a'; console.log(b); b = 'c'; console.log(b); }
+            f();
+        """),
+        prints('a', 'c'),
+    ),
+    'a store under a condition': (
+        a_program("""
+            function f(k) { var b = 'a'; if (k) { b = 'c'; } console.log(b); }
+            f(0); f(1);
+        """),
+        prints('a', 'c'),
+    ),
+    'stores in both branches': (
+        a_program("""
+            function f(k) { var b = 'a'; if (k) { b = 'c'; } else { b = 'd'; } console.log(b); }
+            f(0); f(1);
+        """),
+        prints('d', 'c'),
+    ),
+    'a loop storing at its end': (
+        a_program("""
+            function f() {
+              var b = 'a';
+              for (var i = 0; i < 2; i++) { console.log(b); b = 'c'; }
+              console.log(b);
+            }
+            f();
+        """),
+        prints('a', 'c', 'c'),
+    ),
+    'a loop storing at its head': (
+        a_program("""
+            function f() {
+              var b = 'a';
+              for (var i = 0; i < 2; i++) { b = 'c'; console.log(b); }
+              console.log(b);
+            }
+            f();
+        """),
+        prints('c', 'c', 'c'),
+    ),
+    'a read before a compound store': (
+        a_program("""
+            function f() { var b = 'a'; console.log(b); b += 'c'; console.log(b); }
+            f();
+        """),
+        prints('a', 'ac'),
+    ),
+    'a read before an update': (
+        a_program("""
+            function f() { var b = 1; console.log(b); b++; console.log(b); }
+            f();
+        """),
+        prints('1', '2'),
+    ),
+    'a read before a for-in target': (
+        a_program("""
+            function f() { var b = 'a'; console.log(b); for (b in { k: 0 }); console.log(b); }
+            f();
+        """),
+        prints('a', 'k'),
+    ),
+    'a read after a call that writes the binding': (
+        a_program("""
+            function f() { var b = 'a'; function w() { b = 'c'; } console.log(b); w(); console.log(b); }
+            f();
+        """),
+        prints('a', 'c'),
+    ),
+    'a call after the store': (
+        a_program("""
+            var b = 'a'; function r() { return b; } b = 'c'; console.log(r());
+        """),
+        prints('c'),
+    ),
+    'a timer callback': (
+        a_program("""
+            var b = 'a'; setTimeout(function () { console.log(b); }, 0); b = 'c';
+        """),
+        prints('c'),
+    ),
+    'a closure': (
+        a_program("""
+            function f() { var b = 'a'; var g = function () { return b; }; b = 'c'; return g(); }
+            console.log(f());
+        """),
+        prints('c'),
+    ),
+    'typeof the binding': (
+        a_program("""
+            function f() { var b = 'a'; console.log(typeof b); b = 1; console.log(typeof b); }
+            f();
+        """),
+        prints('string', 'number'),
+    ),
+    'a generator across yield': (
+        a_program("""
+            function* g() { var b = 'a'; yield b; b = 'c'; yield b; }
+            for (var v of g()) console.log(v);
+        """),
+        prints('a', 'c'),
+    ),
+    'a labeled break': (
+        a_program("""
+            function f() { var b = 'a'; out: { b = 'c'; break out; } console.log(b); }
+            f();
+        """),
+        prints('c'),
+    ),
+    'a switch fallthrough': (
+        a_program("""
+            function f(k) { var b = 'a'; switch (k) { case 0: b = 'c'; case 1: console.log(b); } }
+            f(0); f(1);
+        """),
+        prints('c', 'a'),
+    ),
+    'a with body': (
+        a_program("""
+            function f(o) { var b = 'a'; with (o) { b = 'c'; } console.log(b); }
+            f({}); f({ b: 0 });
+        """),
+        prints('c', 'a'),
+    ),
+    'a literal eval': (
+        a_program("""
+            function f() { var b = 'a'; eval("b = 'c'"); console.log(b); }
+            f();
+        """),
+        prints('c'),
+    ),
+    'a store through arguments': (
+        a_program("""
+            function f(b) { b = 'a'; arguments[0] = 'c'; console.log(b); }
+            f(0);
+        """),
+        prints('c'),
+    ),
+    'a read and a store in one statement': (
+        a_program("""
+            function f() { var b = 'a'; console.log(b, b = 'c', b); console.log(b); }
+            f();
+        """),
+        prints('a c c', 'c'),
+    ),
+    'a do-while': (
+        a_program("""
+            function f() { var b = 'a'; var i = 0; do { console.log(b); b = 'c'; } while (++i < 2); }
+            f();
+        """),
+        prints('a', 'c'),
+    ),
+    'a labeled continue': (
+        a_program("""
+            function f() {
+              var b = 'a';
+              outer: for (var i = 0; i < 2; i++) { console.log(b); b = 'c'; continue outer; }
+            }
+            f();
+        """),
+        prints('a', 'c'),
+    ),
+    'a finally': (
+        a_program("""
+            function f() { var b = 'a'; try { b = 'c'; } finally { console.log(b); } }
+            f();
+        """),
+        prints('c'),
+    ),
+    'a let stored again': (
+        a_program("""
+            function f() { let b = 'a'; console.log(b); b = 'c'; console.log(b); }
+            f();
+        """),
+        prints('a', 'c'),
+    ),
+    'a for-in head with an initializer': (
+        a_program("""
+            function f() { for (var b = 'a' in { k: 0 }) console.log(b); console.log(b); }
+            f();
+        """),
+        prints('k', 'k'),
+    ),
+    'a for-in head with an initializer over nothing': (
+        a_program("""
+            function f() { for (var b = 'a' in {}) console.log(b); console.log(b); }
+            f();
+        """),
+        prints('a'),
+    ),
+    'a dead initial value': (
+        a_program("""
+            function f() { var b = 'a'; b = 'c'; console.log(b); }
+            f();
+        """),
+        prints('c'),
+    ),
+    'a stage storing the next stage in a name the file declares empty': (
+        a_program("""
+            var k = 5; var next = ''; eval(atob('bmV4dCA9ICJjb25zb2xlLmxvZyhrKSI=')); eval(next);
+        """),
+        prints('5'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAReadOfABindingStoredAgainTakesTheStoreThatReachesIt(TestBase):
+
+    def test_node_prints_what_each_program_pins(self):
+        rows = A_READ_OF_A_BINDING_STORED_AGAIN
+        self.assertEqual(what_each_script_prints(rows), what_each_script_pins(rows))
+
+    def test_the_deobfuscation_prints_what_the_program_does(self):
+        rows = A_READ_OF_A_BINDING_STORED_AGAIN
+        self.assertEqual(what_each_deobfuscated_script_prints(rows), what_each_deobfuscated_script_pins(rows))
+
+
+class TestAReadOfABindingStoredAgainFolds(TestJsDeobfuscator):
+
+    def test_a_read_between_two_constant_stores_takes_the_first_and_one_after_the_second_takes_it(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                console.log('a');
+                console.log('c');
+                """
+            ),
+            self._deobfuscate(inspect.cleandoc(
+                """
+                function f() {
+                  var b = 'a';
+                  console.log(b);
+                  b = 'c';
+                  console.log(b);
+                }
+                f();
+                """
+            )),
+        )
+
+    def test_a_value_no_read_observes_after_its_reads_fold_is_cleared_in_the_same_run(self):
+        inliner = JsConstantInlining()
+        ast = JsParser(inspect.cleandoc(
+            """
+            function f(k) {
+              var b = 'a';
+              g(b);
+              b = k;
+              g(b);
+            }
+            """
+        )).parse()
+        inliner.visit(ast)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f(k) {
+                  var b;
+                  g('a');
+                  b = k;
+                  g(k);
+                }
+                """
+            ),
+            JsSynthesizer().convert(ast),
+        )
+
+    def test_a_read_after_a_store_under_a_condition_stays(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f(k) {
+                  var b = 'a';
+                  if (k) {
+                    b = 'c';
+                  }
+                  console.log(b);
+                }
+                f(0);
+                f(1);
+                """
+            ),
+            self._deobfuscate(inspect.cleandoc(
+                """
+                function f(k) {
+                  var b = 'a';
+                  if (k) {
+                    b = 'c';
+                  }
+                  console.log(b);
+                }
+                f(0);
+                f(1);
                 """
             )),
         )

@@ -853,7 +853,7 @@ class TamperingModel:
             for prop in _pattern_properties(site.id):
                 value = prop.value
                 if isinstance(value, JsIdentifier) and value.name == name:
-                    return self.model.binding_of(value)
+                    return self.model.declarator_store_binding(value)
             return None
         for prop in _pattern_properties(site.left):
             value = prop.value

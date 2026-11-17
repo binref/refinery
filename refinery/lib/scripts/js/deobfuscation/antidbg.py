@@ -330,7 +330,7 @@ class JsRemoveSelfDefending(ScriptLevelTransformer):
                         and isinstance(d.id, JsIdentifier)
                         and d.id.name == name
                     ):
-                        binding = model.binding_of(d.id)
+                        binding = model.declarator_store_binding(d.id)
                         if not binding_has_references(model, binding):
                             remove_declarator(d)
         self.mark_changed()
@@ -360,7 +360,7 @@ class JsRemoveSelfDefending(ScriptLevelTransformer):
             if isinstance(parent, JsCallExpression) and strip_parens(parent.callee) is node:
                 immediate_guards.append(parent)
             elif isinstance(parent, JsVariableDeclarator) and isinstance(parent.id, JsIdentifier):
-                binding = model.binding_of(parent.id)
+                binding = model.declarator_store_binding(parent.id)
                 calls = _discardable_guard_invocations(model, binding, parent)
                 if calls is not None:
                     stored_guards.append((parent, calls))

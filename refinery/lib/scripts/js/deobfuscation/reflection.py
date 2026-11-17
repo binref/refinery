@@ -1131,6 +1131,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
             binding = model.binding_of(declaration)
             if binding is None or binding.exported or len(binding.declarations) != 1:
                 continue
+            if model.stores_elsewhere(declaration):
+                continue
             declarator = binding.declarations[0].parent
             if not isinstance(declarator, JsVariableDeclarator) or declarator.init is None:
                 continue
@@ -1830,6 +1832,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
             declaration = binding.declarations[0]
             declarator = declaration.parent
             if not isinstance(declarator, JsVariableDeclarator) or declarator.init is None:
+                return None
+            if model.stores_elsewhere(declaration):
                 return None
             if model.reached_from_outside(binding):
                 return None

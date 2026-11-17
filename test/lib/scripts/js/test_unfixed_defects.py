@@ -3556,36 +3556,6 @@ class TestAConstantDefinedBeforeTheHostGetsControlIsFoldedIntoAnEntryPoint(TestB
         )
 
 
-#: The initializer of a `var` inside a `with` body assigns the property of the same name on the
-#: object, so the `var` keeps `undefined`.
-A_VAR_INITIALIZED_INSIDE_A_WITH_BODY = {
-    'a scalar read by a function': Program(
-        a_program("""
-            var obj = { T: 1 };
-            with (obj) { var T = 'x'; }
-            function A() { return T + '!'; }
-            console.log(A());
-            """),
-        prints('undefined!'),
-    ),
-    'a string read in its own scope and by a function': Program(
-        a_program("""
-            var o = { x: "from o" };
-            with (o) { var x = "declared"; }
-            function f() { return x; }
-            console.log(typeof x, f());
-            """),
-        prints('undefined undefined'),
-    ),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_VAR_INITIALIZED_INSIDE_A_WITH_BODY, todo)
-class TestAVarInitializedInsideAWithBodyMayWriteTheObject(TestBase):
-    pass
-
-
 A_GLOBAL_WRITTEN_THROUGH_A_FOUND_GLOBAL_OBJECT = {
     'a scalar read by a function': Program(
         a_program("""
@@ -3605,35 +3575,6 @@ A_GLOBAL_WRITTEN_THROUGH_A_FOUND_GLOBAL_OBJECT = {
 @one_expected_failure_per_program(A_GLOBAL_WRITTEN_THROUGH_A_FOUND_GLOBAL_OBJECT, todo)
 class TestAGlobalWrittenThroughAFoundGlobalObjectChangesTheVariable(TestBase):
     pass
-
-
-#: Under Annex B a `var` inside a `catch` clause may share the name of the clause's parameter; its
-#: initializer then writes the parameter, and the `var` keeps `undefined`.
-A_VAR_NAMED_LIKE_ITS_CATCH_PARAMETER = {
-    a_program("""
-        try { throw 0; } catch (T) { var T = 'x'; }
-        console.log(T);
-        """): 'undefined\n',
-    a_program("""
-        function A(i) { return T[i]; }
-        try { throw 0; } catch (T) { var T = ['x', 'y']; }
-        try { console.log(A(0)); } catch (e) { console.log(e.name); }
-        """): 'TypeError\n',
-}
-
-
-class TestAVarNamedLikeItsCatchParameterKeepsUndefined(TestBase):
-
-    @wontfix(
-        'no obfuscated file declares a var under the name of the catch parameter around it (none '
-        'of 2,074 checked), and such a declaration is made up for the defect'
-    )
-    def test_the_var_keeps_undefined(self):
-        rows = A_VAR_NAMED_LIKE_ITS_CATCH_PARAMETER
-        self.assertEqual(
-            {source: before_and_after(source) for source in rows},
-            each_program_still_prints(rows),
-        )
 
 
 A_CLOSURE_A_NESTED_RUN_REPLACED = {
@@ -5878,9 +5819,6 @@ class TestAGlobalObjectAHostObjectHandsBackKeepsTheWritesReadThroughIt(TestBase)
 
 
 A_TEXT_WRITTEN_INTO_A_NAME_BESIDE_ITS_DECLARED_TEXT = {
-    'a stage storing the next stage in a name the file declares empty': (
-        "var k = 5; var next = ''; eval(atob('bmV4dCA9ICJjb25zb2xlLmxvZyhrKSI=')); eval(next);"
-    ),
     'a loader the stage calls storing the next stage in a name the stage declares': (
         "var k = 5; function load() { next = 'console.log(k)'; } eval(\"var next = ''; load(); eval(next);\");"
     ),

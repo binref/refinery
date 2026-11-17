@@ -41,7 +41,7 @@ from typing import NamedTuple
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import Projection
-from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
+from refinery.lib.scripts.analysis.reaching import DefinitionOrder, ReachabilityQuery
 from refinery.lib.scripts.js.analysis.cfg import CfgNode, ControlFlowGraph
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
@@ -68,15 +68,17 @@ from refinery.lib.scripts.js.model import (
 
 class _Kills(NamedTuple):
     """
-    The sites at which a binding may change value, for one definition tracked from: the kills that
-    hold for every use — reassignments, mutating calls, and the located reflective hazards of a
-    local's own scope — as control-flow node ids, and the opaque global writes that may replace
-    the binding's name, kept as site-and-node pairs because a use can be exempt from such a store:
-    the store is the last step of the assignment spelling it, so a use inside its operands runs
-    before it and is not killed by it.
+    The sites at which a binding may change value, for every definition tracked from in one graph:
+    the kills that hold for every use — reassignments, mutating calls, and the located reflective
+    hazards of a local's own scope — as control-flow node ids, and the opaque global writes that may
+    replace the binding's name, kept as site-and-node pairs because a use can be exempt from such a
+    store: the store is the last step of the assignment spelling it, so a use inside its operands
+    runs before it and is not killed by it. *alone* maps the node of each store no other kill
+    shares to that store: the node a definition tracked from that store leaves out.
     """
     nodes: frozenset[int]
     opaque: tuple[tuple[JsMemberExpression, CfgNode], ...]
+    alone: dict[int, Node]
 
 
 class _BodyEvents(NamedTuple):
@@ -139,11 +141,12 @@ class ReachingModel:
         self.dominance = dominance
         self.effects = effects
         self.model = effects.model
-        self._kill_cache: dict[tuple[int, int, int], _Kills | None] = {}
+        self._kill_cache: dict[tuple[int, int], _Kills | None] = {}
         self._change_cache: dict[tuple[int, int], _Changes | None] = {}
         self._event_cache: dict[int, _BodyEvents] = {}
         self._writer_cache: dict[int, _CallWriters] = {}
         self._cycle_cache: dict[int, bool] = {}
+        self._order_cache: dict[tuple[int, int], DefinitionOrder[Node] | None] = {}
         self._between = ReachabilityQuery(dominance, Projection.MAY)
 
     def value_preserved(self, binding: Binding, definition: Node, use: Node) -> bool:
@@ -168,15 +171,57 @@ class ReachingModel:
             return False
         if not self.dominance.completes_before(definition, use):
             return False
-        kills = self._kill_nodes(binding, graph_d, definition)
+        kills = self._kill_nodes(binding, graph_d)
         if kills is None:
             return False
-        kill_nodes = kills.nodes | {
+        def_write = self._definition_write(definition)
+        left_out = None
+        if def_write is not None and kills.alone.get(id(node_d)) is def_write:
+            left_out = node_d
+        if self._between.any_between(graph_d, node_d, node_u, kills.nodes, excluding=left_out):
+            return False
+        opaque = {
             id(node)
             for site, node in kills.opaque
             if self._store_kills_the_use(site, node, use)
         }
-        return not self._between.any_between(graph_d, node_d, node_u, kill_nodes)
+        return not opaque or not self._between.any_between(graph_d, node_d, node_u, opaque)
+
+    def reaching_store(self, binding: Binding, use: Node) -> Node | None:
+        """
+        The one site that stores into *binding* (`refinery.lib.scripts.js.analysis.model.Binding.store_sites`)
+        whose store is what *use* observes, or `None` where no single one is: the nearest store that
+        runs before *use* on every path, in *use*'s own graph, where no store of *binding* the graph
+        places elsewhere and no foreign kill lies between them. The value the site stores is the
+        caller's to read, and to order against *use* (`value_preserved`), since a site that spells
+        no value — an update, a loop head — is a store all the same and reaches with nothing. A store
+        sharing *use*'s node is not ordered against it, and two stores sharing one node refuse every
+        use they would both reach first.
+        """
+        located = self.dominance.locate(use)
+        if located is None:
+            return None
+        graph, node = located
+        order = self._store_order(binding, graph)
+        if order is None:
+            return None
+        return order.reaching(node)
+
+    def _store_order(self, binding: Binding, graph: ControlFlowGraph) -> DefinitionOrder[Node] | None:
+        """
+        The store sites of *binding* in *graph* ordered for `reaching_store`, or `None` where its
+        kills cannot be listed (`_changes`) or a store lies in another graph, which no order here
+        places. Memoized per binding and graph.
+        """
+        key = (id(binding), id(graph))
+        if key in self._order_cache:
+            return self._order_cache[key]
+        changes = self._changes(binding, graph)
+        order = None
+        if changes is not None and len(changes.stores) == len(binding.store_sites):
+            order = self._between.order(graph, list(changes.stores))
+        self._order_cache[key] = order
+        return order
 
     def foreign_kills(self, binding: Binding, owner: Node) -> list[Node] | None:
         """
@@ -194,38 +239,44 @@ class ReachingModel:
             return None
         return [site for site, _ in (*changes.foreign, *changes.opaque)]
 
-    def _kill_nodes(
-        self, binding: Binding, graph: ControlFlowGraph, definition: Node,
-    ) -> _Kills | None:
+    def _kill_nodes(self, binding: Binding, graph: ControlFlowGraph) -> _Kills | None:
         """
         The sites in *graph* at which *binding* may change value — a reassignment located in this
-        graph, or a call whose statically known callee may write *binding* — excluding the write that
-        establishes *definition* itself. `None` when a change cannot be pinned to a site: *binding* is
-        written by a function that escapes, through a global-object alias, or through a name a dynamic
-        scope resolves at runtime, so its value must be treated as volatile everywhere. The answer is
-        fixed for the model's lifetime and holds for every use alike, so it is memoized per definition
-        and the per-use exemption an opaque write can earn is applied by the caller.
+        graph, or a call whose statically known callee may write *binding* — every one of them, and
+        the store each node no other kill shares holds, which a definition tracked from that store
+        leaves out. `None` when a change cannot be pinned to a site: *binding* is written by a
+        function that escapes, through a global-object alias, or through a name a dynamic scope
+        resolves at runtime, so its value must be treated as volatile everywhere. The answer is fixed
+        for the model's lifetime and holds for every definition and use alike, so it is memoized per
+        binding and graph, and both the definition's own store and the per-use exemption an opaque
+        write can earn are applied by the caller.
         """
-        def_write = self._definition_write(definition)
-        key = (id(binding), id(graph), id(def_write) if def_write is not None else 0)
+        key = (id(binding), id(graph))
         if key not in self._kill_cache:
-            self._kill_cache[key] = self._compute_kill_nodes(binding, graph, def_write)
+            self._kill_cache[key] = self._compute_kill_nodes(binding, graph)
         return self._kill_cache[key]
 
-    def _compute_kill_nodes(
-        self, binding: Binding, graph: ControlFlowGraph, def_write: Node | None,
-    ) -> _Kills | None:
+    def _compute_kill_nodes(self, binding: Binding, graph: ControlFlowGraph) -> _Kills | None:
         """
-        The nodes of *graph* at which *binding*'s definition stops holding, or `None` where they
-        cannot be listed and the caller must treat the value as reaching nowhere: every site
-        `_changes` lists but the write the definition is tracked from.
+        The nodes of *graph* at which some definition of *binding* stops holding, or `None` where
+        they cannot be listed and the caller must treat the value as reaching nowhere: every site
+        `_changes` lists.
         """
         changes = self._changes(binding, graph)
         if changes is None:
             return None
         kills = {id(node) for _, node in changes.foreign}
-        kills.update(id(node) for site, node in changes.stores if site is not def_write)
-        return _Kills(frozenset(kills), changes.opaque)
+        alone: dict[int, Node] = {}
+        shared: set[int] = set(kills)
+        for site, node in changes.stores:
+            key = id(node)
+            if key in shared:
+                alone.pop(key, None)
+            else:
+                alone[key] = site
+                shared.add(key)
+            kills.add(key)
+        return _Kills(frozenset(kills), changes.opaque, alone)
 
     def _changes(self, binding: Binding, graph: ControlFlowGraph) -> _Changes | None:
         """

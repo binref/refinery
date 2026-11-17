@@ -382,22 +382,6 @@ class TestCFFArgParamDeclarations(TestJsDeobfuscator):
         """
     )
 
-    def test_an_assignment_a_function_makes_to_an_outer_variable_reaches_its_read(self):
-        self.assertIn(
-            self._deobfuscate_iterative(self._AN_ASSIGNMENT_A_FUNCTION_MAKES_TO_AN_OUTER_VARIABLE),
-            (
-                inspect.cleandoc(
-                    """
-                    var x = 1;
-                    x = 99;
-                    console.log(x);
-                    """
-                ),
-                'console.log(99);',
-            ),
-        )
-
-    @opportunity
     def test_an_assignment_a_function_makes_to_an_outer_variable_folds_into_its_read(self):
         self.assertEqual(
             self._deobfuscate_iterative(self._AN_ASSIGNMENT_A_FUNCTION_MAKES_TO_AN_OUTER_VARIABLE),

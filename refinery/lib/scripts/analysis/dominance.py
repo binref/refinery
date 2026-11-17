@@ -202,6 +202,18 @@ class DominanceTree:
         reached = self._entered.get(id(b))
         return reached is not None and opened <= reached < self._left[id(a)]
 
+    def interval(self, node: CfgNode) -> tuple[int, int] | None:
+        """
+        The stamps the depth-first walk over the tree gave *node* on entry and on leaving it, or
+        `None` for a node the entry does not reach. *node* dominates exactly the nodes whose entry
+        stamp lies in the interval, so the intervals of two nodes are nested or disjoint, and nested
+        exactly where one dominates the other.
+        """
+        opened = self._entered.get(id(node))
+        if opened is None:
+            return None
+        return opened, self._left[id(node)]
+
 
 class DominatorModel:
     """

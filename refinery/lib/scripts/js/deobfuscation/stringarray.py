@@ -22,7 +22,7 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.model import Binding, Role, SemanticModel, reference_role
+from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
     make_string_literal,
@@ -698,7 +698,7 @@ def _is_written_only_by_itself(
     writes = [
         *binding.writes,
         *binding.indefinite_writes,
-        *(ref for ref in model.dynamic_references(binding) if reference_role(ref) is not Role.READ),
+        *(ref for ref in model.dynamic_references(binding) if model.dynamic_reference_may_store(ref)),
     ]
     return all(write.is_descendant_of(function) for write in writes)
 

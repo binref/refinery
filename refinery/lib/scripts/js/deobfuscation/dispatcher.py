@@ -710,6 +710,8 @@ def _removable_declarators(
         declarator = declaration.parent
         if not isinstance(declarator, JsVariableDeclarator) or declarator.id is not declaration:
             continue
+        if cache.model.stores_elsewhere(declaration):
+            continue
         statement = declarator.parent
         if not isinstance(statement, JsVariableDeclaration) or statement.kind != JsVarKind.VAR:
             continue

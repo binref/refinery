@@ -1029,7 +1029,7 @@ def _forwarded_through_a_table(
     if (
         not isinstance(declarator, JsVariableDeclarator)
         or declarator.id is not table.declarations[0]
-        or not isinstance(array := declarator.init, JsArrayExpression)
+        or not isinstance(array := model.declared_value(table), JsArrayExpression)
         or k >= len(array.elements)
     ):
         return None

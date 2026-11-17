@@ -1810,6 +1810,8 @@ class EffectModel:
                     summary.dead_zone_reads.add(lexical_read)
                 if reference_role(node) is not Role.READ:
                     self._account_write(summary, node, func)
+                elif self.model.stores_elsewhere(node):
+                    self._account_declarator_store(summary, node, func)
             elif isinstance(node, JsMemberExpression):
                 base = node.object
                 if base is not None and not self._base_is_safe(base):
@@ -1933,11 +1935,26 @@ class EffectModel:
             self._dominance = build_dominance(self.model, intrinsic_writes=self.intrinsic_writes)
         return self._dominance
 
+    def _account_declarator_store(self, summary: EffectSummary, target: JsIdentifier, func: Node):
+        """
+        Account the store of a `var` declarator that lands in another binding of its name, as the
+        plain store `name = value` in the same place is accounted: where a `with` object may take
+        it, it writes a global as an unresolved name does.
+        """
+        binding = self.model.declarator_store_binding(target)
+        if binding is None:
+            summary.writes_global = True
+            return
+        self._account_binding_write(summary, binding, func)
+
     def _account_write(self, summary: EffectSummary, target: JsIdentifier, func: Node):
         binding = self.model.resolve(target)
         if binding is None:
             summary.writes_global = True
             return
+        self._account_binding_write(summary, binding, func)
+
+    def _account_binding_write(self, summary: EffectSummary, binding: Binding, func: Node):
         if self._owns_binding(binding, func):
             return
         if binding.is_read:
@@ -2124,6 +2141,8 @@ class EffectModel:
         for decl in binding.declarations:
             declarator = decl.parent
             if not isinstance(declarator, JsVariableDeclarator):
+                return _FreshKind.NOT_FRESH
+            if self.model.stores_elsewhere(decl):
                 return _FreshKind.NOT_FRESH
             kind = _weakest(kind, self._fresh_kind(declarator.init, func, visiting))
             if not kind.is_fresh:

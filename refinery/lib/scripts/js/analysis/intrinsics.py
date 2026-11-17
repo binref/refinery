@@ -385,6 +385,9 @@ class _BuiltinReach:
             if isinstance(parent, JsAssignmentExpression) and parent.left is reference:
                 if parent.right is not None:
                     sources.append(parent.right)
+            elif isinstance(parent, JsVariableDeclarator) and parent.id is reference:
+                if parent.init is not None:
+                    sources.append(parent.init)
             elif _destructured_under_a_builtin_key(reference):
                 return True, []
         return False, sources
@@ -1068,7 +1071,7 @@ def _names_bound_to(
     """
     if not isinstance(target, JsIdentifier):
         return frozenset()
-    binding = model.binding_of(target) or model.resolve(target)
+    binding = model.declarator_store_binding(target) or model.resolve(target)
     if binding is None:
         return frozenset({target.name})
     return aliases.names_of(binding)
@@ -1322,6 +1325,9 @@ def _binding_value_roots(binding: Binding) -> Iterator[JsIdentifier]:
         parent = getattr(reference, 'parent', None)
         if isinstance(parent, JsAssignmentExpression) and parent.left is reference:
             yield from _denoted_roots(parent.right)
+        elif isinstance(parent, JsVariableDeclarator) and parent.id is reference:
+            if parent.init is not None:
+                yield from _denoted_roots(parent.init)
 
 
 def denoting_leaves(node: Node | None, depth: int = 0) -> Iterator[Node]:

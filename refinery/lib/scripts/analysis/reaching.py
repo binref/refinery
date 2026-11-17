@@ -19,7 +19,9 @@ answers them wrongly in the direction that keeps a stale value.
 """
 from __future__ import annotations
 
-from typing import Iterable, Sequence, TypeVar
+import bisect
+
+from typing import Generic, Iterable, Sequence, TypeVar
 
 from refinery.lib.scripts.analysis.cfg import (
     CfgNode,
@@ -30,6 +32,17 @@ from refinery.lib.scripts.analysis.cfg import (
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 
 _D = TypeVar('_D')
+
+
+def _meets(candidates: frozenset[int], reached: frozenset[int], left_out: int | None) -> bool:
+    """
+    Whether *reached* holds a node of *candidates* other than *left_out*.
+    """
+    if left_out is None or left_out not in reached:
+        return not candidates.isdisjoint(reached)
+    if len(candidates) <= len(reached):
+        return any(key in reached for key in candidates if key != left_out)
+    return any(key in candidates for key in reached if key != left_out)
 
 
 class ReachabilityQuery:
@@ -55,9 +68,10 @@ class ReachabilityQuery:
         self._dominators = dominators
         self._projection = projection
         self._reach: dict[tuple[int, bool], frozenset[int]] = {}
-        self._upstream: dict[frozenset[int], dict[tuple[int, int], dict[int, bool]]] = {}
+        self._upstream: dict[frozenset[int], dict[tuple[int, int, int | None], dict[int, bool]]] = {}
         self._asked: set[tuple[int, bool]] = set()
         self._spent: dict[int, int] = {}
+        self._orders: dict[tuple[int, tuple[tuple[int, int], ...]], DefinitionOrder] = {}
 
     def reachable(self, node: CfgNode, *, forward: bool) -> frozenset[int]:
         """
@@ -80,10 +94,15 @@ class ReachabilityQuery:
         source: CfgNode,
         target: CfgNode,
         candidates: Iterable[int],
+        *,
+        excluding: CfgNode | None = None,
     ) -> bool:
         """
         Whether any node in *candidates* — given as node ids of *graph* — lies on some path from
-        *source* to *target*.
+        *source* to *target*. The node *excluding* is never one of them, whether *candidates* lists
+        it or not: a caller asking from each of several definitions whether another of them lies
+        between it and a use hands over one set of all of them and names the one it asks from,
+        where a set made anew for each would cost as much as all of them, every time.
 
         A node lies between the two exactly when it is reachable forward from *source* and *target*
         is reachable forward from it, which is the same as it being reachable backward from
@@ -141,7 +160,8 @@ class ReachabilityQuery:
         set before either way of answering the rest.
         """
         candidates = frozenset(candidates)
-        if not candidates:
+        left_out = None if excluding is None or id(excluding) not in candidates else id(excluding)
+        if not candidates or left_out is not None and len(candidates) == 1:
             return False
         source_end, target_end = (id(source), True), (id(target), False)
         walk = source_end not in self._asked or target_end not in self._asked
@@ -150,10 +170,10 @@ class ReachabilityQuery:
         projection = self._projection
         if projection.declines_the_hub:
             unplaced = candidates & graph.hub_bound
-            if unplaced and not unplaced.isdisjoint(self.reachable(source, forward=True)):
+            if unplaced and _meets(unplaced, self.reachable(source, forward=True), left_out):
                 return True
         reached = self._reach.get(source_end)
-        if reached is not None and reached.isdisjoint(candidates):
+        if reached is not None and not _meets(candidates, reached, left_out):
             return False
         if reached is None or target_end not in self._reach:
             reading = walk_reading(target, forward=False, projection=projection)
@@ -161,10 +181,13 @@ class ReachabilityQuery:
                 walk_reading(source, forward=True, projection=projection) is reading
                 and self._dominators.dominates_node(graph, source, target, projection)
             ):
-                held = self._held_upstream(graph, source, target, candidates, reading, walk=walk)
+                held = self._held_upstream(
+                    graph, source, target, candidates, reading, walk=walk, left_out=left_out)
                 if held is not None:
                     return held
         downstream = self.reachable(source, forward=True) & candidates
+        if left_out is not None:
+            downstream = downstream - {left_out}
         return bool(downstream) and not downstream.isdisjoint(self.reachable(target, forward=False))
 
     def _held_upstream(
@@ -176,33 +199,37 @@ class ReachabilityQuery:
         reading: Projection,
         *,
         walk: bool,
+        left_out: int | None,
     ) -> bool | None:
         """
         `any_between` for a *source* that dominates *target* under *reading*: whether a component
         numbered no higher than that of *source*, every one of which the entry reaches, holds a
-        candidate and reaches *target*. `None` where no earlier walk under the same candidates and
-        bound settled it and *walk* says not to walk.
+        candidate other than *left_out* and reaches *target*. `None` where no earlier walk under the
+        same candidates, exclusion and bound settled it and *walk* says not to walk.
 
         The memos are kept by candidate set first: a caller builds an equal set afresh for every
-        question, and keyed by the set alone it is held once rather than once per source. A memo is
-        kept only for a walk that is taken. Every node a walk tests without finding a candidate is
-        added to what its *source* has spent, and a source that has spent more than the components
-        numbered no higher than its own hold is flooded forward, which `any_between` reads first
-        from then on. A component that holds a candidate costs one: such a walk answers what the
-        flood back from its target would have had to.
+        question, and keyed by the set alone it is held once rather than once per source. Below it,
+        they are kept per graph, bound and excluded node, since a walk that leaves out one node
+        settles nothing for one that counts it. A memo is kept only for a walk that is taken. Every
+        node a walk tests without finding a candidate is added to what its *source* has spent, and a
+        source that has spent more than the components numbered no higher than its own hold is
+        flooded forward, which `any_between` reads first from then on. A component that holds a
+        candidate costs one: such a walk answers what the flood back from its target would have had
+        to.
         """
         condensation = graph.condensation(reading)
         start = condensation.number_of(target)
         bound = condensation.number_of(source)
         assert start is not None and bound is not None
         memos = self._upstream.get(candidates)
-        memo = None if memos is None else memos.get((id(graph), bound))
+        key = (id(graph), bound, left_out)
+        memo = None if memos is None else memos.get(key)
         known = None if memo is None else memo.get(start)
         if known is not None or not walk:
             return known
         if memo is None:
             memo = {}
-            self._upstream.setdefault(candidates, {})[id(graph), bound] = memo
+            self._upstream.setdefault(candidates, {})[key] = memo
         components = condensation.components
         spent = self._spent.get(id(source), 0)
 
@@ -210,7 +237,8 @@ class ReachabilityQuery:
             nonlocal spent
             members = components[number]
             for node in members:
-                if id(node) in candidates:
+                key = id(node)
+                if key in candidates and key != left_out:
                     spent += 1
                     return True
             spent += len(members)
@@ -253,28 +281,25 @@ class ReachabilityQuery:
         rather than being given a switch here, because the safe default has to be the one you get by
         saying nothing.
         """
-        qualifying: list[tuple[_D, CfgNode]] = []
-        seen: set[int] = set()
-        for value, node in definitions:
-            if node is use or not self._dominators.dominates_node(
-                graph, node, use, self._projection
-            ):
-                continue
-            if id(node) in seen:
-                return None
-            seen.add(id(node))
-            qualifying.append((value, node))
-        if not qualifying:
-            return None
-        nearest, nearest_node = qualifying[0]
-        for value, node in qualifying[1:]:
-            if self._dominators.dominates_node(graph, nearest_node, node, self._projection):
-                nearest, nearest_node = value, node
-        blocking = {id(node) for _, node in definitions if node is not nearest_node}
-        blocking.update(kills)
-        if self.any_between(graph, nearest_node, use, blocking):
-            return None
-        return nearest
+        qualifying = self.order(graph, definitions)
+        return qualifying.reaching(use, kills)
+
+    def order(
+        self,
+        graph: ControlFlowGraph,
+        definitions: Sequence[tuple[_D, CfgNode]],
+    ) -> DefinitionOrder[_D]:
+        """
+        The definitions *definitions* of *graph* ordered for `reaching_definition` asked from many
+        uses, kept per graph and per the definitions listed, in their order: a caller asking one set
+        of definitions about each of its uses builds the list anew every time, and the ordering it
+        then costs once is what each use would otherwise pay again.
+        """
+        key = (id(graph), tuple((id(value), id(node)) for value, node in definitions))
+        found = self._orders.get(key)
+        if found is None:
+            found = self._orders[key] = DefinitionOrder(self, graph, definitions)
+        return found
 
     def reaching_definitions(
         self,
@@ -319,3 +344,84 @@ class ReachabilityQuery:
                 return None
             stack.extend(self._projection.predecessors(node))
         return found
+
+
+class DefinitionOrder(Generic[_D]):
+    """
+    One set of definitions of one graph, ordered for the `ReachabilityQuery.reaching_definition`
+    selection asked at each of many uses (`ReachabilityQuery.order`).
+
+    The nodes holding definitions are ordered by the stamp the dominance tree gave them on entry
+    (`refinery.lib.scripts.analysis.dominance.DominanceTree.interval`), each linked to the nearest
+    of them whose interval holds its own. A use's dominating definitions are then the chain of
+    links from the last node entered no later than it whose interval holds it, nearest first: one
+    bisect and a climb over the nodes holding definitions, never over the graph's other nodes. Each
+    link knows whether a node on its chain holds two definitions, which refuses every use below it,
+    so that question costs nothing per use. The kill set every definition makes for another is
+    built once per set of kills and shared, the nearest one left out of it by name.
+    """
+
+    def __init__(
+        self,
+        query: ReachabilityQuery,
+        graph: ControlFlowGraph,
+        definitions: Sequence[tuple[_D, CfgNode]],
+    ):
+        self._query = query
+        self._graph = graph
+        self._tree = query._dominators.tree_of(graph, query._projection)
+        held: dict[int, list[_D]] = {}
+        placed: list[tuple[int, int, CfgNode]] = []
+        for value, node in definitions:
+            values = held.get(id(node))
+            if values is None:
+                values = held[id(node)] = []
+                interval = self._tree.interval(node)
+                if interval is not None:
+                    placed.append((*interval, node))
+            values.append(value)
+        placed.sort(key=lambda entry: entry[0])
+        self._held = held
+        self._placed = placed
+        self._starts = [entry[0] for entry in placed]
+        self._nodes = frozenset(held)
+        self._blocking: dict[frozenset[int], frozenset[int]] = {frozenset(): self._nodes}
+        parent = [-1] * len(placed)
+        doubled = [False] * len(placed)
+        open_: list[int] = []
+        for index, (start, _, node) in enumerate(placed):
+            while open_ and not start < placed[open_[-1]][1]:
+                open_.pop()
+            above = open_[-1] if open_ else -1
+            parent[index] = above
+            doubled[index] = len(held[id(node)]) > 1 or above >= 0 and doubled[above]
+            open_.append(index)
+        self._parent = parent
+        self._doubled = doubled
+
+    def reaching(self, use: CfgNode, kills: Iterable[int] = ()) -> _D | None:
+        """
+        The `ReachabilityQuery.reaching_definition` answer for *use*: the one definition whose value
+        is observed there, or `None` when no single one is.
+        """
+        interval = self._tree.interval(use)
+        if interval is None:
+            return None
+        stamp = interval[0]
+        index = bisect.bisect_right(self._starts, stamp) - 1
+        while index >= 0 and not stamp < self._placed[index][1]:
+            index = self._parent[index]
+        if index >= 0 and self._placed[index][2] is use:
+            index = self._parent[index]
+        if index < 0 or self._doubled[index]:
+            return None
+        nearest_node = self._placed[index][2]
+        nearest = self._held[id(nearest_node)][0]
+        kills = frozenset(kills)
+        blocking = self._blocking.get(kills)
+        if blocking is None:
+            blocking = self._blocking[kills] = self._nodes | kills
+        left_out = None if id(nearest_node) in kills else nearest_node
+        if self._query.any_between(self._graph, nearest_node, use, blocking, excluding=left_out):
+            return None
+        return nearest

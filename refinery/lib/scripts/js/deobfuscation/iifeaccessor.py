@@ -336,6 +336,7 @@ def _stored_where_it_is_only_read_through(
     variable = cache.model.binding_of(name)
     return (
         variable is not None
+        and not cache.model.stores_elsewhere(name)
         and len(variable.declarations) == 1
         and not variable.writes
         and cache.effects.binding_is_immutable_container(variable)
@@ -369,7 +370,7 @@ def _closed_over_containers_stay_unchanged(
                 continue
             if not isinstance(name := declarator.id, JsIdentifier):
                 return False
-            if (binding := cache.model.binding_of(name)) is None:
+            if (binding := cache.model.declarator_store_binding(name)) is None:
                 return False
             nested = bool(_containers(_held_values(literal)))
             inert = None if nested else frozenset()

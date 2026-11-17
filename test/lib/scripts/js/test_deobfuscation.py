@@ -313,7 +313,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
             ),
         )
 
-    @opportunity
     def test_a_global_a_call_overwrites_is_read_as_the_value_the_call_stored(self):
         source = inspect.cleandoc(
             """
@@ -374,7 +373,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
             ),
         )
 
-    @opportunity
     def test_a_copied_global_a_call_overwrites_is_read_as_the_value_the_call_stored(self):
         source = inspect.cleandoc(
             """

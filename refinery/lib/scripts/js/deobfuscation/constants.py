@@ -10,6 +10,7 @@ from refinery.lib.scripts import (
     _clone_node,
     _replace_in_parent,
     is_attached,
+    set_child,
 )
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
@@ -21,6 +22,7 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     pattern_identifiers,
     reference_role,
+    stored_value,
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -112,10 +114,14 @@ class _Candidates(NamedTuple):
     survives for, the free names among them included. A binding the scope walk can reach is told
     apart from another of its name by `SemanticModel.binding_of` at a declaration and
     `SemanticModel.resolve` at a reference, so a store into a catch parameter or a block `let` is
-    no value of the `var` its name also spells.
+    no value of the `var` its name also spells. The bindings the walk meets *stored again*, each
+    mapped to the declarator that declares it, are read store by store
+    (`refinery.lib.scripts.js.analysis.reaching.ReachingModel.reaching_store`): none of them is a
+    destructuring target, and each passes the refusals a candidate does.
     """
     entries: dict[Binding, _CandidateEntry]
     mutated: set[str]
+    stored_again: dict[Binding, JsVariableDeclarator]
 
 
 def _candidate_decl_ids(candidates: dict[Binding, _CandidateEntry]) -> set[int]:
@@ -407,25 +413,63 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         self.max_inline_length = max_inline_length
         self._root: JsScript | None = None
         self._edits_applied = 0
+        self._folded_from: list[JsVariableDeclarator] = []
 
     def visit_JsScript(self, node: JsScript):
         self._root = node
+        self._folded_from = []
         while True:
             self._edits_applied = 0
+            asked, self._folded_from = self._folded_from, []
+            self._clear_dead_values(node, asked)
             super().visit_JsScript(node)
             if not self._edits_applied:
                 break
         return None
 
+    def _clear_dead_values(self, root: JsScript, declarators: list[JsVariableDeclarator]) -> None:
+        """
+        Clear the value of each declarator of *declarators*, the declarators of bindings stored
+        again whose reads the previous round folded, where no read observes it any more: the
+        flow-sensitive liveness proves the store dead
+        (`refinery.lib.scripts.js.analysis.liveness.LivenessModel.is_dead_store`) while the binding
+        is still read, and dropping the value runs nothing. `var b = 'a'` becomes `var b;`. The
+        round that folded the reads could not see this, since its reads were still standing, and a
+        round's edits only remove reads, so a value dead on this round's tree stays dead.
+        """
+        if not declarators:
+            return
+        cache = model_cache(self, root)
+        model = cache.model
+        liveness = cache.liveness
+        cleared: list[JsVariableDeclarator] = []
+        for declarator in dict.fromkeys(declarators):
+            init = declarator.init
+            if init is None or not is_attached(declarator) or not isinstance(declarator.id, JsIdentifier):
+                continue
+            if not model.knows(declarator.id) or not is_literal(init):
+                continue
+            binding = model.binding_of(declarator.id)
+            if binding is None or not binding.is_read or not liveness.is_dead_store(declarator.id):
+                continue
+            cleared.append(declarator)
+        for declarator in cleared:
+            set_child(declarator, 'init', None)
+            self.mark_changed()
+            self._edits_applied += 1
+
     def _process_scope(self, scope: Node) -> None:
         assert self._root is not None
         cache = model_cache(self, self._root)
-        candidates, mutated = self._collect_candidates(scope, cache.effects)
-        if not candidates:
+        candidates, mutated, stored_again = self._collect_candidates(scope, cache.effects)
+        if not candidates and not stored_again:
             return
         decl_ids = _candidate_decl_ids(candidates)
-        substitutions = self._decide_constants(scope, candidates, decl_ids, cache)
-        if not substitutions:
+        substitutions = self._decide_constants(scope, candidates, decl_ids, cache) if candidates else []
+        folded = self._decide_stored_again(scope, stored_again, cache)
+        substitutions.extend(folded)
+        self._folded_from.extend(stored_again[sub.binding] for sub in folded)
+        if not substitutions and candidates:
             substitutions = self._decide_expressions(scope, candidates, mutated, decl_ids, cache)
         if not substitutions:
             return
@@ -472,13 +516,17 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         candidates: dict[Binding, _CandidateEntry] = {}
         rejected: set[Binding] = set()
         uninitialized: dict[Binding, JsVariableDeclarator] = {}
+        declared: dict[Binding, JsVariableDeclarator] = {}
+        unfit: set[Binding] = set()
         mutated: set[str] = set()
 
-        def reject(target: JsIdentifier) -> None:
+        def reject(target: JsIdentifier, *, destructured: bool = False) -> None:
             mutated.add(target.name)
             binding = model.binding_of(target) or _binding_reached(model, target)
             if binding is None:
                 return
+            if destructured:
+                unfit.add(binding)
             rejected.add(binding)
             candidates.pop(binding, None)
             uninitialized.pop(binding, None)
@@ -490,10 +538,17 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                         continue
                     if not isinstance(decl.id, JsIdentifier):
                         for ident in pattern_identifiers(decl.id):
-                            reject(ident)
+                            reject(ident, destructured=True)
                         continue
                     binding = model.binding_of(decl.id)
-                    if binding is None or binding in rejected:
+                    if binding is None:
+                        continue
+                    if model.stores_elsewhere(decl.id):
+                        continue
+                    if binding in declared:
+                        unfit.add(binding)
+                    declared.setdefault(binding, decl)
+                    if binding in rejected:
                         continue
                     if decl.init is None:
                         if binding not in candidates:
@@ -525,7 +580,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                         reject(left)
                 elif isinstance(left, (JsArrayPattern, JsObjectPattern)):
                     for ident in _identifiers_in(left):
-                        reject(ident)
+                        reject(ident, destructured=True)
 
             if isinstance(node, JsUpdateExpression):
                 target = strip_parens(node.argument)
@@ -543,7 +598,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                     JsIdentifier, JsArrayExpression, JsObjectExpression, JsArrayPattern, JsObjectPattern,
                 )):
                     for ident in _identifiers_in(left):
-                        reject(ident)
+                        reject(ident, destructured=not isinstance(left, JsIdentifier))
 
         for binding in list(candidates):
             if (
@@ -555,7 +610,16 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                 del candidates[binding]
                 mutated.add(binding.name)
 
-        return _Candidates(candidates, mutated)
+        stored_again = {
+            binding: decl for binding, decl in declared.items()
+            if binding in rejected
+            and binding not in unfit
+            and not binding.has_global_member_write
+            and model.binding_dynamic_rebind_sites(binding) is not None
+            and not model.reached_from_outside(binding)
+            and not effects.mutators_escape(binding)
+        }
+        return _Candidates(candidates, mutated, stored_again)
 
     def _decide_constants(
         self,
@@ -638,6 +702,56 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
 
         substitutions.extend(self._decide_const_across_functions(scope, constants, decl_ids, cache))
 
+        return substitutions
+
+    def _decide_stored_again(
+        self,
+        scope: Node,
+        stored_again: dict[Binding, JsVariableDeclarator],
+        cache: ModelCache,
+    ) -> list[_Substitution]:
+        """
+        Decide the inlines of one round into the reads of bindings stored again: each read takes
+        the value of the one store that reaches it
+        (`refinery.lib.scripts.js.analysis.reaching.ReachingModel.reaching_store`), where that store
+        is a declarator with a value or a plain `=`, the value is a constant, and it reaches the read
+        unchanged (`refinery.lib.scripts.js.analysis.reaching.ReachingModel.value_preserved`). A read
+        any other store reaches, a compound one, an update or the head of a loop, stays. A string too
+        long to paste folds only where its binding is read once, as a candidate's does.
+        """
+        if not stored_again:
+            return []
+        reaching = cache.reaching
+        model = cache.model
+        names = {binding.name for binding in stored_again}
+        substitutions: list[_Substitution] = []
+        for node in walk_scope(scope, include_root_body=True):
+            if not isinstance(node, JsIdentifier) or node.name not in names:
+                continue
+            if not model.is_reference(node) or reference_role(node) is not Role.READ:
+                continue
+            parent = node.parent
+            if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
+                continue
+            binding = model.resolve(node)
+            if binding is None or binding not in stored_again:
+                continue
+            site = reaching.reaching_store(binding, node)
+            if site is None or (stored := stored_value(site)) is None:
+                continue
+            value = _constant_node(stored, model)
+            if value is None:
+                continue
+            if (
+                isinstance(stored, JsStringLiteral)
+                and stored.value is not None
+                and len(stored.value) > self.max_inline_length
+                and len(binding.reads) + len(binding.dynamic_refs) > 1
+            ):
+                continue
+            if not reaching.value_preserved(binding, stored, node):
+                continue
+            substitutions.append(_Substitution(node, value, binding))
         return substitutions
 
     @staticmethod

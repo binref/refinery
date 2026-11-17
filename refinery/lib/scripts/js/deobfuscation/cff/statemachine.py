@@ -5413,7 +5413,7 @@ def _property_flag_is_private(
     if binding.scope is not home or binding.is_lexical:
         return False
     declarations = list(binding.declarations)
-    if len(declarations) != 1:
+    if len(declarations) != 1 or model.stores_elsewhere(declarations[0]):
         return False
     declarator = declarations[0].parent
     if not (

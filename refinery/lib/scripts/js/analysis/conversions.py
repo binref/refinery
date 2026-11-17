@@ -852,7 +852,7 @@ class ConversionInstalls:
             target = strip_parens(target.left)
         if not isinstance(target, JsIdentifier):
             return None
-        alias = self._model.binding_of(target)
+        alias = self._model.declarator_store_binding(target)
         if alias is None:
             alias = self._model.resolve(target)
         if alias is None:

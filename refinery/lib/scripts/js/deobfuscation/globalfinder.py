@@ -32,6 +32,7 @@ from refinery.lib.scripts.js.analysis.model import (
     GLOBAL_OBJECT_ALIASES,
     Binding,
     SemanticModel,
+    stored_value,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
@@ -241,7 +242,7 @@ def _global_taint(func: Node, model: SemanticModel, this_is_global: bool) -> set
             and node.init is not None
             and isinstance(node.id, JsIdentifier)
         ):
-            defs.append((model.binding_of(node.id), node.init))
+            defs.append((model.declarator_store_binding(node.id), node.init))
         elif (
             isinstance(node, JsAssignmentExpression)
             and node.operator == '='
@@ -325,7 +326,11 @@ def _sole_value(binding: Binding | None, func: Node, model: SemanticModel) -> No
     values: list[Node] = []
     for decl in binding.declarations:
         parent = decl.parent
-        if isinstance(parent, JsVariableDeclarator) and parent.init is not None:
+        if (
+            isinstance(parent, JsVariableDeclarator)
+            and parent.init is not None
+            and not model.stores_elsewhere(decl)
+        ):
             values.append(parent.init)
     for node in walk_run(func):
         if (
@@ -336,6 +341,10 @@ def _sole_value(binding: Binding | None, func: Node, model: SemanticModel) -> No
             and model.resolve(node.left) is binding
         ):
             values.append(node.right)
+    for write in binding.writes:
+        if isinstance(write, JsIdentifier) and model.stores_elsewhere(write):
+            if (value := stored_value(write)) is not None:
+                values.append(value)
     return values[0] if len(values) == 1 else None
 
 

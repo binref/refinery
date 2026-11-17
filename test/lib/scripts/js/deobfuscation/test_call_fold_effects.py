@@ -148,7 +148,7 @@ _FOLDS_BESIDE_A_STORE: dict[str, _Rewrite] = {
             """
             var v = 0;
             console.log(4, (v = 2, 3));
-            console.log(v);
+            console.log(2);
             """
         ),
         inspect.cleandoc(

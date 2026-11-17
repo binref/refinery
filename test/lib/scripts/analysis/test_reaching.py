@@ -170,6 +170,59 @@ class TestAnyBetween(TestBase):
         stranger = {id(object())}
         self.assertFalse(self._query(graph).any_between(graph, named['a'], named['c'], stranger))
 
+    def test_a_node_left_out_of_the_candidates_is_never_between(self):
+        shapes = (STRAIGHT, BRANCH, LOOP, FORK, NESTED_LOOPS, BACK_TO_ENTRY, ISLANDS, *DOMINANCE_SHAPES.values())
+        for edges in shapes:
+            graph, named = graph_from_edges(edges)
+            dominators = dominators_of(graph)
+            asked_before = ReachabilityQuery(dominators, Projection.MAY)
+            ids = [id(node) for node in named.values()]
+            sets = [set(pair) for pair in itertools.combinations(ids, 2)] + [set(ids)]
+            for source, target, left_out in itertools.product(named.values(), repeat=3):
+                for candidates in sets:
+                    expected = ReachabilityQuery(dominators, Projection.MAY).any_between(
+                        graph, source, target, candidates - {id(left_out)})
+                    with self.subTest(edges=edges, candidates=len(candidates)):
+                        self.assertEqual(
+                            asked_before.any_between(graph, source, target, candidates, excluding=left_out),
+                            expected,
+                        )
+
+    def test_one_candidate_set_asked_from_each_of_its_members_walks_less_than_twice_as_far_when_doubled(self):
+        tested: dict[int, int] = {}
+        for count in (1600, 3200):
+            names = [F'{kind}{index}' for index in range(count) for kind in ('store', 'read')]
+            graph, named = self._chain(names)
+            query = self._query(graph)
+            stores = {id(named[F'store{index}']) for index in range(count)}
+            walked: list[int] = []
+            with self._tests(walked):
+                for index in range(count):
+                    source, target = named[F'store{index}'], named[F'read{index}']
+                    self.assertFalse(query.any_between(graph, source, target, stores, excluding=source))
+            tested[count] = len(walked)
+        self.assertLess(tested[3200], 2 * tested[1600] + 2)
+
+    def test_one_candidate_set_asked_from_each_of_its_members_keeps_a_memo_linear_in_the_questions(self):
+        kept: dict[int, int] = {}
+        for count in (1600, 3200):
+            names = [F'{kind}{index}' for index in range(count) for kind in ('store', 'read')]
+            graph, named = self._chain(names)
+            query = self._query(graph)
+            stores = frozenset(id(named[F'store{index}']) for index in range(count))
+            self.assertFalse(query.any_between(graph, named['store0'], named['read0'], stores, excluding=named['store0']))
+            tracemalloc.start()
+            try:
+                before, _ = tracemalloc.get_traced_memory()
+                for index in range(1, count):
+                    source = named[F'store{index}']
+                    self.assertFalse(query.any_between(graph, source, named[F'read{index}'], stores, excluding=source))
+                after, _ = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+            kept[count] = after - before
+        self.assertLess(kept[3200], 3 * kept[1600])
+
 
 class TestReachingDefinition(TestBase):
 
@@ -277,6 +330,82 @@ class TestReachingDefinition(TestBase):
         }
         self.assertIsNone(self._observed(edges, [('taken', 't'), ('other', 'f')], 'u'))
         self.assertIsNone(self._observed(edges, [('other', 'f'), ('taken', 't')], 'u'))
+
+    @staticmethod
+    def _dominates(graph: ControlFlowGraph, a: CfgNode, b: CfgNode) -> bool:
+        reached = flood([graph.entry], forward=True, projection=Projection.MAY)
+        if id(a) not in reached or id(b) not in reached:
+            return False
+        if a is b:
+            return True
+        seen = {id(a)}
+        stack = [graph.entry] if graph.entry is not a else []
+        while stack:
+            node = stack.pop()
+            if node is b:
+                return False
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            stack.extend(Projection.MAY.successors(node))
+        return True
+
+    def _scanned(
+        self,
+        graph: ControlFlowGraph,
+        use: CfgNode,
+        definitions: Sequence[tuple[str, CfgNode]],
+        kills: Iterable[int],
+    ) -> str | None:
+        qualifying = [(label, node) for label, node in definitions if node is not use and self._dominates(graph, node, use)]
+        if not qualifying or len({id(node) for _, node in qualifying}) != len(qualifying):
+            return None
+        nearest = [
+            (label, node) for label, node in qualifying
+            if all(self._dominates(graph, other, node) for _, other in qualifying)
+        ]
+        if len(nearest) != 1:
+            return None
+        label, node = nearest[0]
+        blocking = {id(other) for _, other in definitions if other is not node} | set(kills)
+        forward = flood([node], forward=True, projection=Projection.MAY)
+        backward = flood([use], forward=False, projection=Projection.MAY)
+        return None if blocking & forward & backward else label
+
+    def test_the_selection_agrees_with_a_scan_of_the_definitions_on_every_shape(self):
+        shapes = (STRAIGHT, BRANCH, LOOP, FORK, NESTED_LOOPS, BACK_TO_ENTRY, ISLANDS, *DOMINANCE_SHAPES.values())
+        for edges in shapes:
+            graph, named = graph_from_edges(edges)
+            query = ReachabilityQuery(dominators_of(graph), Projection.MAY)
+            nodes = list(named.items())
+            for size in (1, 2, 3):
+                for chosen in itertools.combinations(nodes, size):
+                    definitions = [(name, node) for name, node in chosen]
+                    for (kill_name, kill), (_, use) in itertools.product([(None, None), *nodes], nodes):
+                        kills = [] if kill is None else [id(kill)]
+                        with self.subTest(edges=edges, definitions=[name for name, _ in chosen], kill=kill_name):
+                            self.assertEqual(
+                                query.reaching_definition(graph, use, definitions, kills),
+                                self._scanned(graph, use, definitions, kills),
+                            )
+
+    def test_a_chain_of_definitions_asked_from_each_use_costs_less_than_twice_as_much_when_doubled(self):
+        cost: dict[int, int] = {}
+        for count in (400, 800):
+            names = [F'{kind}{index}' for index in range(count) for kind in ('store', 'read')]
+            edges = {name: [names[index + 1]] for index, name in enumerate(names[:-1])}
+            edges[names[-1]] = []
+            graph, named = graph_from_edges(edges)
+            query = ReachabilityQuery(dominators_of(graph), Projection.MAY)
+            definitions = [(index, named[F'store{index}']) for index in range(count)]
+            walked: list[int] = []
+            ordered = patch.object(
+                DominatorModel, 'dominates_node', autospec=True, side_effect=DominatorModel.dominates_node)
+            with TestAnyBetween._tests(walked), ordered as asked:
+                for index in range(count):
+                    self.assertEqual(query.reaching_definition(graph, named[F'read{index}'], definitions), index)
+            cost[count] = len(walked) + asked.call_count
+        self.assertLess(cost[800], 2 * cost[400] + 2)
 
 
 class TestReachingDefinitions(TestBase):

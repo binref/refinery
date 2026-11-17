@@ -4582,6 +4582,56 @@ class TestALiveVarKeepsItsDeclarationBesideADeadBindingOfItsName(TestBase):
         self.assertEqual(what_each_deobfuscated_script_prints(rows), what_each_deobfuscated_script_pins(rows))
 
 
+A_VAR_READ_NOWHERE_STORED_WHERE_ITS_SCOPE_DOES_NOT_RUN = {
+    'a static field': (
+        a_program("""
+            function f() {
+              var x;
+              class C { static y = (x = 5); }
+              x = undefined;
+              return [void 0, C.y];
+            }
+            console.log(f());
+        """),
+        prints('[ undefined, 5 ]'),
+    ),
+    'a static block': (
+        a_program("""
+            function f() {
+              var x;
+              class C { static { x = 5; } }
+              return C;
+            }
+            console.log(typeof f());
+        """),
+        prints('function'),
+    ),
+    'an instance field': (
+        a_program("""
+            function f() {
+              var x;
+              class C { y = (x = 5); }
+              return new C().y;
+            }
+            console.log(f());
+        """),
+        prints('5'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAVarReadNowhereKeepsItsDeclarationWhileAStoreOfItStands(TestBase):
+
+    def test_node_prints_what_each_program_pins(self):
+        rows = A_VAR_READ_NOWHERE_STORED_WHERE_ITS_SCOPE_DOES_NOT_RUN
+        self.assertEqual(what_each_script_prints(rows), what_each_script_pins(rows))
+
+    def test_the_deobfuscation_prints_what_the_program_does(self):
+        rows = A_VAR_READ_NOWHERE_STORED_WHERE_ITS_SCOPE_DOES_NOT_RUN
+        self.assertEqual(what_each_deobfuscated_script_prints(rows), what_each_deobfuscated_script_pins(rows))
+
+
 class TestDeadDeclarationsInOneBodyLeaveItInOneEdit(TestJsDeobfuscator):
 
     @staticmethod

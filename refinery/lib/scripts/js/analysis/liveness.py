@@ -224,8 +224,13 @@ class LivenessModel:
         for ident in self._shallow_idents(graph, node.element):
             declared = self.model.binding_of(ident)
             if declared is not None:
-                if self._trackable(declared, owner_scope) and self._declarator_has_init(ident):
-                    kill.add(declared)
+                target = self.model.declarator_store_binding(ident)
+                if (
+                    target is not None
+                    and self._trackable(target, owner_scope)
+                    and self._declarator_has_init(ident)
+                ):
+                    kill.add(target)
                 continue
             if not is_use_position(ident):
                 continue
@@ -294,7 +299,7 @@ class LivenessModel:
         if declared is not None:
             if not self._declarator_has_init(write):
                 return None, None
-            return declared, self._enclosing_declarator(write)
+            return self.model.declarator_store_binding(write), self._enclosing_declarator(write)
         if not is_use_position(write):
             return None, None
         binding = self.model.resolve(write)
@@ -326,7 +331,7 @@ class LivenessModel:
     def _reference_binding(self, ident: JsIdentifier) -> Binding | None:
         declared = self.model.binding_of(ident)
         if declared is not None:
-            return declared
+            return self.model.declarator_store_binding(ident)
         if not is_use_position(ident):
             return None
         return self.model.resolve(ident)

@@ -1239,15 +1239,19 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         eliminated: set[Binding] = set()
         for binding in dead:
             fully = True
+            removed: set[int] = set()
             for stmt in stores[binding]:
                 expr = stmt.expression
                 assert isinstance(expr, JsAssignmentExpression)
                 if expr.right is None or removable[id(stmt)]:
-                    if not lists.remove(stmt):
+                    if lists.remove(stmt):
+                        removed.add(id(expr.left))
+                    else:
                         fully = False
                 else:
                     preserved.add(stmt)
-            if fully:
+                    removed.add(id(expr.left))
+            if fully and self._every_store_goes(binding, removed):
                 eliminated.add(binding)
         if lists.apply():
             self.mark_changed()
@@ -1258,6 +1262,20 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             self.mark_changed()
         self._remove_empty_declarators(parent, body, eliminated)
         return {binding.name for binding in eliminated}, preserved
+
+    def _every_store_goes(self, binding: Binding, removed: set[int]) -> bool:
+        """
+        Whether every store into *binding* is one the sweep takes away, whose targets' ids are
+        *removed*, so that its declaration may go as well. A store the walk of the variable scope
+        does not meet — one in the initializer of a class field or in a static block, which runs at
+        a time of its own, or in a nested function — writes the name all the same, and without its
+        declaration it creates a global, or throws in strict code.
+        """
+        return all(
+            id(write) in removed
+            for write in binding.writes
+            if isinstance(write, JsIdentifier)
+        ) and not any(self.model.dynamic_reference_may_store(ref) for ref in binding.dynamic_refs)
 
     def _dead_store_bindings(
         self,
@@ -1764,6 +1782,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return False
         binding = self.model.binding_of(decl.id)
         if self._reflection_reachable(binding):
+            return False
+        if self.model.stores_elsewhere(decl.id):
             return False
         unreferenced = binding is not None and not binding.reads and not binding.writes
         if decl.init is None:
