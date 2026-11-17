@@ -17,6 +17,10 @@ from test.lib.scripts.js.ledger import (
     each_program_still_prints,
     folded,
     prints,
+    what_each_deobfuscated_script_pins,
+    what_each_deobfuscated_script_prints,
+    what_each_script_pins,
+    what_each_script_prints,
 )
 
 from refinery.lib.scripts import TREE_RECURSION_DEPTH
@@ -2196,6 +2200,182 @@ class TestALocalALaterStoreDefines(TestJsDeobfuscator):
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
+        )
+
+
+A_STORE_INTO_ANOTHER_BINDING_OF_THE_NAME_A_BARE_VAR_DECLARES = {
+    'a catch parameter in a function': (
+        a_program("""
+            function f() {
+              var b;
+              try { throw 0; } catch (b) { b = 'c'; }
+              console.log(b);
+            }
+            f();
+        """),
+        prints('undefined'),
+    ),
+    'a catch parameter at the top of the script': (
+        a_program("""
+            var b;
+            try { throw 0; } catch (b) { b = 'c'; }
+            console.log(b);
+        """),
+        prints('undefined'),
+    ),
+    'a block let': (
+        a_program("""
+            function f() {
+              var b;
+              { let b; b = 'c'; console.log(b); }
+              console.log(b);
+            }
+            f();
+        """),
+        prints('c', 'undefined'),
+    ),
+    'a block let the var is declared after': (
+        a_program("""
+            function f() {
+              { let b = 'x'; console.log(b); }
+              var b;
+              b = 'c';
+              console.log(b);
+            }
+            f();
+        """),
+        prints('x', 'c'),
+    ),
+    'a store in a with body': (
+        a_program("""
+            function f(o) {
+              var b;
+              with (o) { b = 'c'; }
+              console.log(b);
+            }
+            f({}); f({ b: 0 });
+        """),
+        prints('c', 'undefined'),
+    ),
+    'a catch parameter of another name stored and copied': (
+        a_program("""
+            function f() {
+              var b;
+              try { throw 0; } catch (e) { e = 'c'; b = e; }
+              console.log(b);
+            }
+            f();
+        """),
+        prints('c'),
+    ),
+}
+
+A_READ_OF_ANOTHER_BINDING_OF_THE_NAME_OF_A_CONSTANT = {
+    'an element of an array read through a catch parameter of its name': (
+        a_program("""
+            function f() {
+              const t = [1, 2];
+              try { throw [5, 6]; } catch (t) { console.log(t[0]); }
+              return t;
+            }
+            f();
+        """),
+        prints('5'),
+    ),
+    'a constant beside a catch parameter of its name': (
+        a_program("""
+            function f() {
+              var t = 1;
+              try { throw 5; } catch (t) { console.log(t); }
+            }
+            f();
+        """),
+        prints('5'),
+    ),
+    'an expression beside a catch parameter of its name': (
+        a_program("""
+            function f(a) {
+              var t = a + 1;
+              try { throw 5; } catch (t) { console.log(t); }
+              console.log(t);
+            }
+            f(1);
+        """),
+        prints('5', '2'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAStoreIntoAnotherBindingOfItsNameIsNoValueOfABareVar(TestBase):
+
+    def test_node_prints_what_each_program_pins(self):
+        rows = A_STORE_INTO_ANOTHER_BINDING_OF_THE_NAME_A_BARE_VAR_DECLARES
+        self.assertEqual(what_each_script_prints(rows), what_each_script_pins(rows))
+
+    def test_the_deobfuscation_prints_what_the_program_does(self):
+        rows = A_STORE_INTO_ANOTHER_BINDING_OF_THE_NAME_A_BARE_VAR_DECLARES
+        self.assertEqual(what_each_deobfuscated_script_prints(rows), what_each_deobfuscated_script_pins(rows))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAReadOfAnotherBindingOfItsNameIsNoReadOfAConstant(TestBase):
+
+    def test_node_prints_what_each_program_pins(self):
+        rows = A_READ_OF_ANOTHER_BINDING_OF_THE_NAME_OF_A_CONSTANT
+        self.assertEqual(what_each_script_prints(rows), what_each_script_pins(rows))
+
+    def test_the_deobfuscation_prints_what_the_program_does(self):
+        rows = A_READ_OF_ANOTHER_BINDING_OF_THE_NAME_OF_A_CONSTANT
+        self.assertEqual(what_each_deobfuscated_script_prints(rows), what_each_deobfuscated_script_pins(rows))
+
+
+class TestAConstantIsInlinedBesideABlockConstantOfItsName(TestJsDeobfuscator):
+
+    def test_in_its_own_function(self):
+        self.assertEqual(
+            self._inline(inspect.cleandoc("""
+                function f(M) {
+                  const T = 'length';
+                  if (M[T] > 1) { const T = M[0]; g(T); }
+                  return M[T];
+                }
+                h(f);
+            """)),
+            inspect.cleandoc("""
+                function f(M) {
+                  if (M['length'] > 1) {
+                    const T = M[0];
+                    g(T);
+                  }
+                  return M['length'];
+                }
+                h(f);
+            """),
+        )
+
+    def test_in_a_nested_function(self):
+        self.assertEqual(
+            self._inline(inspect.cleandoc("""
+                function f(M) {
+                  const T = 'length';
+                  if (M[T] > 1) { const T = M[0]; g(T); }
+                  return function () { return M[T]; };
+                }
+                h(f);
+            """)),
+            inspect.cleandoc("""
+                function f(M) {
+                  if (M['length'] > 1) {
+                    const T = M[0];
+                    g(T);
+                  }
+                  return function() {
+                    return M['length'];
+                  };
+                }
+                h(f);
+            """),
         )
 
 

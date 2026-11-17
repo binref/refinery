@@ -1236,7 +1236,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         if not dead:
             return set(), set()
         preserved: set[JsExpressionStatement] = set()
-        eliminated: set[str] = set()
+        eliminated: set[Binding] = set()
         for binding in dead:
             fully = True
             for stmt in stores[binding]:
@@ -1248,7 +1248,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 else:
                     preserved.add(stmt)
             if fully:
-                eliminated.add(binding.name)
+                eliminated.add(binding)
         if lists.apply():
             self.mark_changed()
         for stmt in preserved:
@@ -1257,7 +1257,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             set_child(stmt, 'expression', expr.right)
             self.mark_changed()
         self._remove_empty_declarators(parent, body, eliminated)
-        return eliminated, preserved
+        return {binding.name for binding in eliminated}, preserved
 
     def _dead_store_bindings(
         self,
@@ -1375,7 +1375,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return set()
         scope = self.model.scope_of(parent)
         assert scope is not None
-        candidates: list[tuple[JsExpressionStatement, list[str], bool]] = []
+        candidates: list[tuple[JsExpressionStatement, list[Binding], bool]] = []
         for node in walk_scope(parent):
             if not isinstance(node, JsExpressionStatement):
                 continue
@@ -1394,37 +1394,36 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 continue
             if not _destructuring_target_safe(expr.left, expr.right):
                 continue
-            writes_a_global = any(
-                binding is not None and binding.kind is BindingKind.IMPLICIT_GLOBAL
-                for binding in bindings
-            )
-            candidates.append((node, [t.name for t in targets], writes_a_global))
+            owned = [binding for binding in bindings if binding is not None]
+            writes_a_global = any(binding.kind is BindingKind.IMPLICIT_GLOBAL for binding in owned)
+            candidates.append((node, owned, writes_a_global))
         if not candidates:
             return set()
         read_in_scope = self._names_read_in(parent)
         lists = ListRemoval()
-        removed: set[str] = set()
+        removed: set[Binding] = set()
         for stmt, targets, writes_a_global in candidates:
             read_names = self._names_read_in_script(parent) if writes_a_global else read_in_scope
-            if any(t in read_names for t in targets):
+            if any(t.name in read_names for t in targets):
                 continue
             if not lists.remove(stmt):
                 continue
             removed.update(targets)
         if not lists.apply():
             return set()
+        removed_names = {binding.name for binding in removed}
         still_written = {
             node.name
             for node in parent.walk()
             if isinstance(node, JsIdentifier)
-            and node.name in removed
+            and node.name in removed_names
             and is_simple_assignment_target(node)
         }
-        dead = removed - still_written
+        dead = {binding for binding in removed if binding.name not in still_written}
         if dead:
             self._remove_empty_declarators(parent, body, dead)
         self.mark_changed()
-        return dead
+        return {binding.name for binding in dead}
 
     def _names_read_in_script(self, node: Node) -> set[str]:
         """
@@ -1710,17 +1709,19 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         return True
 
     def _remove_empty_declarators(
-        self, parent: Node, body: list[Statement], dead_names: set[str],
+        self, parent: Node, body: list[Statement], dead: set[Binding],
     ):
         """
         Remove `var X;` declarators whose binding is wholly unreferenced. A bare declarator (no
-        initializer) is dropped when its name is in *dead_names* — a binding found dead while removing
-        its assignments, whose references the pass-start model may still record because they sat in
-        now-removed statements — or when its binding has no reads and no writes at all. An initialized
-        declarator is dropped only when its binding is wholly unreferenced and the initializer is
-        side-effect-free. A binding still written by a surviving statement keeps its declaration, so it
-        does not silently become an implicit global; a binding read across a function boundary or
-        captured by a closure likewise keeps its declaration.
+        initializer) is dropped when the binding it declares is in *dead* — a binding found dead
+        while removing its assignments, whose references the pass-start model may still record
+        because they sat in now-removed statements — or when its binding has no reads and no writes
+        at all. Another binding of the same name, a catch parameter or a block `let`, being dead
+        says nothing of this one. An initialized declarator is dropped only when its binding is
+        wholly unreferenced and the initializer is side-effect-free. A binding still written by a
+        surviving statement keeps its declaration, so it does not silently become an implicit
+        global; a binding read across a function boundary or captured by a closure likewise keeps
+        its declaration.
 
         A declaration whose every declarator goes is taken out of *body* whole. The removals from
         *body* and from the declarator lists are taken through one
@@ -1738,7 +1739,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             )
             dropped = [
                 decl for decl in stmt.declarations
-                if self._empty_declarator_may_go(decl, load_bearing, dead_names)
+                if self._empty_declarator_may_go(decl, load_bearing, dead)
             ]
             if not dropped:
                 continue
@@ -1751,7 +1752,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             self.mark_changed()
 
     def _empty_declarator_may_go(
-        self, decl: Node, load_bearing: frozenset[str], dead_names: set[str],
+        self, decl: Node, load_bearing: frozenset[str], dead: set[Binding],
     ) -> bool:
         """
         Whether `_remove_empty_declarators` drops *decl*, a declarator of a declaration whose names
@@ -1766,5 +1767,5 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return False
         unreferenced = binding is not None and not binding.reads and not binding.writes
         if decl.init is None:
-            return decl.id.name in dead_names or unreferenced
+            return binding in dead or unreferenced
         return unreferenced and self._is_removable(decl.init)

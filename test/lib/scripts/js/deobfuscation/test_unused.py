@@ -18,6 +18,11 @@ from test.lib.scripts.js.ledger import (
     before_and_after,
     each_program_still_prints,
     printed,
+    prints,
+    what_each_deobfuscated_script_pins,
+    what_each_deobfuscated_script_prints,
+    what_each_script_pins,
+    what_each_script_prints,
 )
 
 from refinery.lib.scripts import tree_version
@@ -4483,6 +4488,98 @@ class TestNodePrintsTheSameAboutAStoreAStatementMaySkip(TestJsDeobfuscator):
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+A_LIVE_VAR_BESIDE_A_DEAD_BINDING_OF_ITS_NAME = {
+    'a catch parameter stored an object, the var read': (
+        a_program("""
+            function f() {
+              var b;
+              try { throw 0; } catch (b) { b = {}; }
+              console.log(b);
+            }
+            f();
+        """),
+        prints('undefined'),
+    ),
+    'a block let stored an object, the var read': (
+        a_program("""
+            function f() {
+              var b;
+              { let b; b = {}; }
+              console.log(b);
+            }
+            f();
+        """),
+        prints('undefined'),
+    ),
+    'a catch parameter stored a call, the type of the var read': (
+        a_program("""
+            function g() { return 1; }
+            function f() {
+              var b;
+              try { throw 0; } catch (b) { b = g(); }
+              console.log(typeof b);
+            }
+            f();
+        """),
+        prints('undefined'),
+    ),
+    'a catch parameter stored an object, the type of the var read': (
+        a_program("""
+            function f() {
+              var b;
+              try { throw 0; } catch (b) { b = {}; }
+              console.log(typeof b);
+            }
+            f();
+        """),
+        prints('undefined'),
+    ),
+    'a catch parameter at the top stored an object, the type of the var read': (
+        a_program("""
+            var b;
+            try { throw 0; } catch (b) { b = {}; }
+            console.log(typeof b);
+        """),
+        prints('undefined'),
+    ),
+    'a block let stored an object, the type of the var read': (
+        a_program("""
+            function f() {
+              var b;
+              { let b; b = {}; }
+              console.log(typeof b);
+            }
+            f();
+        """),
+        prints('undefined'),
+    ),
+    'the var of a nested function stored an object, the type of the outer var read': (
+        a_program("""
+            function f() {
+              var b;
+              function h() { var b; b = {}; }
+              h();
+              console.log(typeof b);
+            }
+            f();
+        """),
+        prints('undefined'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestALiveVarKeepsItsDeclarationBesideADeadBindingOfItsName(TestBase):
+
+    def test_node_prints_what_each_program_pins(self):
+        rows = A_LIVE_VAR_BESIDE_A_DEAD_BINDING_OF_ITS_NAME
+        self.assertEqual(what_each_script_prints(rows), what_each_script_pins(rows))
+
+    def test_the_deobfuscation_prints_what_the_program_does(self):
+        rows = A_LIVE_VAR_BESIDE_A_DEAD_BINDING_OF_ITS_NAME
+        self.assertEqual(what_each_deobfuscated_script_prints(rows), what_each_deobfuscated_script_pins(rows))
 
 
 class TestDeadDeclarationsInOneBodyLeaveItInOneEdit(TestJsDeobfuscator):

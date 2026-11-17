@@ -67,52 +67,63 @@ from refinery.lib.scripts.js.numbers import exact_integer
 from refinery.lib.scripts.js.values import GLOBAL_VALUE_NAMES
 
 
-def _pattern_identifiers(pattern: Node) -> set[str]:
+def _identifiers_in(pattern: Node) -> list[JsIdentifier]:
     """
-    Extract all identifier names from a destructuring pattern (array or object pattern). These are
-    the variables being assigned to.
+    Every identifier in the subtree of a destructuring pattern or a loop head: the variables it
+    assigns to, and the names its defaults and computed keys read.
     """
-    return {n.name for n in pattern.walk() if isinstance(n, JsIdentifier)}
+    return [n for n in pattern.walk() if isinstance(n, JsIdentifier)]
 
 
 class _CandidateEntry(NamedTuple):
-    declarator: JsVariableDeclarator | None
+    declarator: JsVariableDeclarator
+    binding: Binding
     value: Node
 
 
 class _Substitution(NamedTuple):
     target: Node
     value: Node
-    key: str
+    binding: Binding
 
 
 class _DeclaratorRemoval(NamedTuple):
     declarator: JsVariableDeclarator
-    key: str
+    binding: Binding
 
 
 class _ScopePlan(NamedTuple):
+    """
+    The edits one scope decided in a round, with the *model* they were decided against, which is
+    the one that tells the bindings of the identifiers the round leaves standing apart when the plan
+    counts the references a removal waits on.
+    """
     scope: Node
     substitutions: list[_Substitution]
     declarator_removals: list[_DeclaratorRemoval]
     decl_ids: set[int]
-
-    @property
-    def planned(self) -> set[str]:
-        return _planned_keys(self.substitutions)
+    model: SemanticModel
 
 
-def _candidate_decl_ids(candidates: dict[str, list[_CandidateEntry]]) -> set[int]:
+class _Candidates(NamedTuple):
+    """
+    What one scope walk found: the *entries*, a candidate binding mapped to the one declarator and
+    the one value that define it, and the *mutated* names, those a store writes that no candidate
+    survives for, the free names among them included. A binding the scope walk can reach is told
+    apart from another of its name by `SemanticModel.binding_of` at a declaration and
+    `SemanticModel.resolve` at a reference, so a store into a catch parameter or a block `let` is
+    no value of the `var` its name also spells.
+    """
+    entries: dict[Binding, _CandidateEntry]
+    mutated: set[str]
+
+
+def _candidate_decl_ids(candidates: dict[Binding, _CandidateEntry]) -> set[int]:
     """
     Collect the `id()` values of all declaration-site identifier nodes across candidate entries.
     Used to distinguish binding occurrences from reference occurrences during scope walks.
     """
-    result: set[int] = set()
-    for entries in candidates.values():
-        for entry in entries:
-            if (d := entry.declarator) is not None:
-                result.add(id(d.id))
-    return result
+    return {id(entry.declarator.id) for entry in candidates.values()}
 
 
 def _is_primitive_and_pure(node: Node) -> bool:
@@ -156,36 +167,85 @@ def _is_primitive_and_pure(node: Node) -> bool:
     return True
 
 
-def _count_scope_references(
+def _binding_reached(model: SemanticModel, ident: JsIdentifier) -> Binding | None:
+    """
+    The binding the reference *ident* reads or writes: the one it resolves to, and where a `with`
+    body governs it, the lexical binding it may reach past the body
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.lookup`), or `None` where *ident* is no
+    reference or reaches no binding.
+    """
+    if not model.is_reference(ident):
+        return None
+    binding = model.resolve(ident)
+    if binding is None:
+        binding = model.lookup(ident.name, model.scope_of(ident), cross_dynamic=True)
+    return binding
+
+
+def _counts_as_a_reference(node: JsIdentifier) -> bool:
+    """
+    Whether *node* keeps a declarator its binding would lose: anything but the target of a plain
+    `=`, which stores and reads nothing, and the name of a property.
+    """
+    parent = node.parent
+    if isinstance(parent, JsAssignmentExpression) and parent.left is node and parent.operator == '=':
+        return False
+    if isinstance(parent, JsMemberExpression) and parent.property is node and not parent.computed:
+        return False
+    return True
+
+
+def _still_referenced(
     scope: Node,
-    names: set[str],
+    bindings: set[Binding],
     decl_ids: set[int],
-    *,
-    walk_full: bool = False,
-) -> dict[str, int]:
+    model: SemanticModel,
+) -> set[Binding]:
     """
-    Count identifier references within *scope* for each name in *names*, excluding declaration
-    sites in *decl_ids* and simple (`=`) assignment write targets. A compound assignment (`x += e`,
-    `x <<= e`) reads its target, so its left side is counted as a reference and the variable stays
-    live. When *walk_full* is True, the entire subtree
-    is traversed (including nested function bodies); otherwise only the current scope is walked.
+    The *bindings* that an identifier anywhere in the subtree of *scope* still references, nested
+    functions included, excluding declaration sites in *decl_ids*. The count is taken on a tree the
+    round's substitutions edited, against the *model* the round decided on: an identifier it knows
+    counts for the binding it reaches (`_binding_reached`), and one it does not, which a
+    substitution wrote, counts for every binding of its name, since no model of the round can say
+    which one it reaches.
     """
-    walker = scope.walk() if walk_full else walk_scope(scope, include_root_body=True)
-    counts: dict[str, int] = {}
-    for node in walker:
-        if not isinstance(node, JsIdentifier):
+    by_name: dict[str, list[Binding]] = {}
+    for binding in bindings:
+        by_name.setdefault(binding.name, []).append(binding)
+    referenced: set[Binding] = set()
+    for node in scope.walk():
+        if not isinstance(node, JsIdentifier) or id(node) in decl_ids:
             continue
-        if id(node) in decl_ids:
+        if (named := by_name.get(node.name)) is None or not _counts_as_a_reference(node):
             continue
-        name = node.name
-        if name not in names:
+        if not model.knows(node):
+            referenced.update(named)
+        elif (reached := _binding_reached(model, node)) in bindings:
+            referenced.add(reached)
+    return referenced
+
+
+def _references_in_scope(
+    scope: Node,
+    candidates: dict[Binding, _CandidateEntry],
+    decl_ids: set[int],
+    model: SemanticModel,
+) -> dict[Binding, int]:
+    """
+    Count the references within the scope walk of *scope* that reach each candidate binding
+    (`_binding_reached`), excluding declaration sites in *decl_ids* and the targets of a plain `=`.
+    A compound assignment reads its target and counts.
+    """
+    counts: dict[Binding, int] = {}
+    names = {binding.name for binding in candidates}
+    for node in walk_scope(scope, include_root_body=True):
+        if not isinstance(node, JsIdentifier) or id(node) in decl_ids:
             continue
-        parent = node.parent
-        if isinstance(parent, JsAssignmentExpression) and parent.left is node and parent.operator == '=':
+        if node.name not in names or not _counts_as_a_reference(node):
             continue
-        if isinstance(parent, JsMemberExpression) and parent.property is node and not parent.computed:
-            continue
-        counts[name] = counts.get(name, 0) + 1
+        binding = _binding_reached(model, node)
+        if binding is not None and binding in candidates:
+            counts[binding] = counts.get(binding, 0) + 1
     return counts
 
 
@@ -296,10 +356,6 @@ def _reader_qualifies(
     return dominance.runs_before_every_invocation(value, reader)
 
 
-def _planned_keys(substitutions: list[_Substitution]) -> set[str]:
-    return {sub.key for sub in substitutions}
-
-
 class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
     """
     Inline variables that are assigned once and never mutated. Literal-valued variables are inlined
@@ -376,22 +432,26 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         self._submit(_ScopePlan(
             scope,
             [sub._replace(value=_clone_node(sub.value)) for sub in substitutions],
-            self._decide_dead_declarators(candidates, _planned_keys(substitutions), cache),
+            self._decide_dead_declarators(candidates, substitutions, cache),
             decl_ids,
+            cache.model,
         ))
 
-    def _collect_candidates(
-        self,
-        scope: Node,
-        effects: EffectModel,
-    ) -> tuple[dict[str, list[_CandidateEntry]], set[str]]:
+    def _collect_candidates(self, scope: Node, effects: EffectModel) -> _Candidates:
         """
-        Collect constant declaration entries per variable. Each entry is a `_CandidateEntry` of
+        Collect the candidate bindings of *scope*, each with the one declarator and the one value
+        that define it (`_Candidates`), from a walk of the scope that does not enter a nested
+        function. A binding is a candidate where the walk meets exactly one store of it: a
+        declarator with a value, or a bare `var` the walk meets first and one plain `=` into the
+        same binding after it. A second store of the binding, an update, a destructuring target and
+        a loop head reject it. Every store is filed under the binding it writes: a declarator under
+        the binding it declares, a reference under the one it resolves to, and a reference a `with`
+        body governs under the lexical binding it may reach past the body, which it may write as
+        well. A store into another binding of the same name, a catch parameter or a block `let`, is
+        a store of that binding only. The names the rejected stores write, and the free names any
+        store writes, are returned as the mutated names.
 
-            (declarator, constant_value)
-
-        Also returns the set of fully rejected (mutated) names — those reassigned, updated,
-        destructured, or written by a run that escapes
+        A candidate is rejected as well where a run that escapes writes it
         (`refinery.lib.scripts.js.analysis.effects.EffectModel.mutators_escape`), be it a function
         or the initializer of a field, whose value cannot be pinned to a single definition. A
         candidate a dynamic scope could rewrite with no static write site is no longer rejected
@@ -408,9 +468,20 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         which a surviving candidate's value no longer holds are not enumerated here; the reaching
         query derives them from the effect model at each use.
         """
-        candidates: dict[str, list[_CandidateEntry]] = {}
-        rejected: set[str] = set()
-        uninitialized: dict[str, JsVariableDeclarator] = {}
+        model = effects.model
+        candidates: dict[Binding, _CandidateEntry] = {}
+        rejected: set[Binding] = set()
+        uninitialized: dict[Binding, JsVariableDeclarator] = {}
+        mutated: set[str] = set()
+
+        def reject(target: JsIdentifier) -> None:
+            mutated.add(target.name)
+            binding = model.binding_of(target) or _binding_reached(model, target)
+            if binding is None:
+                return
+            rejected.add(binding)
+            candidates.pop(binding, None)
+            uninitialized.pop(binding, None)
 
         for node in walk_scope(scope, include_root_body=True):
             if isinstance(node, JsVariableDeclaration):
@@ -419,118 +490,77 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                         continue
                     if not isinstance(decl.id, JsIdentifier):
                         for ident in pattern_identifiers(decl.id):
-                            rejected.add(ident.name)
-                            candidates.pop(ident.name, None)
-                            uninitialized.pop(ident.name, None)
+                            reject(ident)
                         continue
-                    name = decl.id.name
-                    if name in rejected:
+                    binding = model.binding_of(decl.id)
+                    if binding is None or binding in rejected:
                         continue
                     if decl.init is None:
-                        if name not in candidates:
-                            uninitialized[name] = decl
+                        if binding not in candidates:
+                            uninitialized[binding] = decl
                         continue
-                    if name in candidates:
-                        rejected.add(name)
-                        candidates.pop(name, None)
-                        uninitialized.pop(name, None)
+                    if binding in candidates:
+                        reject(decl.id)
                         continue
-                    candidates[name] = [_CandidateEntry(decl, decl.init)]
-                    uninitialized.pop(name, None)
+                    candidates[binding] = _CandidateEntry(decl, binding, decl.init)
+                    uninitialized.pop(binding, None)
 
             if isinstance(node, JsAssignmentExpression):
                 left = strip_parens(node.left)
                 if isinstance(left, JsIdentifier):
-                    name = left.name
+                    binding = _binding_reached(model, left)
                     if (
                         node.operator == '='
-                        and name in uninitialized
-                        and name not in candidates
-                        and name not in rejected
+                        and binding is not None
+                        and binding in uninitialized
+                        and binding not in candidates
+                        and binding not in rejected
                     ):
-                        decl = uninitialized.pop(name)
-                        rhs = node.right
-                        if rhs is None:
-                            rejected.add(name)
+                        decl = uninitialized.pop(binding)
+                        if node.right is None:
+                            reject(left)
                         else:
-                            candidates[name] = [_CandidateEntry(decl, rhs)]
+                            candidates[binding] = _CandidateEntry(decl, binding, node.right)
                     else:
-                        rejected.add(name)
-                        candidates.pop(name, None)
-                        uninitialized.pop(name, None)
+                        reject(left)
                 elif isinstance(left, (JsArrayPattern, JsObjectPattern)):
-                    for name in _pattern_identifiers(left):
-                        rejected.add(name)
-                        candidates.pop(name, None)
-                        uninitialized.pop(name, None)
+                    for ident in _identifiers_in(left):
+                        reject(ident)
 
             if isinstance(node, JsUpdateExpression):
                 target = strip_parens(node.argument)
                 if isinstance(target, JsIdentifier):
-                    name = target.name
-                    rejected.add(name)
-                    candidates.pop(name, None)
+                    reject(target)
 
             if isinstance(node, (JsForInStatement, JsForOfStatement)):
                 left = strip_parens(node.left)
-                loop_targets: set[str] = set()
                 if isinstance(left, JsVariableDeclaration):
                     for decl in left.declarations:
                         if isinstance(decl, JsVariableDeclarator) and decl.id is not None:
-                            loop_targets |= _pattern_identifiers(decl.id)
-                elif isinstance(left, JsIdentifier):
-                    loop_targets.add(left.name)
+                            for ident in _identifiers_in(decl.id):
+                                reject(ident)
                 elif isinstance(left, (
-                    JsArrayExpression, JsObjectExpression, JsArrayPattern, JsObjectPattern,
+                    JsIdentifier, JsArrayExpression, JsObjectExpression, JsArrayPattern, JsObjectPattern,
                 )):
-                    loop_targets |= _pattern_identifiers(left)
-                for name in loop_targets:
-                    rejected.add(name)
-                    candidates.pop(name, None)
-                    uninitialized.pop(name, None)
+                    for ident in _identifiers_in(left):
+                        reject(ident)
 
-        model = effects.model
-        candidate_bindings: dict[str, Binding] = {}
-        for cand_name, cand_entries in candidates.items():
-            decl = cand_entries[0].declarator
-            if decl is not None and isinstance(decl.id, JsIdentifier):
-                binding = model.binding_of(decl.id)
-                if binding is not None:
-                    candidate_bindings[cand_name] = binding
-
-        def _reject(target_name: str) -> None:
-            rejected.add(target_name)
-            candidates.pop(target_name, None)
-            uninitialized.pop(target_name, None)
-            candidate_bindings.pop(target_name, None)
-
-        for cand_name, binding in list(candidate_bindings.items()):
+        for binding in list(candidates):
             if (
                 binding.has_global_member_write
                 or model.binding_dynamic_rebind_sites(binding) is None
                 or model.reached_from_outside(binding)
                 or effects.mutators_escape(binding)
             ):
-                _reject(cand_name)
+                del candidates[binding]
+                mutated.add(binding.name)
 
-        return candidates, rejected
-
-    @staticmethod
-    def _candidate_binding(entry: _CandidateEntry, model: SemanticModel) -> Binding | None:
-        """
-        The binding a candidate entry defines, resolved through its declarator identifier, or `None` when
-        the entry carries no single-identifier declarator. This is the binding whose value the reaching
-        query tracks from the definition to a use.
-        """
-        decl = entry.declarator
-        if decl is None or not isinstance(decl.id, JsIdentifier):
-            return None
-        return model.binding_of(decl.id)
+        return _Candidates(candidates, mutated)
 
     def _decide_constants(
         self,
         scope: Node,
-        candidates: dict[str, list[_CandidateEntry]],
+        candidates: dict[Binding, _CandidateEntry],
         decl_ids: set[int],
         cache: ModelCache,
     ) -> list[_Substitution]:
@@ -542,80 +572,71 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         which `_process_scope` copies into the plan, or the node `_constant_node` writes for a name
         denoting a global value. A string too long to paste is inlined only where its binding is
         read once, wherever that read stands: the reads counted are the binding's own, in a `with`
-        body too, so a name a nested function binds for itself never counts against it.
+        body too, so a name a nested function binds for itself never counts against it. A read is
+        paired with a candidate by the binding it resolves to, so a read of another binding of the
+        name, a catch parameter's, takes nothing of the candidate's value.
         """
         effects = cache.effects
         reaching = cache.reaching
         model = effects.model
 
-        bloat_blocked: set[str] = set()
-        for name, entries in candidates.items():
-            if len(entries) != 1:
-                continue
-            entry = entries[0]
+        bloat_blocked: set[Binding] = set()
+        for binding, entry in candidates.items():
             value = entry.value
             if not isinstance(value, JsStringLiteral) or value.value is None:
                 continue
             if len(value.value) <= self.max_inline_length:
                 continue
-            binding = self._candidate_binding(entry, model)
-            if binding is not None and len(binding.reads) + len(binding.dynamic_refs) > 1:
-                bloat_blocked.add(name)
+            if len(binding.reads) + len(binding.dynamic_refs) > 1:
+                bloat_blocked.add(binding)
 
-        constant_names = {
-            name for name, entries in candidates.items()
-            if any(
-                _is_constant_value(e.value, model) or _is_intrinsic_alias_value(effects, e.value)
-                for e in entries
+        constants = {
+            binding: entry for binding, entry in candidates.items()
+            if binding not in bloat_blocked and (
+                _is_constant_value(entry.value, model) or _is_intrinsic_alias_value(effects, entry.value)
             )
         }
-        if not constant_names:
+        if not constants:
             return []
+        names = {binding.name for binding in constants}
 
         substitutions: list[_Substitution] = []
         for node in walk_scope(scope, include_root_body=True):
             if isinstance(node, JsMemberExpression) and node.computed:
                 obj = node.object
-                if (
-                    isinstance(obj, JsIdentifier)
-                    and id(obj) not in decl_ids
-                    and obj.name in constant_names
-                    and obj.name not in bloat_blocked
-                    and self._index_array_immutable(obj, effects, direct_eval_ordered=True)
-                ):
-                    entry = candidates[obj.name][0]
-                    binding = self._candidate_binding(entry, model)
-                    if binding is not None and reaching.value_preserved(binding, entry.value, node):
+                if isinstance(obj, JsIdentifier) and obj.name in names and id(obj) not in decl_ids:
+                    binding = model.resolve(obj)
+                    entry = constants.get(binding) if binding is not None else None
+                    if (
+                        binding is not None
+                        and entry is not None
+                        and self._index_array_immutable(obj, effects, direct_eval_ordered=True)
+                        and reaching.value_preserved(binding, entry.value, node)
+                    ):
                         element = self._index_access_element(node, entry, model)
                         if element is not None:
-                            substitutions.append(_Substitution(node, element, obj.name))
-                    continue
-            if not isinstance(node, JsIdentifier):
+                            substitutions.append(_Substitution(node, element, binding))
+                continue
+            if not isinstance(node, JsIdentifier) or node.name not in names:
                 continue
             if id(node) in decl_ids:
-                continue
-            name = node.name
-            if name not in constant_names or name in bloat_blocked:
                 continue
             parent = node.parent
             if reference_role(node) is not Role.READ:
                 continue
             if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
                 continue
-            entry = candidates[name][0]
+            binding = model.resolve(node)
+            if binding is None or (entry := constants.get(binding)) is None:
+                continue
             value = _constant_node(entry.value, model)
             if value is None:
                 continue
-            binding = self._candidate_binding(entry, model)
-            if binding is None or model.resolve(node) is not binding:
-                continue
             if not reaching.value_preserved(binding, entry.value, node):
                 continue
-            substitutions.append(_Substitution(node, value, name))
+            substitutions.append(_Substitution(node, value, binding))
 
-        substitutions.extend(self._decide_const_across_functions(
-            scope, candidates, decl_ids, bloat_blocked, cache,
-        ))
+        substitutions.extend(self._decide_const_across_functions(scope, constants, decl_ids, cache))
 
         return substitutions
 
@@ -665,13 +686,13 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
     def _decide_const_across_functions(
         self,
         scope: Node,
-        candidates: dict[str, list[_CandidateEntry]],
+        constants: dict[Binding, _CandidateEntry],
         decl_ids: set[int],
-        bloat_blocked: set[str],
         cache: ModelCache,
     ) -> list[_Substitution]:
         """
-        Decide the constant-valued inlines of one round that cross into nested function bodies. A
+        Decide the constant-valued inlines of one round that cross into nested function bodies, for
+        the *constants* the same-function arm admitted. A
         `const`-qualified candidate, or an uninitialized `var` later assigned a single constant, is
         inlined into a function only when the value provably runs before every invocation of that
         function (`DominanceModel.runs_before_function`) — otherwise a call could read the value
@@ -699,88 +720,64 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         effects = cache.effects
         dominance = cache.dominance
         model = effects.model
-        cross_candidates: dict[str, list[_CandidateEntry]] = {}
-        cross_bindings: dict[str, Binding] = {}
-        const_names: set[str] = set()
-        for name, entries in candidates.items():
-            if name in bloat_blocked:
-                continue
-            if len(entries) != 1:
-                continue
-            entry = entries[0]
-            if entry.declarator is None or not isinstance(entry.declarator.id, JsIdentifier):
-                continue
-            intrinsic_alias = _is_intrinsic_alias_value(effects, entry.value)
-            if not (_is_constant_value(entry.value, model) or intrinsic_alias):
-                continue
-            binding = model.binding_of(entry.declarator.id)
-            if binding is None:
-                continue
-            cross_candidates[name] = entries
-            cross_bindings[name] = binding
-            if _is_const_qualified(entry.declarator) or entry.declarator.init is None or intrinsic_alias:
-                const_names.add(name)
 
-        if not cross_candidates:
+        called_funcs = _collect_called_functions(scope, effects)
+        a_callee_is_unstated = _calls_a_function_of_this_file_by_an_unstated_name(scope, effects)
+
+        crossing = {
+            binding: entry for binding, entry in constants.items()
+            if not (
+                model.binding_maybe_reassigned_dynamically(binding)
+                or binding.copies_received
+                or (a_callee_is_unstated and effects.some_function_can_mutate(binding))
+                or any(effects.function_can_mutate(func, binding) for func in called_funcs)
+            )
+        }
+        if not crossing:
             return []
+        const_like = {
+            binding for binding, entry in crossing.items()
+            if _is_const_qualified(entry.declarator)
+            or entry.declarator.init is None
+            or _is_intrinsic_alias_value(effects, entry.value)
+        }
 
         outer = model.scope_of(scope)
         assert outer is not None
         owner = enclosing_run(scope)
 
-        called_funcs = _collect_called_functions(scope, effects)
-        a_callee_is_unstated = _calls_a_function_of_this_file_by_an_unstated_name(scope, effects)
+        def reader_admitted(node: JsIdentifier, binding: Binding, entry: _CandidateEntry) -> bool:
+            enclosing = enclosing_run(node)
+            if enclosing is None or enclosing is owner:
+                return False
+            if binding in const_like:
+                if not dominance.runs_before_function(entry.value, enclosing):
+                    return False
+            elif not _reader_qualifies(entry.value, enclosing, binding, effects, dominance):
+                return False
+            return not model.is_shadowed(node.name, node, outer)
 
-        for name in [
-            candidate for candidate, binding in cross_bindings.items()
-            if model.binding_maybe_reassigned_dynamically(binding)
-            or binding.copies_received
-            or (a_callee_is_unstated and effects.some_function_can_mutate(binding))
-            or any(effects.function_can_mutate(func, binding) for func in called_funcs)
-        ]:
-            del cross_candidates[name]
-            del cross_bindings[name]
-        if not cross_candidates:
-            return []
-
+        names = {binding.name for binding in crossing}
         substitutions: list[_Substitution] = []
         for node in scope.walk():
             if isinstance(node, JsMemberExpression) and node.computed:
                 obj = node.object
-                if (
-                    isinstance(obj, JsIdentifier)
-                    and id(obj) not in decl_ids
-                    and obj.name in cross_candidates
-                    and self._index_array_immutable(obj, effects)
-                ):
-                    name = obj.name
-                    enclosing = enclosing_run(obj)
-                    if enclosing is None or enclosing is owner:
-                        continue
-                    if model.resolve(obj) is not cross_bindings[name]:
-                        continue
-                    if name in const_names:
-                        if not dominance.runs_before_function(
-                            cross_candidates[name][0].value, enclosing,
-                        ):
-                            continue
-                    elif not _reader_qualifies(
-                        cross_candidates[name][0].value, enclosing,
-                        cross_bindings[name], effects, dominance,
+                if isinstance(obj, JsIdentifier) and obj.name in names and id(obj) not in decl_ids:
+                    binding = model.resolve(obj)
+                    entry = crossing.get(binding) if binding is not None else None
+                    if (
+                        binding is not None
+                        and entry is not None
+                        and self._index_array_immutable(obj, effects)
+                        and reader_admitted(obj, binding, entry)
                     ):
-                        continue
-                    if model.is_shadowed(name, obj, outer):
-                        continue
-                    element = self._index_access_element(node, cross_candidates[name][0], model)
-                    if element is not None:
-                        substitutions.append(_Substitution(node, element, name))
-                    continue
-            if not isinstance(node, JsIdentifier):
+                        element = self._index_access_element(node, entry, model)
+                        if element is not None:
+                            substitutions.append(_Substitution(node, element, binding))
+                continue
+            if not isinstance(node, JsIdentifier) or node.name not in names:
                 continue
             if id(node) in decl_ids:
-                continue
-            name = node.name
-            if name not in cross_candidates:
                 continue
             parent = node.parent
             if reference_role(node) is not Role.READ:
@@ -791,24 +788,14 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                 continue
             if isinstance(parent, (JsFunctionDeclaration, JsFunctionExpression)) and parent.id is node:
                 continue
-            entry = cross_candidates[name][0]
+            binding = model.resolve(node)
+            if binding is None or (entry := crossing.get(binding)) is None:
+                continue
             intrinsic_alias = _is_intrinsic_alias_value(effects, entry.value)
             value = entry.value if intrinsic_alias else _constant_node(entry.value, model)
             if value is None:
                 continue
-            enclosing = enclosing_run(node)
-            if enclosing is None or enclosing is owner:
-                continue
-            if model.resolve(node) is not cross_bindings[name]:
-                continue
-            if name in const_names:
-                if not dominance.runs_before_function(entry.value, enclosing):
-                    continue
-            elif not _reader_qualifies(
-                entry.value, enclosing, cross_bindings[name], effects, dominance,
-            ):
-                continue
-            if model.is_shadowed(name, node, outer):
+            if not reader_admitted(node, binding, entry):
                 continue
             if (
                 intrinsic_alias
@@ -816,13 +803,13 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                 and model.lookup(entry.value.name, model.scope_of(node)) is not None
             ):
                 continue
-            substitutions.append(_Substitution(node, value, name))
+            substitutions.append(_Substitution(node, value, binding))
         return substitutions
 
     def _decide_expressions(
         self,
         scope: Node,
-        candidates: dict[str, list[_CandidateEntry]],
+        candidates: dict[Binding, _CandidateEntry],
         mutated: set[str],
         decl_ids: set[int],
         cache: ModelCache,
@@ -839,49 +826,46 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         scope), which the binding-keyed reaching query cannot see. A candidate whose initializer
         reads a bare name through a `with` body's dynamic scope needs no separate gate here: such
         an initializer is inside the `with` body, so the candidate's own binding is written in a
-        dynamic scope and the reaching query orders that hazard against the relocated read.
+        dynamic scope and the reaching query orders that hazard against the relocated read. The one
+        use is counted among the references of the scope walk that reach the binding, so a read of
+        another binding of the name, a catch parameter's, is no use of it.
         """
-        ref_counts = _count_scope_references(scope, set(candidates), decl_ids)
         model = cache.effects.model
+        ref_counts = _references_in_scope(scope, candidates, decl_ids, model)
 
-        to_inline: dict[str, _CandidateEntry] = {}
-        for name, entries in candidates.items():
-            if len(entries) != 1:
-                continue
-            entry = entries[0]
+        to_inline: dict[Binding, _CandidateEntry] = {}
+        for binding, entry in candidates.items():
             init = entry.value
-            count = ref_counts.get(name, 0)
-            if _is_constant_value(init, model) or count != 1:
+            if _is_constant_value(init, model) or ref_counts.get(binding, 0) != 1:
                 continue
             if not _is_primitive_and_pure(init):
                 continue
             if collect_identifier_names(init) & mutated:
                 continue
-            to_inline[name] = entry
+            to_inline[binding] = entry
 
         if not to_inline:
             return []
 
         reaching = cache.reaching
+        names = {binding.name for binding in to_inline}
 
         substitutions: list[_Substitution] = []
         for node in walk_scope(scope, include_root_body=True):
-            if not isinstance(node, JsIdentifier):
+            if not isinstance(node, JsIdentifier) or node.name not in names:
                 continue
             if id(node) in decl_ids:
                 continue
-            name = node.name
-            if name not in to_inline:
-                continue
             if reference_role(node) is not Role.READ:
                 continue
-            entry = to_inline[name]
-            binding = self._candidate_binding(entry, model)
-            if binding is None or not reaching.value_preserved(binding, entry.value, node):
+            binding = model.resolve(node)
+            if binding is None or (entry := to_inline.get(binding)) is None:
+                continue
+            if not reaching.value_preserved(binding, entry.value, node):
                 continue
             if not self._free_variables_preserved(entry.value, node, model, reaching):
                 continue
-            substitutions.append(_Substitution(node, entry.value, name))
+            substitutions.append(_Substitution(node, entry.value, binding))
         return substitutions
 
     @staticmethod
@@ -912,17 +896,17 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
 
     def _decide_dead_declarators(
         self,
-        candidates: dict[str, list[_CandidateEntry]],
-        planned: set[str],
+        candidates: dict[Binding, _CandidateEntry],
+        substitutions: list[_Substitution],
         cache: ModelCache,
     ) -> list[_DeclaratorRemoval]:
         """
-        Decide which declarators of the round-inlined names are up for removal. No reference count
-        is read here — one taken before the round's plans apply cannot see the reads another plan of
-        the same round deletes — so every name the round substitutes is proposed and the plan counts
-        references at apply time. Only a declarator that holds the inlined value is proposed: where
-        the value came from a store after a bare `var b;`, removing the declaration would leave that
-        store writing a global, and a dead store goes with its declaration in
+        Decide which declarators of the round-inlined bindings are up for removal. No reference
+        count is read here — one taken before the round's plans apply cannot see the reads another
+        plan of the same round deletes — so every binding the round substitutes is proposed and the
+        plan counts references at apply time. Only a declarator that holds the inlined value is
+        proposed: where the value came from a store after a bare `var b;`, removing the declaration
+        would leave that store writing a global, and a dead store goes with its declaration in
         `refinery.lib.scripts.js.deobfuscation.unused.JsUnusedCodeRemoval`. An exported binding
         keeps its declarator even with every local read inlined, because an importer still reads it
         across the module boundary; removing it would leave an `export` naming a binding the module
@@ -939,21 +923,17 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         """
         model = cache.model
         removals: list[_DeclaratorRemoval] = []
-        for name in planned:
-            entries = candidates.get(name)
-            if entries is None:
+        for binding in dict.fromkeys(sub.binding for sub in substitutions):
+            entry = candidates.get(binding)
+            if entry is None or entry.declarator.init is None:
                 continue
-            for entry in entries:
-                if entry.declarator is None or entry.declarator.init is None:
-                    continue
-                binding = self._candidate_binding(entry, model)
-                if binding is not None and (
-                    binding.seen_without_a_spelling
-                    or model.reachable_by_opaque_reflection(binding)
-                    or bool(binding.dynamic_refs)
-                ):
-                    continue
-                removals.append(_DeclaratorRemoval(entry.declarator, name))
+            if (
+                binding.seen_without_a_spelling
+                or model.reachable_by_opaque_reflection(binding)
+                or bool(binding.dynamic_refs)
+            ):
+                continue
+            removals.append(_DeclaratorRemoval(entry.declarator, binding))
         return removals
 
     def _apply_plan(self, plan: _ScopePlan) -> None:
@@ -969,11 +949,14 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             self.mark_changed()
             self._edits_applied += 1
         if plan.declarator_removals:
-            ref_counts = _count_scope_references(
-                plan.scope, plan.planned, plan.decl_ids, walk_full=True,
+            referenced = _still_referenced(
+                plan.scope,
+                {removal.binding for removal in plan.declarator_removals},
+                plan.decl_ids,
+                plan.model,
             )
             for removal in plan.declarator_removals:
-                if ref_counts.get(removal.key, 0) > 0:
+                if removal.binding in referenced:
                     continue
                 if not is_attached(removal.declarator):
                     continue

@@ -262,6 +262,43 @@ def each_program_still_prints(
     }
 
 
+#: The two models a test asks the deobfuscation under: the trusting one, then the suspecting one,
+#: as the `strict` switch of `refinery.djs` names them.
+BOTH_MODELS = (False, True)
+
+
+def what_each_script_prints(rows: Mapping[str, tuple[str, Behavior]]) -> dict[str, Behavior]:
+    """
+    What each script of *rows*, a label mapped to a classic script and what it prints, prints where
+    a host runs it.
+    """
+    return {label: host_behavior(source) for label, (source, _) in rows.items()}
+
+
+def what_each_script_pins(rows: Mapping[str, tuple[str, Behavior]]) -> dict[str, Behavior]:
+    return {label: pinned for label, (_, pinned) in rows.items()}
+
+
+def what_each_deobfuscated_script_prints(
+    rows: Mapping[str, tuple[str, Behavior]],
+) -> dict[tuple[str, bool], Behavior]:
+    """
+    What the deobfuscation of each script of *rows* prints where a host runs it, under each of
+    `BOTH_MODELS`.
+    """
+    return {
+        (label, strict): host_behavior(source.encode('utf8') | djs(strict=strict) | str)
+        for label, (source, _) in rows.items()
+        for strict in BOTH_MODELS
+    }
+
+
+def what_each_deobfuscated_script_pins(
+    rows: Mapping[str, tuple[str, Behavior]],
+) -> dict[tuple[str, bool], Behavior]:
+    return {(label, strict): pinned for label, (_, pinned) in rows.items() for strict in BOTH_MODELS}
+
+
 Behavior = tuple[str, str | None]
 
 
