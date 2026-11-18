@@ -25,6 +25,7 @@ import inspect
 import unittest
 
 from test import TestBase, backlog, opportunity, todo
+from test.lib.scripts import a_program, on_separate_lines
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -75,7 +76,6 @@ from test.lib.scripts.js.deobfuscation import test_the_file_kind as the_file_kin
 from test.lib.scripts.js.ledger import (
     Program,
     Reading,
-    a_program,
     a_walk_of,
     an_accessor_at,
     as_classic_scripts,
@@ -84,7 +84,6 @@ from test.lib.scripts.js.ledger import (
     each_program_still_prints,
     evaluated_in_a_body,
     folded,
-    on_separate_lines,
     one_expected_failure_per_program,
     one_expected_failure_per_script,
     printed,

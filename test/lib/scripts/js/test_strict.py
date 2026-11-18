@@ -4,8 +4,9 @@ import inspect
 import unittest
 
 from test import TestBase
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
-from test.lib.scripts.js.ledger import a_program, well_formed
+from test.lib.scripts.js.ledger import well_formed
 
 from refinery.lib.scripts import Statement, set_body
 from refinery.lib.scripts.js.model import JsBlockStatement, JsScript

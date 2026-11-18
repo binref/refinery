@@ -3,7 +3,7 @@ from __future__ import annotations
 from inspect import cleandoc
 
 from test import TestBase, opportunity
-from test.lib.scripts.ps1 import a_program
+from test.lib.scripts import a_program
 
 from refinery.lib.scripts import Statement
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache

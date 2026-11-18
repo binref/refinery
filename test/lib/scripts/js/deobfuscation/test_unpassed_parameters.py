@@ -12,9 +12,10 @@ import inspect
 import unittest
 
 from test import TestBase, opportunity
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_source, node_executable
 from test.lib.scripts.js.deobfuscation.test_a_table_read_through_an_accessor import deobfuscated_by_the_unit
-from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
+from test.lib.scripts.js.ledger import Program, Reading, prints
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.analysis.model import build_semantic_model

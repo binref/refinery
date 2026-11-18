@@ -8,6 +8,7 @@ import lzma
 import unittest
 
 from test import fastest_processor_time, opportunity, processor_time_ratio, wontfix
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import (
     completion_values,
     deobfuscate_source,
@@ -16,7 +17,6 @@ from test.lib.scripts.js.analysis.differential import (
 )
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
-    a_program,
     before_and_after,
     before_and_after_in_a_host,
     each_program_still_prints,

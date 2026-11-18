@@ -28,6 +28,7 @@ import unittest
 from typing import Sequence
 
 from test import TestBase, opportunity
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -44,7 +45,6 @@ from test.lib.scripts.js.analysis.test_differential import (
     a_script_opening_with,
     a_script_whose_directive_stands_below,
 )
-from test.lib.scripts.js.ledger import a_program
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.model import (

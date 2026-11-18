@@ -4,12 +4,12 @@ import inspect
 import unittest
 
 from test import TestBase
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.ledger import (
     FileProgram,
     Reading,
     Unpinned,
-    a_program,
     each_reading_still_prints,
     node_prints_what_each_row_pins,
     prints,

@@ -7,8 +7,9 @@ from __future__ import annotations
 import unittest
 
 from test import TestBase
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
-from test.lib.scripts.js.ledger import Program, Reading, a_program, folded, prints
+from test.lib.scripts.js.ledger import Program, Reading, folded, prints
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.options import ExecutionModel

@@ -5,6 +5,7 @@ import json
 import unittest
 
 from test import TestBase
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     deobfuscate_source,
@@ -12,7 +13,6 @@ from test.lib.scripts.js.analysis.differential import (
     node_executable,
 )
 from test.lib.scripts.js.ledger import (
-    a_program,
     before_and_after,
     each_program_still_prints,
 )

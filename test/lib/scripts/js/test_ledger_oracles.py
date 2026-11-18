@@ -7,7 +7,8 @@ from __future__ import annotations
 import inspect
 
 from test import TestBase
-from test.lib.scripts.js.ledger import a_program, dropped_source_characters
+from test.lib.scripts import a_program
+from test.lib.scripts.js.ledger import dropped_source_characters
 
 
 class TestTheDroppedCharacterOracleReadsCodeInOrder(TestBase):

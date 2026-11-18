@@ -6,6 +6,7 @@ import threading
 import unittest
 
 from test import TestBase, fastest_processor_time, opportunity, processor_time_ratio
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -14,7 +15,6 @@ from test.lib.scripts.js.analysis.differential import (
 )
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
-    a_program,
     before_and_after,
     each_program_still_prints,
     printed,

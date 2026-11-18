@@ -7,9 +7,10 @@ import inspect
 import unittest
 
 from test import TestBase
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
+from test.lib.scripts.js.ledger import Program, Reading, prints
 
 LOOKUPS_BY_KEY: dict[str, Program] = {
     'a return of undefined after the switch': Program(

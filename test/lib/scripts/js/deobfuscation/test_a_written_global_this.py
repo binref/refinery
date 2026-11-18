@@ -8,16 +8,12 @@ obfuscator fixture may be fed to this.
 """
 from __future__ import annotations
 
-import inspect
 import unittest
 
 from test import TestBase
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
-
-
-def a_program(text: str) -> str:
-    return inspect.cleandoc(text) + chr(10)
 
 
 A_GLOBAL_THIS_LANDING_UNDER_A_BINDING_OF_ITS_NAME = {

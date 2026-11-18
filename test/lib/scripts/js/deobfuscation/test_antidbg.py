@@ -4,9 +4,10 @@ import inspect
 import unittest
 
 from test import TestBase, opportunity
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
+from test.lib.scripts.js.ledger import Program, Reading, prints
 
 from refinery.lib.scripts.js.deobfuscation.antidbg import JsRemoveSelfDefending
 

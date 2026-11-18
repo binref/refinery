@@ -7,12 +7,12 @@ from __future__ import annotations
 import unittest
 
 from test import TestBase
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     deobfuscate_source,
     node_executable,
 )
-from test.lib.scripts.js.ledger import a_program
 from test.lib.scripts.js.test_directive_prologue import A_PROGRAM_REPORTING_ITS_MODE
 
 from refinery.lib.scripts import Node, Transformer, set_body

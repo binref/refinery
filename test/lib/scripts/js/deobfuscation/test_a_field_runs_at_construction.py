@@ -7,8 +7,9 @@ import inspect
 import unittest
 
 from test import TestBase, opportunity
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import node_executable
-from test.lib.scripts.js.ledger import Program, Reading, a_program, folded, prints
+from test.lib.scripts.js.ledger import Program, Reading, folded, prints
 
 A_DECODER_CALLED_IN_A_FIELD: dict[str, Program] = {
     'a built-in replaced through a computed global name': Program(

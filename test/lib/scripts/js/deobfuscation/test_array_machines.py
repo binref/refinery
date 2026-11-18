@@ -4,6 +4,7 @@ import inspect
 import unittest
 
 from test import TestBase, opportunity
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     deobfuscate_source,
@@ -11,7 +12,7 @@ from test.lib.scripts.js.analysis.differential import (
     node_executable,
 )
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import Program, Reading, a_program, prints, wontfix
+from test.lib.scripts.js.ledger import Program, Reading, prints, wontfix
 
 from refinery.lib.scripts.js.deobfuscation.cff import JsStateMachineUnflattening
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator

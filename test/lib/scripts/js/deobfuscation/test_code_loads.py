@@ -4,6 +4,7 @@ import inspect
 import unittest
 
 from test import TestBase, backlog
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import (
     deobfuscate_source,
     module_graph_behavior,
@@ -12,7 +13,6 @@ from test.lib.scripts.js.analysis.differential import (
 from test.lib.scripts.js.ledger import (
     FileProgram,
     Reading,
-    a_program,
     each_reading_still_prints,
     node_prints_what_each_row_pins,
     prints,

@@ -4,6 +4,7 @@ import inspect
 import unittest
 
 from test import TestBase, opportunity
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     completion_values,
@@ -11,7 +12,7 @@ from test.lib.scripts.js.analysis.differential import (
     node_executable,
 )
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import Program, a_program, prints
+from test.lib.scripts.js.ledger import Program, prints
 
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.options import DeobfuscationOptions

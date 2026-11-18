@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from test import TestBase, opportunity
-from test.lib.scripts.ps1 import a_program
+from test.lib.scripts import a_program
 
 from inspect import cleandoc
 

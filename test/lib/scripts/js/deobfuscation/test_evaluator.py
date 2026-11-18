@@ -4,9 +4,9 @@ import inspect
 import unittest
 
 from test import backlog, opportunity
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import a_program
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator

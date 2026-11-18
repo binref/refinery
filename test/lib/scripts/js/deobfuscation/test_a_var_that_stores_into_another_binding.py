@@ -7,9 +7,9 @@ from __future__ import annotations
 import unittest
 
 from test import TestBase, todo
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import (
-    a_program,
     prints,
     what_each_deobfuscated_script_pins,
     what_each_deobfuscated_script_prints,

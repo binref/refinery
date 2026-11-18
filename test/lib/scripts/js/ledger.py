@@ -5,13 +5,13 @@ sample corpus.
 """
 from __future__ import annotations
 
-import inspect
 import unittest
 
 from collections import Counter
 from enum import Enum, auto
 from typing import Any, Callable, Iterable, Iterator, Mapping, NamedTuple, TypeVar
 
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     deobfuscate_source,
@@ -28,14 +28,6 @@ from refinery.lib.scripts.js.token import JsTokenKind
 from refinery.units.scripting.djs import djs
 
 NL = chr(10)
-
-
-def a_program(text: str) -> str:
-    return inspect.cleandoc(text) + NL
-
-
-def on_separate_lines(*texts: str) -> str:
-    return NL.join(texts)
 
 
 def well_formed(source: str) -> bool:

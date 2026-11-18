@@ -7,6 +7,7 @@ import unittest
 from typing import NamedTuple
 
 from test import TestBase
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.test_comment_carriers import every_program_holding_a_comment
 from test.lib.scripts.js.deobfuscation.test_escaped_identifiers import (
@@ -16,7 +17,6 @@ from test.lib.scripts.js.deobfuscation.test_escaped_identifiers import (
     AN_ESCAPED_STATIC_TERMINAL,
 )
 from test.lib.scripts.js.ledger import (
-    a_program,
     before_and_after,
     dropped_source_characters,
     printed,

@@ -7,15 +7,14 @@ import functools
 import unittest
 
 from test import TestBase, backlog, fastest_processor_time, processor_time_ratio, todo
+from test.lib.scripts import a_program, on_separate_lines
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import (
     Program,
     Reading,
-    a_program,
     folded,
     node_prints_what_each_program_pins,
     one_expected_failure_per_program,
-    on_separate_lines,
     printed,
     prints,
 )

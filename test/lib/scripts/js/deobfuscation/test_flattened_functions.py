@@ -15,6 +15,7 @@ import inspect
 import unittest
 
 from test import TestBase, opportunity
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.deobfuscation.test_selfchecks import (
     DOUBLE,
@@ -27,7 +28,6 @@ from test.lib.scripts.js.ledger import (
     Program,
     Reading,
     Unpinned,
-    a_program,
     node_prints_what_each_program_pins,
     prints,
     wontfix,

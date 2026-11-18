@@ -7,6 +7,7 @@ import unittest
 from typing import NamedTuple
 
 from test import TestBase, backlog, opportunity, todo
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import (
     JsEvaluation,
     behavior,
@@ -16,7 +17,7 @@ from test.lib.scripts.js.analysis.differential import (
     node_executable,
 )
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import Program, Reading, a_program, printed, prints
+from test.lib.scripts.js.ledger import Program, Reading, printed, prints
 from test.lib.scripts.js.test_directive_prologue import NOT_A_PROGRAM
 
 from refinery.lib.scripts import tree_version

@@ -5,12 +5,12 @@ import inspect
 import unittest
 
 from test import TestBase, a_property_of_the_pin_itself, backlog, fastest_processor_time
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
     FileProgram,
     Reading,
-    a_program,
     before_and_after,
     before_and_after_in_a_host,
     each_program_still_prints,

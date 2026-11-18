@@ -4,15 +4,14 @@ import inspect
 import unittest
 
 from test import TestBase
+from test.lib.scripts import a_program, on_separate_lines
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import (
     Program,
     Reading,
-    a_program,
     before_and_after,
     each_program_still_prints,
     folded,
-    on_separate_lines,
     prints,
 )
 

@@ -6,6 +6,7 @@ import unicodedata
 import unittest
 
 from test import TestBase, backlog, opportunity
+from test.lib.scripts import a_program
 
 from refinery.lib.scripts import canonical
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
@@ -25,7 +26,7 @@ from test.lib.scripts.js.analysis.differential import (
     host_behavior,
     node_executable,
 )
-from test.lib.scripts.js.ledger import STRING_TIMERS, a_program
+from test.lib.scripts.js.ledger import STRING_TIMERS
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

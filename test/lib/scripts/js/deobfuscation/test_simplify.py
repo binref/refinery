@@ -6,9 +6,10 @@ import unittest
 import refinery.lib.scripts as scripts
 
 from test import TestBase, lines_executed, opportunity
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import a_program, before_and_after, each_program_still_prints
+from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
 from refinery.lib.scripts import Expression, tree_version
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment

@@ -4,16 +4,12 @@ obfuscator fixture may be fed to this.
 """
 from __future__ import annotations
 
-import inspect
 import unittest
 
 from test import TestBase
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
-
-
-def a_program(text: str) -> str:
-    return inspect.cleandoc(text) + chr(10)
 
 
 A_STORE_WHOSE_STATEMENT_THREW = {

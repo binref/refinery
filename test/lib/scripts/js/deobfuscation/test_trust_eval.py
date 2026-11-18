@@ -7,8 +7,8 @@ from __future__ import annotations
 from inspect import cleandoc
 
 from test import TestBase, opportunity
+from test.lib.scripts import on_separate_lines
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import on_separate_lines
 
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications

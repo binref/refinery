@@ -8,9 +8,9 @@ import inspect
 import unittest
 
 from test import TestBase, backlog
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import host_behavior, node_executable
 from test.lib.scripts.js.ledger import (
-    a_program,
     before_and_after_in_a_host,
     deobfuscated_host_behavior,
     folded,

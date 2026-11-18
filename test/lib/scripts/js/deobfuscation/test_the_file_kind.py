@@ -4,13 +4,13 @@ import inspect
 import unittest
 
 from test import TestBase, opportunity
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_source, node_executable
 from test.lib.scripts.js.deobfuscation.test_b91strings import SLICED, decoder, slicing
 from test.lib.scripts.js.ledger import (
     FileProgram,
     Program,
     Reading,
-    a_program,
     deobfuscated_behavior,
     each_reading_still_prints,
     node_prints_what_each_row_pins,

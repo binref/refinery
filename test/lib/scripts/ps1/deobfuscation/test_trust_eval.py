@@ -7,7 +7,7 @@ from refinery.lib.scripts.ps1.options import Ps1DeobfuscationOptions
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 from test import opportunity
-from test.lib.scripts.ps1 import a_program
+from test.lib.scripts import a_program
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 _JUNK = '$Null = [System.Guid]::NewGuid()'

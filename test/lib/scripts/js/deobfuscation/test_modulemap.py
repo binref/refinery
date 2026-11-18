@@ -6,11 +6,11 @@ from __future__ import annotations
 import unittest
 
 from test import TestBase, todo, wontfix
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.ledger import (
     Program,
     Reading,
-    a_program,
     folded,
     node_prints_what_each_program_pins,
     printed,

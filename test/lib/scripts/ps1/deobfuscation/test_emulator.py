@@ -3,7 +3,7 @@ from __future__ import annotations
 from inspect import cleandoc
 
 from test import backlog, opportunity, todo, wontfix
-from test.lib.scripts.ps1 import a_program
+from test.lib.scripts import a_program
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1 import data

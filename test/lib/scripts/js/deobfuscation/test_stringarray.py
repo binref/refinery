@@ -4,9 +4,9 @@ import inspect
 import re
 
 from test import TestBase, opportunity
+from test.lib.scripts import a_program
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
-    a_program,
     before_and_after,
     each_program_still_prints,
     wontfix,

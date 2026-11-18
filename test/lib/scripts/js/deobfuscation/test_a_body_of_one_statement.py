@@ -6,8 +6,8 @@ from __future__ import annotations
 import inspect
 
 from test import TestBase
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import deobfuscate_source
-from test.lib.scripts.js.ledger import a_program
 
 from refinery.lib.scripts.js.deobfuscation.bodies import JsBareBodyBlocking
 from refinery.lib.scripts.js.model import (

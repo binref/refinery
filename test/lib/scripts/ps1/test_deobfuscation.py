@@ -4,7 +4,7 @@ import re
 
 from inspect import cleandoc
 
-from test.lib.scripts.ps1 import a_program
+from test.lib.scripts import a_program
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 from test.lib.scripts.ps1.test_oracle import TYPE_TRANSCRIPTS
 

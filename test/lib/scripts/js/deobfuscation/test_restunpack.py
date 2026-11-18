@@ -4,12 +4,12 @@ import inspect
 import unittest
 
 from test import TestBase
+from test.lib.scripts import a_program
 from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_source, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
     Program,
     Reading,
-    a_program,
     before_and_after,
     each_program_still_prints,
     prints,
