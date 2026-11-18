@@ -83,6 +83,35 @@ class TestAntiDebug(TestJsDeobfuscator):
             self._run_transformer(self._REFERENCED_FACTORY, JsRemoveSelfDefending),
         )
 
+    def test_a_guard_declared_under_a_catch_parameter_of_its_name_stays(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              try { throw 0; } catch (b) { var b = g('x(((.+)+)+)+$x'); }
+              b();
+            }
+            f();
+            console.log('survived');
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  try {
+                    throw 0;
+                  } catch (b) {
+                    var b = g('x(((.+)+)+)+$x');
+                  }
+                  b();
+                }
+                f();
+                console.log('survived');
+                """
+            ),
+            self._run_transformer(source, JsRemoveSelfDefending),
+        )
+
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_redos_factory_preserved_when_referenced_preserves_behaviour(self):
         source = self._REFERENCED_FACTORY

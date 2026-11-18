@@ -320,9 +320,6 @@ def _held_once(model: SemanticModel, binding: Binding) -> JsObjectExpression | N
         or model.reflection_can_reach(binding)
     ):
         return None
-    declarator = binding.declarations[0].parent
-    if not isinstance(declarator, JsVariableDeclarator) or declarator.id is not binding.declarations[0]:
-        return None
     literal = model.declared_value(binding)
     if not isinstance(literal, JsObjectExpression) or object_sets_prototype(literal):
         return None

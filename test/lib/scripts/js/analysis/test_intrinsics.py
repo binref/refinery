@@ -18,7 +18,11 @@ from refinery.lib.scripts.js.analysis import intrinsics
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.intrinsics import build_intrinsic_writes
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
-from refinery.lib.scripts.js.model import JsAssignmentExpression, JsExpressionStatement, JsIdentifier
+from refinery.lib.scripts.js.model import (
+    JsAssignmentExpression,
+    JsExpressionStatement,
+    JsIdentifier,
+)
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
@@ -109,6 +113,28 @@ class TestBindingsWhoseValuesDenoteARootTheScanWatches(TestBase):
         ):
             with self.subTest(source=source):
                 self.assertFalse(self._denotes(source))
+
+
+class TestAVarWhoseDeclaratorStoresIntoAnotherBindingDenotesNoWatchedRoot(TestBase):
+
+    @staticmethod
+    def _denotes(source: str) -> bool:
+        cache = ModelCache(JsParser(source).parse())
+        binding = cache.model.root_scope.bindings['P']
+        return cache.intrinsic_writes.denotes_a_watched_root(binding)
+
+    def test_a_var_whose_only_declarator_stores_into_a_catch_parameter(self):
+        self.assertFalse(self._denotes('try { throw 0; } catch (P) { var P = Object; }'))
+
+    def test_a_var_whose_only_declarator_stores_into_the_object_of_a_with(self):
+        self.assertFalse(self._denotes('with ({}) { var P = Object; }'))
+
+    def test_a_var_the_program_stores_itself(self):
+        self.assertTrue(self._denotes('var P = Object;'))
+
+    def test_a_write_through_the_parameter_the_declarator_stores_into_writes_the_root(self):
+        cache = ModelCache(JsParser('try { throw 0; } catch (P) { var P = Object; P.keys = f; }').parse())
+        self.assertEqual(frozenset({'Object', 'P'}), cache.intrinsic_writes.names)
 
 
 class TestAWriteThroughAFormThatForwardsItsValueWritesTheRoot(TestBase):

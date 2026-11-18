@@ -1025,11 +1025,8 @@ def _forwarded_through_a_table(
         or model.reached_from_outside(table)
     ):
         return None
-    declarator = table.declarations[0].parent
     if (
-        not isinstance(declarator, JsVariableDeclarator)
-        or declarator.id is not table.declarations[0]
-        or not isinstance(array := model.declared_value(table), JsArrayExpression)
+        not isinstance(array := model.declared_value(table), JsArrayExpression)
         or k >= len(array.elements)
     ):
         return None

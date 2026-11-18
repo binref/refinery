@@ -311,7 +311,7 @@ class JsRemoveSelfDefending(ScriptLevelTransformer):
         else:
             return
         model = model_cache(self, root).model
-        binding = model.binding_of(guard_decl.id)
+        binding = model.declarator_store_binding(guard_decl.id)
         calls = _discardable_guard_invocations(model, binding, guard_decl)
         if calls is None:
             return

@@ -34,7 +34,6 @@ from refinery.lib.scripts.js.model import (
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
-
 _GLOBAL_WRITE_ROLES = {
     'assignment': (False, True),
     'compound assignment': (True, True),
@@ -2439,3 +2438,34 @@ class TestWhatSeesABindingWithoutItsName(TestBase):
         }.items():
             with self.subTest(label):
                 self.assertEqual(self._answers(source, name), expected)
+
+
+WHETHER_THE_ONE_DECLARATION_OF_A_BINDING_HOLDS_A_VALUE = {
+    'var b = 1;': True,
+    'var b, b = 1;': False,
+    'var b = 1; b = 2;': True,
+    'for (var b = 1 in {});': False,
+    'for (var b of []);': False,
+    'try { throw 0; } catch (b) { var b = 1; }': False,
+    'with ({}) { var b = 1; }': False,
+}
+
+
+def _the_one_declaration_holds_a_value(source: str) -> bool:
+    ast = JsParser(source).parse()
+    model = build_semantic_model(ast)
+    declarator = next(
+        node for node in ast.walk_in_order()
+        if isinstance(node, JsVariableDeclarator) and isinstance(node.id, JsIdentifier)
+    )
+    return model.declared_value(model.binding_of(declarator.id)) is not None
+
+
+class TestTheValueOfTheOneDeclarationABindingHas(TestBase):
+
+    def test_each_declaration_holds_a_value_or_none_as_the_store_model_says(self):
+        rows = WHETHER_THE_ONE_DECLARATION_OF_A_BINDING_HOLDS_A_VALUE
+        self.assertEqual(
+            {source: _the_one_declaration_holds_a_value(source) for source in rows},
+            rows,
+        )

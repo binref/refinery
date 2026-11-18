@@ -578,3 +578,40 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
         )
         self.assertEqual(source, self._find(source))
+
+    def test_a_call_before_a_var_stores_into_the_catch_parameter_is_no_finder(self):
+        source = inspect.cleandoc(
+            '''
+            function g() { return 0; }
+            function finder() {
+              var t = typeof globalThis;
+              try { throw [g]; }
+              catch (b) {
+                var r = b[0]();
+                var b = [function () { return globalThis; }];
+                return r;
+              }
+            }
+            console.log(typeof finder());
+            '''
+        )
+        self.assertEqual(self._find(source), inspect.cleandoc(
+            '''
+            function g() {
+              return 0;
+            }
+            function finder() {
+              var t = typeof globalThis;
+              try {
+                throw [g];
+              } catch (b) {
+                var r = b[0]();
+                var b = [function() {
+                  return globalThis;
+                }];
+                return r;
+              }
+            }
+            console.log(typeof finder());
+            '''
+        ))

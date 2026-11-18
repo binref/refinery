@@ -18,6 +18,7 @@ from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.evaluation import enclosing_run
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
+    BindingKind,
     Role,
     SemanticModel,
     pattern_identifiers,
@@ -186,6 +187,23 @@ def _binding_reached(model: SemanticModel, ident: JsIdentifier) -> Binding | Non
     if binding is None:
         binding = model.lookup(ident.name, model.scope_of(ident), cross_dynamic=True)
     return binding
+
+
+def _every_write_is_located(
+    binding: Binding, model: SemanticModel, effects: EffectModel,
+) -> bool:
+    """
+    Whether every change to *binding* is a site this file spells and the model places, so the
+    reaching query can order each of them against every read: none goes through a global-object
+    alias, no dynamic rebind is nodeless, no host reaches the binding by name, and no run that
+    escapes writes it.
+    """
+    return (
+        not binding.has_global_member_write
+        and model.binding_dynamic_rebind_sites(binding) is not None
+        and not model.reached_from_outside(binding)
+        and not effects.mutators_escape(binding)
+    )
 
 
 def _counts_as_a_reference(node: JsIdentifier) -> bool:
@@ -508,7 +526,10 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         answering `None`) — and a candidate the analyst declared a host reaches by name is rejected
         the same way: the host reads it once the file has run, and may have rewritten it before any
         read the substitution would fold, so neither its declarator nor any read of it may be
-        replaced. A write through a global-object alias is rejected alongside. The points past
+        replaced. A write through a global-object alias is rejected alongside. The binding a run
+        can never store again is rejected with them: an assignment into a `const` binding throws
+        where it stands, so no read after it observes the assigned value, and folding it would
+        fabricate the completion of a store that never ran. The points past
         which a surviving candidate's value no longer holds are not enumerated here; the reaching
         query derives them from the effect model at each use.
         """
@@ -601,23 +622,16 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                         reject(ident, destructured=not isinstance(left, JsIdentifier))
 
         for binding in list(candidates):
-            if (
-                binding.has_global_member_write
-                or model.binding_dynamic_rebind_sites(binding) is None
-                or model.reached_from_outside(binding)
-                or effects.mutators_escape(binding)
-            ):
+            if not _every_write_is_located(binding, model, effects):
                 del candidates[binding]
                 mutated.add(binding.name)
 
         stored_again = {
             binding: decl for binding, decl in declared.items()
-            if binding in rejected
+            if binding.kind in (BindingKind.VAR, BindingKind.LET)
+            and binding in rejected
             and binding not in unfit
-            and not binding.has_global_member_write
-            and model.binding_dynamic_rebind_sites(binding) is not None
-            and not model.reached_from_outside(binding)
-            and not effects.mutators_escape(binding)
+            and _every_write_is_located(binding, model, effects)
         }
         return _Candidates(candidates, mutated, stored_again)
 
@@ -713,11 +727,12 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         """
         Decide the inlines of one round into the reads of bindings stored again: each read takes
         the value of the one store that reaches it
-        (`refinery.lib.scripts.js.analysis.reaching.ReachingModel.reaching_store`), where that store
-        is a declarator with a value or a plain `=`, the value is a constant, and it reaches the read
-        unchanged (`refinery.lib.scripts.js.analysis.reaching.ReachingModel.value_preserved`). A read
-        any other store reaches, a compound one, an update or the head of a loop, stays. A string too
-        long to paste folds only where its binding is read once, as a candidate's does.
+        (`refinery.lib.scripts.js.analysis.reaching.ReachingModel.reaching_store`), where that
+        store is a declarator with a value or a plain `=`, the value is a constant, and it reaches
+        the read unchanged
+        (`refinery.lib.scripts.js.analysis.reaching.ReachingModel.value_preserved`). A read any
+        other store reaches, a compound one, an update or the head of a loop, stays. A string
+        too long to paste folds only where its binding is read once, as a candidate's does.
         """
         if not stored_again:
             return []

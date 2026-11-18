@@ -676,28 +676,27 @@ class TamperingModel:
         The reads of the binding *node* is stored into by *parent* — a declarator initializer or
         the right side of an `=` assignment — or `None` when *node*'s position neither stores it in
         a name nor drops it as an expression statement, so the value escapes the walk's reading. A
-        binding with dynamic references or an unattributed write also escapes: its reads do not
-        enumerate what could invoke the value.
+        declarator stores into the binding its name resolves to where it stands
+        (`SemanticModel.declarator_store_binding`). A binding with dynamic references or an
+        unattributed write also escapes: its reads do not enumerate what could invoke the value.
         """
-        target: JsIdentifier | None = None
         if isinstance(parent, JsVariableDeclarator) and parent.init is node:
-            if isinstance(parent.id, JsIdentifier):
-                target = parent.id
+            if not isinstance(parent.id, JsIdentifier):
+                return None
+            binding = self.model.declarator_store_binding(parent.id)
         elif (
             isinstance(parent, JsAssignmentExpression)
             and parent.operator == '='
             and parent.right is node
         ):
             stripped = strip_parens(parent.left)
-            if isinstance(stripped, JsIdentifier):
-                target = stripped
+            if not isinstance(stripped, JsIdentifier):
+                return None
+            binding = self.model.lookup(stripped.name, self.model.scope_of(stripped))
         elif isinstance(parent, JsExpressionStatement):
             return []
         else:
             return None
-        if target is None:
-            return None
-        binding = self.model.lookup(target.name, self.model.scope_of(target))
         if binding is None or binding.dynamic_refs or binding.has_indefinite_write:
             return None
         return list(binding.reads)

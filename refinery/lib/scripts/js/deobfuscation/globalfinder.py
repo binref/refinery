@@ -32,7 +32,6 @@ from refinery.lib.scripts.js.analysis.model import (
     GLOBAL_OBJECT_ALIASES,
     Binding,
     SemanticModel,
-    stored_value,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
@@ -321,6 +320,13 @@ def _closure_returns_global(
 
 
 def _sole_value(binding: Binding | None, func: Node, model: SemanticModel) -> Node | None:
+    """
+    The one value *binding* holds, or `None` where no single one does: it has no spelled value,
+    more than one, or a store that lands in it from a `var` declarator of the same name, which
+    arrives only after the binding already held a value this function cannot spell — the object a
+    `catch` threw, a `let` still in its dead zone — and nothing here orders the reads before that
+    store against it.
+    """
     if binding is None:
         return None
     values: list[Node] = []
@@ -343,8 +349,7 @@ def _sole_value(binding: Binding | None, func: Node, model: SemanticModel) -> No
             values.append(node.right)
     for write in binding.writes:
         if isinstance(write, JsIdentifier) and model.stores_elsewhere(write):
-            if (value := stored_value(write)) is not None:
-                values.append(value)
+            return None
     return values[0] if len(values) == 1 else None
 
 

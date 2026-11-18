@@ -222,8 +222,7 @@ class LivenessModel:
         if node.element is None:
             return use, kill
         for ident in self._shallow_idents(graph, node.element):
-            declared = self.model.binding_of(ident)
-            if declared is not None:
+            if self.model.binding_of(ident) is not None:
                 target = self.model.declarator_store_binding(ident)
                 if (
                     target is not None
@@ -295,8 +294,7 @@ class LivenessModel:
         `(None, None)` if *write* is not an unconditional value store: a `var`/`let`/`const` declarator
         with an initializer, or the target of a plain `=` assignment.
         """
-        declared = self.model.binding_of(write)
-        if declared is not None:
+        if self.model.binding_of(write) is not None:
             if not self._declarator_has_init(write):
                 return None, None
             return self.model.declarator_store_binding(write), self._enclosing_declarator(write)
@@ -329,8 +327,7 @@ class LivenessModel:
         return reference_role(ident) is not Role.WRITE
 
     def _reference_binding(self, ident: JsIdentifier) -> Binding | None:
-        declared = self.model.binding_of(ident)
-        if declared is not None:
+        if self.model.binding_of(ident) is not None:
             return self.model.declarator_store_binding(ident)
         if not is_use_position(ident):
             return None

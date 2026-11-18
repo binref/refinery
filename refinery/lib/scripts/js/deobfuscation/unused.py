@@ -1267,9 +1267,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         """
         Whether every store into *binding* is one the sweep takes away, whose targets' ids are
         *removed*, so that its declaration may go as well. A store the walk of the variable scope
-        does not meet — one in the initializer of a class field or in a static block, which runs at
-        a time of its own, or in a nested function — writes the name all the same, and without its
-        declaration it creates a global, or throws in strict code.
+        does not meet — one in the initializer of a class field or in a static block, which runs
+        at a time of its own, or in a nested function — writes the name all the same, and without
+        its declaration it creates a global, or throws in strict code.
         """
         return all(
             id(write) in removed

@@ -376,7 +376,7 @@ class _BuiltinReach:
         for declaration in binding.declarations:
             parent = declaration.parent
             if isinstance(parent, JsVariableDeclarator) and parent.id is declaration:
-                if parent.init is not None:
+                if parent.init is not None and not self.model.stores_elsewhere(declaration):
                     sources.append(parent.init)
             elif _destructured_under_a_builtin_key(declaration):
                 return True, []
@@ -1283,7 +1283,7 @@ class _IntrinsicAliases:
         if known is None:
             names: set[str] = set()
             sources: list[Binding] = []
-            for root in _binding_value_roots(binding):
+            for root in _binding_value_roots(self.model, binding):
                 if root.name in PURE_INTRINSIC_ROOTS:
                     names.add(root.name)
                     continue
@@ -1296,11 +1296,13 @@ class _IntrinsicAliases:
         return known
 
 
-def _binding_value_roots(binding: Binding) -> Iterator[JsIdentifier]:
+def _binding_value_roots(model: SemanticModel, binding: Binding) -> Iterator[JsIdentifier]:
     """
     Every name a value of *binding* may denote, over its declarations' initializers and the right
     side of every plain assignment to it. Both are needed: a binding declared empty and assigned
-    later (`var m; m = Math`) holds the intrinsic just as one initialized with it does.
+    later (`var m; m = Math`) holds the intrinsic just as one initialized with it does. A
+    declarator whose store lands in another binding than the one it declares contributes nothing:
+    the value it spells never reaches the binding it declares.
 
     A write the model cannot pin to a value
     (`refinery.lib.scripts.js.analysis.model.Binding.indefinite_writes`) contributes as well. This
@@ -1319,7 +1321,7 @@ def _binding_value_roots(binding: Binding) -> Iterator[JsIdentifier]:
     for declaration in binding.declarations:
         parent = getattr(declaration, 'parent', None)
         initializer = getattr(parent, 'init', None)
-        if initializer is not None:
+        if initializer is not None and not model.stores_elsewhere(declaration):
             yield from _denoted_roots(initializer)
     for reference in (*binding.writes, *binding.indefinite_writes):
         parent = getattr(reference, 'parent', None)

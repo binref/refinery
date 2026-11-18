@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import gc
-import time
 import tracemalloc
 
 from test import TestBase, opportunity
+from unittest.mock import patch
 
 from refinery.lib.scripts import Node
+from refinery.lib.scripts.analysis.components import Condensation
 from refinery.lib.scripts.js.analysis.cache import ModelCache
+from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.model import Binding
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
@@ -74,10 +76,11 @@ class TestReaching(TestBase):
         self.assertFalse(self._query('var x = (x = 2, 1); x;'))
 
     @staticmethod
-    def _each_store_asked_at_its_read(stores: int) -> tuple[float, int, int]:
+    def _each_store_asked_at_its_read(stores: int) -> tuple[int, int, int]:
         """
-        The time, the memory kept, and the count of reads the value reaches, of asking for each of
-        *stores* stores of one name and the read after it whether the value of the store holds there.
+        The work, the memory kept, and the count of reads the value reaches, of asking for each of
+        *stores* stores of one name and the read after it whether the value of the store holds
+        there.
         """
         lines = ['function f(q) {', "  var b = 'v0';", '  log(b);']
         for index in range(1, stores):
@@ -100,23 +103,36 @@ class TestReaching(TestBase):
         reaching = cache.reaching
         for read in reads:
             reaching.dominance.locate(read)
+        walked: list[int] = []
+        walk = Condensation.found_within
+
+        def counting(condensation, number, test, memo, **bounds):
+            def each(component: int) -> bool:
+                walked.append(component)
+                return test(component)
+            return walk(condensation, number, each, memo, **bounds)
+
+        asked = patch.object(
+            DominanceModel, 'dominates_node', autospec=True, side_effect=DominanceModel.dominates_node)
         gc.collect()
         tracemalloc.start()
         try:
             before, _ = tracemalloc.get_traced_memory()
-            start = time.perf_counter()
-            reached = sum(reaching.value_preserved(binding, value, read) for value, read in zip(values, reads))
-            elapsed = time.perf_counter() - start
+            with patch.object(Condensation, 'found_within', counting), asked as calls:
+                reached = sum(
+                    reaching.value_preserved(binding, value, read)
+                    for value, read in zip(values, reads)
+                )
             after, _ = tracemalloc.get_traced_memory()
         finally:
             tracemalloc.stop()
-        return elapsed, after - before, reached
+        return len(walked) + calls.call_count, after - before, reached
 
     def test_each_of_many_stores_reaches_the_read_after_it_at_a_cost_linear_in_the_stores(self):
-        time_1600, kept_1600, reached_1600 = self._each_store_asked_at_its_read(1600)
-        time_3200, kept_3200, reached_3200 = self._each_store_asked_at_its_read(3200)
+        cost_1600, kept_1600, reached_1600 = self._each_store_asked_at_its_read(1600)
+        cost_3200, kept_3200, reached_3200 = self._each_store_asked_at_its_read(3200)
         self.assertEqual((reached_1600, reached_3200), (1600, 3200))
-        self.assertLess(time_3200, 3 * time_1600)
+        self.assertLess(cost_3200, 2 * cost_1600 + 2)
         self.assertLess(kept_3200, 3 * kept_1600)
 
     def test_reaches_with_no_barrier(self):

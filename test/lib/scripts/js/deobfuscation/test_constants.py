@@ -2707,6 +2707,17 @@ class TestAReadOfABindingStoredAgainFolds(TestJsDeobfuscator):
             )),
         )
 
+    def test_a_const_binding_the_program_assigns_again_is_never_stored_again(self):
+        source = inspect.cleandoc(
+            """
+            const b = "a";
+            console.log(b);
+            b = "c";
+            console.log(b);
+            """
+        )
+        self.assertEqual(source, self._deobfuscate(source))
+
 
 A_STORE_ITS_STATEMENT_DOES_NOT_ALWAYS_RUN = {
     'var b; Math.random() > 2 && (b = 1); console.log(b);\n': 'undefined\n',

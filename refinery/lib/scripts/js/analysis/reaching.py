@@ -70,11 +70,11 @@ class _Kills(NamedTuple):
     """
     The sites at which a binding may change value, for every definition tracked from in one graph:
     the kills that hold for every use — reassignments, mutating calls, and the located reflective
-    hazards of a local's own scope — as control-flow node ids, and the opaque global writes that may
-    replace the binding's name, kept as site-and-node pairs because a use can be exempt from such a
-    store: the store is the last step of the assignment spelling it, so a use inside its operands
-    runs before it and is not killed by it. *alone* maps the node of each store no other kill
-    shares to that store: the node a definition tracked from that store leaves out.
+    hazards of a local's own scope — as control-flow node ids, and the opaque global writes that
+    may replace the binding's name, kept as site-and-node pairs because a use can be exempt from
+    such a store: the store is the last step of the assignment spelling it, so a use inside its
+    operands runs before it and is not killed by it. *alone* maps the node of each store no other
+    kill shares to that store: the node a definition tracked from that store leaves out.
     """
     nodes: frozenset[int]
     opaque: tuple[tuple[JsMemberExpression, CfgNode], ...]
@@ -189,14 +189,15 @@ class ReachingModel:
 
     def reaching_store(self, binding: Binding, use: Node) -> Node | None:
         """
-        The one site that stores into *binding* (`refinery.lib.scripts.js.analysis.model.Binding.store_sites`)
-        whose store is what *use* observes, or `None` where no single one is: the nearest store that
-        runs before *use* on every path, in *use*'s own graph, where no store of *binding* the graph
-        places elsewhere and no foreign kill lies between them. The value the site stores is the
-        caller's to read, and to order against *use* (`value_preserved`), since a site that spells
-        no value — an update, a loop head — is a store all the same and reaches with nothing. A store
-        sharing *use*'s node is not ordered against it, and two stores sharing one node refuse every
-        use they would both reach first.
+        The one site that stores into *binding*
+        (`refinery.lib.scripts.js.analysis.model.Binding.store_sites`) whose store is what *use*
+        observes, or `None` where no single one is: the nearest store that runs before *use* on
+        every path, in *use*'s own graph, and `None` where a store of *binding* the graph places
+        elsewhere. The value the site stores is the caller's to read, and to order against *use*
+        (`value_preserved`), which is also where a foreign kill between the store and the read is
+        refused, since a site that spells no value — an update, a loop head — is a store all the
+        same and reaches with nothing. A store sharing *use*'s node is not ordered against it, and
+        two stores sharing one node refuse every use they would both reach first.
         """
         located = self.dominance.locate(use)
         if located is None:
@@ -242,14 +243,14 @@ class ReachingModel:
     def _kill_nodes(self, binding: Binding, graph: ControlFlowGraph) -> _Kills | None:
         """
         The sites in *graph* at which *binding* may change value — a reassignment located in this
-        graph, or a call whose statically known callee may write *binding* — every one of them, and
-        the store each node no other kill shares holds, which a definition tracked from that store
-        leaves out. `None` when a change cannot be pinned to a site: *binding* is written by a
-        function that escapes, through a global-object alias, or through a name a dynamic scope
-        resolves at runtime, so its value must be treated as volatile everywhere. The answer is fixed
-        for the model's lifetime and holds for every definition and use alike, so it is memoized per
-        binding and graph, and both the definition's own store and the per-use exemption an opaque
-        write can earn are applied by the caller.
+        graph, or a call whose statically known callee may write *binding* — every one of them,
+        and the store each node no other kill shares holds, which a definition tracked from that
+        store leaves out. `None` when a change cannot be pinned to a site: *binding* is written by
+        a function that escapes, through a global-object alias, or through a name a dynamic scope
+        resolves at runtime, so its value must be treated as volatile everywhere. The answer is
+        fixed for the model's lifetime and holds for every definition and use alike, so it is
+        memoized per binding and graph, and both the definition's own store and the per-use
+        exemption an opaque write can earn are applied by the caller.
         """
         key = (id(binding), id(graph))
         if key not in self._kill_cache:
@@ -267,14 +268,12 @@ class ReachingModel:
             return None
         kills = {id(node) for _, node in changes.foreign}
         alone: dict[int, Node] = {}
-        shared: set[int] = set(kills)
         for site, node in changes.stores:
             key = id(node)
-            if key in shared:
+            if key in kills:
                 alone.pop(key, None)
             else:
                 alone[key] = site
-                shared.add(key)
             kills.add(key)
         return _Kills(frozenset(kills), changes.opaque, alone)
 

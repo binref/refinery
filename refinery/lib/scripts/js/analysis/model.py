@@ -2875,7 +2875,8 @@ class SemanticModel:
         """
         The value of the one declaration *binding* has, where that declaration is a `var`
         declarator with a value whose store lands in the binding. A `var` whose one declaration
-        stores elsewhere holds nothing of what it spells.
+        stores elsewhere holds nothing of what it spells, and neither does one in the head of a
+        `for-in` or `for-of` loop, which stores what the loop iterates over.
         """
         if binding is None or len(binding.declarations) != 1:
             return None
@@ -2885,6 +2886,7 @@ class SemanticModel:
             not isinstance(parent, JsVariableDeclarator)
             or parent.id is not declaration
             or declaration in binding.stored_elsewhere
+            or _loop_head_assigns(parent)
         ):
             return None
         return parent.init
