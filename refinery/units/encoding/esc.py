@@ -61,7 +61,7 @@ class esc(Unit):
         if not data:
             return data
 
-        if data[0] in b'rR' and len(data) > 1:
+        if data[0] in b'rR' and data[1:2] in (b'"', b"'"):
             rawstring = True
 
         if (_q := data[rawstring:rawstring + 3]) in (b'"""', B"'''"):
@@ -70,8 +70,13 @@ class esc(Unit):
             quote = _q[:1]
 
         quote_len = len(quote)
+        is_quoted = (
+            quote in (b'"', b"'", b'"""', B"'''")
+            and len(data) >= rawstring + 2 * quote_len
+            and data[-quote_len:] == quote
+        )
 
-        if data[-quote_len:] == quote:
+        if is_quoted:
             if not self.args.unquoted:
                 self.log_info('removing automatically detected quotes')
                 strip = data[rawstring + quote_len:-quote_len]
