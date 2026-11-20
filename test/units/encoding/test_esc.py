@@ -132,3 +132,16 @@ class TestEscaping(TestUnitBase):
         data = B'''"""C:\\nProgram\\nFoo\nC:\\rProgram\\aBar"""'''
         test = data | self.load() | str
         self.assertEqual(test, 'C:\nProgram\nFoo\nC:\rProgram\aBar')
+
+    def test_first_and_last_character_equal_but_not_quotes(self):
+        self.assertEqual(B'0123450' | self.load() | bytes, B'0123450')
+        self.assertEqual(B'x' | self.load() | bytes, B'x')
+
+    def test_invertible_with_equal_first_and_last_byte(self):
+        data = B'5G\xc9\x85'
+        test = data | -self.load() | self.load() | bytes
+        self.assertEqual(test, data)
+
+    def test_quoted_requires_actual_quotes(self):
+        with self.assertRaises(Exception):
+            self.load(quoted=True).process(B'0123450')
